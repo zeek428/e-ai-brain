@@ -1,0 +1,91 @@
+# 快速入门
+
+## 适用人群
+
+需要本地启动、验证或继续实现 AI Brain 的开发者、测试人员和 AI 编码助手。
+
+## 前置知识
+
+- 熟悉 Docker Compose 基本命令。
+- 了解 React、FastAPI、PostgreSQL、Redis 的基本用途。
+- 阅读 [AI Brain 文档中心](../README.md)、[项目级 PRD](../01-prd/enterprise-ai-brain/prd.md) 和 [项目级技术规格](../02-specs/enterprise-ai-brain/spec.md)。
+
+## 当前源码状态提示
+
+当前仓库可能只包含文档集，应用源码目录、`.env.example` 或 `docker-compose.yml` 需要在实现阶段创建后才能执行下列命令。若文件尚不存在，请先以 [项目级 PRD](../01-prd/enterprise-ai-brain/prd.md)、[技术规格](../02-specs/enterprise-ai-brain/spec.md) 和 [API 文档](../02-specs/enterprise-ai-brain/api.md) 为准完成基础工程初始化。
+
+## 环境准备
+
+### 必需软件
+
+| 软件 | 版本 | 安装方式 |
+|------|------|----------|
+| Docker Desktop / Docker Engine | 支持 Compose v2 | 按操作系统安装。 |
+| Git | 任意维护版本 | 按操作系统安装。 |
+
+### 可选软件
+
+| 软件 | 用途 |
+|------|------|
+| uv | 本地运行 FastAPI 测试和依赖管理。 |
+| Node.js | 本地运行 React 开发服务。 |
+
+## 快速开始
+
+### 1. 克隆项目
+
+```bash
+git clone https://github.com/zeek428/e-ai-brain.git
+cd e-ai-brain
+```
+
+### 2. 配置环境
+
+```bash
+cp .env.example .env
+```
+
+根据本地模型网关和数据库配置编辑 `.env`。首次安装依赖需要网络访问；如本机依赖安装受限，优先使用 Docker Compose。
+
+### 3. 校验 Compose 配置
+
+```bash
+docker compose config
+```
+
+### 4. 启动服务
+
+```bash
+docker compose up -d --build
+```
+
+### 5. 验证安装
+
+```bash
+curl http://localhost:8000/health
+```
+
+预期 API 返回健康状态。前端、数据库和 Redis 的端口以未来根目录 `docker-compose.yml` 为准。
+
+## 常见问题
+
+| 错误信息 | 原因 | 解决方案 |
+|----------|------|----------|
+| dependency install failed | 首次依赖安装需要网络 | 使用 Docker Compose 或配置可用镜像源。 |
+| database connection failed | PostgreSQL 未启动或环境变量不一致 | 检查 `.env` 与 compose 服务名。 |
+| pgvector extension missing | 数据库初始化未执行 | 检查迁移脚本和 postgres 镜像扩展支持。 |
+
+## 下一步
+
+- 阅读 [系统架构](../02-specs/architecture/system-overview.md)。
+- 阅读 [项目级 PRD](../01-prd/enterprise-ai-brain/prd.md)。
+- 阅读 [项目级技术规格](../02-specs/enterprise-ai-brain/spec.md)。
+- 运行 [测试用例](../02-specs/enterprise-ai-brain/test-case.md) 对应验证。
+
+## 获取帮助
+
+- 文档问题: 更新 [docs/](../) 下对应文件。
+- 需求、技术、接口或测试问题: 先查看项目级 PRD/spec/API/test-case。
+
+---
+最后更新: 2026-05-29

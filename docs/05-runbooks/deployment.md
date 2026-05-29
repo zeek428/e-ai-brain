@@ -1,0 +1,164 @@
+# 部署流程
+
+## 当前源码状态提示
+
+本 runbook 描述目标实现状态下的本地或 v1 演示部署流程。若当前 checkout 仍只有文档集，且尚未包含应用源码、`.env.example` 或 `docker-compose.yml`，请先完成基础工程初始化，再执行部署命令。
+
+## 环境定位
+
+| 环境 | 目标 | 发布要求 |
+|------|------|----------|
+| Local | 开发和演示闭环 | Docker Compose 可启动，P0 API 和 P0 测试通过。 |
+| Staging | 企业试点前验证 | 使用脱敏数据，执行迁移、备份恢复、监控告警和权限验证。 |
+| Production | 企业内部正式使用 | 需要变更审批、备份恢复演练、SLO 告警、密钥轮换计划和回滚方案。 |
+
+当前仓库仍以文档和本地栈为主；production 条目是上线准入要求，不代表当前实现已经满足。
+
+## 触发条件
+
+- 本地开发环境初始化。
+- v1 演示环境部署。
+- 验证 web、api、PostgreSQL + pgvector、Redis、模型网关和内部 GitLab MR Code Review 只读链路是否能协同启动。
+
+## 前置条件
+
+- [ ] 已复制 `.env.example` 为 `.env` 并填写必要配置。
+- [ ] Docker Compose 可用。
+- [ ] `docker compose config` 校验通过。
+- [ ] 数据库迁移脚本已随 API 镜像或启动流程执行。
+- [ ] 已配置默认模型网关，API Key 只存在 `.env` 或密钥管理系统中。
+- [ ] 已配置内部 GitLab 只读凭据引用和产品 Git 资源绑定；凭据不得出现在 API 响应、执行器输入或日志中。
+- [ ] 已配置 code-review 执行器适配器；未配置时必须让 code_review 任务失败为可排查状态，而不是静默跳过。
+
+## 发布准入门禁
+
+- [ ] P0/MVP 测试用例通过，生产就绪用例无阻塞项。
+- [ ] 数据库迁移脚本和回滚脚本已评审。
+- [ ] 最近一次备份恢复演练通过，恢复数据可被应用读取。
+- [ ] 模型 API Key、GitLab 只读凭据和 APP_SECRET_KEY 不出现在仓库、日志或 API 响应中。
+- [ ] GitLab MR Code Review 只读链路验证通过，不会回写评论、审批状态、request changes、合并状态或分支。
+- [ ] 监控告警、trace_id 关联和审计查询可用。
+- [ ] 回滚负责人、审批人和沟通渠道已确认。
+
+## 部署步骤
+
+### 1. 准备阶段
+
+```bash
+# 检查工作目录
+pwd
+
+# 校验 Compose 配置
+docker compose config
+```
+
+### 2. 构建与启动
+
+```bash
+docker compose up -d --build
+```
+
+### 3. 验证服务
+
+```bash
+# API 健康检查
+curl http://localhost:8000/health
+
+# 查看服务状态
+docker compose ps
+
+# 查看 API 日志
+docker compose logs api
+```
+
+### 4. 验证数据库与缓存
+
+```bash
+# PostgreSQL 容器日志
+docker compose logs postgres
+
+# Redis 容器日志
+docker compose logs redis
+```
+
+### 5. 验证 v1 MVP AI 链路
+
+```bash
+# 登录并获取 Bearer Token 后，验证模型网关配置只返回掩码
+curl http://localhost:8000/api/system/model-gateway-configs \
+  -H "Authorization: Bearer <token>"
+
+# 验证内部 GitLab MR 预览只读链路
+curl http://localhost:8000/api/devops/gitlab/merge-requests/<repository_id>/<mr_iid>/preview \
+  -H "Authorization: Bearer <token>"
+
+# 验证 MR diff 快照可以创建，且响应只返回 snapshot_id 和摘要信息
+curl -X POST http://localhost:8000/api/devops/gitlab/merge-requests/<repository_id>/<mr_iid>/snapshot \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"requirement_id":"requirement_001","technical_solution_task_id":"task_tech_001"}'
+```
+
+上述检查不得在 GitLab MR 中新增评论、改变审批状态、request changes、合并状态或分支。
+
+## 回滚方案
+
+本地或 v1 演示环境回滚以停止当前栈、恢复上一版本镜像或代码为主。
+
+```bash
+# 停止服务
+docker compose down
+
+# 如需清理本地构建镜像，先确认不会影响其他项目后再执行 Docker 清理命令
+```
+
+如涉及数据库结构变更，必须先查阅对应迁移和回滚脚本，不得直接删除数据库卷来规避问题。
+
+### Staging / Production 回滚要求
+
+1. 优先回滚应用版本，避免直接回滚数据库结构。
+2. 若迁移不可逆，必须使用已验证备份恢复方案，并记录数据影响范围。
+3. 回滚后执行 `/health`、数据库扩展检查、Redis 检查、模型网关配置检查、GitLab 只读链路检查和审计查询。
+4. 回滚完成后在故障报告中记录触发原因、影响窗口、恢复动作和后续改进。
+
+### 备份恢复门禁
+
+- [ ] PostgreSQL 备份文件存在且可恢复到隔离环境。
+- [ ] pgvector 数据恢复后知识检索 smoke test 通过。
+- [ ] Redis 不作为长期事实来源，恢复流程不得依赖 Redis 保留业务事实。
+- [ ] 审计事件恢复后可按 ai_task_id 和 subject 查询。
+
+## 验证清单
+
+- [ ] `docker compose config` 通过。
+- [ ] `docker compose ps` 中 web、api、postgres、redis 均正常。
+- [ ] `/health` 返回健康状态。
+- [ ] PostgreSQL 初始化包含 pgvector 扩展。
+- [ ] Redis 可连接。
+- [ ] API 日志无启动错误。
+- [ ] 模型网关配置可查询，API Key 只返回掩码或 configured 标记。
+- [ ] 产品 Git 资源可绑定内部 GitLab 项目，凭据不在 API 响应或日志中出现。
+- [ ] MR preview 能返回标题、作者、分支、diff refs 和变更文件数。
+- [ ] MR snapshot 能生成不可变 snapshot_id，并记录 diff_size_bytes、created_at 和审计事件。
+- [ ] code_review 执行器失败时返回明确错误码和 trace_id，不静默生成空报告。
+- [ ] code_review 全流程不会向 GitLab 回写评论、审批状态、request changes、合并状态或分支变更。
+
+## 常见问题
+
+| 现象 | 原因 | 解决方案 |
+|------|------|----------|
+| API 健康检查失败 | API 容器未启动或端口不一致 | 查看 `docker compose ps` 和 `docker compose logs api`。 |
+| 数据库连接失败 | `.env` 与 compose 服务名不一致 | 使用 compose 内部服务名连接 PostgreSQL。 |
+| pgvector 初始化失败 | 镜像或迁移配置不支持扩展 | 检查数据库镜像和 `001_init.sql`。 |
+| 前端访问 API 失败 | API base URL 配置错误 | 检查 web 环境变量和浏览器网络请求。 |
+| MR 预览失败 | GitLab 项目未绑定、凭据无权限或 MR 不存在 | 检查产品 Git 资源、凭据引用、repository_id 和 mr_iid。 |
+| MR 快照失败或 diff 过大 | GitLab API 超时、限流或 diff 超过配置上限 | 重试、拆分 MR 或缩小 Review 范围，不允许静默截断正式报告。 |
+| code-review 报告为空 | 执行器未配置、超时或 schema 校验失败 | 查看任务详情、执行器错误码、trace_id 和 API 日志。 |
+
+## 联系人
+
+- 负责人: Project Maintainers
+- 升级路径: 以 [项目级技术规格](../02-specs/enterprise-ai-brain/spec.md)、[API 文档](../02-specs/enterprise-ai-brain/api.md) 和本 runbook 为准。
+
+---
+最后更新: 2026-05-29

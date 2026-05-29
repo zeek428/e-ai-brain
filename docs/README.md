@@ -1,0 +1,81 @@
+# AI Brain 文档中心
+
+AI Brain 是企业 AI 大脑平台项目。v1 以“研发大脑”为样板，MVP 跑通从研发需求审批、产品详细设计、技术方案、内部 GitLab MR 预览和 diff 快照、内部 GitLab MR Code Review、人工确认、内部报告归档到知识沉淀和审计追踪的最小闭环；自动化测试、发布上线评估、上线后分析、完整 Bug 管理、研发运营看板和用户洞察/迭代规划按后续阶段扩展。
+
+项目仓库: [zeek428/e-ai-brain](https://github.com/zeek428/e-ai-brain)
+
+## 当前文档入口
+
+| 文档 | 用途 |
+|------|------|
+| [CLAUDE.md](CLAUDE.md) | 面向 AI 编码助手的文档阅读入口。 |
+| [01-prd/enterprise-ai-brain/prd.md](01-prd/enterprise-ai-brain/prd.md) | 项目级 PRD，描述产品目标、范围、用户故事和验收标准。 |
+| [02-specs/enterprise-ai-brain/spec.md](02-specs/enterprise-ai-brain/spec.md) | 项目级技术规格，描述模块、数据、状态、风险和测试策略。 |
+| [02-specs/enterprise-ai-brain/api.md](02-specs/enterprise-ai-brain/api.md) | 项目级 API 文档，描述接口契约和错误码。 |
+| [02-specs/enterprise-ai-brain/test-case.md](02-specs/enterprise-ai-brain/test-case.md) | 项目级测试用例，映射 PRD 验收标准。 |
+
+## 推荐阅读顺序
+
+1. [01-prd/enterprise-ai-brain/prd.md](01-prd/enterprise-ai-brain/prd.md) — 理解产品范围和验收标准。
+2. [02-specs/enterprise-ai-brain/spec.md](02-specs/enterprise-ai-brain/spec.md) — 理解技术实现边界。
+3. [02-specs/enterprise-ai-brain/api.md](02-specs/enterprise-ai-brain/api.md) — 理解前后端接口契约。
+4. [02-specs/enterprise-ai-brain/test-case.md](02-specs/enterprise-ai-brain/test-case.md) — 理解测试与验收要求。
+5. [02-specs/architecture/system-overview.md](02-specs/architecture/system-overview.md) 和 [02-specs/architecture/tech-stack.md](02-specs/architecture/tech-stack.md) — 快速查看架构和技术栈摘要。
+
+## 实现者最短路径
+
+1. 先阅读 PRD 的 v1 交付边界、MVP-A/B/C 实施切片、MVP 成功指标、演示验收路径和阶段计划，明确 MVP、v1.1、v1.2 与生产就绪门禁的差异。
+2. 再阅读技术规格中的实施切片、P0 数据表字段、状态机动作矩阵和模块边界，先按 MVP-A 落地需求审批、产品详细设计、技术方案、内部 GitLab 只读绑定、MR 预览、MR diff 快照、人工确认、导出和基础审计。
+3. 然后按 MVP-B 实现 `code_review` 任务、可插拔 code-review 执行器、Review 报告人工确认、内部归档和不回写 GitLab 的只读边界。
+4. 再按 MVP-C 实现知识中心导入、权限过滤检索、知识沉淀审核、模拟 Issue 幂等生成、主体级审计和后续阶段入口空状态。
+5. 前端页面优先实现产品配置、需求管理、任务中心、人工确认台、知识中心、审计与运行入口；Bug、研发运营、用户洞察和完整首页看板可按文档标记先做 MVP 占位或空状态。
+6. 测试按 `test-case.md` 的 MVP-A/B/C 切片和 P0 用例先跑通，再补 v1.1、v1.2 和生产就绪用例。
+7. 发布前执行部署、监控和故障响应 runbook 中的生产就绪门禁，尤其是密钥掩码、GitLab 只读边界、数据库迁移、备份恢复和审计可追踪。
+
+## 文档结构
+
+```text
+docs/
+├── 01-prd/
+│   ├── _template/
+│   └── enterprise-ai-brain/
+│       └── prd.md
+├── 02-specs/
+│   ├── _template/
+│   ├── architecture/
+│   └── enterprise-ai-brain/
+│       ├── spec.md
+│       ├── api.md
+│       └── test-case.md
+├── 03-guides/
+├── 04-decisions/
+├── 05-runbooks/
+├── 06-standards/
+└── 07-deprecated/
+```
+
+## 文档维护规则
+
+- 项目级文档是唯一维护源，后续版本直接维护 PRD、spec、API 和 test-case。
+- 每个 PRD 验收标准必须映射到至少一个测试用例。
+- 每个新增模块必须同步补充 API、数据模型、权限和审计说明。
+- 所有高影响 AI 动作必须保留明确人工确认点。
+- 当实现与文档不一致时，先更新项目级文档，再更新代码；完成后同步 changelog。
+- 部署、监控和故障响应 runbook 同时记录 local、staging 和 production-readiness 门禁；当前实现状态必须以代码和验证结果为准。
+
+## 本地开发
+
+```bash
+# 校验 Docker Compose 配置
+docker compose config
+
+# 启动本地开发栈
+docker compose up -d --build
+
+# 后端测试
+cd apps/api
+uv run pytest
+```
+
+---
+最后更新: 2026-05-29
