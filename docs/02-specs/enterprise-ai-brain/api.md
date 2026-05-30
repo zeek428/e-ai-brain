@@ -23,6 +23,7 @@
 | v1.0.7 | 2026-05-29 | 对齐 PRD，将内部 GitLab MR 代码 Review 纳入 v1 MVP，补充 MR 预览、diff 快照、Review 报告查询和不回写 GitLab 的错误语义 | Claude |
 | v1.1.0 | 2026-05-29 | 对齐 PRD v1.1.0 和 Spec v1.1.0，补充 MVP 角色映射，修正内部 GitLab Git 资源示例和阶段边界 | Claude |
 | v1.1.1 | 2026-05-29 | 修复产品评审问题：将 GitLab 预览和 diff 快照前置到 MVP-A，清理 MVP 角色口径，统一 health trace_id、占位接口和阶段边界 | Claude |
+| v1.1.2 | 2026-05-30 | 将 Bug 管理 GET/POST/PATCH 从占位升级为 v1.1 基础接口，补充状态流转、重复归并和审计约束 | Codex |
 
 ---
 
@@ -32,7 +33,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；Bug、用户洞察和迭代规划的写接口仍属于后续阶段目标，当前仅提供 GET 占位响应。后端运行时当前使用进程内 `MemoryStore`，PostgreSQL migration 是目标持久化 schema。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；Bug 管理已具备 v1.1 基础 GET/POST/PATCH 能力，支持登记、筛选、状态流转、重复归并和审计事件。用户洞察和迭代规划的写接口仍属于后续阶段目标，当前仅提供 GET 占位响应。后端运行时当前使用进程内 `MemoryStore`，PostgreSQL migration 是目标持久化 schema。
 
 ## 认证方式
 
@@ -101,10 +102,10 @@ curl -X POST http://localhost:8000/api/auth/login \
 | 创建和启动 AI 任务、确认技术方案 | rd_owner |
 | 创建内部 GitLab MR 预览和 diff 快照、创建 code_review 任务、确认 Review 报告 | reviewer 或 rd_owner |
 | 审核知识沉淀 | knowledge_owner 或 rd_owner |
-| 登记、分派、验证或关闭 Bug | v1.1 引入 tester 或 rd_owner；MVP 仅开放 viewer 占位入口 |
+| 登记、分派、验证或关闭 Bug | product_owner、rd_owner 或 admin；tester 角色按后续真实测试组织模型扩展 |
 | 维护产品、相关系统、模型网关配置 | admin |
 
-MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 为主；`tester`、发布负责人和 IT 管理者写权限按 v1.1/v1.2 扩展。接口鉴权还需要结合产品归属、任务参与关系和主体权限。
+MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 为主；Bug 登记和状态更新先复用 `product_owner`、`rd_owner`、`admin`，`tester`、发布负责人和 IT 管理者写权限按后续真实组织模型扩展。接口鉴权还需要结合产品归属、任务参与关系和主体权限。
 
 ### 主体级 API 约定
 
@@ -186,8 +187,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | DevOps | GET | `/api/devops/jenkins/releases` | 查询 Jenkins 发布记录。 |
 | Ops | GET | `/api/ops/online-log-metrics` | 查询线上运行日志运营指标。 |
 | Bug | GET | `/api/bugs` | 查询 Bug 列表。 |
-| Bug | POST | `/api/bugs` | v1.1/v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
-| Bug | PATCH | `/api/bugs/{bug_id}` | v1.1/v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
+| Bug | POST | `/api/bugs` | v1.1 基础接口，登记 AI 自动测试或人工测试 Bug。 |
+| Bug | PATCH | `/api/bugs/{bug_id}` | v1.1 基础接口，更新 Bug 状态、分派人、复现信息或重复归并关系。 |
 | Lifecycle | GET | `/api/lifecycle/context` | 查询软件研发全流程上下文关系、上下游影响和风险信号。 |
 | Dashboard | GET | `/api/dashboard/it-team` | 查询首页 IT 团队看板。 |
 | Insights | GET | `/api/insights/usage-metrics` | 查询用户使用指标。 |
@@ -794,7 +795,7 @@ GET /api/ai-tasks/{task_id}/code-review-report
 - MR diff 快照不可被 GitLab 后续变更静默覆盖；重新 Review 必须创建新快照或新运行记录。
 - Review 报告经人工确认或修改后采纳后才可归档为正式结论。
 - v1 MVP 不提供 GitLab 评论、审批状态、request changes、合并状态或分支变更回写接口。
-- 首页、Bug 管理、研发运营看板和用户洞察/迭代规划在 MVP 阶段可返回空状态或禁用态响应；响应必须包含 `status = "placeholder"`、`available_phase` 和用户可理解的 `message`，不得返回伪造统计数据。
+- 首页、研发运营看板和用户洞察/迭代规划在 MVP 阶段可返回空状态或禁用态响应；响应必须包含 `status = "placeholder"`、`available_phase` 和用户可理解的 `message`，不得返回伪造统计数据。Bug 管理已进入 v1.1 基础实现，不再使用占位响应。
 
 ### 人工确认
 
@@ -1220,6 +1221,9 @@ PATCH /api/bugs/{bug_id}
 - 来源：`ai_auto_test | manual_test`。
 - 状态：`open | triaged | needs_info | assigned | fixed | verified | closed | reopened`。
 - 严重程度：`blocker | critical | major | minor`。
+- AI 自动测试来源缺少 `reproduce_steps` 时初始状态为 `needs_info`；人工登记或带复现步骤的 Bug 初始状态为 `open`。
+- 提交 `duplicate_of_bug_id` 时重复 Bug 初始状态为 `closed`，并保留主 Bug 关联，避免重复进入修复队列。
+- 状态更新必须符合状态机约束，非法跨越返回 `BUG_STATE_INVALID`；创建和更新均写入 `bug.created` 或 `bug.updated` 审计事件。
 
 ### 软件研发全流程感知
 

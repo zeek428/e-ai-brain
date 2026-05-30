@@ -69,6 +69,29 @@ BRAIN_APPS = {
     }
 }
 
+BUG_SOURCES = {"ai_auto_test", "manual_test"}
+BUG_SEVERITIES = {"blocker", "critical", "major", "minor"}
+BUG_STATUSES = {
+    "open",
+    "triaged",
+    "needs_info",
+    "assigned",
+    "fixed",
+    "verified",
+    "closed",
+    "reopened",
+}
+BUG_STATUS_TRANSITIONS = {
+    "open": {"triaged", "assigned", "closed"},
+    "needs_info": {"open", "triaged", "closed"},
+    "triaged": {"assigned", "closed"},
+    "assigned": {"fixed", "reopened", "closed"},
+    "fixed": {"verified", "reopened"},
+    "verified": {"closed", "reopened"},
+    "closed": {"reopened"},
+    "reopened": {"triaged", "assigned", "closed"},
+}
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -258,6 +281,33 @@ class ReviewDecisionRequest(BaseModel):
     questions: list[str] = Field(default_factory=list)
 
 
+class BugRequest(BaseModel):
+    product_id: str
+    version_id: str | None = None
+    module_code: str | None = None
+    source: str
+    title: str
+    severity: str
+    description: str
+    related_task_id: str | None = None
+    requirement_id: str | None = None
+    reproduce_steps: list[str] = Field(default_factory=list)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    assignee: str | None = None
+    duplicate_of_bug_id: str | None = None
+
+
+class BugPatchRequest(BaseModel):
+    status: str | None = None
+    severity: str | None = None
+    title: str | None = None
+    description: str | None = None
+    assignee: str | None = None
+    reproduce_steps: list[str] | None = None
+    evidence: dict[str, Any] | None = None
+    duplicate_of_bug_id: str | None = None
+
+
 @app.middleware("http")
 async def trace_middleware(request: Request, call_next):
     request.state.trace_id = new_trace_id()
@@ -398,6 +448,78 @@ def _ensure_task_matches_requirement(
         _raise_task_context_mismatch(f"{source_label} task must belong to the same product")
     if task["version_id"] != requirement["version_id"]:
         _raise_task_context_mismatch(f"{source_label} task must belong to the same version")
+
+
+def _require_bug_write_role(user: dict[str, Any]) -> None:
+    _require_roles(user, {"product_owner", "rd_owner"})
+
+
+def _validate_bug_enums(
+    *,
+    source: str | None = None,
+    severity: str | None = None,
+    status: str | None = None,
+) -> None:
+    if source is not None and source not in BUG_SOURCES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported bug source")
+    if severity is not None and severity not in BUG_SEVERITIES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported bug severity")
+    if status is not None and status not in BUG_STATUSES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported bug status")
+
+
+def _validate_bug_context(
+    current_store: MemoryStore,
+    *,
+    product_id: str,
+    version_id: str | None = None,
+    module_code: str | None = None,
+    requirement_id: str | None = None,
+    related_task_id: str | None = None,
+    duplicate_of_bug_id: str | None = None,
+    bug_id: str | None = None,
+) -> None:
+    if product_id not in current_store.products:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if version_id is not None:
+        version = current_store.product_versions.get(version_id)
+        if version is None or version["product_id"] != product_id:
+            raise api_error(404, "NOT_FOUND", "Product version not found")
+    if module_code is not None and not any(
+        module["product_id"] == product_id and module["code"] == module_code
+        for module in current_store.product_modules.values()
+    ):
+        raise api_error(404, "NOT_FOUND", "Product module not found")
+    if requirement_id is not None:
+        requirement = current_store.requirements.get(requirement_id)
+        if requirement is None or requirement["product_id"] != product_id:
+            raise api_error(404, "NOT_FOUND", "Requirement not found")
+    if related_task_id is not None:
+        task = current_store.ai_tasks.get(related_task_id)
+        if task is None or task["product_id"] != product_id:
+            raise api_error(404, "NOT_FOUND", "AI task not found")
+    if duplicate_of_bug_id is not None:
+        if duplicate_of_bug_id == bug_id:
+            raise api_error(400, "VALIDATION_ERROR", "Bug cannot duplicate itself")
+        duplicate = current_store.bugs.get(duplicate_of_bug_id)
+        if duplicate is None or duplicate["product_id"] != product_id:
+            raise api_error(404, "NOT_FOUND", "Duplicate bug not found")
+
+
+def _initial_bug_status(payload: BugRequest) -> str:
+    if payload.duplicate_of_bug_id:
+        return "closed"
+    if payload.source == "ai_auto_test" and not payload.reproduce_steps:
+        return "needs_info"
+    return "open"
+
+
+def _ensure_bug_status_transition(current_status: str, next_status: str) -> None:
+    if current_status == next_status:
+        return
+    allowed = BUG_STATUS_TRANSITIONS.get(current_status, set())
+    if next_status not in allowed:
+        raise api_error(409, "BUG_STATE_INVALID", "Bug cannot move to requested status")
 
 
 def _payload_updates(payload: BaseModel) -> dict[str, Any]:
@@ -2890,11 +3012,126 @@ def dashboard_placeholder(
 
 
 @app.get("/api/bugs")
-def bugs_placeholder(
+def list_bugs(
     request: Request,
+    product_id: str | None = None,
+    status: str | None = None,
+    severity: str | None = None,
+    source: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(placeholder_payload("MVP 占位 / v1.1"), get_trace_id(request))
+    _validate_bug_enums(source=source, severity=severity, status=status)
+    current_store = store(request)
+    items = list(current_store.bugs.values())
+    if product_id:
+        items = [item for item in items if item["product_id"] == product_id]
+    if status:
+        items = [item for item in items if item["status"] == status]
+    if severity:
+        items = [item for item in items if item["severity"] == severity]
+    if source:
+        items = [item for item in items if item["source"] == source]
+    items.sort(key=lambda item: item["created_at"], reverse=True)
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/bugs")
+def create_bug(
+    request: Request,
+    payload: BugRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_bug_write_role(user)
+    _validate_bug_enums(source=payload.source, severity=payload.severity)
+    current_store = store(request)
+    _validate_bug_context(
+        current_store,
+        product_id=payload.product_id,
+        version_id=payload.version_id,
+        module_code=payload.module_code,
+        requirement_id=payload.requirement_id,
+        related_task_id=payload.related_task_id,
+        duplicate_of_bug_id=payload.duplicate_of_bug_id,
+    )
+    bug_id = current_store.new_id("bug")
+    now = datetime.now(UTC).isoformat()
+    bug = {
+        "id": bug_id,
+        "product_id": payload.product_id,
+        "version_id": payload.version_id,
+        "module_code": payload.module_code,
+        "source": payload.source,
+        "title": payload.title,
+        "severity": payload.severity,
+        "description": payload.description,
+        "status": _initial_bug_status(payload),
+        "assignee": payload.assignee,
+        "related_task_id": payload.related_task_id,
+        "requirement_id": payload.requirement_id,
+        "reproduce_steps": payload.reproduce_steps,
+        "evidence": payload.evidence,
+        "duplicate_of_bug_id": payload.duplicate_of_bug_id,
+        "created_by": user["id"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    current_store.bugs[bug_id] = bug
+    current_store.audit(
+        event_type="bug.created",
+        actor_id=user["id"],
+        subject_type="bug",
+        subject_id=bug_id,
+        payload={
+            "severity": bug["severity"],
+            "source": bug["source"],
+            "status": bug["status"],
+        },
+    )
+    return envelope(bug, get_trace_id(request))
+
+
+@app.patch("/api/bugs/{bug_id}")
+def patch_bug(
+    bug_id: str,
+    request: Request,
+    payload: BugPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_bug_write_role(user)
+    current_store = store(request)
+    bug = current_store.bugs.get(bug_id)
+    if bug is None:
+        raise api_error(404, "NOT_FOUND", "Bug not found")
+    updates = _payload_updates(payload)
+    _validate_bug_enums(
+        severity=updates.get("severity"),
+        status=updates.get("status"),
+    )
+    duplicate_of_bug_id = updates.get("duplicate_of_bug_id")
+    if duplicate_of_bug_id is not None:
+        _validate_bug_context(
+            current_store,
+            product_id=bug["product_id"],
+            duplicate_of_bug_id=duplicate_of_bug_id,
+            bug_id=bug_id,
+        )
+        updates["status"] = "closed"
+    next_status = updates.get("status")
+    if next_status is not None:
+        _ensure_bug_status_transition(bug["status"], next_status)
+    bug.update(updates)
+    bug["updated_at"] = datetime.now(UTC).isoformat()
+    current_store.audit(
+        event_type="bug.updated",
+        actor_id=user["id"],
+        subject_type="bug",
+        subject_id=bug_id,
+        payload={
+            "status": bug["status"],
+            "updated_fields": sorted(updates.keys()),
+        },
+    )
+    return envelope(bug, get_trace_id(request))
 
 
 @app.get("/api/devops/gitlab/daily-code-metrics")

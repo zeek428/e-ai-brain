@@ -680,6 +680,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 - Bug 必须归属产品，可选关联版本、模块、需求、AI 任务、GitLab 提交、Jenkins 发布或线上日志事件。
 - 重复 Bug 通过 `duplicate_of_bug_id` 关联到主 Bug，不重复进入修复队列。
 - AI 自动测试登记但缺少复现信息时应保留待确认标记，等待测试负责人补充。
+- 当前 v1.1 基础实现使用 `product_owner`、`rd_owner`、`admin` 写权限完成登记和状态更新；独立 `tester` 角色随真实测试组织模型接入后再扩展。
 
 ### 模块 B5: lifecycle_context
 

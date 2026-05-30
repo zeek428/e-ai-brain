@@ -86,6 +86,7 @@ def test_initial_migration_defines_core_mvp_tables():
         "knowledge_chunks",
         "knowledge_deposits",
         "mock_issues",
+        "bugs",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS {table_name}" in migration
 

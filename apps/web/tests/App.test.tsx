@@ -453,6 +453,25 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path === '/api/bugs') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                assignee: 'rd_owner@example.com',
+                id: 'bug_api',
+                module_code: 'knowledge',
+                severity: 'critical',
+                source: 'ai_auto_test',
+                status: 'needs_info',
+                title: '接口 Bug',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
       if (path === '/api/audit/events') {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse({
@@ -486,6 +505,12 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     expect(await screen.findByText('接口需求')).toBeInTheDocument();
     expect(screen.getByText('API-PRODUCT')).toBeInTheDocument();
+
+    rerender(<BugsPage />);
+
+    expect(await screen.findByText('接口 Bug')).toBeInTheDocument();
+    expect(screen.getAllByText('致命')).not.toHaveLength(0);
+    expect(screen.getAllByText('待补充')).not.toHaveLength(0);
 
     rerender(<KnowledgePage />);
 

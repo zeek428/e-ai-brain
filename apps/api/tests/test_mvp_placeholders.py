@@ -18,7 +18,6 @@ def test_later_phase_entries_return_honest_placeholder_contracts():
     headers = auth_headers()
     endpoints = [
         "/api/dashboard/it-team",
-        "/api/bugs",
         "/api/devops/gitlab/daily-code-metrics",
         "/api/devops/jenkins/releases",
         "/api/ops/online-log-metrics",

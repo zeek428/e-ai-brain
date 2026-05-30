@@ -1,5 +1,6 @@
 import type {
   AuditRecord,
+  BugRecord,
   KnowledgeRecord,
   ProductRecord,
   RequirementRecord,
@@ -150,6 +151,16 @@ type AuditEventListItem = {
   subject_type?: string;
 };
 
+type BugListItem = {
+  assignee?: string | null;
+  id: string;
+  module_code?: string | null;
+  severity?: string;
+  source?: string;
+  status?: string;
+  title: string;
+};
+
 export async function apiRequest<T>(
   path: string,
   options: {
@@ -264,6 +275,33 @@ function normalizeKnowledgeStatus(status?: string): KnowledgeRecord['status'] {
   return 'pending_index';
 }
 
+function normalizeBugSeverity(severity?: string): BugRecord['severity'] {
+  if (severity === 'blocker' || severity === 'critical' || severity === 'minor') {
+    return severity;
+  }
+  return 'major';
+}
+
+function normalizeBugStatus(status?: string): BugRecord['status'] {
+  if (
+    status === 'assigned' ||
+    status === 'closed' ||
+    status === 'fixed' ||
+    status === 'needs_info' ||
+    status === 'open' ||
+    status === 'reopened' ||
+    status === 'triaged' ||
+    status === 'verified'
+  ) {
+    return status;
+  }
+  return 'open';
+}
+
+function normalizeBugSource(source?: string): BugRecord['source'] {
+  return source === 'ai_auto_test' ? 'ai_auto_test' : 'manual_test';
+}
+
 export async function fetchManagementProducts(): Promise<ProductRecord[]> {
   const token = requireAccessToken();
   const products = await apiRequest<ListResponse<ProductListItem>>('/api/products', { token });
@@ -328,6 +366,21 @@ export async function fetchManagementAudit(): Promise<AuditRecord[]> {
     subject:
       event.subject_type && event.subject_id ? `${event.subject_type}: ${event.subject_id}` : '-',
     timestamp: formatListDate(event.created_at),
+  }));
+}
+
+export async function fetchManagementBugs(): Promise<BugRecord[]> {
+  const token = requireAccessToken();
+  const bugs = await apiRequest<ListResponse<BugListItem>>('/api/bugs', { token });
+
+  return bugs.items.map((bug) => ({
+    assignee: bug.assignee ?? '-',
+    id: bug.id,
+    module: bug.module_code ?? '-',
+    severity: normalizeBugSeverity(bug.severity),
+    source: normalizeBugSource(bug.source),
+    status: normalizeBugStatus(bug.status),
+    title: bug.title,
   }));
 }
 

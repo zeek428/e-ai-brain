@@ -316,6 +316,27 @@ CREATE TABLE IF NOT EXISTS mock_issues (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS bugs (
+  id text PRIMARY KEY,
+  product_id text NOT NULL REFERENCES products(id),
+  version_id text REFERENCES product_versions(id),
+  module_code text,
+  source text NOT NULL,
+  title text NOT NULL,
+  severity text NOT NULL,
+  description text NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  assignee text,
+  related_task_id text REFERENCES ai_tasks(id),
+  requirement_id text REFERENCES requirements(id),
+  reproduce_steps jsonb NOT NULL DEFAULT '[]'::jsonb,
+  evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+  duplicate_of_bug_id text REFERENCES bugs(id),
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS lifecycle_context_edges (
   id text PRIMARY KEY,
   source_subject_type text NOT NULL,
@@ -389,6 +410,10 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_deposits_task_status
   ON knowledge_deposits (ai_task_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS uk_mock_issues_idempotency
   ON mock_issues (idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_bugs_product_status ON bugs (product_id, status);
+CREATE INDEX IF NOT EXISTS idx_bugs_product_severity ON bugs (product_id, severity);
+CREATE INDEX IF NOT EXISTS idx_bugs_source ON bugs (source);
+CREATE INDEX IF NOT EXISTS idx_bugs_related_task ON bugs (related_task_id);
 CREATE INDEX IF NOT EXISTS idx_lifecycle_edges_source
   ON lifecycle_context_edges (source_subject_type, source_subject_id);
 CREATE INDEX IF NOT EXISTS idx_lifecycle_edges_target

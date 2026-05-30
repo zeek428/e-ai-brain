@@ -21,9 +21,17 @@ export type BugRecord = {
   assignee: string;
   id: string;
   module: string;
-  severity: 'blocker' | 'major' | 'minor';
-  source: 'ai_test' | 'manual';
-  status: 'open' | 'triaged' | 'resolved';
+  severity: 'blocker' | 'critical' | 'major' | 'minor';
+  source: 'ai_auto_test' | 'manual_test';
+  status:
+    | 'assigned'
+    | 'closed'
+    | 'fixed'
+    | 'needs_info'
+    | 'open'
+    | 'reopened'
+    | 'triaged'
+    | 'verified';
   title: string;
 };
 
@@ -108,7 +116,7 @@ export const bugRows: BugRecord[] = [
     id: 'BUG-001',
     module: '认证',
     severity: 'major',
-    source: 'manual',
+    source: 'manual_test',
     status: 'open',
     title: '登录态过期提示异常',
   },
@@ -117,7 +125,7 @@ export const bugRows: BugRecord[] = [
     id: 'BUG-002',
     module: '任务中心',
     severity: 'blocker',
-    source: 'ai_test',
+    source: 'ai_auto_test',
     status: 'triaged',
     title: '人工确认后任务状态未刷新',
   },
@@ -126,8 +134,8 @@ export const bugRows: BugRecord[] = [
     id: 'BUG-003',
     module: '知识中心',
     severity: 'minor',
-    source: 'manual',
-    status: 'resolved',
+    source: 'manual_test',
+    status: 'closed',
     title: '沉淀候选列表筛选项缺省',
   },
 ];

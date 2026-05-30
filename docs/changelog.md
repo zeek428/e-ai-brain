@@ -16,12 +16,13 @@
 - AI 任务启动补齐 graph_run/checkpoint 记录、任务详情运行投影和 graph run 查询接口，为后续 LangGraph 持久化接入预留数据边界。
 - AI 任务启动改为经由最小模型网关边界生成本地 fallback 输出，并记录不含完整 prompt/output 的模型调用元数据日志。
 - `/api/lifecycle/context` 从占位升级为 MVP 全流程感知视图，可从需求聚合下游任务、人工确认、GitLab MR 快照、Code Review 报告、模拟 Issue、知识沉淀、审计事件和 Review 风险信号。
+- `/api/bugs` 从占位升级为 v1.1 基础 Bug 管理接口，支持查询筛选、AI 自动测试和人工测试登记、状态流转、重复归并、权限校验和审计事件。
 - React 工作台任务中心新增一键 MVP 演示流程，串联登录、产品/版本创建、需求审批、AI 任务生成与启动、任务详情和生命周期上下文读取，并读取 `UMI_APP_API_BASE_URL` 对接后端。
 - 前端补齐 ESLint 9 flat config、React/TypeScript lint 依赖、favicon 和移动端表格内部滚动适配。
 - React 工作台左侧导航新增可见页面切换反馈，已实现入口展示 API 能力摘要，后续阶段入口展示明确待接入状态。
 - 前端工程迁移到 Umi Max / Ant Design Pro 结构，新增 `.umirc.ts`、`config/routes.ts`、`src/app.tsx`、ProLayout 运行时配置和 ProComponents 页面骨架。
 - 产品管理、需求管理、Bug 管理、知识中心和审计与运行页面改为参考 Ant Design Pro `list/table-list` 的 `PageContainer` 面包屑 + `ProTable` 内建查询表格形态，并支持本地查询筛选。
-- 产品管理、需求管理、知识中心和审计与运行页面优先从后端列表 API 水合真实数据，接口不可用时保留本地示例数据兜底。
+- 产品管理、需求管理、Bug 管理、知识中心和审计与运行页面优先从后端列表 API 水合真实数据，接口不可用时保留本地示例数据兜底。
 - 产品管理、需求管理、Bug 管理、知识中心和审计与运行页面面包屑移除 `欢迎` 前缀，仅保留业务域和当前页面。
 - 业务页面统一关闭 `PageContainer` 顶部标题、状态标签和说明文案，使列表页和工作台页只保留主体表格、卡片和操作区。
 - 导航保留顶部 Header，并调整为左侧单栏多级菜单；首页改为欢迎页，任务中心作为一级菜单并新增任务管理二级菜单，需求交付、产品资产、运营治理承载二级菜单。
@@ -40,6 +41,7 @@
 - PRD 增加 MVP 成功指标，覆盖需求到产品详细设计耗时、技术方案采纳率、Code Review 报告采纳率、高风险问题有效率、知识沉淀复用率和审计可追踪率。
 - 补齐 `/api/brain-apps`、`GET /api/ai-tasks`、`POST /api/ai-tasks/{task_id}/cancel`、`GET /api/reviews/{review_id}`、`GET /api/knowledge/documents` 和显式 `POST /api/writeback/results/{task_id}` 契约。
 - PostgreSQL 初始化迁移补齐 users、brain_apps、ai_tasks、human_reviews、GitLab MR 快照、Code Review 报告、知识文档/切片/沉淀和 mock_issues 等 MVP 核心表。
+- PostgreSQL 初始化迁移新增 `bugs` 表和按产品状态、来源查询的索引，为后续持久化仓储切换预留结构。
 
 ### Changed
 - 测试用例清单增加适用阶段口径，区分 MVP 必交、MVP 占位、v1.1、v1.2 和生产就绪验证。

@@ -2,17 +2,25 @@ import type { ProColumns } from '@ant-design/pro-components';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import { bugRows, type BugRecord } from '../../data/management';
+import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { fetchManagementBugs } from '../../services/aiBrain';
 
 const severityLabels: Record<BugRecord['severity'], { color: string; label: string }> = {
   blocker: { color: 'red', label: '阻断' },
+  critical: { color: 'volcano', label: '致命' },
   major: { color: 'orange', label: '严重' },
   minor: { color: 'blue', label: '一般' },
 };
 
 const statusLabels: Record<BugRecord['status'], { color: string; label: string }> = {
+  assigned: { color: 'purple', label: '已分派' },
+  closed: { color: 'default', label: '已关闭' },
+  fixed: { color: 'cyan', label: '已修复' },
+  needs_info: { color: 'gold', label: '待补充' },
   open: { color: 'red', label: '待处理' },
-  resolved: { color: 'green', label: '已解决' },
+  reopened: { color: 'red', label: '重新打开' },
   triaged: { color: 'gold', label: '已分诊' },
+  verified: { color: 'green', label: '已验证' },
 };
 
 const columns: ProColumns<BugRecord>[] = [
@@ -48,7 +56,7 @@ const columns: ProColumns<BugRecord>[] = [
     dataIndex: 'source',
     title: '来源',
     render: (_, row) =>
-      row.source === 'ai_test' ? (
+      row.source === 'ai_auto_test' ? (
         <StatusTag color="purple" label="AI 自动测试" />
       ) : (
         <StatusTag color="default" label="人工登记" />
@@ -67,11 +75,13 @@ const columns: ProColumns<BugRecord>[] = [
 ];
 
 export default function BugsPage() {
+  const { error, rows: dataSource } = useRemoteRows(bugRows, fetchManagementBugs);
+
   return (
     <ManagementListPage<BugRecord>
       breadcrumbGroup="需求交付"
       columns={columns}
-      dataSource={bugRows}
+      dataSource={dataSource}
       filters={[
         { label: 'Bug 标题', name: 'title', type: 'text' },
         { label: '所属模块', name: 'module', type: 'text' },
@@ -80,6 +90,7 @@ export default function BugsPage() {
           name: 'severity',
           options: [
             { label: '阻断', value: 'blocker' },
+            { label: '致命', value: 'critical' },
             { label: '严重', value: 'major' },
             { label: '一般', value: 'minor' },
           ],
@@ -90,12 +101,18 @@ export default function BugsPage() {
           name: 'status',
           options: [
             { label: '待处理', value: 'open' },
+            { label: '待补充', value: 'needs_info' },
             { label: '已分诊', value: 'triaged' },
-            { label: '已解决', value: 'resolved' },
+            { label: '已分派', value: 'assigned' },
+            { label: '已修复', value: 'fixed' },
+            { label: '已验证', value: 'verified' },
+            { label: '已关闭', value: 'closed' },
+            { label: '重新打开', value: 'reopened' },
           ],
           type: 'select',
         },
       ]}
+      notice={formatRemoteRowsError(error)}
       primaryAction="登记 Bug"
       rowKey="id"
       tableTitle="Bug 列表"
