@@ -2,8 +2,11 @@ import type { ProColumns } from '@ant-design/pro-components';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import { knowledgeRows, type KnowledgeRecord } from '../../data/management';
+import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { fetchManagementKnowledge } from '../../services/aiBrain';
 
 const statusLabels: Record<KnowledgeRecord['status'], { color: string; label: string }> = {
+  failed: { color: 'red', label: '索引失败' },
   indexed: { color: 'green', label: '已索引' },
   pending_index: { color: 'gold', label: '待索引' },
   review_pending: { color: 'blue', label: '待审核' },
@@ -47,11 +50,13 @@ const columns: ProColumns<KnowledgeRecord>[] = [
 ];
 
 export default function KnowledgePage() {
+  const { error, rows: dataSource } = useRemoteRows(knowledgeRows, fetchManagementKnowledge);
+
   return (
     <ManagementListPage<KnowledgeRecord>
       breadcrumbGroup="产品资产"
       columns={columns}
-      dataSource={knowledgeRows}
+      dataSource={dataSource}
       filters={[
         { label: '知识标题', name: 'title', type: 'text' },
         {
@@ -72,10 +77,12 @@ export default function KnowledgePage() {
             { label: '已索引', value: 'indexed' },
             { label: '待索引', value: 'pending_index' },
             { label: '待审核', value: 'review_pending' },
+            { label: '索引失败', value: 'failed' },
           ],
           type: 'select',
         },
       ]}
+      notice={formatRemoteRowsError(error)}
       primaryAction="导入文档"
       rowKey="id"
       tableTitle="知识列表"

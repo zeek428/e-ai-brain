@@ -2,6 +2,8 @@ import type { ProColumns } from '@ant-design/pro-components';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import { auditRows, type AuditRecord } from '../../data/management';
+import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { fetchManagementAudit } from '../../services/aiBrain';
 
 const columns: ProColumns<AuditRecord>[] = [
   {
@@ -43,11 +45,13 @@ const columns: ProColumns<AuditRecord>[] = [
 ];
 
 export default function AuditPage() {
+  const { error, rows: dataSource } = useRemoteRows(auditRows, fetchManagementAudit);
+
   return (
     <ManagementListPage<AuditRecord>
       breadcrumbGroup="运营治理"
       columns={columns}
-      dataSource={auditRows}
+      dataSource={dataSource}
       filters={[
         { label: '事件类型', name: 'eventType', type: 'text' },
         { label: '主体', name: 'subject', type: 'text' },
@@ -62,6 +66,7 @@ export default function AuditPage() {
           type: 'select',
         },
       ]}
+      notice={formatRemoteRowsError(error)}
       rowKey="id"
       tableTitle="审计列表"
       title="审计与运行"

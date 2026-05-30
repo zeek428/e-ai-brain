@@ -21,6 +21,7 @@
 - React 工作台左侧导航新增可见页面切换反馈，已实现入口展示 API 能力摘要，后续阶段入口展示明确待接入状态。
 - 前端工程迁移到 Umi Max / Ant Design Pro 结构，新增 `.umirc.ts`、`config/routes.ts`、`src/app.tsx`、ProLayout 运行时配置和 ProComponents 页面骨架。
 - 产品管理、需求管理、Bug 管理、知识中心和审计与运行页面改为参考 Ant Design Pro `list/table-list` 的 `PageContainer` 面包屑 + `ProTable` 内建查询表格形态，并支持本地查询筛选。
+- 产品管理、需求管理、知识中心和审计与运行页面优先从后端列表 API 水合真实数据，接口不可用时保留本地示例数据兜底。
 - 产品管理、需求管理、Bug 管理、知识中心和审计与运行页面面包屑移除 `欢迎` 前缀，仅保留业务域和当前页面。
 - 业务页面统一关闭 `PageContainer` 顶部标题、状态标签和说明文案，使列表页和工作台页只保留主体表格、卡片和操作区。
 - 导航保留顶部 Header，并调整为左侧单栏多级菜单；首页改为欢迎页，任务中心作为一级菜单并新增任务管理二级菜单，需求交付、产品资产、运营治理承载二级菜单。
@@ -37,6 +38,8 @@
 - 补充 GitLab 代码质量、线上运行日志、Jenkins 发布、首页 IT 团队看板和 Bug 管理的 PRD、技术规格、API、测试用例和评审指南覆盖。
 - 扩展 AI 任务为产品详细设计、技术方案、代码开发辅助、代码 Review、自动化测试、发布上线评估和上线后分析七类研发全链路任务。
 - PRD 增加 MVP 成功指标，覆盖需求到产品详细设计耗时、技术方案采纳率、Code Review 报告采纳率、高风险问题有效率、知识沉淀复用率和审计可追踪率。
+- 补齐 `/api/brain-apps`、`GET /api/ai-tasks`、`POST /api/ai-tasks/{task_id}/cancel`、`GET /api/reviews/{review_id}`、`GET /api/knowledge/documents` 和显式 `POST /api/writeback/results/{task_id}` 契约。
+- PostgreSQL 初始化迁移补齐 users、brain_apps、ai_tasks、human_reviews、GitLab MR 快照、Code Review 报告、知识文档/切片/沉淀和 mock_issues 等 MVP 核心表。
 
 ### Changed
 - 测试用例清单增加适用阶段口径，区分 MVP 必交、MVP 占位、v1.1、v1.2 和生产就绪验证。
@@ -56,6 +59,9 @@
 - MVP-A/B/C 阶段边界调整为 MVP-A 包含内部 GitLab 只读绑定、MR 预览和 diff 快照，MVP-B 专注 code_review 执行器、正式 Review 报告和内部归档，MVP-C 专注知识治理和模拟 Issue。
 - 部署 runbook 补充模型网关、内部 GitLab MR 预览、diff 快照和 code-review 执行器的 MVP 验证步骤。
 - 前端框架约束升级为严格 Ant Design Pro：新增页面、导航、表格、卡片和工作台布局必须优先使用 Umi Max、ProLayout、ProComponents 与 antd，禁止回退到 Vite 自建壳子或手写全局导航。
+- 模拟 Issue 写回从 GET 隐式写副作用改为 POST 显式生成；GET 只查询现有结果，未写回时返回 `not_written`。
+- 文档补充当前源码状态：后端运行时仍使用 `MemoryStore`，PostgreSQL migration 为目标持久化 schema；真实 GitLab 和模型调用仍需后续接入。
+- 前端管理列表改为使用显式 `ai_brain_access_token` 登录态，不再在浏览器代码中内置 admin 登录凭据；API 失败时展示示例数据提示和 trace_id。
 
 ### Deprecated
 - `docs/design/` 不再作为后续版本迭代的维护目录。
@@ -76,11 +82,19 @@
 - 合并单独维护的本地环境说明到规范化本地开发指南。
 - 修复技术规格工作台入口表仍引用非 MVP 系统角色 `member` 的问题，需求管理入口对齐 `product_owner` 和 `rd_owner`。
 - 修复 Docker 容器内 `/health` 仍探测 `127.0.0.1` 导致 Postgres/Redis 健康状态误报的问题，改为从连接 URL 解析依赖端点。
+- 修复 `code_review` 报告在修改后采纳时未归档的问题，`approve` 和 `edit-approve` 均会确认报告并写入 `archived_at`。
+- 修复 GitLab MR 快照和 `code_review` 任务缺少产品、需求、技术方案上下文一致性校验的问题。
+- 修复补充信息状态可直接重新启动任务的问题，必须先提交 `/api/ai-tasks/{task_id}/more-info` 回到 `draft`。
+- 修复 API 文档登录字段、错误 trace_id 结构、MR 快照响应字段和后续阶段写接口状态与当前实现不一致的问题。
+- 修复 `technical_solution` 可复用其他需求产品详细设计任务的问题，新增需求、产品和版本一致性校验。
+- 修复任务列表、任务详情、Review 详情、待确认列表和 graph run 查询缺少任务类型读权限过滤的问题。
+- 修复 Git 仓库响应暴露 `credential_ref`、模型网关响应暴露 API key 片段以及初始化迁移字段与运行时对象不一致的问题。
 
 ### Security
 - 后端 MVP 骨架补充轻量角色边界：产品/需求维护、GitLab MR 只读预览、Review 决策、知识治理、模拟写回和审计查询按系统角色收敛，并覆盖 403 测试。
 - 补充内部 GitLab MR 快照、code-review 执行器、用户反馈/使用数据采集失败和不可归属数据的审计要求。
 - 明确 MR diff、用户反馈和使用数据进入模型前必须脱敏、限长，且 GitLab token 不得传给 code-review 执行器。
+- 非本地环境默认禁用内置种子账号登录，除非显式开启受控的 `ALLOW_SEEDED_USERS=true`。
 
 ---
 

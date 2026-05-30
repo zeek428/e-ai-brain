@@ -61,7 +61,7 @@ def build_mvp_lifecycle(headers: dict[str, str]) -> tuple[str, str]:
         json={"version": 1},
         headers=headers,
     )
-    client.get(f"/api/writeback/results/{design_task['task_id']}", headers=headers)
+    client.post(f"/api/writeback/results/{design_task['task_id']}", headers=headers)
 
     solution_task = client.post(
         "/api/ai-tasks",

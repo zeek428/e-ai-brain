@@ -43,3 +43,25 @@ Object.defineProperty(globalThis, 'ResizeObserver', {
   writable: true,
   value: TestResizeObserver,
 });
+
+const localStorageData = new Map<string, string>();
+const testLocalStorage = {
+  clear: () => localStorageData.clear(),
+  getItem: (key: string) => localStorageData.get(key) ?? null,
+  removeItem: (key: string) => {
+    localStorageData.delete(key);
+  },
+  setItem: (key: string, value: string) => {
+    localStorageData.set(key, value);
+  },
+};
+
+Object.defineProperty(window, 'localStorage', {
+  configurable: true,
+  value: testLocalStorage,
+});
+
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: testLocalStorage,
+});

@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, settings
 
 client = TestClient(app)
 
@@ -9,6 +9,35 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def create_draft_product_detail_design_task(headers: dict[str, str]) -> str:
+    product = client.post(
+        "/api/products",
+        json={"code": "rd-platform", "name": "研发大脑平台"},
+        headers=headers,
+    ).json()["data"]
+    version = client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": "v1", "name": "v1 MVP"},
+        headers=headers,
+    ).json()["data"]
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "title": "权限边界验证",
+            "product_id": product["id"],
+            "version_id": version["id"],
+            "content": "任务读写必须遵守任务类型角色边界。",
+        },
+        headers=headers,
+    ).json()["data"]
+    client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
+    task = client.post(
+        f"/api/requirements/{requirement['id']}/generate-task",
+        headers=headers,
+    ).json()["data"]
+    return task["task_id"]
 
 
 def test_gitlab_review_api_surface_has_no_writeback_routes():
@@ -76,3 +105,47 @@ def test_role_boundaries_for_product_audit_and_gitlab_preview():
     assert len(filtered_audit) == 1
     assert filtered_audit[0]["event_type"] == "product.created"
     assert filtered_audit[0]["created_at"].startswith("20")
+
+
+def test_seeded_default_users_are_disabled_outside_local_env():
+    original_env = settings.app_env
+    settings.app_env = "production"
+    try:
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "admin@example.com", "password": "admin123"},
+        )
+    finally:
+        settings.app_env = original_env
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DEFAULT_CREDENTIALS_DISABLED"
+
+
+def test_reviewer_cannot_start_or_read_product_design_tasks_and_reviews():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    task_id = create_draft_product_detail_design_task(admin_headers)
+
+    forbidden_start = client.post(f"/api/ai-tasks/{task_id}/start", headers=reviewer_headers)
+    assert forbidden_start.status_code == 403
+    assert forbidden_start.json()["detail"]["code"] == "FORBIDDEN"
+
+    reviewer_tasks = client.get("/api/ai-tasks", headers=reviewer_headers).json()["data"]
+    assert reviewer_tasks["items"] == []
+
+    forbidden_detail = client.get(f"/api/ai-tasks/{task_id}", headers=reviewer_headers)
+    assert forbidden_detail.status_code == 403
+    assert forbidden_detail.json()["detail"]["code"] == "FORBIDDEN"
+
+    started = client.post(f"/api/ai-tasks/{task_id}/start", headers=admin_headers).json()["data"]
+    pending_reviews = client.get("/api/reviews/pending", headers=reviewer_headers).json()["data"]
+    assert pending_reviews["items"] == []
+
+    forbidden_review = client.get(
+        f"/api/reviews/{started['review_id']}",
+        headers=reviewer_headers,
+    )
+    assert forbidden_review.status_code == 403
+    assert forbidden_review.json()["detail"]["code"] == "FORBIDDEN"

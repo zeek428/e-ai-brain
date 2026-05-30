@@ -32,6 +32,8 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；Bug、用户洞察和迭代规划的写接口仍属于后续阶段目标，当前仅提供 GET 占位响应。后端运行时当前使用进程内 `MemoryStore`，PostgreSQL migration 是目标持久化 schema。
+
 ## 认证方式
 
 - 方式: 本地账号登录 + Bearer Token。
@@ -43,7 +45,7 @@ API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研
 ```bash
 curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@example.com","password":"<redacted>"}'
+  -d '{"username":"admin@example.com","password":"<redacted>"}'
 ```
 
 ## 公共约定
@@ -72,9 +74,9 @@ curl -X POST http://localhost:8000/api/auth/login \
 {
   "detail": {
     "code": "VALIDATION_ERROR",
-    "message": "需求必须选择产品和目标版本"
-  },
-  "trace_id": "trace_001"
+    "message": "需求必须选择产品和目标版本",
+    "trace_id": "trace_001"
+  }
 }
 ```
 
@@ -174,6 +176,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/approve` | 采纳知识沉淀。 |
 | Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/reject` | 驳回知识沉淀。 |
 | Output | GET | `/api/writeback/results/{task_id}` | 查询模拟回写结果。 |
+| Output | POST | `/api/writeback/results/{task_id}` | 显式生成或复用模拟回写结果，使用幂等键避免重复 Issue。 |
 | Output | GET | `/api/export/tasks/{task_id}/markdown` | 导出 Markdown 方案。 |
 | Audit | GET | `/api/audit/events` | 查询审计事件。 |
 | DevOps | GET | `/api/devops/gitlab/daily-code-metrics` | 查询 GitLab 每日提交和代码质量审核结果。 |
@@ -183,17 +186,17 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | DevOps | GET | `/api/devops/jenkins/releases` | 查询 Jenkins 发布记录。 |
 | Ops | GET | `/api/ops/online-log-metrics` | 查询线上运行日志运营指标。 |
 | Bug | GET | `/api/bugs` | 查询 Bug 列表。 |
-| Bug | POST | `/api/bugs` | 人工登记或 AI 自动测试登记 Bug。 |
-| Bug | PATCH | `/api/bugs/{bug_id}` | 更新 Bug 状态、处理人、验证结果或重复归并。 |
+| Bug | POST | `/api/bugs` | v1.1/v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
+| Bug | PATCH | `/api/bugs/{bug_id}` | v1.1/v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
 | Lifecycle | GET | `/api/lifecycle/context` | 查询软件研发全流程上下文关系、上下游影响和风险信号。 |
 | Dashboard | GET | `/api/dashboard/it-team` | 查询首页 IT 团队看板。 |
 | Insights | GET | `/api/insights/usage-metrics` | 查询用户使用指标。 |
 | Insights | GET | `/api/insights/user-feedback` | 查询用户反馈列表。 |
-| Insights | POST | `/api/insights/user-feedback` | 登记用户反馈。 |
-| Insights | PATCH | `/api/insights/user-feedback/{feedback_id}` | 更新用户反馈状态、标签或关联模块。 |
+| Insights | POST | `/api/insights/user-feedback` | v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
+| Insights | PATCH | `/api/insights/user-feedback/{feedback_id}` | v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
 | Planning | GET | `/api/planning/iteration-suggestions` | 查询 AI 迭代规划建议。 |
-| Planning | POST | `/api/planning/iteration-suggestions` | 生成 AI 迭代规划建议。 |
-| Planning | POST | `/api/planning/iteration-suggestions/{suggestion_id}/decide` | 确认、修改后采纳或驳回迭代规划建议。 |
+| Planning | POST | `/api/planning/iteration-suggestions` | v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
+| Planning | POST | `/api/planning/iteration-suggestions/{suggestion_id}/decide` | v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
 
 ---
 
@@ -234,11 +237,13 @@ GET /health
 POST /api/auth/login
 ```
 
+当前 MVP 内置种子账号仅用于 `APP_ENV=local|test|development` 的本地验证；非本地环境默认拒绝种子账号登录，除非显式设置受控的 `ALLOW_SEEDED_USERS=true`。
+
 请求体：
 
 ```json
 {
-  "email": "admin@example.com",
+  "username": "admin@example.com",
   "password": "<redacted>"
 }
 ```
@@ -249,13 +254,13 @@ POST /api/auth/login
 {
   "data": {
     "access_token": "<redacted>",
-    "token_type": "Bearer",
+    "token_type": "bearer",
     "expires_in": 28800,
     "user": {
-      "id": "user_001",
-      "name": "本地管理员",
-      "email": "admin@example.com",
-      "role": "admin"
+      "id": "user_admin",
+      "username": "admin@example.com",
+      "display_name": "AI Brain Admin",
+      "roles": ["admin"]
     }
   },
   "trace_id": "trace_001"
@@ -276,7 +281,7 @@ GET /api/brain-apps/{brain_app_id}
   "data": {
     "items": [
       {
-        "id": "brain_001",
+        "id": "rd_brain",
         "code": "rd_brain",
         "name": "研发大脑",
         "status": "active",
@@ -375,7 +380,7 @@ Git 资源请求体：
 - 版本状态：`planning | active | archived`。
 - Git 资源类型：`code | docs | prd | test`。
 - Git 资源状态：`active | inactive`。
-- MVP 内部 GitLab MR 代码 Review 只使用 `git_provider=gitlab` 且带有 `project_id` 或 `project_path` 的只读仓库绑定；`credential_ref` 只能引用服务端密钥或密文，不得在 API 响应中返回明文 token。
+- MVP 内部 GitLab MR 代码 Review 只使用 `git_provider=gitlab` 且带有 `project_id` 或 `project_path` 的只读仓库绑定；`credential_ref` 只能引用服务端密钥或密文，API 响应只返回 `credential_ref_configured`，不返回密钥引用或明文 token。
 - 归档版本不可用于新需求和新 AI 任务，历史任务继续使用生成时保存的产品上下文快照。
 
 ### 平台配置
@@ -426,7 +431,7 @@ PATCH /api/system/model-gateway-configs/{config_id}
 }
 ```
 
-响应不会返回明文 `api_key`，只返回 `api_key_configured` 和 `api_key_masked`。
+响应不会返回明文 `api_key`、密钥前缀或后缀，只返回 `api_key_configured`。
 
 模型调用日志：
 
@@ -589,6 +594,7 @@ GET /api/ai-tasks?status=waiting_review&task_type=code_review&page=1&page_size=2
 ```
 
 可按 `status`、`task_type`、`product_id`、`requirement_id` 查询。
+列表只返回当前用户有权读取的任务摘要，不返回 `requirement_snapshot`、`product_context`、`input_json` 或 `output_json` 等任务内部上下文。
 
 启动任务：
 
@@ -597,6 +603,7 @@ POST /api/ai-tasks/{task_id}/start
 ```
 
 当前实现会同步运行到下一个人工确认点或失败状态。典型响应：
+启动权限按任务类型收敛：`product_detail_design` 和 `technical_solution` 仅允许 `product_owner`/`rd_owner`，`code_review` 仅允许 `reviewer`/`rd_owner`；`admin` 可执行全部本地管理操作。
 
 ```json
 {
@@ -729,16 +736,12 @@ POST /api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/snapshot
 ```json
 {
   "data": {
-    "snapshot_id": "mr_snapshot_001",
+    "id": "mr_snapshot_001",
     "repository_id": "repo_001",
     "mr_iid": 42,
     "changed_file_count": 8,
     "diff_size_bytes": 48000,
-    "diff_limit": {
-      "max_diff_size_bytes": 204800,
-      "max_changed_file_count": 50,
-      "max_single_file_diff_lines": 2000
-    },
+    "diff_limit_bytes": 204800,
     "created_at": "2026-05-29T10:00:00Z"
   },
   "trace_id": "trace_gitlab_002"
@@ -1298,7 +1301,7 @@ GET /api/dashboard/it-team?product_id=product_001&time_range=7d
 
 ### 回写与导出
 
-查询回写结果：
+查询回写结果不会产生写副作用。未生成时返回 `status=not_written` 和空 `issues`：
 
 ```http
 GET /api/writeback/results/{task_id}
@@ -1310,13 +1313,42 @@ GET /api/writeback/results/{task_id}
 {
   "data": {
     "task_id": "task_001",
-    "status": "completed",
-    "mock_issues": [],
-    "markdown_plan": "# 需求研发方案..."
+    "status": "not_written",
+    "idempotency_key": "mock_issue:task_001",
+    "issues": []
   },
   "trace_id": "trace_009"
 }
 ```
+
+显式生成或复用模拟 Issue：
+
+```http
+POST /api/writeback/results/{task_id}
+```
+
+响应：
+
+```json
+{
+  "data": {
+    "task_id": "task_001",
+    "status": "completed",
+    "idempotency_key": "mock_issue:task_001",
+    "issues": [
+      {
+        "id": "mock_issue_001",
+        "title": "产品详细设计：支持 Markdown 知识导入",
+        "source_task_id": "task_001",
+        "status": "open"
+      }
+    ]
+  },
+  "trace_id": "trace_010"
+}
+```
+
+重复 POST 返回相同 `idempotency_key` 和同一组 `issues`，不会创建重复 Issue。
 
 导出 Markdown：
 

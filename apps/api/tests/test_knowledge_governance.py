@@ -100,12 +100,18 @@ def test_mock_issue_writeback_is_idempotent_for_completed_task():
     headers = auth_headers()
     task_id = create_completed_design_task(headers)
 
-    first = client.get(f"/api/writeback/results/{task_id}", headers=headers).json()["data"]
-    second = client.get(f"/api/writeback/results/{task_id}", headers=headers).json()["data"]
+    initial = client.get(f"/api/writeback/results/{task_id}", headers=headers).json()["data"]
+    assert initial["status"] == "not_written"
+    assert initial["issues"] == []
+
+    first = client.post(f"/api/writeback/results/{task_id}", headers=headers).json()["data"]
+    second = client.post(f"/api/writeback/results/{task_id}", headers=headers).json()["data"]
+    queried = client.get(f"/api/writeback/results/{task_id}", headers=headers).json()["data"]
 
     assert first["status"] == "completed"
     assert first["idempotency_key"] == second["idempotency_key"]
     assert first["issues"] == second["issues"]
+    assert queried["issues"] == first["issues"]
     assert len(first["issues"]) == 1
 
 

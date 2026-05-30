@@ -56,6 +56,19 @@ USERS = {
     }
 }
 
+BRAIN_APPS = {
+    "rd_brain": {
+        "id": "rd_brain",
+        "code": "rd_brain",
+        "name": "研发大脑",
+        "status": "active",
+        "description": "把研发需求转成可确认、可回写、可沉淀的任务方案。",
+        "config": {
+            "default_task_types": ["product_detail_design", "technical_solution", "code_review"],
+        },
+    }
+}
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -346,11 +359,45 @@ def _require_roles(user: dict[str, Any], allowed_roles: set[str]) -> None:
     raise api_error(403, "FORBIDDEN", "Role permission denied")
 
 
-def _require_review_decision_role(user: dict[str, Any], task: dict[str, Any]) -> None:
+def _task_allowed_roles(task: dict[str, Any]) -> set[str]:
     if task["task_type"] == "code_review":
-        _require_roles(user, {"reviewer", "rd_owner"})
-        return
-    _require_roles(user, {"product_owner", "rd_owner"})
+        return {"reviewer", "rd_owner"}
+    return {"product_owner", "rd_owner"}
+
+
+def _can_read_task(user: dict[str, Any], task: dict[str, Any]) -> bool:
+    user_roles = set(user["roles"])
+    return "admin" in user_roles or bool(user_roles.intersection(_task_allowed_roles(task)))
+
+
+def _require_task_read_role(user: dict[str, Any], task: dict[str, Any]) -> None:
+    _require_roles(user, _task_allowed_roles(task))
+
+
+def _require_review_decision_role(user: dict[str, Any], task: dict[str, Any]) -> None:
+    _require_roles(user, _task_allowed_roles(task))
+
+
+def _raise_gitlab_context_mismatch(message: str) -> None:
+    raise api_error(400, "GITLAB_CONTEXT_MISMATCH", message)
+
+
+def _raise_task_context_mismatch(message: str) -> None:
+    raise api_error(400, "TASK_CONTEXT_MISMATCH", message)
+
+
+def _ensure_task_matches_requirement(
+    task: dict[str, Any],
+    requirement: dict[str, Any],
+    *,
+    source_label: str,
+) -> None:
+    if task["requirement_id"] != requirement["id"]:
+        _raise_task_context_mismatch(f"{source_label} task must belong to the same requirement")
+    if task["product_id"] != requirement["product_id"]:
+        _raise_task_context_mismatch(f"{source_label} task must belong to the same product")
+    if task["version_id"] != requirement["version_id"]:
+        _raise_task_context_mismatch(f"{source_label} task must belong to the same version")
 
 
 def _payload_updates(payload: BaseModel) -> dict[str, Any]:
@@ -367,14 +414,6 @@ def _list_payload(
     return envelope({"items": visible_items, "total": len(visible_items)}, trace_id)
 
 
-def _mask_secret(value: str | None) -> str | None:
-    if not value:
-        return None
-    if len(value) <= 7:
-        return "***"
-    return f"{value[:3]}***{value[-4:]}"
-
-
 def _public_model_gateway_config(config: dict[str, Any]) -> dict[str, Any]:
     public_config = {
         key: value
@@ -383,8 +422,17 @@ def _public_model_gateway_config(config: dict[str, Any]) -> dict[str, Any]:
     }
     api_key = config.get("api_key")
     public_config["api_key_configured"] = bool(api_key)
-    public_config["api_key_masked"] = _mask_secret(api_key)
     return public_config
+
+
+def _public_git_repository(repository: dict[str, Any]) -> dict[str, Any]:
+    public_repository = {
+        key: value
+        for key, value in repository.items()
+        if key != "credential_ref"
+    }
+    public_repository["credential_ref_configured"] = bool(repository.get("credential_ref"))
+    return public_repository
 
 
 def _set_default_model_gateway_config(
@@ -487,8 +535,18 @@ async def get_current_user(
 CurrentUser = Depends(get_current_user)
 
 
+def _seeded_users_enabled() -> bool:
+    return settings.allow_seeded_users or settings.app_env in {"local", "test", "development"}
+
+
 @app.post("/api/auth/login")
 def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
+    if payload.username in USERS and not _seeded_users_enabled():
+        raise api_error(
+            403,
+            "DEFAULT_CREDENTIALS_DISABLED",
+            "Seeded local users are disabled outside local environments",
+        )
     user = USERS.get(payload.username)
     if user is None or not verify_password(payload.password, user["password_hash"]):
         raise api_error(401, "INVALID_CREDENTIALS", "Invalid username or password")
@@ -517,6 +575,29 @@ def me(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
 @app.post("/api/auth/logout")
 def logout(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
     return envelope({"success": True}, get_trace_id(request))
+
+
+@app.get("/api/brain-apps")
+def list_brain_apps(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
+    items = sorted(BRAIN_APPS.values(), key=lambda item: item["code"])
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.get("/api/brain-apps/{brain_app_id}")
+def get_brain_app(
+    brain_app_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    brain_app = BRAIN_APPS.get(brain_app_id)
+    if brain_app is None:
+        brain_app = next(
+            (item for item in BRAIN_APPS.values() if item["id"] == brain_app_id),
+            None,
+        )
+    if brain_app is None:
+        raise api_error(404, "NOT_FOUND", "Brain app not found")
+    return envelope(brain_app, get_trace_id(request))
 
 
 @app.get("/api/products")
@@ -737,6 +818,7 @@ def list_product_git_repositories(
     active_only: bool = False,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
     current_store = store(request)
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
@@ -746,7 +828,8 @@ def list_product_git_repositories(
         if item["product_id"] == product_id
     ]
     items.sort(key=lambda item: item["name"])
-    return _list_payload(items, trace_id=get_trace_id(request), active_only=active_only)
+    public_items = [_public_git_repository(item) for item in items]
+    return _list_payload(public_items, trace_id=get_trace_id(request), active_only=active_only)
 
 
 @app.post("/api/products/{product_id}/git-repositories")
@@ -787,7 +870,7 @@ def create_product_git_repository(
         subject_type="product_git_repository",
         subject_id=repository_id,
     )
-    return envelope(repository, get_trace_id(request))
+    return envelope(_public_git_repository(repository), get_trace_id(request))
 
 
 @app.patch("/api/product-git-repositories/{repo_id}")
@@ -817,7 +900,7 @@ def patch_product_git_repository(
         subject_type="product_git_repository",
         subject_id=repo_id,
     )
-    return envelope(repository, get_trace_id(request))
+    return envelope(_public_git_repository(repository), get_trace_id(request))
 
 
 @app.get("/api/system/related-systems")
@@ -1196,6 +1279,7 @@ def generate_task_from_requirement(
         "review_ids": [],
         "graph_run_ids": [],
         "current_step": "draft",
+        "created_by": user["id"],
     }
     current_store.ai_tasks[task_id] = task
     requirement["status"] = "task_created"
@@ -1305,6 +1389,30 @@ def _diff_payload(preview: dict[str, Any]) -> str:
     )
 
 
+def _ensure_gitlab_snapshot_context(
+    *,
+    repository: dict[str, Any],
+    requirement: dict[str, Any],
+    technical_solution: dict[str, Any],
+) -> None:
+    if repository["product_id"] != requirement["product_id"]:
+        _raise_gitlab_context_mismatch(
+            "GitLab repository binding and requirement must belong to the same product"
+        )
+    if technical_solution["requirement_id"] != requirement["id"]:
+        _raise_gitlab_context_mismatch(
+            "Technical solution task must be derived from the snapshot requirement"
+        )
+    if technical_solution["product_id"] != requirement["product_id"]:
+        _raise_gitlab_context_mismatch(
+            "Technical solution task and requirement must belong to the same product"
+        )
+    if technical_solution["version_id"] != requirement["version_id"]:
+        _raise_gitlab_context_mismatch(
+            "Technical solution task and requirement must belong to the same version"
+        )
+
+
 @app.get("/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview")
 def preview_gitlab_mr(
     repository_id: str,
@@ -1357,11 +1465,16 @@ def snapshot_gitlab_mr(
             "TECHNICAL_SOLUTION_NOT_CONFIRMED",
             "MR snapshot requires a confirmed technical solution task",
         )
+    _ensure_gitlab_snapshot_context(
+        repository=repository,
+        requirement=requirement,
+        technical_solution=technical_solution,
+    )
 
     preview = _mock_gitlab_preview(repository, mr_iid)
     diff_payload = _diff_payload(preview)
     diff_size_bytes = len(diff_payload.encode())
-    diff_limit_bytes = 500_000
+    diff_limit_bytes = 204_800
     if diff_size_bytes > diff_limit_bytes:
         raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
 
@@ -1370,6 +1483,8 @@ def snapshot_gitlab_mr(
     snapshot = {
         "id": snapshot_id,
         "repository_id": repository_id,
+        "product_id": requirement["product_id"],
+        "version_id": requirement["version_id"],
         "project_id": preview["project_id"],
         "project_path": preview["project_path"],
         "mr_iid": mr_iid,
@@ -1402,6 +1517,36 @@ def snapshot_gitlab_mr(
     return envelope(snapshot, get_trace_id(request))
 
 
+@app.get("/api/ai-tasks")
+def list_ai_tasks(
+    request: Request,
+    status: str | None = None,
+    task_type: str | None = None,
+    product_id: str | None = None,
+    requirement_id: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    current_store = store(request)
+    items = [
+        item
+        for item in current_store.ai_tasks.values()
+        if _can_read_task(user, item)
+    ]
+    if status:
+        items = [item for item in items if item["status"] == status]
+    if task_type:
+        items = [item for item in items if item["task_type"] == task_type]
+    if product_id:
+        items = [item for item in items if item["product_id"] == product_id]
+    if requirement_id:
+        items = [item for item in items if item["requirement_id"] == requirement_id]
+    items.sort(key=lambda item: item["id"])
+    return envelope(
+        {"items": [_task_summary_projection(item) for item in items], "total": len(items)},
+        get_trace_id(request),
+    )
+
+
 @app.post("/api/ai-tasks")
 def create_ai_task(
     request: Request,
@@ -1427,19 +1572,41 @@ def create_ai_task(
                 "PRODUCT_DETAIL_DESIGN_NOT_CONFIRMED",
                 "technical_solution requires a confirmed product detail design task",
             )
+        _ensure_task_matches_requirement(
+            design_task,
+            requirement,
+            source_label="Product detail design",
+        )
     elif payload.task_type == "code_review":
         _require_roles(user, {"reviewer", "rd_owner"})
         snapshot_id = payload.input.get("gitlab_mr_snapshot_id")
         snapshot = current_store.gitlab_mr_snapshots.get(str(snapshot_id))
         if snapshot is None:
             raise api_error(400, "GITLAB_MR_SNAPSHOT_REQUIRED", "code_review requires MR snapshot")
+        if snapshot["requirement_id"] != requirement["id"]:
+            _raise_gitlab_context_mismatch(
+                "code_review requirement must match the GitLab MR snapshot requirement"
+            )
+        if snapshot["product_id"] != requirement["product_id"]:
+            _raise_gitlab_context_mismatch(
+                "code_review product must match the GitLab MR snapshot product"
+            )
         technical_solution = current_store.ai_tasks.get(snapshot["technical_solution_task_id"])
-        if technical_solution is None or technical_solution["status"] != "completed":
+        if (
+            technical_solution is None
+            or technical_solution["task_type"] != "technical_solution"
+            or technical_solution["status"] != "completed"
+        ):
             raise api_error(
                 400,
                 "TECHNICAL_SOLUTION_NOT_CONFIRMED",
                 "code_review requires a confirmed technical solution",
             )
+        _ensure_gitlab_snapshot_context(
+            repository=current_store.product_git_repositories[snapshot["repository_id"]],
+            requirement=requirement,
+            technical_solution=technical_solution,
+        )
     else:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported task_type")
 
@@ -1460,6 +1627,7 @@ def create_ai_task(
         "review_ids": [],
         "graph_run_ids": [],
         "current_step": "draft",
+        "created_by": user["id"],
     }
     current_store.ai_tasks[task_id] = task
     current_store.audit(
@@ -1497,6 +1665,21 @@ def _create_code_review_report(
     current_store.code_review_reports[report_id] = report
     task["code_review_report_id"] = report_id
     return report
+
+
+def _confirm_code_review_report(current_store: MemoryStore, task: dict[str, Any]) -> None:
+    if task["task_type"] != "code_review":
+        return
+    report_id = task.get("code_review_report_id")
+    if not report_id:
+        return
+    report = current_store.code_review_reports[report_id]
+    output = task.get("output_json") or {}
+    for key in ("summary", "risk_level", "findings", "executor"):
+        if key in output:
+            report[key] = current_store.snapshot(output[key])
+    report["status"] = "confirmed"
+    report["archived_at"] = datetime.now(UTC).isoformat()
 
 
 def _ensure_review_decidable(
@@ -1667,7 +1850,27 @@ def _task_detail_projection(current_store: MemoryStore, task: dict[str, Any]) ->
             if deposit["ai_task_id"] == task["id"]
         ]
     }
+    writeback = current_store.mock_writebacks.get(_writeback_idempotency_key(task["id"]))
+    detail["mock_issues"] = {
+        "status": writeback["status"] if writeback else "not_written",
+        "items": current_store.snapshot(writeback["issues"]) if writeback else [],
+    }
     return detail
+
+
+def _task_summary_projection(task: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": task["id"],
+        "task_type": task["task_type"],
+        "title": task["title"],
+        "status": task["status"],
+        "requirement_id": task["requirement_id"],
+        "product_id": task["product_id"],
+        "version_id": task["version_id"],
+        "module_code": task.get("module_code"),
+        "current_step": task.get("current_step"),
+        "created_by": task.get("created_by"),
+    }
 
 
 @app.post("/api/ai-tasks/{task_id}/start")
@@ -1680,7 +1883,8 @@ def start_ai_task(
     task = current_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
-    if task["status"] not in {"draft", "waiting_more_info"}:
+    _require_review_decision_role(user, task)
+    if task["status"] != "draft":
         raise api_error(409, "TASK_STATE_INVALID", "Task cannot be started from current status")
 
     task["output_json"], model_log = _call_model_gateway_for_task(current_store, task=task)
@@ -1766,7 +1970,45 @@ def get_ai_task(
     task = current_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
+    _require_task_read_role(user, task)
     return envelope(_task_detail_projection(current_store, task), get_trace_id(request))
+
+
+@app.post("/api/ai-tasks/{task_id}/cancel")
+def cancel_ai_task(
+    task_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    current_store = store(request)
+    task = current_store.ai_tasks.get(task_id)
+    if task is None:
+        raise api_error(404, "NOT_FOUND", "AI task not found")
+    if task["status"] in {"completed", "failed", "cancelled"}:
+        raise api_error(409, "TASK_STATE_INVALID", "Task cannot be cancelled from current status")
+    _require_review_decision_role(user, task)
+    task["status"] = "cancelled"
+    for review_id in task.get("review_ids", []):
+        review = current_store.human_reviews.get(review_id)
+        if review and review["status"] == "pending":
+            review["status"] = "cancelled"
+            review["version"] += 1
+            review["decided_by"] = user["id"]
+    _transition_latest_graph_run(
+        current_store,
+        task=task,
+        status="cancelled",
+        current_step="cancelled",
+        state_snapshot={"task_status": task["status"]},
+    )
+    current_store.audit(
+        event_type="ai_task.cancelled",
+        actor_id=user["id"],
+        ai_task_id=task_id,
+        subject_type="ai_task",
+        subject_id=task_id,
+    )
+    return envelope({"id": task_id, "status": task["status"]}, get_trace_id(request))
 
 
 @app.get("/api/graph-runs")
@@ -1778,7 +2020,18 @@ def list_graph_runs(
     current_store = store(request)
     items = list(current_store.graph_runs.values())
     if ai_task_id:
+        task = current_store.ai_tasks.get(ai_task_id)
+        if task is None:
+            raise api_error(404, "NOT_FOUND", "AI task not found")
+        _require_task_read_role(user, task)
         items = [item for item in items if item["ai_task_id"] == ai_task_id]
+    else:
+        items = [
+            item
+            for item in items
+            if (task := current_store.ai_tasks.get(item["ai_task_id"])) is not None
+            and _can_read_task(user, task)
+        ]
     items.sort(key=lambda item: item["started_at"], reverse=True)
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
@@ -1793,8 +2046,33 @@ def pending_reviews(
         review
         for review in current_store.human_reviews.values()
         if review["status"] == "pending"
+        and (task := current_store.ai_tasks.get(review["ai_task_id"])) is not None
+        and _can_read_task(user, task)
     ]
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.get("/api/reviews/{review_id}")
+def get_review(
+    review_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    current_store = store(request)
+    review = current_store.human_reviews.get(review_id)
+    if review is None:
+        raise api_error(404, "NOT_FOUND", "Review not found")
+    task = current_store.ai_tasks.get(review["ai_task_id"])
+    if task is None:
+        raise api_error(404, "NOT_FOUND", "AI task not found")
+    _require_task_read_role(user, task)
+    return envelope(
+        {
+            **current_store.snapshot(review),
+            "task": current_store.snapshot(task),
+        },
+        get_trace_id(request),
+    )
 
 
 @app.post("/api/reviews/{review_id}/approve")
@@ -1814,11 +2092,7 @@ def approve_review(
     review["status"] = "approved"
     review["decided_by"] = user["id"]
     task["status"] = "completed"
-    if task["task_type"] == "code_review":
-        report_id = task.get("code_review_report_id")
-        report = current_store.code_review_reports[report_id]
-        report["status"] = "confirmed"
-        report["archived_at"] = datetime.now(UTC).isoformat()
+    _confirm_code_review_report(current_store, task)
     _create_knowledge_deposit(current_store, task)
     _transition_latest_graph_run(
         current_store,
@@ -1861,6 +2135,7 @@ def edit_approve_review(
     review["edited_content"] = edited_content
     review["decided_by"] = user["id"]
     task["status"] = "completed"
+    _confirm_code_review_report(current_store, task)
     _create_knowledge_deposit(current_store, task)
     _transition_latest_graph_run(
         current_store,
@@ -1996,6 +2271,35 @@ def submit_more_info(
     return envelope({"id": task_id, "status": task["status"]}, get_trace_id(request))
 
 
+@app.get("/api/knowledge/documents")
+def list_knowledge_documents(
+    request: Request,
+    keyword: str | None = None,
+    doc_type: str | None = None,
+    index_status: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    current_store = store(request)
+    items = [
+        document
+        for document in current_store.knowledge_documents.values()
+        if _user_can_read_roles(user, document["permission_roles"])
+    ]
+    if keyword:
+        normalized_keyword = keyword.lower()
+        items = [
+            item
+            for item in items
+            if normalized_keyword in f"{item['title']} {item['content']}".lower()
+        ]
+    if doc_type:
+        items = [item for item in items if item["doc_type"] == doc_type]
+    if index_status:
+        items = [item for item in items if item["index_status"] == index_status]
+    items.sort(key=lambda item: item["id"])
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
 @app.post("/api/knowledge/documents")
 def create_knowledge_document(
     request: Request,
@@ -2129,21 +2433,51 @@ def reject_knowledge_deposit(
     return envelope(deposit, get_trace_id(request))
 
 
+def _writeback_idempotency_key(task_id: str) -> str:
+    return f"mock_issue:{task_id}"
+
+
+def _completed_task_for_writeback(current_store: MemoryStore, task_id: str) -> dict[str, Any]:
+    task = current_store.ai_tasks.get(task_id)
+    if task is None:
+        raise api_error(404, "NOT_FOUND", "AI task not found")
+    if task["status"] != "completed":
+        raise api_error(409, "TASK_STATE_INVALID", "Only completed tasks can write mock issues")
+    return task
+
+
 @app.get("/api/writeback/results/{task_id}")
-def writeback_results(
+def get_writeback_results(
     task_id: str,
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
     current_store = store(request)
-    task = current_store.ai_tasks.get(task_id)
-    if task is None:
-        raise api_error(404, "NOT_FOUND", "AI task not found")
-    if task["status"] != "completed":
-        raise api_error(409, "TASK_STATE_INVALID", "Only completed tasks can write mock issues")
+    _completed_task_for_writeback(current_store, task_id)
 
-    idempotency_key = f"mock_issue:{task_id}"
+    idempotency_key = _writeback_idempotency_key(task_id)
+    result = current_store.mock_writebacks.get(idempotency_key)
+    if result is None:
+        result = {
+            "task_id": task_id,
+            "status": "not_written",
+            "idempotency_key": idempotency_key,
+            "issues": [],
+        }
+    return envelope(result, get_trace_id(request))
+
+
+@app.post("/api/writeback/results/{task_id}")
+def create_writeback_results(
+    task_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = store(request)
+    task = _completed_task_for_writeback(current_store, task_id)
+    idempotency_key = _writeback_idempotency_key(task_id)
     result = current_store.mock_writebacks.get(idempotency_key)
     if result is None:
         issue = {
@@ -2153,6 +2487,7 @@ def writeback_results(
             "status": "open",
         }
         result = {
+            "task_id": task_id,
             "status": "completed",
             "idempotency_key": idempotency_key,
             "issues": [issue],
@@ -2180,6 +2515,7 @@ def get_code_review_report(
     task = current_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
+    _require_task_read_role(user, task)
     report_id = task.get("code_review_report_id")
     if not report_id:
         raise api_error(404, "NOT_FOUND", "Code review report not found")

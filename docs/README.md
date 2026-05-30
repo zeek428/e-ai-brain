@@ -25,6 +25,8 @@ AI Brain 是企业 AI 大脑平台项目。v1 以“研发大脑”为样板，M
 
 ## 实现者最短路径
 
+当前源码已包含 FastAPI + Ant Design Pro 的 MVP 骨架。后端测试/演示运行时使用进程内 `MemoryStore`；PostgreSQL migration 已补齐目标核心表，但请求处理尚未切换到数据库仓储。内部 GitLab 和模型调用当前提供受控本地/mock 路径，用于验证流程、安全边界和审计语义；接入真实 GitLab/API provider 前不得宣称具备生产级真实外部集成。
+
 1. 先阅读 PRD 的 v1 交付边界、MVP-A/B/C 实施切片、MVP 成功指标、演示验收路径和阶段计划，明确 MVP、v1.1、v1.2 与生产就绪门禁的差异。
 2. 再阅读技术规格中的实施切片、P0 数据表字段、状态机动作矩阵和模块边界，先按 MVP-A 落地需求审批、产品详细设计、技术方案、内部 GitLab 只读绑定、MR 预览、MR diff 快照、人工确认、导出和基础审计。
 3. 然后按 MVP-B 实现 `code_review` 任务、可插拔 code-review 执行器、Review 报告人工确认、内部归档和不回写 GitLab 的只读边界。

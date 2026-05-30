@@ -84,7 +84,7 @@ docker compose logs redis
 ### 5. 验证 v1 MVP AI 链路
 
 ```bash
-# 登录并获取 Bearer Token 后，验证模型网关配置只返回掩码
+# 登录并获取 Bearer Token 后，验证模型网关配置只返回 configured 标记
 curl http://localhost:8000/api/system/model-gateway-configs \
   -H "Authorization: Bearer <token>"
 
@@ -136,7 +136,7 @@ docker compose down
 - [ ] PostgreSQL 初始化包含 pgvector 扩展。
 - [ ] Redis 可连接。
 - [ ] API 日志无启动错误。
-- [ ] 模型网关配置可查询，API Key 只返回掩码或 configured 标记。
+- [ ] 模型网关配置可查询，API Key 只返回 configured 标记，不返回明文或密钥片段。
 - [ ] 产品 Git 资源可绑定内部 GitLab 项目，凭据不在 API 响应或日志中出现。
 - [ ] MR preview 能返回标题、作者、分支、diff refs 和变更文件数。
 - [ ] MR snapshot 能生成不可变 snapshot_id，并记录 diff_size_bytes、created_at 和审计事件。

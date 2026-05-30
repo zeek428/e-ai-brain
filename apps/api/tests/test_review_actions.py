@@ -82,6 +82,10 @@ def test_reject_and_request_more_info_move_task_to_documented_states():
     assert more_info["review_status"] == "requested_more_info"
     assert more_info["task_status"] == "waiting_more_info"
 
+    direct_restart = client.post(f"/api/ai-tasks/{task_id}/start", headers=headers)
+    assert direct_restart.status_code == 409
+    assert direct_restart.json()["detail"]["code"] == "TASK_STATE_INVALID"
+
     submitted = client.post(
         f"/api/ai-tasks/{task_id}/more-info",
         json={"answers": [{"question": "请补充验收边界", "answer": "补充 P0 验收边界"}]},

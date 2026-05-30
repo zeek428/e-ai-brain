@@ -12,7 +12,7 @@
 
 ## 当前源码状态提示
 
-当前仓库可能只包含文档集，应用源码目录、`.env.example` 或 `docker-compose.yml` 需要在实现阶段创建后才能执行下列命令。若文件尚不存在，请先以 [项目级 PRD](../01-prd/enterprise-ai-brain/prd.md)、[技术规格](../02-specs/enterprise-ai-brain/spec.md) 和 [API 文档](../02-specs/enterprise-ai-brain/api.md) 为准完成基础工程初始化。
+当前仓库已包含 `apps/api` FastAPI 后端、`apps/web` Ant Design Pro 工作台、`.env.example`、`docker-compose.yml` 和 PostgreSQL 初始化迁移脚本。当前后端请求处理仍使用进程内 `MemoryStore` 支撑本地测试和演示；迁移脚本定义的是目标持久化 schema，后续接入数据库仓储时应继续以项目级 PRD/spec/API/test-case 为准。
 
 ## 环境准备
 
@@ -47,6 +47,8 @@ cp .env.example .env
 
 根据本地模型网关和数据库配置编辑 `.env`。首次安装依赖需要网络访问；如本机依赖安装受限，优先使用 Docker Compose。
 
+本地种子账号只用于本地验证，非本地环境会默认禁用。前端工作台不会内置或自动提交 admin 密码；需要真实 API 数据时，先通过登录接口获取 token，再写入浏览器 `localStorage.ai_brain_access_token`。
+
 ### 3. 校验 Compose 配置
 
 ```bash
@@ -65,7 +67,7 @@ docker compose up -d --build
 curl http://localhost:8000/health
 ```
 
-预期 API 返回健康状态。前端、数据库和 Redis 的端口以未来根目录 `docker-compose.yml` 为准。
+预期 API 返回健康状态。默认端口为：API `8000`、Web `5173`、PostgreSQL `5432`、Redis `6379`。
 
 ## 常见问题
 

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from app.main import _tcp_endpoint_from_url, app
@@ -68,3 +70,37 @@ def test_logout_requires_bearer_token():
 
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "UNAUTHORIZED"
+
+
+def test_initial_migration_defines_core_mvp_tables():
+    migration = Path("app/db/migrations/001_init.sql").read_text()
+
+    for table_name in [
+        "users",
+        "brain_apps",
+        "ai_tasks",
+        "human_reviews",
+        "gitlab_mr_snapshots",
+        "code_review_reports",
+        "knowledge_documents",
+        "knowledge_chunks",
+        "knowledge_deposits",
+        "mock_issues",
+    ]:
+        assert f"CREATE TABLE IF NOT EXISTS {table_name}" in migration
+
+
+def test_initial_migration_matches_runtime_record_shapes():
+    migration = Path("app/db/migrations/001_init.sql").read_text()
+
+    assert "stage text NOT NULL" in migration
+    assert "content jsonb NOT NULL DEFAULT '{}'::jsonb" in migration
+    assert "review_type text NOT NULL" not in migration
+    assert "original_content jsonb" not in migration
+
+    assert "task_id text NOT NULL REFERENCES ai_tasks(id)" in migration
+    assert "executor jsonb NOT NULL DEFAULT '{}'::jsonb" in migration
+    assert "executor_type text NOT NULL" not in migration
+    assert "executor_name text NOT NULL" not in migration
+
+    assert "created_by text NOT NULL" in migration

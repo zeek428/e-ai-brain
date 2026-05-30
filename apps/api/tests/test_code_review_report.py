@@ -146,3 +146,41 @@ def test_code_review_report_is_confirmed_and_archived_without_gitlab_writeback()
         "model_gateway.called",
         "ai_task.created",
     ]
+
+
+def test_code_review_report_edit_approve_also_confirms_and_archives_report():
+    headers = auth_headers()
+    requirement_id, snapshot_id = build_mr_snapshot(headers)
+
+    task = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "code_review",
+            "title": "Review MR !42 with edits",
+            "requirement_id": requirement_id,
+            "input": {"gitlab_mr_snapshot_id": snapshot_id},
+        },
+        headers=headers,
+    ).json()["data"]
+    started = client.post(f"/api/ai-tasks/{task['id']}/start", headers=headers).json()["data"]
+
+    result = client.post(
+        f"/api/reviews/{started['review_id']}/edit-approve",
+        json={
+            "version": 1,
+            "edited_content": {
+                "summary": "人工确认后保留一处高风险问题并补充边界测试建议。"
+            },
+        },
+        headers=headers,
+    ).json()["data"]
+
+    assert result["task_status"] == "completed"
+    archived = client.get(
+        f"/api/ai-tasks/{task['id']}/code-review-report",
+        headers=headers,
+    ).json()["data"]
+    assert archived["status"] == "confirmed"
+    assert archived["archived_at"].startswith("20")
+    assert archived["summary"] == "人工确认后保留一处高风险问题并补充边界测试建议。"
+    assert archived["gitlab_writeback_performed"] is False

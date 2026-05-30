@@ -1,6 +1,45 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+CREATE TABLE IF NOT EXISTS users (
+  id text PRIMARY KEY,
+  email text NOT NULL UNIQUE,
+  display_name text NOT NULL,
+  roles jsonb NOT NULL DEFAULT '[]'::jsonb,
+  password_hash text NOT NULL,
+  status text NOT NULL DEFAULT 'active',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS brain_apps (
+  id text PRIMARY KEY,
+  code text NOT NULL UNIQUE,
+  name text NOT NULL,
+  description text,
+  status text NOT NULL DEFAULT 'active',
+  config jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO brain_apps (id, code, name, description, status, config)
+VALUES (
+  'rd_brain',
+  'rd_brain',
+  '研发大脑',
+  '把研发需求转成可确认、可回写、可沉淀的任务方案。',
+  'active',
+  '{"default_task_types":["product_detail_design","technical_solution","code_review"]}'::jsonb
+)
+ON CONFLICT (id) DO UPDATE SET
+  code = EXCLUDED.code,
+  name = EXCLUDED.name,
+  description = EXCLUDED.description,
+  status = EXCLUDED.status,
+  config = EXCLUDED.config,
+  updated_at = now();
+
 CREATE TABLE IF NOT EXISTS products (
   id text PRIMARY KEY,
   code text NOT NULL UNIQUE,
@@ -102,6 +141,7 @@ CREATE TABLE IF NOT EXISTS model_gateway_logs (
 
 CREATE TABLE IF NOT EXISTS requirements (
   id text PRIMARY KEY,
+  brain_app_id text DEFAULT 'rd_brain',
   title text NOT NULL,
   product_id text NOT NULL REFERENCES products(id),
   version_id text NOT NULL REFERENCES product_versions(id),
@@ -117,9 +157,30 @@ CREATE TABLE IF NOT EXISTS requirements (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS ai_tasks (
+  id text PRIMARY KEY,
+  requirement_id text REFERENCES requirements(id),
+  task_type text NOT NULL,
+  title text NOT NULL,
+  status text NOT NULL DEFAULT 'draft',
+  product_id text NOT NULL REFERENCES products(id),
+  version_id text NOT NULL REFERENCES product_versions(id),
+  module_code text,
+  requirement_snapshot jsonb,
+  product_context jsonb NOT NULL DEFAULT '{}'::jsonb,
+  input_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  output_json jsonb,
+  current_step text,
+  error_code text,
+  error_message text,
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS graph_runs (
   id text PRIMARY KEY,
-  ai_task_id text NOT NULL,
+  ai_task_id text NOT NULL REFERENCES ai_tasks(id),
   task_type text NOT NULL,
   status text NOT NULL,
   current_step text,
@@ -132,9 +193,126 @@ CREATE TABLE IF NOT EXISTS graph_runs (
 CREATE TABLE IF NOT EXISTS graph_checkpoints (
   id text PRIMARY KEY,
   graph_run_id text NOT NULL REFERENCES graph_runs(id),
-  ai_task_id text NOT NULL,
+  ai_task_id text NOT NULL REFERENCES ai_tasks(id),
   current_step text NOT NULL,
   state_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS human_reviews (
+  id text PRIMARY KEY,
+  ai_task_id text NOT NULL REFERENCES ai_tasks(id),
+  stage text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  version integer NOT NULL DEFAULT 1,
+  content jsonb NOT NULL DEFAULT '{}'::jsonb,
+  edited_content jsonb,
+  decision_reason text,
+  decided_by text,
+  questions jsonb NOT NULL DEFAULT '[]'::jsonb,
+  decided_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS gitlab_mr_snapshots (
+  id text PRIMARY KEY,
+  repository_id text NOT NULL REFERENCES product_git_repositories(id),
+  product_id text NOT NULL REFERENCES products(id),
+  version_id text REFERENCES product_versions(id),
+  project_id text,
+  project_path text,
+  mr_iid integer NOT NULL,
+  title text NOT NULL,
+  author jsonb,
+  source_branch text NOT NULL,
+  target_branch text NOT NULL,
+  base_sha text,
+  head_sha text NOT NULL,
+  diff_refs jsonb,
+  changed_files_summary jsonb NOT NULL DEFAULT '[]'::jsonb,
+  diff_storage_ref text NOT NULL,
+  diff_size_bytes integer NOT NULL DEFAULT 0,
+  diff_limit_bytes integer NOT NULL DEFAULT 0,
+  snapshot_hash text NOT NULL,
+  requirement_id text NOT NULL REFERENCES requirements(id),
+  technical_solution_task_id text NOT NULL REFERENCES ai_tasks(id),
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  writeback_allowed boolean NOT NULL DEFAULT false,
+  UNIQUE (repository_id, snapshot_hash)
+);
+
+CREATE TABLE IF NOT EXISTS code_review_reports (
+  id text PRIMARY KEY,
+  task_id text NOT NULL REFERENCES ai_tasks(id),
+  gitlab_mr_snapshot_id text NOT NULL REFERENCES gitlab_mr_snapshots(id),
+  executor jsonb NOT NULL DEFAULT '{}'::jsonb,
+  summary text NOT NULL,
+  risk_level text NOT NULL,
+  findings jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL DEFAULT 'draft',
+  review_id text REFERENCES human_reviews(id),
+  archived_at timestamptz,
+  error_code text,
+  gitlab_writeback_performed boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+  id text PRIMARY KEY,
+  brain_app_id text DEFAULT 'rd_brain',
+  product_id text REFERENCES products(id),
+  version_id text REFERENCES product_versions(id),
+  title text NOT NULL,
+  content text NOT NULL,
+  source_type text NOT NULL DEFAULT 'manual',
+  doc_type text NOT NULL DEFAULT 'manual',
+  permission_scope jsonb NOT NULL DEFAULT '{}'::jsonb,
+  permission_roles jsonb NOT NULL DEFAULT '["admin"]'::jsonb,
+  index_status text NOT NULL DEFAULT 'pending_index',
+  index_error text,
+  tags jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  id text PRIMARY KEY,
+  document_id text NOT NULL REFERENCES knowledge_documents(id),
+  chunk_index integer NOT NULL,
+  content text NOT NULL,
+  embedding vector(1536),
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  permission_scope jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (document_id, chunk_index)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_deposits (
+  id text PRIMARY KEY,
+  ai_task_id text NOT NULL REFERENCES ai_tasks(id),
+  deposit_type text NOT NULL DEFAULT 'task_output',
+  title text NOT NULL,
+  content text NOT NULL,
+  content_hash text,
+  status text NOT NULL DEFAULT 'pending',
+  knowledge_document_id text REFERENCES knowledge_documents(id),
+  rejection_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (ai_task_id, deposit_type, content_hash)
+);
+
+CREATE TABLE IF NOT EXISTS mock_issues (
+  id text PRIMARY KEY,
+  source_task_id text NOT NULL REFERENCES ai_tasks(id),
+  title text NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  idempotency_key text NOT NULL UNIQUE,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -194,8 +372,23 @@ CREATE INDEX IF NOT EXISTS idx_product_git_repositories_product_status
 CREATE INDEX IF NOT EXISTS idx_requirements_status ON requirements (status);
 CREATE INDEX IF NOT EXISTS idx_requirements_product_id ON requirements (product_id);
 CREATE INDEX IF NOT EXISTS idx_requirements_created_at ON requirements (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_tasks_status ON ai_tasks (status);
+CREATE INDEX IF NOT EXISTS idx_ai_tasks_requirement ON ai_tasks (requirement_id);
+CREATE INDEX IF NOT EXISTS idx_ai_tasks_product_status ON ai_tasks (product_id, status);
 CREATE INDEX IF NOT EXISTS idx_graph_runs_task ON graph_runs (ai_task_id);
 CREATE INDEX IF NOT EXISTS idx_graph_checkpoints_run ON graph_checkpoints (graph_run_id);
+CREATE INDEX IF NOT EXISTS idx_human_reviews_task ON human_reviews (ai_task_id);
+CREATE INDEX IF NOT EXISTS idx_human_reviews_status ON human_reviews (status);
+CREATE INDEX IF NOT EXISTS idx_gitlab_mr_snapshots_requirement
+  ON gitlab_mr_snapshots (requirement_id);
+CREATE INDEX IF NOT EXISTS idx_code_review_reports_task ON code_review_reports (task_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_documents_index_status
+  ON knowledge_documents (index_status);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document ON knowledge_chunks (document_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_deposits_task_status
+  ON knowledge_deposits (ai_task_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_mock_issues_idempotency
+  ON mock_issues (idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_lifecycle_edges_source
   ON lifecycle_context_edges (source_subject_type, source_subject_id);
 CREATE INDEX IF NOT EXISTS idx_lifecycle_edges_target

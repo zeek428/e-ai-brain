@@ -1,8 +1,8 @@
 import { PlusOutlined } from '@ant-design/icons';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Tag } from 'antd';
-import { useMemo, useState } from 'react';
+import { Alert, Button, Tag } from 'antd';
+import { type ReactNode, useMemo, useState } from 'react';
 
 type FilterField = {
   label: string;
@@ -17,6 +17,7 @@ type ManagementListPageProps<Row extends Record<string, unknown>> = {
   columns: ProColumns<Row>[];
   dataSource: Row[];
   filters: FilterField[];
+  notice?: ReactNode;
   primaryAction?: string;
   rowKey: keyof Row & string;
   tableTitle: string;
@@ -41,6 +42,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
   columns,
   dataSource,
   filters,
+  notice,
   primaryAction,
   rowKey,
   tableTitle,
@@ -98,6 +100,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
       }}
       title={false}
     >
+      {notice ? <Alert className="management-list-alert" showIcon title={notice} type="warning" /> : null}
       <ProTable<Row>
         cardBordered
         columns={proTableColumns}

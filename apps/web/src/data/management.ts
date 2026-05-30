@@ -12,7 +12,7 @@ export type RequirementRecord = {
   owner: string;
   priority: 'P0' | 'P1' | 'P2';
   product: string;
-  status: 'approved' | 'pending_approval' | 'task_created';
+  status: 'approved' | 'closed' | 'draft' | 'pending_approval' | 'rejected' | 'task_created';
   title: string;
   updatedAt: string;
 };
@@ -31,7 +31,7 @@ export type KnowledgeRecord = {
   documentType: string;
   id: string;
   ownerRole: string;
-  status: 'indexed' | 'pending_index' | 'review_pending';
+  status: 'failed' | 'indexed' | 'pending_index' | 'review_pending';
   title: string;
   updatedAt: string;
 };

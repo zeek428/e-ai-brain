@@ -2,6 +2,8 @@ import type { ProColumns } from '@ant-design/pro-components';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import { productRows, type ProductRecord } from '../../data/management';
+import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { fetchManagementProducts } from '../../services/aiBrain';
 
 const columns: ProColumns<ProductRecord>[] = [
   {
@@ -43,11 +45,13 @@ const columns: ProColumns<ProductRecord>[] = [
 ];
 
 export default function ProductsPage() {
+  const { error, rows: dataSource } = useRemoteRows(productRows, fetchManagementProducts);
+
   return (
     <ManagementListPage<ProductRecord>
       breadcrumbGroup="产品资产"
       columns={columns}
-      dataSource={productRows}
+      dataSource={dataSource}
       filters={[
         { label: '产品编码', name: 'code', type: 'text' },
         { label: '产品名称', name: 'name', type: 'text' },
@@ -62,6 +66,7 @@ export default function ProductsPage() {
           type: 'select',
         },
       ]}
+      notice={formatRemoteRowsError(error)}
       primaryAction="新增产品"
       rowKey="code"
       tableTitle="产品列表"

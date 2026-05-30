@@ -46,6 +46,7 @@ https://registry.npmjs.org
 ```bash
 APP_ENV=local
 APP_SECRET_KEY=<local-secret>
+ALLOW_SEEDED_USERS=
 ACCESS_TOKEN_EXPIRE_SECONDS=28800
 
 DATABASE_URL=postgresql://ai_brain:<password>@postgres:5432/ai_brain
@@ -64,6 +65,8 @@ LOG_LEVEL=INFO
 默认配置不访问外部模型时，后端使用本地兜底生成器，便于离线开发和端到端自测。`/health` 返回 `model_gateway=configured` 表示已进入真实网关路径，返回 `local_fallback` 表示仍在本地兜底。
 
 真实 `.env` 不提交到仓库。
+
+本地内置种子账号仅在 `APP_ENV=local|test|development` 时启用；非本地环境默认拒绝这些账号登录。前端不会自动使用种子账号登录，若要在本地直接调用管理列表 API，可通过登录接口获取 token 后写入浏览器 `localStorage.ai_brain_access_token`。
 
 ### 网络受限环境
 
@@ -102,6 +105,8 @@ docker compose ps
 | api | FastAPI 接口、LangGraph、模型网关、知识检索和审计。 |
 | postgres | 业务数据、知识文档、pgvector 向量。 |
 | redis | 队列、临时状态、限流和短期缓存。 |
+
+当前 API 运行时仍以进程内 `MemoryStore` 承载本地测试和演示数据；PostgreSQL 初始化脚本已经定义目标持久化表结构，用于后续数据库仓储接入和 Compose 依赖验证。不要把当前内存存储误判为生产持久化能力。
 
 ## 开发工作流
 
@@ -159,6 +164,11 @@ docker compose exec postgres psql -U ai_brain -d ai_brain -c "select extname fro
 ```bash
 cd apps/api
 uv run pytest
+
+cd ../web
+npm test
+npm run typecheck
+npm run lint
 ```
 
 测试应覆盖 [项目级测试用例](../02-specs/enterprise-ai-brain/test-case.md) 中的 P0/P1 用例。

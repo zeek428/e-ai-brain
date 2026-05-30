@@ -7,6 +7,11 @@ from functools import lru_cache
 class Settings:
     def __init__(self) -> None:
         self.app_env = os.getenv("APP_ENV", "local")
+        self.allow_seeded_users = os.getenv("ALLOW_SEEDED_USERS", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         self.app_secret_key = os.getenv("APP_SECRET_KEY", "change-me-in-local-env")
         self.access_token_expire_seconds = int(os.getenv("ACCESS_TOKEN_EXPIRE_SECONDS", "28800"))
         self.database_url = os.getenv(

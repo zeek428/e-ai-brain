@@ -105,11 +105,15 @@ def test_product_config_supports_list_patch_and_active_filters():
         },
         headers=headers,
     ).json()["data"]
+    assert "credential_ref" not in repository
+    assert repository["credential_ref_configured"] is True
     repositories = client.get(
         f"/api/products/{product['id']}/git-repositories?active_only=true",
         headers=headers,
     ).json()["data"]
     assert [item["id"] for item in repositories["items"]] == [repository["id"]]
+    assert "credential_ref" not in repositories["items"][0]
+    assert repositories["items"][0]["credential_ref_configured"] is True
 
     patched_repository = client.patch(
         f"/api/product-git-repositories/{repository['id']}",
@@ -117,7 +121,8 @@ def test_product_config_supports_list_patch_and_active_filters():
         headers=headers,
     ).json()["data"]
     assert patched_repository["status"] == "inactive"
-    assert "credential_secret" not in patched_repository
+    assert "credential_ref" not in patched_repository
+    assert patched_repository["credential_ref_configured"] is True
 
 
 def test_related_systems_and_model_gateway_configs_mask_secrets_and_audit_writes():
@@ -163,8 +168,8 @@ def test_related_systems_and_model_gateway_configs_mask_secrets_and_audit_writes
         headers=headers,
     ).json()["data"]
     assert config["api_key_configured"] is True
-    assert config["api_key_masked"] == "sk-***alue"
     assert "api_key" not in config
+    assert "api_key_masked" not in config
 
     second_config = client.post(
         "/api/system/model-gateway-configs",
@@ -184,13 +189,15 @@ def test_related_systems_and_model_gateway_configs_mask_secrets_and_audit_writes
     ]
     assert [item["id"] for item in configs if item["is_default"]] == [second_config["id"]]
     assert all("api_key" not in item for item in configs)
+    assert all("api_key_masked" not in item for item in configs)
 
     patched_config = client.patch(
         f"/api/system/model-gateway-configs/{second_config['id']}",
         json={"api_key": "rotated-secret", "timeout_seconds": 45},
         headers=headers,
     ).json()["data"]
-    assert patched_config["api_key_masked"] == "rot***cret"
+    assert patched_config["api_key_configured"] is True
+    assert "api_key_masked" not in patched_config
     assert patched_config["timeout_seconds"] == 45
 
     audit_events = client.get("/api/audit/events", headers=headers).json()["data"]["items"]

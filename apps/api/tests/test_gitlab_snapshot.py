@@ -80,9 +80,12 @@ def build_confirmed_solution_context(headers: dict[str, str]) -> dict[str, str]:
         headers=headers,
     )
     return {
+        "product_detail_design_task_id": design_task["task_id"],
+        "product_id": product["id"],
         "repository_id": repository["id"],
         "requirement_id": requirement["id"],
         "technical_solution_task_id": solution_task["id"],
+        "version_id": version["id"],
     }
 
 
@@ -119,3 +122,108 @@ def test_gitlab_mr_preview_and_snapshot_are_read_only_and_immutable():
         headers=headers,
     ).json()["data"]["items"]
     assert [event["event_type"] for event in audit_events] == ["gitlab_mr.snapshotted"]
+
+
+def test_gitlab_snapshot_rejects_cross_product_requirement_context():
+    headers = auth_headers()
+    context = build_confirmed_solution_context(headers)
+    other_product = client.post(
+        "/api/products",
+        json={"code": "other-product", "name": "其他产品"},
+        headers=headers,
+    ).json()["data"]
+    other_version = client.post(
+        f"/api/products/{other_product['id']}/versions",
+        json={"code": "v1", "name": "v1"},
+        headers=headers,
+    ).json()["data"]
+    other_requirement = client.post(
+        "/api/requirements",
+        json={
+            "title": "不应复用其他产品 MR 快照",
+            "product_id": other_product["id"],
+            "version_id": other_version["id"],
+            "content": "跨产品上下文不能进入同一份 GitLab MR 快照。",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    response = client.post(
+        f"/api/devops/gitlab/merge-requests/{context['repository_id']}/42/snapshot",
+        json={
+            "requirement_id": other_requirement["id"],
+            "technical_solution_task_id": context["technical_solution_task_id"],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "GITLAB_CONTEXT_MISMATCH"
+
+
+def test_technical_solution_task_rejects_design_from_another_requirement():
+    headers = auth_headers()
+    context = build_confirmed_solution_context(headers)
+    unrelated_requirement = client.post(
+        "/api/requirements",
+        json={
+            "title": "同产品内另一条需求",
+            "product_id": context["product_id"],
+            "version_id": context["version_id"],
+            "content": "技术方案不能复用另一条需求的产品详细设计。",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    response = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "technical_solution",
+            "title": "错配上下文技术方案",
+            "requirement_id": unrelated_requirement["id"],
+            "input": {
+                "product_detail_design_task_id": context["product_detail_design_task_id"],
+            },
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "TASK_CONTEXT_MISMATCH"
+
+
+def test_code_review_task_rejects_requirement_that_does_not_match_snapshot():
+    headers = auth_headers()
+    context = build_confirmed_solution_context(headers)
+    snapshot = client.post(
+        f"/api/devops/gitlab/merge-requests/{context['repository_id']}/42/snapshot",
+        json={
+            "requirement_id": context["requirement_id"],
+            "technical_solution_task_id": context["technical_solution_task_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    unrelated_requirement = client.post(
+        "/api/requirements",
+        json={
+            "title": "同产品的另一条需求",
+            "product_id": context["product_id"],
+            "version_id": context["version_id"],
+            "content": "同一产品内也不能错配快照来源需求。",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    response = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "code_review",
+            "title": "Review MR !42",
+            "requirement_id": unrelated_requirement["id"],
+            "input": {"gitlab_mr_snapshot_id": snapshot["id"]},
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "GITLAB_CONTEXT_MISMATCH"

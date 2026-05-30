@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Repository Status
 
-This checkout currently contains the AI Brain documentation set under [docs/](docs/). The active project documents describe the intended v1 application architecture, but application source directories such as apps/api and apps/web may not exist yet in this working tree. Do not assume implementation files exist until you verify them.
+This checkout contains the AI Brain documentation set under [docs/](docs/) plus the current MVP implementation skeleton under [apps/api](apps/api) and [apps/web](apps/web). The backend is a FastAPI app with an in-process `MemoryStore` used by the current test/demo runtime; PostgreSQL migrations are present for the intended persistent schema, but application request handling is not yet wired to PostgreSQL persistence. Always verify implementation files before assuming a module is complete.
 
 ## Source of Truth
 

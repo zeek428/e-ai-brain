@@ -246,12 +246,15 @@ import InsightsPage from '../src/pages/Insights';
 import KnowledgePage from '../src/pages/Knowledge';
 import ProductsPage from '../src/pages/Products';
 import RequirementsPage from '../src/pages/Requirements';
+import { apiRequest } from '../src/services/aiBrain';
 import TaskCenterPage from '../src/pages/TaskCenter';
 
 describe('AI Brain Ant Design Pro workbench', () => {
   afterEach(() => {
     cleanup();
+    window.localStorage.clear();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('registers the MVP workbench entries through Umi route config', () => {
@@ -389,9 +392,170 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('AI-BRAIN')).toBeInTheDocument();
   });
 
+  it('hydrates management tables from backend API list endpoints when available', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+
+      if (path === '/api/products') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: '接口产品',
+                owner_team: 'API Team',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/requirements') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_at: '2026-05-30T08:30:00+00:00',
+                id: 'requirement_api',
+                priority: 'P0',
+                product_id: 'product_api',
+                status: 'approved',
+                title: '接口需求',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/knowledge/documents') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                doc_type: 'Spec',
+                id: 'knowledge_api',
+                index_status: 'indexed',
+                permission_roles: ['admin', 'rd_owner'],
+                title: '接口知识文档',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/audit/events') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                actor_id: 'user_admin',
+                created_at: '2026-05-30T08:40:00+00:00',
+                event_type: 'product.created',
+                id: 'audit_api',
+                subject_id: 'product_api',
+                subject_type: 'product',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { rerender } = render(<ProductsPage />);
+
+    expect(await screen.findByText('API-PRODUCT')).toBeInTheDocument();
+    expect(screen.queryByText('AI-BRAIN')).not.toBeInTheDocument();
+
+    rerender(<RequirementsPage />);
+
+    expect(await screen.findByText('接口需求')).toBeInTheDocument();
+    expect(screen.getByText('API-PRODUCT')).toBeInTheDocument();
+
+    rerender(<KnowledgePage />);
+
+    expect(await screen.findByText('接口知识文档')).toBeInTheDocument();
+    expect(screen.getByText('admin, rd_owner')).toBeInTheDocument();
+
+    rerender(<AuditPage />);
+
+    expect(await screen.findByText('product.created')).toBeInTheDocument();
+    expect(screen.getByText('product: product_api')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/login', expect.anything());
+  });
+
+  it('shows backend load failures when management tables fall back to local examples', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      new Response(
+        JSON.stringify({
+          detail: {
+            code: 'FORBIDDEN',
+            message: 'Role permission denied',
+            trace_id: 'trace_denied',
+          },
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 403,
+        },
+      ),
+    );
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ProductsPage />);
+
+    expect(screen.getByText('AI-BRAIN')).toBeInTheDocument();
+    expect(await screen.findByText(/接口异常，当前展示示例数据/)).toBeInTheDocument();
+    expect(screen.getByText(/FORBIDDEN/)).toBeInTheDocument();
+    expect(screen.getByText(/trace_denied/)).toBeInTheDocument();
+  });
+
+  it('preserves backend error code, message and trace id in API failures', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async () =>
+        new Response(
+          JSON.stringify({
+            detail: {
+              code: 'TASK_STATE_INVALID',
+              message: 'Task cannot be started from current status',
+              trace_id: 'trace_task',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 409,
+          },
+        ),
+      ),
+    );
+
+    await expect(apiRequest('/api/ai-tasks/task_001/start')).rejects.toMatchObject({
+      code: 'TASK_STATE_INVALID',
+      message: 'Task cannot be started from current status',
+      status: 409,
+      traceId: 'trace_task',
+    });
+  });
+
   it('runs the MVP API workflow and renders the resulting task context', async () => {
     const responses = [
-      { data: { access_token: 'token-admin' } },
       { data: { id: 'product_001' } },
       { data: { id: 'version_001' } },
       { data: { id: 'requirement_001', status: 'pending_approval' } },
@@ -430,6 +594,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
         status: 200,
       });
     });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.stubGlobal('fetch', fetchMock);
 
     render(<TaskCenterPage />);
@@ -441,12 +606,13 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('interrupt_for_human_review')).toBeInTheDocument();
     expect(screen.getByText('下游关系 7')).toBeInTheDocument();
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(9));
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/auth/login');
-    expect(fetchMock.mock.calls[6][0]).toBe('/api/ai-tasks/task_001/start');
-    expect(fetchMock.mock.calls[8][0]).toContain('/api/lifecycle/context?subject_type=requirement');
-    expect(fetchMock.mock.calls[8][1]?.headers).toMatchObject({
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/products');
+    expect(fetchMock.mock.calls[5][0]).toBe('/api/ai-tasks/task_001/start');
+    expect(fetchMock.mock.calls[7][0]).toContain('/api/lifecycle/context?subject_type=requirement');
+    expect(fetchMock.mock.calls[7][1]?.headers).toMatchObject({
       Authorization: 'Bearer token-admin',
     });
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/login', expect.anything());
   });
 });
