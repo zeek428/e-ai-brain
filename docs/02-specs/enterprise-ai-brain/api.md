@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.0 |
+| 功能版本 | v1.1.3 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -24,6 +24,7 @@
 | v1.1.0 | 2026-05-29 | 对齐 PRD v1.1.0 和 Spec v1.1.0，补充 MVP 角色映射，修正内部 GitLab Git 资源示例和阶段边界 | Claude |
 | v1.1.1 | 2026-05-29 | 修复产品评审问题：将 GitLab 预览和 diff 快照前置到 MVP-A，清理 MVP 角色口径，统一 health trace_id、占位接口和阶段边界 | Claude |
 | v1.1.2 | 2026-05-30 | 将 Bug 管理 GET/POST/PATCH 从占位升级为 v1.1 基础接口，补充状态流转、重复归并和审计约束 | Codex |
+| v1.1.3 | 2026-05-30 | 对齐当前实现的 PostgreSQL 登录用户表、用户管理接口和 SQL 迁移驱动持久化 | Codex |
 
 ---
 
@@ -33,7 +34,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；Bug 管理已具备 v1.1 基础 GET/POST/PATCH 能力，支持登记、筛选、状态流转、重复归并和审计事件。用户洞察和迭代规划的写接口仍属于后续阶段目标，当前仅提供 GET 占位响应。后端运行时当前使用进程内 `MemoryStore`，PostgreSQL migration 是目标持久化 schema。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；Bug 管理已具备 v1.1 基础 GET/POST/PATCH 能力，支持登记、筛选、状态流转、重复归并和审计事件。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过用户管理接口维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标，当前仅提供 GET 占位响应。
 
 ## 认证方式
 
@@ -103,7 +104,7 @@ curl -X POST http://localhost:8000/api/auth/login \
 | 创建内部 GitLab MR 预览和 diff 快照、创建 code_review 任务、确认 Review 报告 | reviewer 或 rd_owner |
 | 审核知识沉淀 | knowledge_owner 或 rd_owner |
 | 登记、分派、验证或关闭 Bug | product_owner、rd_owner 或 admin；tester 角色按后续真实测试组织模型扩展 |
-| 维护产品、相关系统、模型网关配置 | admin |
+| 维护产品、相关系统、模型网关配置、用户账号 | admin |
 
 MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 为主；Bug 登记和状态更新先复用 `product_owner`、`rd_owner`、`admin`，`tester`、发布负责人和 IT 管理者写权限按后续真实组织模型扩展。接口鉴权还需要结合产品归属、任务参与关系和主体权限。
 
@@ -132,6 +133,9 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Auth | POST | `/api/auth/login` | 登录。 |
 | Auth | GET | `/api/auth/me` | 当前用户。 |
 | Auth | POST | `/api/auth/logout` | 前端退出登录辅助接口。 |
+| User | GET | `/api/users` | 管理员查询用户列表。 |
+| User | POST | `/api/users` | 管理员创建用户。 |
+| User | PATCH | `/api/users/{user_id}` | 管理员更新用户姓名、角色、状态或密码。 |
 | Brain App | GET | `/api/brain-apps` | 业务大脑列表。 |
 | Brain App | GET | `/api/brain-apps/{brain_app_id}` | 业务大脑详情。 |
 | Product | GET | `/api/products` | 产品列表。 |
@@ -1471,6 +1475,8 @@ GET /api/audit/events?event_type=review.submitted
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.3 | 2026-05-30 | 对齐 PostgreSQL 登录用户表、用户管理接口和 SQL 迁移驱动持久化。 |
+| v1.1.2 | 2026-05-30 | 将 Bug 管理 GET/POST/PATCH 从占位升级为 v1.1 基础接口。 |
 | v1.1.1 | 2026-05-29 | 将 GitLab 预览和 diff 快照前置到 MVP-A，清理 MVP 角色口径，统一 health trace_id、占位接口和阶段边界。 |
 | v1.1.0 | 2026-05-29 | 对齐 PRD/Spec v1.1.0，补充 MVP 角色映射，修正内部 GitLab Git 资源示例和阶段边界。 |
 | v1.0.7 | 2026-05-29 | 对齐 PRD，将内部 GitLab MR 代码 Review 纳入 v1 MVP，补充 MR 预览、diff 快照、Review 报告查询和不回写 GitLab 的错误语义。 |
@@ -1483,4 +1489,4 @@ GET /api/audit/events?event_type=review.submitted
 | v1.0.0 | 2026-05-27 | 初始版本 |
 
 ---
-最后更新: 2026-05-29
+最后更新: 2026-05-30

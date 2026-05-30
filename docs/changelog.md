@@ -42,6 +42,9 @@
 - 补齐 `/api/brain-apps`、`GET /api/ai-tasks`、`POST /api/ai-tasks/{task_id}/cancel`、`GET /api/reviews/{review_id}`、`GET /api/knowledge/documents` 和显式 `POST /api/writeback/results/{task_id}` 契约。
 - PostgreSQL 初始化迁移补齐 users、brain_apps、ai_tasks、human_reviews、GitLab MR 快照、Code Review 报告、知识文档/切片/沉淀和 mock_issues 等 MVP 核心表。
 - PostgreSQL 初始化迁移新增 `bugs` 表和按产品状态、来源查询的索引，为后续持久化仓储切换预留结构。
+- 后端新增 PostgreSQL 用户仓储、用户管理接口和 `app_state_snapshots` JSONB 快照持久化，Docker 本地栈默认从数据库读取登录用户并保存业务运行状态。
+- 新增 `002_persistence_users.sql` 可重复迁移脚本和 API 启动迁移入口，已有数据库卷通过 SQL 脚本升级，不再需要清空 volume。
+- PostgreSQL 服务默认切换到官方 `pgvector/pgvector:0.8.2-pg18-trixie`，并保留本地 PG18 + pgvector 构建 Dockerfile 作为网络受限 fallback，避免已有 PostgreSQL 18 数据卷被误切到 PG16 镜像。
 
 ### Changed
 - 测试用例清单增加适用阶段口径，区分 MVP 必交、MVP 占位、v1.1、v1.2 和生产就绪验证。
@@ -62,7 +65,7 @@
 - 部署 runbook 补充模型网关、内部 GitLab MR 预览、diff 快照和 code-review 执行器的 MVP 验证步骤。
 - 前端框架约束升级为严格 Ant Design Pro：新增页面、导航、表格、卡片和工作台布局必须优先使用 Umi Max、ProLayout、ProComponents 与 antd，禁止回退到 Vite 自建壳子或手写全局导航。
 - 模拟 Issue 写回从 GET 隐式写副作用改为 POST 显式生成；GET 只查询现有结果，未写回时返回 `not_written`。
-- 文档补充当前源码状态：后端运行时仍使用 `MemoryStore`，PostgreSQL migration 为目标持久化 schema；真实 GitLab 和模型调用仍需后续接入。
+- 文档补充当前源码状态：Docker 本地栈默认使用 PostgreSQL 用户表和运行状态快照持久化，`MemoryStore` 保留为测试/fallback；真实 GitLab 和模型调用仍需后续接入。
 - 前端管理列表改为使用显式 `ai_brain_access_token` 登录态，不再在浏览器代码中内置 admin 登录凭据；API 失败时展示示例数据提示和 trace_id。
 
 ### Deprecated

@@ -116,6 +116,8 @@ Docker Compose
   └─ redis：缓存/队列
 ```
 
+API 容器启动入口会在服务启动前按顺序执行 `apps/api/app/db/migrations/*.sql`，用于升级已有数据库卷；数据库结构或种子数据变更不得依赖清空 volume。PostgreSQL 服务使用同主版本 pgvector 镜像，避免已有 PG18 数据目录被错误挂载到 PG16。
+
 ## 外部依赖
 
 | 服务 | 用途 |

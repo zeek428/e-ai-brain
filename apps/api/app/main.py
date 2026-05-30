@@ -15,14 +15,32 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
+from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
 from app.core.security import TokenError, create_access_token, parse_access_token, verify_password
 from app.core.store import MemoryStore
 from app.core.trace import envelope, get_trace_id, new_trace_id
+from app.core.users import SEEDED_USERS, MemoryUserRepository, PostgresUserRepository
 
 settings = get_settings()
 
 app = FastAPI(title="Enterprise AI Brain API", version="0.1.0")
-app.state.store = MemoryStore()
+
+
+def build_store() -> MemoryStore:
+    if settings.persistence_mode == "postgres":
+        repository = PostgresSnapshotRepository(settings.database_url)
+        return PersistentMemoryStore.from_repository(repository)
+    return MemoryStore()
+
+
+def build_user_repository() -> MemoryUserRepository | PostgresUserRepository:
+    if settings.persistence_mode == "postgres":
+        return PostgresUserRepository(settings.database_url)
+    return MemoryUserRepository.seeded()
+
+
+app.state.store = build_store()
+app.state.user_repository = build_user_repository()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -31,30 +49,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-ADMIN_PASSWORD_HASH = (
-    "pbkdf2_sha256$210000$admin-local-salt$"
-    "KntdecyMHyH2xHE5T1MpTcNqUSw77BzqFUHEEHh6IcI"
-)
-USERS = {
-    "admin@example.com": {
-        "id": "user_admin",
-        "username": "admin@example.com",
-        "display_name": "AI Brain Admin",
-        "roles": ["admin"],
-        "password_hash": ADMIN_PASSWORD_HASH,
-    },
-    "reviewer@example.com": {
-        "id": "user_reviewer",
-        "username": "reviewer@example.com",
-        "display_name": "AI Brain Reviewer",
-        "roles": ["reviewer"],
-        "password_hash": (
-            "pbkdf2_sha256$210000$reviewer-local-salt$"
-            "2y8_7B-H676ivrW5jN7hGbvcmzq55VeL1RhrqRlZyXA"
-        ),
-    }
-}
 
 BRAIN_APPS = {
     "rd_brain": {
@@ -96,6 +90,21 @@ BUG_STATUS_TRANSITIONS = {
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class UserCreateRequest(BaseModel):
+    username: str
+    display_name: str
+    password: str
+    roles: list[str] = Field(default_factory=lambda: ["viewer"])
+    status: str = "active"
+
+
+class UserPatchRequest(BaseModel):
+    display_name: str | None = None
+    password: str | None = None
+    roles: list[str] | None = None
+    status: str | None = None
 
 
 class ProductRequest(BaseModel):
@@ -312,6 +321,9 @@ class BugPatchRequest(BaseModel):
 async def trace_middleware(request: Request, call_next):
     request.state.trace_id = new_trace_id()
     response = await call_next(request)
+    current_store = getattr(request.app.state, "store", None)
+    if request.url.path.startswith("/api/") and hasattr(current_store, "persist"):
+        current_store.persist()
     response.headers["X-Trace-Id"] = request.state.trace_id
     return response
 
@@ -648,7 +660,7 @@ async def get_current_user(
         code = "TOKEN_EXPIRED" if str(exc) == "token_expired" else "UNAUTHORIZED"
         raise api_error(401, code, "Invalid bearer token") from exc
 
-    user = USERS.get(str(payload.get("username", "")))
+    user = request.app.state.user_repository.get_by_username(str(payload.get("username", "")))
     if user is None:
         raise api_error(401, "UNAUTHORIZED", "User is inactive or missing")
     return user
@@ -663,13 +675,17 @@ def _seeded_users_enabled() -> bool:
 
 @app.post("/api/auth/login")
 def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
-    if payload.username in USERS and not _seeded_users_enabled():
+    if (
+        settings.persistence_mode != "postgres"
+        and payload.username in SEEDED_USERS
+        and not _seeded_users_enabled()
+    ):
         raise api_error(
             403,
             "DEFAULT_CREDENTIALS_DISABLED",
             "Seeded local users are disabled outside local environments",
         )
-    user = USERS.get(payload.username)
+    user = request.app.state.user_repository.get_by_username(payload.username)
     if user is None or not verify_password(payload.password, user["password_hash"]):
         raise api_error(401, "INVALID_CREDENTIALS", "Invalid username or password")
 
@@ -697,6 +713,52 @@ def me(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
 @app.post("/api/auth/logout")
 def logout(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
     return envelope({"success": True}, get_trace_id(request))
+
+
+@app.get("/api/users")
+def list_users(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
+    _require_roles(user, {"admin"})
+    items = request.app.state.user_repository.list_users()
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/users")
+def create_user(
+    request: Request,
+    payload: UserCreateRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"admin"})
+    try:
+        created = request.app.state.user_repository.create_user(
+            display_name=payload.display_name,
+            password=payload.password,
+            roles=payload.roles,
+            status=payload.status,
+            username=payload.username,
+        )
+    except ValueError as exc:
+        if str(exc) == "user_exists":
+            raise api_error(409, "USER_EXISTS", "User already exists") from exc
+        raise
+    return envelope(created, get_trace_id(request))
+
+
+@app.patch("/api/users/{user_id}")
+def patch_user(
+    user_id: str,
+    request: Request,
+    payload: UserPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"admin"})
+    updated = request.app.state.user_repository.update_user(
+        user_id,
+        payload.model_dump(exclude_unset=True),
+    )
+    if updated is None:
+        raise api_error(404, "NOT_FOUND", "User not found")
+    return envelope(updated, get_trace_id(request))
 
 
 @app.get("/api/brain-apps")

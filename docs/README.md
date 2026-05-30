@@ -25,7 +25,18 @@ AI Brain 是企业 AI 大脑平台项目。v1 以“研发大脑”为样板，M
 
 ## 实现者最短路径
 
-当前源码已包含 FastAPI + Ant Design Pro 的 MVP 骨架。后端测试/演示运行时使用进程内 `MemoryStore`；PostgreSQL migration 已补齐目标核心表，但请求处理尚未切换到数据库仓储。内部 GitLab 和模型调用当前提供受控本地/mock 路径，用于验证流程、安全边界和审计语义；接入真实 GitLab/API provider 前不得宣称具备生产级真实外部集成。
+当前源码已包含 FastAPI + Ant Design Pro 的 MVP 骨架。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 启动，登录账号来自 PostgreSQL `users` 表，业务运行状态写入 `app_state_snapshots` JSONB 快照表；进程内 `MemoryStore` 仅作为测试和显式本地 fallback。数据库升级通过 `apps/api/app/db/migrations/*.sql` 可重复执行脚本完成，不需要也不应清空数据库卷。内部 GitLab 和模型调用当前提供受控本地/mock 路径，用于验证流程、安全边界和审计语义；接入真实 GitLab/API provider 前不得宣称具备生产级真实外部集成。
+
+PostgreSQL 服务默认使用 `pgvector/pgvector:0.8.2-pg18-trixie`，避免已有 PG18 数据卷被错误挂载到 PG16 镜像。网络受限无法拉取官方镜像时，可用 `infra/docker/postgres-pgvector.Dockerfile` 基于本机已有 `postgres:18-alpine` 构建同主版本 fallback 镜像，并通过 `PGVECTOR_IMAGE` 指向它。
+
+```bash
+docker build -f infra/docker/postgres-pgvector.Dockerfile \
+  --build-arg POSTGRES_BASE_IMAGE=postgres:18-alpine \
+  --build-arg PGVECTOR_REF=v0.8.2 \
+  -t e-ai-brain-postgres-pgvector .
+
+PGVECTOR_IMAGE=e-ai-brain-postgres-pgvector docker compose up -d --no-deps postgres
+```
 
 1. 先阅读 PRD 的 v1 交付边界、MVP-A/B/C 实施切片、MVP 成功指标、演示验收路径和阶段计划，明确 MVP、v1.1、v1.2 与生产就绪门禁的差异。
 2. 再阅读技术规格中的实施切片、P0 数据表字段、状态机动作矩阵和模块边界，先按 MVP-A 落地需求审批、产品详细设计、技术方案、内部 GitLab 只读绑定、MR 预览、MR diff 快照、人工确认、导出和基础审计。
@@ -75,10 +86,13 @@ docker compose config
 # 启动本地开发栈
 docker compose up -d --build
 
+# 已有数据库卷升级时，API 启动入口会按顺序执行迁移 SQL
+# 不要通过删除 postgres_data 卷来规避迁移问题
+
 # 后端测试
 cd apps/api
 uv run pytest
 ```
 
 ---
-最后更新: 2026-05-29
+最后更新: 2026-05-30
