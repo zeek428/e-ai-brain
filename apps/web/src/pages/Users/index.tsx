@@ -4,27 +4,27 @@ import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from '
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import { productRows, type ProductRecord } from '../../data/management';
+import { userRows, type UserRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
-  createManagementProduct,
-  deleteManagementProduct,
-  fetchManagementProducts,
-  updateManagementProduct,
+  createManagementUser,
+  deleteManagementUser,
+  fetchManagementUsers,
+  updateManagementUser,
 } from '../../services/aiBrain';
-import { formatMutationError, trimText } from '../../utils/managementCrud';
+import { formatMutationError, joinTextList, splitCommaText, trimText } from '../../utils/managementCrud';
 
-type ProductFormValues = {
-  code?: string;
-  description?: string;
-  name: string;
-  owner_team?: string;
-  status: ProductRecord['status'];
+type UserFormValues = {
+  display_name: string;
+  password?: string;
+  roles?: string;
+  status: UserRecord['status'];
+  username: string;
 };
 
-export default function ProductsPage() {
-  const [form] = Form.useForm<ProductFormValues>();
-  const [editingProduct, setEditingProduct] = useState<ProductRecord | null>(null);
+export default function UsersPage() {
+  const [form] = Form.useForm<UserFormValues>();
+  const [editingUser, setEditingUser] = useState<UserRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const {
@@ -32,44 +32,48 @@ export default function ProductsPage() {
     reload,
     rows: dataSource,
     status,
-  } = useRemoteRows(productRows, fetchManagementProducts);
+  } = useRemoteRows(userRows, fetchManagementUsers);
 
   const openCreateModal = () => {
-    setEditingProduct(null);
+    setEditingUser(null);
     form.resetFields();
-    form.setFieldsValue({ status: 'active' });
+    form.setFieldsValue({
+      roles: 'viewer',
+      status: 'active',
+    });
     setIsModalOpen(true);
   };
 
-  const openEditModal = useCallback((row: ProductRecord) => {
-    setEditingProduct(row);
+  const openEditModal = useCallback((row: UserRecord) => {
+    setEditingUser(row);
     form.setFieldsValue({
-      code: row.code,
-      name: row.name,
-      owner_team: row.ownerTeam === '-' ? undefined : row.ownerTeam,
+      display_name: row.displayName,
+      roles: joinTextList(row.roles),
       status: row.status,
+      username: row.username,
     });
     setIsModalOpen(true);
   }, [form]);
 
   const handleSave = async () => {
     const values = await form.validateFields();
+    const roles = splitCommaText(values.roles);
     const payload = {
-      code: trimText(values.code),
-      description: trimText(values.description),
-      name: values.name.trim(),
-      owner_team: trimText(values.owner_team),
+      display_name: values.display_name.trim(),
+      password: trimText(values.password),
+      roles: roles.length ? roles : ['viewer'],
       status: values.status,
+      username: values.username.trim(),
     };
 
     setIsSaving(true);
     try {
-      if (editingProduct) {
-        await updateManagementProduct(editingProduct.id, payload);
-        message.success('产品已更新');
+      if (editingUser) {
+        await updateManagementUser(editingUser.id, payload);
+        message.success('用户已更新');
       } else {
-        await createManagementProduct(payload);
-        message.success('产品已创建');
+        await createManagementUser(payload);
+        message.success('用户已创建');
       }
       setIsModalOpen(false);
       await reload();
@@ -80,37 +84,29 @@ export default function ProductsPage() {
     }
   };
 
-  const handleDelete = useCallback(async (row: ProductRecord) => {
+  const handleDelete = useCallback(async (row: UserRecord) => {
     try {
-      await deleteManagementProduct(row.id);
-      message.success('产品已删除');
+      await deleteManagementUser(row.id);
+      message.success('用户已删除');
       await reload();
     } catch (deleteError) {
       message.error(formatMutationError(deleteError));
     }
   }, [reload]);
 
-  const columns = useMemo<ProColumns<ProductRecord>[]>(
+  const columns = useMemo<ProColumns<UserRecord>[]>(
     () => [
       {
-        dataIndex: 'code',
-        title: '产品编码',
+        dataIndex: 'username',
+        title: '登录账号',
       },
       {
-        dataIndex: 'name',
-        title: '产品名称',
+        dataIndex: 'displayName',
+        title: '显示名称',
       },
       {
-        dataIndex: 'ownerTeam',
-        title: '负责团队',
-      },
-      {
-        dataIndex: 'version',
-        title: '当前版本',
-      },
-      {
-        dataIndex: 'moduleCount',
-        title: '模块数',
+        dataIndex: 'rolesText',
+        title: '角色',
       },
       {
         dataIndex: 'status',
@@ -131,11 +127,7 @@ export default function ProductsPage() {
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
-            <Popconfirm
-              okText="删除"
-              onConfirm={() => handleDelete(row)}
-              title={`删除产品 ${row.code}？`}
-            >
+            <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除用户 ${row.username}？`}>
               <Button danger icon={<DeleteOutlined />} type="link">
                 删除
               </Button>
@@ -149,14 +141,14 @@ export default function ProductsPage() {
 
   return (
     <>
-      <ManagementListPage<ProductRecord>
-        breadcrumbGroup="产品资产"
+      <ManagementListPage<UserRecord>
+        breadcrumbGroup="系统管理"
         columns={columns}
         dataSource={dataSource}
         filters={[
-          { label: '产品编码', name: 'code', type: 'text' },
-          { label: '产品名称', name: 'name', type: 'text' },
-          { label: '负责团队', name: 'ownerTeam', type: 'text' },
+          { label: '登录账号', name: 'username', type: 'text' },
+          { label: '显示名称', name: 'displayName', type: 'text' },
+          { label: '角色', name: 'rolesText', type: 'text' },
           {
             label: '状态',
             name: 'status',
@@ -171,10 +163,10 @@ export default function ProductsPage() {
         notice={formatRemoteRowsError(error)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
-        primaryAction="新增产品"
+        primaryAction="新增用户"
         rowKey="id"
-        tableTitle="产品列表"
-        title="产品管理"
+        tableTitle="用户列表"
+        title="用户管理"
       />
       <Modal
         confirmLoading={isSaving}
@@ -182,20 +174,24 @@ export default function ProductsPage() {
         onCancel={() => setIsModalOpen(false)}
         onOk={() => void handleSave()}
         open={isModalOpen}
-        title={editingProduct ? '编辑产品' : '新增产品'}
+        title={editingUser ? '编辑用户' : '新增用户'}
       >
-        <Form<ProductFormValues> form={form} layout="vertical">
-          <Form.Item label="产品编码" name="code" rules={[{ required: true, message: '请输入产品编码' }]}>
-            <Input placeholder="例如 AI-BRAIN" />
+        <Form<UserFormValues> form={form} layout="vertical">
+          <Form.Item label="登录账号" name="username" rules={[{ required: true, message: '请输入登录账号' }]}>
+            <Input disabled={Boolean(editingUser)} />
           </Form.Item>
-          <Form.Item label="产品名称" name="name" rules={[{ required: true, message: '请输入产品名称' }]}>
+          <Form.Item label="显示名称" name="display_name" rules={[{ required: true, message: '请输入显示名称' }]}>
             <Input />
           </Form.Item>
-          <Form.Item label="负责团队" name="owner_team">
-            <Input />
+          <Form.Item
+            label={editingUser ? '重置密码' : '登录密码'}
+            name="password"
+            rules={editingUser ? [] : [{ required: true, message: '请输入登录密码' }]}
+          >
+            <Input.Password autoComplete="new-password" />
           </Form.Item>
-          <Form.Item label="描述" name="description">
-            <Input.TextArea autoSize={{ minRows: 3 }} />
+          <Form.Item label="角色" name="roles">
+            <Input placeholder="admin, product_owner, rd_owner" />
           </Form.Item>
           <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
             <Select

@@ -247,7 +247,25 @@ import KnowledgePage from '../src/pages/Knowledge';
 import LoginPage from '../src/pages/Login';
 import ProductsPage from '../src/pages/Products';
 import RequirementsPage from '../src/pages/Requirements';
-import { apiRequest } from '../src/services/aiBrain';
+import UsersPage from '../src/pages/Users';
+import {
+  apiRequest,
+  createManagementBug,
+  createManagementKnowledgeDocument,
+  createManagementProduct,
+  createManagementRequirement,
+  createManagementUser,
+  deleteManagementBug,
+  deleteManagementKnowledgeDocument,
+  deleteManagementProduct,
+  deleteManagementRequirement,
+  deleteManagementUser,
+  updateManagementBug,
+  updateManagementKnowledgeDocument,
+  updateManagementProduct,
+  updateManagementRequirement,
+  updateManagementUser,
+} from '../src/services/aiBrain';
 import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
 import TaskCenterPage from '../src/pages/TaskCenter';
 
@@ -278,6 +296,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(routes).toContain("name: '需求交付'");
     expect(routes).toContain("name: '产品资产'");
     expect(routes).toContain("name: '运营治理'");
+    expect(routes).toContain("name: '系统管理'");
     expect(routes).toContain("name: '产品管理'");
     expect(routes).toContain("name: '需求管理'");
     expect(routes).toContain("name: '知识中心'");
@@ -285,6 +304,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(routes).toContain("path: '/delivery/requirements'");
     expect(routes).toContain("path: '/assets/products'");
     expect(routes).toContain("path: '/governance/audit'");
+    expect(routes).not.toContain("path: '/governance/users'");
+    expect(routes).toContain("path: '/system/users'");
+    expect(routes).toContain("name: '用户管理'");
     expect(routes).toContain("component: './TaskCenter'");
   });
 
@@ -462,6 +484,34 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.reset(screen.getByRole('form', { name: '查询表格' }));
 
     expect(screen.getByText('AI-BRAIN')).toBeInTheDocument();
+  });
+
+  it('renders executable CRUD buttons on management pages', () => {
+    const { rerender } = render(<ProductsPage />);
+
+    expect(screen.getByRole('button', { name: /新增产品/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
+
+    rerender(<RequirementsPage />);
+    expect(screen.getByRole('button', { name: /新增需求/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
+
+    rerender(<BugsPage />);
+    expect(screen.getByRole('button', { name: /登记 Bug/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
+
+    rerender(<KnowledgePage />);
+    expect(screen.getByRole('button', { name: /导入文档/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
+
+    rerender(<UsersPage />);
+    expect(screen.getByRole('button', { name: /新增用户/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
   });
 
   it('hydrates management tables from backend API list endpoints when available', async () => {
@@ -649,6 +699,81 @@ describe('AI Brain Ant Design Pro workbench', () => {
       status: 409,
       traceId: 'trace_task',
     });
+  });
+
+  it('sends management CRUD mutations to backend APIs with the stored token', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      return jsonResponse({
+        data: {
+          id: String(input).includes('/api/products') ? 'product_api' : 'resource_api',
+          status: 'active',
+        },
+      });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createManagementProduct({ code: 'CRUD', name: 'CRUD 产品', status: 'active' });
+    await updateManagementProduct('product_api', { name: '更新产品' });
+    await deleteManagementProduct('product_api');
+    await createManagementRequirement({
+      content: '需求内容',
+      priority: 'P1',
+      product_id: 'product_api',
+      title: 'CRUD 需求',
+      version_id: 'version_api',
+    });
+    await updateManagementRequirement('requirement_api', { title: '更新需求' });
+    await deleteManagementRequirement('requirement_api');
+    await createManagementBug({
+      description: 'Bug 描述',
+      product_id: 'product_api',
+      severity: 'major',
+      source: 'manual_test',
+      title: 'CRUD Bug',
+    });
+    await updateManagementBug('bug_api', { assignee: 'rd_owner@example.com' });
+    await deleteManagementBug('bug_api');
+    await createManagementKnowledgeDocument({
+      content: '知识内容',
+      permission_roles: ['admin'],
+      title: 'CRUD 知识',
+    });
+    await updateManagementKnowledgeDocument('knowledge_api', { title: '更新知识' });
+    await deleteManagementKnowledgeDocument('knowledge_api');
+    await createManagementUser({
+      display_name: 'CRUD 用户',
+      password: 'secret123',
+      roles: ['viewer'],
+      status: 'active',
+      username: 'crud@example.com',
+    });
+    await updateManagementUser('user_api', { display_name: '更新用户' });
+    await deleteManagementUser('user_api');
+
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ['/api/products', 'POST'],
+      ['/api/products/product_api', 'PATCH'],
+      ['/api/products/product_api', 'DELETE'],
+      ['/api/requirements', 'POST'],
+      ['/api/requirements/requirement_api', 'PATCH'],
+      ['/api/requirements/requirement_api', 'DELETE'],
+      ['/api/bugs', 'POST'],
+      ['/api/bugs/bug_api', 'PATCH'],
+      ['/api/bugs/bug_api', 'DELETE'],
+      ['/api/knowledge/documents', 'POST'],
+      ['/api/knowledge/documents/knowledge_api', 'PATCH'],
+      ['/api/knowledge/documents/knowledge_api', 'DELETE'],
+      ['/api/users', 'POST'],
+      ['/api/users/user_api', 'PATCH'],
+      ['/api/users/user_api', 'DELETE'],
+    ]);
   });
 
   it('runs the MVP API workflow and renders the resulting task context', async () => {

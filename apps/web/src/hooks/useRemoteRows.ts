@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export type RemoteRowsError = {
   code?: string;
@@ -10,6 +10,10 @@ export type RemoteRowsState<Row> = {
   error?: RemoteRowsError;
   rows: Row[];
   status: 'fallback' | 'loading' | 'ready';
+};
+
+export type RemoteRowsResult<Row> = RemoteRowsState<Row> & {
+  reload: () => Promise<void>;
 };
 
 function normalizeError(error: unknown): RemoteRowsError {
@@ -37,11 +41,32 @@ export function formatRemoteRowsError(error?: RemoteRowsError) {
   return `接口异常，当前展示示例数据${details ? `：${details}` : ''}`;
 }
 
-export function useRemoteRows<Row>(fallbackRows: Row[], loadRows: () => Promise<Row[]>) {
+export function useRemoteRows<Row>(
+  fallbackRows: Row[],
+  loadRows: () => Promise<Row[]>,
+): RemoteRowsResult<Row> {
   const [state, setState] = useState<RemoteRowsState<Row>>({
     rows: fallbackRows,
     status: 'loading',
   });
+
+  const reload = useCallback(async () => {
+    setState((current) => ({
+      rows: current.rows.length ? current.rows : fallbackRows,
+      status: 'loading',
+    }));
+
+    try {
+      const loadedRows = await loadRows();
+      setState({ rows: loadedRows, status: 'ready' });
+    } catch (error: unknown) {
+      setState({
+        error: normalizeError(error),
+        rows: fallbackRows,
+        status: 'fallback',
+      });
+    }
+  }, [fallbackRows, loadRows]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -67,5 +92,5 @@ export function useRemoteRows<Row>(fallbackRows: Row[], loadRows: () => Promise<
     };
   }, [fallbackRows, loadRows]);
 
-  return state;
+  return { ...state, reload };
 }

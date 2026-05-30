@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.3 |
+| 功能版本 | v1.1.4 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -25,6 +25,7 @@
 | v1.1.1 | 2026-05-29 | 修复产品评审问题：将 GitLab 预览和 diff 快照前置到 MVP-A，清理 MVP 角色口径，统一 health trace_id、占位接口和阶段边界 | Claude |
 | v1.1.2 | 2026-05-30 | 将 Bug 管理 GET/POST/PATCH 从占位升级为 v1.1 基础接口，补充状态流转、重复归并和审计约束 | Codex |
 | v1.1.3 | 2026-05-30 | 对齐当前实现的 PostgreSQL 登录用户表、用户管理接口和 SQL 迁移驱动持久化 | Codex |
+| v1.1.4 | 2026-05-30 | 补齐当前管理主体 CRUD 契约，新增产品子资源、需求、知识文档、Bug 和用户删除/更新接口说明 | Codex |
 
 ---
 
@@ -34,7 +35,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；Bug 管理已具备 v1.1 基础 GET/POST/PATCH 能力，支持登记、筛选、状态流转、重复归并和审计事件。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过用户管理接口维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标，当前仅提供 GET 占位响应。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；产品配置、需求、知识文档、Bug 和用户管理已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标，当前仅提供 GET 占位响应。
 
 ## 认证方式
 
@@ -136,29 +137,38 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | User | GET | `/api/users` | 管理员查询用户列表。 |
 | User | POST | `/api/users` | 管理员创建用户。 |
 | User | PATCH | `/api/users/{user_id}` | 管理员更新用户姓名、角色、状态或密码。 |
+| User | DELETE | `/api/users/{user_id}` | 管理员删除用户；PostgreSQL 模式下软删除为 inactive，当前登录用户不可删除。 |
 | Brain App | GET | `/api/brain-apps` | 业务大脑列表。 |
 | Brain App | GET | `/api/brain-apps/{brain_app_id}` | 业务大脑详情。 |
 | Product | GET | `/api/products` | 产品列表。 |
 | Product | POST | `/api/products` | 创建产品。 |
 | Product | PATCH | `/api/products/{product_id}` | 更新产品。 |
+| Product | DELETE | `/api/products/{product_id}` | 删除未被版本、模块、Git 资源、需求或 Bug 占用的产品。 |
 | Product Version | GET | `/api/products/{product_id}/versions` | 产品版本列表。 |
 | Product Version | POST | `/api/products/{product_id}/versions` | 创建产品版本。 |
 | Product Version | PATCH | `/api/product-versions/{version_id}` | 更新产品版本。 |
+| Product Version | DELETE | `/api/product-versions/{version_id}` | 删除未被需求或 Bug 占用的产品版本。 |
 | Product Module | GET | `/api/products/{product_id}/modules` | 产品模块列表。 |
 | Product Module | POST | `/api/products/{product_id}/modules` | 创建产品模块。 |
 | Product Module | PATCH | `/api/product-modules/{module_id}` | 更新产品模块。 |
+| Product Module | DELETE | `/api/product-modules/{module_id}` | 删除未被需求或 Bug 占用的产品模块。 |
 | Product Git | GET | `/api/products/{product_id}/git-repositories` | 产品 Git 资源列表。 |
 | Product Git | POST | `/api/products/{product_id}/git-repositories` | 创建产品 Git 资源。 |
 | Product Git | PATCH | `/api/product-git-repositories/{repo_id}` | 更新产品 Git 资源。 |
+| Product Git | DELETE | `/api/product-git-repositories/{repo_id}` | 删除产品 Git 资源配置。 |
 | System | GET | `/api/system/related-systems` | 相关系统列表。 |
 | System | POST | `/api/system/related-systems` | 创建相关系统。 |
 | System | PATCH | `/api/system/related-systems/{system_id}` | 更新相关系统。 |
+| System | DELETE | `/api/system/related-systems/{system_id}` | 删除相关系统配置。 |
 | System | GET | `/api/system/model-gateway-configs` | 模型网关配置列表。 |
 | System | POST | `/api/system/model-gateway-configs` | 创建模型网关配置。 |
 | System | PATCH | `/api/system/model-gateway-configs/{config_id}` | 更新模型网关配置。 |
+| System | DELETE | `/api/system/model-gateway-configs/{config_id}` | 删除模型网关配置。 |
 | System | GET | `/api/model-gateway/logs` | 查询模型调用元数据日志，不返回完整 prompt 或输出。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
+| Requirement | PATCH | `/api/requirements/{requirement_id}` | 更新待审批或已驳回需求。 |
+| Requirement | DELETE | `/api/requirements/{requirement_id}` | 删除未生成任务的需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/approve` | 审批通过需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/reject` | 驳回需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/generate-task` | 审批后生成 AI 任务。 |
@@ -176,6 +186,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Review | POST | `/api/reviews/{review_id}/request-more-info` | 要求补充信息。 |
 | Knowledge | GET | `/api/knowledge/documents` | 知识文档列表。 |
 | Knowledge | POST | `/api/knowledge/documents` | 导入知识文档。 |
+| Knowledge | PATCH | `/api/knowledge/documents/{document_id}` | 更新知识文档元数据、内容、权限角色、标签或索引状态。 |
+| Knowledge | DELETE | `/api/knowledge/documents/{document_id}` | 删除知识文档。 |
 | Knowledge | POST | `/api/knowledge/search` | 知识检索。 |
 | Knowledge | GET | `/api/knowledge/deposits` | 知识沉淀候选列表。 |
 | Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/approve` | 采纳知识沉淀。 |
@@ -193,6 +205,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Bug | GET | `/api/bugs` | 查询 Bug 列表。 |
 | Bug | POST | `/api/bugs` | v1.1 基础接口，登记 AI 自动测试或人工测试 Bug。 |
 | Bug | PATCH | `/api/bugs/{bug_id}` | v1.1 基础接口，更新 Bug 状态、分派人、复现信息或重复归并关系。 |
+| Bug | DELETE | `/api/bugs/{bug_id}` | 删除 Bug 记录。 |
 | Lifecycle | GET | `/api/lifecycle/context` | 查询软件研发全流程上下文关系、上下游影响和风险信号。 |
 | Dashboard | GET | `/api/dashboard/it-team` | 查询首页 IT 团队看板。 |
 | Insights | GET | `/api/insights/usage-metrics` | 查询用户使用指标。 |

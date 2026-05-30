@@ -88,6 +88,16 @@ class MemoryUserRepository:
             user["password_hash"] = hash_password(updates["password"])
         return self._public_user(user)
 
+    def delete_user(self, user_id: str) -> bool:
+        username = next(
+            (key for key, user in self.users.items() if user["id"] == user_id),
+            None,
+        )
+        if username is None:
+            return False
+        del self.users[username]
+        return True
+
     def _public_user(self, user: dict[str, Any]) -> dict[str, Any]:
         return {
             "display_name": user["display_name"],
@@ -226,6 +236,15 @@ class PostgresUserRepository:
                         values,
                     )
         return next((user for user in self.list_users() if user["id"] == user_id), None)
+
+    def delete_user(self, user_id: str) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE users SET status = 'inactive', updated_at = now() WHERE id = %s",
+                    (user_id,),
+                )
+                return cursor.rowcount > 0
 
 
 def _json_dumps(value: Any) -> str:

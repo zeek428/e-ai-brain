@@ -17,7 +17,10 @@ type ManagementListPageProps<Row extends Record<string, unknown>> = {
   columns: ProColumns<Row>[];
   dataSource: Row[];
   filters: FilterField[];
+  loading?: boolean;
   notice?: ReactNode;
+  onPrimaryAction?: () => void;
+  onReload?: () => void;
   primaryAction?: string;
   rowKey: keyof Row & string;
   tableTitle: string;
@@ -42,7 +45,10 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
   columns,
   dataSource,
   filters,
+  loading = false,
   notice,
+  onPrimaryAction,
+  onReload,
   primaryAction,
   rowKey,
   tableTitle,
@@ -107,12 +113,13 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         dataSource={filteredDataSource}
         dateFormatter="string"
         headerTitle={tableTitle}
+        loading={loading}
         onReset={() => setFilterValues({})}
         onSubmit={(values) => setFilterValues(values)}
         options={{
           density: true,
           fullScreen: true,
-          reload: false,
+          reload: onReload ? () => onReload() : false,
           setting: true,
         }}
         pagination={{
@@ -129,7 +136,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         toolBarRender={() =>
           primaryAction
             ? [
-                <Button icon={<PlusOutlined />} key="primary" type="primary">
+                <Button icon={<PlusOutlined />} key="primary" onClick={onPrimaryAction} type="primary">
                   {primaryAction}
                 </Button>,
               ]

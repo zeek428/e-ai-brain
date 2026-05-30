@@ -240,6 +240,15 @@ class RequirementRequest(BaseModel):
     priority: str = "P1"
 
 
+class RequirementPatchRequest(BaseModel):
+    title: str | None = None
+    product_id: str | None = None
+    version_id: str | None = None
+    module_code: str | None = None
+    content: str | None = None
+    priority: str | None = None
+
+
 class RequirementDecisionRequest(BaseModel):
     comment: str | None = None
     rejection_reason: str | None = None
@@ -263,6 +272,15 @@ class KnowledgeDocumentRequest(BaseModel):
     doc_type: str = "manual"
     permission_roles: list[str] = Field(default_factory=lambda: ["admin"])
     tags: list[str] = Field(default_factory=list)
+
+
+class KnowledgeDocumentPatchRequest(BaseModel):
+    title: str | None = None
+    content: str | None = None
+    doc_type: str | None = None
+    permission_roles: list[str] | None = None
+    tags: list[str] | None = None
+    index_status: str | None = None
 
 
 class KnowledgeSearchRequest(BaseModel):
@@ -761,6 +779,21 @@ def patch_user(
     return envelope(updated, get_trace_id(request))
 
 
+@app.delete("/api/users/{user_id}")
+def delete_user(
+    user_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"admin"})
+    if user_id == user["id"]:
+        raise api_error(409, "RESOURCE_IN_USE", "Current user cannot be deleted")
+    deleted = request.app.state.user_repository.delete_user(user_id)
+    if not deleted:
+        raise api_error(404, "NOT_FOUND", "User not found")
+    return envelope({"deleted": True, "id": user_id}, get_trace_id(request))
+
+
 @app.get("/api/brain-apps")
 def list_brain_apps(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
     items = sorted(BRAIN_APPS.values(), key=lambda item: item["code"])
@@ -849,6 +882,39 @@ def patch_product(
     return envelope(product, get_trace_id(request))
 
 
+@app.delete("/api/products/{product_id}")
+def delete_product(
+    product_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner"})
+    current_store = store(request)
+    if product_id not in current_store.products:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    has_dependencies = any(
+        item["product_id"] == product_id
+        for collection in [
+            current_store.product_versions,
+            current_store.product_modules,
+            current_store.product_git_repositories,
+            current_store.requirements,
+            current_store.bugs,
+        ]
+        for item in collection.values()
+    )
+    if has_dependencies:
+        raise api_error(409, "RESOURCE_IN_USE", "Product still has related records")
+    del current_store.products[product_id]
+    current_store.audit(
+        event_type="product.deleted",
+        actor_id=user["id"],
+        subject_type="product",
+        subject_id=product_id,
+    )
+    return envelope({"deleted": True, "id": product_id}, get_trace_id(request))
+
+
 @app.get("/api/products/{product_id}/versions")
 def list_product_versions(
     product_id: str,
@@ -922,6 +988,31 @@ def patch_product_version(
     return envelope(version, get_trace_id(request))
 
 
+@app.delete("/api/product-versions/{version_id}")
+def delete_product_version(
+    version_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner"})
+    current_store = store(request)
+    version = current_store.product_versions.get(version_id)
+    if version is None:
+        raise api_error(404, "NOT_FOUND", "Product version not found")
+    if any(item["version_id"] == version_id for item in current_store.requirements.values()) or any(
+        item.get("version_id") == version_id for item in current_store.bugs.values()
+    ):
+        raise api_error(409, "RESOURCE_IN_USE", "Product version still has related records")
+    del current_store.product_versions[version_id]
+    current_store.audit(
+        event_type="product_version.deleted",
+        actor_id=user["id"],
+        subject_type="product_version",
+        subject_id=version_id,
+    )
+    return envelope({"deleted": True, "id": version_id}, get_trace_id(request))
+
+
 @app.get("/api/products/{product_id}/modules")
 def list_product_modules(
     product_id: str,
@@ -993,6 +1084,33 @@ def patch_product_module(
         subject_id=module_id,
     )
     return envelope(module, get_trace_id(request))
+
+
+@app.delete("/api/product-modules/{module_id}")
+def delete_product_module(
+    module_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner"})
+    current_store = store(request)
+    module = current_store.product_modules.get(module_id)
+    if module is None:
+        raise api_error(404, "NOT_FOUND", "Product module not found")
+    if any(
+        item["product_id"] == module["product_id"]
+        and item.get("module_code") == module["code"]
+        for item in [*current_store.requirements.values(), *current_store.bugs.values()]
+    ):
+        raise api_error(409, "RESOURCE_IN_USE", "Product module still has related records")
+    del current_store.product_modules[module_id]
+    current_store.audit(
+        event_type="product_module.deleted",
+        actor_id=user["id"],
+        subject_type="product_module",
+        subject_id=module_id,
+    )
+    return envelope({"deleted": True, "id": module_id}, get_trace_id(request))
 
 
 @app.get("/api/products/{product_id}/git-repositories")
@@ -1087,6 +1205,26 @@ def patch_product_git_repository(
     return envelope(_public_git_repository(repository), get_trace_id(request))
 
 
+@app.delete("/api/product-git-repositories/{repo_id}")
+def delete_product_git_repository(
+    repo_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner"})
+    current_store = store(request)
+    if repo_id not in current_store.product_git_repositories:
+        raise api_error(404, "NOT_FOUND", "Product Git repository not found")
+    del current_store.product_git_repositories[repo_id]
+    current_store.audit(
+        event_type="product_git_repository.deleted",
+        actor_id=user["id"],
+        subject_type="product_git_repository",
+        subject_id=repo_id,
+    )
+    return envelope({"deleted": True, "id": repo_id}, get_trace_id(request))
+
+
 @app.get("/api/system/related-systems")
 def list_related_systems(
     request: Request,
@@ -1149,6 +1287,26 @@ def patch_related_system(
         subject_id=system_id,
     )
     return envelope(related_system, get_trace_id(request))
+
+
+@app.delete("/api/system/related-systems/{system_id}")
+def delete_related_system(
+    system_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner"})
+    current_store = store(request)
+    if system_id not in current_store.related_systems:
+        raise api_error(404, "NOT_FOUND", "Related system not found")
+    del current_store.related_systems[system_id]
+    current_store.audit(
+        event_type="related_system.deleted",
+        actor_id=user["id"],
+        subject_type="related_system",
+        subject_id=system_id,
+    )
+    return envelope({"deleted": True, "id": system_id}, get_trace_id(request))
 
 
 @app.get("/api/system/model-gateway-configs")
@@ -1232,6 +1390,26 @@ def patch_model_gateway_config(
         subject_id=config_id,
     )
     return envelope(_public_model_gateway_config(config), get_trace_id(request))
+
+
+@app.delete("/api/system/model-gateway-configs/{config_id}")
+def delete_model_gateway_config(
+    config_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"admin"})
+    current_store = store(request)
+    if config_id not in current_store.model_gateway_configs:
+        raise api_error(404, "NOT_FOUND", "Model gateway config not found")
+    del current_store.model_gateway_configs[config_id]
+    current_store.audit(
+        event_type="model_gateway_config.deleted",
+        actor_id=user["id"],
+        subject_type="model_gateway_config",
+        subject_id=config_id,
+    )
+    return envelope({"deleted": True, "id": config_id}, get_trace_id(request))
 
 
 @app.get("/api/model-gateway/logs")
@@ -1323,6 +1501,62 @@ def get_requirement(
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     return envelope(requirement, get_trace_id(request))
+
+
+@app.patch("/api/requirements/{requirement_id}")
+def patch_requirement(
+    requirement_id: str,
+    request: Request,
+    payload: RequirementPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = store(request)
+    requirement = current_store.requirements.get(requirement_id)
+    if requirement is None:
+        raise api_error(404, "NOT_FOUND", "Requirement not found")
+    if requirement["status"] not in {"pending_approval", "rejected"}:
+        raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement cannot be edited")
+    updates = _payload_updates(payload)
+    next_product_id = updates.get("product_id", requirement["product_id"])
+    next_version_id = updates.get("version_id", requirement["version_id"])
+    if next_product_id not in current_store.products:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    version = current_store.product_versions.get(next_version_id)
+    if version is None or version["product_id"] != next_product_id:
+        raise api_error(404, "NOT_FOUND", "Product version not found")
+    requirement.update(updates)
+    requirement["updated_at"] = datetime.now(UTC).isoformat()
+    current_store.audit(
+        event_type="requirement.updated",
+        actor_id=user["id"],
+        subject_type="requirement",
+        subject_id=requirement_id,
+    )
+    return envelope(requirement, get_trace_id(request))
+
+
+@app.delete("/api/requirements/{requirement_id}")
+def delete_requirement(
+    requirement_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = store(request)
+    requirement = current_store.requirements.get(requirement_id)
+    if requirement is None:
+        raise api_error(404, "NOT_FOUND", "Requirement not found")
+    if requirement.get("task_ids"):
+        raise api_error(409, "RESOURCE_IN_USE", "Requirement already has tasks")
+    del current_store.requirements[requirement_id]
+    current_store.audit(
+        event_type="requirement.deleted",
+        actor_id=user["id"],
+        subject_type="requirement",
+        subject_id=requirement_id,
+    )
+    return envelope({"deleted": True, "id": requirement_id}, get_trace_id(request))
 
 
 @app.post("/api/requirements/{requirement_id}/approve")
@@ -2513,6 +2747,49 @@ def create_knowledge_document(
     return envelope(document, get_trace_id(request))
 
 
+@app.patch("/api/knowledge/documents/{document_id}")
+def patch_knowledge_document(
+    document_id: str,
+    request: Request,
+    payload: KnowledgeDocumentPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"knowledge_owner", "rd_owner"})
+    current_store = store(request)
+    document = current_store.knowledge_documents.get(document_id)
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    document.update(_payload_updates(payload))
+    document["updated_at"] = datetime.now(UTC).isoformat()
+    current_store.audit(
+        event_type="knowledge_document.updated",
+        actor_id=user["id"],
+        subject_type="knowledge_document",
+        subject_id=document_id,
+    )
+    return envelope(document, get_trace_id(request))
+
+
+@app.delete("/api/knowledge/documents/{document_id}")
+def delete_knowledge_document(
+    document_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"knowledge_owner", "rd_owner"})
+    current_store = store(request)
+    if document_id not in current_store.knowledge_documents:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    del current_store.knowledge_documents[document_id]
+    current_store.audit(
+        event_type="knowledge_document.deleted",
+        actor_id=user["id"],
+        subject_type="knowledge_document",
+        subject_id=document_id,
+    )
+    return envelope({"deleted": True, "id": document_id}, get_trace_id(request))
+
+
 @app.post("/api/knowledge/search")
 def search_knowledge(
     request: Request,
@@ -3194,6 +3471,26 @@ def patch_bug(
         },
     )
     return envelope(bug, get_trace_id(request))
+
+
+@app.delete("/api/bugs/{bug_id}")
+def delete_bug(
+    bug_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_bug_write_role(user)
+    current_store = store(request)
+    if bug_id not in current_store.bugs:
+        raise api_error(404, "NOT_FOUND", "Bug not found")
+    del current_store.bugs[bug_id]
+    current_store.audit(
+        event_type="bug.deleted",
+        actor_id=user["id"],
+        subject_type="bug",
+        subject_id=bug_id,
+    )
+    return envelope({"deleted": True, "id": bug_id}, get_trace_id(request))
 
 
 @app.get("/api/devops/gitlab/daily-code-metrics")

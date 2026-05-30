@@ -1,5 +1,6 @@
 export type ProductRecord = {
   code: string;
+  id: string;
   moduleCount: number;
   name: string;
   ownerTeam: string;
@@ -8,19 +9,25 @@ export type ProductRecord = {
 };
 
 export type RequirementRecord = {
+  content?: string;
   id: string;
+  moduleCode?: string;
   owner: string;
   priority: 'P0' | 'P1' | 'P2';
   product: string;
+  productId?: string;
   status: 'approved' | 'closed' | 'draft' | 'pending_approval' | 'rejected' | 'task_created';
   title: string;
   updatedAt: string;
+  versionId?: string;
 };
 
 export type BugRecord = {
   assignee: string;
+  description?: string;
   id: string;
   module: string;
+  productId?: string;
   severity: 'blocker' | 'critical' | 'major' | 'minor';
   source: 'ai_auto_test' | 'manual_test';
   status:
@@ -33,13 +40,17 @@ export type BugRecord = {
     | 'triaged'
     | 'verified';
   title: string;
+  versionId?: string;
 };
 
 export type KnowledgeRecord = {
+  content?: string;
   documentType: string;
   id: string;
   ownerRole: string;
+  permissionRoles?: string[];
   status: 'failed' | 'indexed' | 'pending_index' | 'review_pending';
+  tags?: string[];
   title: string;
   updatedAt: string;
 };
@@ -53,9 +64,19 @@ export type AuditRecord = {
   timestamp: string;
 };
 
+export type UserRecord = {
+  displayName: string;
+  id: string;
+  roles: string[];
+  rolesText: string;
+  status: 'active' | 'inactive';
+  username: string;
+};
+
 export const productRows: ProductRecord[] = [
   {
     code: 'AI-BRAIN',
+    id: 'sample_product_ai_brain',
     moduleCount: 9,
     name: '企业 AI 大脑平台',
     ownerTeam: 'AI Platform',
@@ -64,6 +85,7 @@ export const productRows: ProductRecord[] = [
   },
   {
     code: 'RD-BRAIN',
+    id: 'sample_product_rd_brain',
     moduleCount: 6,
     name: '研发大脑',
     ownerTeam: 'R&D Enablement',
@@ -72,6 +94,7 @@ export const productRows: ProductRecord[] = [
   },
   {
     code: 'OPS-BRAIN',
+    id: 'sample_product_ops_brain',
     moduleCount: 3,
     name: 'IT 运营大脑',
     ownerTeam: 'IT Operations',
@@ -82,6 +105,7 @@ export const productRows: ProductRecord[] = [
 
 export const requirementRows: RequirementRecord[] = [
   {
+    content: '产品详细设计辅助',
     id: 'REQ-20260530-001',
     owner: '产品负责人',
     priority: 'P1',
@@ -91,6 +115,7 @@ export const requirementRows: RequirementRecord[] = [
     updatedAt: '2026-05-30',
   },
   {
+    content: '内部 GitLab MR Code Review',
     id: 'REQ-20260530-002',
     owner: '研发负责人',
     priority: 'P0',
@@ -100,6 +125,7 @@ export const requirementRows: RequirementRecord[] = [
     updatedAt: '2026-05-30',
   },
   {
+    content: '知识沉淀候选审核',
     id: 'REQ-20260529-008',
     owner: '业务接口人',
     priority: 'P2',
@@ -191,5 +217,24 @@ export const auditRows: AuditRecord[] = [
     result: 'success',
     subject: 'local_fallback',
     timestamp: '2026-05-30 11:43',
+  },
+];
+
+export const userRows: UserRecord[] = [
+  {
+    displayName: 'AI Brain Admin',
+    id: 'user_admin',
+    roles: ['admin'],
+    rolesText: 'admin',
+    status: 'active',
+    username: 'admin@example.com',
+  },
+  {
+    displayName: 'AI Brain Reviewer',
+    id: 'user_reviewer',
+    roles: ['reviewer'],
+    rolesText: 'reviewer',
+    status: 'active',
+    username: 'reviewer@example.com',
   },
 ];

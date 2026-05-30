@@ -108,6 +108,23 @@ const routes = [
     ],
   },
   {
+    path: '/system',
+    name: '系统管理',
+    icon: 'SettingOutlined',
+    routes: [
+      {
+        path: '/system',
+        redirect: '/system/users',
+      },
+      {
+        path: '/system/users',
+        name: '用户管理',
+        icon: 'TeamOutlined',
+        component: './Users',
+      },
+    ],
+  },
+  {
     path: '/workspace',
     redirect: '/welcome',
     hideInMenu: true,
@@ -160,6 +177,11 @@ const routes = [
   {
     path: '/audit',
     redirect: '/governance/audit',
+    hideInMenu: true,
+  },
+  {
+    path: '/users',
+    redirect: '/system/users',
     hideInMenu: true,
   },
   {
