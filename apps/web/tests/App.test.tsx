@@ -248,7 +248,7 @@ import LoginPage from '../src/pages/Login';
 import ProductsPage from '../src/pages/Products';
 import RequirementsPage from '../src/pages/Requirements';
 import { apiRequest } from '../src/services/aiBrain';
-import { handleLogout, redirectToLoginIfNeeded } from '../src/app';
+import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
 import TaskCenterPage from '../src/pages/TaskCenter';
 
 describe('AI Brain Ant Design Pro workbench', () => {

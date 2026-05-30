@@ -2,8 +2,7 @@ import { ClusterOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons
 import { ConfigProvider, Dropdown, theme } from 'antd';
 import type { ReactNode } from 'react';
 
-import { getAccessToken, logout } from './services/aiBrain';
-import { navigateTo } from './utils/navigation';
+import { handleLogout, redirectToLoginIfNeeded } from './runtimeAuth';
 import './global.css';
 
 type InitialState = {
@@ -20,24 +19,6 @@ export async function getInitialState(): Promise<InitialState> {
       role: 'admin',
     },
   };
-}
-
-function loginRedirectFor(pathname: string, search: string) {
-  const target = `${pathname}${search}`;
-  return `/login?redirect=${encodeURIComponent(target)}`;
-}
-
-export function redirectToLoginIfNeeded(pathname = window.location.pathname, search = window.location.search) {
-  if (pathname === '/login' || getAccessToken()) {
-    return false;
-  }
-  navigateTo(loginRedirectFor(pathname, search));
-  return true;
-}
-
-export async function handleLogout() {
-  await logout();
-  navigateTo('/login');
 }
 
 export const layout = ({ initialState }: { initialState?: InitialState }) => ({
