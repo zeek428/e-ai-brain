@@ -31,7 +31,7 @@ services:
       - api
 
   postgres:
-    image: ${PGVECTOR_IMAGE:-pgvector/pgvector:0.8.2-pg18-trixie}
+    image: ${PGVECTOR_IMAGE:-e-ai-brain-postgres-pgvector:0.8.2-pg18-trixie}
     container_name: e-ai-brain-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ai_brain}

@@ -27,7 +27,7 @@ AI Brain 是企业 AI 大脑平台项目。v1 以“研发大脑”为样板，M
 
 当前源码已包含 FastAPI + Ant Design Pro 的 MVP 骨架。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 启动，登录账号来自 PostgreSQL `users` 表，业务运行状态写入 `app_state_snapshots` JSONB 快照表；进程内 `MemoryStore` 仅作为测试和显式本地 fallback。数据库升级通过 `apps/api/app/db/migrations/*.sql` 可重复执行脚本完成，不需要也不应清空数据库卷。内部 GitLab 和模型调用当前提供受控本地/mock 路径，用于验证流程、安全边界和审计语义；接入真实 GitLab/API provider 前不得宣称具备生产级真实外部集成。
 
-PostgreSQL 服务默认使用 `pgvector/pgvector:0.8.2-pg18-trixie`，避免已有 PG18 数据卷被错误挂载到 PG16 镜像。网络受限无法拉取官方镜像时，可用 `infra/docker/postgres-pgvector.Dockerfile` 基于本机已有 `postgres:18-alpine` 构建同主版本 fallback 镜像，并通过 `PGVECTOR_IMAGE` 指向它。
+PostgreSQL 服务默认使用本地项目镜像别名 `e-ai-brain-postgres-pgvector:0.8.2-pg18-trixie`，它对应官方 `pgvector/pgvector:0.8.2-pg18-trixie`，方便 Docker Desktop 中和 `e-ai-brain` 容器组一起管理，并避免已有 PG18 数据卷被错误挂载到 PG16 镜像。网络受限无法拉取官方镜像时，可用 `infra/docker/postgres-pgvector.Dockerfile` 基于本机已有 `postgres:18-alpine` 构建同主版本 fallback 镜像，并通过 `PGVECTOR_IMAGE` 指向它。
 
 ```bash
 docker build -f infra/docker/postgres-pgvector.Dockerfile \
