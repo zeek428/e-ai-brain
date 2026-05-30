@@ -1,5 +1,11 @@
 const routes = [
   {
+    path: '/login',
+    component: './Login',
+    hideInMenu: true,
+    layout: false,
+  },
+  {
     path: '/',
     redirect: '/welcome',
   },

@@ -15,6 +15,12 @@ export default defineConfig({
   },
   model: {},
   npmClient: 'npm',
+  proxy: {
+    '/api': {
+      changeOrigin: true,
+      target: 'http://localhost:8000',
+    },
+  },
   request: {},
   routes,
   title: 'AI Brain',

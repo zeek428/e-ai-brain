@@ -244,15 +244,18 @@ import DashboardPage from '../src/pages/Dashboard';
 import DevopsPage from '../src/pages/Devops';
 import InsightsPage from '../src/pages/Insights';
 import KnowledgePage from '../src/pages/Knowledge';
+import LoginPage from '../src/pages/Login';
 import ProductsPage from '../src/pages/Products';
 import RequirementsPage from '../src/pages/Requirements';
 import { apiRequest } from '../src/services/aiBrain';
+import { handleLogout, redirectToLoginIfNeeded } from '../src/app';
 import TaskCenterPage from '../src/pages/TaskCenter';
 
 describe('AI Brain Ant Design Pro workbench', () => {
   afterEach(() => {
     cleanup();
     window.localStorage.clear();
+    window.history.pushState({}, '', '/');
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -260,6 +263,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
   it('registers the MVP workbench entries through Umi route config', () => {
     const routes = readFileSync(join(__dirname, '..', 'config', 'routes.ts'), 'utf8');
 
+    expect(routes).toContain("path: '/login'");
+    expect(routes).toContain("component: './Login'");
+    expect(routes).toContain('layout: false');
     expect(routes).toContain("path: '/welcome'");
     expect(routes).toContain("name: '欢迎'");
     expect(routes).toContain("path: '/tasks'");
@@ -280,6 +286,63 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(routes).toContain("path: '/assets/products'");
     expect(routes).toContain("path: '/governance/audit'");
     expect(routes).toContain("component: './TaskCenter'");
+  });
+
+  it('logs in with the development account and redirects to the requested page', async () => {
+    window.history.pushState({}, '', '/login?redirect=%2Fdelivery%2Fbugs');
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(input).toBe('/api/auth/login');
+      expect(init?.method).toBe('POST');
+      expect(JSON.parse(String(init?.body))).toEqual({
+        password: 'admin123',
+        username: 'admin@example.com',
+      });
+      return new Response(
+        JSON.stringify({
+          data: {
+            access_token: 'token-admin',
+          },
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<LoginPage />);
+    fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(window.localStorage.getItem('ai_brain_access_token')).toBe('token-admin');
+    expect(window.location.pathname).toBe('/delivery/bugs');
+  });
+
+  it('redirects anonymous users to login and clears the session on logout', async () => {
+    expect(redirectToLoginIfNeeded('/delivery/bugs', '?severity=critical')).toBe(true);
+    expect(window.location.pathname).toBe('/login');
+    expect(window.location.search).toBe('?redirect=%2Fdelivery%2Fbugs%3Fseverity%3Dcritical');
+
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    window.history.pushState({}, '', '/delivery/bugs');
+    expect(redirectToLoginIfNeeded('/delivery/bugs')).toBe(false);
+
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(input).toBe('/api/auth/logout');
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      return new Response(JSON.stringify({ data: { success: true } }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await handleLogout();
+
+    expect(window.localStorage.getItem('ai_brain_access_token')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe('/login');
   });
 
   it('renders the task center with Pro page content first screen', () => {

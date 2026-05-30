@@ -1,7 +1,9 @@
-import { ClusterOutlined, UserOutlined } from '@ant-design/icons';
-import { ConfigProvider, theme } from 'antd';
+import { ClusterOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons';
+import { ConfigProvider, Dropdown, theme } from 'antd';
 import type { ReactNode } from 'react';
 
+import { getAccessToken, logout } from './services/aiBrain';
+import { navigateTo } from './utils/navigation';
 import './global.css';
 
 type InitialState = {
@@ -20,10 +22,52 @@ export async function getInitialState(): Promise<InitialState> {
   };
 }
 
+function loginRedirectFor(pathname: string, search: string) {
+  const target = `${pathname}${search}`;
+  return `/login?redirect=${encodeURIComponent(target)}`;
+}
+
+export function redirectToLoginIfNeeded(pathname = window.location.pathname, search = window.location.search) {
+  if (pathname === '/login' || getAccessToken()) {
+    return false;
+  }
+  navigateTo(loginRedirectFor(pathname, search));
+  return true;
+}
+
+export async function handleLogout() {
+  await logout();
+  navigateTo('/login');
+}
+
 export const layout = ({ initialState }: { initialState?: InitialState }) => ({
   actionsRender: () => [<span className="layout-action" key="phase">研发大脑 MVP</span>],
   avatarProps: {
     icon: <UserOutlined />,
+    render: (_props: unknown, dom: ReactNode) => (
+      <Dropdown
+        menu={{
+          items: [
+            {
+              icon: <LogoutOutlined />,
+              key: 'logout',
+              label: '退出登录',
+            },
+          ],
+          onClick: ({ key }) => {
+            if (key === 'logout') {
+              void handleLogout();
+            }
+          },
+        }}
+        placement="bottomRight"
+        trigger={['click']}
+      >
+        <button className="avatar-menu-trigger" type="button">
+          {dom}
+        </button>
+      </Dropdown>
+    ),
     title: initialState?.currentUser?.name ?? 'admin',
   },
   contentStyle: {
@@ -38,6 +82,9 @@ export const layout = ({ initialState }: { initialState?: InitialState }) => ({
   },
   menuFooterRender: () => <span className="menu-footer">AI Brain v1</span>,
   navTheme: 'light',
+  onPageChange: () => {
+    redirectToLoginIfNeeded();
+  },
   siderWidth: 256,
   splitMenus: false,
   title: 'AI Brain',

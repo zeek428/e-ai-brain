@@ -222,6 +222,13 @@ export function saveAccessToken(token: string) {
   globalThis.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
 }
 
+export function clearAccessToken() {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return;
+  }
+  globalThis.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+}
+
 export async function login(username: string, password: string): Promise<LoginResponse> {
   const loginResponse = await apiRequest<LoginResponse>('/api/auth/login', {
     body: { username, password },
@@ -229,6 +236,22 @@ export async function login(username: string, password: string): Promise<LoginRe
   });
   saveAccessToken(loginResponse.access_token);
   return loginResponse;
+}
+
+export async function logout(): Promise<void> {
+  const token = getAccessToken();
+  clearAccessToken();
+  if (!token) {
+    return;
+  }
+  try {
+    await apiRequest<{ success: boolean }>('/api/auth/logout', {
+      method: 'POST',
+      token,
+    });
+  } catch {
+    // Local logout should still complete if the server token is already expired.
+  }
 }
 
 function formatListDate(value?: string) {
