@@ -33,23 +33,27 @@
 
 ### 工程模板约束
 
-前端工程默认基于 Ant Design Pro 模板搭建，模板来源为 `https://github.com/ant-design/ant-design-pro`。使用模板时应保留其后台工作台能力，包括基础布局、路由、菜单、权限入口、请求封装和页面脚手架；同时删除与 AI Brain 无关的示例页面、mock 数据和演示业务逻辑。
+前端工程默认基于 Ant Design Pro 模板搭建，模板来源为 `https://github.com/ant-design/ant-design-pro`。当前 `apps/web` 应按 Umi Max / Ant Design Pro 工程结构运行，保留后台工作台能力，包括基础布局、路由、菜单、权限入口、请求封装和页面脚手架；同时删除与 AI Brain 无关的示例页面、mock 数据和演示业务逻辑。
 
 约束：
 
-- Ant Design Pro 作为工程模板和后台信息架构起点，不作为远程运行时依赖；项目应复制或初始化为本仓库自己的 `apps/web` 工程。
-- 前端路由应围绕首页 IT 团队看板、产品管理、需求管理、任务中心、Bug 管理、研发运营看板、用户洞察/迭代规划、知识中心、审计与运行九个主入口组织。
+- Ant Design Pro 作为工程模板和后台信息架构起点；项目应复制或初始化为本仓库自己的 `apps/web` 工程，并通过 `@umijs/max`、`@ant-design/pro-components`、`antd` 等 npm 依赖独立安装、构建和部署。
+- `apps/web` 启动和构建脚本必须使用 `max dev`、`max build`；不得用 Vite 自建根入口、自定义 sidebar 或纯 `antd` 壳子替代 Ant Design Pro。
+- 前端布局应保留顶部 Header，菜单采用左侧单栏多级模式，不把一级菜单拆到顶部导航。欢迎作为独立一级菜单；任务中心作为一级菜单并承载任务管理二级菜单；需求交付、产品资产、运营治理按业务域组织二级菜单并全部在左侧展开/收起。
 - 保留模板中有价值的 Layout、菜单、权限和请求约定，但业务模型、API 类型和页面内容以本项目 PRD/API 文档为准。
 - 初始化后应在本仓库锁定 package manager、依赖版本、启动脚本、构建脚本和测试脚本。
 - 不保留模板自带示例账号、示例接口、mock 数据作为正式业务逻辑。
 
 ### 组件框架约束
 
-前端默认使用 Ant Design Pro 提供的后台工程结构，并使用 Ant Design 作为 UI 组件框架。新页面、新表单、新列表、新弹窗、新导航和状态展示应优先采用 `antd` 官方组件，并通过 `ConfigProvider` 主题 token、组件 token 和局部 className 完成视觉定制。
+前端默认使用 Ant Design Pro 提供的后台工程结构，并使用 Ant Design 作为 UI 组件框架。新页面、新表单、新列表、新弹窗、新导航和状态展示应优先采用 `@ant-design/pro-components` 与 `antd` 官方组件，并通过 `ConfigProvider` 主题 token、组件 token 和局部 className 完成视觉定制。
 
 约束：
 
 - 默认从 npm 包 `antd` 引入组件，不依赖本机 `/Users/zeek/source/ant-design` 源码目录作为运行时路径。
+- 后台页面容器、查询表格、详情卡片、统计卡片和工作台区块优先使用 `PageContainer`、`ProTable`、`ProCard`、`StatisticCard` 等 ProComponents。
+- 产品、需求、Bug、知识和审计等台账型入口默认参考 Ant Design Pro `list/table-list`，使用 `PageContainer` 面包屑 + `ProTable` 内建查询表单、表格标题、工具栏、分页和行选择能力，并要求查询动作真实更新列表结果。
+- 业务页面默认关闭 `PageContainer` 顶部标题、状态标签和说明文案，避免页面头部重复展示菜单名称、API 状态和长说明；必要上下文应放在表格标题、卡片标题或业务控件内。
 - 本地 Ant Design 工程目录只作为源码参考、样式评估或版本对照来源；`ai-brain` 项目后续应能独立构建、运行和部署。
 - 只有当 Ant Design 没有合适组件，或业务交互需要明显定制时，才新增自定义组件；自定义组件也应尽量复用 Ant Design 的 token、布局节奏和交互状态。
 - 不用全局 CSS 大面积覆盖 Ant Design 内部选择器；优先使用主题 token、组件 props 和小范围样式封装。

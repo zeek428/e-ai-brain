@@ -1,0 +1,146 @@
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #f5f7fb;
+}
+
+.ant-pro-layout .ant-pro-layout-content {
+  padding-block: 0;
+}
+
+.layout-action {
+  color: rgba(15, 23, 42, 0.62);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.menu-footer {
+  display: block;
+  padding: 8px 24px 18px;
+  color: rgba(255, 255, 255, 0.54);
+  font-size: 12px;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 0.9fr);
+  gap: 16px;
+}
+
+.phase-grid {
+  margin-bottom: 16px;
+}
+
+.phase-card {
+  height: 100%;
+}
+
+.phase-card h2,
+.capability-row h3 {
+  margin: 0;
+}
+
+.demo-flow {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #d6e4ff;
+  border-radius: 8px;
+  background: #f0f5ff;
+}
+
+.demo-result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.task-name {
+  display: grid;
+  gap: 2px;
+}
+
+.task-name small,
+.capability-row p {
+  color: rgba(15, 23, 42, 0.56);
+}
+
+.review-card {
+  display: grid;
+  gap: 8px;
+}
+
+.review-card p {
+  margin: 0;
+  color: rgba(15, 23, 42, 0.66);
+}
+
+.welcome-panel {
+  min-height: 280px;
+}
+
+.welcome-panel .ant-pro-card-body {
+  display: grid;
+  place-items: center;
+  padding: 56px 24px;
+  text-align: center;
+}
+
+.welcome-mark {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 18px;
+  place-items: center;
+  border-radius: 16px;
+  background: #e6f4ff;
+  color: #1677ff;
+  font-size: 30px;
+}
+
+.welcome-panel p {
+  margin: 0;
+  color: rgba(15, 23, 42, 0.62);
+}
+
+.capability-list {
+  display: grid;
+  gap: 12px;
+}
+
+.capability-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.capability-row p {
+  margin: 6px 0 0;
+}
+
+@media (max-width: 960px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .demo-result,
+  .capability-row {
+    align-items: flex-start;
+  }
+
+  .capability-row {
+    grid-template-columns: 1fr;
+  }
+}

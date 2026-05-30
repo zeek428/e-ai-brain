@@ -1,0 +1,37 @@
+{
+  "name": "ai-brain-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "PORT=5173 max dev --host 0.0.0.0",
+    "build": "max build",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.2.3",
+    "@ant-design/pro-components": "^3.1.12-0",
+    "antd": "^6.4.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@umijs/max": "^4.6.51",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "jsdom": "^25.0.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.60.0",
+    "vitest": "^2.1.0"
+  }
+}

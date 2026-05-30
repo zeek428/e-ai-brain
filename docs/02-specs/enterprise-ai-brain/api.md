@@ -149,6 +149,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | System | GET | `/api/system/model-gateway-configs` | 模型网关配置列表。 |
 | System | POST | `/api/system/model-gateway-configs` | 创建模型网关配置。 |
 | System | PATCH | `/api/system/model-gateway-configs/{config_id}` | 更新模型网关配置。 |
+| System | GET | `/api/model-gateway/logs` | 查询模型调用元数据日志，不返回完整 prompt 或输出。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/approve` | 审批通过需求。 |
@@ -426,6 +427,14 @@ PATCH /api/system/model-gateway-configs/{config_id}
 ```
 
 响应不会返回明文 `api_key`，只返回 `api_key_configured` 和 `api_key_masked`。
+
+模型调用日志：
+
+```http
+GET /api/model-gateway/logs?ai_task_id=task_001&status=succeeded
+```
+
+模型调用日志只返回 `provider`、`model`、`purpose`、`tokens`、`latency_ms`、`status`、`error`、`created_at` 等元数据，不返回完整 prompt、完整模型输出或密钥。
 
 ### 需求管理
 

@@ -10,6 +10,7 @@ AI Brain 是企业 AI 大脑平台项目。v1 以“研发大脑”为样板，M
 |------|------|
 | [CLAUDE.md](CLAUDE.md) | 面向 AI 编码助手的文档阅读入口。 |
 | [01-prd/enterprise-ai-brain/prd.md](01-prd/enterprise-ai-brain/prd.md) | 项目级 PRD，描述产品目标、范围、用户故事和验收标准。 |
+| [01-prd/enterprise-ai-brain/solution-overview.html](01-prd/enterprise-ai-brain/solution-overview.html) | 面向管理层和非技术人员的 HTML 方案说明，包含业务价值、AI 赋能机制、核心闭环、总体架构图、企业级扩展架构、组件可更替性、项目风险、实施路线、阶段边界和治理要点。 |
 | [02-specs/enterprise-ai-brain/spec.md](02-specs/enterprise-ai-brain/spec.md) | 项目级技术规格，描述模块、数据、状态、风险和测试策略。 |
 | [02-specs/enterprise-ai-brain/api.md](02-specs/enterprise-ai-brain/api.md) | 项目级 API 文档，描述接口契约和错误码。 |
 | [02-specs/enterprise-ai-brain/test-case.md](02-specs/enterprise-ai-brain/test-case.md) | 项目级测试用例，映射 PRD 验收标准。 |

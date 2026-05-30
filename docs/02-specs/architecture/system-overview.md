@@ -47,7 +47,7 @@ FastAPI 模块化单体
 
 | 模块 | 职责 | 技术栈 |
 |------|------|--------|
-| web | 首页 IT 团队看板、产品管理、需求管理、任务中心、Bug 管理、研发运营看板、用户洞察/迭代规划、知识中心、审计与运行 | React + TypeScript + Ant Design Pro |
+| web | 欢迎页、任务中心/任务管理、产品管理、需求管理、Bug 管理、研发运营看板、用户洞察/迭代规划、知识中心、审计与运行 | React + TypeScript + Ant Design Pro |
 | api | JSON API、认证、产品配置、需求审批、任务管理、Bug 管理、研发运营指标和模块化领域逻辑 | FastAPI + Python |
 | product_config | 产品、版本、模块、Git 资源、内部 GitLab 项目绑定和相关系统主数据 | PostgreSQL |
 | requirement | 需求台账、审批、驳回、关闭和审批后生成 AI 任务 | PostgreSQL |

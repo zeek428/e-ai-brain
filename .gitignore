@@ -14,14 +14,25 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.uv-cache/
 .venv/
 venv/
+*.egg-info/
 
 # Node
 node_modules/
 dist/
 build/
 coverage/
+.umi/
+src/.umi/
+src/.umi-production/
+**/src/.umi/
+**/src/.umi-production/
+*.tsbuildinfo
 
 # Logs
 *.log
+
+# Local assistant workspace
+.claude/

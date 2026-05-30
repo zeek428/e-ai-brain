@@ -1,0 +1,2031 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>企业 AI 大脑平台 v1 方案说明</title>
+    <style>
+      :root {
+        --paper: #f2f5f1;
+        --paper-strong: #ffffff;
+        --ink: #19202a;
+        --ink-soft: #4e5967;
+        --line: #d3dbd4;
+        --line-strong: #879783;
+        --blue: #285a86;
+        --blue-soft: #dceaf5;
+        --teal: #2f756f;
+        --teal-soft: #dcece8;
+        --amber: #b36b1d;
+        --amber-soft: #f3e4cd;
+        --red: #aa463c;
+        --red-soft: #f0d7d2;
+        --green: #4c7c45;
+        --green-soft: #deead9;
+        --violet: #5f5794;
+        --violet-soft: #e5e2f3;
+        --shadow: 0 18px 40px rgba(41, 35, 25, 0.12);
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          linear-gradient(rgba(25, 32, 42, 0.032) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(25, 32, 42, 0.032) 1px, transparent 1px),
+          var(--paper);
+        background-size: 28px 28px;
+        font-family:
+          "PingFang SC",
+          "Microsoft YaHei",
+          "Noto Sans CJK SC",
+          "Source Han Sans SC",
+          sans-serif;
+        line-height: 1.65;
+      }
+
+      a {
+        color: var(--blue);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+
+      code {
+        border: 1px solid rgba(25, 32, 42, 0.12);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.72);
+        color: #244862;
+        font-family:
+          "SFMono-Regular",
+          "Cascadia Code",
+          "Menlo",
+          monospace;
+        font-size: 0.92em;
+        padding: 1px 5px;
+      }
+
+      a:focus-visible,
+      button:focus-visible {
+        outline: 3px solid rgba(179, 107, 29, 0.45);
+        outline-offset: 3px;
+      }
+
+      .skip-link {
+        position: absolute;
+        left: 18px;
+        top: 12px;
+        z-index: 40;
+        transform: translateY(-160%);
+        border-radius: 999px;
+        background: var(--ink);
+        color: #fff;
+        font-weight: 800;
+        padding: 8px 14px;
+        text-decoration: none;
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .page {
+        min-height: 100vh;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 12px clamp(18px, 4vw, 58px);
+        border-bottom: 1px solid rgba(25, 32, 42, 0.12);
+        background: rgba(242, 245, 241, 0.92);
+        backdrop-filter: blur(12px);
+      }
+
+      .brand {
+        display: flex;
+        flex-direction: column;
+        min-width: 190px;
+      }
+
+      .brand strong {
+        font-size: 15px;
+        letter-spacing: 0;
+      }
+
+      .brand span {
+        color: var(--ink-soft);
+        font-size: 12px;
+      }
+
+      .nav {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .nav a,
+      .print-button {
+        display: inline-flex;
+        min-height: 34px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(25, 32, 42, 0.16);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--ink);
+        font-size: 13px;
+        padding: 6px 12px;
+        text-decoration: none;
+        cursor: pointer;
+      }
+
+      .print-button {
+        font: inherit;
+      }
+
+      .hero {
+        display: grid;
+        min-height: 82vh;
+        grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+        gap: clamp(26px, 4vw, 60px);
+        align-items: end;
+        padding: clamp(48px, 7vw, 96px) clamp(18px, 6vw, 96px) 34px;
+        background:
+          radial-gradient(circle at 12% 18%, rgba(220, 236, 232, 0.92), transparent 28%),
+          linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(242, 245, 241, 0.88) 56%, rgba(220, 234, 245, 0.86)),
+          var(--paper);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 20px;
+        color: var(--amber);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .eyebrow::before {
+        content: "";
+        display: inline-block;
+        width: 34px;
+        height: 2px;
+        background: var(--amber);
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.18;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        max-width: 940px;
+        margin: 0;
+        font-family:
+          "Songti SC",
+          "STSong",
+          "Noto Serif CJK SC",
+          serif;
+        font-size: clamp(44px, 6.8vw, 92px);
+        font-weight: 800;
+      }
+
+      h2 {
+        margin: 0 0 18px;
+        font-size: clamp(30px, 4.2vw, 56px);
+        font-family:
+          "Songti SC",
+          "STSong",
+          "Noto Serif CJK SC",
+          serif;
+      }
+
+      h3 {
+        margin: 0 0 10px;
+        font-size: 20px;
+      }
+
+      p {
+        margin: 0;
+      }
+
+      .hero-lede {
+        max-width: 760px;
+        margin-top: 26px;
+        color: var(--ink-soft);
+        font-size: clamp(18px, 2vw, 23px);
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 30px;
+      }
+
+      .button {
+        display: inline-flex;
+        min-height: 44px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--ink);
+        border-radius: 999px;
+        background: var(--ink);
+        color: #fff;
+        font-weight: 700;
+        padding: 10px 18px;
+        text-decoration: none;
+      }
+
+      .button.secondary {
+        background: transparent;
+        color: var(--ink);
+      }
+
+      .hero-panel {
+        border: 1px solid rgba(25, 32, 42, 0.2);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: var(--shadow);
+        padding: 22px;
+      }
+
+      .hero-panel h2 {
+        margin-bottom: 10px;
+        font-family: inherit;
+        font-size: 22px;
+      }
+
+      .signal-list {
+        display: grid;
+        gap: 14px;
+        margin-top: 18px;
+      }
+
+      .signal-item {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+      }
+
+      .signal-icon {
+        display: grid;
+        width: 42px;
+        height: 42px;
+        place-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 50%;
+        color: var(--blue);
+        font-weight: 800;
+      }
+
+      .signal-item strong {
+        display: block;
+      }
+
+      .signal-item span {
+        color: var(--ink-soft);
+        font-size: 14px;
+      }
+
+      .hero-proof {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 22px;
+      }
+
+      .proof-tile {
+        min-height: 92px;
+        border: 1px solid rgba(25, 32, 42, 0.12);
+        border-radius: var(--radius);
+        background: rgba(242, 245, 241, 0.82);
+        padding: 12px;
+      }
+
+      .proof-tile strong {
+        display: block;
+        font-size: 22px;
+        line-height: 1.1;
+      }
+
+      .proof-tile span {
+        color: var(--ink-soft);
+        font-size: 13px;
+      }
+
+      .content-band {
+        padding: clamp(54px, 7vw, 92px) clamp(18px, 6vw, 96px);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .content-band.light {
+        background: rgba(255, 255, 255, 0.64);
+      }
+
+      .content-band.dark {
+        color: #fffaf1;
+        background: #17202b;
+      }
+
+      .content-band.dark p,
+      .content-band.dark .section-kicker,
+      .content-band.dark .muted {
+        color: rgba(255, 250, 241, 0.74);
+      }
+
+      .content-band.dark .section-title::before {
+        background: #d6a156;
+      }
+
+      .section-heading {
+        display: grid;
+        grid-template-columns: minmax(0, 0.8fr) minmax(260px, 0.55fr);
+        gap: 28px;
+        align-items: end;
+        margin-bottom: 32px;
+      }
+
+      .section-kicker {
+        margin-bottom: 12px;
+        color: var(--amber);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .section-title {
+        display: inline-block;
+        position: relative;
+      }
+
+      .section-title::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -7px;
+        height: 4px;
+        background: var(--amber-soft);
+      }
+
+      .section-copy {
+        color: var(--ink-soft);
+        font-size: 17px;
+      }
+
+      .callout {
+        border-left: 6px solid var(--blue);
+        border-radius: var(--radius);
+        background: rgba(220, 234, 245, 0.65);
+        color: var(--ink);
+        margin-top: 22px;
+        padding: 18px;
+      }
+
+      .callout strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+      }
+
+      .grid.four {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .grid.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .grid.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .card {
+        border: 1px solid rgba(25, 32, 42, 0.14);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.78);
+        padding: 20px;
+      }
+
+      .card h3 {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .card h3::before {
+        content: "";
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--teal);
+      }
+
+      .card p,
+      .card li {
+        color: var(--ink-soft);
+      }
+
+      .metric {
+        display: flex;
+        min-height: 180px;
+        flex-direction: column;
+        justify-content: space-between;
+        border-top: 5px solid var(--blue);
+      }
+
+      .metric:nth-child(2) {
+        border-top-color: var(--teal);
+      }
+
+      .metric:nth-child(3) {
+        border-top-color: var(--amber);
+      }
+
+      .metric:nth-child(4) {
+        border-top-color: var(--red);
+      }
+
+      .metric:nth-child(5) {
+        border-top-color: var(--green);
+      }
+
+      .metric:nth-child(6) {
+        border-top-color: var(--violet);
+      }
+
+      .metric strong {
+        display: block;
+        font-size: clamp(34px, 5vw, 56px);
+        line-height: 1;
+      }
+
+      .metric span {
+        color: var(--ink-soft);
+      }
+
+      .flow-strip {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 24px;
+      }
+
+      .flow-step {
+        position: relative;
+        min-height: 150px;
+        border: 1px solid rgba(255, 250, 241, 0.24);
+        border-radius: var(--radius);
+        background: rgba(255, 250, 241, 0.06);
+        padding: 16px;
+      }
+
+      .flow-step::after {
+        content: "→";
+        position: absolute;
+        top: 50%;
+        right: -12px;
+        color: #d6a156;
+        font-weight: 800;
+        transform: translateY(-50%);
+      }
+
+      .flow-step:last-child::after {
+        content: "";
+      }
+
+      .flow-step span {
+        display: block;
+        margin-bottom: 18px;
+        color: #d6a156;
+        font-weight: 800;
+      }
+
+      .flow-step strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .flow-step p {
+        font-size: 14px;
+      }
+
+      .ai-engines {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .engine-card {
+        position: relative;
+        min-height: 220px;
+        overflow: hidden;
+        border: 1px solid rgba(25, 32, 42, 0.14);
+        border-radius: var(--radius);
+        background: #fff;
+        padding: 20px;
+      }
+
+      .engine-card::before {
+        content: attr(data-index);
+        position: absolute;
+        right: 16px;
+        top: 10px;
+        color: rgba(25, 32, 42, 0.08);
+        font-size: 58px;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .engine-card h3 {
+        max-width: 260px;
+      }
+
+      .engine-card p {
+        color: var(--ink-soft);
+      }
+
+      .engine-card ul {
+        margin: 14px 0 0;
+        padding-left: 18px;
+      }
+
+      .engine-card li {
+        margin-top: 6px;
+        color: var(--ink-soft);
+      }
+
+      .capability-map {
+        display: grid;
+        grid-template-columns: 0.8fr 1.2fr;
+        gap: 18px;
+        margin-top: 18px;
+      }
+
+      .map-panel {
+        border: 1px solid rgba(25, 32, 42, 0.14);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.8);
+        padding: 18px;
+      }
+
+      .map-panel strong {
+        display: block;
+        margin-bottom: 10px;
+      }
+
+      .map-panel p,
+      .map-panel li {
+        color: var(--ink-soft);
+      }
+
+      .mini-flow {
+        display: grid;
+        gap: 8px;
+      }
+
+      .mini-flow span {
+        border: 1px solid rgba(25, 32, 42, 0.12);
+        border-radius: 999px;
+        background: var(--teal-soft);
+        color: #24514d;
+        font-size: 13px;
+        font-weight: 800;
+        padding: 8px 12px;
+      }
+
+      .architecture {
+        overflow: hidden;
+        border: 1px solid rgba(25, 32, 42, 0.18);
+        border-radius: var(--radius);
+        background: var(--paper-strong);
+        box-shadow: var(--shadow);
+      }
+
+      .architecture-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 18px 22px;
+        border-bottom: 1px solid var(--line);
+        background: #1b2733;
+        color: #fffaf1;
+      }
+
+      .architecture-header strong {
+        font-size: 18px;
+      }
+
+      .architecture-header span {
+        color: rgba(255, 250, 241, 0.72);
+        font-size: 14px;
+      }
+
+      .arch-grid {
+        display: grid;
+        grid-template-columns: 0.75fr 1fr 1.4fr 1fr;
+        gap: 18px;
+        padding: 24px;
+      }
+
+      .arch-column {
+        position: relative;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+
+      .arch-column:not(:last-child)::after {
+        content: "→";
+        position: absolute;
+        top: 48%;
+        right: -18px;
+        color: var(--amber);
+        font-size: 24px;
+        font-weight: 800;
+      }
+
+      .arch-title {
+        color: var(--ink-soft);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .arch-box {
+        border: 1px solid rgba(25, 32, 42, 0.15);
+        border-radius: var(--radius);
+        background: #fff;
+        padding: 14px;
+      }
+
+      .arch-box.major {
+        border-top: 5px solid var(--blue);
+      }
+
+      .arch-box.teal {
+        border-top: 5px solid var(--teal);
+      }
+
+      .arch-box.amber {
+        border-top: 5px solid var(--amber);
+      }
+
+      .arch-box.red {
+        border-top: 5px solid var(--red);
+      }
+
+      .arch-box strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .arch-box span {
+        color: var(--ink-soft);
+        font-size: 13px;
+      }
+
+      .module-cloud {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .module-pill {
+        border: 1px solid rgba(25, 32, 42, 0.13);
+        border-radius: 999px;
+        background: var(--blue-soft);
+        color: #244862;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 5px 9px;
+      }
+
+      .module-pill:nth-child(3n + 2) {
+        background: var(--teal-soft);
+        color: #24514d;
+      }
+
+      .module-pill:nth-child(3n) {
+        background: var(--amber-soft);
+        color: #6a451e;
+      }
+
+      .architecture-foot {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        padding: 0 24px 24px;
+      }
+
+      .foot-chip {
+        border: 1px solid rgba(25, 32, 42, 0.12);
+        border-radius: var(--radius);
+        background: rgba(220, 236, 232, 0.58);
+        padding: 12px;
+        font-size: 13px;
+      }
+
+      .roadmap {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .slice {
+        position: relative;
+        border: 1px solid rgba(25, 32, 42, 0.15);
+        border-radius: var(--radius);
+        background: #fff;
+        padding: 22px;
+      }
+
+      .slice::before {
+        content: "";
+        display: block;
+        width: 100%;
+        height: 6px;
+        margin: -22px -22px 20px;
+        padding: 0 22px;
+        background: var(--blue);
+      }
+
+      .slice:nth-child(2)::before {
+        background: var(--teal);
+      }
+
+      .slice:nth-child(3)::before {
+        background: var(--amber);
+      }
+
+      .slice ul,
+      .card ul {
+        margin: 12px 0 0;
+        padding-left: 18px;
+      }
+
+      .slice li {
+        margin-top: 8px;
+        color: var(--ink-soft);
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+        border: 1px solid rgba(25, 32, 42, 0.14);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 780px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 14px 16px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: #1b2733;
+        color: #fffaf1;
+        font-size: 14px;
+      }
+
+      td {
+        color: var(--ink-soft);
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      caption {
+        color: var(--ink-soft);
+        font-size: 13px;
+        padding: 12px 16px;
+        text-align: left;
+      }
+
+      .phase-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .phase-card {
+        border: 1px solid rgba(25, 32, 42, 0.14);
+        border-radius: var(--radius);
+        background: #fff;
+        padding: 18px;
+      }
+
+      .phase-card strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .phase-card span {
+        display: inline-flex;
+        border-radius: 999px;
+        background: var(--violet-soft);
+        color: #413a70;
+        font-size: 12px;
+        font-weight: 800;
+        margin-bottom: 12px;
+        padding: 5px 9px;
+      }
+
+      .phase-card p {
+        color: var(--ink-soft);
+      }
+
+      .ladder {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .ladder-step {
+        position: relative;
+        min-height: 240px;
+        border: 1px solid rgba(25, 32, 42, 0.15);
+        border-radius: var(--radius);
+        background: #fff;
+        padding: 20px;
+      }
+
+      .ladder-step::before {
+        content: attr(data-step);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 54px;
+        min-height: 34px;
+        border-radius: 999px;
+        background: var(--blue-soft);
+        color: #244862;
+        font-weight: 900;
+        margin-bottom: 18px;
+      }
+
+      .ladder-step:nth-child(2)::before {
+        background: var(--teal-soft);
+        color: #24514d;
+      }
+
+      .ladder-step:nth-child(3)::before {
+        background: var(--violet-soft);
+        color: #413a70;
+      }
+
+      .ladder-step p,
+      .ladder-step li {
+        color: var(--ink-soft);
+      }
+
+      .ladder-step ul {
+        margin: 12px 0 0;
+        padding-left: 18px;
+      }
+
+      .replaceable {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 900;
+        padding: 4px 9px;
+      }
+
+      .replaceable.high {
+        background: var(--green-soft);
+        color: #345e30;
+      }
+
+      .replaceable.medium {
+        background: var(--amber-soft);
+        color: #6a451e;
+      }
+
+      .replaceable.low {
+        background: var(--red-soft);
+        color: #7a3029;
+      }
+
+      .risk-board {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .risk-card {
+        border: 1px solid rgba(25, 32, 42, 0.15);
+        border-radius: var(--radius);
+        background: #fff;
+        padding: 18px;
+      }
+
+      .risk-card strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .risk-card span {
+        display: inline-flex;
+        border-radius: 999px;
+        background: var(--red-soft);
+        color: #7a3029;
+        font-size: 12px;
+        font-weight: 900;
+        margin-bottom: 12px;
+        padding: 5px 9px;
+      }
+
+      .risk-card:nth-child(2n) span {
+        background: var(--amber-soft);
+        color: #6a451e;
+      }
+
+      .risk-card:nth-child(3n) span {
+        background: var(--blue-soft);
+        color: #244862;
+      }
+
+      .risk-card p {
+        color: var(--ink-soft);
+      }
+
+      .risk-card em {
+        color: var(--ink);
+        font-style: normal;
+        font-weight: 800;
+      }
+
+      .decision-panel {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+
+      .decision {
+        border-left: 6px solid var(--teal);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.08);
+        padding: 18px;
+      }
+
+      .decision:nth-child(2) {
+        border-left-color: var(--amber);
+      }
+
+      .decision:nth-child(3) {
+        border-left-color: #7aa4c7;
+      }
+
+      .decision:nth-child(4) {
+        border-left-color: #d18378;
+      }
+
+      .source-list {
+        display: grid;
+        gap: 10px;
+        margin: 18px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .source-list li {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid rgba(25, 32, 42, 0.12);
+        padding-bottom: 10px;
+      }
+
+      .source-list span {
+        color: var(--ink-soft);
+      }
+
+      .muted {
+        color: var(--ink-soft);
+      }
+
+      .tag-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .tag {
+        border: 1px solid rgba(25, 32, 42, 0.14);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.68);
+        color: var(--ink-soft);
+        font-size: 13px;
+        font-weight: 700;
+        padding: 6px 10px;
+      }
+
+      .print-note {
+        margin-top: 26px;
+        color: var(--ink-soft);
+        font-size: 13px;
+      }
+
+      @media (max-width: 1060px) {
+        .hero,
+        .section-heading,
+        .decision-panel {
+          grid-template-columns: 1fr;
+        }
+
+        .grid.four,
+        .grid.three,
+        .architecture-foot,
+        .ai-engines,
+        .phase-grid,
+        .ladder,
+        .risk-board,
+        .capability-map {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .flow-strip,
+        .roadmap,
+        .arch-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .flow-step::after,
+        .arch-column::after,
+        .arch-column:not(:last-child)::after {
+          display: none;
+        }
+      }
+
+      @media (max-width: 680px) {
+        .topbar {
+          position: static;
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .nav {
+          justify-content: flex-start;
+        }
+
+        .hero {
+          min-height: auto;
+          padding-top: 46px;
+        }
+
+        .grid.four,
+        .grid.three,
+        .grid.two,
+        .architecture-foot,
+        .module-cloud,
+        .ai-engines,
+        .phase-grid,
+        .ladder,
+        .risk-board,
+        .capability-map,
+        .hero-proof {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-actions {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .button {
+          width: 100%;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        .topbar,
+        .hero-actions,
+        .print-note {
+          display: none;
+        }
+
+        .hero {
+          min-height: auto;
+        }
+
+        .content-band,
+        .hero {
+          break-inside: avoid;
+          padding: 28px;
+        }
+
+        .card,
+        .slice,
+        .architecture {
+          break-inside: avoid;
+          box-shadow: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到正文</a>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">
+          <strong>AI Brain v1 方案说明</strong>
+          <span>面向管理层与非技术读者</span>
+        </div>
+        <nav class="nav" aria-label="页面导航">
+          <a href="#value">业务价值</a>
+          <a href="#flow">核心闭环</a>
+          <a href="#ai-enablement">AI 赋能</a>
+          <a href="#architecture">总体架构</a>
+          <a href="#enterprise-scale">扩展架构</a>
+          <a href="#roadmap">实施路线</a>
+          <a href="#replaceability">组件替换</a>
+          <a href="#risk-review">项目风险</a>
+          <a href="#phase-boundary">阶段边界</a>
+          <a href="#governance">治理与风控</a>
+          <button class="print-button" type="button" onclick="window.print()">打印 / 导出 PDF</button>
+        </nav>
+      </header>
+
+      <main id="main">
+        <section class="hero">
+          <div>
+            <p class="eyebrow">Enterprise AI Brain</p>
+            <h1>企业 AI 大脑平台 v1 方案说明</h1>
+            <p class="hero-lede">
+              以“产品研发大脑”为首个样板，把企业内部零散的需求、知识、代码、评审、测试、发布和反馈串成一个可审计、可复用、可逐步扩展到多业务模块大脑和企业总AI大脑的 AI 协作闭环。
+            </p>
+            <div class="hero-actions">
+              <a class="button" href="#architecture">查看总体架构图</a>
+              <a class="button secondary" href="#roadmap">查看 MVP 交付切片</a>
+            </div>
+          </div>
+
+          <aside class="hero-panel" aria-label="管理层摘要">
+            <h2>管理层先看摘要</h2>
+            <p class="muted">
+              v1 不追求一次性做成完整平台，而是先用研发场景证明 AI 能缩短评审链路、固化知识资产、降低研发风险。
+            </p>
+            <div class="hero-proof" aria-label="核心结论指标">
+              <div class="proof-tile">
+                <strong>3 段</strong>
+                <span>MVP-A/B/C 分批验收，降低一次性交付风险。</span>
+              </div>
+              <div class="proof-tile">
+                <strong>6 类</strong>
+                <span>成功指标覆盖效率、采纳率、风险有效率和审计。</span>
+              </div>
+              <div class="proof-tile">
+                <strong>3 层</strong>
+                <span>业务大脑、平台能力、企业总AI大脑逐级扩展。</span>
+              </div>
+            </div>
+            <div class="signal-list">
+              <div class="signal-item">
+                <div class="signal-icon">1</div>
+                <div>
+                  <strong>从“问答工具”升级为“业务闭环”</strong>
+                  <span>需求审批、AI 产出、人工确认、归档、知识沉淀都有状态和责任人。</span>
+                </div>
+              </div>
+              <div class="signal-item">
+                <div class="signal-icon">2</div>
+                <div>
+                  <strong>先做最小可验收 MVP</strong>
+                  <span>MVP-A/B/C 分步验证，避免一次性把平台愿景做成高风险大工程。</span>
+                </div>
+              </div>
+              <div class="signal-item">
+                <div class="signal-icon">3</div>
+                <div>
+                  <strong>关键 AI 动作必须人工确认</strong>
+                  <span>高影响产出不自动生效，所有写操作和关键动作保留审计追踪。</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="content-band light" id="value">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">01 / 业务价值</p>
+              <h2 class="section-title">先解决研发信息断层，再沉淀企业级能力</h2>
+            </div>
+            <p class="section-copy">
+              当前企业内部的需求、方案、代码、测试、发布、线上日志、用户反馈和经验知识分散在多个系统里。AI Brain 的价值不是替代人决策，而是把这些事实变成可引用、可确认、可追踪、可跨业务复用的工作流资产。
+            </p>
+          </div>
+
+          <div class="grid four">
+            <article class="card">
+              <h3>减少重复沟通</h3>
+              <p>需求审批后自动进入产品详细设计和技术方案生成，统一上下文，减少“每个环节重新解释一次”的损耗。</p>
+            </article>
+            <article class="card">
+              <h3>提升评审效率</h3>
+              <p>AI 先生成可评审草案和代码 Review 报告，负责人把时间用在判断、修正和确认上。</p>
+            </article>
+            <article class="card">
+              <h3>沉淀组织知识</h3>
+              <p>已确认的方案、评审结论和经验进入知识沉淀候选，经人工审核后成为后续任务的检索依据。</p>
+            </article>
+            <article class="card">
+              <h3>建立责任闭环</h3>
+              <p>每次审批、确认、回写、导出和关键 AI 动作都可审计，管理层能追踪风险来自哪里。</p>
+            </article>
+          </div>
+
+          <div class="callout">
+            <strong>管理层判断重点</strong>
+            <p>这份方案的重点不是“接入一个大模型”，而是把 AI 放进可管理的研发流程：输入有来源、过程有状态、输出有人确认、沉淀有审核、风险有审计。</p>
+          </div>
+        </section>
+
+        <section class="content-band dark" id="flow">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">02 / 核心闭环</p>
+              <h2 class="section-title">从需求到知识沉淀的一条主线</h2>
+            </div>
+            <p class="section-copy">
+              v1 MVP 重点跑通研发大脑的最小闭环：登录、产品配置、需求审批、产品详细设计、技术方案、内部 GitLab MR 代码 Review、人工确认、内部归档、知识沉淀和审计。
+            </p>
+          </div>
+
+          <div class="flow-strip" aria-label="核心业务流程">
+            <div class="flow-step">
+              <span>Step 1</span>
+              <strong>提交与审批需求</strong>
+              <p>产品负责人提交背景、目标、约束和产品版本，审批通过后进入 AI 任务阶段。</p>
+            </div>
+            <div class="flow-step">
+              <span>Step 2</span>
+              <strong>生成产品详细设计</strong>
+              <p>AI 结合产品上下文和知识库输出详细 PRD、页面字段、业务规则和验收标准。</p>
+            </div>
+            <div class="flow-step">
+              <span>Step 3</span>
+              <strong>生成技术方案</strong>
+              <p>研发负责人确认模块边界、接口、数据模型、风险依赖和研发拆解。</p>
+            </div>
+            <div class="flow-step">
+              <span>Step 4</span>
+              <strong>内部代码 Review</strong>
+              <p>基于授权 GitLab MR 元信息和 diff 快照生成 AI Brain 内部 Review 报告。</p>
+            </div>
+            <div class="flow-step">
+              <span>Step 5</span>
+              <strong>人工确认与归档</strong>
+              <p>高影响产出必须由对应负责人采纳、修改后采纳、驳回或要求补充信息。</p>
+            </div>
+            <div class="flow-step">
+              <span>Step 6</span>
+              <strong>导出与知识沉淀</strong>
+              <p>生成 Markdown、模拟 Issue、知识沉淀候选，并把全过程写入审计。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-band light" id="ai-enablement">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">03 / AI 赋能机制</p>
+              <h2 class="section-title">AI 不是旁路助手，而是嵌入研发流程的能力层</h2>
+            </div>
+            <p class="section-copy">
+              管理层最需要看清的是：AI Brain 的 AI 能力并非单次问答，而是围绕“上下文、编排、模型、评审、长期记忆、追溯”形成可治理的闭环。
+            </p>
+          </div>
+
+          <div class="ai-engines">
+            <article class="engine-card" data-index="01">
+              <h3>上下文装配引擎</h3>
+              <p>把产品、版本、模块、需求快照、技术方案和 GitLab MR 快照组成任务输入，降低 AI 胡乱发挥的空间。</p>
+              <ul>
+                <li>需求与产品上下文固化为快照。</li>
+                <li>MR diff 只读拉取并形成不可变输入。</li>
+              </ul>
+            </article>
+            <article class="engine-card" data-index="02">
+              <h3>知识检索与长期记忆</h3>
+              <p>PostgreSQL + pgvector 负责权限过滤后的企业知识检索，GBrain 作为长期记忆和知识图谱补充层。</p>
+              <ul>
+                <li>先过滤权限，再返回知识切片。</li>
+                <li>长期经验可跨任务复用，但不替代业务数据库。</li>
+              </ul>
+            </article>
+            <article class="engine-card" data-index="03">
+              <h3>LangGraph 工作流编排</h3>
+              <p>让 AI 任务具备状态、检查点、中断和恢复能力，信息不足时可要求补充，关键产出等待人工确认。</p>
+              <ul>
+                <li>支持 waiting_more_info 和 waiting_review。</li>
+                <li>人确认后再继续后续动作。</li>
+              </ul>
+            </article>
+            <article class="engine-card" data-index="04">
+              <h3>模型网关</h3>
+              <p>所有聊天和 embedding 调用统一走 OpenAI-compatible 模型网关，便于替换模型、限流、记录元数据和隐藏密钥。</p>
+              <ul>
+                <li>业务模块不直连供应商 SDK。</li>
+                <li>日志默认不保存完整 prompt 和输出。</li>
+              </ul>
+            </article>
+            <article class="engine-card" data-index="05">
+              <h3>代码 Review 执行器</h3>
+              <p>v1 MVP 用可插拔 code-review 执行器生成结构化报告，报告只归档在 AI Brain 内部，不改变 GitLab 状态。</p>
+              <ul>
+                <li>输出摘要、风险等级、问题清单和修改建议。</li>
+                <li>失败、超时、diff 超限均有可操作错误语义。</li>
+              </ul>
+            </article>
+            <article class="engine-card" data-index="06">
+              <h3>研发上下文图谱</h3>
+              <p>把需求、设计、方案、Review、Bug、发布、线上日志、用户反馈和知识沉淀串成关系网，支撑影响分析。</p>
+              <ul>
+                <li>从任一主体追溯上游依据和下游影响。</li>
+                <li>为后续 AI 迭代规划提供证据链。</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="capability-map">
+            <div class="map-panel">
+              <strong>AI 赋能的边界</strong>
+              <p>AI 负责生成建议、聚合证据、识别风险和沉淀候选；业务负责人负责确认、修改后采纳或驳回。</p>
+            </div>
+            <div class="map-panel">
+              <strong>一次任务中的 AI 能力链</strong>
+              <div class="mini-flow" aria-label="AI 能力链">
+                <span>结构化输入</span>
+                <span>权限过滤检索</span>
+                <span>长期记忆补充</span>
+                <span>模型生成</span>
+                <span>人工确认</span>
+                <span>归档 / 导出 / 知识沉淀</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-band" id="architecture">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">04 / 总体架构图</p>
+              <h2 class="section-title">一个工作台，一个业务中台，多类企业知识源</h2>
+            </div>
+            <p class="section-copy">
+              架构采用“前端工作台 + FastAPI 模块化单体 + 数据与 AI 基础设施”的分层方式。这样既能快速落地 MVP，又保留未来拆分服务和接入更多业务大脑的空间。
+            </p>
+          </div>
+
+          <div class="architecture" role="img" aria-label="AI Brain 总体架构图">
+            <div class="architecture-header">
+              <strong>AI Brain v1 总体架构</strong>
+              <span>React 工作台 → FastAPI 模块化单体 → PostgreSQL / Redis / GBrain / 模型网关 / 企业系统</span>
+            </div>
+
+            <div class="arch-grid">
+              <div class="arch-column">
+                <div class="arch-title">使用者</div>
+                <div class="arch-box major">
+                  <strong>业务与管理角色</strong>
+                  <span>产品负责人、研发负责人、Reviewer、知识维护者、平台管理员、管理层查看者；后续可扩展到更多业务负责人。</span>
+                </div>
+                <div class="arch-box">
+                  <strong>管理层视角</strong>
+                  <span>看产品进展、风险、知识复用、审计与后续迭代建议。</span>
+                </div>
+              </div>
+
+              <div class="arch-column">
+                <div class="arch-title">前端体验层</div>
+                <div class="arch-box teal">
+                  <strong>React + TypeScript 工作台</strong>
+                  <span>基于 Ant Design Pro，提供九个主入口。</span>
+                </div>
+                <div class="module-cloud">
+                  <span class="module-pill">首页看板</span>
+                  <span class="module-pill">产品管理</span>
+                  <span class="module-pill">需求管理</span>
+                  <span class="module-pill">任务中心</span>
+                  <span class="module-pill">Bug 管理</span>
+                  <span class="module-pill">知识中心</span>
+                  <span class="module-pill">研发运营</span>
+                  <span class="module-pill">审计运行</span>
+                </div>
+              </div>
+
+              <div class="arch-column">
+                <div class="arch-title">业务与 AI 编排层</div>
+                <div class="arch-box amber">
+                  <strong>FastAPI 模块化单体</strong>
+                  <span>统一承载认证、产品、需求、任务、评审、知识、看板、审计和导出。</span>
+                </div>
+                <div class="module-cloud">
+                  <span class="module-pill">auth</span>
+                  <span class="module-pill">product_config</span>
+                  <span class="module-pill">requirement</span>
+                  <span class="module-pill">ai_task</span>
+                  <span class="module-pill">graph_runtime</span>
+                  <span class="module-pill">review</span>
+                  <span class="module-pill">knowledge</span>
+                  <span class="module-pill">model_gateway</span>
+                  <span class="module-pill">gitlab_review</span>
+                  <span class="module-pill">code_review_executor</span>
+                  <span class="module-pill">lifecycle_context</span>
+                  <span class="module-pill">audit</span>
+                </div>
+              </div>
+
+              <div class="arch-column">
+                <div class="arch-title">数据、AI 与企业系统</div>
+                <div class="arch-box major">
+                  <strong>PostgreSQL + pgvector</strong>
+                  <span>业务数据、知识切片、权限过滤和向量检索。</span>
+                </div>
+                <div class="arch-box teal">
+                  <strong>Redis</strong>
+                  <span>缓存、临时状态和后续队列化基础。</span>
+                </div>
+                <div class="arch-box amber">
+                  <strong>GBrain + 模型网关</strong>
+                  <span>长期记忆、知识图谱、模型调用和 embedding 统一入口。</span>
+                </div>
+                <div class="arch-box red">
+                  <strong>企业系统只读接入优先</strong>
+                  <span>GitLab MR、Jenkins、线上日志、用户反馈，v1 MVP 代码 Review 不回写 GitLab。</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="architecture-foot">
+              <div class="foot-chip"><strong>人机协同:</strong> AI 生成建议，人确认后继续。</div>
+              <div class="foot-chip"><strong>可审计:</strong> 每个关键动作关联 trace_id 和 audit_events。</div>
+              <div class="foot-chip"><strong>可治理:</strong> 知识检索先做权限过滤，再返回结果。</div>
+              <div class="foot-chip"><strong>可扩展:</strong> v1 模块化单体，后续可拆 worker 或服务。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-band light" id="enterprise-scale">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">05 / 企业级扩展架构</p>
+              <h2 class="section-title">从研发大脑，扩展到多业务大脑和企业总AI大脑</h2>
+            </div>
+            <p class="section-copy">
+              本方案当前以研发大脑 <code>rd_brain</code> 做样板，但底层设计必须支持未来接入客服、销售、供应链、运营、财务、人力等多业务模块大脑，并在企业总AI大脑层形成跨域知识、风险和决策视图。
+            </p>
+          </div>
+
+          <div class="ladder">
+            <article class="ladder-step" data-step="L1">
+              <h3>业务大脑层</h3>
+              <p>每个业务域拥有自己的流程、权限、任务类型、知识源和确认人，避免所有业务被硬塞进研发任务模型。</p>
+              <ul>
+                <li>研发大脑：需求、设计、Review、测试、发布。</li>
+                <li>客服大脑：工单、FAQ、质检、升级处理。</li>
+                <li>销售大脑：线索、商机、方案、报价和合同风险。</li>
+              </ul>
+            </article>
+            <article class="ladder-step" data-step="L2">
+              <h3>平台公共能力层</h3>
+              <p>认证、模型网关、知识检索、工作流、审计、集成适配器和指标看板作为共享底座，业务大脑只配置差异。</p>
+              <ul>
+                <li><code>brain_app</code> 决定业务大脑配置和可用任务。</li>
+                <li>统一权限、trace_id、审计和人工确认机制。</li>
+                <li>模型、知识和外部系统通过边界接口接入。</li>
+              </ul>
+            </article>
+            <article class="ladder-step" data-step="L3">
+              <h3>企业总AI大脑层</h3>
+              <p>面向管理层聚合跨业务证据链，形成企业级知识图谱、风险雷达和经营建议，但不直接替代各业务负责人决策。</p>
+              <ul>
+                <li>跨域检索：从需求、客户反馈、质量、运营和财务数据中找证据。</li>
+                <li>跨域风险：识别交付延期、客户流失、成本异常和知识缺口。</li>
+                <li>跨域决策：生成建议后仍由责任人确认。</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="callout">
+            <strong>扩展性修复结论</strong>
+            <p>方案需要明确：v1 的研发大脑不是一次性定制系统，而是企业 AI 大脑平台的第一个业务插件。后续扩展应优先复用平台公共能力，再为每个业务大脑配置自己的任务、知识源、审批链和指标。</p>
+          </div>
+        </section>
+
+        <section class="content-band light">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">06 / 业务主体</p>
+              <h2 class="section-title">不是一个聊天窗口，而是一组可运营对象</h2>
+            </div>
+            <p class="section-copy">
+              文档明确要求产品、需求、AI 任务、知识、Bug、研发运营、用户洞察和研发上下文都成为独立主体或独立视图。这样平台才能被管理、被验收、被追责。
+            </p>
+          </div>
+
+          <div class="grid four">
+            <article class="card">
+              <h3>产品</h3>
+              <p>承载版本、模块、Git 资源和相关系统，是后续需求、任务、知识和看板归属的基础。</p>
+            </article>
+            <article class="card">
+              <h3>需求</h3>
+              <p>保存业务事实、目标、约束和审批结论，审批通过后生成正式 AI 任务。</p>
+            </article>
+            <article class="card">
+              <h3>AI 任务</h3>
+              <p>覆盖产品详细设计、技术方案、代码 Review，并在后续扩展测试、发布和上线后分析。</p>
+            </article>
+            <article class="card">
+              <h3>知识中心</h3>
+              <p>支持导入、索引、权限过滤检索和知识沉淀审核，让 AI 依据可治理知识工作。</p>
+            </article>
+            <article class="card">
+              <h3>GitLab Review</h3>
+              <p>v1 MVP 读取授权 MR 元信息和 diff 快照，生成内部 Review 报告，不回写 GitLab。</p>
+            </article>
+            <article class="card">
+              <h3>研发上下文图谱</h3>
+              <p>把需求、设计、方案、代码、Review、Bug、发布、日志、反馈和知识串联起来。</p>
+            </article>
+            <article class="card">
+              <h3>运营看板</h3>
+              <p>面向 IT 管理者聚合需求、研发进展、代码质量、Bug、发布、线上健康和用户反馈。</p>
+            </article>
+            <article class="card">
+              <h3>审计与运行</h3>
+              <p>查询写操作、AI 高影响动作、运行状态和失败原因，保障管理透明度。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-band" id="roadmap">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">07 / 实施路线</p>
+              <h2 class="section-title">MVP 拆成三段验收，降低交付风险</h2>
+            </div>
+            <p class="section-copy">
+              三个切片全部通过后，才宣称 v1 MVP 完整完成。这样可以先证明主流程，再接入代码 Review，最后补齐知识治理和模拟回写。
+            </p>
+          </div>
+
+          <div class="roadmap">
+            <article class="slice">
+              <h3>MVP-A 基础 + GitLab 输入闭环</h3>
+              <p class="muted">验证“需求到可确认方案”的主链路，并具备内部 GitLab 只读输入。</p>
+              <ul>
+                <li>本地账号、角色和产品配置。</li>
+                <li>需求创建、审批、产品详细设计、技术方案。</li>
+                <li>内部 GitLab MR 预览和 diff 快照。</li>
+                <li>人工确认、Markdown 导出、基础审计和健康检查。</li>
+              </ul>
+            </article>
+            <article class="slice">
+              <h3>MVP-B GitLab Review 闭环</h3>
+              <p class="muted">验证内部 MR 代码 Review 报告的可审计闭环。</p>
+              <ul>
+                <li>创建 <code>code_review</code> 任务。</li>
+                <li>调用可插拔 code-review 执行器。</li>
+                <li>生成结构化 Review 报告。</li>
+                <li>人工确认、内部归档、失败处理和 diff 超限处理。</li>
+              </ul>
+            </article>
+            <article class="slice">
+              <h3>MVP-C 知识与治理闭环</h3>
+              <p class="muted">验证产出可沉淀、可检索、可治理。</p>
+              <ul>
+                <li>知识文档导入、索引状态和权限过滤检索。</li>
+                <li>知识沉淀候选审核。</li>
+                <li>模拟 Issue 幂等生成。</li>
+                <li>主体级审计和后续阶段占位入口。</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-band light" id="replaceability">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">08 / 技术组件可更替性</p>
+              <h2 class="section-title">关键组件要有边界，避免平台被单一技术锁死</h2>
+            </div>
+            <p class="section-copy">
+              面向企业长期演进，技术选型不能只看当前能跑通，还要看替换成本。v1 应把模型、工作流、知识、执行器和外部系统接入都做成可治理边界。
+            </p>
+          </div>
+
+          <div class="table-wrap" role="region" aria-label="技术组件可更替性表">
+            <table>
+              <caption>可更替性按“替换难度、必须稳定的接口、近期策略”评估。</caption>
+              <thead>
+                <tr>
+                  <th>组件</th>
+                  <th>当前选择</th>
+                  <th>可更替等级</th>
+                  <th>稳定边界</th>
+                  <th>替换风险与策略</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>模型服务</td>
+                  <td>OpenAI-compatible 模型网关</td>
+                  <td><span class="replaceable high">高</span></td>
+                  <td>chat、embedding、tokens、latency、error 元数据。</td>
+                  <td>供应商可替换，但 prompt、schema 和评测集必须沉淀，否则换模型会导致输出质量漂移。</td>
+                </tr>
+                <tr>
+                  <td>AI 工作流</td>
+                  <td>LangGraph</td>
+                  <td><span class="replaceable medium">中</span></td>
+                  <td>graph_run、checkpoint、interrupt、resume 和任务状态机。</td>
+                  <td>编排引擎可替换，但状态语义必须独立于 LangGraph API，避免业务状态被框架锁定。</td>
+                </tr>
+                <tr>
+                  <td>知识检索</td>
+                  <td>PostgreSQL + pgvector</td>
+                  <td><span class="replaceable medium">中</span></td>
+                  <td>document、chunk、embedding、permission_scope、source citation。</td>
+                  <td>可替换为专用向量库，但权限过滤必须下推，不能让向量库绕过企业权限。</td>
+                </tr>
+                <tr>
+                  <td>长期记忆</td>
+                  <td>GBrain</td>
+                  <td><span class="replaceable high">高</span></td>
+                  <td>long_memory.search、answer synthesis、graph traversal、source references。</td>
+                  <td>应保持可选接入，未配置时不阻塞 MVP；接入结果必须保留来源和权限校验。</td>
+                </tr>
+                <tr>
+                  <td>代码 Review 执行器</td>
+                  <td>Claude Code code-review skill 适配器</td>
+                  <td><span class="replaceable high">高</span></td>
+                  <td>executor input、finding schema、risk_level、retryable error。</td>
+                  <td>执行器可替换为内部模型或第三方工具，但不得接收 GitLab token 或调用写接口。</td>
+                </tr>
+                <tr>
+                  <td>前端工作台</td>
+                  <td>React + TypeScript + Ant Design Pro</td>
+                  <td><span class="replaceable low">低</span></td>
+                  <td>API DTO、权限菜单、页面入口和状态展示契约。</td>
+                  <td>UI 框架替换成本高，近期应稳定 Ant Design token 和页面信息架构。</td>
+                </tr>
+                <tr>
+                  <td>部署形态</td>
+                  <td>Docker Compose</td>
+                  <td><span class="replaceable medium">中</span></td>
+                  <td>健康检查、配置、数据卷、迁移、备份和日志。</td>
+                  <td>未来迁移 Kubernetes 前先标准化配置和运维脚本，避免环境差异造成演示成功、部署失败。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="content-band" id="risk-review">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">09 / 项目风险重点 Review</p>
+              <h2 class="section-title">平台风险不只来自技术，也来自范围、数据和组织协同</h2>
+            </div>
+            <p class="section-copy">
+              本轮 review 发现，方案需要把项目风险显性化，否则管理层容易只看到 AI 价值，低估数据治理、模型质量、集成边界和组织采纳难度。
+            </p>
+          </div>
+
+          <div class="risk-board">
+            <article class="risk-card">
+              <span>范围风险</span>
+              <strong>MVP 被平台愿景吞没</strong>
+              <p><em>应对：</em>多业务大脑、总脑、运营看板和真实回写都很诱人，但 MVP 必须锁定研发闭环；其余能力用占位、接口和路线图承接。</p>
+            </article>
+            <article class="risk-card">
+              <span>数据风险</span>
+              <strong>知识和外部数据不可用或不可归属</strong>
+              <p><em>应对：</em>知识缺失、权限不清、GitLab/Jenkins/日志无法映射产品时，AI 结论必须标识证据缺口，不能默认无风险。</p>
+            </article>
+            <article class="risk-card">
+              <span>质量风险</span>
+              <strong>模型输出波动影响采纳率</strong>
+              <p><em>应对：</em>需要结构化 schema、评测样例、人工确认和采纳率指标，低于目标时先优化输入上下文，而不是盲目扩任务类型。</p>
+            </article>
+            <article class="risk-card">
+              <span>集成风险</span>
+              <strong>外部系统副作用不可控</strong>
+              <p><em>应对：</em>GitLab 一期只读、不回写；模拟 Issue 先行。真实写回必须等审计、权限、幂等和回滚策略成熟后再开放。</p>
+            </article>
+            <article class="risk-card">
+              <span>安全风险</span>
+              <strong>提示词、输出、凭据或用户数据泄漏</strong>
+              <p><em>应对：</em>模型日志默认只记录元数据；GitLab token 不给执行器；用户使用和反馈进入 AI 前要聚合、脱敏和限长。</p>
+            </article>
+            <article class="risk-card">
+              <span>组织风险</span>
+              <strong>责任人不确认，闭环跑不起来</strong>
+              <p><em>应对：</em>AI Brain 的价值依赖产品、研发、知识维护者和管理员共同使用；需要用待办、SLA 和审计看板推动确认节奏。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-band light" id="phase-boundary">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">10 / 阶段边界</p>
+              <h2 class="section-title">哪些能力现在交付，哪些能力后续扩展</h2>
+            </div>
+            <p class="section-copy">
+              这张边界表用于统一管理层预期：MVP 先完成可演示、可审计的研发闭环；研发执行、运营数据、用户洞察和完整 Bug 生命周期按 v1.1/v1.2 逐步增强。
+            </p>
+          </div>
+
+          <div class="phase-grid">
+            <article class="phase-card">
+              <span>v1 MVP</span>
+              <strong>研发大脑核心闭环</strong>
+              <p>产品配置、需求审批、产品详细设计、技术方案、内部 GitLab MR Review、人工确认、知识沉淀、模拟 Issue、审计和导出。</p>
+            </article>
+            <article class="phase-card">
+              <span>v1.1</span>
+              <strong>研发任务扩展</strong>
+              <p>开发计划、自动化测试任务、AI 自动测试 Bug 建议和代码 Review 执行器扩展能力。</p>
+            </article>
+            <article class="phase-card">
+              <span>v1.2</span>
+              <strong>研发运营与用户洞察</strong>
+              <p>GitLab 指标、Jenkins 发布、线上日志、用户使用数据、用户反馈、Bug 管理闭环、首页 IT 团队看板和 AI 迭代规划。</p>
+            </article>
+            <article class="phase-card">
+              <span>暂不承诺</span>
+              <strong>外部系统强副作用</strong>
+              <p>真实 GitLab 评论/审批回写、自动修改代码、自动部署、多租户治理和绕过人工确认的自动排期不作为 MVP 目标。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-band light">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">11 / 成功指标</p>
+              <h2 class="section-title">MVP 不是“能点”，而是要证明有效</h2>
+            </div>
+            <p class="section-copy">
+              PRD 已定义 MVP 需要跟踪的业务指标。管理层验收时建议关注这些指标，而不是只看功能清单是否完成。
+            </p>
+          </div>
+
+          <div class="grid three">
+            <article class="card metric">
+              <div>
+                <strong>30%+</strong>
+                <span>需求到可评审产品详细设计耗时下降，或单样例流程不超过 30 分钟。</span>
+              </div>
+              <p>衡量 AI 是否真正缩短前期评审链路。</p>
+            </article>
+            <article class="card metric">
+              <div>
+                <strong>≥60%</strong>
+                <span>技术方案首次采纳或修改后采纳比例。</span>
+              </div>
+              <p>衡量 AI 输出是否达到研发负责人可用标准。</p>
+            </article>
+            <article class="card metric">
+              <div>
+                <strong>≥50%</strong>
+                <span>Code Review 报告采纳率和高风险问题有效率。</span>
+              </div>
+              <p>衡量 AI 对代码质量和风险判断的实际贡献。</p>
+            </article>
+            <article class="card metric">
+              <div>
+                <strong>100%</strong>
+                <span>演示路径关键写操作和高影响 AI 动作可审计。</span>
+              </div>
+              <p>衡量平台是否满足企业级管理和追踪要求。</p>
+            </article>
+            <article class="card metric">
+              <div>
+                <strong>可追踪</strong>
+                <span>知识沉淀在后续任务检索中是否被引用。</span>
+              </div>
+              <p>衡量企业知识是否从一次性输出变成复用资产。</p>
+            </article>
+            <article class="card metric">
+              <div>
+                <strong>可下钻</strong>
+                <span>从需求追溯到设计、方案、Review、沉淀和审计。</span>
+              </div>
+              <p>衡量研发上下文图谱是否能支持管理定位。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-band" id="governance">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">12 / 治理与风控</p>
+              <h2 class="section-title">AI 可以提建议，但不能绕过责任人</h2>
+            </div>
+            <p class="section-copy">
+              方案把“人工确认、权限过滤、审计、模型网关、只读外部集成”作为基础机制，避免 AI 系统一上线就带来不可控副作用。
+            </p>
+          </div>
+
+          <div class="table-wrap" role="region" aria-label="治理与风控表">
+            <table>
+              <caption>治理机制用于约束 AI 输入、输出、权限、外部系统副作用和审计责任。</caption>
+              <thead>
+                <tr>
+                  <th>治理点</th>
+                  <th>管理层含义</th>
+                  <th>v1 设计</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>人工确认</td>
+                  <td>AI 不直接替代关键业务决策。</td>
+                  <td>产品详细设计、技术方案、代码 Review、知识沉淀等关键产出都需要负责人确认。</td>
+                </tr>
+                <tr>
+                  <td>权限过滤</td>
+                  <td>员工只能检索自己有权访问的知识。</td>
+                  <td>知识检索必须在数据库查询层完成权限过滤后再返回内容。</td>
+                </tr>
+                <tr>
+                  <td>审计追踪</td>
+                  <td>出了问题可以定位谁在何时做了什么。</td>
+                  <td>写操作、高影响 AI 动作、采集失败和确认结果写入 audit_events。</td>
+                </tr>
+                <tr>
+                  <td>模型网关</td>
+                  <td>模型供应商可替换，调用可治理。</td>
+                  <td>业务模块不直连模型 SDK，统一走 OpenAI-compatible 模型网关。</td>
+                </tr>
+                <tr>
+                  <td>GitLab 只读边界</td>
+                  <td>先获得 Review 价值，不影响真实代码平台状态。</td>
+                  <td>v1 MVP 只读取授权 MR 并归档内部报告，不回写评论、审批状态或合并结果。</td>
+                </tr>
+                <tr>
+                  <td>知识沉淀审核</td>
+                  <td>企业知识库不被未经确认的 AI 内容污染。</td>
+                  <td>AI 输出先进入候选队列，知识维护者审核后才进入正式知识库。</td>
+                </tr>
+                <tr>
+                  <td>隐私与脱敏</td>
+                  <td>研发数据、用户反馈和凭据不能被无边界传给模型。</td>
+                  <td>GitLab token 不传给执行器；用户使用和反馈默认聚合或脱敏后进入 AI 规划。</td>
+                </tr>
+                <tr>
+                  <td>结构化输出</td>
+                  <td>AI 输出要能被系统校验、比较和归档。</td>
+                  <td>Review 报告、任务产出和迭代建议按 schema 校验，失败可重试或要求补充信息。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="content-band dark">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">13 / 管理决策建议</p>
+              <h2 class="section-title">先让研发闭环跑起来，再扩展运营智能</h2>
+            </div>
+            <p class="section-copy">
+              当前文档已经把 v1 MVP、v1.1 和 v1.2 分层。建议管理层按阶段批准资源和验收口径，避免把未来平台愿景全部压到 MVP。
+            </p>
+          </div>
+
+          <div class="decision-panel">
+            <article class="decision">
+              <h3>建议一：MVP 只承诺研发大脑最小闭环</h3>
+              <p>把验收锁定在需求、设计、方案、GitLab Review、人工确认、归档、知识沉淀和审计，先证明价值。</p>
+            </article>
+            <article class="decision">
+              <h3>建议二：把 Code Review 作为早期亮点</h3>
+              <p>内部 MR Review 能直接触达研发质量痛点，但保持“不回写 GitLab”的安全边界。</p>
+            </article>
+            <article class="decision">
+              <h3>建议三：把知识治理作为平台护城河</h3>
+              <p>AI 输出经过确认和审核后沉淀，后续任务才能越来越懂企业上下文。</p>
+            </article>
+            <article class="decision">
+              <h3>建议四：v1.2 再扩展运营看板与用户洞察</h3>
+              <p>GitLab 指标、Jenkins、线上日志、用户使用和迭代规划建议更适合在 MVP 闭环稳定后接入。</p>
+            </article>
+            <article class="decision">
+              <h3>建议五：以平台能力支撑多业务大脑</h3>
+              <p>不要为每个业务重新造一套 AI 系统；优先沉淀 <code>brain_app</code>、工作流、知识、模型网关、审计和集成适配器。</p>
+            </article>
+            <article class="decision">
+              <h3>建议六：组件替换先定接口再换实现</h3>
+              <p>模型、执行器、检索和部署都可以演进，但必须先稳定 DTO、状态机、审计字段和评测口径。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-band light">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">14 / 文档来源</p>
+              <h2 class="section-title">本说明基于项目级源文档生成</h2>
+            </div>
+            <p class="section-copy">
+              如后续实现与方案发生差异，应优先更新项目级 PRD、技术规格、API 和测试用例，再同步本说明页。
+            </p>
+          </div>
+
+          <ul class="source-list">
+            <li>
+              <a href="prd.md">企业 AI 大脑平台 PRD</a>
+              <span>产品目标、范围、角色、MVP-A/B/C、成功指标。</span>
+            </li>
+            <li>
+              <a href="../../02-specs/enterprise-ai-brain/spec.md">企业 AI 大脑平台技术规格</a>
+              <span>模块边界、数据模型、状态机、架构和治理设计。</span>
+            </li>
+            <li>
+              <a href="../../02-specs/enterprise-ai-brain/api.md">企业 AI 大脑平台 API 文档</a>
+              <span>接口契约、认证、错误语义、角色要求和 trace_id 约定。</span>
+            </li>
+            <li>
+              <a href="../../02-specs/enterprise-ai-brain/test-case.md">企业 AI 大脑平台测试用例</a>
+              <span>MVP 验收切片、P0/P1 用例和阶段测试口径。</span>
+            </li>
+            <li>
+              <a href="../../02-specs/architecture/system-overview.md">系统概览</a>
+              <span>系统架构、数据流和外部依赖摘要。</span>
+            </li>
+            <li>
+              <a href="../../02-specs/architecture/tech-stack.md">技术栈选型</a>
+              <span>React、FastAPI、LangGraph、PostgreSQL、Redis、GBrain 和 Docker Compose 选择依据。</span>
+            </li>
+          </ul>
+
+          <div class="tag-row" aria-label="关键词">
+            <span class="tag">研发大脑</span>
+            <span class="tag">MVP-A/B/C</span>
+            <span class="tag">人机协同</span>
+            <span class="tag">知识沉淀</span>
+            <span class="tag">可审计</span>
+            <span class="tag">GitLab 只读 Review</span>
+            <span class="tag">长期记忆</span>
+            <span class="tag">多业务大脑</span>
+            <span class="tag">企业总AI大脑</span>
+            <span class="tag">组件可更替</span>
+            <span class="tag">项目风险</span>
+          </div>
+
+          <p class="print-note">最后更新：2026-05-30。页面为自包含静态 HTML，可直接打开、打印或导出为 PDF。</p>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
