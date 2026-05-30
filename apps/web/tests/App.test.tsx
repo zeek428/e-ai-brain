@@ -273,7 +273,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(routes).toContain("path: '/tasks/management'");
     expect(routes).toContain("name: '任务管理'");
     expect(routes).toContain("redirect: '/tasks/management'");
-    expect(routes).toContain("redirect: '/welcome'");
+    expect(routes).toContain("redirect: '/login'");
     expect(routes).not.toContain("name: '工作台'");
     expect(routes).toContain("name: '需求交付'");
     expect(routes).toContain("name: '产品资产'");
@@ -317,6 +317,15 @@ describe('AI Brain Ant Design Pro workbench', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(window.localStorage.getItem('ai_brain_access_token')).toBe('token-admin');
     expect(window.location.pathname).toBe('/delivery/bugs');
+  });
+
+  it('sends already authenticated users away from the login page', async () => {
+    window.history.pushState({}, '', '/login');
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+
+    render(<LoginPage />);
+
+    await waitFor(() => expect(window.location.pathname).toBe('/welcome'));
   });
 
   it('redirects anonymous users to login and clears the session on logout', async () => {

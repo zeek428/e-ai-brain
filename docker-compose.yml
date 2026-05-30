@@ -22,7 +22,7 @@ services:
       context: .
       dockerfile: infra/docker/web.Dockerfile
     environment:
-      UMI_APP_API_BASE_URL: ${UMI_APP_API_BASE_URL:-http://localhost:8000}
+      API_PROXY_TARGET: ${API_PROXY_TARGET:-http://api:8000}
     ports:
       - "5173:5173"
     depends_on:

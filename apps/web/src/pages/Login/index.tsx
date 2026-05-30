@@ -1,8 +1,8 @@
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { Alert, Button, Card, Form, Input, Typography } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import { ApiRequestError, login } from '../../services/aiBrain';
+import { ApiRequestError, getAccessToken, login } from '../../services/aiBrain';
 import { navigateTo } from '../../utils/navigation';
 
 type LoginFormValues = {
@@ -22,6 +22,12 @@ function getRedirectPath() {
 export default function LoginPage() {
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (getAccessToken()) {
+      navigateTo(getRedirectPath());
+    }
+  }, []);
 
   const handleFinish = async (values: LoginFormValues) => {
     setError(undefined);
