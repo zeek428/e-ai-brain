@@ -8,6 +8,20 @@ export type ProductRecord = {
   version: string;
 };
 
+export type ProductVersionOption = {
+  code: string;
+  id: string;
+  name: string;
+  status: string;
+};
+
+export type ProductContextOption = {
+  code: string;
+  id: string;
+  name: string;
+  versions: ProductVersionOption[];
+};
+
 export type RequirementRecord = {
   content?: string;
   id: string;

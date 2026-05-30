@@ -2,7 +2,9 @@ import type {
   AuditRecord,
   BugRecord,
   KnowledgeRecord,
+  ProductContextOption,
   ProductRecord,
+  ProductVersionOption,
   RequirementRecord,
   UserRecord,
 } from '../data/management';
@@ -109,6 +111,14 @@ type ProductListItem = {
   status?: string;
 };
 
+type ProductVersionListItem = {
+  code?: string;
+  id: string;
+  name: string;
+  product_id: string;
+  status?: string;
+};
+
 export type ProductMutationPayload = {
   code?: string;
   description?: string;
@@ -125,6 +135,15 @@ export type RequirementMutationPayload = {
   product_id?: string;
   title?: string;
   version_id?: string;
+};
+
+export type ProductVersionMutationPayload = {
+  code?: string;
+  description?: string;
+  name: string;
+  release_date?: string;
+  start_date?: string;
+  status?: string;
 };
 
 export type BugMutationPayload = {
@@ -423,6 +442,17 @@ function firstKnownValue(item: FlexibleListItem, keys: string[]) {
 export async function fetchManagementProducts(): Promise<ProductRecord[]> {
   const token = requireAccessToken();
   const products = await apiRequest<ListResponse<ProductListItem>>('/api/products', { token });
+  const versionsByProductId = new Map(
+    await Promise.all(
+      products.items.map(async (product) => {
+        const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
+          `/api/products/${product.id}/versions`,
+          { token },
+        );
+        return [product.id, versions.items] as const;
+      }),
+    ),
+  );
 
   return products.items.map((product) => ({
     code: product.code ?? product.id,
@@ -431,7 +461,11 @@ export async function fetchManagementProducts(): Promise<ProductRecord[]> {
     name: product.name,
     ownerTeam: product.owner_team ?? '-',
     status: normalizeProductStatus(product.status),
-    version: product.current_version_name ?? '未配置',
+    version:
+      product.current_version_name ??
+      versionsByProductId.get(product.id)?.find((version) => version.status === 'active')?.name ??
+      versionsByProductId.get(product.id)?.[0]?.name ??
+      '未配置',
   }));
 }
 
@@ -459,6 +493,50 @@ export async function deleteManagementProduct(productId: string) {
     method: 'DELETE',
     token,
   });
+}
+
+function mapProductVersionOption(version: ProductVersionListItem): ProductVersionOption {
+  return {
+    code: version.code ?? version.id,
+    id: version.id,
+    name: version.name,
+    status: version.status ?? '-',
+  };
+}
+
+export async function createProductVersion(
+  productId: string,
+  payload: ProductVersionMutationPayload,
+) {
+  const token = requireAccessToken();
+  return apiRequest<ProductVersionListItem>(`/api/products/${productId}/versions`, {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function fetchProductContextOptions(): Promise<ProductContextOption[]> {
+  const token = requireAccessToken();
+  const products = await apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', {
+    token,
+  });
+
+  return Promise.all(
+    products.items.map(async (product) => {
+      const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
+        `/api/products/${product.id}/versions?active_only=true`,
+        { token },
+      );
+
+      return {
+        code: product.code ?? product.id,
+        id: product.id,
+        name: product.name,
+        versions: versions.items.map(mapProductVersionOption),
+      };
+    }),
+  );
 }
 
 export async function fetchManagementUsers(): Promise<UserRecord[]> {

@@ -519,8 +519,15 @@ describe('AI Brain Ant Design Pro workbench', () => {
   });
 
   it('filters management table rows from query conditions', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () =>
-      new Response(
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
+      if (path.includes('/versions')) {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      return new Response(
         JSON.stringify({
           data: {
             items: [
@@ -546,8 +553,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
           headers: { 'Content-Type': 'application/json' },
           status: 200,
         },
-      ),
-    );
+      );
+    });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.stubGlobal('fetch', fetchMock);
 
@@ -573,9 +580,13 @@ describe('AI Brain Ant Design Pro workbench', () => {
         status: 200,
       });
     let resolveProducts: (response: Response) => void = () => {};
+    let resolveActiveProducts: (response: Response) => void = () => {};
     let resolveRequirements: (response: Response) => void = () => {};
     const productsPromise = new Promise<Response>((resolve) => {
       resolveProducts = resolve;
+    });
+    const activeProductsPromise = new Promise<Response>((resolve) => {
+      resolveActiveProducts = resolve;
     });
     const requirementsPromise = new Promise<Response>((resolve) => {
       resolveRequirements = resolve;
@@ -584,6 +595,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
       const path = String(input);
       if (path === '/api/products') {
         return productsPromise;
+      }
+      if (path === '/api/products?active_only=true') {
+        return activeProductsPromise;
       }
       if (path === '/api/requirements') {
         return requirementsPromise;
@@ -598,9 +612,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('产品详细设计辅助')).not.toBeInTheDocument();
 
     resolveProducts(jsonResponse({ data: { items: [], total: 0 } }));
+    resolveActiveProducts(jsonResponse({ data: { items: [], total: 0 } }));
     resolveRequirements(jsonResponse({ data: { items: [], total: 0 } }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(screen.queryByText('产品详细设计辅助')).not.toBeInTheDocument();
     expect(screen.queryByText(/接口异常/)).not.toBeInTheDocument();
   });
@@ -622,6 +637,38 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 id: 'product_api',
                 name: '接口产品',
                 owner_team: 'API Team',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: '接口产品',
+                owner_team: 'API Team',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/versions' || path === '/api/products/product_api/versions?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'v1',
+                id: 'version_api',
+                name: 'v1',
+                product_id: 'product_api',
                 status: 'active',
               },
             ],
@@ -744,6 +791,40 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 id: 'product_api',
                 name: '接口产品',
                 owner_team: 'API Team',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products?active_only=true') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: '接口产品',
+                owner_team: 'API Team',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/versions' || path === '/api/products/product_api/versions?active_only=true') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'v1',
+                id: 'version_api',
+                name: 'v1',
+                product_id: 'product_api',
                 status: 'active',
               },
             ],

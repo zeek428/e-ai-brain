@@ -40,10 +40,6 @@ def test_product_children_support_full_delete_crud_and_dependency_guards():
     headers = auth_headers()
     context = create_product_context(headers)
 
-    blocked_product_delete = client.delete(f"/api/products/{context['product_id']}", headers=headers)
-    assert blocked_product_delete.status_code == 409
-    assert blocked_product_delete.json()["detail"]["code"] == "RESOURCE_IN_USE"
-
     repository = client.post(
         f"/api/products/{context['product_id']}/git-repositories",
         json={"name": "core-api", "project_path": "rd/core-api"},
@@ -65,16 +61,29 @@ def test_product_children_support_full_delete_crud_and_dependency_guards():
         headers=headers,
     ).json()["data"]
 
-    assert client.delete(f"/api/product-git-repositories/{repository['id']}", headers=headers).status_code == 200
-    assert client.delete(f"/api/product-modules/{context['module_id']}", headers=headers).status_code == 200
-    assert client.delete(f"/api/product-versions/{context['version_id']}", headers=headers).status_code == 200
-    assert client.delete(f"/api/system/related-systems/{related['id']}", headers=headers).status_code == 200
-    assert client.delete(f"/api/system/model-gateway-configs/{config['id']}", headers=headers).status_code == 200
-
     deleted_product = client.delete(f"/api/products/{context['product_id']}", headers=headers)
     assert deleted_product.status_code == 200
     assert deleted_product.json()["data"]["deleted"] is True
-    assert client.get("/api/products", headers=headers).json()["data"]["items"] == []
+    assert client.get(f"/api/products/{context['product_id']}/versions", headers=headers).status_code == 404
+
+    assert client.delete(f"/api/system/related-systems/{related['id']}", headers=headers).status_code == 200
+    assert client.delete(f"/api/system/model-gateway-configs/{config['id']}", headers=headers).status_code == 200
+
+    blocked_context = create_product_context(headers)
+    client.post(
+        "/api/requirements",
+        json={
+            "content": "阻止删除的需求内容",
+            "priority": "P1",
+            "product_id": blocked_context["product_id"],
+            "title": "阻止删除的需求",
+            "version_id": blocked_context["version_id"],
+        },
+        headers=headers,
+    )
+    blocked_product_delete = client.delete(f"/api/products/{blocked_context['product_id']}", headers=headers)
+    assert blocked_product_delete.status_code == 409
+    assert blocked_product_delete.json()["detail"]["code"] == "RESOURCE_IN_USE"
 
 
 def test_requirements_documents_bugs_and_users_support_update_and_delete():
@@ -152,6 +161,10 @@ def test_requirements_documents_bugs_and_users_support_update_and_delete():
         headers=headers,
     ).json()["data"]
     assert client.delete(f"/api/users/{user['id']}", headers=headers).status_code == 200
+    assert all(
+        item["id"] != user["id"]
+        for item in client.get("/api/users", headers=headers).json()["data"]["items"]
+    )
     login = client.post(
         "/api/auth/login",
         json={"username": "crud_user@example.com", "password": "crud-secret"},

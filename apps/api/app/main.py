@@ -895,16 +895,22 @@ def delete_product(
     has_dependencies = any(
         item["product_id"] == product_id
         for collection in [
-            current_store.product_versions,
-            current_store.product_modules,
-            current_store.product_git_repositories,
             current_store.requirements,
+            current_store.ai_tasks,
             current_store.bugs,
         ]
         for item in collection.values()
     )
     if has_dependencies:
         raise api_error(409, "RESOURCE_IN_USE", "Product still has related records")
+    for collection in [
+        current_store.product_versions,
+        current_store.product_modules,
+        current_store.product_git_repositories,
+    ]:
+        for item_id, item in list(collection.items()):
+            if item["product_id"] == product_id:
+                del collection[item_id]
     del current_store.products[product_id]
     current_store.audit(
         event_type="product.deleted",

@@ -9,6 +9,7 @@ import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows'
 import {
   createManagementBug,
   deleteManagementBug,
+  fetchProductContextOptions,
   fetchManagementBugs,
   updateManagementBug,
 } from '../../services/aiBrain';
@@ -55,13 +56,53 @@ export default function BugsPage() {
     rows: dataSource,
     status,
   } = useRemoteRows(fetchManagementBugs);
+  const {
+    error: productContextError,
+    rows: productContexts,
+    status: productContextStatus,
+  } = useRemoteRows(fetchProductContextOptions);
+  const selectedProductId = Form.useWatch('product_id', form);
+  const selectedProduct = useMemo(
+    () => productContexts.find((product) => product.id === selectedProductId),
+    [productContexts, selectedProductId],
+  );
+  const productOptions = useMemo(
+    () =>
+      productContexts.map((product) => ({
+        label: `${product.code} · ${product.name}`,
+        value: product.id,
+      })),
+    [productContexts],
+  );
+  const versionOptions = useMemo(
+    () =>
+      selectedProduct?.versions.map((version) => ({
+        label: `${version.code} · ${version.name}`,
+        value: version.id,
+      })) ?? [],
+    [selectedProduct],
+  );
 
   const openCreateModal = () => {
     setEditingBug(null);
     form.resetFields();
-    form.setFieldsValue({ severity: 'major', source: 'manual_test' });
+    const firstProduct = productContexts[0];
+    form.setFieldsValue({
+      product_id: firstProduct?.id,
+      severity: 'major',
+      source: 'manual_test',
+      version_id: firstProduct?.versions[0]?.id,
+    });
     setIsModalOpen(true);
   };
+
+  const handleProductChange = useCallback((productId: string) => {
+    const product = productContexts.find((item) => item.id === productId);
+    form.setFieldsValue({
+      module_code: undefined,
+      version_id: product?.versions[0]?.id,
+    });
+  }, [form, productContexts]);
 
   const openEditModal = useCallback((row: BugRecord) => {
     setEditingBug(row);
@@ -102,7 +143,7 @@ export default function BugsPage() {
         message.success('Bug 已登记');
       }
       setIsModalOpen(false);
-      await reload();
+      void reload();
     } catch (saveError) {
       message.error(formatMutationError(saveError));
     } finally {
@@ -222,7 +263,7 @@ export default function BugsPage() {
           },
         ]}
         loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        notice={formatRemoteRowsError(error ?? productContextError)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="登记 Bug"
@@ -244,11 +285,24 @@ export default function BugsPage() {
           </Form.Item>
           {!editingBug ? (
             <>
-              <Form.Item label="产品 ID" name="product_id" rules={[{ required: true, message: '请输入产品 ID' }]}>
-                <Input />
+              <Form.Item label="所属产品" name="product_id" rules={[{ required: true, message: '请选择产品' }]}>
+                <Select
+                  loading={productContextStatus === 'loading'}
+                  onChange={handleProductChange}
+                  optionFilterProp="label"
+                  options={productOptions}
+                  placeholder="请选择产品"
+                  showSearch
+                />
               </Form.Item>
-              <Form.Item label="版本 ID" name="version_id">
-                <Input />
+              <Form.Item label="目标版本" name="version_id">
+                <Select
+                  allowClear
+                  disabled={!selectedProduct || versionOptions.length === 0}
+                  loading={productContextStatus === 'loading'}
+                  options={versionOptions}
+                  placeholder={selectedProduct ? '请选择版本，可留空' : '请先选择产品'}
+                />
               </Form.Item>
               <Form.Item label="模块编码" name="module_code">
                 <Input />

@@ -76,7 +76,7 @@ export default function UsersPage() {
         message.success('用户已创建');
       }
       setIsModalOpen(false);
-      await reload();
+      void reload();
     } catch (saveError) {
       message.error(formatMutationError(saveError));
     } finally {

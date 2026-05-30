@@ -8,6 +8,7 @@ import type { ProductRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createManagementProduct,
+  createProductVersion,
   deleteManagementProduct,
   fetchManagementProducts,
   updateManagementProduct,
@@ -16,6 +17,8 @@ import { formatMutationError, trimText } from '../../utils/managementCrud';
 
 type ProductFormValues = {
   code?: string;
+  default_version_code?: string;
+  default_version_name?: string;
   description?: string;
   name: string;
   owner_team?: string;
@@ -37,7 +40,11 @@ export default function ProductsPage() {
   const openCreateModal = () => {
     setEditingProduct(null);
     form.resetFields();
-    form.setFieldsValue({ status: 'active' });
+    form.setFieldsValue({
+      default_version_code: 'v1',
+      default_version_name: 'v1',
+      status: 'active',
+    });
     setIsModalOpen(true);
   };
 
@@ -68,11 +75,19 @@ export default function ProductsPage() {
         await updateManagementProduct(editingProduct.id, payload);
         message.success('产品已更新');
       } else {
-        await createManagementProduct(payload);
+        const createdProduct = await createManagementProduct(payload);
+        const defaultVersionName = trimText(values.default_version_name);
+        if (defaultVersionName) {
+          await createProductVersion(createdProduct.id, {
+            code: trimText(values.default_version_code) ?? defaultVersionName,
+            name: defaultVersionName,
+            status: 'active',
+          });
+        }
         message.success('产品已创建');
       }
       setIsModalOpen(false);
-      await reload();
+      void reload();
     } catch (saveError) {
       message.error(formatMutationError(saveError));
     } finally {
@@ -205,6 +220,16 @@ export default function ProductsPage() {
               ]}
             />
           </Form.Item>
+          {!editingProduct ? (
+            <>
+              <Form.Item label="默认版本编码" name="default_version_code">
+                <Input placeholder="例如 v1" />
+              </Form.Item>
+              <Form.Item label="默认版本名称" name="default_version_name">
+                <Input placeholder="例如 v1" />
+              </Form.Item>
+            </>
+          ) : null}
         </Form>
       </Modal>
     </>

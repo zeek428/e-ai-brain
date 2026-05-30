@@ -7,12 +7,16 @@ import { ManagementListPage, StatusTag } from '../../components/ManagementListPa
 import type { RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
+  createProductVersion,
   createManagementRequirement,
   deleteManagementRequirement,
+  fetchProductContextOptions,
   fetchManagementRequirements,
   updateManagementRequirement,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
+
+const AUTO_VERSION_ID = '__auto_default_version__';
 
 const statusLabels: Record<RequirementRecord['status'], { color: string; label: string }> = {
   approved: { color: 'green', label: '已审批' },
@@ -43,13 +47,63 @@ export default function RequirementsPage() {
     rows: dataSource,
     status,
   } = useRemoteRows(fetchManagementRequirements);
+  const {
+    error: productContextError,
+    reload: reloadProductContexts,
+    rows: productContexts,
+    status: productContextStatus,
+  } = useRemoteRows(fetchProductContextOptions);
+  const selectedProductId = Form.useWatch('product_id', form);
+  const selectedProduct = useMemo(
+    () => productContexts.find((product) => product.id === selectedProductId),
+    [productContexts, selectedProductId],
+  );
+  const productOptions = useMemo(
+    () =>
+      productContexts.map((product) => ({
+        label: `${product.code} · ${product.name}`,
+        value: product.id,
+      })),
+    [productContexts],
+  );
+  const resolveDefaultVersionValue = useCallback(
+    (productId?: string) => {
+      const product = productContexts.find((item) => item.id === productId);
+      return product?.versions[0]?.id ?? AUTO_VERSION_ID;
+    },
+    [productContexts],
+  );
+  const versionOptions = useMemo(() => {
+    if (!selectedProduct) {
+      return [];
+    }
+    if (selectedProduct.versions.length === 0) {
+      return [{ label: '自动创建默认版本 v1', value: AUTO_VERSION_ID }];
+    }
+    return selectedProduct.versions.map((version) => ({
+      label: `${version.code} · ${version.name}`,
+      value: version.id,
+    }));
+  }, [selectedProduct]);
 
   const openCreateModal = () => {
     setEditingRequirement(null);
     form.resetFields();
-    form.setFieldsValue({ priority: 'P1' });
+    const firstProduct = productContexts[0];
+    form.setFieldsValue({
+      priority: 'P1',
+      product_id: firstProduct?.id,
+      version_id: firstProduct ? resolveDefaultVersionValue(firstProduct.id) : undefined,
+    });
     setIsModalOpen(true);
   };
+
+  const handleProductChange = useCallback((productId: string) => {
+    form.setFieldsValue({
+      module_code: undefined,
+      version_id: resolveDefaultVersionValue(productId),
+    });
+  }, [form, resolveDefaultVersionValue]);
 
   const openEditModal = useCallback((row: RequirementRecord) => {
     setEditingRequirement(row);
@@ -66,17 +120,27 @@ export default function RequirementsPage() {
 
   const handleSave = async () => {
     const values = await form.validateFields();
+    let versionId = values.version_id;
     const payload = {
       content: values.content.trim(),
       module_code: trimText(values.module_code),
       priority: values.priority,
       product_id: values.product_id.trim(),
       title: values.title.trim(),
-      version_id: values.version_id.trim(),
+      version_id: versionId.trim(),
     };
 
     setIsSaving(true);
     try {
+      if (versionId === AUTO_VERSION_ID) {
+        const version = await createProductVersion(values.product_id.trim(), {
+          code: 'v1',
+          name: 'v1',
+          status: 'active',
+        });
+        versionId = version.id;
+        payload.version_id = version.id;
+      }
       if (editingRequirement) {
         await updateManagementRequirement(editingRequirement.id, payload);
         message.success('需求已更新');
@@ -85,7 +149,8 @@ export default function RequirementsPage() {
         message.success('需求已创建');
       }
       setIsModalOpen(false);
-      await reload();
+      void reloadProductContexts();
+      void reload();
     } catch (saveError) {
       message.error(formatMutationError(saveError));
     } finally {
@@ -195,7 +260,7 @@ export default function RequirementsPage() {
           },
         ]}
         loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        notice={formatRemoteRowsError(error ?? productContextError)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增需求"
@@ -215,11 +280,28 @@ export default function RequirementsPage() {
           <Form.Item label="需求标题" name="title" rules={[{ required: true, message: '请输入需求标题' }]}>
             <Input />
           </Form.Item>
-          <Form.Item label="产品 ID" name="product_id" rules={[{ required: true, message: '请输入产品 ID' }]}>
-            <Input placeholder="请输入产品 ID" />
+          <Form.Item label="所属产品" name="product_id" rules={[{ required: true, message: '请选择产品' }]}>
+            <Select
+              loading={productContextStatus === 'loading'}
+              onChange={handleProductChange}
+              optionFilterProp="label"
+              options={productOptions}
+              placeholder="请选择产品"
+              showSearch
+            />
           </Form.Item>
-          <Form.Item label="版本 ID" name="version_id" rules={[{ required: true, message: '请输入版本 ID' }]}>
-            <Input placeholder="请输入版本 ID" />
+          <Form.Item
+            extra={selectedProduct?.versions.length === 0 ? '该产品暂无版本，保存时将创建真实默认版本 v1。' : undefined}
+            label="目标版本"
+            name="version_id"
+            rules={[{ required: true, message: '请选择版本' }]}
+          >
+            <Select
+              disabled={!selectedProduct}
+              loading={productContextStatus === 'loading'}
+              options={versionOptions}
+              placeholder="请选择版本"
+            />
           </Form.Item>
           <Form.Item label="模块编码" name="module_code">
             <Input />

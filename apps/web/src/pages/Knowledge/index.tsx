@@ -90,7 +90,7 @@ export default function KnowledgePage() {
         message.success('知识文档已导入');
       }
       setIsModalOpen(false);
-      await reload();
+      void reload();
     } catch (saveError) {
       message.error(formatMutationError(saveError));
     } finally {

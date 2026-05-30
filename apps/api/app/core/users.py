@@ -241,7 +241,7 @@ class PostgresUserRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "UPDATE users SET status = 'inactive', updated_at = now() WHERE id = %s",
+                    "DELETE FROM users WHERE id = %s",
                     (user_id,),
                 )
                 return cursor.rowcount > 0
