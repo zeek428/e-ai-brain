@@ -87,21 +87,6 @@ body {
   margin: 0;
 }
 
-.demo-flow {
-  margin-bottom: 16px;
-  padding: 12px 14px;
-  border: 1px solid #d6e4ff;
-  border-radius: 8px;
-  background: #f0f5ff;
-}
-
-.demo-result {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  align-items: center;
-}
-
 .task-name {
   display: grid;
   gap: 2px;
@@ -177,7 +162,6 @@ body {
 }
 
 @media (max-width: 640px) {
-  .demo-result,
   .capability-row {
     align-items: flex-start;
   }

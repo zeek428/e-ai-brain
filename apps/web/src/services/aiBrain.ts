@@ -68,52 +68,35 @@ export type ProductResponse = {
   status?: string;
 };
 
-export type VersionResponse = {
-  id: string;
-};
-
 export type RequirementResponse = {
   id: string;
   status: string;
 };
 
-export type GeneratedTaskResponse = {
-  task_id: string;
-  task_status: string;
-};
-
-export type StartedTaskResponse = {
+export type TaskCenterTaskRecord = {
   id: string;
+  label: string;
+  owner: string;
   status: string;
-  review_id: string;
-  current_step?: string;
+  type: string;
 };
 
-export type TaskDetailResponse = {
+export type OperationalMetricRecord = {
+  category: string;
   id: string;
+  name: string;
   status: string;
-  current_step?: string;
-  output?: {
-    kind?: string;
-  };
+  updatedAt: string;
+  value: string;
 };
 
-export type LifecycleResponse = {
+export type UserInsightRecord = {
+  category: string;
+  id: string;
+  owner: string;
   status: string;
-  summary: {
-    downstream_count: number;
-    risk_count: number;
-  };
-};
-
-export type MvpWorkflowResult = {
-  requirementId: string;
-  taskId: string;
-  reviewId: string;
-  taskStatus: string;
-  currentStep: string;
-  downstreamCount: number;
-  riskCount: number;
+  summary: string;
+  updatedAt: string;
 };
 
 type ProductListItem = {
@@ -225,6 +208,21 @@ type BugListItem = {
   status?: string;
   title: string;
   version_id?: string | null;
+};
+
+type TaskListItem = {
+  created_by?: string;
+  id: string;
+  status?: string;
+  task_type?: string;
+  title?: string;
+};
+
+type FlexibleListItem = Record<string, unknown> & {
+  created_at?: string;
+  id?: string;
+  status?: string;
+  updated_at?: string;
 };
 
 type UserListItem = {
@@ -397,6 +395,29 @@ function normalizeBugStatus(status?: string): BugRecord['status'] {
 
 function normalizeBugSource(source?: string): BugRecord['source'] {
   return source === 'ai_auto_test' ? 'ai_auto_test' : 'manual_test';
+}
+
+function formatUnknownValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  if (Array.isArray(value)) {
+    return value.map(formatUnknownValue).join(', ');
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function firstKnownValue(item: FlexibleListItem, keys: string[]) {
+  for (const key of keys) {
+    const value = item[key];
+    if (value !== null && value !== undefined && value !== '') {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 export async function fetchManagementProducts(): Promise<ProductRecord[]> {
@@ -645,68 +666,78 @@ export async function deleteManagementBug(bugId: string) {
   });
 }
 
-export async function runMvpWorkflow(): Promise<MvpWorkflowResult> {
-  const suffix = Date.now().toString(36);
+export async function fetchTaskCenterTasks(): Promise<TaskCenterTaskRecord[]> {
   const token = requireAccessToken();
-  const product = await apiRequest<ProductResponse>('/api/products', {
-    method: 'POST',
-    token,
-    body: {
-      code: `demo-${suffix}`,
-      name: `AI Brain Demo ${suffix}`,
-      owner_team: 'AI Platform',
-    },
-  });
-  const version = await apiRequest<VersionResponse>(`/api/products/${product.id}/versions`, {
-    method: 'POST',
-    token,
-    body: { code: `v-${suffix}`, name: 'v1 MVP', status: 'active' },
-  });
-  const requirement = await apiRequest<RequirementResponse>('/api/requirements', {
-    method: 'POST',
-    token,
-    body: {
-      content: '从前端触发需求审批到产品详细设计人工确认点。',
-      priority: 'P1',
-      product_id: product.id,
-      title: `前端演示需求 ${suffix}`,
-      version_id: version.id,
-    },
-  });
-  await apiRequest<RequirementResponse>(`/api/requirements/${requirement.id}/approve`, {
-    method: 'POST',
-    token,
-    body: { comment: '前端演示流审批通过' },
-  });
-  const generated = await apiRequest<GeneratedTaskResponse>(
-    `/api/requirements/${requirement.id}/generate-task`,
-    {
-      method: 'POST',
-      token,
-    },
-  );
-  const started = await apiRequest<StartedTaskResponse>(
-    `/api/ai-tasks/${generated.task_id}/start`,
-    {
-      method: 'POST',
-      token,
-    },
-  );
-  const task = await apiRequest<TaskDetailResponse>(`/api/ai-tasks/${generated.task_id}`, {
-    token,
-  });
-  const lifecycle = await apiRequest<LifecycleResponse>(
-    `/api/lifecycle/context?subject_type=requirement&subject_id=${requirement.id}&direction=both&include_risks=true`,
-    { token },
-  );
+  const tasks = await apiRequest<ListResponse<TaskListItem>>('/api/ai-tasks', { token });
 
-  return {
-    currentStep: task.current_step ?? started.current_step ?? 'unknown',
-    downstreamCount: lifecycle.summary.downstream_count,
-    requirementId: requirement.id,
-    reviewId: started.review_id,
-    riskCount: lifecycle.summary.risk_count,
-    taskId: generated.task_id,
-    taskStatus: task.status,
-  };
+  return tasks.items.map((task) => ({
+    id: task.id,
+    label: task.title ?? task.task_type ?? task.id,
+    owner: task.created_by ?? '-',
+    status: task.status ?? '-',
+    type: task.task_type ?? '-',
+  }));
+}
+
+function mapOperationalMetrics(
+  category: string,
+  items: FlexibleListItem[],
+): OperationalMetricRecord[] {
+  return items.map((item, index) => ({
+    category,
+    id: formatUnknownValue(item.id ?? `${category}-${index}`),
+    name: formatUnknownValue(
+      firstKnownValue(item, ['name', 'metric_name', 'repository_name', 'release_name', 'title']),
+    ),
+    status: formatUnknownValue(item.status),
+    updatedAt: formatListDate(
+      formatUnknownValue(firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'date'])),
+    ),
+    value: formatUnknownValue(firstKnownValue(item, ['value', 'count', 'score', 'summary'])),
+  }));
+}
+
+export async function fetchDevopsMetrics(): Promise<OperationalMetricRecord[]> {
+  const token = requireAccessToken();
+  const [gitlabMetrics, jenkinsReleases, onlineLogs] = await Promise.all([
+    apiRequest<ListResponse<FlexibleListItem>>('/api/devops/gitlab/daily-code-metrics', { token }),
+    apiRequest<ListResponse<FlexibleListItem>>('/api/devops/jenkins/releases', { token }),
+    apiRequest<ListResponse<FlexibleListItem>>('/api/ops/online-log-metrics', { token }),
+  ]);
+
+  return [
+    ...mapOperationalMetrics('GitLab 指标', gitlabMetrics.items),
+    ...mapOperationalMetrics('Jenkins 发布', jenkinsReleases.items),
+    ...mapOperationalMetrics('线上日志', onlineLogs.items),
+  ];
+}
+
+function mapUserInsights(category: string, items: FlexibleListItem[]): UserInsightRecord[] {
+  return items.map((item, index) => ({
+    category,
+    id: formatUnknownValue(item.id ?? `${category}-${index}`),
+    owner: formatUnknownValue(firstKnownValue(item, ['user_id', 'owner_id', 'created_by', 'actor_id'])),
+    status: formatUnknownValue(item.status),
+    summary: formatUnknownValue(
+      firstKnownValue(item, ['summary', 'content', 'feedback_text', 'suggestion', 'feature_code']),
+    ),
+    updatedAt: formatListDate(
+      formatUnknownValue(firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'window_start'])),
+    ),
+  }));
+}
+
+export async function fetchUserInsights(): Promise<UserInsightRecord[]> {
+  const token = requireAccessToken();
+  const [usageMetrics, feedbackItems, iterationSuggestions] = await Promise.all([
+    apiRequest<ListResponse<FlexibleListItem>>('/api/insights/usage-metrics', { token }),
+    apiRequest<ListResponse<FlexibleListItem>>('/api/insights/user-feedback', { token }),
+    apiRequest<ListResponse<FlexibleListItem>>('/api/planning/iteration-suggestions', { token }),
+  ]);
+
+  return [
+    ...mapUserInsights('使用趋势', usageMetrics.items),
+    ...mapUserInsights('用户反馈', feedbackItems.items),
+    ...mapUserInsights('迭代建议', iterationSuggestions.items),
+  ];
 }

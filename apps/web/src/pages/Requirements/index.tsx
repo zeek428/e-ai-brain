@@ -4,7 +4,7 @@ import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from '
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import { requirementRows, type RequirementRecord } from '../../data/management';
+import type { RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createManagementRequirement,
@@ -42,7 +42,7 @@ export default function RequirementsPage() {
     reload,
     rows: dataSource,
     status,
-  } = useRemoteRows(requirementRows, fetchManagementRequirements);
+  } = useRemoteRows(fetchManagementRequirements);
 
   const openCreateModal = () => {
     setEditingRequirement(null);
@@ -216,10 +216,10 @@ export default function RequirementsPage() {
             <Input />
           </Form.Item>
           <Form.Item label="产品 ID" name="product_id" rules={[{ required: true, message: '请输入产品 ID' }]}>
-            <Input placeholder="例如 product_001" />
+            <Input placeholder="请输入产品 ID" />
           </Form.Item>
           <Form.Item label="版本 ID" name="version_id" rules={[{ required: true, message: '请输入版本 ID' }]}>
-            <Input placeholder="例如 version_001" />
+            <Input placeholder="请输入版本 ID" />
           </Form.Item>
           <Form.Item label="模块编码" name="module_code">
             <Input />

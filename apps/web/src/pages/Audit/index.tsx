@@ -1,7 +1,7 @@
 import type { ProColumns } from '@ant-design/pro-components';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import { auditRows, type AuditRecord } from '../../data/management';
+import type { AuditRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import { fetchManagementAudit } from '../../services/aiBrain';
 
@@ -45,7 +45,7 @@ const columns: ProColumns<AuditRecord>[] = [
 ];
 
 export default function AuditPage() {
-  const { error, rows: dataSource } = useRemoteRows(auditRows, fetchManagementAudit);
+  const { error, rows: dataSource } = useRemoteRows(fetchManagementAudit);
 
   return (
     <ManagementListPage<AuditRecord>

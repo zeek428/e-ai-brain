@@ -1,22 +1,16 @@
-import { useState } from 'react';
-import { PageContainer, ProCard, ProTable, StatisticCard } from '@ant-design/pro-components';
+import { PageContainer, ProCard, ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Col, Row, Space, Tag, Typography } from 'antd';
+import { Alert, Col, Row, Space, Tag, Typography } from 'antd';
 
-import { phases, taskRows, type TaskRow } from '../../data/workbench';
-import { runMvpWorkflow, type MvpWorkflowResult } from '../../services/aiBrain';
+import { phases } from '../../data/workbench';
+import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { fetchTaskCenterTasks, type TaskCenterTaskRecord } from '../../services/aiBrain';
 
 const { Paragraph, Text, Title } = Typography;
 
-type DemoState =
-  | { status: 'idle' }
-  | { status: 'running' }
-  | ({ status: 'ready' } & MvpWorkflowResult)
-  | { status: 'error'; message: string };
-
-const columns: ProColumns<TaskRow>[] = [
+const columns: ProColumns<TaskCenterTaskRecord>[] = [
   {
-    title: '任务类型',
+    title: '任务',
     dataIndex: 'label',
     key: 'label',
     render: (_value, row) => (
@@ -40,20 +34,7 @@ const columns: ProColumns<TaskRow>[] = [
 ];
 
 export default function TaskCenterPage() {
-  const [demoState, setDemoState] = useState<DemoState>({ status: 'idle' });
-
-  async function runDemo() {
-    setDemoState({ status: 'running' });
-    try {
-      const result = await runMvpWorkflow();
-      setDemoState({ status: 'ready', ...result });
-    } catch (error) {
-      setDemoState({
-        status: 'error',
-        message: error instanceof Error ? error.message : 'API workflow failed',
-      });
-    }
-  }
+  const { error, rows: dataSource, status } = useRemoteRows(fetchTaskCenterTasks);
 
   return (
     <PageContainer title={false}>
@@ -74,61 +55,22 @@ export default function TaskCenterPage() {
       </Row>
 
       <section className="workspace-grid">
-        <ProCard
-          title="任务列表"
-          extra={
-            <Button loading={demoState.status === 'running'} onClick={() => void runDemo()} type="primary">
-              运行 MVP 演示流程
-            </Button>
-          }
-        >
-          {demoState.status !== 'idle' ? (
-            <div className="demo-flow" aria-live="polite">
-              {demoState.status === 'running' ? <Text>正在执行 API 工作流...</Text> : null}
-              {demoState.status === 'error' ? <Text type="danger">{demoState.message}</Text> : null}
-              {demoState.status === 'ready' ? (
-                <div className="demo-result">
-                  <span>
-                    需求 <strong>{demoState.requirementId}</strong>
-                  </span>
-                  <span>
-                    任务 <strong>{demoState.taskId}</strong>
-                  </span>
-                  <span>
-                    Review <strong>{demoState.reviewId}</strong>
-                  </span>
-                  <Tag color="blue">{demoState.taskStatus}</Tag>
-                  <Tag color="gold">{demoState.currentStep}</Tag>
-                  <Tag color="green">下游关系 {demoState.downstreamCount}</Tag>
-                  <Tag color={demoState.riskCount > 0 ? 'orange' : 'default'}>
-                    风险 {demoState.riskCount}
-                  </Tag>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <ProTable<TaskRow>
+        <ProCard title="任务列表">
+          {error ? <Alert className="management-list-alert" showIcon title={formatRemoteRowsError(error)} type="error" /> : null}
+          <ProTable<TaskCenterTaskRecord>
             columns={columns}
-            dataSource={taskRows}
+            dataSource={dataSource}
+            loading={status === 'loading'}
             options={false}
             pagination={false}
-            rowKey="type"
+            rowKey="id"
             search={false}
           />
         </ProCard>
 
         <ProCard title="确认台">
           <Paragraph>待确认项会显示需求快照、产品上下文、检索证据、AI 输出和审计轨迹。</Paragraph>
-          <StatisticCard.Group direction="column">
-            <StatisticCard
-              statistic={{
-                description: 'version=1，提交确认时使用乐观锁避免并发覆盖。',
-                prefix: <Tag color="gold">pending</Tag>,
-                title: '产品详细设计确认',
-                value: 'waiting_review',
-              }}
-            />
-          </StatisticCard.Group>
+          <Text type="secondary">待确认数据将从 Review 接口加载。</Text>
         </ProCard>
       </section>
     </PageContainer>

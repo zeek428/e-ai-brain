@@ -3042,12 +3042,10 @@ def _render_markdown(current_store: MemoryStore, task: dict[str, Any]) -> str:
     return "\n".join(sections) + "\n"
 
 
-def placeholder_payload(available_phase: str) -> dict[str, Any]:
+def empty_list_payload() -> dict[str, Any]:
     return {
-        "status": "placeholder",
-        "available_phase": available_phase,
-        "message": "该入口在 MVP 阶段仅提供占位，不返回伪造统计数据。",
         "items": [],
+        "total": 0,
     }
 
 
@@ -3343,11 +3341,11 @@ def _lifecycle_risk_signals(
 
 
 @app.get("/api/dashboard/it-team")
-def dashboard_placeholder(
+def dashboard_metrics(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(placeholder_payload("MVP 占位 / v1.2"), get_trace_id(request))
+    return envelope(empty_list_payload(), get_trace_id(request))
 
 
 @app.get("/api/bugs")
@@ -3494,51 +3492,51 @@ def delete_bug(
 
 
 @app.get("/api/devops/gitlab/daily-code-metrics")
-def gitlab_metrics_placeholder(
+def gitlab_metrics(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(placeholder_payload("MVP 占位 / v1.2"), get_trace_id(request))
+    return envelope(empty_list_payload(), get_trace_id(request))
 
 
 @app.get("/api/devops/jenkins/releases")
-def jenkins_releases_placeholder(
+def jenkins_releases(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(placeholder_payload("MVP 占位 / v1.2"), get_trace_id(request))
+    return envelope(empty_list_payload(), get_trace_id(request))
 
 
 @app.get("/api/ops/online-log-metrics")
-def online_log_metrics_placeholder(
+def online_log_metrics(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(placeholder_payload("MVP 占位 / v1.2"), get_trace_id(request))
+    return envelope(empty_list_payload(), get_trace_id(request))
 
 
 @app.get("/api/insights/usage-metrics")
-def usage_metrics_placeholder(
+def usage_metrics(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(placeholder_payload("MVP 占位 / v1.2"), get_trace_id(request))
+    return envelope(empty_list_payload(), get_trace_id(request))
 
 
 @app.get("/api/insights/user-feedback")
-def user_feedback_placeholder(
+def user_feedback(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(placeholder_payload("MVP 占位 / v1.2"), get_trace_id(request))
+    return envelope(empty_list_payload(), get_trace_id(request))
 
 
 @app.get("/api/planning/iteration-suggestions")
-def iteration_suggestions_placeholder(
+def iteration_suggestions(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(placeholder_payload("MVP 占位 / v1.2"), get_trace_id(request))
+    return envelope(empty_list_payload(), get_trace_id(request))
 
 
 @app.get("/api/lifecycle/context")

@@ -4,7 +4,7 @@ import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from '
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import { productRows, type ProductRecord } from '../../data/management';
+import type { ProductRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createManagementProduct,
@@ -32,7 +32,7 @@ export default function ProductsPage() {
     reload,
     rows: dataSource,
     status,
-  } = useRemoteRows(productRows, fetchManagementProducts);
+  } = useRemoteRows(fetchManagementProducts);
 
   const openCreateModal = () => {
     setEditingProduct(null);
@@ -186,7 +186,7 @@ export default function ProductsPage() {
       >
         <Form<ProductFormValues> form={form} layout="vertical">
           <Form.Item label="产品编码" name="code" rules={[{ required: true, message: '请输入产品编码' }]}>
-            <Input placeholder="例如 AI-BRAIN" />
+            <Input placeholder="请输入唯一产品编码" />
           </Form.Item>
           <Form.Item label="产品名称" name="name" rules={[{ required: true, message: '请输入产品名称' }]}>
             <Input />

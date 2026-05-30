@@ -4,7 +4,7 @@ import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from '
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import { userRows, type UserRecord } from '../../data/management';
+import type { UserRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createManagementUser,
@@ -32,7 +32,7 @@ export default function UsersPage() {
     reload,
     rows: dataSource,
     status,
-  } = useRemoteRows(userRows, fetchManagementUsers);
+  } = useRemoteRows(fetchManagementUsers);
 
   const openCreateModal = () => {
     setEditingUser(null);

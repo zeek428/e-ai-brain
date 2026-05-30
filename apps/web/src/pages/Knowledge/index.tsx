@@ -4,7 +4,7 @@ import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from '
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import { knowledgeRows, type KnowledgeRecord } from '../../data/management';
+import type { KnowledgeRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createManagementKnowledgeDocument,
@@ -44,7 +44,7 @@ export default function KnowledgePage() {
     reload,
     rows: dataSource,
     status,
-  } = useRemoteRows(knowledgeRows, fetchManagementKnowledge);
+  } = useRemoteRows(fetchManagementKnowledge);
 
   const openCreateModal = () => {
     setEditingDocument(null);

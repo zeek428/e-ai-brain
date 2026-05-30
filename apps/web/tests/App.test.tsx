@@ -376,7 +376,34 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(window.location.pathname).toBe('/login');
   });
 
-  it('renders the task center with Pro page content first screen', () => {
+  it('renders the task center from backend tasks without a demo workflow', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(input).toBe('/api/ai-tasks');
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      return new Response(
+        JSON.stringify({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'task_api',
+                status: 'waiting_review',
+                task_type: 'product_detail_design',
+                title: '接口任务',
+              },
+            ],
+            total: 1,
+          },
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      );
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
     render(<TaskCenterPage />);
 
     expect(screen.queryByRole('heading', { level: 1, name: '任务管理' })).not.toBeInTheDocument();
@@ -385,11 +412,23 @@ describe('AI Brain Ant Design Pro workbench', () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText('任务列表')).toBeInTheDocument();
     expect(screen.getByText('MVP-A 基础 + GitLab 输入闭环')).toBeInTheDocument();
-    expect(screen.getByText('产品详细设计')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '运行 MVP 演示流程' })).not.toBeInTheDocument();
+    expect(await screen.findByText('接口任务')).toBeInTheDocument();
+    expect(screen.getByText('product_detail_design')).toBeInTheDocument();
     expect(screen.getByText('确认台')).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   });
 
-  it('renders non-ledger module overview pages from shared Pro page scaffolding', () => {
+  it('renders dashboard and operation pages without placeholder data', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse({ data: { items: [], total: 0 } }));
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
     const { rerender } = render(<DashboardPage />);
 
     expect(screen.queryByRole('heading', { level: 1, name: '欢迎' })).not.toBeInTheDocument();
@@ -401,17 +440,24 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByRole('heading', { level: 1, name: '研发运营看板' })).not.toBeInTheDocument();
     expect(screen.queryByText('后续阶段')).not.toBeInTheDocument();
     expect(screen.queryByText('GitLab/Jenkins/线上日志真实运营采集属于后续增强。')).not.toBeInTheDocument();
+    expect(screen.queryByText('待接入')).not.toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
+    expect(screen.getByText('研发运营指标')).toBeInTheDocument();
     expect(screen.getByText('GitLab 指标')).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     rerender(<InsightsPage />);
 
     expect(screen.queryByRole('heading', { level: 1, name: '用户洞察/迭代规划' })).not.toBeInTheDocument();
     expect(screen.queryByText('后续阶段')).not.toBeInTheDocument();
     expect(screen.queryByText('当前预留入口，后续接入用户使用、反馈和 AI 迭代建议。')).not.toBeInTheDocument();
+    expect(screen.queryByText('待接入')).not.toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
     expect(screen.getByText('使用趋势')).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
   });
 
-  it('renders management modules as query filters with table lists', () => {
+  it('renders management modules as query filters with table lists', async () => {
     const { rerender } = render(<ProductsPage />);
 
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('产品资产');
@@ -422,7 +468,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('form', { name: '查询表格' })).toBeInTheDocument();
     expect(screen.getByText('产品列表')).toBeInTheDocument();
     expect(screen.getAllByText('产品编码')).not.toHaveLength(0);
-    expect(screen.getByText('AI-BRAIN')).toBeInTheDocument();
+    expect(screen.queryByText('AI-BRAIN')).not.toBeInTheDocument();
 
     rerender(<RequirementsPage />);
 
@@ -436,7 +482,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('form', { name: '查询表格' })).toBeInTheDocument();
     expect(screen.getByText('需求列表')).toBeInTheDocument();
     expect(screen.getAllByText('需求标题')).not.toHaveLength(0);
-    expect(screen.getByText('产品详细设计辅助')).toBeInTheDocument();
+    expect(screen.queryByText('产品详细设计辅助')).not.toBeInTheDocument();
 
     rerender(<BugsPage />);
 
@@ -447,7 +493,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('form', { name: '查询表格' })).toBeInTheDocument();
     expect(screen.getByText('Bug 列表')).toBeInTheDocument();
     expect(screen.getAllByText('严重级别')).not.toHaveLength(0);
-    expect(screen.getByText('登录态过期提示异常')).toBeInTheDocument();
+    expect(screen.queryByText('登录态过期提示异常')).not.toBeInTheDocument();
 
     rerender(<KnowledgePage />);
 
@@ -458,7 +504,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('form', { name: '查询表格' })).toBeInTheDocument();
     expect(screen.getByText('知识列表')).toBeInTheDocument();
     expect(screen.getAllByText('知识标题')).not.toHaveLength(0);
-    expect(screen.getByText('AI Brain v1 产品需求文档')).toBeInTheDocument();
+    expect(screen.queryByText('AI Brain v1 产品需求文档')).not.toBeInTheDocument();
 
     rerender(<AuditPage />);
 
@@ -469,11 +515,45 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('form', { name: '查询表格' })).toBeInTheDocument();
     expect(screen.getByText('审计列表')).toBeInTheDocument();
     expect(screen.getAllByText('事件类型')).not.toHaveLength(0);
-    expect(screen.getByText('requirement.approved')).toBeInTheDocument();
+    expect(screen.queryByText('requirement.approved')).not.toBeInTheDocument();
   });
 
-  it('filters management table rows from query conditions', () => {
+  it('filters management table rows from query conditions', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_ai_brain',
+                name: '企业 AI 大脑平台',
+                owner_team: 'AI Platform',
+                status: 'active',
+              },
+              {
+                code: 'RD-BRAIN',
+                id: 'product_rd_brain',
+                name: '研发大脑',
+                owner_team: 'R&D Enablement',
+                status: 'active',
+              },
+            ],
+            total: 2,
+          },
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      ),
+    );
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
     render(<ProductsPage />);
+
+    expect(await screen.findByText('AI-BRAIN')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('产品编码'), { target: { value: 'RD-BRAIN' } });
     fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
@@ -486,31 +566,162 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('AI-BRAIN')).toBeInTheDocument();
   });
 
-  it('renders executable CRUD buttons on management pages', () => {
+  it('does not flash local requirement examples while authenticated data is loading', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    let resolveProducts: (response: Response) => void = () => {};
+    let resolveRequirements: (response: Response) => void = () => {};
+    const productsPromise = new Promise<Response>((resolve) => {
+      resolveProducts = resolve;
+    });
+    const requirementsPromise = new Promise<Response>((resolve) => {
+      resolveRequirements = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      const path = String(input);
+      if (path === '/api/products') {
+        return productsPromise;
+      }
+      if (path === '/api/requirements') {
+        return requirementsPromise;
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<RequirementsPage />);
+
+    expect(screen.queryByText('产品详细设计辅助')).not.toBeInTheDocument();
+
+    resolveProducts(jsonResponse({ data: { items: [], total: 0 } }));
+    resolveRequirements(jsonResponse({ data: { items: [], total: 0 } }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('产品详细设计辅助')).not.toBeInTheDocument();
+    expect(screen.queryByText(/接口异常/)).not.toBeInTheDocument();
+  });
+
+  it('renders executable CRUD buttons on management pages', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
+      if (path === '/api/products') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: '接口产品',
+                owner_team: 'API Team',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/requirements') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                id: 'requirement_api',
+                priority: 'P1',
+                product_id: 'product_api',
+                status: 'pending_approval',
+                title: '接口需求',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/bugs') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                id: 'bug_api',
+                product_id: 'product_api',
+                severity: 'major',
+                source: 'manual_test',
+                status: 'open',
+                title: '接口 Bug',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/knowledge/documents') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                id: 'knowledge_api',
+                index_status: 'indexed',
+                permission_roles: ['admin'],
+                title: '接口知识',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/users') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                display_name: '接口用户',
+                id: 'user_api',
+                roles: ['viewer'],
+                status: 'active',
+                username: 'viewer@example.com',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
     const { rerender } = render(<ProductsPage />);
 
     expect(screen.getByRole('button', { name: /新增产品/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(await screen.findAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
     expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
 
     rerender(<RequirementsPage />);
     expect(screen.getByRole('button', { name: /新增需求/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(await screen.findAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
     expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
 
     rerender(<BugsPage />);
     expect(screen.getByRole('button', { name: /登记 Bug/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(await screen.findAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
     expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
 
     rerender(<KnowledgePage />);
     expect(screen.getByRole('button', { name: /导入文档/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(await screen.findAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
     expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
 
     rerender(<UsersPage />);
     expect(screen.getByRole('button', { name: /新增用户/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
+    expect(await screen.findAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
     expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
   });
 
@@ -646,7 +857,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/login', expect.anything());
   });
 
-  it('shows backend load failures when management tables fall back to local examples', async () => {
+  it('shows backend load failures without local example rows', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       new Response(
         JSON.stringify({
@@ -667,8 +878,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     render(<ProductsPage />);
 
-    expect(screen.getByText('AI-BRAIN')).toBeInTheDocument();
-    expect(await screen.findByText(/接口异常，当前展示示例数据/)).toBeInTheDocument();
+    expect(screen.queryByText('AI-BRAIN')).not.toBeInTheDocument();
+    expect(await screen.findByText(/接口异常，未加载到数据/)).toBeInTheDocument();
     expect(screen.getByText(/FORBIDDEN/)).toBeInTheDocument();
     expect(screen.getByText(/trace_denied/)).toBeInTheDocument();
   });
@@ -776,65 +987,4 @@ describe('AI Brain Ant Design Pro workbench', () => {
     ]);
   });
 
-  it('runs the MVP API workflow and renders the resulting task context', async () => {
-    const responses = [
-      { data: { id: 'product_001' } },
-      { data: { id: 'version_001' } },
-      { data: { id: 'requirement_001', status: 'pending_approval' } },
-      { data: { id: 'requirement_001', status: 'approved' } },
-      { data: { task_id: 'task_001', task_status: 'draft' } },
-      {
-        data: {
-          id: 'task_001',
-          status: 'waiting_review',
-          review_id: 'review_001',
-          current_step: 'interrupt_for_human_review',
-        },
-      },
-      {
-        data: {
-          id: 'task_001',
-          status: 'waiting_review',
-          current_step: 'interrupt_for_human_review',
-          output: { kind: 'product_detail_design' },
-        },
-      },
-      {
-        data: {
-          status: 'available',
-          summary: { downstream_count: 7, risk_count: 0 },
-        },
-      },
-    ];
-    const fetchMock = vi.fn<typeof fetch>(async () => {
-      const body = responses.shift();
-      if (!body) {
-        throw new Error('Unexpected fetch call');
-      }
-      return new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<TaskCenterPage />);
-    fireEvent.click(screen.getByRole('button', { name: '运行 MVP 演示流程' }));
-
-    expect(await screen.findAllByText('waiting_review')).not.toHaveLength(0);
-    expect(screen.getByText('task_001')).toBeInTheDocument();
-    expect(screen.getByText('review_001')).toBeInTheDocument();
-    expect(screen.getByText('interrupt_for_human_review')).toBeInTheDocument();
-    expect(screen.getByText('下游关系 7')).toBeInTheDocument();
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/products');
-    expect(fetchMock.mock.calls[5][0]).toBe('/api/ai-tasks/task_001/start');
-    expect(fetchMock.mock.calls[7][0]).toContain('/api/lifecycle/context?subject_type=requirement');
-    expect(fetchMock.mock.calls[7][1]?.headers).toMatchObject({
-      Authorization: 'Bearer token-admin',
-    });
-    expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/login', expect.anything());
-  });
 });

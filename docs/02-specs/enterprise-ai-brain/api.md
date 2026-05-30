@@ -35,7 +35,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；产品配置、需求、知识文档、Bug 和用户管理已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标，当前仅提供 GET 占位响应。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；产品配置、需求、知识文档、Bug 和用户管理已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps、看板和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
 
 ## 认证方式
 
@@ -210,11 +210,11 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Dashboard | GET | `/api/dashboard/it-team` | 查询首页 IT 团队看板。 |
 | Insights | GET | `/api/insights/usage-metrics` | 查询用户使用指标。 |
 | Insights | GET | `/api/insights/user-feedback` | 查询用户反馈列表。 |
-| Insights | POST | `/api/insights/user-feedback` | v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
-| Insights | PATCH | `/api/insights/user-feedback/{feedback_id}` | v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
+| Insights | POST | `/api/insights/user-feedback` | v1.2 目标接口；当前实现未开放写入。 |
+| Insights | PATCH | `/api/insights/user-feedback/{feedback_id}` | v1.2 目标接口；当前实现未开放写入。 |
 | Planning | GET | `/api/planning/iteration-suggestions` | 查询 AI 迭代规划建议。 |
-| Planning | POST | `/api/planning/iteration-suggestions` | v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
-| Planning | POST | `/api/planning/iteration-suggestions/{suggestion_id}/decide` | v1.2 目标接口；MVP 当前仅提供 GET 占位入口。 |
+| Planning | POST | `/api/planning/iteration-suggestions` | v1.2 目标接口；当前实现未开放写入。 |
+| Planning | POST | `/api/planning/iteration-suggestions/{suggestion_id}/decide` | v1.2 目标接口；当前实现未开放写入。 |
 
 ---
 
@@ -812,7 +812,7 @@ GET /api/ai-tasks/{task_id}/code-review-report
 - MR diff 快照不可被 GitLab 后续变更静默覆盖；重新 Review 必须创建新快照或新运行记录。
 - Review 报告经人工确认或修改后采纳后才可归档为正式结论。
 - v1 MVP 不提供 GitLab 评论、审批状态、request changes、合并状态或分支变更回写接口。
-- 首页、研发运营看板和用户洞察/迭代规划在 MVP 阶段可返回空状态或禁用态响应；响应必须包含 `status = "placeholder"`、`available_phase` 和用户可理解的 `message`，不得返回伪造统计数据。Bug 管理已进入 v1.1 基础实现，不再使用占位响应。
+- 首页、研发运营看板和用户洞察/迭代规划在未接入真实采集器前返回空集合响应；响应必须包含 `items` 和 `total`，不得返回占位状态或伪造统计数据。Bug 管理已进入 v1.1 基础实现，不再使用空集合替代业务数据。
 
 ### 人工确认
 
@@ -965,30 +965,13 @@ GitLab 每日提交和代码质量：
 GET /api/devops/gitlab/daily-code-metrics?product_id=product_001&date=2026-05-28
 ```
 
-响应摘要：
+当前实现尚未接入真实采集器时返回空集合；不得返回伪造统计数据：
 
 ```json
 {
   "data": {
-    "product_id": "product_001",
-    "date": "2026-05-28",
-    "repositories": [
-      {
-        "repository_id": "repo_001",
-        "commit_count": 18,
-        "active_author_count": 5,
-        "quality_score": 86,
-        "risk_count": 3
-      }
-    ],
-    "authors": [
-      {
-        "user_id": "user_001",
-        "commit_count": 6,
-        "changed_lines": 420,
-        "review_issue_count": 1
-      }
-    ]
+    "items": [],
+    "total": 0
   },
   "trace_id": "trace_011"
 }
@@ -1000,22 +983,13 @@ Jenkins 发布记录：
 GET /api/devops/jenkins/releases?product_id=product_001&version_id=version_001
 ```
 
-响应摘要：
+当前实现尚未接入真实 Jenkins 采集器时返回空集合；不得返回伪造发布数据：
 
 ```json
 {
   "data": {
-    "items": [
-      {
-        "job_name": "ai-brain-api-prod",
-        "build_id": "build_1024",
-        "status": "success",
-        "environment": "prod",
-        "triggered_by": "user_001",
-        "duration_seconds": 480,
-        "deployed_at": "2026-05-28T10:00:00Z"
-      }
-    ]
+    "items": [],
+    "total": 0
   },
   "trace_id": "trace_012"
 }
@@ -1027,17 +1001,13 @@ GET /api/devops/jenkins/releases?product_id=product_001&version_id=version_001
 GET /api/ops/online-log-metrics?product_id=product_001&environment=prod&from=2026-05-28T00:00:00Z&to=2026-05-28T23:59:59Z
 ```
 
-响应摘要：
+当前实现尚未接入线上日志采集器时返回空集合；不得返回伪造运行指标：
 
 ```json
 {
   "data": {
-    "product_id": "product_001",
-    "environment": "prod",
-    "error_rate": 0.012,
-    "latency_p95_ms": 420,
-    "core_business_event_count": 1320,
-    "top_errors": []
+    "items": [],
+    "total": 0
   },
   "trace_id": "trace_013"
 }
@@ -1051,25 +1021,13 @@ GET /api/ops/online-log-metrics?product_id=product_001&environment=prod&from=202
 GET /api/insights/usage-metrics?product_id=product_001&module_code=knowledge&feature_code=search&user_segment=rd&from=2026-05-01T00:00:00Z&to=2026-05-28T23:59:59Z
 ```
 
-响应摘要：
+当前实现尚未接入真实用户行为采集器时返回空集合；不得返回伪造使用指标：
 
 ```json
 {
   "data": {
-    "product_id": "product_001",
-    "module_code": "knowledge",
-    "feature_code": "search",
-    "user_segment": "rd",
-    "window": {
-      "from": "2026-05-01T00:00:00Z",
-      "to": "2026-05-28T23:59:59Z"
-    },
-    "active_user_count": 128,
-    "visit_count": 2048,
-    "conversion_rate": 0.64,
-    "avg_stay_seconds": 86,
-    "abnormal_exit_count": 31,
-    "low_usage_features": ["batch_import"]
+    "items": [],
+    "total": 0
   },
   "trace_id": "trace_016"
 }
@@ -1300,21 +1258,13 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 GET /api/dashboard/it-team?product_id=product_001&time_range=7d
 ```
 
-响应摘要：
+当前实现尚未接入真实看板聚合器时返回空集合；不得返回伪造看板指标：
 
 ```json
 {
   "data": {
-    "product_id": "product_001",
-    "requirements": {"pending": 3, "approved": 8},
-    "development": {"running_tasks": 5, "completed_tasks": 12},
-    "bugs": {"open": 6, "critical": 1},
-    "online_system": {"status": "healthy", "error_rate": 0.012},
-    "core_business": {"event_count": 1320},
-    "usage": {"active_user_count": 128, "conversion_rate": 0.64},
-    "feedback": {"open_count": 12, "negative_count": 5},
-    "iteration_planning": {"suggestion_count": 4, "top_priority": "P1"},
-    "release": {"last_success_at": "2026-05-28T10:00:00Z", "failure_rate": 0.08}
+    "items": [],
+    "total": 0
   },
   "trace_id": "trace_014"
 }

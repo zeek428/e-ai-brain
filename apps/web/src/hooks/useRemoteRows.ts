@@ -9,7 +9,7 @@ export type RemoteRowsError = {
 export type RemoteRowsState<Row> = {
   error?: RemoteRowsError;
   rows: Row[];
-  status: 'fallback' | 'loading' | 'ready';
+  status: 'error' | 'loading' | 'ready';
 };
 
 export type RemoteRowsResult<Row> = RemoteRowsState<Row> & {
@@ -38,21 +38,18 @@ export function formatRemoteRowsError(error?: RemoteRowsError) {
   const details = [error.code, error.message, error.traceId ? `trace_id=${error.traceId}` : undefined]
     .filter(Boolean)
     .join(' · ');
-  return `接口异常，当前展示示例数据${details ? `：${details}` : ''}`;
+  return `接口异常，未加载到数据${details ? `：${details}` : ''}`;
 }
 
-export function useRemoteRows<Row>(
-  fallbackRows: Row[],
-  loadRows: () => Promise<Row[]>,
-): RemoteRowsResult<Row> {
+export function useRemoteRows<Row>(loadRows: () => Promise<Row[]>): RemoteRowsResult<Row> {
   const [state, setState] = useState<RemoteRowsState<Row>>({
-    rows: fallbackRows,
+    rows: [],
     status: 'loading',
   });
 
   const reload = useCallback(async () => {
     setState((current) => ({
-      rows: current.rows.length ? current.rows : fallbackRows,
+      rows: current.rows,
       status: 'loading',
     }));
 
@@ -62,11 +59,11 @@ export function useRemoteRows<Row>(
     } catch (error: unknown) {
       setState({
         error: normalizeError(error),
-        rows: fallbackRows,
-        status: 'fallback',
+        rows: [],
+        status: 'error',
       });
     }
-  }, [fallbackRows, loadRows]);
+  }, [loadRows]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -81,8 +78,8 @@ export function useRemoteRows<Row>(
         if (isCurrent) {
           setState({
             error: normalizeError(error),
-            rows: fallbackRows,
-            status: 'fallback',
+            rows: [],
+            status: 'error',
           });
         }
       });
@@ -90,7 +87,7 @@ export function useRemoteRows<Row>(
     return () => {
       isCurrent = false;
     };
-  }, [fallbackRows, loadRows]);
+  }, [loadRows]);
 
   return { ...state, reload };
 }

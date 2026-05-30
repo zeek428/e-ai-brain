@@ -4,7 +4,7 @@ import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from '
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import { bugRows, type BugRecord } from '../../data/management';
+import type { BugRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createManagementBug,
@@ -54,7 +54,7 @@ export default function BugsPage() {
     reload,
     rows: dataSource,
     status,
-  } = useRemoteRows(bugRows, fetchManagementBugs);
+  } = useRemoteRows(fetchManagementBugs);
 
   const openCreateModal = () => {
     setEditingBug(null);

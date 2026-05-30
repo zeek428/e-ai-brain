@@ -14,7 +14,7 @@ def auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_later_phase_entries_return_honest_placeholder_contracts():
+def test_later_phase_entries_return_empty_lists_without_fake_data():
     headers = auth_headers()
     endpoints = [
         "/api/dashboard/it-team",
@@ -29,7 +29,7 @@ def test_later_phase_entries_return_honest_placeholder_contracts():
     for endpoint in endpoints:
         body = client.get(endpoint, headers=headers).json()
         assert body["trace_id"].startswith("trace_")
-        assert body["data"]["status"] == "placeholder"
         assert body["data"]["items"] == []
-        assert body["data"]["available_phase"] in {"MVP 占位 / v1.1", "MVP 占位 / v1.2"}
-        assert "不返回伪造统计数据" in body["data"]["message"]
+        assert body["data"]["total"] == 0
+        assert "placeholder" not in body["data"]
+        assert "available_phase" not in body["data"]
