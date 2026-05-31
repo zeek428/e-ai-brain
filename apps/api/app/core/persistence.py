@@ -38,6 +38,10 @@ MODEL_GATEWAY_FIELDS = [
     "model_gateway_configs",
     "model_gateway_logs",
 ]
+GITLAB_REVIEW_FIELDS = [
+    "gitlab_mr_snapshots",
+    "code_review_reports",
+]
 COLLECTION_FIELDS = [
     "products",
     "product_versions",
@@ -116,6 +120,12 @@ class ModelGatewayRepository(Protocol):
     def save_model_gateway(self, payload: dict[str, Any]) -> None: ...
 
 
+class GitlabReviewRepository(Protocol):
+    def load_gitlab_review(self) -> dict[str, Any] | None: ...
+
+    def save_gitlab_review(self, payload: dict[str, Any]) -> None: ...
+
+
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in PRODUCT_CONFIG_FIELDS}
 
@@ -149,6 +159,10 @@ def _model_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "model_gateway_configs": deepcopy(payload.get("model_gateway_configs", {})),
         "model_gateway_logs": deepcopy(payload.get("model_gateway_logs", [])),
     }
+
+
+def _gitlab_review_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in GITLAB_REVIEW_FIELDS}
 
 
 def _ai_tasks_merge_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -278,6 +292,13 @@ def _repository_load_model_gateway(repository: SnapshotRepository) -> dict[str, 
     return load_model_gateway()
 
 
+def _repository_load_gitlab_review(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_gitlab_review = getattr(repository, "load_gitlab_review", None)
+    if load_gitlab_review is None:
+        return None
+    return load_gitlab_review()
+
+
 def _repository_save_workflow_runtime(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -323,6 +344,17 @@ def _repository_save_model_gateway(
         save_model_gateway(_model_gateway_payload(payload))
 
 
+def _repository_save_gitlab_review(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_gitlab_review = getattr(repository, "save_gitlab_review", None)
+    if save_gitlab_review is not None:
+        clean_payload = deepcopy(payload)
+        _drop_gitlab_review_without_context(clean_payload)
+        save_gitlab_review(_gitlab_review_payload(clean_payload))
+
+
 def _has_product_config_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in PRODUCT_CONFIG_FIELDS)
 
@@ -353,6 +385,10 @@ def _has_bug_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_model_gateway_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in MODEL_GATEWAY_FIELDS)
+
+
+def _has_gitlab_review_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in GITLAB_REVIEW_FIELDS)
 
 
 def _max_numeric_suffix(items: dict[str, dict[str, Any]], prefix: str) -> int:
@@ -468,6 +504,19 @@ def _sync_model_gateway_counters(payload: dict[str, Any]) -> None:
     payload["counters"] = counters
 
 
+def _sync_gitlab_review_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["snapshot"] = max(
+        counters.get("snapshot", 0),
+        _max_numeric_suffix(payload.get("gitlab_mr_snapshots", {}), "snapshot"),
+    )
+    counters["report"] = max(
+        counters.get("report", 0),
+        _max_numeric_suffix(payload.get("code_review_reports", {}), "report"),
+    )
+    payload["counters"] = counters
+
+
 def _drop_requirements_without_product_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     versions = payload.get("product_versions", {})
@@ -550,6 +599,15 @@ def _sync_task_runtime_links(payload: dict[str, Any]) -> None:
             task["checkpoint_id"] = graph_run["checkpoint_id"]
 
 
+def _sync_code_review_report_links(payload: dict[str, Any]) -> None:
+    ai_tasks = payload.get("ai_tasks", {})
+    for report_id, report in payload.get("code_review_reports", {}).items():
+        task = ai_tasks.get(report.get("task_id"))
+        if task is None:
+            continue
+        task["code_review_report_id"] = report_id
+
+
 def _drop_knowledge_without_context(payload: dict[str, Any]) -> None:
     ai_tasks = payload.get("ai_tasks", {})
     knowledge_documents = payload.get("knowledge_documents", {})
@@ -595,6 +653,61 @@ def _drop_bugs_without_context(payload: dict[str, Any]) -> None:
         if duplicate_of_bug_id == bug_id:
             bug["duplicate_of_bug_id"] = None
     payload["bugs"] = cleaned_bugs
+
+
+def _drop_gitlab_review_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    repositories = payload.get("product_git_repositories", {})
+    versions = payload.get("product_versions", {})
+    requirements = payload.get("requirements", {})
+    ai_tasks = payload.get("ai_tasks", {})
+    human_reviews = payload.get("human_reviews", {})
+    snapshots = payload.get("gitlab_mr_snapshots", {})
+
+    cleaned_snapshots = {}
+    for snapshot_id, snapshot in snapshots.items():
+        repository = repositories.get(snapshot.get("repository_id"))
+        product_id = snapshot.get("product_id")
+        version_id = snapshot.get("version_id")
+        requirement = requirements.get(snapshot.get("requirement_id"))
+        solution_task = ai_tasks.get(snapshot.get("technical_solution_task_id"))
+        if repository is None or repository.get("product_id") != product_id:
+            continue
+        if product_id not in products:
+            continue
+        if version_id and (
+            version_id not in versions or versions[version_id].get("product_id") != product_id
+        ):
+            continue
+        if requirement is None or requirement.get("product_id") != product_id:
+            continue
+        if version_id and requirement.get("version_id") != version_id:
+            continue
+        if solution_task is None or solution_task.get("product_id") != product_id:
+            continue
+        if solution_task.get("requirement_id") != snapshot.get("requirement_id"):
+            continue
+        if version_id and solution_task.get("version_id") != version_id:
+            continue
+        cleaned_snapshots[snapshot_id] = deepcopy(snapshot)
+
+    cleaned_reports = {}
+    for report_id, report in payload.get("code_review_reports", {}).items():
+        if report.get("gitlab_mr_snapshot_id") not in cleaned_snapshots:
+            continue
+        task = ai_tasks.get(report.get("task_id"))
+        if task is None:
+            continue
+        cleaned_report = deepcopy(report)
+        review_id = cleaned_report.get("review_id")
+        if review_id:
+            review = human_reviews.get(review_id)
+            if review is None or review.get("ai_task_id") != report.get("task_id"):
+                cleaned_report["review_id"] = None
+        cleaned_reports[report_id] = cleaned_report
+
+    payload["gitlab_mr_snapshots"] = cleaned_snapshots
+    payload["code_review_reports"] = cleaned_reports
 
 
 class PersistentMemoryStore(MemoryStore):
@@ -670,6 +783,14 @@ class PersistentMemoryStore(MemoryStore):
                 MODEL_GATEWAY_FIELDS,
             )
             _sync_model_gateway_counters(payload)
+        gitlab_review_payload = _repository_load_gitlab_review(repository)
+        if _has_gitlab_review_items(gitlab_review_payload):
+            _replace_collection_payload(
+                payload,
+                _gitlab_review_payload(gitlab_review_payload),
+                GITLAB_REVIEW_FIELDS,
+            )
+            _sync_gitlab_review_counters(payload)
         if has_structured_product_config:
             _drop_requirements_without_product_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
@@ -679,8 +800,10 @@ class PersistentMemoryStore(MemoryStore):
             _drop_knowledge_without_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
             _drop_bugs_without_context(payload)
+        _drop_gitlab_review_without_context(payload)
         _ensure_ai_task_defaults(payload)
         _sync_task_runtime_links(payload)
+        _sync_code_review_report_links(payload)
         if payload:
             store.load_payload(payload)
         return store
@@ -705,6 +828,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_audit_events(self.repository, payload)
         _repository_save_bugs(self.repository, payload)
         _repository_save_model_gateway(self.repository, payload)
+        _repository_save_gitlab_review(self.repository, payload)
 
 
 class PostgresSnapshotRepository:
@@ -819,6 +943,16 @@ class PostgresSnapshotRepository:
             "model_gateway_logs": logs,
         }
 
+    def load_gitlab_review(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                snapshots = self._load_gitlab_mr_snapshots(cursor)
+                reports = self._load_code_review_reports(cursor)
+        return {
+            "code_review_reports": reports,
+            "gitlab_mr_snapshots": snapshots,
+        }
+
     def save_product_config(self, payload: dict[str, Any]) -> None:
         products = payload.get("products", {})
         versions = payload.get("product_versions", {})
@@ -906,6 +1040,16 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "model_gateway_configs", configs)
                 self._upsert_model_gateway_configs(cursor, configs)
                 self._upsert_model_gateway_logs(cursor, logs)
+
+    def save_gitlab_review(self, payload: dict[str, Any]) -> None:
+        snapshots = payload.get("gitlab_mr_snapshots", {})
+        reports = payload.get("code_review_reports", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "code_review_reports", reports)
+                self._delete_missing(cursor, "gitlab_mr_snapshots", snapshots)
+                self._upsert_gitlab_mr_snapshots(cursor, snapshots)
+                self._upsert_code_review_reports(cursor, reports)
 
     def _load_products(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -1373,6 +1517,98 @@ class PostgresSnapshotRepository:
                     log.pop(optional_key)
             logs.append(log)
         return logs
+
+    def _load_gitlab_mr_snapshots(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, repository_id, product_id, version_id, project_id, project_path,
+                   mr_iid, title, author, source_branch, target_branch, base_sha,
+                   head_sha, diff_refs, changed_files_summary, diff_storage_ref,
+                   diff_size_bytes, diff_limit_bytes, snapshot_hash, requirement_id,
+                   technical_solution_task_id, created_by, created_at, writeback_allowed
+            FROM gitlab_mr_snapshots
+            ORDER BY created_at, id
+            """
+        )
+        snapshots = {}
+        for row in cursor.fetchall():
+            snapshot = {
+                "author": dict(row[8] or {}),
+                "base_sha": row[11],
+                "changed_files_summary": list(row[14] or []),
+                "created_at": row[22].isoformat() if row[22] else None,
+                "created_by": row[21],
+                "diff_limit_bytes": row[17],
+                "diff_refs": dict(row[13] or {}),
+                "diff_size_bytes": row[16],
+                "diff_storage_ref": row[15],
+                "head_sha": row[12],
+                "id": row[0],
+                "mr_iid": row[6],
+                "product_id": row[2],
+                "project_id": row[4],
+                "project_path": row[5],
+                "repository_id": row[1],
+                "requirement_id": row[19],
+                "snapshot_hash": row[18],
+                "source_branch": row[9],
+                "target_branch": row[10],
+                "technical_solution_task_id": row[20],
+                "title": row[7],
+                "version_id": row[3],
+                "writeback_allowed": row[23],
+            }
+            for optional_key in (
+                "base_sha",
+                "created_at",
+                "project_id",
+                "project_path",
+                "version_id",
+            ):
+                if snapshot[optional_key] is None:
+                    snapshot.pop(optional_key)
+            snapshots[row[0]] = snapshot
+        return snapshots
+
+    def _load_code_review_reports(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, task_id, gitlab_mr_snapshot_id, executor, summary, risk_level,
+                   findings, status, review_id, archived_at, error_code,
+                   gitlab_writeback_performed, created_at, updated_at
+            FROM code_review_reports
+            ORDER BY created_at, id
+            """
+        )
+        reports = {}
+        for row in cursor.fetchall():
+            report = {
+                "archived_at": row[9].isoformat() if row[9] else None,
+                "created_at": row[12].isoformat() if row[12] else None,
+                "error_code": row[10],
+                "executor": dict(row[3] or {}),
+                "findings": list(row[6] or []),
+                "gitlab_mr_snapshot_id": row[2],
+                "gitlab_writeback_performed": row[11],
+                "id": row[0],
+                "review_id": row[8],
+                "risk_level": row[5],
+                "status": row[7],
+                "summary": row[4],
+                "task_id": row[1],
+                "updated_at": row[13].isoformat() if row[13] else None,
+            }
+            for optional_key in (
+                "archived_at",
+                "created_at",
+                "error_code",
+                "review_id",
+                "updated_at",
+            ):
+                if report[optional_key] is None:
+                    report.pop(optional_key)
+            reports[row[0]] = report
+        return reports
 
     def _delete_missing(
         self,
@@ -2111,5 +2347,134 @@ class PostgresSnapshotRepository:
                     log.get("error"),
                     log.get("model_gateway_config_id"),
                     log.get("created_at"),
+                ),
+            )
+
+    def _upsert_gitlab_mr_snapshots(
+        self,
+        cursor,
+        snapshots: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for snapshot in snapshots.values():
+            cursor.execute(
+                """
+                INSERT INTO gitlab_mr_snapshots (
+                  id, repository_id, product_id, version_id, project_id, project_path,
+                  mr_iid, title, author, source_branch, target_branch, base_sha, head_sha,
+                  diff_refs, changed_files_summary, diff_storage_ref, diff_size_bytes,
+                  diff_limit_bytes, snapshot_hash, requirement_id, technical_solution_task_id,
+                  created_by, created_at, writeback_allowed
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s,
+                  %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), %s
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  repository_id = EXCLUDED.repository_id,
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  project_id = EXCLUDED.project_id,
+                  project_path = EXCLUDED.project_path,
+                  mr_iid = EXCLUDED.mr_iid,
+                  title = EXCLUDED.title,
+                  author = EXCLUDED.author,
+                  source_branch = EXCLUDED.source_branch,
+                  target_branch = EXCLUDED.target_branch,
+                  base_sha = EXCLUDED.base_sha,
+                  head_sha = EXCLUDED.head_sha,
+                  diff_refs = EXCLUDED.diff_refs,
+                  changed_files_summary = EXCLUDED.changed_files_summary,
+                  diff_storage_ref = EXCLUDED.diff_storage_ref,
+                  diff_size_bytes = EXCLUDED.diff_size_bytes,
+                  diff_limit_bytes = EXCLUDED.diff_limit_bytes,
+                  snapshot_hash = EXCLUDED.snapshot_hash,
+                  requirement_id = EXCLUDED.requirement_id,
+                  technical_solution_task_id = EXCLUDED.technical_solution_task_id,
+                  created_by = EXCLUDED.created_by,
+                  created_at = EXCLUDED.created_at,
+                  writeback_allowed = EXCLUDED.writeback_allowed
+                """,
+                (
+                    snapshot["id"],
+                    snapshot["repository_id"],
+                    snapshot["product_id"],
+                    snapshot.get("version_id"),
+                    snapshot.get("project_id"),
+                    snapshot.get("project_path"),
+                    snapshot["mr_iid"],
+                    snapshot["title"],
+                    json.dumps(snapshot.get("author"), ensure_ascii=False),
+                    snapshot["source_branch"],
+                    snapshot["target_branch"],
+                    snapshot.get("base_sha"),
+                    snapshot["head_sha"],
+                    json.dumps(snapshot.get("diff_refs"), ensure_ascii=False),
+                    json.dumps(snapshot.get("changed_files_summary", []), ensure_ascii=False),
+                    snapshot["diff_storage_ref"],
+                    snapshot.get("diff_size_bytes", 0),
+                    snapshot.get("diff_limit_bytes", 0),
+                    snapshot["snapshot_hash"],
+                    snapshot["requirement_id"],
+                    snapshot["technical_solution_task_id"],
+                    snapshot["created_by"],
+                    snapshot.get("created_at"),
+                    snapshot.get("writeback_allowed", False),
+                ),
+            )
+
+    def _upsert_code_review_reports(
+        self,
+        cursor,
+        reports: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for report in reports.values():
+            created_at = report.get("created_at")
+            updated_at = report.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO code_review_reports (
+                  id, task_id, gitlab_mr_snapshot_id, executor, summary, risk_level,
+                  findings, status, review_id, archived_at, error_code,
+                  gitlab_writeback_performed, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s, %s,
+                  %s::timestamptz, %s, %s, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  task_id = EXCLUDED.task_id,
+                  gitlab_mr_snapshot_id = EXCLUDED.gitlab_mr_snapshot_id,
+                  executor = EXCLUDED.executor,
+                  summary = EXCLUDED.summary,
+                  risk_level = EXCLUDED.risk_level,
+                  findings = EXCLUDED.findings,
+                  status = EXCLUDED.status,
+                  review_id = EXCLUDED.review_id,
+                  archived_at = EXCLUDED.archived_at,
+                  error_code = EXCLUDED.error_code,
+                  gitlab_writeback_performed = EXCLUDED.gitlab_writeback_performed,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    report["id"],
+                    report["task_id"],
+                    report["gitlab_mr_snapshot_id"],
+                    json.dumps(report.get("executor", {}), ensure_ascii=False),
+                    report["summary"],
+                    report["risk_level"],
+                    json.dumps(report.get("findings", []), ensure_ascii=False),
+                    report.get("status", "draft"),
+                    report.get("review_id"),
+                    report.get("archived_at"),
+                    report.get("error_code"),
+                    report.get("gitlab_writeback_performed", False),
+                    created_at,
+                    updated_at,
                 ),
             )
