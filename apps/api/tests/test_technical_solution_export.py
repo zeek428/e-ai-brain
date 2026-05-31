@@ -14,6 +14,15 @@ def auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def reviewer_headers() -> dict[str, str]:
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "reviewer@example.com", "password": "reviewer123"},
+    )
+    token = response.json()["data"]["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 def create_confirmed_product_detail_task(headers: dict[str, str]) -> tuple[dict[str, str], str]:
     app.state.store.reset()
     product = client.post(
@@ -87,3 +96,32 @@ def test_technical_solution_requires_confirmed_design_and_exports_markdown():
     assert "## 产品详细设计" in markdown.text
     assert "## 技术方案" in markdown.text
     assert "审批后需要生成详细设计和技术方案。" in markdown.text
+
+
+def test_markdown_export_obeys_task_read_permissions():
+    headers = auth_headers()
+    requirement, design_task_id = create_confirmed_product_detail_task(headers)
+    created = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "technical_solution",
+            "title": "技术方案：生成技术方案",
+            "requirement_id": requirement["id"],
+            "input": {"product_detail_design_task_id": design_task_id},
+        },
+        headers=headers,
+    ).json()["data"]
+    started = client.post(f"/api/ai-tasks/{created['id']}/start", headers=headers).json()["data"]
+    client.post(
+        f"/api/reviews/{started['review_id']}/approve",
+        json={"version": 1},
+        headers=headers,
+    )
+
+    forbidden = client.get(
+        f"/api/export/tasks/{created['id']}/markdown",
+        headers=reviewer_headers(),
+    )
+
+    assert forbidden.status_code == 403
+    assert forbidden.json()["detail"]["code"] == "FORBIDDEN"

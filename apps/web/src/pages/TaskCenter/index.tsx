@@ -1,12 +1,14 @@
 import { PageContainer, ProCard, ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Col, Row, Space, Tag, Typography, message } from 'antd';
-import { useCallback, useMemo } from 'react';
+import { Alert, Button, Col, Input, Modal, Row, Space, Tag, Typography, message } from 'antd';
+import { useCallback, useMemo, useState } from 'react';
 
 import { phases } from '../../data/workbench';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   approveTaskCenterReview,
+  createTechnicalSolutionTask,
+  fetchTaskMarkdown,
   fetchTaskCenterPendingReviews,
   fetchTaskCenterTasks,
   startTaskCenterTask,
@@ -18,6 +20,10 @@ import { formatMutationError } from '../../utils/managementCrud';
 const { Paragraph, Text, Title } = Typography;
 
 export default function TaskCenterPage() {
+  const [markdownPreview, setMarkdownPreview] = useState<{
+    content: string;
+    title: string;
+  }>();
   const {
     error,
     reload: reloadTasks,
@@ -55,6 +61,25 @@ export default function TaskCenterPage() {
     }
   }, [reloadTaskCenter]);
 
+  const handleCreateTechnicalSolution = useCallback(async (task: TaskCenterTaskRecord) => {
+    try {
+      await createTechnicalSolutionTask(task);
+      message.success('技术方案任务已创建');
+      await reloadTaskCenter();
+    } catch (taskError) {
+      message.error(formatMutationError(taskError));
+    }
+  }, [reloadTaskCenter]);
+
+  const handleExportMarkdown = useCallback(async (task: TaskCenterTaskRecord) => {
+    try {
+      const content = await fetchTaskMarkdown(task.id);
+      setMarkdownPreview({ content, title: task.label });
+    } catch (taskError) {
+      message.error(formatMutationError(taskError));
+    }
+  }, []);
+
   const columns = useMemo<ProColumns<TaskCenterTaskRecord>[]>(
     () => [
       {
@@ -83,15 +108,28 @@ export default function TaskCenterPage() {
         key: 'actions',
         title: '操作',
         valueType: 'option',
-        render: (_, row) =>
-          row.status === 'draft' ? (
-            <Button onClick={() => handleStartTask(row)} type="link">
-              启动任务
-            </Button>
-          ) : null,
+        render: (_, row) => (
+          <Space size={4}>
+            {row.status === 'draft' ? (
+              <Button onClick={() => handleStartTask(row)} type="link">
+                启动任务
+              </Button>
+            ) : null}
+            {row.type === 'product_detail_design' && row.status === 'completed' ? (
+              <Button onClick={() => handleCreateTechnicalSolution(row)} type="link">
+                生成技术方案
+              </Button>
+            ) : null}
+            {row.type === 'technical_solution' && row.status === 'completed' ? (
+              <Button onClick={() => handleExportMarkdown(row)} type="link">
+                导出 Markdown
+              </Button>
+            ) : null}
+          </Space>
+        ),
       },
     ],
-    [handleStartTask],
+    [handleCreateTechnicalSolution, handleExportMarkdown, handleStartTask],
   );
 
   const reviewColumns = useMemo<ProColumns<TaskCenterReviewRecord>[]>(
@@ -178,6 +216,20 @@ export default function TaskCenterPage() {
           ) : null}
         </ProCard>
       </section>
+
+      <Modal
+        footer={null}
+        onCancel={() => setMarkdownPreview(undefined)}
+        open={Boolean(markdownPreview)}
+        title={markdownPreview?.title ? `Markdown 导出：${markdownPreview.title}` : 'Markdown 导出'}
+        width={760}
+      >
+        <Input.TextArea
+          autoSize={{ maxRows: 22, minRows: 12 }}
+          readOnly
+          value={markdownPreview?.content}
+        />
+      </Modal>
     </PageContainer>
   );
 }

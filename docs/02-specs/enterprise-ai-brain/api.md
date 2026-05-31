@@ -36,7 +36,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；产品配置、需求、知识文档、Bug 和用户管理已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps、看板和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR mock 输入和 code_review 报告闭环；产品配置、需求、知识文档、Bug 和用户管理已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps、看板和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
 
 ## 认证方式
 
@@ -1329,6 +1329,12 @@ GET /api/export/tasks/{task_id}/markdown
 ```
 
 响应类型：`text/markdown; charset=utf-8`。
+
+规则：
+
+- 仅允许导出 `completed` 状态任务；未完成任务返回 `TASK_STATE_INVALID`。
+- 导出权限与 AI 任务读取权限一致：`product_detail_design` 和 `technical_solution` 仅允许 `product_owner`/`rd_owner`/`admin`，`code_review` 仅允许 `reviewer`/`rd_owner`/`admin`。
+- 响应通过 `X-Trace-Id` 头关联本次导出请求。
 
 ### 审计事件
 

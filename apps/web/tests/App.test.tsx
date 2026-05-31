@@ -257,11 +257,13 @@ import {
   createManagementProduct,
   createManagementRequirement,
   createManagementUser,
+  createTechnicalSolutionTask,
   deleteManagementBug,
   deleteManagementKnowledgeDocument,
   deleteManagementProduct,
   deleteManagementRequirement,
   deleteManagementUser,
+  fetchTaskMarkdown,
   generateRequirementTask,
   rejectManagementRequirement,
   startTaskCenterTask,
@@ -506,9 +508,26 @@ describe('AI Brain Ant Design Pro workbench', () => {
               {
                 created_by: 'user_admin',
                 id: 'task_api',
+                requirement_id: 'requirement_api',
                 status: 'waiting_review',
                 task_type: 'product_detail_design',
                 title: '接口任务',
+              },
+              {
+                created_by: 'user_admin',
+                id: 'task_design_done',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'product_detail_design',
+                title: '已确认详细设计',
+              },
+              {
+                created_by: 'user_admin',
+                id: 'task_solution_done',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'technical_solution',
+                title: '技术方案：接口任务',
               },
             ],
             total: 1,
@@ -534,6 +553,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByRole('button', { name: '运行 MVP 演示流程' })).not.toBeInTheDocument();
     expect(await screen.findByText('接口任务')).toBeInTheDocument();
     expect(screen.getAllByText('product_detail_design')).not.toHaveLength(0);
+    expect(screen.getByRole('button', { name: '生成技术方案' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出 Markdown' })).toBeInTheDocument();
     expect(screen.getByText('确认台')).toBeInTheDocument();
     expect(await screen.findByText('接口任务输出摘要')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
@@ -1159,6 +1180,12 @@ describe('AI Brain Ant Design Pro workbench', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/export/tasks/task_solution/markdown') {
+        return new Response('# Markdown 导出', {
+          headers: { 'Content-Type': 'text/markdown' },
+          status: 200,
+        });
+      }
       return jsonResponse({
         data: {
           id: String(input).includes('/api/products') ? 'product_api' : 'resource_api',
@@ -1211,6 +1238,15 @@ describe('AI Brain Ant Design Pro workbench', () => {
     await deleteManagementUser('user_api');
     await startTaskCenterTask('task_api');
     await approveTaskCenterReview('review_api', 1);
+    await createTechnicalSolutionTask({
+      id: 'task_design',
+      label: '产品详细设计：CRUD 需求',
+      owner: 'user_admin',
+      requirementId: 'requirement_api',
+      status: 'completed',
+      type: 'product_detail_design',
+    });
+    await expect(fetchTaskMarkdown('task_solution')).resolves.toBe('# Markdown 导出');
 
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
       ['/api/products', 'POST'],
@@ -1233,7 +1269,17 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/users/user_api', 'DELETE'],
       ['/api/ai-tasks/task_api/start', 'POST'],
       ['/api/reviews/review_api/approve', 'POST'],
+      ['/api/ai-tasks', 'POST'],
+      ['/api/export/tasks/task_solution/markdown', 'GET'],
     ]);
+    expect(fetchMock.mock.calls[20]?.[1]?.body).toBe(
+      JSON.stringify({
+        input: { product_detail_design_task_id: 'task_design' },
+        requirement_id: 'requirement_api',
+        task_type: 'technical_solution',
+        title: '技术方案：CRUD 需求',
+      }),
+    );
   });
 
 });

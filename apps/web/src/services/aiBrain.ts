@@ -89,6 +89,7 @@ export type TaskCenterTaskRecord = {
   id: string;
   label: string;
   owner: string;
+  requirementId?: string;
   status: string;
   type: string;
 };
@@ -251,6 +252,7 @@ type BugListItem = {
 type TaskListItem = {
   created_by?: string;
   id: string;
+  requirement_id?: string;
   status?: string;
   task_type?: string;
   title?: string;
@@ -858,6 +860,7 @@ export async function fetchTaskCenterTasks(): Promise<TaskCenterTaskRecord[]> {
     id: task.id,
     label: task.title ?? task.task_type ?? task.id,
     owner: task.created_by ?? '-',
+    requirementId: task.requirement_id,
     status: task.status ?? '-',
     type: task.task_type ?? '-',
   }));
@@ -897,6 +900,61 @@ export async function approveTaskCenterReview(reviewId: string, version: number)
       token,
     },
   );
+}
+
+function technicalSolutionTitleFromDesignTask(task: TaskCenterTaskRecord) {
+  const title = task.label.replace(/^产品详细设计[:：]\s*/, '').trim();
+  return `技术方案：${title || task.label}`;
+}
+
+export async function createTechnicalSolutionTask(task: TaskCenterTaskRecord) {
+  const token = requireAccessToken();
+  if (!task.requirementId) {
+    throw new ApiRequestError({
+      code: 'VALIDATION_ERROR',
+      message: '缺少需求编号，无法创建技术方案任务。',
+      status: 400,
+    });
+  }
+  return apiRequest<{ id: string; status: string }>('/api/ai-tasks', {
+    body: {
+      input: { product_detail_design_task_id: task.id },
+      requirement_id: task.requirementId,
+      task_type: 'technical_solution',
+      title: technicalSolutionTitleFromDesignTask(task),
+    },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function fetchTaskMarkdown(taskId: string): Promise<string> {
+  const token = requireAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/export/tasks/${taskId}/markdown`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    method: 'GET',
+  });
+  if (!response.ok) {
+    let payload: ApiErrorPayload | undefined;
+    try {
+      payload = (await response.json()) as ApiErrorPayload;
+    } catch {
+      payload = undefined;
+    }
+    const requestError = new ApiRequestError({
+      code: payload?.detail?.code,
+      message: payload?.detail?.message ?? `API request failed: ${response.status}`,
+      status: response.status,
+      traceId: payload?.detail?.trace_id,
+    });
+    if (response.status === 401) {
+      handleUnauthorizedApiResponse();
+    }
+    throw requestError;
+  }
+  return response.text();
 }
 
 function mapOperationalMetrics(

@@ -3866,6 +3866,7 @@ def export_task_markdown(
     task = current_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
+    _require_task_read_role(user, task)
     if task["status"] != "completed":
         raise api_error(409, "TASK_STATE_INVALID", "Only completed tasks can be exported")
 
