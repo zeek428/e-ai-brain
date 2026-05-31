@@ -298,6 +298,38 @@ import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
 import TaskCenterPage from '../src/pages/TaskCenter';
 import { getInitialState } from '../src/app';
 
+const roleCatalogEnvelope = {
+  data: {
+    items: [
+      {
+        code: 'admin',
+        data_scope: '全平台。',
+        decision_scope: '系统治理。',
+        description: '负责用户、角色、模型网关、审计与系统级配置管理。',
+        is_assignable: true,
+        name: '系统管理员',
+        permissions: ['system.users.manage'],
+        responsibilities: ['维护用户和角色。'],
+        sort_order: 10,
+        status: 'active',
+      },
+      {
+        code: 'viewer',
+        data_scope: '授权范围内的数据。',
+        decision_scope: '无写入或审批决策权限。',
+        description: '只能查看有权限访问的工作台数据、任务结果、知识和看板摘要。',
+        is_assignable: true,
+        name: '查看者',
+        permissions: ['workspace.read'],
+        responsibilities: ['查看授权范围内的业务数据。'],
+        sort_order: 60,
+        status: 'active',
+      },
+    ],
+    total: 2,
+  },
+};
+
 describe('AI Brain Ant Design Pro workbench', () => {
   afterEach(() => {
     cleanup();
@@ -1147,6 +1179,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (input === '/api/auth/roles') {
+        return jsonResponse(roleCatalogEnvelope);
+      }
       if (input === '/api/knowledge/search') {
         expect(init?.method).toBe('POST');
         expect(JSON.parse(String(init?.body))).toEqual({
@@ -1183,6 +1218,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('manual · 需求评估规则')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
       ['/api/knowledge/documents', 'GET'],
+      ['/api/auth/roles', 'GET'],
       ['/api/knowledge/search', 'POST'],
     ]);
   });
@@ -1912,6 +1948,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path === '/api/auth/roles') {
+        return jsonResponse(roleCatalogEnvelope);
+      }
       if (path === '/api/users') {
         return jsonResponse({
           data: {
@@ -1962,6 +2001,13 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
   it('uses explicitly defined role options in the user management modal', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === '/api/auth/roles') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return new Response(JSON.stringify(roleCatalogEnvelope), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
       expect(String(input)).toBe('/api/users');
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       return new Response(
@@ -1984,7 +2030,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /新增用户/ }));
 
-    expect(await screen.findByText('查看者')).toBeInTheDocument();
+    expect(await screen.findByText(/查看者/)).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('admin, product_owner, rd_owner')).not.toBeInTheDocument();
   });
 
@@ -2082,6 +2128,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
             total: 1,
           },
         });
+      }
+      if (path === '/api/auth/roles') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return jsonResponse(roleCatalogEnvelope);
       }
       if (path === '/api/bugs') {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

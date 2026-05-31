@@ -2,10 +2,11 @@ import { DeleteOutlined, EditOutlined, SearchOutlined } from '@ant-design/icons'
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Typography, message } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { KnowledgeRecord } from '../../data/management';
+import { type UserRoleDefinition, toUserRoleOptions } from '../../data/roles';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   approveKnowledgeDeposit,
@@ -14,16 +15,13 @@ import {
   fetchKnowledgeDeposits,
   fetchKnowledgeSearchResults,
   fetchManagementKnowledge,
+  fetchRoleDefinitions,
   rejectKnowledgeDeposit,
   updateManagementKnowledgeDocument,
   type KnowledgeDepositRecord,
   type KnowledgeSearchResultRecord,
 } from '../../services/aiBrain';
-import {
-  formatMutationError,
-  joinTextList,
-  splitCommaText,
-} from '../../utils/managementCrud';
+import { formatMutationError, joinTextList, splitCommaText } from '../../utils/managementCrud';
 
 const { Text } = Typography;
 
@@ -44,7 +42,7 @@ type KnowledgeFormValues = {
   content: string;
   doc_type: string;
   index_status?: KnowledgeRecord['status'];
-  permission_roles?: string;
+  permission_roles?: string[];
   tags?: string;
   title: string;
 };
@@ -73,19 +71,44 @@ export default function KnowledgePage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [roleCatalogError, setRoleCatalogError] = useState<string | undefined>();
+  const [roleDefinitions, setRoleDefinitions] = useState<UserRoleDefinition[]>([]);
   const {
     error,
     reload,
     rows: dataSource,
     status,
   } = useRemoteRows(fetchManagementKnowledge);
+  const roleOptions = useMemo(() => toUserRoleOptions(roleDefinitions), [roleDefinitions]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    fetchRoleDefinitions()
+      .then((definitions) => {
+        if (isCurrent) {
+          setRoleDefinitions(definitions);
+          setRoleCatalogError(undefined);
+        }
+      })
+      .catch((roleError: unknown) => {
+        if (isCurrent) {
+          setRoleDefinitions([]);
+          setRoleCatalogError(`角色目录加载失败：${formatMutationError(roleError)}`);
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
 
   const openCreateModal = () => {
     setEditingDocument(null);
     form.resetFields();
     form.setFieldsValue({
       doc_type: 'manual',
-      permission_roles: 'admin',
+      permission_roles: ['admin'],
     });
     setIsModalOpen(true);
   };
@@ -120,7 +143,9 @@ export default function KnowledgePage() {
       content: row.content ?? '',
       doc_type: row.documentType,
       index_status: row.status,
-      permission_roles: joinTextList(row.permissionRoles) || row.ownerRole,
+      permission_roles: row.permissionRoles?.length
+        ? row.permissionRoles
+        : splitCommaText(row.ownerRole),
       tags: joinTextList(row.tags),
       title: row.title,
     });
@@ -133,7 +158,7 @@ export default function KnowledgePage() {
       content: values.content.trim(),
       doc_type: values.doc_type.trim(),
       index_status: editingDocument ? values.index_status : undefined,
-      permission_roles: splitCommaText(values.permission_roles),
+      permission_roles: values.permission_roles ?? [],
       tags: splitCommaText(values.tags),
       title: values.title.trim(),
     };
@@ -361,7 +386,7 @@ export default function KnowledgePage() {
           },
         ]}
         loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        notice={formatRemoteRowsError(error) ?? roleCatalogError}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="导入文档"
@@ -456,8 +481,14 @@ export default function KnowledgePage() {
           <Form.Item label="类型" name="doc_type" rules={[{ required: true, message: '请输入知识类型' }]}>
             <Input placeholder="manual / PRD / Spec / Deposit" />
           </Form.Item>
-          <Form.Item label="权限角色" name="permission_roles">
-            <Input placeholder="admin, knowledge_owner" />
+          <Form.Item label="权限角色" name="permission_roles" rules={[{ required: true, message: '请选择权限角色' }]}>
+            <Select
+              disabled={roleOptions.length === 0}
+              mode="multiple"
+              optionFilterProp="label"
+              options={roleOptions}
+              placeholder="请选择权限角色"
+            />
           </Form.Item>
           <Form.Item label="标签" name="tags">
             <Input />

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
-from app.core.roles import ROLE_CODES, list_role_definitions
+from app.core.roles import ASSIGNABLE_ROLE_CODES, list_role_definitions
 from app.core.security import TokenError, create_access_token, parse_access_token, verify_password
 from app.core.store import MemoryStore
 from app.core.trace import envelope, get_trace_id, new_trace_id
@@ -81,7 +81,7 @@ BUG_STATUSES = {
     "closed",
     "reopened",
 }
-USER_ROLES = ROLE_CODES
+USER_ROLES = ASSIGNABLE_ROLE_CODES
 USER_STATUSES = {"active", "inactive"}
 PRODUCT_STATUSES = {"active", "inactive"}
 VERSION_STATUSES = {"planning", "active", "archived"}
@@ -584,6 +584,8 @@ def _ensure_enum(value: str | None, allowed_values: set[str], field: str) -> Non
 def _ensure_roles(roles: list[str]) -> None:
     if not roles:
         raise api_error(400, "VALIDATION_ERROR", "roles is required")
+    if len(set(roles)) != len(roles):
+        raise api_error(400, "VALIDATION_ERROR", "roles must be unique")
     invalid_roles = sorted(set(roles) - USER_ROLES)
     if invalid_roles:
         raise api_error(400, "VALIDATION_ERROR", f"Unsupported roles: {', '.join(invalid_roles)}")

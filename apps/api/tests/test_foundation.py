@@ -97,6 +97,40 @@ def test_role_catalog_defines_supported_mvp_roles():
     assert roles[0]["name"] == "系统管理员"
     assert "system.users.manage" in roles[0]["permissions"]
     assert all(role["description"] for role in roles)
+    assert all(role["responsibilities"] for role in roles)
+    assert all(role["data_scope"] for role in roles)
+    assert all(role["decision_scope"] for role in roles)
+    assert [role["sort_order"] for role in roles] == [10, 20, 30, 40, 50, 60]
+    assert roles[1]["responsibilities"][1] == "审批需求并从已批准需求生成 AI 任务。"
+    assert roles[5]["decision_scope"] == "无写入或审批决策权限。"
+
+    unsupported_role = client.post(
+        "/api/users",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "username": "bad-role@example.com",
+            "display_name": "Bad Role",
+            "password": "password123",
+            "roles": ["viewer", "undefined_role"],
+            "status": "active",
+        },
+    )
+    assert unsupported_role.status_code == 400
+    assert unsupported_role.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+    duplicate_role = client.post(
+        "/api/users",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "username": "duplicate-role@example.com",
+            "display_name": "Duplicate Role",
+            "password": "password123",
+            "roles": ["viewer", "viewer"],
+            "status": "active",
+        },
+    )
+    assert duplicate_role.status_code == 400
+    assert duplicate_role.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
 def test_initial_migration_defines_core_mvp_tables():
@@ -124,6 +158,9 @@ def test_initial_migration_matches_runtime_record_shapes():
 
     assert "stage text NOT NULL" in migration
     assert "content jsonb NOT NULL DEFAULT '{}'::jsonb" in migration
+    assert "responsibilities jsonb NOT NULL DEFAULT '[]'::jsonb" in migration
+    assert "data_scope text NOT NULL DEFAULT ''" in migration
+    assert "decision_scope text NOT NULL DEFAULT ''" in migration
     assert "review_type text NOT NULL" not in migration
     assert "original_content jsonb" not in migration
 

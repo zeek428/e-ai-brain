@@ -1,15 +1,16 @@
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
+import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { UserRecord } from '../../data/management';
-import { USER_ROLE_OPTIONS } from '../../data/roles';
+import { type UserRoleDefinition, toUserRoleOptions } from '../../data/roles';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createManagementUser,
   deleteManagementUser,
+  fetchRoleDefinitions,
   fetchManagementUsers,
   updateManagementUser,
 } from '../../services/aiBrain';
@@ -27,13 +28,26 @@ export default function UsersPage() {
   const [form] = Form.useForm<UserFormValues>();
   const [editingUser, setEditingUser] = useState<UserRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isRoleCatalogOpen, setIsRoleCatalogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [roleDefinitions, setRoleDefinitions] = useState<UserRoleDefinition[]>([]);
+  const loadUsersWithRoles = useCallback(async () => {
+    const definitions = await fetchRoleDefinitions();
+    setRoleDefinitions(definitions);
+    return fetchManagementUsers(definitions);
+  }, []);
   const {
     error,
     reload,
     rows: dataSource,
     status,
-  } = useRemoteRows(fetchManagementUsers);
+  } = useRemoteRows(loadUsersWithRoles);
+
+  const roleOptions = useMemo(() => toUserRoleOptions(roleDefinitions), [roleDefinitions]);
+  const roleByCode = useMemo(
+    () => new Map(roleDefinitions.map((role) => [role.code, role])),
+    [roleDefinitions],
+  );
 
   const openCreateModal = () => {
     setEditingUser(null);
@@ -108,6 +122,16 @@ export default function UsersPage() {
       {
         dataIndex: 'rolesText',
         title: '角色',
+        render: (_, row) =>
+          row.roles.length ? (
+            <Space size={[4, 4]} wrap>
+              {row.roles.map((role) => (
+                <Tag key={role}>{roleByCode.get(role)?.name ?? role}</Tag>
+              ))}
+            </Space>
+          ) : (
+            '-'
+          ),
       },
       {
         dataIndex: 'status',
@@ -137,7 +161,7 @@ export default function UsersPage() {
         ),
       },
     ],
-    [handleDelete, openEditModal],
+    [handleDelete, openEditModal, roleByCode],
   );
 
   return (
@@ -168,7 +192,62 @@ export default function UsersPage() {
         rowKey="id"
         tableTitle="用户列表"
         title="用户管理"
+        toolbarActions={[
+          <Button
+            icon={<SafetyCertificateOutlined />}
+            key="roles"
+            onClick={() => setIsRoleCatalogOpen(true)}
+          >
+            角色目录
+          </Button>,
+        ]}
       />
+      <Modal
+        destroyOnHidden
+        footer={null}
+        onCancel={() => setIsRoleCatalogOpen(false)}
+        open={isRoleCatalogOpen}
+        title="角色目录"
+        width={960}
+      >
+        <Table<UserRoleDefinition>
+          columns={[
+            {
+              dataIndex: 'name',
+              title: '角色',
+              render: (_, role) => `${role.name} (${role.code})`,
+            },
+            {
+              dataIndex: 'responsibilities',
+              title: '职责',
+              render: (_, role) => role.responsibilities.join('；'),
+            },
+            {
+              dataIndex: 'data_scope',
+              title: '数据范围',
+            },
+            {
+              dataIndex: 'decision_scope',
+              title: '决策范围',
+            },
+            {
+              dataIndex: 'permissions',
+              title: '权限点',
+              render: (_, role) => (
+                <Space size={[4, 4]} wrap>
+                  {role.permissions.map((permission) => (
+                    <Tag key={permission}>{permission}</Tag>
+                  ))}
+                </Space>
+              ),
+            },
+          ]}
+          dataSource={roleDefinitions}
+          pagination={false}
+          rowKey="code"
+          size="small"
+        />
+      </Modal>
       <Modal
         confirmLoading={isSaving}
         destroyOnHidden
@@ -193,9 +272,10 @@ export default function UsersPage() {
           </Form.Item>
           <Form.Item label="角色" name="roles" rules={[{ required: true, message: '请选择角色' }]}>
             <Select
+              disabled={roleOptions.length === 0}
               mode="multiple"
               optionFilterProp="label"
-              options={USER_ROLE_OPTIONS}
+              options={roleOptions}
               placeholder="请选择角色"
             />
           </Form.Item>

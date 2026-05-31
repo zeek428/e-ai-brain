@@ -12,7 +12,7 @@ import type {
   RequirementRecord,
   UserRecord,
 } from '../data/management';
-import { formatUserRoles } from '../data/roles';
+import { formatUserRoles, type UserRoleDefinition } from '../data/roles';
 import { navigateTo } from '../utils/navigation';
 
 const configuredApiBaseUrl = process.env.UMI_APP_API_BASE_URL ?? '';
@@ -645,6 +645,20 @@ type UserListItem = {
   username: string;
 };
 
+type RoleDefinitionListItem = {
+  category?: string;
+  code: string;
+  data_scope?: string;
+  decision_scope?: string;
+  description?: string;
+  is_assignable?: boolean;
+  name: string;
+  permissions?: string[];
+  responsibilities?: string[];
+  sort_order?: number;
+  status?: string;
+};
+
 export async function apiRequest<T>(
   path: string,
   options: {
@@ -1218,7 +1232,31 @@ export async function fetchProductContextOptions(): Promise<ProductContextOption
   );
 }
 
-export async function fetchManagementUsers(): Promise<UserRecord[]> {
+function mapRoleDefinition(role: RoleDefinitionListItem): UserRoleDefinition {
+  return {
+    category: role.category ?? 'workspace',
+    code: role.code,
+    data_scope: role.data_scope ?? '',
+    decision_scope: role.decision_scope ?? '',
+    description: role.description ?? '',
+    is_assignable: role.is_assignable ?? true,
+    name: role.name,
+    permissions: role.permissions ?? [],
+    responsibilities: role.responsibilities ?? [],
+    sort_order: role.sort_order ?? 0,
+    status: role.status ?? 'active',
+  };
+}
+
+export async function fetchRoleDefinitions(): Promise<UserRoleDefinition[]> {
+  const token = requireAccessToken();
+  const roles = await apiRequest<ListResponse<RoleDefinitionListItem>>('/api/auth/roles', { token });
+  return roles.items.map(mapRoleDefinition);
+}
+
+export async function fetchManagementUsers(
+  roleDefinitions: UserRoleDefinition[] = [],
+): Promise<UserRecord[]> {
   const token = requireAccessToken();
   const users = await apiRequest<ListResponse<UserListItem>>('/api/users', { token });
 
@@ -1228,7 +1266,7 @@ export async function fetchManagementUsers(): Promise<UserRecord[]> {
       displayName: user.display_name,
       id: user.id,
       roles,
-      rolesText: formatUserRoles(roles),
+      rolesText: formatUserRoles(roles, roleDefinitions),
       status: user.status === 'inactive' ? 'inactive' : 'active',
       username: user.username,
     };
