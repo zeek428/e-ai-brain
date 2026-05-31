@@ -123,6 +123,12 @@ const routes = [
         component: './Users',
       },
       {
+        path: '/system/roles',
+        name: '角色管理',
+        icon: 'SafetyCertificateOutlined',
+        component: './Roles',
+      },
+      {
         path: '/system/model-gateway',
         name: '模型网关',
         icon: 'ApiOutlined',
@@ -188,6 +194,11 @@ const routes = [
   {
     path: '/users',
     redirect: '/system/users',
+    hideInMenu: true,
+  },
+  {
+    path: '/roles',
+    redirect: '/system/roles',
     hideInMenu: true,
   },
   {

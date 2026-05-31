@@ -248,6 +248,7 @@ import LoginPage from '../src/pages/Login';
 import ModelGatewayPage from '../src/pages/ModelGateway';
 import ProductsPage from '../src/pages/Products';
 import RequirementsPage from '../src/pages/Requirements';
+import RolesPage from '../src/pages/Roles';
 import UsersPage from '../src/pages/Users';
 import {
   approveManagementRequirement,
@@ -368,6 +369,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(routes).not.toContain("path: '/governance/users'");
     expect(routes).toContain("path: '/system/users'");
     expect(routes).toContain("name: '用户管理'");
+    expect(routes).toContain("path: '/system/roles'");
+    expect(routes).toContain("name: '角色管理'");
+    expect(routes).toContain("component: './Roles'");
     expect(routes).toContain("path: '/system/model-gateway'");
     expect(routes).toContain("name: '模型网关'");
     expect(routes).toContain("component: './ModelGateway'");
@@ -2032,6 +2036,30 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     expect(await screen.findByText(/查看者/)).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('admin, product_owner, rd_owner')).not.toBeInTheDocument();
+  });
+
+  it('renders system role management from the backend role catalog', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('/api/auth/roles');
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      return new Response(JSON.stringify(roleCatalogEnvelope), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<RolesPage />);
+
+    expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('系统管理');
+    expect(await screen.findByText('角色定义')).toBeInTheDocument();
+    expect(screen.getByText('系统管理员 (admin)')).toBeInTheDocument();
+    expect(screen.getByText('查看者 (viewer)')).toBeInTheDocument();
+    expect(screen.getByText('系统治理。')).toBeInTheDocument();
+    expect(screen.getByText('无写入或审批决策权限。')).toBeInTheDocument();
+    expect(screen.getByText('system.users.manage')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /新增角色|删除/ })).not.toBeInTheDocument();
   });
 
   it('hydrates management tables from backend API list endpoints when available', async () => {

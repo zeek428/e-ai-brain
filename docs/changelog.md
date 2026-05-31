@@ -75,6 +75,7 @@
 - GitLab MR diff、变更文件数或单文件 diff 行数超限时记录 `gitlab_mr.snapshot_failed` 审计事件，保留实际 diff 大小、文件数、单文件行数、限制和关联需求/技术方案任务。
 - 明确 MVP 用户角色目录，新增 `/api/auth/roles` 角色查询接口、PostgreSQL `role_definitions` 可重复迁移脚本，并将用户管理角色录入改为固定多选。
 - 角色目录补齐职责、数据范围、决策范围、权限点、可分配状态和排序信息；用户管理和知识权限配置均从后端角色目录加载固定选项，不再依赖前端静态角色定义或自由文本录入。
+- 系统管理新增“角色管理”二级菜单，只读展示后端角色目录、职责、数据范围、决策范围和权限点，明确 MVP 不自由创建未定义角色。
 - AI 任务启动接入 active/default OpenAI-compatible 模型网关配置，调用真实 `/chat/completions` 并解析 JSON 输出；模型日志只记录脱敏元数据，缺失密钥或 provider 调用失败时任务进入 failed，不再静默回退本地输出。
 - Code Review 执行器失败语义补齐：结构化报告生成失败返回 `CODE_REVIEW_EXECUTOR_FAILED`，任务停在 `code_review_executor_failed` 并记录 `code_review.executor_failed` 审计事件。
 - 审计与运行列表新增真实详情弹窗和生命周期链路追踪操作，可从审计主体查看上下游、风险信号和缺失上下文。
