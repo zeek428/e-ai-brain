@@ -68,21 +68,6 @@ body {
   margin-bottom: 16px;
 }
 
-.workspace-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(320px, 0.9fr);
-  gap: 16px;
-}
-
-.phase-grid {
-  margin-bottom: 16px;
-}
-
-.phase-card {
-  height: 100%;
-}
-
-.phase-card h2,
 .capability-row h3 {
   margin: 0;
 }
@@ -97,18 +82,9 @@ body {
   color: rgba(15, 23, 42, 0.56);
 }
 
-.review-card {
-  display: grid;
-  gap: 8px;
-}
-
-.review-card p {
-  margin: 0;
-  color: rgba(15, 23, 42, 0.66);
-}
-
 .task-operation-dialog {
   display: grid;
+  grid-template-columns: 1fr;
   gap: 16px;
 }
 
@@ -129,6 +105,10 @@ body {
 .task-operation-actions {
   display: grid;
   gap: 8px;
+}
+
+.task-code-review-form .ant-form-item {
+  margin-bottom: 12px;
 }
 
 .welcome-panel {
@@ -177,12 +157,6 @@ body {
 
 .capability-row p {
   margin: 6px 0 0;
-}
-
-@media (max-width: 960px) {
-  .workspace-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 640px) {

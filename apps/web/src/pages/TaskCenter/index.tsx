@@ -840,7 +840,7 @@ export default function TaskCenterPage() {
         width={760}
       >
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          <Form component={false} layout="inline">
+          <Form aria-label="创建 Code Review 参数" className="task-code-review-form" layout="vertical">
             <Form.Item label="GitLab 仓库">
               <Select
                 disabled={codeReviewDraft?.loading}
@@ -854,7 +854,7 @@ export default function TaskCenterPage() {
                   value: repository.id,
                 }))}
                 placeholder="选择 GitLab 仓库"
-                style={{ minWidth: 280 }}
+                style={{ width: '100%' }}
                 value={codeReviewDraft?.repositoryId}
               />
             </Form.Item>
@@ -869,6 +869,7 @@ export default function TaskCenterPage() {
                   )
                 }
                 precision={0}
+                style={{ width: '100%' }}
                 value={codeReviewDraft?.mrIid}
               />
             </Form.Item>

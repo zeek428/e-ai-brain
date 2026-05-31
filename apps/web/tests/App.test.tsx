@@ -636,6 +636,75 @@ describe('AI Brain Ant Design Pro workbench', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   });
 
+  it('opens task row operations in vertical dialogs aligned with management pages', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/pending') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ai-tasks') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'task_solution_done',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'technical_solution',
+                title: '技术方案：弹窗操作',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products/product_api/git-repositories?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                default_branch: 'main',
+                git_provider: 'gitlab',
+                id: 'repo_api',
+                name: 'AI Brain 仓库',
+                project_path: 'platform/ai-brain',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    expect(await screen.findByText('技术方案：弹窗操作')).toBeInTheDocument();
+    const taskRow = screen.getByText('技术方案：弹窗操作').closest('tr');
+    expect(taskRow).not.toBeNull();
+    fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
+
+    expect(await screen.findByText(/任务操作：技术方案：弹窗操作/)).toBeInTheDocument();
+    expect(screen.queryByText('确认台')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '创建 Code Review' }));
+
+    expect(await screen.findByText(/创建 Code Review：技术方案：弹窗操作/)).toBeInTheDocument();
+    const codeReviewForm = screen.getByRole('form', { name: '创建 Code Review 参数' });
+    expect(codeReviewForm).toHaveClass('ant-form-vertical');
+    expect(codeReviewForm).not.toHaveClass('ant-form-inline');
+    expect(screen.getByText('AI Brain 仓库 (platform/ai-brain)')).toBeInTheDocument();
+  });
+
   it('opens mock issue writeback from completed task rows', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
