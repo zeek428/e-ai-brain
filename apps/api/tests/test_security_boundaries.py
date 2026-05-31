@@ -109,17 +109,26 @@ def test_role_boundaries_for_product_audit_and_gitlab_preview():
 
 def test_seeded_default_users_are_disabled_outside_local_env():
     original_env = settings.app_env
+    original_persistence_mode = settings.persistence_mode
     settings.app_env = "production"
     try:
         response = client.post(
             "/api/auth/login",
             json={"username": "admin@example.com", "password": "admin123"},
         )
+        settings.persistence_mode = "postgres"
+        postgres_response = client.post(
+            "/api/auth/login",
+            json={"username": "admin@example.com", "password": "admin123"},
+        )
     finally:
         settings.app_env = original_env
+        settings.persistence_mode = original_persistence_mode
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "DEFAULT_CREDENTIALS_DISABLED"
+    assert postgres_response.status_code == 403
+    assert postgres_response.json()["detail"]["code"] == "DEFAULT_CREDENTIALS_DISABLED"
 
 
 def test_reviewer_cannot_start_or_read_product_design_tasks_and_reviews():

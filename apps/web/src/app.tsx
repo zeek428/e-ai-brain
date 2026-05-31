@@ -3,6 +3,7 @@ import { ConfigProvider, Dropdown, theme } from 'antd';
 import type { ReactNode } from 'react';
 
 import { handleLogout, redirectToLoginIfNeeded } from './runtimeAuth';
+import { fetchCurrentUser, getStoredCurrentUser } from './services/aiBrain';
 import './global.css';
 
 type InitialState = {
@@ -13,10 +14,30 @@ type InitialState = {
 };
 
 export async function getInitialState(): Promise<InitialState> {
+  const storedUser = getStoredCurrentUser();
+  if (storedUser) {
+    return {
+      currentUser: {
+        name: storedUser.display_name,
+        role: storedUser.roles.join(', ') || 'viewer',
+      },
+    };
+  }
+  try {
+    const currentUser = await fetchCurrentUser();
+    return {
+      currentUser: {
+        name: currentUser.display_name,
+        role: currentUser.roles.join(', ') || 'viewer',
+      },
+    };
+  } catch {
+    // Layout still renders a login-safe shell while route guards redirect anonymous users.
+  }
   return {
     currentUser: {
-      name: 'AI Brain Admin',
-      role: 'admin',
+      name: '未登录',
+      role: 'anonymous',
     },
   };
 }

@@ -8,10 +8,13 @@ import type { RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createProductVersion,
+  approveManagementRequirement,
   createManagementRequirement,
   deleteManagementRequirement,
   fetchProductContextOptions,
   fetchManagementRequirements,
+  generateRequirementTask,
+  rejectManagementRequirement,
   updateManagementRequirement,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -38,8 +41,10 @@ type RequirementFormValues = {
 
 export default function RequirementsPage() {
   const [form] = Form.useForm<RequirementFormValues>();
+  const [rejectForm] = Form.useForm<{ rejection_reason: string }>();
   const [editingRequirement, setEditingRequirement] = useState<RequirementRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [rejectingRequirement, setRejectingRequirement] = useState<RequirementRecord | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const {
     error,
@@ -168,6 +173,49 @@ export default function RequirementsPage() {
     }
   }, [reload]);
 
+  const handleApprove = useCallback(async (row: RequirementRecord) => {
+    try {
+      await approveManagementRequirement(row.id);
+      message.success('需求已审批通过');
+      await reload();
+    } catch (decisionError) {
+      message.error(formatMutationError(decisionError));
+    }
+  }, [reload]);
+
+  const openRejectModal = useCallback((row: RequirementRecord) => {
+    setRejectingRequirement(row);
+    rejectForm.resetFields();
+  }, [rejectForm]);
+
+  const handleReject = async () => {
+    if (!rejectingRequirement) {
+      return;
+    }
+    const values = await rejectForm.validateFields();
+    try {
+      await rejectManagementRequirement(
+        rejectingRequirement.id,
+        values.rejection_reason.trim(),
+      );
+      message.success('需求已驳回');
+      setRejectingRequirement(null);
+      await reload();
+    } catch (decisionError) {
+      message.error(formatMutationError(decisionError));
+    }
+  };
+
+  const handleGenerateTask = useCallback(async (row: RequirementRecord) => {
+    try {
+      const result = await generateRequirementTask(row.id);
+      message.success(`已生成 ${result.task_type} 任务：${result.task_id}`);
+      await reload();
+    } catch (decisionError) {
+      message.error(formatMutationError(decisionError));
+    }
+  }, [reload]);
+
   const columns = useMemo<ProColumns<RequirementRecord>[]>(
     () => [
       {
@@ -214,6 +262,21 @@ export default function RequirementsPage() {
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
+            {row.status === 'pending_approval' ? (
+              <>
+                <Button onClick={() => handleApprove(row)} type="link">
+                  审批通过
+                </Button>
+                <Button danger onClick={() => openRejectModal(row)} type="link">
+                  驳回
+                </Button>
+              </>
+            ) : null}
+            {row.status === 'approved' ? (
+              <Button onClick={() => handleGenerateTask(row)} type="link">
+                生成任务
+              </Button>
+            ) : null}
             <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除需求 ${row.id}？`}>
               <Button danger icon={<DeleteOutlined />} type="link">
                 删除
@@ -223,7 +286,7 @@ export default function RequirementsPage() {
         ),
       },
     ],
-    [handleDelete, openEditModal],
+    [handleApprove, handleDelete, handleGenerateTask, openEditModal, openRejectModal],
   );
 
   return (
@@ -317,6 +380,23 @@ export default function RequirementsPage() {
           </Form.Item>
           <Form.Item label="需求内容" name="content" rules={[{ required: true, message: '请输入需求内容' }]}>
             <Input.TextArea autoSize={{ minRows: 4 }} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        onCancel={() => setRejectingRequirement(null)}
+        onOk={() => void handleReject()}
+        open={Boolean(rejectingRequirement)}
+        title="驳回需求"
+      >
+        <Form<{ rejection_reason: string }> form={rejectForm} layout="vertical">
+          <Form.Item
+            label="驳回原因"
+            name="rejection_reason"
+            rules={[{ required: true, message: '请输入驳回原因' }]}
+          >
+            <Input.TextArea autoSize={{ minRows: 3 }} />
           </Form.Item>
         </Form>
       </Modal>

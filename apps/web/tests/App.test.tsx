@@ -249,6 +249,8 @@ import ProductsPage from '../src/pages/Products';
 import RequirementsPage from '../src/pages/Requirements';
 import UsersPage from '../src/pages/Users';
 import {
+  approveManagementRequirement,
+  approveTaskCenterReview,
   apiRequest,
   createManagementBug,
   createManagementKnowledgeDocument,
@@ -260,6 +262,9 @@ import {
   deleteManagementProduct,
   deleteManagementRequirement,
   deleteManagementUser,
+  generateRequirementTask,
+  rejectManagementRequirement,
+  startTaskCenterTask,
   updateManagementBug,
   updateManagementKnowledgeDocument,
   updateManagementProduct,
@@ -268,6 +273,7 @@ import {
 } from '../src/services/aiBrain';
 import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
 import TaskCenterPage from '../src/pages/TaskCenter';
+import { getInitialState } from '../src/app';
 
 describe('AI Brain Ant Design Pro workbench', () => {
   afterEach(() => {
@@ -323,6 +329,12 @@ describe('AI Brain Ant Design Pro workbench', () => {
         JSON.stringify({
           data: {
             access_token: 'token-admin',
+            user: {
+              display_name: 'AI Brain Admin',
+              id: 'user_admin',
+              roles: ['admin'],
+              username: 'admin@example.com',
+            },
           },
         }),
         {
@@ -339,6 +351,37 @@ describe('AI Brain Ant Design Pro workbench', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(window.localStorage.getItem('ai_brain_access_token')).toBe('token-admin');
     expect(window.location.pathname).toBe('/delivery/bugs');
+  });
+
+  it('hydrates the layout user from the authenticated current-user API', async () => {
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(input).toBe('/api/auth/me');
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      return new Response(
+        JSON.stringify({
+          data: {
+            display_name: '真实用户',
+            id: 'user_real',
+            roles: ['product_owner', 'rd_owner'],
+            username: 'real@example.com',
+          },
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getInitialState()).resolves.toEqual({
+      currentUser: {
+        name: '真实用户',
+        role: 'product_owner, rd_owner',
+      },
+    });
+    expect(window.localStorage.getItem('ai_brain_current_user')).toContain('real@example.com');
   });
 
   it('sends already authenticated users away from the login page', async () => {
@@ -378,8 +421,31 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
   it('renders the task center from backend tasks without a demo workflow', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      expect(input).toBe('/api/ai-tasks');
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/pending') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  ai_task_id: 'task_api',
+                  content: { summary: '接口任务输出摘要' },
+                  id: 'review_api',
+                  stage: 'product_detail_design',
+                  status: 'pending',
+                  version: 1,
+                },
+              ],
+              total: 1,
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      expect(input).toBe('/api/ai-tasks');
       return new Response(
         JSON.stringify({
           data: {
@@ -414,9 +480,11 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('MVP-A 基础 + GitLab 输入闭环')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '运行 MVP 演示流程' })).not.toBeInTheDocument();
     expect(await screen.findByText('接口任务')).toBeInTheDocument();
-    expect(screen.getByText('product_detail_design')).toBeInTheDocument();
+    expect(screen.getAllByText('product_detail_design')).not.toHaveLength(0);
     expect(screen.getByText('确认台')).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('接口任务输出摘要')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
   it('renders dashboard and operation pages without placeholder data', async () => {
@@ -1022,6 +1090,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
       version_id: 'version_api',
     });
     await updateManagementRequirement('requirement_api', { title: '更新需求' });
+    await approveManagementRequirement('requirement_api');
+    await rejectManagementRequirement('requirement_api', '目标不清晰');
+    await generateRequirementTask('requirement_api');
     await deleteManagementRequirement('requirement_api');
     await createManagementBug({
       description: 'Bug 描述',
@@ -1048,6 +1119,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
     await updateManagementUser('user_api', { display_name: '更新用户' });
     await deleteManagementUser('user_api');
+    await startTaskCenterTask('task_api');
+    await approveTaskCenterReview('review_api', 1);
 
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
       ['/api/products', 'POST'],
@@ -1055,6 +1128,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/products/product_api', 'DELETE'],
       ['/api/requirements', 'POST'],
       ['/api/requirements/requirement_api', 'PATCH'],
+      ['/api/requirements/requirement_api/approve', 'POST'],
+      ['/api/requirements/requirement_api/reject', 'POST'],
+      ['/api/requirements/requirement_api/generate-task', 'POST'],
       ['/api/requirements/requirement_api', 'DELETE'],
       ['/api/bugs', 'POST'],
       ['/api/bugs/bug_api', 'PATCH'],
@@ -1065,6 +1141,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/users', 'POST'],
       ['/api/users/user_api', 'PATCH'],
       ['/api/users/user_api', 'DELETE'],
+      ['/api/ai-tasks/task_api/start', 'POST'],
+      ['/api/reviews/review_api/approve', 'POST'],
     ]);
   });
 

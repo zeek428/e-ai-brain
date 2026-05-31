@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.4 |
+| 功能版本 | v1.1.5 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -26,6 +26,7 @@
 | v1.1.2 | 2026-05-30 | 将 Bug 管理 GET/POST/PATCH 从占位升级为 v1.1 基础接口，补充状态流转、重复归并和审计约束 | Codex |
 | v1.1.3 | 2026-05-30 | 对齐当前实现的 PostgreSQL 登录用户表、用户管理接口和 SQL 迁移驱动持久化 | Codex |
 | v1.1.4 | 2026-05-30 | 补齐当前管理主体 CRUD 契约，新增产品子资源、需求、知识文档、Bug 和用户删除/更新接口说明 | Codex |
+| v1.1.5 | 2026-05-31 | 对齐真实删除语义、主数据唯一性校验和需求审批/任务确认前端主链路接口使用 | Codex |
 
 ---
 
@@ -137,21 +138,21 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | User | GET | `/api/users` | 管理员查询用户列表。 |
 | User | POST | `/api/users` | 管理员创建用户。 |
 | User | PATCH | `/api/users/{user_id}` | 管理员更新用户姓名、角色、状态或密码。 |
-| User | DELETE | `/api/users/{user_id}` | 管理员删除用户；PostgreSQL 模式下软删除为 inactive，当前登录用户不可删除。 |
+| User | DELETE | `/api/users/{user_id}` | 管理员删除非当前登录用户；PostgreSQL 模式下从用户表移除该账号。 |
 | Brain App | GET | `/api/brain-apps` | 业务大脑列表。 |
 | Brain App | GET | `/api/brain-apps/{brain_app_id}` | 业务大脑详情。 |
 | Product | GET | `/api/products` | 产品列表。 |
 | Product | POST | `/api/products` | 创建产品。 |
 | Product | PATCH | `/api/products/{product_id}` | 更新产品。 |
-| Product | DELETE | `/api/products/{product_id}` | 删除未被版本、模块、Git 资源、需求或 Bug 占用的产品。 |
+| Product | DELETE | `/api/products/{product_id}` | 删除未被需求、AI 任务或 Bug 占用的产品；无业务依赖时级联清理该产品的版本、模块和 Git 资源配置。 |
 | Product Version | GET | `/api/products/{product_id}/versions` | 产品版本列表。 |
 | Product Version | POST | `/api/products/{product_id}/versions` | 创建产品版本。 |
 | Product Version | PATCH | `/api/product-versions/{version_id}` | 更新产品版本。 |
-| Product Version | DELETE | `/api/product-versions/{version_id}` | 删除未被需求或 Bug 占用的产品版本。 |
+| Product Version | DELETE | `/api/product-versions/{version_id}` | 删除未被需求、AI 任务或 Bug 占用的产品版本。 |
 | Product Module | GET | `/api/products/{product_id}/modules` | 产品模块列表。 |
 | Product Module | POST | `/api/products/{product_id}/modules` | 创建产品模块。 |
 | Product Module | PATCH | `/api/product-modules/{module_id}` | 更新产品模块。 |
-| Product Module | DELETE | `/api/product-modules/{module_id}` | 删除未被需求或 Bug 占用的产品模块。 |
+| Product Module | DELETE | `/api/product-modules/{module_id}` | 删除未被需求、AI 任务或 Bug 占用的产品模块。 |
 | Product Git | GET | `/api/products/{product_id}/git-repositories` | 产品 Git 资源列表。 |
 | Product Git | POST | `/api/products/{product_id}/git-repositories` | 创建产品 Git 资源。 |
 | Product Git | PATCH | `/api/product-git-repositories/{repo_id}` | 更新产品 Git 资源。 |

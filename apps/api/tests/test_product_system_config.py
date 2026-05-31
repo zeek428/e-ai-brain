@@ -125,6 +125,76 @@ def test_product_config_supports_list_patch_and_active_filters():
     assert patched_repository["credential_ref_configured"] is True
 
 
+def test_product_config_rejects_duplicate_codes_and_invalid_statuses():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    product = client.post(
+        "/api/products",
+        json={"code": "unique-product", "name": "唯一产品"},
+        headers=headers,
+    ).json()["data"]
+    duplicate_product = client.post(
+        "/api/products",
+        json={"code": "unique-product", "name": "重复产品"},
+        headers=headers,
+    )
+    assert duplicate_product.status_code == 409
+    assert duplicate_product.json()["detail"]["code"] == "PRODUCT_CODE_EXISTS"
+
+    invalid_product_status = client.patch(
+        f"/api/products/{product['id']}",
+        json={"status": "deleted"},
+        headers=headers,
+    )
+    assert invalid_product_status.status_code == 400
+    assert invalid_product_status.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+    version = client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": "v1", "name": "v1"},
+        headers=headers,
+    ).json()["data"]
+    duplicate_version = client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": "v1", "name": "重复版本"},
+        headers=headers,
+    )
+    assert duplicate_version.status_code == 409
+    assert duplicate_version.json()["detail"]["code"] == "PRODUCT_VERSION_CODE_EXISTS"
+
+    module = client.post(
+        f"/api/products/{product['id']}/modules",
+        json={"code": "core", "name": "核心模块"},
+        headers=headers,
+    ).json()["data"]
+    duplicate_module = client.post(
+        f"/api/products/{product['id']}/modules",
+        json={"code": module["code"], "name": "重复模块"},
+        headers=headers,
+    )
+    assert duplicate_module.status_code == 409
+    assert duplicate_module.json()["detail"]["code"] == "PRODUCT_MODULE_CODE_EXISTS"
+
+    archived = client.patch(
+        f"/api/product-versions/{version['id']}",
+        json={"status": "archived"},
+        headers=headers,
+    ).json()["data"]
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "content": "归档版本不能创建需求",
+            "product_id": product["id"],
+            "title": "归档版本需求",
+            "version_id": archived["id"],
+        },
+        headers=headers,
+    )
+    assert requirement.status_code == 400
+    assert requirement.json()["detail"]["code"] == "PRODUCT_VERSION_ARCHIVED"
+
+
 def test_related_systems_and_model_gateway_configs_mask_secrets_and_audit_writes():
     app.state.store.reset()
     headers = auth_headers()

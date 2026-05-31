@@ -32,6 +32,7 @@ type ListResponse<T> = {
 };
 
 const ACCESS_TOKEN_STORAGE_KEY = 'ai_brain_access_token';
+const CURRENT_USER_STORAGE_KEY = 'ai_brain_current_user';
 
 export class ApiRequestError extends Error {
   code?: string;
@@ -59,6 +60,14 @@ export class ApiRequestError extends Error {
 
 export type LoginResponse = {
   access_token: string;
+  user: CurrentUserResponse;
+};
+
+export type CurrentUserResponse = {
+  display_name: string;
+  id: string;
+  roles: string[];
+  username: string;
 };
 
 export type ProductResponse = {
@@ -81,6 +90,15 @@ export type TaskCenterTaskRecord = {
   owner: string;
   status: string;
   type: string;
+};
+
+export type TaskCenterReviewRecord = {
+  aiTaskId: string;
+  contentSummary: string;
+  id: string;
+  stage: string;
+  status: string;
+  version: number;
 };
 
 export type OperationalMetricRecord = {
@@ -237,6 +255,15 @@ type TaskListItem = {
   title?: string;
 };
 
+type PendingReviewListItem = {
+  ai_task_id: string;
+  content?: Record<string, unknown>;
+  id: string;
+  stage?: string;
+  status?: string;
+  version: number;
+};
+
 type FlexibleListItem = Record<string, unknown> & {
   created_at?: string;
   id?: string;
@@ -313,11 +340,35 @@ export function saveAccessToken(token: string) {
   globalThis.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
 }
 
+export function saveCurrentUser(user: CurrentUserResponse) {
+  if (!user || typeof globalThis.localStorage === 'undefined') {
+    return;
+  }
+  globalThis.localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
+}
+
+export function getStoredCurrentUser(): CurrentUserResponse | undefined {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return undefined;
+  }
+  const value = globalThis.localStorage.getItem(CURRENT_USER_STORAGE_KEY);
+  if (!value) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value) as CurrentUserResponse;
+  } catch {
+    globalThis.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+    return undefined;
+  }
+}
+
 export function clearAccessToken() {
   if (typeof globalThis.localStorage === 'undefined') {
     return;
   }
   globalThis.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+  globalThis.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 }
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
@@ -326,7 +377,15 @@ export async function login(username: string, password: string): Promise<LoginRe
     method: 'POST',
   });
   saveAccessToken(loginResponse.access_token);
+  saveCurrentUser(loginResponse.user);
   return loginResponse;
+}
+
+export async function fetchCurrentUser(): Promise<CurrentUserResponse> {
+  const token = requireAccessToken();
+  const user = await apiRequest<CurrentUserResponse>('/api/auth/me', { token });
+  saveCurrentUser(user);
+  return user;
 }
 
 export async function logout(): Promise<void> {
@@ -636,6 +695,35 @@ export async function deleteManagementRequirement(requirementId: string) {
   });
 }
 
+export async function approveManagementRequirement(requirementId: string) {
+  const token = requireAccessToken();
+  return apiRequest<RequirementResponse>(`/api/requirements/${requirementId}/approve`, {
+    body: {},
+    method: 'POST',
+    token,
+  });
+}
+
+export async function rejectManagementRequirement(requirementId: string, rejectionReason: string) {
+  const token = requireAccessToken();
+  return apiRequest<RequirementResponse>(`/api/requirements/${requirementId}/reject`, {
+    body: { rejection_reason: rejectionReason },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function generateRequirementTask(requirementId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ task_id: string; task_status: string; task_type: string }>(
+    `/api/requirements/${requirementId}/generate-task`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
+}
+
 export async function fetchManagementKnowledge(): Promise<KnowledgeRecord[]> {
   const token = requireAccessToken();
   const documents = await apiRequest<ListResponse<KnowledgeDocumentListItem>>(
@@ -755,6 +843,42 @@ export async function fetchTaskCenterTasks(): Promise<TaskCenterTaskRecord[]> {
     status: task.status ?? '-',
     type: task.task_type ?? '-',
   }));
+}
+
+export async function startTaskCenterTask(taskId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ review_id: string; status: string }>(`/api/ai-tasks/${taskId}/start`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export async function fetchTaskCenterPendingReviews(): Promise<TaskCenterReviewRecord[]> {
+  const token = requireAccessToken();
+  const reviews = await apiRequest<ListResponse<PendingReviewListItem>>('/api/reviews/pending', {
+    token,
+  });
+
+  return reviews.items.map((review) => ({
+    aiTaskId: review.ai_task_id,
+    contentSummary: formatUnknownValue(review.content?.summary),
+    id: review.id,
+    stage: review.stage ?? '-',
+    status: review.status ?? '-',
+    version: review.version,
+  }));
+}
+
+export async function approveTaskCenterReview(reviewId: string, version: number) {
+  const token = requireAccessToken();
+  return apiRequest<{ review_status: string; task_status: string }>(
+    `/api/reviews/${reviewId}/approve`,
+    {
+      body: { version },
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 function mapOperationalMetrics(

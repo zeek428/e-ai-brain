@@ -75,6 +75,14 @@ BUG_STATUSES = {
     "closed",
     "reopened",
 }
+USER_ROLES = {"admin", "product_owner", "rd_owner", "reviewer", "knowledge_owner", "viewer"}
+USER_STATUSES = {"active", "inactive"}
+PRODUCT_STATUSES = {"active", "inactive"}
+VERSION_STATUSES = {"planning", "active", "archived"}
+MODULE_STATUSES = {"active", "inactive"}
+GIT_REPO_STATUSES = {"active", "inactive"}
+RELATED_SYSTEM_STATUSES = {"active", "inactive"}
+MODEL_GATEWAY_STATUSES = {"active", "inactive"}
 BUG_STATUS_TRANSITIONS = {
     "open": {"triaged", "assigned", "closed"},
     "needs_info": {"open", "triaged", "closed"},
@@ -556,6 +564,46 @@ def _payload_updates(payload: BaseModel) -> dict[str, Any]:
     return payload.model_dump(exclude_unset=True)
 
 
+def _ensure_non_blank(value: str | None, field: str) -> str:
+    if value is None or not value.strip():
+        raise api_error(400, "VALIDATION_ERROR", f"{field} is required")
+    return value.strip()
+
+
+def _ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None:
+    if value is not None and value not in allowed_values:
+        raise api_error(400, "VALIDATION_ERROR", f"Unsupported {field}")
+
+
+def _ensure_roles(roles: list[str]) -> None:
+    if not roles:
+        raise api_error(400, "VALIDATION_ERROR", "roles is required")
+    invalid_roles = sorted(set(roles) - USER_ROLES)
+    if invalid_roles:
+        raise api_error(400, "VALIDATION_ERROR", f"Unsupported roles: {', '.join(invalid_roles)}")
+
+
+def _ensure_unique_value(
+    collection: dict[str, dict[str, Any]],
+    *,
+    field: str,
+    value: str,
+    conflict_code: str,
+    message: str,
+    exclude_id: str | None = None,
+    scope: dict[str, Any] | None = None,
+) -> None:
+    for item_id, item in collection.items():
+        if exclude_id is not None and item_id == exclude_id:
+            continue
+        if scope and any(
+            item.get(scope_key) != scope_value for scope_key, scope_value in scope.items()
+        ):
+            continue
+        if item.get(field) == value:
+            raise api_error(409, conflict_code, message)
+
+
 def _list_payload(
     items: list[dict[str, Any]],
     *,
@@ -693,11 +741,7 @@ def _seeded_users_enabled() -> bool:
 
 @app.post("/api/auth/login")
 def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
-    if (
-        settings.persistence_mode != "postgres"
-        and payload.username in SEEDED_USERS
-        and not _seeded_users_enabled()
-    ):
+    if payload.username in SEEDED_USERS and not _seeded_users_enabled():
         raise api_error(
             403,
             "DEFAULT_CREDENTIALS_DISABLED",
@@ -747,13 +791,18 @@ def create_user(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
+    username = _ensure_non_blank(payload.username, "username")
+    display_name = _ensure_non_blank(payload.display_name, "display_name")
+    password = _ensure_non_blank(payload.password, "password")
+    _ensure_enum(payload.status, USER_STATUSES, "user status")
+    _ensure_roles(payload.roles)
     try:
         created = request.app.state.user_repository.create_user(
-            display_name=payload.display_name,
-            password=payload.password,
+            display_name=display_name,
+            password=password,
             roles=payload.roles,
             status=payload.status,
-            username=payload.username,
+            username=username,
         )
     except ValueError as exc:
         if str(exc) == "user_exists":
@@ -770,10 +819,16 @@ def patch_user(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
-    updated = request.app.state.user_repository.update_user(
-        user_id,
-        payload.model_dump(exclude_unset=True),
-    )
+    updates = payload.model_dump(exclude_unset=True)
+    if "display_name" in updates:
+        updates["display_name"] = _ensure_non_blank(updates["display_name"], "display_name")
+    if "password" in updates:
+        updates["password"] = _ensure_non_blank(updates["password"], "password")
+    if "roles" in updates:
+        _ensure_roles(updates["roles"])
+    if "status" in updates:
+        _ensure_enum(updates["status"], USER_STATUSES, "user status")
+    updated = request.app.state.user_repository.update_user(user_id, updates)
     if updated is None:
         raise api_error(404, "NOT_FOUND", "User not found")
     return envelope(updated, get_trace_id(request))
@@ -839,12 +894,21 @@ def create_product(
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
     current_store = store(request)
+    name = _ensure_non_blank(payload.name, "name")
+    _ensure_enum(payload.status, PRODUCT_STATUSES, "product status")
     product_id = current_store.new_id("product")
-    code = payload.code or product_id
+    code = _ensure_non_blank(payload.code or product_id, "code")
+    _ensure_unique_value(
+        current_store.products,
+        field="code",
+        value=code,
+        conflict_code="PRODUCT_CODE_EXISTS",
+        message="Product code already exists",
+    )
     product = {
         "id": product_id,
         "code": code,
-        "name": payload.name,
+        "name": name,
         "description": payload.description,
         "owner_team": payload.owner_team,
         "status": payload.status,
@@ -872,7 +936,22 @@ def patch_product(
     product = current_store.products.get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
-    product.update(_payload_updates(payload))
+    updates = _payload_updates(payload)
+    if "name" in updates:
+        updates["name"] = _ensure_non_blank(updates["name"], "name")
+    if "code" in updates:
+        updates["code"] = _ensure_non_blank(updates["code"], "code")
+        _ensure_unique_value(
+            current_store.products,
+            field="code",
+            value=updates["code"],
+            conflict_code="PRODUCT_CODE_EXISTS",
+            message="Product code already exists",
+            exclude_id=product_id,
+        )
+    if "status" in updates:
+        _ensure_enum(updates["status"], PRODUCT_STATUSES, "product status")
+    product.update(updates)
     current_store.audit(
         event_type="product.updated",
         actor_id=user["id"],
@@ -951,12 +1030,23 @@ def create_product_version(
     current_store = store(request)
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    name = _ensure_non_blank(payload.name, "name")
+    _ensure_enum(payload.status, VERSION_STATUSES, "product version status")
     version_id = current_store.new_id("version")
+    code = _ensure_non_blank(payload.code or version_id, "code")
+    _ensure_unique_value(
+        current_store.product_versions,
+        field="code",
+        value=code,
+        conflict_code="PRODUCT_VERSION_CODE_EXISTS",
+        message="Product version code already exists",
+        scope={"product_id": product_id},
+    )
     version = {
         "id": version_id,
         "product_id": product_id,
-        "code": payload.code or version_id,
-        "name": payload.name,
+        "code": code,
+        "name": name,
         "description": payload.description,
         "status": payload.status,
         "start_date": payload.start_date,
@@ -984,7 +1074,23 @@ def patch_product_version(
     version = current_store.product_versions.get(version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
-    version.update(_payload_updates(payload))
+    updates = _payload_updates(payload)
+    if "name" in updates:
+        updates["name"] = _ensure_non_blank(updates["name"], "name")
+    if "code" in updates:
+        updates["code"] = _ensure_non_blank(updates["code"], "code")
+        _ensure_unique_value(
+            current_store.product_versions,
+            field="code",
+            value=updates["code"],
+            conflict_code="PRODUCT_VERSION_CODE_EXISTS",
+            message="Product version code already exists",
+            exclude_id=version_id,
+            scope={"product_id": version["product_id"]},
+        )
+    if "status" in updates:
+        _ensure_enum(updates["status"], VERSION_STATUSES, "product version status")
+    version.update(updates)
     current_store.audit(
         event_type="product_version.updated",
         actor_id=user["id"],
@@ -1005,8 +1111,10 @@ def delete_product_version(
     version = current_store.product_versions.get(version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
-    if any(item["version_id"] == version_id for item in current_store.requirements.values()) or any(
-        item.get("version_id") == version_id for item in current_store.bugs.values()
+    if (
+        any(item["version_id"] == version_id for item in current_store.requirements.values())
+        or any(item.get("version_id") == version_id for item in current_store.ai_tasks.values())
+        or any(item.get("version_id") == version_id for item in current_store.bugs.values())
     ):
         raise api_error(409, "RESOURCE_IN_USE", "Product version still has related records")
     del current_store.product_versions[version_id]
@@ -1049,12 +1157,23 @@ def create_product_module(
     current_store = store(request)
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    name = _ensure_non_blank(payload.name, "name")
+    _ensure_enum(payload.status, MODULE_STATUSES, "product module status")
     module_id = current_store.new_id("module")
+    code = _ensure_non_blank(payload.code or module_id, "code")
+    _ensure_unique_value(
+        current_store.product_modules,
+        field="code",
+        value=code,
+        conflict_code="PRODUCT_MODULE_CODE_EXISTS",
+        message="Product module code already exists",
+        scope={"product_id": product_id},
+    )
     module = {
         "id": module_id,
         "product_id": product_id,
-        "code": payload.code or module_id,
-        "name": payload.name,
+        "code": code,
+        "name": name,
         "description": payload.description,
         "owner_team": payload.owner_team,
         "status": payload.status,
@@ -1082,7 +1201,23 @@ def patch_product_module(
     module = current_store.product_modules.get(module_id)
     if module is None:
         raise api_error(404, "NOT_FOUND", "Product module not found")
-    module.update(_payload_updates(payload))
+    updates = _payload_updates(payload)
+    if "name" in updates:
+        updates["name"] = _ensure_non_blank(updates["name"], "name")
+    if "code" in updates:
+        updates["code"] = _ensure_non_blank(updates["code"], "code")
+        _ensure_unique_value(
+            current_store.product_modules,
+            field="code",
+            value=updates["code"],
+            conflict_code="PRODUCT_MODULE_CODE_EXISTS",
+            message="Product module code already exists",
+            exclude_id=module_id,
+            scope={"product_id": module["product_id"]},
+        )
+    if "status" in updates:
+        _ensure_enum(updates["status"], MODULE_STATUSES, "product module status")
+    module.update(updates)
     current_store.audit(
         event_type="product_module.updated",
         actor_id=user["id"],
@@ -1106,7 +1241,11 @@ def delete_product_module(
     if any(
         item["product_id"] == module["product_id"]
         and item.get("module_code") == module["code"]
-        for item in [*current_store.requirements.values(), *current_store.bugs.values()]
+        for item in [
+            *current_store.requirements.values(),
+            *current_store.ai_tasks.values(),
+            *current_store.bugs.values(),
+        ]
     ):
         raise api_error(409, "RESOURCE_IN_USE", "Product module still has related records")
     del current_store.product_modules[module_id]
@@ -1151,6 +1290,8 @@ def create_product_git_repository(
     current_store = store(request)
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    name = _ensure_non_blank(payload.name, "name")
+    _ensure_enum(payload.status, GIT_REPO_STATUSES, "product Git repository status")
     if payload.git_provider != "gitlab":
         raise api_error(400, "VALIDATION_ERROR", "v1 MVP only supports GitLab bindings")
     if not payload.project_id and not payload.project_path:
@@ -1161,7 +1302,7 @@ def create_product_git_repository(
         "id": repository_id,
         "product_id": product_id,
         "repo_type": payload.repo_type,
-        "name": payload.name,
+        "name": name,
         "remote_url": payload.remote_url,
         "git_provider": payload.git_provider,
         "project_id": payload.project_id,
@@ -1194,6 +1335,10 @@ def patch_product_git_repository(
     if repository is None:
         raise api_error(404, "NOT_FOUND", "Product Git repository not found")
     updates = _payload_updates(payload)
+    if "name" in updates:
+        updates["name"] = _ensure_non_blank(updates["name"], "name")
+    if "status" in updates:
+        _ensure_enum(updates["status"], GIT_REPO_STATUSES, "product Git repository status")
     next_provider = updates.get("git_provider", repository["git_provider"])
     next_project_id = updates.get("project_id", repository.get("project_id"))
     next_project_path = updates.get("project_path", repository.get("project_path"))
@@ -1253,11 +1398,21 @@ def create_related_system(
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
     current_store = store(request)
+    name = _ensure_non_blank(payload.name, "name")
+    _ensure_enum(payload.status, RELATED_SYSTEM_STATUSES, "related system status")
     system_id = current_store.new_id("system")
+    code = _ensure_non_blank(payload.code or system_id, "code")
+    _ensure_unique_value(
+        current_store.related_systems,
+        field="code",
+        value=code,
+        conflict_code="RELATED_SYSTEM_CODE_EXISTS",
+        message="Related system code already exists",
+    )
     related_system = {
         "id": system_id,
-        "code": payload.code or system_id,
-        "name": payload.name,
+        "code": code,
+        "name": name,
         "description": payload.description,
         "owner_team": payload.owner_team,
         "status": payload.status,
@@ -1285,7 +1440,22 @@ def patch_related_system(
     related_system = current_store.related_systems.get(system_id)
     if related_system is None:
         raise api_error(404, "NOT_FOUND", "Related system not found")
-    related_system.update(_payload_updates(payload))
+    updates = _payload_updates(payload)
+    if "name" in updates:
+        updates["name"] = _ensure_non_blank(updates["name"], "name")
+    if "code" in updates:
+        updates["code"] = _ensure_non_blank(updates["code"], "code")
+        _ensure_unique_value(
+            current_store.related_systems,
+            field="code",
+            value=updates["code"],
+            conflict_code="RELATED_SYSTEM_CODE_EXISTS",
+            message="Related system code already exists",
+            exclude_id=system_id,
+        )
+    if "status" in updates:
+        _ensure_enum(updates["status"], RELATED_SYSTEM_STATUSES, "related system status")
+    related_system.update(updates)
     current_store.audit(
         event_type="related_system.updated",
         actor_id=user["id"],
@@ -1341,15 +1511,23 @@ def create_model_gateway_config(
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
     current_store = store(request)
+    name = _ensure_non_blank(payload.name, "name")
+    base_url = _ensure_non_blank(payload.base_url, "base_url")
+    default_chat_model = _ensure_non_blank(payload.default_chat_model, "default_chat_model")
+    default_embedding_model = _ensure_non_blank(
+        payload.default_embedding_model,
+        "default_embedding_model",
+    )
+    _ensure_enum(payload.status, MODEL_GATEWAY_STATUSES, "model gateway status")
     config_id = current_store.new_id("model_gateway_config")
     config = {
         "id": config_id,
-        "name": payload.name,
+        "name": name,
         "provider": payload.provider,
-        "base_url": payload.base_url,
+        "base_url": base_url,
         "api_key": payload.api_key,
-        "default_chat_model": payload.default_chat_model,
-        "default_embedding_model": payload.default_embedding_model,
+        "default_chat_model": default_chat_model,
+        "default_embedding_model": default_embedding_model,
         "timeout_seconds": payload.timeout_seconds,
         "max_retries": payload.max_retries,
         "status": payload.status,
@@ -1383,6 +1561,22 @@ def patch_model_gateway_config(
     if config is None:
         raise api_error(404, "NOT_FOUND", "Model gateway config not found")
     updates = _payload_updates(payload)
+    if "name" in updates:
+        updates["name"] = _ensure_non_blank(updates["name"], "name")
+    if "base_url" in updates:
+        updates["base_url"] = _ensure_non_blank(updates["base_url"], "base_url")
+    if "default_chat_model" in updates:
+        updates["default_chat_model"] = _ensure_non_blank(
+            updates["default_chat_model"],
+            "default_chat_model",
+        )
+    if "default_embedding_model" in updates:
+        updates["default_embedding_model"] = _ensure_non_blank(
+            updates["default_embedding_model"],
+            "default_embedding_model",
+        )
+    if "status" in updates:
+        _ensure_enum(updates["status"], MODEL_GATEWAY_STATUSES, "model gateway status")
     config.update(updates)
     _set_default_model_gateway_config(
         current_store,
@@ -1444,6 +1638,8 @@ def create_requirement(
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
     current_store = store(request)
+    title = _ensure_non_blank(payload.title, "title")
+    content = _ensure_non_blank(payload.content, "content")
     product = current_store.products.get(payload.product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
@@ -1454,15 +1650,20 @@ def create_requirement(
         raise api_error(404, "NOT_FOUND", "Product version not found")
     if version["status"] == "archived":
         raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
+    if payload.module_code is not None and not any(
+        module["product_id"] == payload.product_id and module["code"] == payload.module_code
+        for module in current_store.product_modules.values()
+    ):
+        raise api_error(404, "NOT_FOUND", "Product module not found")
 
     requirement_id = current_store.new_id("requirement")
     requirement = {
         "id": requirement_id,
-        "title": payload.title,
+        "title": title,
         "product_id": payload.product_id,
         "version_id": payload.version_id,
         "module_code": payload.module_code,
-        "content": payload.content,
+        "content": content,
         "priority": payload.priority,
         "status": "pending_approval",
         "created_by": user["id"],
@@ -1524,13 +1725,28 @@ def patch_requirement(
     if requirement["status"] not in {"pending_approval", "rejected"}:
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement cannot be edited")
     updates = _payload_updates(payload)
+    if "title" in updates:
+        updates["title"] = _ensure_non_blank(updates["title"], "title")
+    if "content" in updates:
+        updates["content"] = _ensure_non_blank(updates["content"], "content")
     next_product_id = updates.get("product_id", requirement["product_id"])
     next_version_id = updates.get("version_id", requirement["version_id"])
-    if next_product_id not in current_store.products:
+    product = current_store.products.get(next_product_id)
+    if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
     version = current_store.product_versions.get(next_version_id)
     if version is None or version["product_id"] != next_product_id:
         raise api_error(404, "NOT_FOUND", "Product version not found")
+    if version["status"] == "archived":
+        raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
+    next_module_code = updates.get("module_code", requirement.get("module_code"))
+    if next_module_code is not None and not any(
+        module["product_id"] == next_product_id and module["code"] == next_module_code
+        for module in current_store.product_modules.values()
+    ):
+        raise api_error(404, "NOT_FOUND", "Product module not found")
     requirement.update(updates)
     requirement["updated_at"] = datetime.now(UTC).isoformat()
     current_store.audit(
@@ -2732,11 +2948,14 @@ def create_knowledge_document(
 ) -> dict[str, Any]:
     _require_roles(user, {"knowledge_owner", "rd_owner"})
     current_store = store(request)
+    title = _ensure_non_blank(payload.title, "title")
+    content = _ensure_non_blank(payload.content, "content")
+    _ensure_roles(payload.permission_roles)
     document_id = current_store.new_id("knowledge")
     document = {
         "id": document_id,
-        "title": payload.title,
-        "content": payload.content,
+        "title": title,
+        "content": content,
         "doc_type": payload.doc_type,
         "permission_roles": payload.permission_roles,
         "tags": payload.tags,
@@ -2765,7 +2984,14 @@ def patch_knowledge_document(
     document = current_store.knowledge_documents.get(document_id)
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
-    document.update(_payload_updates(payload))
+    updates = _payload_updates(payload)
+    if "title" in updates:
+        updates["title"] = _ensure_non_blank(updates["title"], "title")
+    if "content" in updates:
+        updates["content"] = _ensure_non_blank(updates["content"], "content")
+    if "permission_roles" in updates:
+        _ensure_roles(updates["permission_roles"])
+    document.update(updates)
     document["updated_at"] = datetime.now(UTC).isoformat()
     current_store.audit(
         event_type="knowledge_document.updated",
@@ -3387,6 +3613,8 @@ def create_bug(
     _require_bug_write_role(user)
     _validate_bug_enums(source=payload.source, severity=payload.severity)
     current_store = store(request)
+    title = _ensure_non_blank(payload.title, "title")
+    description = _ensure_non_blank(payload.description, "description")
     _validate_bug_context(
         current_store,
         product_id=payload.product_id,
@@ -3404,9 +3632,9 @@ def create_bug(
         "version_id": payload.version_id,
         "module_code": payload.module_code,
         "source": payload.source,
-        "title": payload.title,
+        "title": title,
         "severity": payload.severity,
-        "description": payload.description,
+        "description": description,
         "status": _initial_bug_status(payload),
         "assignee": payload.assignee,
         "related_task_id": payload.related_task_id,
@@ -3450,6 +3678,10 @@ def patch_bug(
         severity=updates.get("severity"),
         status=updates.get("status"),
     )
+    if "title" in updates:
+        updates["title"] = _ensure_non_blank(updates["title"], "title")
+    if "description" in updates:
+        updates["description"] = _ensure_non_blank(updates["description"], "description")
     duplicate_of_bug_id = updates.get("duplicate_of_bug_id")
     if duplicate_of_bug_id is not None:
         _validate_bug_context(

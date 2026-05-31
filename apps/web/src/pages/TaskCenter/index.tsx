@@ -1,40 +1,131 @@
 import { PageContainer, ProCard, ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Alert, Col, Row, Space, Tag, Typography } from 'antd';
+import { Alert, Button, Col, Row, Space, Tag, Typography, message } from 'antd';
+import { useCallback, useMemo } from 'react';
 
 import { phases } from '../../data/workbench';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
-import { fetchTaskCenterTasks, type TaskCenterTaskRecord } from '../../services/aiBrain';
+import {
+  approveTaskCenterReview,
+  fetchTaskCenterPendingReviews,
+  fetchTaskCenterTasks,
+  startTaskCenterTask,
+  type TaskCenterReviewRecord,
+  type TaskCenterTaskRecord,
+} from '../../services/aiBrain';
+import { formatMutationError } from '../../utils/managementCrud';
 
 const { Paragraph, Text, Title } = Typography;
 
-const columns: ProColumns<TaskCenterTaskRecord>[] = [
-  {
-    title: '任务',
-    dataIndex: 'label',
-    key: 'label',
-    render: (_value, row) => (
-      <span className="task-name">
-        <strong>{row.label}</strong>
-        <small>{row.type}</small>
-      </span>
-    ),
-  },
-  {
-    title: '状态',
-    dataIndex: 'status',
-    key: 'status',
-    render: (_, row) => <Tag color="blue">{row.status}</Tag>,
-  },
-  {
-    title: '负责人',
-    dataIndex: 'owner',
-    key: 'owner',
-  },
-];
-
 export default function TaskCenterPage() {
-  const { error, rows: dataSource, status } = useRemoteRows(fetchTaskCenterTasks);
+  const {
+    error,
+    reload: reloadTasks,
+    rows: dataSource,
+    status,
+  } = useRemoteRows(fetchTaskCenterTasks);
+  const {
+    error: reviewsError,
+    reload: reloadReviews,
+    rows: reviewRows,
+    status: reviewsStatus,
+  } = useRemoteRows(fetchTaskCenterPendingReviews);
+
+  const reloadTaskCenter = useCallback(async () => {
+    await Promise.all([reloadTasks(), reloadReviews()]);
+  }, [reloadReviews, reloadTasks]);
+
+  const handleStartTask = useCallback(async (task: TaskCenterTaskRecord) => {
+    try {
+      await startTaskCenterTask(task.id);
+      message.success('任务已启动，已进入人工确认');
+      await reloadTaskCenter();
+    } catch (taskError) {
+      message.error(formatMutationError(taskError));
+    }
+  }, [reloadTaskCenter]);
+
+  const handleApproveReview = useCallback(async (review: TaskCenterReviewRecord) => {
+    try {
+      await approveTaskCenterReview(review.id, review.version);
+      message.success('确认已提交，任务已完成');
+      await reloadTaskCenter();
+    } catch (reviewError) {
+      message.error(formatMutationError(reviewError));
+    }
+  }, [reloadTaskCenter]);
+
+  const columns = useMemo<ProColumns<TaskCenterTaskRecord>[]>(
+    () => [
+      {
+        title: '任务',
+        dataIndex: 'label',
+        key: 'label',
+        render: (_value, row) => (
+          <span className="task-name">
+            <strong>{row.label}</strong>
+            <small>{row.type}</small>
+          </span>
+        ),
+      },
+      {
+        title: '状态',
+        dataIndex: 'status',
+        key: 'status',
+        render: (_, row) => <Tag color="blue">{row.status}</Tag>,
+      },
+      {
+        title: '负责人',
+        dataIndex: 'owner',
+        key: 'owner',
+      },
+      {
+        key: 'actions',
+        title: '操作',
+        valueType: 'option',
+        render: (_, row) =>
+          row.status === 'draft' ? (
+            <Button onClick={() => handleStartTask(row)} type="link">
+              启动任务
+            </Button>
+          ) : null,
+      },
+    ],
+    [handleStartTask],
+  );
+
+  const reviewColumns = useMemo<ProColumns<TaskCenterReviewRecord>[]>(
+    () => [
+      {
+        dataIndex: 'id',
+        title: '确认编号',
+      },
+      {
+        dataIndex: 'stage',
+        title: '确认阶段',
+      },
+      {
+        dataIndex: 'contentSummary',
+        title: 'AI 输出摘要',
+      },
+      {
+        dataIndex: 'status',
+        title: '状态',
+        render: (_, row) => <Tag color="gold">{row.status}</Tag>,
+      },
+      {
+        key: 'actions',
+        title: '操作',
+        valueType: 'option',
+        render: (_, row) => (
+          <Button onClick={() => handleApproveReview(row)} type="link">
+            确认通过
+          </Button>
+        ),
+      },
+    ],
+    [handleApproveReview],
+  );
 
   return (
     <PageContainer title={false}>
@@ -69,8 +160,22 @@ export default function TaskCenterPage() {
         </ProCard>
 
         <ProCard title="确认台">
-          <Paragraph>待确认项会显示需求快照、产品上下文、检索证据、AI 输出和审计轨迹。</Paragraph>
-          <Text type="secondary">待确认数据将从 Review 接口加载。</Text>
+          {reviewsError ? (
+            <Alert className="management-list-alert" showIcon title={formatRemoteRowsError(reviewsError)} type="error" />
+          ) : null}
+          <Paragraph>待确认项来自 Review 接口，确认后任务进入完成状态并生成知识沉淀候选。</Paragraph>
+          <ProTable<TaskCenterReviewRecord>
+            columns={reviewColumns}
+            dataSource={reviewRows}
+            loading={reviewsStatus === 'loading'}
+            options={false}
+            pagination={false}
+            rowKey="id"
+            search={false}
+          />
+          {reviewRows.length === 0 && reviewsStatus === 'ready' ? (
+            <Text type="secondary">当前没有待确认项。</Text>
+          ) : null}
         </ProCard>
       </section>
     </PageContainer>
