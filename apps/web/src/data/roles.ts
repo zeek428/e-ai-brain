@@ -7,12 +7,15 @@ export type UserRoleCode =
   | 'viewer';
 
 export type UserRoleDefinition = {
+  business_roles: string[];
   category: string;
   code: UserRoleCode | string;
   data_scope: string;
   decision_scope: string;
   description: string;
   is_assignable: boolean;
+  limitations: string[];
+  menu_scope: string[];
   name: string;
   permissions: string[];
   responsibilities: string[];

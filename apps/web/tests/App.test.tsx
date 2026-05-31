@@ -303,11 +303,14 @@ const roleCatalogEnvelope = {
   data: {
     items: [
       {
+        business_roles: ['平台管理员'],
         code: 'admin',
         data_scope: '全平台。',
         decision_scope: '系统治理。',
         description: '负责用户、角色、模型网关、审计与系统级配置管理。',
         is_assignable: true,
+        limitations: ['不能代替业务负责人做最终产品决策。'],
+        menu_scope: ['系统管理', '审计与运行'],
         name: '系统管理员',
         permissions: ['system.users.manage'],
         responsibilities: ['维护用户和角色。'],
@@ -315,11 +318,14 @@ const roleCatalogEnvelope = {
         status: 'active',
       },
       {
+        business_roles: ['只读参与者'],
         code: 'viewer',
         data_scope: '授权范围内的数据。',
         decision_scope: '无写入或审批决策权限。',
         description: '只能查看有权限访问的工作台数据、任务结果、知识和看板摘要。',
         is_assignable: true,
+        limitations: ['不能执行写操作、审批或配置变更。'],
+        menu_scope: ['首页 IT 团队看板', '授权业务列表'],
         name: '查看者',
         permissions: ['workspace.read'],
         responsibilities: ['查看授权范围内的业务数据。'],
@@ -1227,6 +1233,68 @@ describe('AI Brain Ant Design Pro workbench', () => {
     ]);
   });
 
+  it('shows knowledge index errors and retries failed indexing', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    let retryCalled = false;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/knowledge/documents') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '索引失败内容',
+                doc_type: 'manual',
+                id: 'knowledge_failed',
+                index_error: retryCalled ? null : 'embedding provider timeout',
+                index_status: retryCalled ? 'indexed' : 'index_failed',
+                permission_roles: ['admin'],
+                title: '失败知识',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/auth/roles') {
+        return jsonResponse(roleCatalogEnvelope);
+      }
+      if (input === '/api/knowledge/documents/knowledge_failed/retry-index') {
+        expect(init?.method).toBe('POST');
+        retryCalled = true;
+        return jsonResponse({
+          data: {
+            id: 'knowledge_failed',
+            index_error: null,
+            index_status: 'indexed',
+            title: '失败知识',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<KnowledgePage />);
+
+    expect(await screen.findByText('失败知识')).toBeInTheDocument();
+    expect(screen.getByText('embedding provider timeout')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /重试索引/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
+        '/api/knowledge/documents/knowledge_failed/retry-index',
+        'POST',
+      ]),
+    );
+    await waitFor(() => expect(screen.getByText('已索引')).toBeInTheDocument());
+  });
+
   it('renders dashboard and operation pages without placeholder data', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -2056,8 +2124,13 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(await screen.findByText('角色定义')).toBeInTheDocument();
     expect(screen.getByText('系统管理员 (admin)')).toBeInTheDocument();
     expect(screen.getByText('查看者 (viewer)')).toBeInTheDocument();
+    expect(screen.getByText('平台管理员')).toBeInTheDocument();
+    expect(screen.getByText('只读参与者')).toBeInTheDocument();
+    expect(screen.getAllByText('系统管理').length).toBeGreaterThan(0);
+    expect(screen.getByText('授权业务列表')).toBeInTheDocument();
     expect(screen.getByText('系统治理。')).toBeInTheDocument();
     expect(screen.getByText('无写入或审批决策权限。')).toBeInTheDocument();
+    expect(screen.getByText('不能执行写操作、审批或配置变更。')).toBeInTheDocument();
     expect(screen.getByText('system.users.manage')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /新增角色|删除/ })).not.toBeInTheDocument();
   });

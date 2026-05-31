@@ -93,9 +93,10 @@ export type KnowledgeRecord = {
   content?: string;
   documentType: string;
   id: string;
+  indexError?: string | null;
   ownerRole: string;
   permissionRoles?: string[];
-  status: 'failed' | 'indexed' | 'pending_index' | 'review_pending';
+  status: 'archived' | 'importing' | 'indexed' | 'index_failed' | 'pending_index';
   tags?: string[];
   title: string;
   updatedAt: string;

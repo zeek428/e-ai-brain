@@ -173,6 +173,84 @@ def test_knowledge_search_returns_permission_filtered_chunks_and_reindexes_on_up
     assert [item["chunk_id"] for item in fresh_results] == [f"{document['id']}_chunk_001"]
 
 
+def test_knowledge_index_failure_keeps_error_and_retry_rebuilds_chunks():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    document = client.post(
+        "/api/knowledge/documents",
+        json={
+            "title": "索引失败重试指南",
+            "content": "retry-index-token should only appear after successful indexing.",
+            "permission_roles": ["admin"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    failed = client.patch(
+        f"/api/knowledge/documents/{document['id']}",
+        json={
+            "index_error": "embedding provider timeout",
+            "index_status": "index_failed",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    assert failed["index_status"] == "index_failed"
+    assert failed["index_error"] == "embedding provider timeout"
+    assert failed["chunk_count"] == 0
+
+    indexed_items = client.get(
+        "/api/knowledge/documents?index_status=index_failed",
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert [item["id"] for item in indexed_items] == [document["id"]]
+
+    failed_search = client.post(
+        "/api/knowledge/search",
+        json={"query": "retry-index-token", "top_k": 5},
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert failed_search == []
+
+    retried = client.post(
+        f"/api/knowledge/documents/{document['id']}/retry-index",
+        headers=admin_headers,
+    ).json()["data"]
+    assert retried["index_status"] == "indexed"
+    assert retried["index_error"] is None
+    assert retried["chunk_count"] == 1
+
+    retried_search = client.post(
+        "/api/knowledge/search",
+        json={"query": "retry-index-token", "top_k": 5},
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert [item["chunk_id"] for item in retried_search] == [f"{document['id']}_chunk_001"]
+
+
+def test_knowledge_index_status_must_use_supported_values():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    document = client.post(
+        "/api/knowledge/documents",
+        json={
+            "title": "索引状态校验",
+            "content": "unsupported status should be rejected",
+            "permission_roles": ["admin"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.patch(
+        f"/api/knowledge/documents/{document['id']}",
+        json={"index_status": "failed"},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
 def test_mock_issue_writeback_is_idempotent_for_completed_task():
     app.state.store.reset()
     headers = auth_headers()

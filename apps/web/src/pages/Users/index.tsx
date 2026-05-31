@@ -223,12 +223,27 @@ export default function UsersPage() {
               render: (_, role) => role.responsibilities.join('；'),
             },
             {
+              dataIndex: 'business_roles',
+              title: '业务角色',
+              render: (_, role) => role.business_roles.join('；'),
+            },
+            {
               dataIndex: 'data_scope',
               title: '数据范围',
             },
             {
               dataIndex: 'decision_scope',
               title: '决策范围',
+            },
+            {
+              dataIndex: 'menu_scope',
+              title: '可见入口',
+              render: (_, role) => role.menu_scope.join('；'),
+            },
+            {
+              dataIndex: 'limitations',
+              title: '限制边界',
+              render: (_, role) => role.limitations.join('；'),
             },
             {
               dataIndex: 'permissions',

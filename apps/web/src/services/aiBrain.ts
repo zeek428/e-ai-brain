@@ -396,6 +396,7 @@ export type BugMutationPayload = {
 export type KnowledgeDocumentMutationPayload = {
   content?: string;
   doc_type?: string;
+  index_error?: string | null;
   index_status?: string;
   permission_roles?: string[];
   tags?: string[];
@@ -442,6 +443,7 @@ type KnowledgeDocumentListItem = {
   created_at?: string;
   doc_type?: string;
   id: string;
+  index_error?: string | null;
   index_status?: string;
   permission_roles?: string[];
   tags?: string[];
@@ -651,12 +653,15 @@ type UserListItem = {
 };
 
 type RoleDefinitionListItem = {
+  business_roles?: string[];
   category?: string;
   code: string;
   data_scope?: string;
   decision_scope?: string;
   description?: string;
   is_assignable?: boolean;
+  limitations?: string[];
+  menu_scope?: string[];
   name: string;
   permissions?: string[];
   responsibilities?: string[];
@@ -855,12 +860,16 @@ function normalizeRequirementStatus(status?: string): RequirementRecord['status'
 
 function normalizeKnowledgeStatus(status?: string): KnowledgeRecord['status'] {
   if (
-    status === 'failed' ||
+    status === 'archived' ||
+    status === 'importing' ||
     status === 'indexed' ||
-    status === 'pending_index' ||
-    status === 'review_pending'
+    status === 'index_failed' ||
+    status === 'pending_index'
   ) {
     return status;
+  }
+  if (status === 'failed') {
+    return 'index_failed';
   }
   return 'pending_index';
 }
@@ -1239,12 +1248,15 @@ export async function fetchProductContextOptions(): Promise<ProductContextOption
 
 function mapRoleDefinition(role: RoleDefinitionListItem): UserRoleDefinition {
   return {
+    business_roles: role.business_roles ?? [],
     category: role.category ?? 'workspace',
     code: role.code,
     data_scope: role.data_scope ?? '',
     decision_scope: role.decision_scope ?? '',
     description: role.description ?? '',
     is_assignable: role.is_assignable ?? true,
+    limitations: role.limitations ?? [],
+    menu_scope: role.menu_scope ?? [],
     name: role.name,
     permissions: role.permissions ?? [],
     responsibilities: role.responsibilities ?? [],
@@ -1457,6 +1469,7 @@ export async function fetchManagementKnowledge(): Promise<KnowledgeRecord[]> {
     content: document.content,
     documentType: document.doc_type ?? '-',
     id: document.id,
+    indexError: document.index_error,
     ownerRole: document.permission_roles?.join(', ') || '-',
     permissionRoles: document.permission_roles,
     status: normalizeKnowledgeStatus(document.index_status),
@@ -1493,6 +1506,17 @@ export async function deleteManagementKnowledgeDocument(documentId: string) {
     method: 'DELETE',
     token,
   });
+}
+
+export async function retryKnowledgeDocumentIndex(documentId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ id: string; index_error?: string | null; index_status?: string }>(
+    `/api/knowledge/documents/${documentId}/retry-index`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 export async function fetchManagementAudit(): Promise<AuditRecord[]> {

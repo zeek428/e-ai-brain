@@ -89,6 +89,7 @@ MODULE_STATUSES = {"active", "inactive"}
 GIT_REPO_STATUSES = {"active", "inactive"}
 RELATED_SYSTEM_STATUSES = {"active", "inactive"}
 MODEL_GATEWAY_STATUSES = {"active", "inactive"}
+KNOWLEDGE_INDEX_STATUSES = {"archived", "importing", "indexed", "index_failed", "pending_index"}
 BUG_STATUS_TRANSITIONS = {
     "open": {"triaged", "assigned", "closed"},
     "needs_info": {"open", "triaged", "closed"},
@@ -295,6 +296,7 @@ class KnowledgeDocumentPatchRequest(BaseModel):
     permission_roles: list[str] | None = None
     tags: list[str] | None = None
     index_status: str | None = None
+    index_error: str | None = None
 
 
 class KnowledgeSearchRequest(BaseModel):
@@ -2661,6 +2663,40 @@ def _ensure_review_decidable(
     return review, task
 
 
+def _complete_review_with_edited_approval(
+    current_store: MemoryStore,
+    *,
+    actor_id: str,
+    edited_content: dict[str, Any],
+    review: dict[str, Any],
+    review_id: str,
+    task: dict[str, Any],
+) -> dict[str, Any]:
+    task["output_json"] = {**task["output_json"], **edited_content}
+    review["status"] = "edited_approved"
+    review["edited_content"] = edited_content
+    review["decided_by"] = actor_id
+    task["status"] = "completed"
+    _confirm_code_review_report(current_store, task)
+    _create_knowledge_deposit(current_store, task)
+    _transition_latest_graph_run(
+        current_store,
+        task=task,
+        status="completed",
+        current_step="complete_archive",
+        state_snapshot={"task_status": task["status"], "review_id": review_id},
+    )
+    current_store.audit(
+        event_type="review.submitted",
+        actor_id=actor_id,
+        ai_task_id=task["id"],
+        subject_type="human_review",
+        subject_id=review_id,
+        payload={"decision": "edited_approved"},
+    )
+    return {"review_status": review["status"], "task_status": task["status"]}
+
+
 def _create_knowledge_deposit(current_store: MemoryStore, task: dict[str, Any]) -> None:
     deposit_id = current_store.new_id("deposit")
     current_store.knowledge_deposits[deposit_id] = {
@@ -3162,32 +3198,15 @@ def edit_approve_review(
     )
     _require_review_decision_role(user, task)
     edited_content = payload.edited_content or {}
-    task["output_json"] = {**task["output_json"], **edited_content}
-    review["status"] = "edited_approved"
-    review["edited_content"] = edited_content
-    review["decided_by"] = user["id"]
-    task["status"] = "completed"
-    _confirm_code_review_report(current_store, task)
-    _create_knowledge_deposit(current_store, task)
-    _transition_latest_graph_run(
+    result = _complete_review_with_edited_approval(
         current_store,
-        task=task,
-        status="completed",
-        current_step="complete_archive",
-        state_snapshot={"task_status": task["status"], "review_id": review_id},
-    )
-    current_store.audit(
-        event_type="review.submitted",
         actor_id=user["id"],
-        ai_task_id=task["id"],
-        subject_type="human_review",
-        subject_id=review_id,
-        payload={"decision": "edited_approved"},
+        edited_content=edited_content,
+        review=review,
+        review_id=review_id,
+        task=task,
     )
-    return envelope(
-        {"review_status": review["status"], "task_status": task["status"]},
-        get_trace_id(request),
-    )
+    return envelope(result, get_trace_id(request))
 
 
 @app.post("/api/reviews/{review_id}/reject")
@@ -3311,6 +3330,8 @@ def list_knowledge_documents(
     index_status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    if index_status:
+        _ensure_enum(index_status, KNOWLEDGE_INDEX_STATUSES, "knowledge index status")
     current_store = store(request)
     items = [
         document
@@ -3373,17 +3394,36 @@ def _knowledge_document_response(
 ) -> dict[str, Any]:
     response = current_store.snapshot(document)
     response["chunk_count"] = len(_knowledge_document_chunks(current_store, document["id"]))
+    response["index_error"] = document.get("index_error")
     return response
 
 
-def _replace_knowledge_chunks(current_store: MemoryStore, document: dict[str, Any]) -> None:
-    document_id = document["id"]
+def _clear_knowledge_chunks(current_store: MemoryStore, document_id: str) -> None:
     current_store.knowledge_chunks = {
         chunk_id: chunk
         for chunk_id, chunk in current_store.knowledge_chunks.items()
         if chunk.get("document_id") != document_id
     }
+
+
+def _mark_knowledge_index_failed(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+    error: str,
+) -> None:
+    _clear_knowledge_chunks(current_store, document["id"])
+    document["chunk_count"] = 0
+    document["index_error"] = _ensure_non_blank(error, "index_error")
+    document["index_status"] = "index_failed"
+
+
+def _replace_knowledge_chunks(current_store: MemoryStore, document: dict[str, Any]) -> None:
+    document_id = document["id"]
+    _clear_knowledge_chunks(current_store, document_id)
     chunks = _split_knowledge_content(document["content"])
+    if not chunks:
+        _mark_knowledge_index_failed(current_store, document, "NO_INDEXABLE_CONTENT")
+        return
     permission_roles = list(document.get("permission_roles", ["admin"]))
     for chunk_index, content in enumerate(chunks, start=1):
         chunk_id = f"{document_id}_chunk_{chunk_index:03d}"
@@ -3425,6 +3465,7 @@ def create_knowledge_document(
         "permission_roles": payload.permission_roles,
         "tags": payload.tags,
         "index_status": "indexed",
+        "index_error": None,
         "created_by": user["id"],
     }
     current_store.knowledge_documents[document_id] = document
@@ -3457,12 +3498,56 @@ def patch_knowledge_document(
         updates["content"] = _ensure_non_blank(updates["content"], "content")
     if "permission_roles" in updates:
         _ensure_roles(updates["permission_roles"])
+    if "index_status" in updates:
+        _ensure_enum(updates["index_status"], KNOWLEDGE_INDEX_STATUSES, "knowledge index status")
+    if "index_error" in updates and updates["index_error"] is not None:
+        updates["index_error"] = _ensure_non_blank(updates["index_error"], "index_error")
     document.update(updates)
     document["updated_at"] = datetime.now(UTC).isoformat()
-    if {"content", "title", "permission_roles", "doc_type", "tags"}.intersection(updates):
+    if updates.get("index_status") == "index_failed":
+        _mark_knowledge_index_failed(
+            current_store,
+            document,
+            document.get("index_error") or "Knowledge indexing failed",
+        )
+    elif updates.get("index_status") in {"archived", "importing", "pending_index"}:
+        _clear_knowledge_chunks(current_store, document_id)
+        document["chunk_count"] = 0
+        document["index_error"] = None
+    elif updates.get("index_status") == "indexed" or {
+        "content",
+        "title",
+        "permission_roles",
+        "doc_type",
+        "tags",
+    }.intersection(updates):
         _replace_knowledge_chunks(current_store, document)
     current_store.audit(
         event_type="knowledge_document.updated",
+        actor_id=user["id"],
+        subject_type="knowledge_document",
+        subject_id=document_id,
+    )
+    return envelope(_knowledge_document_response(current_store, document), get_trace_id(request))
+
+
+@app.post("/api/knowledge/documents/{document_id}/retry-index")
+def retry_knowledge_document_index(
+    document_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"knowledge_owner", "rd_owner"})
+    current_store = store(request)
+    document = current_store.knowledge_documents.get(document_id)
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    if document.get("index_status") != "index_failed":
+        raise api_error(409, "KNOWLEDGE_INDEX_STATE_INVALID", "Knowledge document is not failed")
+    _replace_knowledge_chunks(current_store, document)
+    document["updated_at"] = datetime.now(UTC).isoformat()
+    current_store.audit(
+        event_type="knowledge_document.index_retried",
         actor_id=user["id"],
         subject_type="knowledge_document",
         subject_id=document_id,

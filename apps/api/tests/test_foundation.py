@@ -104,9 +104,15 @@ def test_role_catalog_defines_supported_mvp_roles():
     assert all(role["responsibilities"] for role in roles)
     assert all(role["data_scope"] for role in roles)
     assert all(role["decision_scope"] for role in roles)
+    assert all(role["business_roles"] for role in roles)
+    assert all(role["menu_scope"] for role in roles)
+    assert all(role["limitations"] for role in roles)
     assert [role["sort_order"] for role in roles] == [10, 20, 30, 40, 50, 60]
+    assert roles[0]["business_roles"] == ["平台管理员"]
+    assert "系统管理" in roles[0]["menu_scope"]
     assert roles[1]["responsibilities"][1] == "审批需求并从已批准需求生成 AI 任务。"
     assert roles[5]["decision_scope"] == "无写入或审批决策权限。"
+    assert "不能执行写操作、审批或配置变更。" in roles[5]["limitations"]
 
     unsupported_role = client.post(
         "/api/users",

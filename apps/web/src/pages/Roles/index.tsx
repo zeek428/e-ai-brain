@@ -9,7 +9,10 @@ import { fetchRoleDefinitions } from '../../services/aiBrain';
 
 type RoleManagementRow = UserRoleDefinition & {
   assignableText: string;
+  businessRoleText: string;
   categoryText: string;
+  limitationText: string;
+  menuScopeText: string;
   permissionText: string;
   roleLabel: string;
   responsibilityText: string;
@@ -36,6 +39,17 @@ const columns: ProColumns<RoleManagementRow>[] = [
     title: '分类',
   },
   {
+    dataIndex: 'businessRoleText',
+    title: '业务角色',
+    render: (_, row) => (
+      <Space size={[4, 4]} wrap>
+        {row.business_roles.map((role) => (
+          <Tag key={role}>{role}</Tag>
+        ))}
+      </Space>
+    ),
+  },
+  {
     dataIndex: 'description',
     title: '定位',
   },
@@ -50,6 +64,21 @@ const columns: ProColumns<RoleManagementRow>[] = [
   {
     dataIndex: 'decision_scope',
     title: '决策范围',
+  },
+  {
+    dataIndex: 'menuScopeText',
+    title: '可见入口',
+    render: (_, row) => (
+      <Space size={[4, 4]} wrap>
+        {row.menu_scope.map((menu) => (
+          <Tag key={menu}>{menu}</Tag>
+        ))}
+      </Space>
+    ),
+  },
+  {
+    dataIndex: 'limitationText',
+    title: '限制边界',
   },
   {
     dataIndex: 'permissionText',
@@ -88,7 +117,10 @@ function mapRoleRow(role: UserRoleDefinition): RoleManagementRow {
   return {
     ...role,
     assignableText: role.is_assignable ? '可分配' : '不可分配',
+    businessRoleText: role.business_roles.join(', '),
     categoryText: CATEGORY_LABELS[role.category] ?? role.category,
+    limitationText: role.limitations.join('；'),
+    menuScopeText: role.menu_scope.join(', '),
     permissionText: role.permissions.join(', '),
     responsibilityText: role.responsibilities.join('；'),
     roleLabel: `${role.name} (${role.code})`,
@@ -116,6 +148,8 @@ export default function RolesPage() {
           options: Object.values(CATEGORY_LABELS).map((label) => ({ label, value: label })),
           type: 'select',
         },
+        { label: '业务角色', name: 'businessRoleText', type: 'text' },
+        { label: '可见入口', name: 'menuScopeText', type: 'text' },
         { label: '权限点', name: 'permissionText', type: 'text' },
         {
           label: '状态',

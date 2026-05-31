@@ -1,4 +1,4 @@
-import { DeleteOutlined, EditOutlined, SearchOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Typography, message } from 'antd';
@@ -17,6 +17,7 @@ import {
   fetchManagementKnowledge,
   fetchRoleDefinitions,
   rejectKnowledgeDeposit,
+  retryKnowledgeDocumentIndex,
   updateManagementKnowledgeDocument,
   type KnowledgeDepositRecord,
   type KnowledgeSearchResultRecord,
@@ -26,10 +27,11 @@ import { formatMutationError, joinTextList, splitCommaText } from '../../utils/m
 const { Text } = Typography;
 
 const statusLabels: Record<KnowledgeRecord['status'], { color: string; label: string }> = {
-  failed: { color: 'red', label: '索引失败' },
+  archived: { color: 'default', label: '已归档' },
+  importing: { color: 'blue', label: '索引中' },
   indexed: { color: 'green', label: '已索引' },
+  index_failed: { color: 'red', label: '索引失败' },
   pending_index: { color: 'gold', label: '待索引' },
-  review_pending: { color: 'blue', label: '待审核' },
 };
 
 const depositStatusLabels: Record<string, { color: string; label: string }> = {
@@ -191,6 +193,16 @@ export default function KnowledgePage() {
     }
   }, [reload]);
 
+  const handleRetryIndex = useCallback(async (row: KnowledgeRecord) => {
+    try {
+      await retryKnowledgeDocumentIndex(row.id);
+      message.success('知识索引已重试');
+      await reload();
+    } catch (retryError) {
+      message.error(formatMutationError(retryError));
+    }
+  }, [reload]);
+
   const handleApproveDeposit = useCallback(async (row: KnowledgeDepositRecord) => {
     try {
       await approveKnowledgeDeposit(row.id, {
@@ -265,6 +277,11 @@ export default function KnowledgePage() {
         },
       },
       {
+        dataIndex: 'indexError',
+        title: '索引错误',
+        render: (_, row) => row.indexError || '-',
+      },
+      {
         dataIndex: 'updatedAt',
         title: '更新时间',
       },
@@ -277,6 +294,11 @@ export default function KnowledgePage() {
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
+            {row.status === 'index_failed' ? (
+              <Button icon={<ReloadOutlined />} onClick={() => handleRetryIndex(row)} type="link">
+                重试索引
+              </Button>
+            ) : null}
             <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除知识 ${row.id}？`}>
               <Button danger icon={<DeleteOutlined />} type="link">
                 删除
@@ -286,7 +308,7 @@ export default function KnowledgePage() {
         ),
       },
     ],
-    [handleDelete, openEditModal],
+    [handleDelete, handleRetryIndex, openEditModal],
   );
 
   const depositColumns = useMemo<ProColumns<KnowledgeDepositRecord>[]>(
@@ -379,8 +401,9 @@ export default function KnowledgePage() {
             options: [
               { label: '已索引', value: 'indexed' },
               { label: '待索引', value: 'pending_index' },
-              { label: '待审核', value: 'review_pending' },
-              { label: '索引失败', value: 'failed' },
+              { label: '索引中', value: 'importing' },
+              { label: '索引失败', value: 'index_failed' },
+              { label: '已归档', value: 'archived' },
             ],
             type: 'select',
           },
@@ -499,8 +522,9 @@ export default function KnowledgePage() {
                 options={[
                   { label: '已索引', value: 'indexed' },
                   { label: '待索引', value: 'pending_index' },
-                  { label: '待审核', value: 'review_pending' },
-                  { label: '索引失败', value: 'failed' },
+                  { label: '索引中', value: 'importing' },
+                  { label: '索引失败', value: 'index_failed' },
+                  { label: '已归档', value: 'archived' },
                 ]}
               />
             </Form.Item>
