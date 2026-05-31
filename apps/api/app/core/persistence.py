@@ -13,6 +13,9 @@ PRODUCT_CONFIG_FIELDS = [
     "product_modules",
     "product_git_repositories",
 ]
+REQUIREMENT_FIELDS = [
+    "requirements",
+]
 COLLECTION_FIELDS = [
     "products",
     "product_versions",
@@ -49,8 +52,30 @@ class ProductConfigRepository(Protocol):
     def save_product_config(self, payload: dict[str, Any]) -> None: ...
 
 
+class RequirementRepository(Protocol):
+    def load_requirements(self) -> dict[str, Any] | None: ...
+
+    def save_requirements(self, payload: dict[str, Any]) -> None: ...
+
+
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in PRODUCT_CONFIG_FIELDS}
+
+
+def _requirements_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in REQUIREMENT_FIELDS}
+
+
+def _merge_collection_payload(
+    payload: dict[str, Any],
+    overlay: dict[str, Any],
+    fields: list[str],
+) -> None:
+    for field in fields:
+        payload[field] = {
+            **deepcopy(payload.get(field, {})),
+            **deepcopy(overlay.get(field, {})),
+        }
 
 
 def _repository_load_product_config(repository: SnapshotRepository) -> dict[str, Any] | None:
@@ -69,8 +94,28 @@ def _repository_save_product_config(
         save_product_config(_product_config_payload(payload))
 
 
+def _repository_load_requirements(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_requirements = getattr(repository, "load_requirements", None)
+    if load_requirements is None:
+        return None
+    return load_requirements()
+
+
+def _repository_save_requirements(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_requirements = getattr(repository, "save_requirements", None)
+    if save_requirements is not None:
+        save_requirements(_requirements_payload(payload))
+
+
 def _has_product_config_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in PRODUCT_CONFIG_FIELDS)
+
+
+def _has_requirement_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in REQUIREMENT_FIELDS)
 
 
 def _max_numeric_suffix(items: dict[str, dict[str, Any]], prefix: str) -> int:
@@ -100,6 +145,28 @@ def _sync_product_config_counters(payload: dict[str, Any]) -> None:
     payload["counters"] = counters
 
 
+def _sync_requirement_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["requirement"] = max(
+        counters.get("requirement", 0),
+        _max_numeric_suffix(payload.get("requirements", {}), "requirement"),
+    )
+    payload["counters"] = counters
+
+
+def _drop_requirements_without_product_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    versions = payload.get("product_versions", {})
+    requirements = payload.get("requirements", {})
+    payload["requirements"] = {
+        requirement_id: requirement
+        for requirement_id, requirement in requirements.items()
+        if requirement.get("product_id") in products
+        and requirement.get("version_id") in versions
+        and versions[requirement["version_id"]].get("product_id") == requirement.get("product_id")
+    }
+
+
 class PersistentMemoryStore(MemoryStore):
     def __init__(self, repository: SnapshotRepository) -> None:
         super().__init__()
@@ -110,9 +177,24 @@ class PersistentMemoryStore(MemoryStore):
         store = cls(repository)
         payload = repository.load() or {}
         product_config_payload = _repository_load_product_config(repository)
-        if _has_product_config_items(product_config_payload):
-            payload.update(_product_config_payload(product_config_payload))
+        has_structured_product_config = _has_product_config_items(product_config_payload)
+        if has_structured_product_config:
+            _merge_collection_payload(
+                payload,
+                _product_config_payload(product_config_payload),
+                PRODUCT_CONFIG_FIELDS,
+            )
             _sync_product_config_counters(payload)
+        requirements_payload = _repository_load_requirements(repository)
+        if _has_requirement_items(requirements_payload):
+            _merge_collection_payload(
+                payload,
+                _requirements_payload(requirements_payload),
+                REQUIREMENT_FIELDS,
+            )
+            _sync_requirement_counters(payload)
+        if has_structured_product_config:
+            _drop_requirements_without_product_context(payload)
         if payload:
             store.load_payload(payload)
         return store
@@ -130,6 +212,7 @@ class PersistentMemoryStore(MemoryStore):
         payload = self.to_payload()
         self.repository.save(payload)
         _repository_save_product_config(self.repository, payload)
+        _repository_save_requirements(self.repository, payload)
 
 
 class PostgresSnapshotRepository:
@@ -188,6 +271,12 @@ class PostgresSnapshotRepository:
             "products": products,
         }
 
+    def load_requirements(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                requirements = self._load_requirements(cursor)
+        return {"requirements": requirements}
+
     def save_product_config(self, payload: dict[str, Any]) -> None:
         products = payload.get("products", {})
         versions = payload.get("product_versions", {})
@@ -203,6 +292,13 @@ class PostgresSnapshotRepository:
                 self._upsert_product_versions(cursor, versions)
                 self._upsert_product_modules(cursor, modules)
                 self._upsert_product_git_repositories(cursor, repositories)
+
+    def save_requirements(self, payload: dict[str, Any]) -> None:
+        requirements = payload.get("requirements", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "requirements", requirements)
+                self._upsert_requirements(cursor, requirements)
 
     def _load_products(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -295,6 +391,39 @@ class PostgresSnapshotRepository:
             }
             for row in cursor.fetchall()
         }
+
+    def _load_requirements(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, title, product_id, version_id, module_code, description, priority,
+                   status, created_by, approval_comment, rejection_reason, task_ids,
+                   created_at, updated_at
+            FROM requirements
+            ORDER BY created_at DESC, id
+            """
+        )
+        requirements = {}
+        for row in cursor.fetchall():
+            requirement = {
+                "content": row[5],
+                "created_at": row[12].isoformat() if row[12] else None,
+                "created_by": row[8],
+                "id": row[0],
+                "module_code": row[4],
+                "priority": row[6],
+                "product_id": row[2],
+                "status": row[7],
+                "task_ids": list(row[11] or []),
+                "title": row[1],
+                "updated_at": row[13].isoformat() if row[13] else None,
+                "version_id": row[3],
+            }
+            if row[9] is not None:
+                requirement["approval_comment"] = row[9]
+            if row[10] is not None:
+                requirement["rejection_reason"] = row[10]
+            requirements[row[0]] = requirement
+        return requirements
 
     def _delete_missing(
         self,
@@ -441,5 +570,54 @@ class PostgresSnapshotRepository:
                     repository.get("default_branch", "main"),
                     repository.get("root_path", "/"),
                     repository.get("status", "active"),
+                ),
+            )
+
+    def _upsert_requirements(self, cursor, requirements: dict[str, dict[str, Any]]) -> None:
+        import json
+
+        for requirement in requirements.values():
+            created_at = requirement.get("created_at")
+            updated_at = requirement.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO requirements (
+                  id, title, product_id, version_id, module_code, description, priority,
+                  status, created_by, approval_comment, rejection_reason, task_ids,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  title = EXCLUDED.title,
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  module_code = EXCLUDED.module_code,
+                  description = EXCLUDED.description,
+                  priority = EXCLUDED.priority,
+                  status = EXCLUDED.status,
+                  created_by = EXCLUDED.created_by,
+                  approval_comment = EXCLUDED.approval_comment,
+                  rejection_reason = EXCLUDED.rejection_reason,
+                  task_ids = EXCLUDED.task_ids,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    requirement["id"],
+                    requirement["title"],
+                    requirement["product_id"],
+                    requirement["version_id"],
+                    requirement.get("module_code"),
+                    requirement["content"],
+                    requirement.get("priority", "P1"),
+                    requirement.get("status", "pending_approval"),
+                    requirement["created_by"],
+                    requirement.get("approval_comment"),
+                    requirement.get("rejection_reason"),
+                    json.dumps(requirement.get("task_ids", []), ensure_ascii=False),
+                    created_at,
+                    updated_at,
                 ),
             )
