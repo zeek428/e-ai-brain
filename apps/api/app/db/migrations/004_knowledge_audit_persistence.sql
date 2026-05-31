@@ -1,0 +1,3 @@
+ALTER TABLE audit_events ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE audit_events ALTER COLUMN id TYPE text USING id::text;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS sequence integer NOT NULL DEFAULT 0;

@@ -3481,6 +3481,9 @@ def delete_knowledge_document(
     if document_id not in current_store.knowledge_documents:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     del current_store.knowledge_documents[document_id]
+    for deposit in current_store.knowledge_deposits.values():
+        if deposit.get("knowledge_document_id") == document_id:
+            deposit["knowledge_document_id"] = None
     current_store.audit(
         event_type="knowledge_document.deleted",
         actor_id=user["id"],

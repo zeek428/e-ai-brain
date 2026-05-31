@@ -161,6 +161,8 @@ def test_initial_migration_matches_runtime_record_shapes():
     assert "responsibilities jsonb NOT NULL DEFAULT '[]'::jsonb" in migration
     assert "data_scope text NOT NULL DEFAULT ''" in migration
     assert "decision_scope text NOT NULL DEFAULT ''" in migration
+    assert "id text PRIMARY KEY" in migration
+    assert "sequence integer NOT NULL DEFAULT 0" in migration
     assert "review_type text NOT NULL" not in migration
     assert "original_content jsonb" not in migration
 

@@ -24,6 +24,13 @@ WORKFLOW_RUNTIME_FIELDS = [
     "graph_checkpoints",
     "human_reviews",
 ]
+KNOWLEDGE_FIELDS = [
+    "knowledge_documents",
+    "knowledge_deposits",
+]
+AUDIT_FIELDS = [
+    "audit_events",
+]
 COLLECTION_FIELDS = [
     "products",
     "product_versions",
@@ -78,6 +85,18 @@ class WorkflowRuntimeRepository(Protocol):
     def save_workflow_runtime(self, payload: dict[str, Any]) -> None: ...
 
 
+class KnowledgeRepository(Protocol):
+    def load_knowledge(self) -> dict[str, Any] | None: ...
+
+    def save_knowledge(self, payload: dict[str, Any]) -> None: ...
+
+
+class AuditRepository(Protocol):
+    def load_audit_events(self) -> dict[str, Any] | None: ...
+
+    def save_audit_events(self, payload: dict[str, Any]) -> None: ...
+
+
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in PRODUCT_CONFIG_FIELDS}
 
@@ -92,6 +111,14 @@ def _ai_tasks_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _workflow_runtime_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in WORKFLOW_RUNTIME_FIELDS}
+
+
+def _knowledge_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in KNOWLEDGE_FIELDS}
+
+
+def _audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, [])) for field in AUDIT_FIELDS}
 
 
 def _ai_tasks_merge_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -123,6 +150,19 @@ def _merge_collection_payload(
             payload[field] = merged_items
         else:
             payload[field] = {**existing_items, **overlay_items}
+
+
+def _replace_collection_payload(
+    payload: dict[str, Any],
+    overlay: dict[str, Any],
+    fields: list[str],
+) -> None:
+    for field in fields:
+        payload[field] = deepcopy(overlay.get(field, {}))
+
+
+def _merge_audit_payload(payload: dict[str, Any], overlay: dict[str, Any]) -> None:
+    payload["audit_events"] = deepcopy(overlay.get("audit_events", []))
 
 
 def _repository_load_product_config(repository: SnapshotRepository) -> dict[str, Any] | None:
@@ -180,6 +220,20 @@ def _repository_load_workflow_runtime(repository: SnapshotRepository) -> dict[st
     return load_workflow_runtime()
 
 
+def _repository_load_knowledge(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_knowledge = getattr(repository, "load_knowledge", None)
+    if load_knowledge is None:
+        return None
+    return load_knowledge()
+
+
+def _repository_load_audit_events(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_audit_events = getattr(repository, "load_audit_events", None)
+    if load_audit_events is None:
+        return None
+    return load_audit_events()
+
+
 def _repository_save_workflow_runtime(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -187,6 +241,24 @@ def _repository_save_workflow_runtime(
     save_workflow_runtime = getattr(repository, "save_workflow_runtime", None)
     if save_workflow_runtime is not None:
         save_workflow_runtime(_workflow_runtime_payload(payload))
+
+
+def _repository_save_knowledge(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_knowledge = getattr(repository, "save_knowledge", None)
+    if save_knowledge is not None:
+        save_knowledge(_knowledge_payload(payload))
+
+
+def _repository_save_audit_events(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_audit_events = getattr(repository, "save_audit_events", None)
+    if save_audit_events is not None:
+        save_audit_events(_audit_payload(payload))
 
 
 def _has_product_config_items(payload: dict[str, Any] | None) -> bool:
@@ -205,6 +277,14 @@ def _has_workflow_runtime_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in WORKFLOW_RUNTIME_FIELDS)
 
 
+def _has_knowledge_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in KNOWLEDGE_FIELDS)
+
+
+def _has_audit_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in AUDIT_FIELDS)
+
+
 def _max_numeric_suffix(items: dict[str, dict[str, Any]], prefix: str) -> int:
     marker = f"{prefix}_"
     max_value = 0
@@ -215,6 +295,13 @@ def _max_numeric_suffix(items: dict[str, dict[str, Any]], prefix: str) -> int:
         if suffix.isdigit():
             max_value = max(max_value, int(suffix))
     return max_value
+
+
+def _max_numeric_suffix_from_values(items: list[dict[str, Any]], prefix: str) -> int:
+    return _max_numeric_suffix(
+        {str(item.get("id")): item for item in items if item.get("id")},
+        prefix,
+    )
 
 
 def _sync_product_config_counters(payload: dict[str, Any]) -> None:
@@ -261,6 +348,28 @@ def _sync_workflow_runtime_counters(payload: dict[str, Any]) -> None:
             counters.get(prefix, 0),
             _max_numeric_suffix(payload.get(field, {}), prefix),
         )
+    payload["counters"] = counters
+
+
+def _sync_knowledge_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    for prefix, field in [
+        ("knowledge", "knowledge_documents"),
+        ("deposit", "knowledge_deposits"),
+    ]:
+        counters[prefix] = max(
+            counters.get(prefix, 0),
+            _max_numeric_suffix(payload.get(field, {}), prefix),
+        )
+    payload["counters"] = counters
+
+
+def _sync_audit_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["audit"] = max(
+        counters.get("audit", 0),
+        _max_numeric_suffix_from_values(payload.get("audit_events", []), "audit"),
+    )
     payload["counters"] = counters
 
 
@@ -346,6 +455,21 @@ def _sync_task_runtime_links(payload: dict[str, Any]) -> None:
             task["checkpoint_id"] = graph_run["checkpoint_id"]
 
 
+def _drop_knowledge_without_context(payload: dict[str, Any]) -> None:
+    ai_tasks = payload.get("ai_tasks", {})
+    knowledge_documents = payload.get("knowledge_documents", {})
+    knowledge_deposits = payload.get("knowledge_deposits", {})
+    cleaned_deposits = {}
+    for deposit_id, deposit in knowledge_deposits.items():
+        if ai_tasks and deposit.get("ai_task_id") not in ai_tasks:
+            continue
+        if deposit.get("knowledge_document_id") not in knowledge_documents:
+            deposit = deepcopy(deposit)
+            deposit["knowledge_document_id"] = None
+        cleaned_deposits[deposit_id] = deposit
+    payload["knowledge_deposits"] = cleaned_deposits
+
+
 class PersistentMemoryStore(MemoryStore):
     def __init__(self, repository: SnapshotRepository) -> None:
         super().__init__()
@@ -391,12 +515,25 @@ class PersistentMemoryStore(MemoryStore):
                 WORKFLOW_RUNTIME_FIELDS,
             )
             _sync_workflow_runtime_counters(payload)
+        knowledge_payload = _repository_load_knowledge(repository)
+        if _has_knowledge_items(knowledge_payload):
+            _replace_collection_payload(
+                payload,
+                _knowledge_payload(knowledge_payload),
+                KNOWLEDGE_FIELDS,
+            )
+            _sync_knowledge_counters(payload)
+        audit_payload = _repository_load_audit_events(repository)
+        if _has_audit_items(audit_payload):
+            _merge_audit_payload(payload, _audit_payload(audit_payload))
+            _sync_audit_counters(payload)
         if has_structured_product_config:
             _drop_requirements_without_product_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
             _drop_ai_tasks_without_context(payload)
         if has_structured_ai_tasks:
             _drop_workflow_runtime_without_tasks(payload)
+            _drop_knowledge_without_context(payload)
         _ensure_ai_task_defaults(payload)
         _sync_task_runtime_links(payload)
         if payload:
@@ -419,6 +556,8 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_requirements(self.repository, payload)
         _repository_save_ai_tasks(self.repository, payload)
         _repository_save_workflow_runtime(self.repository, payload)
+        _repository_save_knowledge(self.repository, payload)
+        _repository_save_audit_events(self.repository, payload)
 
 
 class PostgresSnapshotRepository:
@@ -501,6 +640,22 @@ class PostgresSnapshotRepository:
             "human_reviews": human_reviews,
         }
 
+    def load_knowledge(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                knowledge_documents = self._load_knowledge_documents(cursor)
+                knowledge_deposits = self._load_knowledge_deposits(cursor)
+        return {
+            "knowledge_deposits": knowledge_deposits,
+            "knowledge_documents": knowledge_documents,
+        }
+
+    def load_audit_events(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                audit_events = self._load_audit_events(cursor)
+        return {"audit_events": audit_events}
+
     def save_product_config(self, payload: dict[str, Any]) -> None:
         products = payload.get("products", {})
         versions = payload.get("product_versions", {})
@@ -543,6 +698,29 @@ class PostgresSnapshotRepository:
                 self._upsert_graph_runs(cursor, graph_runs)
                 self._upsert_graph_checkpoints(cursor, graph_checkpoints)
                 self._upsert_human_reviews(cursor, human_reviews)
+
+    def save_knowledge(self, payload: dict[str, Any]) -> None:
+        documents = payload.get("knowledge_documents", {})
+        deposits = payload.get("knowledge_deposits", {})
+        deposits = self._clean_knowledge_deposit_references(documents, deposits)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._clear_dangling_knowledge_deposit_documents(cursor, documents)
+                self._delete_missing(cursor, "knowledge_deposits", deposits)
+                self._delete_missing(cursor, "knowledge_documents", documents)
+                self._upsert_knowledge_documents(cursor, documents)
+                self._upsert_knowledge_deposits(cursor, deposits)
+
+    def save_audit_events(self, payload: dict[str, Any]) -> None:
+        audit_events = payload.get("audit_events", [])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing_ids(
+                    cursor,
+                    "audit_events",
+                    [str(event["id"]) for event in audit_events if event.get("id")],
+                )
+                self._upsert_audit_events(cursor, audit_events)
 
     def _load_products(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -789,6 +967,112 @@ class PostgresSnapshotRepository:
             human_reviews[row[0]] = review
         return human_reviews
 
+    def _load_knowledge_documents(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, brain_app_id, product_id, version_id, title, content, source_type,
+                   doc_type, permission_scope, permission_roles, index_status, index_error,
+                   tags, created_by, created_at, updated_at
+            FROM knowledge_documents
+            ORDER BY id
+            """
+        )
+        documents = {}
+        for row in cursor.fetchall():
+            document = {
+                "brain_app_id": row[1],
+                "content": row[5],
+                "created_at": row[14].isoformat() if row[14] else None,
+                "created_by": row[13],
+                "doc_type": row[7],
+                "id": row[0],
+                "index_error": row[11],
+                "index_status": row[10],
+                "permission_roles": list(row[9] or []),
+                "permission_scope": dict(row[8] or {}),
+                "product_id": row[2],
+                "source_type": row[6],
+                "tags": list(row[12] or []),
+                "title": row[4],
+                "updated_at": row[15].isoformat() if row[15] else None,
+                "version_id": row[3],
+            }
+            for optional_key in (
+                "brain_app_id",
+                "created_at",
+                "index_error",
+                "product_id",
+                "updated_at",
+                "version_id",
+            ):
+                if document[optional_key] is None:
+                    document.pop(optional_key)
+            if not document["permission_scope"]:
+                document.pop("permission_scope")
+            documents[row[0]] = document
+        return documents
+
+    def _load_knowledge_deposits(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, ai_task_id, deposit_type, title, content, content_hash, status,
+                   knowledge_document_id, rejection_reason, created_at, updated_at
+            FROM knowledge_deposits
+            ORDER BY created_at, id
+            """
+        )
+        deposits = {}
+        for row in cursor.fetchall():
+            deposit = {
+                "ai_task_id": row[1],
+                "content": row[4],
+                "content_hash": row[5],
+                "created_at": row[9].isoformat() if row[9] else None,
+                "deposit_type": row[2],
+                "id": row[0],
+                "knowledge_document_id": row[7],
+                "rejection_reason": row[8],
+                "status": row[6],
+                "title": row[3],
+                "updated_at": row[10].isoformat() if row[10] else None,
+            }
+            for optional_key in (
+                "content_hash",
+                "created_at",
+                "deposit_type",
+                "knowledge_document_id",
+                "rejection_reason",
+                "updated_at",
+            ):
+                if deposit[optional_key] is None:
+                    deposit.pop(optional_key)
+            deposits[row[0]] = deposit
+        return deposits
+
+    def _load_audit_events(self, cursor) -> list[dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id::text, event_type, actor_id, ai_task_id, subject_type, subject_id,
+                   payload, sequence, created_at
+            FROM audit_events
+            ORDER BY sequence, created_at, id
+            """
+        )
+        return [
+            {
+                "actor_id": row[2],
+                "ai_task_id": row[3],
+                "created_at": row[8].isoformat() if row[8] else None,
+                "event_type": row[1],
+                "id": row[0],
+                "payload": dict(row[6] or {}),
+                "sequence": row[7],
+                "subject_id": row[5],
+                "subject_type": row[4],
+            }
+            for row in cursor.fetchall()
+        ]
+
     def _delete_missing(
         self,
         cursor,
@@ -802,6 +1086,16 @@ class PostgresSnapshotRepository:
         cursor.execute(
             f"DELETE FROM {table_name} WHERE id NOT IN ({placeholders})",  # noqa: S608
             tuple(items.keys()),
+        )
+
+    def _delete_missing_ids(self, cursor, table_name: str, item_ids: list[str]) -> None:
+        if not item_ids:
+            cursor.execute(f"DELETE FROM {table_name}")  # noqa: S608
+            return
+        placeholders = ", ".join(["%s"] * len(item_ids))
+        cursor.execute(
+            f"DELETE FROM {table_name} WHERE id NOT IN ({placeholders})",  # noqa: S608
+            tuple(item_ids),
         )
 
     def _upsert_products(self, cursor, products: dict[str, dict[str, Any]]) -> None:
@@ -1154,5 +1448,175 @@ class PostgresSnapshotRepository:
                     review.get("decided_at"),
                     created_at,
                     updated_at,
+                ),
+            )
+
+    def _clean_knowledge_deposit_references(
+        self,
+        documents: dict[str, dict[str, Any]],
+        deposits: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        cleaned = deepcopy(deposits)
+        for deposit in cleaned.values():
+            if deposit.get("knowledge_document_id") not in documents:
+                deposit["knowledge_document_id"] = None
+        return cleaned
+
+    def _clear_dangling_knowledge_deposit_documents(
+        self,
+        cursor,
+        documents: dict[str, dict[str, Any]],
+    ) -> None:
+        if not documents:
+            cursor.execute("UPDATE knowledge_deposits SET knowledge_document_id = NULL")
+            return
+        placeholders = ", ".join(["%s"] * len(documents))
+        cursor.execute(
+            f"""
+            UPDATE knowledge_deposits
+            SET knowledge_document_id = NULL
+            WHERE knowledge_document_id IS NOT NULL
+              AND knowledge_document_id NOT IN ({placeholders})
+            """,  # noqa: S608
+            tuple(documents.keys()),
+        )
+
+    def _upsert_knowledge_documents(
+        self,
+        cursor,
+        documents: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for document in documents.values():
+            created_at = document.get("created_at")
+            updated_at = document.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO knowledge_documents (
+                  id, brain_app_id, product_id, version_id, title, content, source_type,
+                  doc_type, permission_scope, permission_roles, index_status, index_error,
+                  tags, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s,
+                  %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  brain_app_id = EXCLUDED.brain_app_id,
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  title = EXCLUDED.title,
+                  content = EXCLUDED.content,
+                  source_type = EXCLUDED.source_type,
+                  doc_type = EXCLUDED.doc_type,
+                  permission_scope = EXCLUDED.permission_scope,
+                  permission_roles = EXCLUDED.permission_roles,
+                  index_status = EXCLUDED.index_status,
+                  index_error = EXCLUDED.index_error,
+                  tags = EXCLUDED.tags,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    document["id"],
+                    document.get("brain_app_id", "rd_brain"),
+                    document.get("product_id"),
+                    document.get("version_id"),
+                    document["title"],
+                    document["content"],
+                    document.get("source_type", "manual"),
+                    document.get("doc_type", "manual"),
+                    json.dumps(document.get("permission_scope", {}), ensure_ascii=False),
+                    json.dumps(document.get("permission_roles", ["admin"]), ensure_ascii=False),
+                    document.get("index_status", "pending_index"),
+                    document.get("index_error"),
+                    json.dumps(document.get("tags", []), ensure_ascii=False),
+                    document["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_knowledge_deposits(
+        self,
+        cursor,
+        deposits: dict[str, dict[str, Any]],
+    ) -> None:
+        for deposit in deposits.values():
+            created_at = deposit.get("created_at")
+            updated_at = deposit.get("updated_at") or created_at
+            content_hash = deposit.get("content_hash") or deposit["id"]
+            cursor.execute(
+                """
+                INSERT INTO knowledge_deposits (
+                  id, ai_task_id, deposit_type, title, content, content_hash, status,
+                  knowledge_document_id, rejection_reason, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  ai_task_id = EXCLUDED.ai_task_id,
+                  deposit_type = EXCLUDED.deposit_type,
+                  title = EXCLUDED.title,
+                  content = EXCLUDED.content,
+                  content_hash = EXCLUDED.content_hash,
+                  status = EXCLUDED.status,
+                  knowledge_document_id = EXCLUDED.knowledge_document_id,
+                  rejection_reason = EXCLUDED.rejection_reason,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    deposit["id"],
+                    deposit["ai_task_id"],
+                    deposit.get("deposit_type", "task_output"),
+                    deposit["title"],
+                    deposit["content"],
+                    content_hash,
+                    deposit.get("status", "pending"),
+                    deposit.get("knowledge_document_id"),
+                    deposit.get("rejection_reason"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_audit_events(self, cursor, audit_events: list[dict[str, Any]]) -> None:
+        import json
+
+        for event in audit_events:
+            cursor.execute(
+                """
+                INSERT INTO audit_events (
+                  id, event_type, actor_id, ai_task_id, subject_type, subject_id, payload,
+                  sequence, created_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  event_type = EXCLUDED.event_type,
+                  actor_id = EXCLUDED.actor_id,
+                  ai_task_id = EXCLUDED.ai_task_id,
+                  subject_type = EXCLUDED.subject_type,
+                  subject_id = EXCLUDED.subject_id,
+                  payload = EXCLUDED.payload,
+                  sequence = EXCLUDED.sequence,
+                  created_at = EXCLUDED.created_at
+                """,
+                (
+                    event["id"],
+                    event["event_type"],
+                    event["actor_id"],
+                    event.get("ai_task_id"),
+                    event.get("subject_type"),
+                    event.get("subject_id"),
+                    json.dumps(event.get("payload", {}), ensure_ascii=False),
+                    event.get("sequence", 0),
+                    event.get("created_at"),
                 ),
             )

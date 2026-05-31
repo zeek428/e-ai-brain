@@ -517,15 +517,20 @@ CREATE TABLE IF NOT EXISTS lifecycle_risk_signals (
 );
 
 CREATE TABLE IF NOT EXISTS audit_events (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  id text PRIMARY KEY,
   ai_task_id text,
   subject_type text,
   subject_id text,
   event_type text NOT NULL,
   actor_id text NOT NULL,
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  sequence integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE audit_events ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE audit_events ALTER COLUMN id TYPE text USING id::text;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS sequence integer NOT NULL DEFAULT 0;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_model_gateway_default_active
   ON model_gateway_configs (is_default)
