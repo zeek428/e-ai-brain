@@ -4,8 +4,11 @@ import type {
   KnowledgeRecord,
   ModelGatewayConfigRecord,
   ProductContextOption,
+  ProductGitRepositoryRecord,
+  ProductModuleRecord,
   ProductRecord,
   ProductVersionOption,
+  ProductVersionRecord,
   RequirementRecord,
   UserRecord,
 } from '../data/management';
@@ -227,8 +230,21 @@ type ProductListItem = {
 
 type ProductVersionListItem = {
   code?: string;
+  description?: string | null;
   id: string;
   name: string;
+  product_id: string;
+  release_date?: string | null;
+  start_date?: string | null;
+  status?: string;
+};
+
+type ProductModuleListItem = {
+  code?: string;
+  description?: string | null;
+  id: string;
+  name: string;
+  owner_team?: string | null;
   product_id: string;
   status?: string;
 };
@@ -257,6 +273,28 @@ export type ProductVersionMutationPayload = {
   name: string;
   release_date?: string;
   start_date?: string;
+  status?: string;
+};
+
+export type ProductModuleMutationPayload = {
+  code?: string;
+  description?: string;
+  display_order?: number;
+  name: string;
+  owner_team?: string;
+  status?: string;
+};
+
+export type ProductGitRepositoryMutationPayload = {
+  credential_ref?: string;
+  default_branch?: string;
+  git_provider?: string;
+  name: string;
+  project_id?: string;
+  project_path?: string;
+  remote_url?: string;
+  repo_type?: string;
+  root_path?: string;
   status?: string;
 };
 
@@ -367,12 +405,16 @@ type TaskListItem = {
 };
 
 type ProductGitRepositoryListItem = {
+  credential_ref_configured?: boolean;
   default_branch?: string;
   git_provider?: string;
   id: string;
   name: string;
   project_id?: string | null;
   project_path?: string | null;
+  remote_url?: string | null;
+  repo_type?: string;
+  root_path?: string;
   status?: string;
 };
 
@@ -634,6 +676,19 @@ function normalizeProductStatus(status?: string): ProductRecord['status'] {
   return status === 'inactive' ? 'inactive' : 'active';
 }
 
+function normalizeProductVersionStatus(status?: string): ProductVersionRecord['status'] {
+  if (status === 'archived' || status === 'planning') {
+    return status;
+  }
+  return 'active';
+}
+
+function normalizeActiveInactiveStatus(
+  status?: string,
+): ProductModuleRecord['status'] | ProductGitRepositoryRecord['status'] {
+  return status === 'inactive' ? 'inactive' : 'active';
+}
+
 function normalizePriority(priority?: string): RequirementRecord['priority'] {
   if (priority === 'P0' || priority === 'P2') {
     return priority;
@@ -794,6 +849,56 @@ function mapProductVersionOption(version: ProductVersionListItem): ProductVersio
   };
 }
 
+function mapProductVersionRecord(version: ProductVersionListItem): ProductVersionRecord {
+  return {
+    code: version.code ?? version.id,
+    id: version.id,
+    name: version.name,
+    releaseDate: version.release_date ?? undefined,
+    startDate: version.start_date ?? undefined,
+    status: normalizeProductVersionStatus(version.status),
+  };
+}
+
+function mapProductModuleRecord(module: ProductModuleListItem): ProductModuleRecord {
+  return {
+    code: module.code ?? module.id,
+    id: module.id,
+    name: module.name,
+    ownerTeam: module.owner_team ?? '-',
+    status: normalizeActiveInactiveStatus(module.status),
+  };
+}
+
+function mapProductGitRepositoryRecord(
+  repository: ProductGitRepositoryListItem,
+): ProductGitRepositoryRecord {
+  const credentialRefConfigured = repository.credential_ref_configured ?? false;
+  return {
+    credentialRefConfigured,
+    credentialStatus: credentialRefConfigured ? '已配置' : '未配置',
+    defaultBranch: repository.default_branch ?? 'main',
+    id: repository.id,
+    name: repository.name,
+    projectId: repository.project_id,
+    projectPath: repository.project_path,
+    provider: repository.git_provider ?? 'gitlab',
+    remoteUrl: repository.remote_url ?? '-',
+    repoType: repository.repo_type ?? 'code',
+    rootPath: repository.root_path ?? '/',
+    status: normalizeActiveInactiveStatus(repository.status),
+  };
+}
+
+export async function fetchProductVersions(productId: string): Promise<ProductVersionRecord[]> {
+  const token = requireAccessToken();
+  const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
+    `/api/products/${productId}/versions`,
+    { token },
+  );
+  return versions.items.map(mapProductVersionRecord);
+}
+
 export async function createProductVersion(
   productId: string,
   payload: ProductVersionMutationPayload,
@@ -804,6 +909,113 @@ export async function createProductVersion(
     method: 'POST',
     token,
   });
+}
+
+export async function updateProductVersion(
+  versionId: string,
+  payload: Partial<ProductVersionMutationPayload>,
+) {
+  const token = requireAccessToken();
+  return apiRequest<ProductVersionListItem>(`/api/product-versions/${versionId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function deleteProductVersion(versionId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(`/api/product-versions/${versionId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function fetchProductModules(productId: string): Promise<ProductModuleRecord[]> {
+  const token = requireAccessToken();
+  const modules = await apiRequest<ListResponse<ProductModuleListItem>>(
+    `/api/products/${productId}/modules`,
+    { token },
+  );
+  return modules.items.map(mapProductModuleRecord);
+}
+
+export async function createProductModule(
+  productId: string,
+  payload: ProductModuleMutationPayload,
+) {
+  const token = requireAccessToken();
+  return apiRequest<ProductModuleListItem>(`/api/products/${productId}/modules`, {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateProductModule(
+  moduleId: string,
+  payload: Partial<ProductModuleMutationPayload>,
+) {
+  const token = requireAccessToken();
+  return apiRequest<ProductModuleListItem>(`/api/product-modules/${moduleId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function deleteProductModule(moduleId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(`/api/product-modules/${moduleId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function fetchProductGitRepositoryRecords(
+  productId: string,
+): Promise<ProductGitRepositoryRecord[]> {
+  const token = requireAccessToken();
+  const repositories = await apiRequest<ListResponse<ProductGitRepositoryListItem>>(
+    `/api/products/${productId}/git-repositories`,
+    { token },
+  );
+  return repositories.items.map(mapProductGitRepositoryRecord);
+}
+
+export async function createProductGitRepository(
+  productId: string,
+  payload: ProductGitRepositoryMutationPayload,
+) {
+  const token = requireAccessToken();
+  return apiRequest<ProductGitRepositoryListItem>(`/api/products/${productId}/git-repositories`, {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateProductGitRepository(
+  repositoryId: string,
+  payload: Partial<ProductGitRepositoryMutationPayload>,
+) {
+  const token = requireAccessToken();
+  return apiRequest<ProductGitRepositoryListItem>(`/api/product-git-repositories/${repositoryId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function deleteProductGitRepository(repositoryId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(
+    `/api/product-git-repositories/${repositoryId}`,
+    {
+      method: 'DELETE',
+      token,
+    },
+  );
 }
 
 export async function fetchProductContextOptions(): Promise<ProductContextOption[]> {

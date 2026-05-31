@@ -15,6 +15,38 @@ export type ProductVersionOption = {
   status: string;
 };
 
+export type ProductVersionRecord = {
+  code: string;
+  id: string;
+  name: string;
+  releaseDate?: string;
+  startDate?: string;
+  status: 'active' | 'archived' | 'planning';
+};
+
+export type ProductModuleRecord = {
+  code: string;
+  id: string;
+  name: string;
+  ownerTeam: string;
+  status: 'active' | 'inactive';
+};
+
+export type ProductGitRepositoryRecord = {
+  credentialRefConfigured: boolean;
+  credentialStatus: string;
+  defaultBranch: string;
+  id: string;
+  name: string;
+  projectId?: string | null;
+  projectPath?: string | null;
+  provider: string;
+  remoteUrl: string;
+  repoType: string;
+  rootPath: string;
+  status: 'active' | 'inactive';
+};
+
 export type ProductContextOption = {
   code: string;
   id: string;

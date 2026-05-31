@@ -1336,6 +1336,309 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('AI-BRAIN')).toBeInTheDocument();
   });
 
+  it('manages product versions modules and git resources from the product page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+
+      if (path === '/api/products') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_api',
+                module_count: 1,
+                name: 'AI Brain',
+                owner_team: 'AI Platform',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/versions' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'v1',
+                id: 'version_api',
+                name: 'v1 MVP',
+                product_id: 'product_api',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/versions' && method === 'POST') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          code: 'v2',
+          name: 'v2 版本',
+          status: 'active',
+        });
+        return jsonResponse({
+          data: {
+            code: 'v2',
+            id: 'version_new',
+            name: 'v2 版本',
+            product_id: 'product_api',
+            status: 'active',
+          },
+        });
+      }
+      if (path === '/api/products/product_api/modules' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'knowledge',
+                id: 'module_api',
+                name: '知识模块',
+                owner_team: 'AI Platform',
+                product_id: 'product_api',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/modules' && method === 'POST') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          code: 'planning',
+          name: '规划模块',
+          owner_team: 'AI Platform',
+          status: 'active',
+        });
+        return jsonResponse({
+          data: {
+            code: 'planning',
+            id: 'module_new',
+            name: '规划模块',
+            owner_team: 'AI Platform',
+            product_id: 'product_api',
+            status: 'active',
+          },
+        });
+      }
+      if (path === '/api/products/product_api/git-repositories' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                credential_ref_configured: true,
+                default_branch: 'main',
+                git_provider: 'gitlab',
+                id: 'repo_api',
+                name: 'AI Brain 仓库',
+                project_path: 'platform/ai-brain',
+                remote_url: 'https://gitlab.example.com/platform/ai-brain.git',
+                repo_type: 'code',
+                root_path: '/',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/git-repositories' && method === 'POST') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          credential_ref: 'env:GITLAB_READONLY_TOKEN',
+          git_provider: 'gitlab',
+          name: '测试仓库',
+          project_path: 'platform/test',
+          remote_url: 'https://gitlab.example.com/platform/test.git',
+          status: 'active',
+        });
+        return jsonResponse({
+          data: {
+            credential_ref_configured: true,
+            default_branch: 'main',
+            git_provider: 'gitlab',
+            id: 'repo_new',
+            name: '测试仓库',
+            project_path: 'platform/test',
+            remote_url: 'https://gitlab.example.com/platform/test.git',
+            repo_type: 'code',
+            root_path: '/',
+            status: 'active',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ProductsPage />);
+
+    expect(await screen.findByText('AI Brain')).toBeInTheDocument();
+    const productRow = screen.getByText('AI Brain').closest('tr');
+    expect(productRow).not.toBeNull();
+    fireEvent.click(within(productRow as HTMLElement).getByRole('button', { name: '配置' }));
+
+    expect(await screen.findByText(/产品配置：AI Brain/)).toBeInTheDocument();
+    expect(screen.getByText('版本管理')).toBeInTheDocument();
+    expect(screen.getByText('模块管理')).toBeInTheDocument();
+    expect(screen.getByText('Git 资源')).toBeInTheDocument();
+    expect(screen.getAllByText('v1 MVP').length).toBeGreaterThan(0);
+    expect(screen.getByText('知识模块')).toBeInTheDocument();
+    expect(screen.getByText('platform/ai-brain')).toBeInTheDocument();
+    expect(screen.getByText('已配置')).toBeInTheDocument();
+    expect(screen.queryByText('env:GITLAB_READONLY_TOKEN')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '新增版本' }));
+    fireEvent.change(screen.getByLabelText('版本编码'), { target: { value: 'v2' } });
+    fireEvent.change(screen.getByLabelText('版本名称'), { target: { value: 'v2 版本' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/products/product_api/versions',
+        'POST',
+      ]),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '新增模块' }));
+    fireEvent.change(screen.getByLabelText('模块编码'), { target: { value: 'planning' } });
+    fireEvent.change(screen.getByLabelText('模块名称'), { target: { value: '规划模块' } });
+    fireEvent.change(screen.getByLabelText('模块负责团队'), { target: { value: 'AI Platform' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/products/product_api/modules',
+        'POST',
+      ]),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '新增 Git 资源' }));
+    fireEvent.change(screen.getByLabelText('资源名称'), { target: { value: '测试仓库' } });
+    fireEvent.change(screen.getByLabelText('Remote URL'), {
+      target: { value: 'https://gitlab.example.com/platform/test.git' },
+    });
+    fireEvent.change(screen.getByLabelText('Project Path'), { target: { value: 'platform/test' } });
+    fireEvent.change(screen.getByLabelText('凭据引用'), {
+      target: { value: 'env:GITLAB_READONLY_TOKEN' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/products/product_api/git-repositories',
+        'POST',
+      ]),
+    );
+  });
+
+  it('sends product subresource CRUD requests to backend APIs without exposing git credentials', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/products/product_api/versions' && method === 'GET') {
+        return jsonResponse({
+          data: { items: [{ code: 'v1', id: 'version_api', name: 'v1', status: 'active' }], total: 1 },
+        });
+      }
+      if (path === '/api/products/product_api/modules' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'core', id: 'module_api', name: '核心模块', owner_team: 'AI', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/git-repositories' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                credential_ref_configured: true,
+                default_branch: 'main',
+                git_provider: 'gitlab',
+                id: 'repo_api',
+                name: '代码仓库',
+                project_path: 'platform/ai-brain',
+                remote_url: 'https://gitlab.example.com/platform/ai-brain.git',
+                repo_type: 'code',
+                root_path: '/',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      return jsonResponse({ data: { deleted: method === 'DELETE', id: path.split('/').at(-1), status: 'active' } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    const services = (await import('../src/services/aiBrain')) as Record<string, unknown>;
+    const callService = async (name: string, ...args: unknown[]) => {
+      expect(services[name]).toBeTypeOf('function');
+      return (services[name] as (...serviceArgs: unknown[]) => Promise<unknown>)(...args);
+    };
+
+    await callService('fetchProductVersions', 'product_api');
+    await callService('createProductVersion', 'product_api', { code: 'v2', name: 'v2', status: 'active' });
+    await callService('updateProductVersion', 'version_api', { name: 'v2 更新' });
+    await callService('deleteProductVersion', 'version_api');
+    await callService('fetchProductModules', 'product_api');
+    await callService('createProductModule', 'product_api', { code: 'core', name: '核心模块', status: 'active' });
+    await callService('updateProductModule', 'module_api', { owner_team: 'AI Platform' });
+    await callService('deleteProductModule', 'module_api');
+    const gitRepositories = await callService('fetchProductGitRepositoryRecords', 'product_api');
+    await callService('createProductGitRepository', 'product_api', {
+      credential_ref: 'env:GITLAB_READONLY_TOKEN',
+      git_provider: 'gitlab',
+      name: '代码仓库',
+      project_path: 'platform/ai-brain',
+      remote_url: 'https://gitlab.example.com/platform/ai-brain.git',
+      status: 'active',
+    });
+    await callService('updateProductGitRepository', 'repo_api', { default_branch: 'develop' });
+    await callService('deleteProductGitRepository', 'repo_api');
+
+    expect(gitRepositories).toEqual([
+      expect.objectContaining({
+        credentialRefConfigured: true,
+        credentialStatus: '已配置',
+        id: 'repo_api',
+        projectPath: 'platform/ai-brain',
+      }),
+    ]);
+    expect(JSON.stringify(gitRepositories)).not.toContain('env:GITLAB_READONLY_TOKEN');
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+      ['/api/products/product_api/versions', 'GET'],
+      ['/api/products/product_api/versions', 'POST'],
+      ['/api/product-versions/version_api', 'PATCH'],
+      ['/api/product-versions/version_api', 'DELETE'],
+      ['/api/products/product_api/modules', 'GET'],
+      ['/api/products/product_api/modules', 'POST'],
+      ['/api/product-modules/module_api', 'PATCH'],
+      ['/api/product-modules/module_api', 'DELETE'],
+      ['/api/products/product_api/git-repositories', 'GET'],
+      ['/api/products/product_api/git-repositories', 'POST'],
+      ['/api/product-git-repositories/repo_api', 'PATCH'],
+      ['/api/product-git-repositories/repo_api', 'DELETE'],
+    ]);
+  });
+
   it('does not flash local requirement examples while authenticated data is loading', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
