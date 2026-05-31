@@ -19,6 +19,11 @@ REQUIREMENT_FIELDS = [
 AI_TASK_FIELDS = [
     "ai_tasks",
 ]
+WORKFLOW_RUNTIME_FIELDS = [
+    "graph_runs",
+    "graph_checkpoints",
+    "human_reviews",
+]
 COLLECTION_FIELDS = [
     "products",
     "product_versions",
@@ -67,6 +72,12 @@ class AiTaskRepository(Protocol):
     def save_ai_tasks(self, payload: dict[str, Any]) -> None: ...
 
 
+class WorkflowRuntimeRepository(Protocol):
+    def load_workflow_runtime(self) -> dict[str, Any] | None: ...
+
+    def save_workflow_runtime(self, payload: dict[str, Any]) -> None: ...
+
+
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in PRODUCT_CONFIG_FIELDS}
 
@@ -77,6 +88,10 @@ def _requirements_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _ai_tasks_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in AI_TASK_FIELDS}
+
+
+def _workflow_runtime_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in WORKFLOW_RUNTIME_FIELDS}
 
 
 def _ai_tasks_merge_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -158,6 +173,22 @@ def _repository_save_ai_tasks(
         save_ai_tasks(_ai_tasks_payload(payload))
 
 
+def _repository_load_workflow_runtime(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_workflow_runtime = getattr(repository, "load_workflow_runtime", None)
+    if load_workflow_runtime is None:
+        return None
+    return load_workflow_runtime()
+
+
+def _repository_save_workflow_runtime(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_workflow_runtime = getattr(repository, "save_workflow_runtime", None)
+    if save_workflow_runtime is not None:
+        save_workflow_runtime(_workflow_runtime_payload(payload))
+
+
 def _has_product_config_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in PRODUCT_CONFIG_FIELDS)
 
@@ -168,6 +199,10 @@ def _has_requirement_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_ai_task_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in AI_TASK_FIELDS)
+
+
+def _has_workflow_runtime_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in WORKFLOW_RUNTIME_FIELDS)
 
 
 def _max_numeric_suffix(items: dict[str, dict[str, Any]], prefix: str) -> int:
@@ -215,6 +250,20 @@ def _sync_ai_task_counters(payload: dict[str, Any]) -> None:
     payload["counters"] = counters
 
 
+def _sync_workflow_runtime_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    for prefix, field in [
+        ("graph_run", "graph_runs"),
+        ("checkpoint", "graph_checkpoints"),
+        ("review", "human_reviews"),
+    ]:
+        counters[prefix] = max(
+            counters.get(prefix, 0),
+            _max_numeric_suffix(payload.get(field, {}), prefix),
+        )
+    payload["counters"] = counters
+
+
 def _drop_requirements_without_product_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     versions = payload.get("product_versions", {})
@@ -253,6 +302,50 @@ def _ensure_ai_task_defaults(payload: dict[str, Any]) -> None:
         task.setdefault("review_ids", [])
 
 
+def _drop_workflow_runtime_without_tasks(payload: dict[str, Any]) -> None:
+    ai_tasks = payload.get("ai_tasks", {})
+    graph_runs = payload.get("graph_runs", {})
+    payload["graph_runs"] = {
+        run_id: run
+        for run_id, run in graph_runs.items()
+        if run.get("ai_task_id") in ai_tasks
+    }
+    graph_runs = payload["graph_runs"]
+    graph_checkpoints = payload.get("graph_checkpoints", {})
+    payload["graph_checkpoints"] = {
+        checkpoint_id: checkpoint
+        for checkpoint_id, checkpoint in graph_checkpoints.items()
+        if checkpoint.get("ai_task_id") in ai_tasks
+        and checkpoint.get("graph_run_id") in graph_runs
+    }
+    human_reviews = payload.get("human_reviews", {})
+    payload["human_reviews"] = {
+        review_id: review
+        for review_id, review in human_reviews.items()
+        if review.get("ai_task_id") in ai_tasks
+    }
+
+
+def _sync_task_runtime_links(payload: dict[str, Any]) -> None:
+    ai_tasks = payload.get("ai_tasks", {})
+    for review_id, review in payload.get("human_reviews", {}).items():
+        task = ai_tasks.get(review.get("ai_task_id"))
+        if task is None:
+            continue
+        review_ids = task.setdefault("review_ids", [])
+        if review_id not in review_ids:
+            review_ids.append(review_id)
+    for run_id, graph_run in payload.get("graph_runs", {}).items():
+        task = ai_tasks.get(graph_run.get("ai_task_id"))
+        if task is None:
+            continue
+        graph_run_ids = task.setdefault("graph_run_ids", [])
+        if run_id not in graph_run_ids:
+            graph_run_ids.append(run_id)
+        if graph_run.get("checkpoint_id"):
+            task["checkpoint_id"] = graph_run["checkpoint_id"]
+
+
 class PersistentMemoryStore(MemoryStore):
     def __init__(self, repository: SnapshotRepository) -> None:
         super().__init__()
@@ -289,11 +382,23 @@ class PersistentMemoryStore(MemoryStore):
                 merge_items=True,
             )
             _sync_ai_task_counters(payload)
+        workflow_runtime_payload = _repository_load_workflow_runtime(repository)
+        has_structured_workflow_runtime = _has_workflow_runtime_items(workflow_runtime_payload)
+        if has_structured_workflow_runtime:
+            _merge_collection_payload(
+                payload,
+                _workflow_runtime_payload(workflow_runtime_payload),
+                WORKFLOW_RUNTIME_FIELDS,
+            )
+            _sync_workflow_runtime_counters(payload)
         if has_structured_product_config:
             _drop_requirements_without_product_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
             _drop_ai_tasks_without_context(payload)
+        if has_structured_ai_tasks:
+            _drop_workflow_runtime_without_tasks(payload)
         _ensure_ai_task_defaults(payload)
+        _sync_task_runtime_links(payload)
         if payload:
             store.load_payload(payload)
         return store
@@ -313,6 +418,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_product_config(self.repository, payload)
         _repository_save_requirements(self.repository, payload)
         _repository_save_ai_tasks(self.repository, payload)
+        _repository_save_workflow_runtime(self.repository, payload)
 
 
 class PostgresSnapshotRepository:
@@ -383,6 +489,18 @@ class PostgresSnapshotRepository:
                 ai_tasks = self._load_ai_tasks(cursor)
         return {"ai_tasks": ai_tasks}
 
+    def load_workflow_runtime(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                graph_runs = self._load_graph_runs(cursor)
+                graph_checkpoints = self._load_graph_checkpoints(cursor)
+                human_reviews = self._load_human_reviews(cursor)
+        return {
+            "graph_checkpoints": graph_checkpoints,
+            "graph_runs": graph_runs,
+            "human_reviews": human_reviews,
+        }
+
     def save_product_config(self, payload: dict[str, Any]) -> None:
         products = payload.get("products", {})
         versions = payload.get("product_versions", {})
@@ -412,6 +530,19 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "ai_tasks", ai_tasks)
                 self._upsert_ai_tasks(cursor, ai_tasks)
+
+    def save_workflow_runtime(self, payload: dict[str, Any]) -> None:
+        graph_runs = payload.get("graph_runs", {})
+        graph_checkpoints = payload.get("graph_checkpoints", {})
+        human_reviews = payload.get("human_reviews", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "human_reviews", human_reviews)
+                self._delete_missing(cursor, "graph_checkpoints", graph_checkpoints)
+                self._delete_missing(cursor, "graph_runs", graph_runs)
+                self._upsert_graph_runs(cursor, graph_runs)
+                self._upsert_graph_checkpoints(cursor, graph_checkpoints)
+                self._upsert_human_reviews(cursor, human_reviews)
 
     def _load_products(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -574,6 +705,89 @@ class PostgresSnapshotRepository:
             }
             ai_tasks[row[0]] = task
         return ai_tasks
+
+    def _load_graph_runs(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, ai_task_id, task_type, status, current_step, checkpoint_id,
+                   state_snapshot, started_at, completed_at
+            FROM graph_runs
+            ORDER BY started_at, id
+            """
+        )
+        return {
+            row[0]: {
+                "ai_task_id": row[1],
+                "checkpoint_id": row[5],
+                "completed_at": row[8].isoformat() if row[8] else None,
+                "current_step": row[4],
+                "id": row[0],
+                "started_at": row[7].isoformat() if row[7] else None,
+                "state_snapshot": dict(row[6] or {}),
+                "status": row[3],
+                "task_type": row[2],
+            }
+            for row in cursor.fetchall()
+        }
+
+    def _load_graph_checkpoints(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, graph_run_id, ai_task_id, current_step, state_snapshot, created_at
+            FROM graph_checkpoints
+            ORDER BY created_at, id
+            """
+        )
+        return {
+            row[0]: {
+                "ai_task_id": row[2],
+                "created_at": row[5].isoformat() if row[5] else None,
+                "current_step": row[3],
+                "graph_run_id": row[1],
+                "id": row[0],
+                "state_snapshot": dict(row[4] or {}),
+            }
+            for row in cursor.fetchall()
+        }
+
+    def _load_human_reviews(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, ai_task_id, stage, status, version, content, edited_content,
+                   decision_reason, decided_by, questions, decided_at, created_at, updated_at
+            FROM human_reviews
+            ORDER BY created_at, id
+            """
+        )
+        human_reviews = {}
+        for row in cursor.fetchall():
+            review = {
+                "ai_task_id": row[1],
+                "content": dict(row[5] or {}),
+                "created_at": row[11].isoformat() if row[11] else None,
+                "decided_at": row[10].isoformat() if row[10] else None,
+                "decided_by": row[8],
+                "decision_reason": row[7],
+                "edited_content": row[6],
+                "id": row[0],
+                "questions": list(row[9] or []),
+                "stage": row[2],
+                "status": row[3],
+                "updated_at": row[12].isoformat() if row[12] else None,
+                "version": row[4],
+            }
+            if review["edited_content"] is None:
+                review.pop("edited_content")
+            if review["decision_reason"] is None:
+                review.pop("decision_reason")
+            if review["decided_by"] is None:
+                review.pop("decided_by")
+            if review["decided_at"] is None:
+                review.pop("decided_at")
+            if not review["questions"]:
+                review.pop("questions")
+            human_reviews[row[0]] = review
+        return human_reviews
 
     def _delete_missing(
         self,
@@ -825,6 +1039,119 @@ class PostgresSnapshotRepository:
                     task.get("error_code"),
                     task.get("error_message"),
                     task["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_graph_runs(self, cursor, graph_runs: dict[str, dict[str, Any]]) -> None:
+        import json
+
+        for graph_run in graph_runs.values():
+            cursor.execute(
+                """
+                INSERT INTO graph_runs (
+                  id, ai_task_id, task_type, status, current_step, checkpoint_id,
+                  state_snapshot, started_at, completed_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s::jsonb,
+                  COALESCE(%s::timestamptz, now()), %s::timestamptz
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  ai_task_id = EXCLUDED.ai_task_id,
+                  task_type = EXCLUDED.task_type,
+                  status = EXCLUDED.status,
+                  current_step = EXCLUDED.current_step,
+                  checkpoint_id = EXCLUDED.checkpoint_id,
+                  state_snapshot = EXCLUDED.state_snapshot,
+                  completed_at = EXCLUDED.completed_at
+                """,
+                (
+                    graph_run["id"],
+                    graph_run["ai_task_id"],
+                    graph_run["task_type"],
+                    graph_run["status"],
+                    graph_run.get("current_step"),
+                    graph_run.get("checkpoint_id"),
+                    json.dumps(graph_run.get("state_snapshot", {}), ensure_ascii=False),
+                    graph_run.get("started_at"),
+                    graph_run.get("completed_at"),
+                ),
+            )
+
+    def _upsert_graph_checkpoints(
+        self,
+        cursor,
+        graph_checkpoints: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for checkpoint in graph_checkpoints.values():
+            cursor.execute(
+                """
+                INSERT INTO graph_checkpoints (
+                  id, graph_run_id, ai_task_id, current_step, state_snapshot, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()))
+                ON CONFLICT (id) DO UPDATE SET
+                  graph_run_id = EXCLUDED.graph_run_id,
+                  ai_task_id = EXCLUDED.ai_task_id,
+                  current_step = EXCLUDED.current_step,
+                  state_snapshot = EXCLUDED.state_snapshot
+                """,
+                (
+                    checkpoint["id"],
+                    checkpoint["graph_run_id"],
+                    checkpoint["ai_task_id"],
+                    checkpoint["current_step"],
+                    json.dumps(checkpoint.get("state_snapshot", {}), ensure_ascii=False),
+                    checkpoint.get("created_at"),
+                ),
+            )
+
+    def _upsert_human_reviews(self, cursor, human_reviews: dict[str, dict[str, Any]]) -> None:
+        import json
+
+        for review in human_reviews.values():
+            created_at = review.get("created_at")
+            updated_at = review.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO human_reviews (
+                  id, ai_task_id, stage, status, version, content, edited_content,
+                  decision_reason, decided_by, questions, decided_at, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb,
+                  %s::timestamptz, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  ai_task_id = EXCLUDED.ai_task_id,
+                  stage = EXCLUDED.stage,
+                  status = EXCLUDED.status,
+                  version = EXCLUDED.version,
+                  content = EXCLUDED.content,
+                  edited_content = EXCLUDED.edited_content,
+                  decision_reason = EXCLUDED.decision_reason,
+                  decided_by = EXCLUDED.decided_by,
+                  questions = EXCLUDED.questions,
+                  decided_at = EXCLUDED.decided_at,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    review["id"],
+                    review["ai_task_id"],
+                    review["stage"],
+                    review.get("status", "pending"),
+                    review.get("version", 1),
+                    json.dumps(review.get("content", {}), ensure_ascii=False),
+                    json.dumps(review.get("edited_content"), ensure_ascii=False),
+                    review.get("decision_reason"),
+                    review.get("decided_by"),
+                    json.dumps(review.get("questions", []), ensure_ascii=False),
+                    review.get("decided_at"),
                     created_at,
                     updated_at,
                 ),
