@@ -2,7 +2,7 @@ import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { Alert, Button, Card, Form, Input, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 
-import { ApiRequestError, getAccessToken, login } from '../../services/aiBrain';
+import { ApiRequestError, fetchCurrentUser, getAccessToken, login } from '../../services/aiBrain';
 import { navigateTo } from '../../utils/navigation';
 
 type LoginFormValues = {
@@ -24,9 +24,16 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (getAccessToken()) {
-      navigateTo(getRedirectPath());
+    if (!getAccessToken()) {
+      return;
     }
+    void fetchCurrentUser()
+      .then(() => {
+        navigateTo(getRedirectPath());
+      })
+      .catch(() => {
+        // Invalid stored tokens are cleared by the shared API request layer.
+      });
   }, []);
 
   const handleFinish = async (values: LoginFormValues) => {

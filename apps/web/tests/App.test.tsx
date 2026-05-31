@@ -387,10 +387,63 @@ describe('AI Brain Ant Design Pro workbench', () => {
   it('sends already authenticated users away from the login page', async () => {
     window.history.pushState({}, '', '/login');
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (input, init) => {
+        expect(input).toBe('/api/auth/me');
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return new Response(
+          JSON.stringify({
+            data: {
+              display_name: 'AI Brain Admin',
+              id: 'user_admin',
+              roles: ['admin'],
+              username: 'admin@example.com',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }),
+    );
 
     render(<LoginPage />);
 
     await waitFor(() => expect(window.location.pathname).toBe('/welcome'));
+  });
+
+  it('keeps users on login and clears stale tokens when the stored token is invalid', async () => {
+    window.history.pushState({}, '', '/login');
+    window.localStorage.setItem('ai_brain_access_token', 'expired-token');
+    window.localStorage.setItem('ai_brain_current_user', JSON.stringify({ username: 'old@example.com' }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async () =>
+        new Response(
+          JSON.stringify({
+            detail: {
+              code: 'TOKEN_EXPIRED',
+              message: 'Invalid bearer token',
+              trace_id: 'trace_login_expired',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 401,
+          },
+        ),
+      ),
+    );
+
+    render(<LoginPage />);
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem('ai_brain_access_token')).toBeNull();
+    });
+    expect(window.localStorage.getItem('ai_brain_current_user')).toBeNull();
+    expect(window.location.pathname).toBe('/login');
   });
 
   it('redirects anonymous users to login and clears the session on logout', async () => {
@@ -1059,6 +1112,43 @@ describe('AI Brain Ant Design Pro workbench', () => {
       status: 409,
       traceId: 'trace_task',
     });
+  });
+
+  it('clears stale login state and redirects to login when an API token expires', async () => {
+    window.history.pushState({}, '', '/delivery/requirements?priority=P0');
+    window.localStorage.setItem('ai_brain_access_token', 'expired-token');
+    window.localStorage.setItem('ai_brain_current_user', JSON.stringify({ username: 'old@example.com' }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async () =>
+        new Response(
+          JSON.stringify({
+            detail: {
+              code: 'TOKEN_EXPIRED',
+              message: 'Invalid bearer token',
+              trace_id: 'trace_expired',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 401,
+          },
+        ),
+      ),
+    );
+
+    await expect(apiRequest('/api/requirements', { token: 'expired-token' })).rejects.toMatchObject({
+      code: 'TOKEN_EXPIRED',
+      message: 'Invalid bearer token',
+      status: 401,
+      traceId: 'trace_expired',
+    });
+    expect(window.localStorage.getItem('ai_brain_access_token')).toBeNull();
+    expect(window.localStorage.getItem('ai_brain_current_user')).toBeNull();
+    expect(window.location.pathname).toBe('/login');
+    expect(window.location.search).toBe(
+      '?redirect=%2Fdelivery%2Frequirements%3Fpriority%3DP0',
+    );
   });
 
   it('sends management CRUD mutations to backend APIs with the stored token', async () => {

@@ -8,6 +8,7 @@ import type {
   RequirementRecord,
   UserRecord,
 } from '../data/management';
+import { navigateTo } from '../utils/navigation';
 
 const configuredApiBaseUrl = process.env.UMI_APP_API_BASE_URL ?? '';
 const API_BASE_URL = configuredApiBaseUrl.endsWith('/')
@@ -302,12 +303,16 @@ export async function apiRequest<T>(
     } catch {
       payload = undefined;
     }
-    throw new ApiRequestError({
+    const requestError = new ApiRequestError({
       code: payload?.detail?.code,
       message: payload?.detail?.message ?? `API request failed: ${response.status}`,
       status: response.status,
       traceId: payload?.detail?.trace_id,
     });
+    if (response.status === 401 && !path.startsWith('/api/auth/login')) {
+      handleUnauthorizedApiResponse();
+    }
+    throw requestError;
   }
   const payload = (await response.json()) as ApiEnvelope<T>;
   return payload.data;
@@ -369,6 +374,19 @@ export function clearAccessToken() {
   }
   globalThis.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
   globalThis.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+}
+
+function handleUnauthorizedApiResponse() {
+  clearAccessToken();
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const { pathname, search } = window.location;
+  if (pathname === '/login') {
+    return;
+  }
+  const target = `${pathname}${search}`;
+  navigateTo(`/login?redirect=${encodeURIComponent(target)}`);
 }
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
