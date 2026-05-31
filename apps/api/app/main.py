@@ -3933,12 +3933,91 @@ def _lifecycle_risk_signals(
     return signals
 
 
+def _status_counts(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for item in items:
+        status = str(item.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return [
+        {"status": status, "count": count}
+        for status, count in sorted(counts.items(), key=lambda item: item[0])
+    ]
+
+
 @app.get("/api/dashboard/it-team")
 def dashboard_metrics(
     request: Request,
+    product_id: str | None = None,
+    time_range: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(empty_list_payload(), get_trace_id(request))
+    current_store = store(request)
+    if product_id and product_id not in current_store.products:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+
+    products = [
+        product
+        for product in current_store.products.values()
+        if product.get("status") == "active" and (product_id is None or product["id"] == product_id)
+    ]
+    requirements = [
+        requirement
+        for requirement in current_store.requirements.values()
+        if product_id is None or requirement["product_id"] == product_id
+    ]
+    tasks = [
+        task
+        for task in current_store.ai_tasks.values()
+        if product_id is None or task["product_id"] == product_id
+    ]
+    task_ids = {task["id"] for task in tasks}
+    pending_reviews = [
+        review
+        for review in current_store.human_reviews.values()
+        if review["status"] == "pending" and review["ai_task_id"] in task_ids
+    ]
+    knowledge_documents = [
+        document
+        for document in current_store.knowledge_documents.values()
+        if _user_can_read_roles(user, document["permission_roles"])
+    ]
+    knowledge_deposits = [
+        deposit
+        for deposit in current_store.knowledge_deposits.values()
+        if deposit["ai_task_id"] in task_ids
+    ]
+    audit_events = list(current_store.audit_events)
+    latest_tasks = sorted(tasks, key=lambda item: item["id"], reverse=True)[:5]
+    recent_audit_events = sorted(
+        audit_events,
+        key=lambda item: item["sequence"],
+        reverse=True,
+    )[:8]
+    recent_knowledge_documents = sorted(
+        knowledge_documents,
+        key=lambda item: item["id"],
+        reverse=True,
+    )[:5]
+    data = {
+        "summary": {
+            "active_products": len(products),
+            "ai_tasks": len(tasks),
+            "audit_events": len(audit_events),
+            "knowledge_deposits": len(knowledge_deposits),
+            "knowledge_documents": len(knowledge_documents),
+            "pending_reviews": len(pending_reviews),
+            "requirements": len(requirements),
+        },
+        "requirement_status_counts": _status_counts(requirements),
+        "task_status_counts": _status_counts(tasks),
+        "latest_tasks": current_store.snapshot(latest_tasks),
+        "pending_reviews": current_store.snapshot(pending_reviews),
+        "recent_knowledge_documents": current_store.snapshot(recent_knowledge_documents),
+        "recent_audit_events": current_store.snapshot(recent_audit_events),
+        "requirement_titles": [requirement["title"] for requirement in requirements[:10]],
+        "time_range": time_range or "all",
+    }
+    return envelope(data, get_trace_id(request))
 
 
 @app.get("/api/bugs")

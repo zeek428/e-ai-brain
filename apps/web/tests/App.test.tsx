@@ -623,6 +623,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     const operationDialog = await screen.findByTestId('task-operation-dialog');
     const summarySection = screen.getByTestId('task-operation-summary');
     const actionSection = screen.getByTestId('task-operation-actions');
+    expect(screen.getByText('任务操作')).toBeInTheDocument();
+    expect(summarySection).toHaveTextContent('技术方案：接口任务');
     expect(operationDialog).toContainElement(summarySection);
     expect(operationDialog).toContainElement(actionSection);
     expect(summarySection.compareDocumentPosition(actionSection)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
@@ -694,7 +696,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(taskRow).not.toBeNull();
     fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
 
-    expect(await screen.findByText(/任务操作：技术方案：弹窗操作/)).toBeInTheDocument();
+    expect(await screen.findByText('任务操作')).toBeInTheDocument();
+    expect(screen.getByTestId('task-operation-summary')).toHaveTextContent('技术方案：弹窗操作');
     expect(screen.queryByText('确认台')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '创建 Code Review' }));
 
@@ -773,7 +776,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(taskRow).not.toBeNull();
     fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
 
-    expect(await screen.findByText(/任务操作：技术方案：写回需求/)).toBeInTheDocument();
+    expect(await screen.findByText('任务操作')).toBeInTheDocument();
+    expect(screen.getByTestId('task-operation-summary')).toHaveTextContent('技术方案：写回需求');
     expect(screen.getByRole('button', { name: '创建 Code Review' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '模拟 Issue' }));
 
@@ -882,7 +886,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     const taskRow = screen.getByText('待补充详细设计').closest('tr');
     expect(taskRow).not.toBeNull();
     fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
-    expect(await screen.findByText(/任务操作：待补充详细设计/)).toBeInTheDocument();
+    expect(await screen.findByText('任务操作')).toBeInTheDocument();
+    expect(screen.getByTestId('task-operation-summary')).toHaveTextContent('待补充详细设计');
     fireEvent.click(screen.getByRole('button', { name: '提交补充信息' }));
     fireEvent.change(screen.getByLabelText('补充说明'), {
       target: { value: '补充 P0 验收边界' },
@@ -1188,15 +1193,57 @@ describe('AI Brain Ant Design Pro workbench', () => {
         headers: { 'Content-Type': 'application/json' },
         status: 200,
       });
-    const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse({ data: { items: [], total: 0 } }));
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === '/api/dashboard/it-team') {
+        return jsonResponse({
+          data: {
+            latest_tasks: [
+              {
+                id: 'task_dashboard',
+                status: 'waiting_review',
+                task_type: 'product_detail_design',
+                title: '首页看板任务',
+              },
+            ],
+            pending_reviews: [{ id: 'review_dashboard', stage: 'product_detail_design' }],
+            recent_audit_events: [
+              { event_type: 'ai_task.started', id: 'audit_dashboard' },
+            ],
+            recent_knowledge_documents: [{ id: 'knowledge_dashboard', title: '首页知识' }],
+            requirement_status_counts: [
+              { count: 1, status: 'pending_approval' },
+              { count: 1, status: 'task_created' },
+            ],
+            summary: {
+              active_products: 1,
+              ai_tasks: 3,
+              audit_events: 8,
+              knowledge_deposits: 2,
+              knowledge_documents: 4,
+              pending_reviews: 1,
+              requirements: 5,
+            },
+            task_status_counts: [{ count: 1, status: 'waiting_review' }],
+            time_range: '7d',
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.stubGlobal('fetch', fetchMock);
 
     const { rerender } = render(<DashboardPage />);
 
     expect(screen.queryByRole('heading', { level: 1, name: '欢迎' })).not.toBeInTheDocument();
-    expect(screen.getByText('欢迎使用 AI Brain')).toBeInTheDocument();
-    expect(screen.getByText('从左侧菜单进入任务中心、需求交付、产品资产和运营治理。')).toBeInTheDocument();
+    expect(screen.queryByText('欢迎使用 AI Brain')).not.toBeInTheDocument();
+    expect(screen.queryByText('从左侧菜单进入任务中心、需求交付、产品资产和运营治理。')).not.toBeInTheDocument();
+    expect(await screen.findByText('IT 团队看板')).toBeInTheDocument();
+    expect(screen.getByText('需求总数')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.getByText('首页看板任务')).toBeInTheDocument();
+    expect(screen.getByText('首页知识')).toBeInTheDocument();
+    expect(screen.getByText('ai_task.started')).toBeInTheDocument();
 
     rerender(<DevopsPage />);
 
@@ -1207,7 +1254,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
     expect(screen.getByText('研发运营指标')).toBeInTheDocument();
     expect(screen.getByText('GitLab 指标')).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
 
     rerender(<InsightsPage />);
 
@@ -1217,7 +1264,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('待接入')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
     expect(screen.getByText('使用趋势')).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(7));
   });
 
   it('renders management modules as query filters with table lists', async () => {

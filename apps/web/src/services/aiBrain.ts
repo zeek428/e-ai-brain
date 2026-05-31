@@ -139,6 +139,54 @@ export type UserInsightRecord = {
   updatedAt: string;
 };
 
+export type DashboardSummary = {
+  activeProducts: number;
+  aiTasks: number;
+  auditEvents: number;
+  knowledgeDeposits: number;
+  knowledgeDocuments: number;
+  pendingReviews: number;
+  requirements: number;
+};
+
+export type DashboardStatusCount = {
+  count: number;
+  status: string;
+};
+
+export type DashboardTaskSummary = {
+  id: string;
+  status: string;
+  title: string;
+  type: string;
+};
+
+export type DashboardReviewSummary = {
+  id: string;
+  stage: string;
+};
+
+export type DashboardKnowledgeSummary = {
+  id: string;
+  title: string;
+};
+
+export type DashboardAuditSummary = {
+  eventType: string;
+  id: string;
+};
+
+export type ItTeamDashboard = {
+  latestTasks: DashboardTaskSummary[];
+  pendingReviews: DashboardReviewSummary[];
+  recentAuditEvents: DashboardAuditSummary[];
+  recentKnowledgeDocuments: DashboardKnowledgeSummary[];
+  requirementStatusCounts: DashboardStatusCount[];
+  summary: DashboardSummary;
+  taskStatusCounts: DashboardStatusCount[];
+  timeRange: string;
+};
+
 export type ProductGitRepositoryOption = {
   defaultBranch: string;
   id: string;
@@ -513,6 +561,25 @@ type FlexibleListItem = Record<string, unknown> & {
   updated_at?: string;
 };
 
+type DashboardResponse = {
+  latest_tasks?: FlexibleListItem[];
+  pending_reviews?: FlexibleListItem[];
+  recent_audit_events?: FlexibleListItem[];
+  recent_knowledge_documents?: FlexibleListItem[];
+  requirement_status_counts?: Array<{ count?: number; status?: string }>;
+  summary?: Partial<{
+    active_products: number;
+    ai_tasks: number;
+    audit_events: number;
+    knowledge_deposits: number;
+    knowledge_documents: number;
+    pending_reviews: number;
+    requirements: number;
+  }>;
+  task_status_counts?: Array<{ count?: number; status?: string }>;
+  time_range?: string;
+};
+
 type UserListItem = {
   display_name: string;
   id: string;
@@ -782,6 +849,59 @@ function firstKnownValue(item: FlexibleListItem, keys: string[]) {
     }
   }
   return undefined;
+}
+
+function normalizeDashboardCount(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function mapDashboardStatusCounts(
+  items?: Array<{ count?: number; status?: string }>,
+): DashboardStatusCount[] {
+  return (items ?? []).map((item) => ({
+    count: normalizeDashboardCount(item.count),
+    status: formatUnknownValue(item.status),
+  }));
+}
+
+export async function fetchItTeamDashboard(): Promise<ItTeamDashboard> {
+  const token = requireAccessToken();
+  const dashboard = await apiRequest<DashboardResponse>('/api/dashboard/it-team', { token });
+  const summary = dashboard.summary ?? {};
+  return {
+    latestTasks: (dashboard.latest_tasks ?? []).map((task, index) => ({
+      id: formatUnknownValue(task.id ?? `task-${index}`),
+      status: formatUnknownValue(task.status),
+      title: formatUnknownValue(firstKnownValue(task, ['title', 'name'])),
+      type: formatUnknownValue(task.task_type),
+    })),
+    pendingReviews: (dashboard.pending_reviews ?? []).map((review, index) => ({
+      id: formatUnknownValue(review.id ?? `review-${index}`),
+      stage: formatUnknownValue(review.stage),
+    })),
+    recentAuditEvents: (dashboard.recent_audit_events ?? []).map((event, index) => ({
+      eventType: formatUnknownValue(event.event_type),
+      id: formatUnknownValue(event.id ?? `audit-${index}`),
+    })),
+    recentKnowledgeDocuments: (dashboard.recent_knowledge_documents ?? []).map(
+      (document, index) => ({
+        id: formatUnknownValue(document.id ?? `knowledge-${index}`),
+        title: formatUnknownValue(document.title),
+      }),
+    ),
+    requirementStatusCounts: mapDashboardStatusCounts(dashboard.requirement_status_counts),
+    summary: {
+      activeProducts: normalizeDashboardCount(summary.active_products),
+      aiTasks: normalizeDashboardCount(summary.ai_tasks),
+      auditEvents: normalizeDashboardCount(summary.audit_events),
+      knowledgeDeposits: normalizeDashboardCount(summary.knowledge_deposits),
+      knowledgeDocuments: normalizeDashboardCount(summary.knowledge_documents),
+      pendingReviews: normalizeDashboardCount(summary.pending_reviews),
+      requirements: normalizeDashboardCount(summary.requirements),
+    },
+    taskStatusCounts: mapDashboardStatusCounts(dashboard.task_status_counts),
+    timeRange: formatUnknownValue(dashboard.time_range),
+  };
 }
 
 export async function fetchManagementProducts(): Promise<ProductRecord[]> {

@@ -702,8 +702,8 @@ export default function TaskCenterPage() {
         footer={null}
         onCancel={() => setActionDialog(undefined)}
         open={Boolean(actionDialog)}
-        title={selectedActionTask?.label ? `任务操作：${selectedActionTask.label}` : '任务操作'}
-        width={560}
+        title="任务操作"
+        width={640}
       >
         {selectedActionTask ? (
           <div className="task-operation-dialog" data-testid="task-operation-dialog">

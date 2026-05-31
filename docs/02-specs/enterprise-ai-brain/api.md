@@ -36,7 +36,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环；产品配置、需求、知识文档、Bug、用户管理和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。产品管理页面可维护产品版本、模块和 Git 资源；Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，调用日志只保存脱敏元数据。配置缺失密钥或 provider 调用失败时，任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`，不会静默生成本地输出。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps、看板和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环；产品配置、需求、知识文档、Bug、用户管理和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。产品管理页面可维护产品版本、模块和 Git 资源；Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，调用日志只保存脱敏元数据。配置缺失密钥或 provider 调用失败时，任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`，不会静默生成本地输出。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps 和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
 
 ## 认证方式
 
@@ -819,7 +819,7 @@ GET /api/ai-tasks/{task_id}/code-review-report
 - MR diff 快照不可被 GitLab 后续变更静默覆盖；重新 Review 必须创建新快照或新运行记录。
 - Review 报告经人工确认或修改后采纳后才可归档为正式结论。
 - v1 MVP 不提供 GitLab 评论、审批状态、request changes、合并状态或分支变更回写接口。
-- 首页、研发运营看板和用户洞察/迭代规划在未接入真实采集器前返回空集合响应；响应必须包含 `items` 和 `total`，不得返回占位状态或伪造统计数据。Bug 管理已进入 v1.1 基础实现，不再使用空集合替代业务数据。
+- 首页 IT 团队看板返回当前业务数据聚合，不返回空集合占位；研发运营看板和用户洞察/迭代规划在未接入真实采集器前返回空集合响应，响应必须包含 `items` 和 `total`，不得返回占位状态或伪造统计数据。Bug 管理已进入 v1.1 基础实现，不再使用空集合替代业务数据。
 
 ### 人工确认
 
@@ -1269,13 +1269,32 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 GET /api/dashboard/it-team?product_id=product_001&time_range=7d
 ```
 
-当前实现尚未接入真实看板聚合器时返回空集合；不得返回伪造看板指标：
+当前实现返回 MVP 真实聚合指标，来源于产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计事件；未接入的 DevOps、用户洞察、发布和线上运行类指标不得伪造成看板数据：
 
 ```json
 {
   "data": {
-    "items": [],
-    "total": 0
+    "summary": {
+      "active_products": 1,
+      "requirements": 2,
+      "ai_tasks": 1,
+      "pending_reviews": 1,
+      "knowledge_documents": 1,
+      "knowledge_deposits": 0,
+      "audit_events": 10
+    },
+    "requirement_status_counts": [
+      {"status": "pending_approval", "count": 1},
+      {"status": "task_created", "count": 1}
+    ],
+    "task_status_counts": [
+      {"status": "waiting_review", "count": 1}
+    ],
+    "latest_tasks": [],
+    "pending_reviews": [],
+    "recent_knowledge_documents": [],
+    "recent_audit_events": [],
+    "time_range": "7d"
   },
   "trace_id": "trace_014"
 }
