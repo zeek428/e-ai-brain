@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.25 |
+| 功能版本 | v1.1.26 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -47,6 +47,7 @@
 | v1.1.23 | 2026-05-31 | 将相关系统同步到 PostgreSQL `related_systems` 结构表，纳入产品配置恢复范围 | Codex |
 | v1.1.24 | 2026-05-31 | 移除 AI 任务启动本地输出 fallback，无模型网关配置时明确失败，不再生成伪输出 | Codex |
 | v1.1.25 | 2026-05-31 | 知识检索升级为权限过滤后的 chunk 级结果，并将 `knowledge_chunks` 纳入结构表持久化 | Codex |
+| v1.1.26 | 2026-05-31 | 生命周期视图和首页看板聚合按任务读权限过滤，避免聚合接口泄露无权任务或 Review | Codex |
 
 ---
 
@@ -57,6 +58,8 @@
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
 当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环；产品配置、需求、知识文档、Bug、用户管理和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、职责、数据范围、决策范围、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。产品管理页面可维护产品版本、模块和 Git 资源；产品、版本、模块、Git 资源、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`，Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。知识文档创建、更新和知识沉淀采纳会同步重建 chunk；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再返回命中的 chunk 内容、`chunk_id`、`chunk_index` 和来源引用，不返回无权限 chunk。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；产品配置、需求台账、AI 任务核心字段、人工确认、Graph 运行态、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写和模型网关配置/调用日志从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps 和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
+
+生命周期视图和首页 IT 团队看板的 AI 任务、待确认 Review、知识沉淀和风险信号聚合必须先按任务类型读权限过滤，不能通过聚合接口绕过任务详情权限。
 
 ## 认证方式
 
@@ -149,8 +152,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 - 内部 GitLab MR 代码 Review 接口只读取授权 MR 元信息和 diff 快照，生成 AI Brain 内部 Review 报告，不提供 GitLab 评论、审批、request changes、合并或分支变更回写能力。
 - 知识接口支持独立导入、索引状态查询、权限过滤检索、索引失败重试和沉淀审核。
 - Bug 接口支持 AI 自动测试和人工测试两类来源的登记、分派、修复、验证、关闭和重复归并。
-- DevOps/运营接口按产品归属暴露 GitLab 每日代码质量、Jenkins 发布、线上运行日志、用户使用、用户反馈、迭代规划建议和首页 IT 团队看板指标。
-- 全流程感知接口按产品、版本、模块、需求、AI 任务或任一主体查询上下文关系、上下游影响和风险信号。
+- DevOps/运营接口按产品归属暴露 GitLab 每日代码质量、Jenkins 发布、线上运行日志、用户使用、用户反馈、迭代规划建议和首页 IT 团队看板指标；首页看板中的任务、待确认 Review 和知识沉淀聚合必须先按任务读权限过滤。
+- 全流程感知接口按产品、版本、模块、需求、AI 任务或任一主体查询上下文关系、上下游影响和风险信号；返回下游任务、Review、报告、沉淀和风险信号前必须先按任务读权限过滤。
 - 审计接口支持按 `ai_task_id`、`subject_type`、`subject_id`、`event_type`、`actor_id` 和创建时间范围过滤。
 - 迭代规划建议接口只生成建议和采纳记录，不能绕过产品负责人确认自动创建正式需求或调整迭代排期。
 
@@ -1300,6 +1303,8 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 | direction | string | `upstream | downstream | both`，默认 `both`。 |
 | include_risks | boolean | 是否返回风险信号，默认 true。 |
 
+权限规则：当起点是 `ai_task` 时，读取权限与 AI 任务详情一致；当起点是需求或产品聚合时，返回的下游任务、人工确认、报告、知识沉淀、模拟 Issue 和风险信号必须先过滤掉当前用户无权读取的任务链路。
+
 响应摘要：
 
 ```json
@@ -1340,7 +1345,7 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 GET /api/dashboard/it-team?product_id=product_001&time_range=7d
 ```
 
-当前实现返回 MVP 真实聚合指标，来源于产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计事件；未接入的 DevOps、用户洞察、发布和线上运行类指标不得伪造成看板数据：
+当前实现返回 MVP 真实聚合指标，来源于产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计事件；其中 AI 任务、待确认 Review 和知识沉淀计数、列表必须先按任务读权限过滤，未接入的 DevOps、用户洞察、发布和线上运行类指标不得伪造成看板数据：
 
 ```json
 {
@@ -1548,6 +1553,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.26 | 2026-05-31 | 生命周期视图和首页看板聚合按任务读权限过滤，避免聚合接口泄露无权任务或 Review。 |
 | v1.1.25 | 2026-05-31 | 知识检索升级为权限过滤后的 chunk 级结果，并将 `knowledge_chunks` 纳入结构表持久化。 |
 | v1.1.24 | 2026-05-31 | 移除 AI 任务启动本地输出 fallback，无模型网关配置时明确失败，不再生成伪输出。 |
 | v1.1.23 | 2026-05-31 | 将相关系统同步到 PostgreSQL `related_systems` 结构表，纳入产品配置恢复范围。 |

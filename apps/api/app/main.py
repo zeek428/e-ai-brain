@@ -4139,7 +4139,7 @@ def dashboard_metrics(
     tasks = [
         task
         for task in current_store.ai_tasks.values()
-        if product_id is None or task["product_id"] == product_id
+        if (product_id is None or task["product_id"] == product_id) and _can_read_task(user, task)
     ]
     task_ids = {task["id"] for task in tasks}
     pending_reviews = [
@@ -4418,6 +4418,12 @@ def lifecycle_context(
         version_id=version_id,
         module_code=module_code,
     )
+    if subject_type == "ai_task":
+        subject_task = current_store.ai_tasks.get(str(subject_id))
+        if subject_task is None:
+            raise api_error(404, "NOT_FOUND", "AI task not found")
+        _require_task_read_role(user, subject_task)
+    tasks = [task for task in tasks if _can_read_task(user, task)]
     upstream = (
         _lifecycle_upstream(current_store, subject_type=subject_type, subject_id=subject_id)
         if direction in {"upstream", "both"}

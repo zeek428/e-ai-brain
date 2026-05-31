@@ -41,6 +41,44 @@ def create_draft_product_detail_design_task(headers: dict[str, str]) -> str:
     return task["task_id"]
 
 
+def create_product_detail_design_task_context(headers: dict[str, str]) -> dict[str, str]:
+    product = client.post(
+        "/api/products",
+        json={"code": "rd-platform", "name": "研发大脑平台"},
+        headers=headers,
+    ).json()["data"]
+    version = client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": "v1", "name": "v1 MVP"},
+        headers=headers,
+    ).json()["data"]
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "title": "权限过滤生命周期",
+            "product_id": product["id"],
+            "version_id": version["id"],
+            "content": "生命周期和仪表盘不能泄露无权任务。",
+        },
+        headers=headers,
+    ).json()["data"]
+    client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
+    task = client.post(
+        f"/api/requirements/{requirement['id']}/generate-task",
+        headers=headers,
+    ).json()["data"]
+    started = client.post(
+        f"/api/ai-tasks/{task['task_id']}/start",
+        headers=headers,
+    ).json()["data"]
+    return {
+        "product_id": product["id"],
+        "requirement_id": requirement["id"],
+        "review_id": started["review_id"],
+        "task_id": task["task_id"],
+    }
+
+
 def test_gitlab_review_api_surface_has_no_writeback_routes():
     paths = client.get("/openapi.json").json()["paths"]
     gitlab_paths = {
@@ -203,3 +241,29 @@ def test_reviewer_cannot_start_or_read_product_design_tasks_and_reviews():
     )
     assert forbidden_review.status_code == 403
     assert forbidden_review.json()["detail"]["code"] == "FORBIDDEN"
+
+
+def test_reviewer_cannot_see_unreadable_product_design_tasks_in_aggregates():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    context = create_product_detail_design_task_context(admin_headers)
+
+    lifecycle = client.get(
+        "/api/lifecycle/context"
+        f"?subject_type=requirement&subject_id={context['requirement_id']}"
+        "&direction=both&include_risks=true",
+        headers=reviewer_headers,
+    ).json()["data"]
+    assert lifecycle["downstream"] == []
+    assert lifecycle["summary"]["downstream_count"] == 0
+    assert lifecycle["risk_signals"] == []
+
+    dashboard = client.get(
+        f"/api/dashboard/it-team?product_id={context['product_id']}",
+        headers=reviewer_headers,
+    ).json()["data"]
+    assert dashboard["summary"]["ai_tasks"] == 0
+    assert dashboard["summary"]["pending_reviews"] == 0
+    assert dashboard["latest_tasks"] == []
+    assert dashboard["pending_reviews"] == []
