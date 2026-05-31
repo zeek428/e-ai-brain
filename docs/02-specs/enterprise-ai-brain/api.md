@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.10 |
+| 功能版本 | v1.1.11 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -32,6 +32,7 @@
 | v1.1.8 | 2026-05-31 | 补齐 GitLab MR diff 超限失败审计，记录实际大小、限制和关联上下文 | Codex |
 | v1.1.9 | 2026-05-31 | 补齐 GitLab MR 变更文件数限制，超限时拒绝快照并记录审计指标 | Codex |
 | v1.1.10 | 2026-05-31 | 补齐 GitLab MR 单文件 diff 行数限制，超限时拒绝快照并记录文件指标 | Codex |
+| v1.1.11 | 2026-05-31 | 明确 MVP 用户角色目录、角色查询接口、用户管理角色选择和 SQL 角色字典 | Codex |
 
 ---
 
@@ -41,7 +42,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环；产品配置、需求、知识文档、Bug、用户管理和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。产品管理页面可维护产品版本、模块和 Git 资源；Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，调用日志只保存脱敏元数据。配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps 和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环；产品配置、需求、知识文档、Bug、用户管理和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录，用户管理只能从该目录选择角色。产品管理页面可维护产品版本、模块和 Git 资源；Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，调用日志只保存脱敏元数据。配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，业务运行状态以 `app_state_snapshots` JSONB 快照持久化；后续阶段继续把各业务主体替换为细粒度 PostgreSQL 仓储。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps 和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
 
 ## 认证方式
 
@@ -115,6 +116,15 @@ curl -X POST http://localhost:8000/api/auth/login \
 
 MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 为主；Bug 登记和状态更新先复用 `product_owner`、`rd_owner`、`admin`，`tester`、发布负责人和 IT 管理者写权限按后续真实组织模型扩展。接口鉴权还需要结合产品归属、任务参与关系和主体权限。
 
+| 角色 code | 中文名称 | 权限边界 |
+|-----------|----------|----------|
+| `admin` | 系统管理员 | 用户、角色、模型网关、审计与系统级配置管理；默认拥有所有业务读取和管理入口权限。 |
+| `product_owner` | 产品负责人 | 产品配置、版本模块、需求审批、任务生成、产品侧交付闭环和 Bug 管理。 |
+| `rd_owner` | 研发负责人 | 研发任务启动、技术方案确认、Code Review 任务创建、Bug 处理和研发知识沉淀。 |
+| `reviewer` | 评审负责人 | 高影响 AI 输出、需求分析、设计方案和内部 GitLab MR Code Review 的人工确认。 |
+| `knowledge_owner` | 知识负责人 | 知识文档导入、权限角色维护、知识检索治理和知识沉淀审核。 |
+| `viewer` | 查看者 | 查看有权限访问的工作台数据、任务结果、知识和看板摘要，不具备写权限。 |
+
 ### 主体级 API 约定
 
 产品、需求、AI 任务、Bug、知识中心、研发运营指标/看板和用户洞察/迭代规划是独立业务主体或独立运营视图。API 设计应遵循以下约定：
@@ -140,6 +150,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Auth | POST | `/api/auth/login` | 登录。 |
 | Auth | GET | `/api/auth/me` | 当前用户。 |
 | Auth | POST | `/api/auth/logout` | 前端退出登录辅助接口。 |
+| Auth | GET | `/api/auth/roles` | 查询 MVP 可分配用户角色目录。 |
 | User | GET | `/api/users` | 管理员查询用户列表。 |
 | User | POST | `/api/users` | 管理员创建用户。 |
 | User | PATCH | `/api/users/{user_id}` | 管理员更新用户姓名、角色、状态或密码。 |
@@ -288,6 +299,33 @@ POST /api/auth/login
     }
   },
   "trace_id": "trace_001"
+}
+```
+
+### 角色目录
+
+```http
+GET /api/auth/roles
+```
+
+该接口返回当前 MVP 可分配的系统角色目录，供用户管理页面、权限说明和外部集成统一引用。`POST /api/users` 和 `PATCH /api/users/{user_id}` 的 `roles` 字段只能使用该目录中的 `code`。
+
+响应：
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "code": "admin",
+        "name": "系统管理员",
+        "description": "负责用户、角色、模型网关、审计与系统级配置管理。",
+        "permissions": ["system.users.manage", "system.model_gateway.manage", "audit.read", "workspace.read", "workspace.write"]
+      }
+    ],
+    "total": 6
+  },
+  "trace_id": "trace_002"
 }
 ```
 
@@ -1482,6 +1520,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.11 | 2026-05-31 | 明确 MVP 用户角色目录、角色查询接口、用户管理角色选择和 SQL 角色字典。 |
 | v1.1.3 | 2026-05-30 | 对齐 PostgreSQL 登录用户表、用户管理接口和 SQL 迁移驱动持久化。 |
 | v1.1.2 | 2026-05-30 | 将 Bug 管理 GET/POST/PATCH 从占位升级为 v1.1 基础接口。 |
 | v1.1.1 | 2026-05-29 | 将 GitLab 预览和 diff 快照前置到 MVP-A，清理 MVP 角色口径，统一 health trace_id、占位接口和阶段边界。 |
@@ -1496,4 +1535,4 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | v1.0.0 | 2026-05-27 | 初始版本 |
 
 ---
-最后更新: 2026-05-30
+最后更新: 2026-05-31

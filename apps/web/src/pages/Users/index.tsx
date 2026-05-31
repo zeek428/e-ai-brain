@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { UserRecord } from '../../data/management';
+import { USER_ROLE_OPTIONS } from '../../data/roles';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createManagementUser,
@@ -12,12 +13,12 @@ import {
   fetchManagementUsers,
   updateManagementUser,
 } from '../../services/aiBrain';
-import { formatMutationError, joinTextList, splitCommaText, trimText } from '../../utils/managementCrud';
+import { formatMutationError, trimText } from '../../utils/managementCrud';
 
 type UserFormValues = {
   display_name: string;
   password?: string;
-  roles?: string;
+  roles?: string[];
   status: UserRecord['status'];
   username: string;
 };
@@ -38,7 +39,7 @@ export default function UsersPage() {
     setEditingUser(null);
     form.resetFields();
     form.setFieldsValue({
-      roles: 'viewer',
+      roles: ['viewer'],
       status: 'active',
     });
     setIsModalOpen(true);
@@ -48,7 +49,7 @@ export default function UsersPage() {
     setEditingUser(row);
     form.setFieldsValue({
       display_name: row.displayName,
-      roles: joinTextList(row.roles),
+      roles: row.roles,
       status: row.status,
       username: row.username,
     });
@@ -57,7 +58,7 @@ export default function UsersPage() {
 
   const handleSave = async () => {
     const values = await form.validateFields();
-    const roles = splitCommaText(values.roles);
+    const roles = values.roles ?? [];
     const payload = {
       display_name: values.display_name.trim(),
       password: trimText(values.password),
@@ -190,8 +191,13 @@ export default function UsersPage() {
           >
             <Input.Password autoComplete="new-password" />
           </Form.Item>
-          <Form.Item label="角色" name="roles">
-            <Input placeholder="admin, product_owner, rd_owner" />
+          <Form.Item label="角色" name="roles" rules={[{ required: true, message: '请选择角色' }]}>
+            <Select
+              mode="multiple"
+              optionFilterProp="label"
+              options={USER_ROLE_OPTIONS}
+              placeholder="请选择角色"
+            />
           </Form.Item>
           <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
             <Select

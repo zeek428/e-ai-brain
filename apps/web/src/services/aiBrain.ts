@@ -12,6 +12,7 @@ import type {
   RequirementRecord,
   UserRecord,
 } from '../data/management';
+import { formatUserRoles } from '../data/roles';
 import { navigateTo } from '../utils/navigation';
 
 const configuredApiBaseUrl = process.env.UMI_APP_API_BASE_URL ?? '';
@@ -1227,7 +1228,7 @@ export async function fetchManagementUsers(): Promise<UserRecord[]> {
       displayName: user.display_name,
       id: user.id,
       roles,
-      rolesText: roles.join(', ') || '-',
+      rolesText: formatUserRoles(roles),
       status: user.status === 'inactive' ? 'inactive' : 'active',
       username: user.username,
     };

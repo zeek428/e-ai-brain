@@ -1,3 +1,5 @@
+from urllib.error import HTTPError
+
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
@@ -95,6 +97,47 @@ def test_gitlab_mr_preview_requires_configured_gitlab_base_url(monkeypatch):
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "GITLAB_CONFIG_INVALID"
+
+
+def test_gitlab_mr_preview_maps_gitlab_404_to_documented_error(monkeypatch):
+    monkeypatch.setenv("GITLAB_READONLY_TOKEN", "readonly-token")
+    headers = auth_headers()
+    app.state.store.reset()
+    product = client.post(
+        "/api/products",
+        json={"code": "missing-mr-product", "name": "缺失 MR 产品"},
+        headers=headers,
+    ).json()["data"]
+    repository = client.post(
+        f"/api/products/{product['id']}/git-repositories",
+        json={
+            "name": "AI Brain API",
+            "remote_url": "https://gitlab.example.com/platform/ai-brain.git",
+            "git_provider": "gitlab",
+            "project_path": "platform/ai-brain",
+            "credential_ref": "env:GITLAB_READONLY_TOKEN",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    def missing_gitlab_mr(_request, timeout=10):
+        raise HTTPError(
+            "https://gitlab.example.com/api/v4/projects/platform%2Fai-brain/merge_requests/404",
+            404,
+            "Not Found",
+            {},
+            None,
+        )
+
+    monkeypatch.setattr("app.main.urlopen", missing_gitlab_mr)
+
+    response = client.get(
+        f"/api/devops/gitlab/merge-requests/{repository['id']}/404/preview",
+        headers=headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "GITLAB_MR_NOT_FOUND"
 
 
 def build_confirmed_solution_context(headers: dict[str, str]) -> dict[str, str]:

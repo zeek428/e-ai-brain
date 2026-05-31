@@ -1960,6 +1960,34 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
   });
 
+  it('uses explicitly defined role options in the user management modal', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('/api/users');
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      return new Response(
+        JSON.stringify({
+          data: {
+            items: [],
+            total: 0,
+          },
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        },
+      );
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<UsersPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: /新增用户/ }));
+
+    expect(await screen.findByText('查看者')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('admin, product_owner, rd_owner')).not.toBeInTheDocument();
+  });
+
   it('hydrates management tables from backend API list endpoints when available', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

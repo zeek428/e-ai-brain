@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
+from app.core.roles import ROLE_CODES, list_role_definitions
 from app.core.security import TokenError, create_access_token, parse_access_token, verify_password
 from app.core.store import MemoryStore
 from app.core.trace import envelope, get_trace_id, new_trace_id
@@ -80,7 +81,7 @@ BUG_STATUSES = {
     "closed",
     "reopened",
 }
-USER_ROLES = {"admin", "product_owner", "rd_owner", "reviewer", "knowledge_owner", "viewer"}
+USER_ROLES = ROLE_CODES
 USER_STATUSES = {"active", "inactive"}
 PRODUCT_STATUSES = {"active", "inactive"}
 VERSION_STATUSES = {"planning", "active", "archived"}
@@ -974,6 +975,11 @@ def me(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
 @app.post("/api/auth/logout")
 def logout(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
     return envelope({"success": True}, get_trace_id(request))
+
+
+@app.get("/api/auth/roles")
+def list_roles(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
+    return _list_payload(list_role_definitions(), trace_id=get_trace_id(request))
 
 
 @app.get("/api/users")
@@ -2253,13 +2259,19 @@ def _gitlab_request_json(base_url: str, token: str, path: str) -> dict[str, Any]
         with urlopen(request, timeout=10) as response:  # noqa: S310
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        raise api_error(
-            exc.code,
-            "GITLAB_REQUEST_FAILED",
-            f"GitLab API request failed with status {exc.code}",
-        ) from exc
+        if exc.code == 404:
+            raise api_error(404, "GITLAB_MR_NOT_FOUND", "GitLab merge request not found") from exc
+        if exc.code == 403:
+            raise api_error(403, "FORBIDDEN", "GitLab merge request is not accessible") from exc
+        if exc.code in {408, 429} or exc.code >= 500:
+            raise api_error(
+                503,
+                "DEVOPS_SOURCE_UNAVAILABLE",
+                "GitLab API source unavailable",
+            ) from exc
+        raise api_error(exc.code, "GITLAB_REQUEST_FAILED", "GitLab API request failed") from exc
     except (OSError, URLError, json.JSONDecodeError) as exc:
-        raise api_error(502, "GITLAB_REQUEST_FAILED", "GitLab API request failed") from exc
+        raise api_error(503, "DEVOPS_SOURCE_UNAVAILABLE", "GitLab API source unavailable") from exc
 
 
 def _summarize_gitlab_change(change: dict[str, Any]) -> dict[str, Any]:

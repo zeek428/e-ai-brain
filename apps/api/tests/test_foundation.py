@@ -72,10 +72,38 @@ def test_logout_requires_bearer_token():
     assert response.json()["detail"]["code"] == "UNAUTHORIZED"
 
 
+def test_role_catalog_defines_supported_mvp_roles():
+    login_response = client.post(
+        "/api/auth/login",
+        json={"username": "admin@example.com", "password": "admin123"},
+    )
+    token = login_response.json()["data"]["access_token"]
+
+    response = client.get("/api/auth/roles", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trace_id"].startswith("trace_")
+    assert body["data"]["total"] == 6
+    roles = body["data"]["items"]
+    assert [role["code"] for role in roles] == [
+        "admin",
+        "product_owner",
+        "rd_owner",
+        "reviewer",
+        "knowledge_owner",
+        "viewer",
+    ]
+    assert roles[0]["name"] == "系统管理员"
+    assert "system.users.manage" in roles[0]["permissions"]
+    assert all(role["description"] for role in roles)
+
+
 def test_initial_migration_defines_core_mvp_tables():
     migration = Path("app/db/migrations/001_init.sql").read_text()
 
     for table_name in [
+        "role_definitions",
         "users",
         "brain_apps",
         "ai_tasks",
