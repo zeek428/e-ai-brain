@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from gitlab_fakes import install_real_gitlab_api_stub
 
 from app.main import app
 
@@ -30,9 +31,10 @@ def build_mr_snapshot(headers: dict[str, str]) -> tuple[str, str]:
         f"/api/products/{product['id']}/git-repositories",
         json={
             "name": "AI Brain API",
+            "remote_url": "https://gitlab.example.com/platform/ai-brain.git",
             "git_provider": "gitlab",
             "project_path": "platform/ai-brain",
-            "credential_ref": "secret/gitlab-readonly",
+            "credential_ref": "env:GITLAB_READONLY_TOKEN",
         },
         headers=headers,
     ).json()["data"]
@@ -90,7 +92,8 @@ def build_mr_snapshot(headers: dict[str, str]) -> tuple[str, str]:
     return requirement["id"], snapshot["id"]
 
 
-def test_code_review_report_is_confirmed_and_archived_without_gitlab_writeback():
+def test_code_review_report_is_confirmed_and_archived_without_gitlab_writeback(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
     headers = auth_headers()
     requirement_id, snapshot_id = build_mr_snapshot(headers)
 
@@ -148,7 +151,8 @@ def test_code_review_report_is_confirmed_and_archived_without_gitlab_writeback()
     ]
 
 
-def test_code_review_report_edit_approve_also_confirms_and_archives_report():
+def test_code_review_report_edit_approve_also_confirms_and_archives_report(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
     headers = auth_headers()
     requirement_id, snapshot_id = build_mr_snapshot(headers)
 

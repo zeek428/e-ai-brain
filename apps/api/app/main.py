@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import socket
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlparse
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -1992,28 +1997,147 @@ def _local_task_output(task: dict[str, Any]) -> dict[str, Any]:
     return {"kind": task["task_type"], "summary": "Local fallback output"}
 
 
-def _mock_gitlab_preview(repository: dict[str, Any], mr_iid: int) -> dict[str, Any]:
-    project_path = repository.get("project_path") or f"project-{repository.get('project_id')}"
+def _gitlab_base_url(repository: dict[str, Any]) -> str | None:
+    remote_url = str(repository.get("remote_url") or "").strip()
+    if remote_url.startswith("git@") and ":" in remote_url:
+        host = remote_url.split("@", 1)[1].split(":", 1)[0]
+        return f"https://{host}"
+    if remote_url:
+        parsed = urlparse(remote_url)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    configured_base_url = os.getenv("GITLAB_BASE_URL", "").strip()
+    return configured_base_url.rstrip("/") if configured_base_url else None
+
+
+def _credential_ref_env_candidates(credential_ref: str) -> list[str]:
+    if credential_ref.startswith("env:"):
+        return [credential_ref.removeprefix("env:").strip()]
+    normalized = credential_ref.removeprefix("secret://").removeprefix("secret/")
+    env_name = re.sub(r"[^A-Za-z0-9]+", "_", normalized).strip("_").upper()
+    if not env_name:
+        return []
+    candidates = [env_name]
+    if not env_name.endswith("_TOKEN"):
+        candidates.append(f"{env_name}_TOKEN")
+    if "GITLAB" in env_name and "READONLY" in env_name:
+        candidates.append("GITLAB_READONLY_TOKEN")
+    return candidates
+
+
+def _gitlab_access_token(repository: dict[str, Any]) -> str | None:
+    credential_ref = str(repository.get("credential_ref") or "").strip()
+    for env_name in _credential_ref_env_candidates(credential_ref):
+        token = os.getenv(env_name, "").strip()
+        if token:
+            return token
+    configured_token = os.getenv("GITLAB_READONLY_TOKEN", "").strip()
+    return configured_token or None
+
+
+def _gitlab_project_key(repository: dict[str, Any]) -> str:
+    project_key = repository.get("project_id") or repository.get("project_path")
+    if not project_key:
+        raise api_error(
+            400,
+            "GITLAB_CONFIG_INVALID",
+            "GitLab project_id or project_path is required",
+        )
+    return str(project_key)
+
+
+def _gitlab_request_json(base_url: str, token: str, path: str) -> dict[str, Any]:
+    request = UrlRequest(
+        f"{base_url.rstrip('/')}{path}",
+        headers={
+            "Accept": "application/json",
+            "PRIVATE-TOKEN": token,
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise api_error(
+            exc.code,
+            "GITLAB_REQUEST_FAILED",
+            f"GitLab API request failed with status {exc.code}",
+        ) from exc
+    except (OSError, URLError, json.JSONDecodeError) as exc:
+        raise api_error(502, "GITLAB_REQUEST_FAILED", "GitLab API request failed") from exc
+
+
+def _summarize_gitlab_change(change: dict[str, Any]) -> dict[str, Any]:
+    diff_lines = str(change.get("diff") or "").splitlines()
+    additions = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
+    deletions = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
+    return {
+        "path": change.get("new_path") or change.get("old_path") or "-",
+        "additions": additions,
+        "deletions": deletions,
+    }
+
+
+def _gitlab_changes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    changes = payload.get("changes")
+    if isinstance(changes, list):
+        return [item for item in changes if isinstance(item, dict)]
+    diffs = payload.get("diffs")
+    if isinstance(diffs, list):
+        return [item for item in diffs if isinstance(item, dict)]
+    return []
+
+
+def _real_gitlab_preview(repository: dict[str, Any], mr_iid: int) -> dict[str, Any]:
+    base_url = _gitlab_base_url(repository)
+    if not base_url:
+        raise api_error(
+            400,
+            "GITLAB_CONFIG_INVALID",
+            "GitLab repository remote_url or GITLAB_BASE_URL is required",
+        )
+    token = _gitlab_access_token(repository)
+    if not token:
+        raise api_error(
+            400,
+            "GITLAB_CREDENTIAL_UNAVAILABLE",
+            "GitLab readonly credential is not available",
+        )
+    encoded_project = quote(_gitlab_project_key(repository), safe="")
+    mr_path = f"/api/v4/projects/{encoded_project}/merge_requests/{mr_iid}"
+    changes_path = f"{mr_path}/changes"
+    mr = _gitlab_request_json(base_url, token, mr_path)
+    changes_payload = _gitlab_request_json(base_url, token, changes_path)
+    changes_summary = [
+        _summarize_gitlab_change(change)
+        for change in _gitlab_changes(changes_payload)
+    ]
+    diff_refs = mr.get("diff_refs") if isinstance(mr.get("diff_refs"), dict) else {}
+    base_sha = diff_refs.get("base_sha") or diff_refs.get("start_sha") or mr.get("sha")
+    head_sha = diff_refs.get("head_sha") or mr.get("sha")
+    project_path = repository.get("project_path") or str(repository.get("project_id") or "")
     return {
         "repository_id": repository["id"],
         "project_id": repository.get("project_id"),
         "project_path": project_path,
-        "mr_iid": mr_iid,
-        "title": f"Review MR !{mr_iid}: AI Brain MVP",
-        "author": {"username": "developer", "name": "Developer"},
-        "source_branch": f"feature/mvp-{mr_iid}",
-        "target_branch": "main",
-        "base_sha": f"base{mr_iid:04d}",
-        "head_sha": f"head{mr_iid:04d}",
-        "diff_refs": {"base_sha": f"base{mr_iid:04d}", "head_sha": f"head{mr_iid:04d}"},
-        "changed_file_count": 2,
-        "changed_files_summary": [
-            {"path": "apps/api/app/main.py", "additions": 120, "deletions": 8},
-            {"path": "apps/web/src/App.tsx", "additions": 80, "deletions": 4},
-        ],
-        "web_url": f"https://gitlab.local/{project_path}/-/merge_requests/{mr_iid}",
+        "mr_iid": int(mr.get("iid") or mr_iid),
+        "title": mr.get("title") or f"MR !{mr_iid}",
+        "author": mr.get("author") or {},
+        "source_branch": mr.get("source_branch"),
+        "target_branch": mr.get("target_branch"),
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "diff_refs": diff_refs,
+        "changed_file_count": len(changes_summary),
+        "changed_files_summary": changes_summary,
+        "web_url": mr.get("web_url"),
         "writeback_allowed": False,
     }
+
+
+def _gitlab_preview(repository: dict[str, Any], mr_iid: int) -> dict[str, Any]:
+    return _real_gitlab_preview(repository, mr_iid)
 
 
 def _diff_payload(preview: dict[str, Any]) -> str:
@@ -2067,7 +2191,7 @@ def preview_gitlab_mr(
         raise api_error(404, "NOT_FOUND", "GitLab repository binding not found")
     if repository["git_provider"] != "gitlab":
         raise api_error(400, "VALIDATION_ERROR", "Repository is not a GitLab binding")
-    preview = _mock_gitlab_preview(repository, mr_iid)
+    preview = _gitlab_preview(repository, mr_iid)
     current_store.audit(
         event_type="gitlab_mr.previewed",
         actor_id=user["id"],
@@ -2111,7 +2235,7 @@ def snapshot_gitlab_mr(
         technical_solution=technical_solution,
     )
 
-    preview = _mock_gitlab_preview(repository, mr_iid)
+    preview = _gitlab_preview(repository, mr_iid)
     diff_payload = _diff_payload(preview)
     diff_size_bytes = len(diff_payload.encode())
     diff_limit_bytes = 204_800

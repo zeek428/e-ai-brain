@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from gitlab_fakes import install_real_gitlab_api_stub
 
 from app.main import app, settings
 
@@ -59,7 +60,8 @@ def test_gitlab_review_api_surface_has_no_writeback_routes():
         assert not path.endswith("/merge")
 
 
-def test_role_boundaries_for_product_audit_and_gitlab_preview():
+def test_role_boundaries_for_product_audit_and_gitlab_preview(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
     app.state.store.reset()
     admin_headers = auth_headers()
     reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
@@ -81,8 +83,10 @@ def test_role_boundaries_for_product_audit_and_gitlab_preview():
         f"/api/products/{product['id']}/git-repositories",
         json={
             "name": "AI Brain API",
+            "remote_url": "https://gitlab.example.com/platform/ai-brain.git",
             "git_provider": "gitlab",
             "project_path": "platform/ai-brain",
+            "credential_ref": "env:GITLAB_READONLY_TOKEN",
         },
         headers=admin_headers,
     ).json()["data"]

@@ -57,7 +57,7 @@ FastAPI 模块化单体
 | long_memory | 长期记忆、答案合成、知识图谱和多跳查询 | GBrain |
 | model_gateway | 聊天/embedding 模型统一入口 | OpenAI-compatible API |
 | devops_metrics | GitLab 提交与代码质量、Jenkins 发布、线上运行日志指标采集和归属映射 | PostgreSQL + 定时采集器 |
-| gitlab_review | 内部 GitLab MR 元信息、diff 快照、Review 报告归档和不回写 GitLab 约束 | GitLab API + PostgreSQL |
+| gitlab_review | 内部 GitLab MR 元信息、changes 只读读取、diff 快照、Review 报告归档和不回写 GitLab 约束 | GitLab API + PostgreSQL |
 | code_review_executor | 可插拔代码 Review 执行器，一期默认对接 Claude Code `code-review` skill | Claude Code skill adapter |
 | user_insights | 用户使用数据、用户反馈、归属映射和聚合分析 | PostgreSQL + 定时采集器 |
 | iteration_planning | AI 迭代规划建议、证据链聚合和人工确认 | PostgreSQL + 模型网关 |

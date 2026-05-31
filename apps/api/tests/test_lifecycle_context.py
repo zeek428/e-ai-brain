@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from gitlab_fakes import install_real_gitlab_api_stub
 
 from app.main import app
 
@@ -30,9 +31,10 @@ def build_mvp_lifecycle(headers: dict[str, str]) -> tuple[str, str]:
         f"/api/products/{product['id']}/git-repositories",
         json={
             "name": "AI Brain API",
+            "remote_url": "https://gitlab.example.com/platform/ai-brain.git",
             "git_provider": "gitlab",
             "project_path": "platform/ai-brain",
-            "credential_ref": "secret/gitlab-readonly",
+            "credential_ref": "env:GITLAB_READONLY_TOKEN",
         },
         headers=headers,
     ).json()["data"]
@@ -113,7 +115,8 @@ def build_mvp_lifecycle(headers: dict[str, str]) -> tuple[str, str]:
     return requirement["id"], product["id"]
 
 
-def test_lifecycle_context_links_mvp_requirement_downstream_subjects_and_risks():
+def test_lifecycle_context_links_mvp_requirement_downstream_subjects_and_risks(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
     headers = auth_headers()
     requirement_id, product_id = build_mvp_lifecycle(headers)
 

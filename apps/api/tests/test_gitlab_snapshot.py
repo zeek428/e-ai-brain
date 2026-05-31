@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from gitlab_fakes import install_real_gitlab_api_stub
 
 from app.main import app
 
@@ -12,6 +13,88 @@ def auth_headers() -> dict[str, str]:
     )
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_gitlab_mr_preview_reads_real_gitlab_api_when_remote_url_is_configured(monkeypatch):
+    calls = install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    app.state.store.reset()
+    product = client.post(
+        "/api/products",
+        json={"code": "real-gitlab-product", "name": "真实 GitLab 产品"},
+        headers=headers,
+    ).json()["data"]
+    repository = client.post(
+        f"/api/products/{product['id']}/git-repositories",
+        json={
+            "name": "AI Brain API",
+            "remote_url": "https://gitlab.example.com/platform/ai-brain.git",
+            "git_provider": "gitlab",
+            "project_path": "platform/ai-brain",
+            "credential_ref": "env:GITLAB_READONLY_TOKEN",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    preview = client.get(
+        f"/api/devops/gitlab/merge-requests/{repository['id']}/7/preview",
+        headers=headers,
+    ).json()["data"]
+
+    assert preview["title"] == "真实 GitLab MR"
+    assert preview["author"] == {"username": "alice", "name": "Alice"}
+    assert preview["source_branch"] == "feature/real-gitlab"
+    assert preview["target_branch"] == "main"
+    assert preview["base_sha"] == "real-base-sha"
+    assert preview["head_sha"] == "real-head-sha"
+    assert preview["changed_file_count"] == 2
+    assert preview["changed_files_summary"] == [
+        {"path": "apps/api/app/main.py", "additions": 1, "deletions": 1},
+        {"path": "apps/web/src/App.tsx", "additions": 2, "deletions": 0},
+    ]
+    assert preview["writeback_allowed"] is False
+    assert calls == [
+        {
+            "base_url": "https://gitlab.example.com",
+            "path": "/api/v4/projects/platform%2Fai-brain/merge_requests/7",
+            "token": "readonly-token",
+        },
+        {
+            "base_url": "https://gitlab.example.com",
+            "path": "/api/v4/projects/platform%2Fai-brain/merge_requests/7/changes",
+            "token": "readonly-token",
+        },
+    ]
+
+
+def test_gitlab_mr_preview_requires_configured_gitlab_base_url(monkeypatch):
+    monkeypatch.delenv("GITLAB_BASE_URL", raising=False)
+    monkeypatch.delenv("GITLAB_READONLY_TOKEN", raising=False)
+    headers = auth_headers()
+    app.state.store.reset()
+    product = client.post(
+        "/api/products",
+        json={"code": "missing-gitlab-base", "name": "缺失 GitLab 地址产品"},
+        headers=headers,
+    ).json()["data"]
+    repository = client.post(
+        f"/api/products/{product['id']}/git-repositories",
+        json={
+            "name": "AI Brain API",
+            "git_provider": "gitlab",
+            "project_path": "platform/ai-brain",
+            "credential_ref": "env:GITLAB_READONLY_TOKEN",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    response = client.get(
+        f"/api/devops/gitlab/merge-requests/{repository['id']}/7/preview",
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "GITLAB_CONFIG_INVALID"
 
 
 def build_confirmed_solution_context(headers: dict[str, str]) -> dict[str, str]:
@@ -30,9 +113,10 @@ def build_confirmed_solution_context(headers: dict[str, str]) -> dict[str, str]:
         f"/api/products/{product['id']}/git-repositories",
         json={
             "name": "AI Brain API",
+            "remote_url": "https://gitlab.example.com/platform/ai-brain.git",
             "git_provider": "gitlab",
             "project_path": "platform/ai-brain",
-            "credential_ref": "secret/gitlab-readonly",
+            "credential_ref": "env:GITLAB_READONLY_TOKEN",
         },
         headers=headers,
     ).json()["data"]
@@ -89,7 +173,8 @@ def build_confirmed_solution_context(headers: dict[str, str]) -> dict[str, str]:
     }
 
 
-def test_gitlab_mr_preview_and_snapshot_are_read_only_and_immutable():
+def test_gitlab_mr_preview_and_snapshot_are_read_only_and_immutable(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
     headers = auth_headers()
     context = build_confirmed_solution_context(headers)
 
@@ -192,7 +277,8 @@ def test_technical_solution_task_rejects_design_from_another_requirement():
     assert response.json()["detail"]["code"] == "TASK_CONTEXT_MISMATCH"
 
 
-def test_code_review_task_rejects_requirement_that_does_not_match_snapshot():
+def test_code_review_task_rejects_requirement_that_does_not_match_snapshot(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
     headers = auth_headers()
     context = build_confirmed_solution_context(headers)
     snapshot = client.post(
