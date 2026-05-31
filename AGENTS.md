@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Repository Status
 
-This checkout contains the AI Brain documentation set under [docs/](docs/) plus the current MVP implementation skeleton under [apps/api](apps/api) and [apps/web](apps/web). The backend is a FastAPI app with an in-process `MemoryStore` used by the current test/demo runtime; PostgreSQL migrations are present for the intended persistent schema, but application request handling is not yet wired to PostgreSQL persistence. Always verify implementation files before assuming a module is complete.
+This checkout contains the AI Brain documentation set under [docs/](docs/) plus the current MVP implementation under [apps/api](apps/api) and [apps/web](apps/web). The backend is a FastAPI app with a `MemoryStore` runtime that persists to PostgreSQL by default: users are managed through the `users` table, product configuration is mirrored into `products`, `product_versions`, `product_modules`, and `product_git_repositories`, and the remaining business runtime state is still stored through `app_state_snapshots` JSONB while fine-grained repositories are added module by module. Always verify implementation files before assuming a module is complete.
 
 ## Source of Truth
 

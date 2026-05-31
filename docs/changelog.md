@@ -45,6 +45,7 @@
 - 后端新增 PostgreSQL 用户仓储、用户管理接口和 `app_state_snapshots` JSONB 快照持久化，Docker 本地栈默认从数据库读取登录用户并保存业务运行状态。
 - 新增 `002_persistence_users.sql` 可重复迁移脚本和 API 启动迁移入口，已有数据库卷通过 SQL 脚本升级，不再需要清空 volume。
 - PostgreSQL 服务默认切换到本地项目镜像别名 `e-ai-brain-postgres-pgvector:0.8.2-pg18-trixie`，对应官方 `pgvector/pgvector:0.8.2-pg18-trixie`，并保留本地 PG18 + pgvector 构建 Dockerfile 作为网络受限 fallback，避免已有 PostgreSQL 18 数据卷被误切到 PG16 镜像。
+- 产品配置开始细粒度 PostgreSQL 持久化，产品、版本、模块和 Git 资源会同步写入 `products`、`product_versions`、`product_modules`、`product_git_repositories`，并在 API 启动时从结构表恢复。
 - 后端补齐当前管理主体 CRUD：产品及版本/模块/Git 资源、相关系统、模型网关配置、需求、知识文档、Bug 和用户均支持新增/更新/删除，删除前保留依赖占用校验和审计记录。
 - 前端产品管理、需求管理、Bug 管理、知识中心和用户管理新增真实表单弹窗、编辑按钮、删除按钮和接口刷新逻辑，不再停留在列表 demo。
 - 新增“系统管理”一级菜单，并将“用户管理”作为其二级菜单；`/users` 旧入口重定向到 `/system/users`。
