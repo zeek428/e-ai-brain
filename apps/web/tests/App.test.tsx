@@ -257,6 +257,7 @@ import {
   createManagementProduct,
   createManagementRequirement,
   createManagementUser,
+  createCodeReviewTask,
   createTechnicalSolutionTask,
   deleteManagementBug,
   deleteManagementKnowledgeDocument,
@@ -264,8 +265,12 @@ import {
   deleteManagementRequirement,
   deleteManagementUser,
   fetchTaskMarkdown,
+  fetchCodeReviewReport,
+  fetchProductGitRepositories,
   generateRequirementTask,
+  previewGitLabMergeRequest,
   rejectManagementRequirement,
+  snapshotGitLabMergeRequest,
   startTaskCenterTask,
   updateManagementBug,
   updateManagementKnowledgeDocument,
@@ -508,6 +513,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
               {
                 created_by: 'user_admin',
                 id: 'task_api',
+                product_id: 'product_api',
                 requirement_id: 'requirement_api',
                 status: 'waiting_review',
                 task_type: 'product_detail_design',
@@ -516,6 +522,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
               {
                 created_by: 'user_admin',
                 id: 'task_design_done',
+                product_id: 'product_api',
                 requirement_id: 'requirement_api',
                 status: 'completed',
                 task_type: 'product_detail_design',
@@ -524,10 +531,20 @@ describe('AI Brain Ant Design Pro workbench', () => {
               {
                 created_by: 'user_admin',
                 id: 'task_solution_done',
+                product_id: 'product_api',
                 requirement_id: 'requirement_api',
                 status: 'completed',
                 task_type: 'technical_solution',
                 title: '技术方案：接口任务',
+              },
+              {
+                created_by: 'user_admin',
+                id: 'task_code_review',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'waiting_review',
+                task_type: 'code_review',
+                title: 'Code Review：接口任务',
               },
             ],
             total: 1,
@@ -549,16 +566,25 @@ describe('AI Brain Ant Design Pro workbench', () => {
       screen.queryByText('研发大脑 v1 MVP：从需求审批到方案确认、GitLab 输入快照、内部 Review 和知识沉淀。'),
     ).not.toBeInTheDocument();
     expect(screen.getByText('任务列表')).toBeInTheDocument();
-    expect(screen.getByText('MVP-A 基础 + GitLab 输入闭环')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('任务中心');
+    expect(screen.getByRole('form', { name: '查询表格' })).toBeInTheDocument();
+    expect(screen.queryByText('MVP-A 基础 + GitLab 输入闭环')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '运行 MVP 演示流程' })).not.toBeInTheDocument();
     expect(await screen.findByText('接口任务')).toBeInTheDocument();
     expect(screen.getAllByText('product_detail_design')).not.toHaveLength(0);
+    expect(screen.getByRole('button', { name: '待确认' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '确认输出' })).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: '生成技术方案' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '导出 Markdown' })).toBeInTheDocument();
-    expect(screen.getByText('确认台')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '创建 Code Review' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看报告' })).toBeInTheDocument();
+    expect(screen.queryByText('确认台')).not.toBeInTheDocument();
+    expect(screen.queryByText('确认编号')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '待确认' }));
     expect(await screen.findByText('接口任务输出摘要')).toBeInTheDocument();
+    expect(screen.getAllByText('确认编号')).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   });
 
   it('renders dashboard and operation pages without placeholder data', async () => {
@@ -1186,6 +1212,54 @@ describe('AI Brain Ant Design Pro workbench', () => {
           status: 200,
         });
       }
+      if (input === '/api/products/product_api/git-repositories?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                git_provider: 'gitlab',
+                id: 'repo_api',
+                name: 'AI Brain API',
+                project_path: 'platform/ai-brain',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/devops/gitlab/merge-requests/repo_api/42/preview') {
+        return jsonResponse({
+          data: {
+            author: 'alice',
+            changed_file_count: 3,
+            mr_iid: 42,
+            repository_id: 'repo_api',
+            title: 'feat: review flow',
+          },
+        });
+      }
+      if (input === '/api/devops/gitlab/merge-requests/repo_api/42/snapshot') {
+        return jsonResponse({
+          data: {
+            id: 'snapshot_api',
+            mr_iid: 42,
+            repository_id: 'repo_api',
+          },
+        });
+      }
+      if (input === '/api/ai-tasks/task_code_review/code-review-report') {
+        return jsonResponse({
+          data: {
+            findings: [{ severity: 'high', summary: '缺少边界测试' }],
+            gitlab_writeback_performed: false,
+            id: 'report_api',
+            risk_level: 'medium',
+            status: 'pending_review',
+            summary: '发现 1 个高风险问题',
+          },
+        });
+      }
       return jsonResponse({
         data: {
           id: String(input).includes('/api/products') ? 'product_api' : 'resource_api',
@@ -1242,11 +1316,38 @@ describe('AI Brain Ant Design Pro workbench', () => {
       id: 'task_design',
       label: '产品详细设计：CRUD 需求',
       owner: 'user_admin',
+      productId: 'product_api',
       requirementId: 'requirement_api',
       status: 'completed',
       type: 'product_detail_design',
     });
     await expect(fetchTaskMarkdown('task_solution')).resolves.toBe('# Markdown 导出');
+    await fetchProductGitRepositories('product_api');
+    await previewGitLabMergeRequest('repo_api', 42);
+    await snapshotGitLabMergeRequest({
+      mrIid: 42,
+      repositoryId: 'repo_api',
+      requirementId: 'requirement_api',
+      technicalSolutionTaskId: 'task_solution',
+    });
+    await createCodeReviewTask(
+      {
+        id: 'task_solution',
+        label: '技术方案：CRUD 需求',
+        owner: 'user_admin',
+        productId: 'product_api',
+        requirementId: 'requirement_api',
+        status: 'completed',
+        type: 'technical_solution',
+      },
+      'snapshot_api',
+      42,
+    );
+    await expect(fetchCodeReviewReport('task_code_review')).resolves.toMatchObject({
+      gitlabWritebackPerformed: false,
+      riskLevel: 'medium',
+      status: 'pending_review',
+    });
 
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
       ['/api/products', 'POST'],
@@ -1271,6 +1372,11 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/reviews/review_api/approve', 'POST'],
       ['/api/ai-tasks', 'POST'],
       ['/api/export/tasks/task_solution/markdown', 'GET'],
+      ['/api/products/product_api/git-repositories?active_only=true', 'GET'],
+      ['/api/devops/gitlab/merge-requests/repo_api/42/preview', 'GET'],
+      ['/api/devops/gitlab/merge-requests/repo_api/42/snapshot', 'POST'],
+      ['/api/ai-tasks', 'POST'],
+      ['/api/ai-tasks/task_code_review/code-review-report', 'GET'],
     ]);
     expect(fetchMock.mock.calls[20]?.[1]?.body).toBe(
       JSON.stringify({
@@ -1278,6 +1384,20 @@ describe('AI Brain Ant Design Pro workbench', () => {
         requirement_id: 'requirement_api',
         task_type: 'technical_solution',
         title: '技术方案：CRUD 需求',
+      }),
+    );
+    expect(fetchMock.mock.calls[24]?.[1]?.body).toBe(
+      JSON.stringify({
+        requirement_id: 'requirement_api',
+        technical_solution_task_id: 'task_solution',
+      }),
+    );
+    expect(fetchMock.mock.calls[25]?.[1]?.body).toBe(
+      JSON.stringify({
+        input: { gitlab_mr_snapshot_id: 'snapshot_api' },
+        requirement_id: 'requirement_api',
+        task_type: 'code_review',
+        title: 'Code Review：CRUD 需求 MR !42',
       }),
     );
   });

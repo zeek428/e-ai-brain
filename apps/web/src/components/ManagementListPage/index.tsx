@@ -25,6 +25,7 @@ type ManagementListPageProps<Row extends Record<string, unknown>> = {
   rowKey: keyof Row & string;
   tableTitle: string;
   title: string;
+  toolbarActions?: ReactNode[];
 };
 
 type FilterValues = Record<string, unknown>;
@@ -53,6 +54,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
   rowKey,
   tableTitle,
   title,
+  toolbarActions = [],
 }: ManagementListPageProps<Row>) {
   const [filterValues, setFilterValues] = useState<FilterValues>({});
 
@@ -133,15 +135,16 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
           defaultCollapsed: false,
           labelWidth: 100,
         }}
-        toolBarRender={() =>
-          primaryAction
+        toolBarRender={() => [
+          ...toolbarActions,
+          ...(primaryAction
             ? [
                 <Button icon={<PlusOutlined />} key="primary" onClick={onPrimaryAction} type="primary">
                   {primaryAction}
                 </Button>,
               ]
-            : []
-        }
+            : []),
+        ]}
       />
     </PageContainer>
   );

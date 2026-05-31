@@ -733,7 +733,7 @@ GET /api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview
 }
 ```
 
-MR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持内部 GitLab 只读项目绑定、MR 预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。前端应先预览 MR，再生成快照，最后用 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。
+MR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持内部 GitLab 只读项目绑定、MR 预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再预览 MR、生成快照，最后用 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。
 
 生成 MR diff 快照：
 

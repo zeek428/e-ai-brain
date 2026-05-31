@@ -89,6 +89,7 @@ export type TaskCenterTaskRecord = {
   id: string;
   label: string;
   owner: string;
+  productId?: string;
   requirementId?: string;
   status: string;
   type: string;
@@ -119,6 +120,48 @@ export type UserInsightRecord = {
   status: string;
   summary: string;
   updatedAt: string;
+};
+
+export type ProductGitRepositoryOption = {
+  defaultBranch: string;
+  id: string;
+  label: string;
+  name: string;
+  projectId?: string | null;
+  projectPath?: string | null;
+  provider: string;
+  status: string;
+};
+
+export type GitLabMergeRequestPreview = {
+  author: string;
+  changedFileCount: number;
+  changedFilesSummary: unknown[];
+  mrIid: number;
+  repositoryId: string;
+  sourceBranch?: string;
+  targetBranch?: string;
+  title: string;
+  webUrl?: string;
+  writebackAllowed: boolean;
+};
+
+export type GitLabMergeRequestSnapshot = {
+  diffLimitBytes?: number;
+  diffSizeBytes?: number;
+  id: string;
+  mrIid: number;
+  repositoryId: string;
+};
+
+export type CodeReviewReportRecord = {
+  executor?: unknown;
+  findings: unknown[];
+  gitlabWritebackPerformed: boolean;
+  id: string;
+  riskLevel: string;
+  status: string;
+  summary: string;
 };
 
 type ProductListItem = {
@@ -252,10 +295,52 @@ type BugListItem = {
 type TaskListItem = {
   created_by?: string;
   id: string;
+  product_id?: string;
   requirement_id?: string;
   status?: string;
   task_type?: string;
   title?: string;
+};
+
+type ProductGitRepositoryListItem = {
+  default_branch?: string;
+  git_provider?: string;
+  id: string;
+  name: string;
+  project_id?: string | null;
+  project_path?: string | null;
+  status?: string;
+};
+
+type GitLabMergeRequestPreviewResponse = {
+  author?: unknown;
+  changed_file_count?: number;
+  changed_files_summary?: unknown[];
+  mr_iid: number;
+  repository_id: string;
+  source_branch?: string;
+  target_branch?: string;
+  title?: string;
+  web_url?: string;
+  writeback_allowed?: boolean;
+};
+
+type GitLabMergeRequestSnapshotResponse = {
+  diff_limit_bytes?: number;
+  diff_size_bytes?: number;
+  id: string;
+  mr_iid: number;
+  repository_id: string;
+};
+
+type CodeReviewReportResponse = {
+  executor?: unknown;
+  findings?: unknown[];
+  gitlab_writeback_performed?: boolean;
+  id: string;
+  risk_level?: string;
+  status?: string;
+  summary?: string;
 };
 
 type PendingReviewListItem = {
@@ -506,6 +591,14 @@ function formatUnknownValue(value: unknown): string {
     return JSON.stringify(value);
   }
   return String(value);
+}
+
+function formatGitLabAuthor(value: unknown): string {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const author = value as Record<string, unknown>;
+    return formatUnknownValue(author.name ?? author.username);
+  }
+  return formatUnknownValue(value);
 }
 
 function firstKnownValue(item: FlexibleListItem, keys: string[]) {
@@ -860,6 +953,7 @@ export async function fetchTaskCenterTasks(): Promise<TaskCenterTaskRecord[]> {
     id: task.id,
     label: task.title ?? task.task_type ?? task.id,
     owner: task.created_by ?? '-',
+    productId: task.product_id,
     requirementId: task.requirement_id,
     status: task.status ?? '-',
     type: task.task_type ?? '-',
@@ -907,6 +1001,11 @@ function technicalSolutionTitleFromDesignTask(task: TaskCenterTaskRecord) {
   return `技术方案：${title || task.label}`;
 }
 
+function codeReviewTitleFromTechnicalSolutionTask(task: TaskCenterTaskRecord, mrIid: number) {
+  const title = task.label.replace(/^技术方案[:：]\s*/, '').trim();
+  return `Code Review：${title || task.label} MR !${mrIid}`;
+}
+
 export async function createTechnicalSolutionTask(task: TaskCenterTaskRecord) {
   const token = requireAccessToken();
   if (!task.requirementId) {
@@ -926,6 +1025,129 @@ export async function createTechnicalSolutionTask(task: TaskCenterTaskRecord) {
     method: 'POST',
     token,
   });
+}
+
+export async function fetchProductGitRepositories(
+  productId: string,
+): Promise<ProductGitRepositoryOption[]> {
+  const token = requireAccessToken();
+  const repositories = await apiRequest<ListResponse<ProductGitRepositoryListItem>>(
+    `/api/products/${productId}/git-repositories?active_only=true`,
+    { token },
+  );
+
+  return repositories.items.map((repository) => ({
+    defaultBranch: repository.default_branch ?? 'main',
+    id: repository.id,
+    label: repository.project_path
+      ? `${repository.name} (${repository.project_path})`
+      : repository.name,
+    name: repository.name,
+    projectId: repository.project_id,
+    projectPath: repository.project_path,
+    provider: repository.git_provider ?? 'gitlab',
+    status: repository.status ?? '-',
+  }));
+}
+
+export async function previewGitLabMergeRequest(
+  repositoryId: string,
+  mrIid: number,
+): Promise<GitLabMergeRequestPreview> {
+  const token = requireAccessToken();
+  const preview = await apiRequest<GitLabMergeRequestPreviewResponse>(
+    `/api/devops/gitlab/merge-requests/${repositoryId}/${mrIid}/preview`,
+    { token },
+  );
+
+  return {
+    author: formatGitLabAuthor(preview.author),
+    changedFileCount: preview.changed_file_count ?? 0,
+    changedFilesSummary: preview.changed_files_summary ?? [],
+    mrIid: preview.mr_iid,
+    repositoryId: preview.repository_id,
+    sourceBranch: preview.source_branch,
+    targetBranch: preview.target_branch,
+    title: preview.title ?? `MR !${preview.mr_iid}`,
+    webUrl: preview.web_url,
+    writebackAllowed: preview.writeback_allowed ?? false,
+  };
+}
+
+export async function snapshotGitLabMergeRequest({
+  mrIid,
+  repositoryId,
+  requirementId,
+  technicalSolutionTaskId,
+}: {
+  mrIid: number;
+  repositoryId: string;
+  requirementId: string;
+  technicalSolutionTaskId: string;
+}): Promise<GitLabMergeRequestSnapshot> {
+  const token = requireAccessToken();
+  const snapshot = await apiRequest<GitLabMergeRequestSnapshotResponse>(
+    `/api/devops/gitlab/merge-requests/${repositoryId}/${mrIid}/snapshot`,
+    {
+      body: {
+        requirement_id: requirementId,
+        technical_solution_task_id: technicalSolutionTaskId,
+      },
+      method: 'POST',
+      token,
+    },
+  );
+
+  return {
+    diffLimitBytes: snapshot.diff_limit_bytes,
+    diffSizeBytes: snapshot.diff_size_bytes,
+    id: snapshot.id,
+    mrIid: snapshot.mr_iid,
+    repositoryId: snapshot.repository_id,
+  };
+}
+
+export async function createCodeReviewTask(
+  task: TaskCenterTaskRecord,
+  gitlabMrSnapshotId: string,
+  mrIid: number,
+) {
+  const token = requireAccessToken();
+  if (!task.requirementId) {
+    throw new ApiRequestError({
+      code: 'VALIDATION_ERROR',
+      message: '缺少需求编号，无法创建 Code Review 任务。',
+      status: 400,
+    });
+  }
+  return apiRequest<{ id: string; status: string }>('/api/ai-tasks', {
+    body: {
+      input: { gitlab_mr_snapshot_id: gitlabMrSnapshotId },
+      requirement_id: task.requirementId,
+      task_type: 'code_review',
+      title: codeReviewTitleFromTechnicalSolutionTask(task, mrIid),
+    },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function fetchCodeReviewReport(taskId: string): Promise<CodeReviewReportRecord> {
+  const token = requireAccessToken();
+  const report = await apiRequest<CodeReviewReportResponse>(
+    `/api/ai-tasks/${taskId}/code-review-report`,
+    { token },
+  );
+
+  return {
+    executor: report.executor,
+    findings: report.findings ?? [],
+    gitlabWritebackPerformed: report.gitlab_writeback_performed ?? false,
+    id: report.id,
+    riskLevel: report.risk_level ?? '-',
+    status: report.status ?? '-',
+    summary: report.summary ?? '-',
+  };
 }
 
 export async function fetchTaskMarkdown(taskId: string): Promise<string> {
