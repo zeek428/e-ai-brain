@@ -1,75 +1,240 @@
 import type { ProColumns } from '@ant-design/pro-components';
+import { Button, Descriptions, Modal, Space, Tag, Typography, message } from 'antd';
+import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { AuditRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
-import { fetchManagementAudit } from '../../services/aiBrain';
+import {
+  fetchLifecycleContext,
+  fetchManagementAudit,
+  type LifecycleContextRecord,
+} from '../../services/aiBrain';
+import { formatMutationError } from '../../utils/managementCrud';
 
-const columns: ProColumns<AuditRecord>[] = [
-  {
-    dataIndex: 'id',
-    title: '审计编号',
-  },
-  {
-    dataIndex: 'eventType',
-    title: '事件类型',
-  },
-  {
-    dataIndex: 'subject',
-    title: '主体',
-  },
-  {
-    dataIndex: 'actor',
-    title: '操作者',
-  },
-  {
-    dataIndex: 'result',
-    title: '结果',
-    render: (_, row) =>
-      row.result === 'success' ? (
-        <StatusTag color="green" label="成功" />
-      ) : (
-        <StatusTag color="red" label="失败" />
-      ),
-  },
-  {
-    dataIndex: 'timestamp',
-    title: '发生时间',
-  },
-  {
-    key: 'actions',
-    title: '操作',
-    valueType: 'option',
-    render: () => ['详情', '链路追踪'],
-  },
-];
+const { Text } = Typography;
+
+function resolveTraceParams(row: AuditRecord) {
+  if (row.subjectType === 'requirement' || row.subjectType === 'ai_task') {
+    return { subjectId: row.subjectId, subjectType: row.subjectType };
+  }
+  if (row.subjectType === 'product') {
+    return { productId: row.subjectId };
+  }
+  if (row.aiTaskId) {
+    return { subjectId: row.aiTaskId, subjectType: 'ai_task' };
+  }
+  return undefined;
+}
+
+function RelationList({ items }: { items: LifecycleContextRecord['downstream'] }) {
+  if (items.length === 0) {
+    return <Text type="secondary">暂无链路数据。</Text>;
+  }
+  return (
+    <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+      {items.map((item) => (
+        <div className="audit-trace-item" key={`${item.relationType}-${item.subjectType}-${item.subjectId}`}>
+          <Space size={8} wrap>
+            <Tag>{item.relationType}</Tag>
+            <Text type="secondary">
+              {item.subjectType}: {item.subjectId}
+            </Text>
+          </Space>
+          <Text>{item.summary}</Text>
+        </div>
+      ))}
+    </Space>
+  );
+}
 
 export default function AuditPage() {
-  const { error, rows: dataSource } = useRemoteRows(fetchManagementAudit);
+  const [selectedAudit, setSelectedAudit] = useState<AuditRecord>();
+  const [traceDialog, setTraceDialog] = useState<{
+    context?: LifecycleContextRecord;
+    loading: boolean;
+    row: AuditRecord;
+  }>();
+  const {
+    error,
+    reload,
+    rows: dataSource,
+    status,
+  } = useRemoteRows(fetchManagementAudit);
+
+  const openTraceDialog = useCallback(async (row: AuditRecord) => {
+    const params = resolveTraceParams(row);
+    if (!params) {
+      message.warning('当前审计事件没有可追踪的需求、任务或产品主体。');
+      return;
+    }
+    setTraceDialog({ loading: true, row });
+    try {
+      const context = await fetchLifecycleContext(params);
+      setTraceDialog({ context, loading: false, row });
+    } catch (traceError) {
+      setTraceDialog(undefined);
+      message.error(formatMutationError(traceError));
+    }
+  }, []);
+
+  const columns = useMemo<ProColumns<AuditRecord>[]>(
+    () => [
+      {
+        dataIndex: 'id',
+        title: '审计编号',
+      },
+      {
+        dataIndex: 'eventType',
+        title: '事件类型',
+      },
+      {
+        dataIndex: 'subject',
+        title: '主体',
+      },
+      {
+        dataIndex: 'actor',
+        title: '操作者',
+      },
+      {
+        dataIndex: 'result',
+        title: '结果',
+        render: (_, row) =>
+          row.result === 'success' ? (
+            <StatusTag color="green" label="成功" />
+          ) : (
+            <StatusTag color="red" label="失败" />
+          ),
+      },
+      {
+        dataIndex: 'timestamp',
+        title: '发生时间',
+      },
+      {
+        key: 'actions',
+        title: '操作',
+        valueType: 'option',
+        render: (_, row) => (
+          <Space size={4}>
+            <Button onClick={() => setSelectedAudit(row)} type="link">
+              详情
+            </Button>
+            <Button onClick={() => void openTraceDialog(row)} type="link">
+              链路追踪
+            </Button>
+          </Space>
+        ),
+      },
+    ],
+    [openTraceDialog],
+  );
 
   return (
-    <ManagementListPage<AuditRecord>
-      breadcrumbGroup="运营治理"
-      columns={columns}
-      dataSource={dataSource}
-      filters={[
-        { label: '事件类型', name: 'eventType', type: 'text' },
-        { label: '主体', name: 'subject', type: 'text' },
-        { label: '操作者', name: 'actor', type: 'text' },
-        {
-          label: '结果',
-          name: 'result',
-          options: [
-            { label: '成功', value: 'success' },
-            { label: '失败', value: 'failed' },
-          ],
-          type: 'select',
-        },
-      ]}
-      notice={formatRemoteRowsError(error)}
-      rowKey="id"
-      tableTitle="审计列表"
-      title="审计与运行"
-    />
+    <>
+      <ManagementListPage<AuditRecord>
+        breadcrumbGroup="运营治理"
+        columns={columns}
+        dataSource={dataSource}
+        filters={[
+          { label: '事件类型', name: 'eventType', type: 'text' },
+          { label: '主体', name: 'subject', type: 'text' },
+          { label: '操作者', name: 'actor', type: 'text' },
+          {
+            label: '结果',
+            name: 'result',
+            options: [
+              { label: '成功', value: 'success' },
+              { label: '失败', value: 'failed' },
+            ],
+            type: 'select',
+          },
+        ]}
+        loading={status === 'loading'}
+        notice={formatRemoteRowsError(error)}
+        onReload={() => void reload()}
+        rowKey="id"
+        tableTitle="审计列表"
+        title="审计与运行"
+      />
+      <Modal
+        footer={null}
+        onCancel={() => setSelectedAudit(undefined)}
+        open={Boolean(selectedAudit)}
+        title="审计详情"
+        width={720}
+      >
+        {selectedAudit ? (
+          <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+            <Descriptions column={1} size="small">
+              <Descriptions.Item label="事件类型">{selectedAudit.eventType}</Descriptions.Item>
+              <Descriptions.Item label="主体">{selectedAudit.subject}</Descriptions.Item>
+              <Descriptions.Item label="AI 任务">{selectedAudit.aiTaskId ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="操作者">{selectedAudit.actor}</Descriptions.Item>
+              <Descriptions.Item label="发生时间">{selectedAudit.timestamp}</Descriptions.Item>
+            </Descriptions>
+            <pre className="audit-json">{JSON.stringify(selectedAudit.payload ?? {}, null, 2)}</pre>
+          </Space>
+        ) : null}
+      </Modal>
+      <Modal
+        footer={null}
+        loading={traceDialog?.loading}
+        onCancel={() => setTraceDialog(undefined)}
+        open={Boolean(traceDialog)}
+        title="链路追踪"
+        width={760}
+      >
+        {traceDialog?.context ? (
+          <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+            <Descriptions column={3} size="small">
+              <Descriptions.Item label="上游">
+                {traceDialog.context.summary.upstreamCount}
+              </Descriptions.Item>
+              <Descriptions.Item label="下游">
+                {traceDialog.context.summary.downstreamCount}
+              </Descriptions.Item>
+              <Descriptions.Item label="风险">
+                {traceDialog.context.summary.riskCount}
+              </Descriptions.Item>
+            </Descriptions>
+            <section>
+              <Text strong>下游链路</Text>
+              <RelationList items={traceDialog.context.downstream} />
+            </section>
+            <section>
+              <Text strong>风险信号</Text>
+              {traceDialog.context.riskSignals.length ? (
+                <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+                  {traceDialog.context.riskSignals.map((risk) => (
+                    <div className="audit-trace-item" key={risk.riskType}>
+                      <Space size={8} wrap>
+                        <Tag color={risk.severity === 'high' ? 'red' : 'orange'}>
+                          {risk.riskType}
+                        </Tag>
+                        <Text type="secondary">{risk.severity}</Text>
+                      </Space>
+                      <Text>{risk.impactSummary}</Text>
+                      <Text type="secondary">{risk.recommendation}</Text>
+                    </div>
+                  ))}
+                </Space>
+              ) : (
+                <Text type="secondary">暂无风险信号。</Text>
+              )}
+            </section>
+            <section>
+              <Text strong>缺失上下文</Text>
+              <div>
+                {traceDialog.context.missingContext.length ? (
+                  traceDialog.context.missingContext.map((item) => <Tag key={item}>{item}</Tag>)
+                ) : (
+                  <Text type="secondary">暂无缺失上下文。</Text>
+                )}
+              </div>
+            </section>
+          </Space>
+        ) : null}
+      </Modal>
+    </>
   );
 }

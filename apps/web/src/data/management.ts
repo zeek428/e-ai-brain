@@ -103,10 +103,14 @@ export type KnowledgeRecord = {
 
 export type AuditRecord = {
   actor: string;
+  aiTaskId?: string;
   eventType: string;
   id: string;
+  payload?: Record<string, unknown>;
   result: 'success' | 'failed';
   subject: string;
+  subjectId?: string;
+  subjectType?: string;
   timestamp: string;
 };
 

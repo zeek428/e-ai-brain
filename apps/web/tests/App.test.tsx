@@ -1328,6 +1328,81 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('requirement.approved')).not.toBeInTheDocument();
   });
 
+  it('opens real audit detail and lifecycle trace actions from audit rows', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/audit/events') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                actor_id: 'user_admin',
+                ai_task_id: 'task_audit',
+                created_at: '2026-05-31T08:00:00+00:00',
+                event_type: 'requirement.approved',
+                id: 'audit_api',
+                payload: { comment: '进入 MVP-A' },
+                subject_id: 'requirement_api',
+                subject_type: 'requirement',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/lifecycle/context?subject_type=requirement&subject_id=requirement_api') {
+        return jsonResponse({
+          data: {
+            downstream: [
+              {
+                relation_type: 'generates_product_detail_design',
+                subject_id: 'task_audit',
+                subject_type: 'ai_task',
+                summary: '产品详细设计：审计链路',
+              },
+            ],
+            missing_context: ['automated_testing'],
+            risk_signals: [
+              {
+                impact_summary: 'Review 中风险',
+                recommendation: '补充边界测试',
+                risk_type: 'code_review_medium_risk',
+                severity: 'medium',
+              },
+            ],
+            status: 'available',
+            summary: { downstream_count: 1, risk_count: 1 },
+            upstream: [],
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AuditPage />);
+
+    expect(await screen.findByText('requirement.approved')).toBeInTheDocument();
+    const auditRow = screen.getByText('requirement.approved').closest('tr');
+    expect(auditRow).not.toBeNull();
+    fireEvent.click(within(auditRow as HTMLElement).getByRole('button', { name: '详情' }));
+    expect(await screen.findByText('审计详情')).toBeInTheDocument();
+    expect(screen.getAllByText('requirement: requirement_api')).not.toHaveLength(0);
+    expect(screen.getByText(/进入 MVP-A/)).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /close/i }));
+    fireEvent.click(within(auditRow as HTMLElement).getByRole('button', { name: '链路追踪' }));
+    expect(await screen.findByText('generates_product_detail_design')).toBeInTheDocument();
+    expect(screen.getByText('code_review_medium_risk')).toBeInTheDocument();
+    expect(screen.getByText('automated_testing')).toBeInTheDocument();
+  });
+
   it('filters management table rows from query conditions', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
       const path = String(input);

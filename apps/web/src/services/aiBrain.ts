@@ -176,6 +176,33 @@ export type DashboardAuditSummary = {
   id: string;
 };
 
+export type LifecycleRelationRecord = {
+  relationType: string;
+  subjectId: string;
+  subjectType: string;
+  summary: string;
+};
+
+export type LifecycleRiskSignalRecord = {
+  impactSummary: string;
+  recommendation: string;
+  riskType: string;
+  severity: string;
+};
+
+export type LifecycleContextRecord = {
+  downstream: LifecycleRelationRecord[];
+  missingContext: string[];
+  riskSignals: LifecycleRiskSignalRecord[];
+  status: string;
+  summary: {
+    downstreamCount: number;
+    riskCount: number;
+    upstreamCount: number;
+  };
+  upstream: LifecycleRelationRecord[];
+};
+
 export type ItTeamDashboard = {
   latestTasks: DashboardTaskSummary[];
   pendingReviews: DashboardReviewSummary[];
@@ -421,12 +448,41 @@ type KnowledgeDocumentListItem = {
 
 type AuditEventListItem = {
   actor_id?: string;
+  ai_task_id?: string | null;
   created_at?: string;
   event_type: string;
   id: string;
+  payload?: Record<string, unknown>;
   result?: string;
   subject_id?: string;
   subject_type?: string;
+};
+
+type LifecycleRelationItem = {
+  relation_type?: string;
+  subject_id?: string;
+  subject_type?: string;
+  summary?: string;
+};
+
+type LifecycleRiskSignalItem = {
+  impact_summary?: string;
+  recommendation?: string;
+  risk_type?: string;
+  severity?: string;
+};
+
+type LifecycleContextResponse = {
+  downstream?: LifecycleRelationItem[];
+  missing_context?: string[];
+  risk_signals?: LifecycleRiskSignalItem[];
+  status?: string;
+  summary?: Partial<{
+    downstream_count: number;
+    risk_count: number;
+    upstream_count: number;
+  }>;
+  upstream?: LifecycleRelationItem[];
 };
 
 type BugListItem = {
@@ -1401,13 +1457,66 @@ export async function fetchManagementAudit(): Promise<AuditRecord[]> {
 
   return events.items.map((event) => ({
     actor: event.actor_id ?? '-',
+    aiTaskId: event.ai_task_id ?? undefined,
     eventType: event.event_type,
     id: event.id,
+    payload: event.payload,
     result: event.result === 'failed' ? 'failed' : 'success',
     subject:
       event.subject_type && event.subject_id ? `${event.subject_type}: ${event.subject_id}` : '-',
+    subjectId: event.subject_id,
+    subjectType: event.subject_type,
     timestamp: formatListDate(event.created_at),
   }));
+}
+
+function mapLifecycleRelation(item: LifecycleRelationItem): LifecycleRelationRecord {
+  return {
+    relationType: formatUnknownValue(item.relation_type),
+    subjectId: formatUnknownValue(item.subject_id),
+    subjectType: formatUnknownValue(item.subject_type),
+    summary: formatUnknownValue(item.summary),
+  };
+}
+
+export async function fetchLifecycleContext(params: {
+  productId?: string;
+  subjectId?: string;
+  subjectType?: string;
+}): Promise<LifecycleContextRecord> {
+  const token = requireAccessToken();
+  const query = new URLSearchParams();
+  if (params.subjectType) {
+    query.set('subject_type', params.subjectType);
+  }
+  if (params.subjectId) {
+    query.set('subject_id', params.subjectId);
+  }
+  if (params.productId) {
+    query.set('product_id', params.productId);
+  }
+  const context = await apiRequest<LifecycleContextResponse>(
+    `/api/lifecycle/context?${query.toString()}`,
+    { token },
+  );
+  const summary = context.summary ?? {};
+  return {
+    downstream: (context.downstream ?? []).map(mapLifecycleRelation),
+    missingContext: context.missing_context ?? [],
+    riskSignals: (context.risk_signals ?? []).map((item) => ({
+      impactSummary: formatUnknownValue(item.impact_summary),
+      recommendation: formatUnknownValue(item.recommendation),
+      riskType: formatUnknownValue(item.risk_type),
+      severity: formatUnknownValue(item.severity),
+    })),
+    status: formatUnknownValue(context.status),
+    summary: {
+      downstreamCount: normalizeDashboardCount(summary.downstream_count),
+      riskCount: normalizeDashboardCount(summary.risk_count),
+      upstreamCount: normalizeDashboardCount(summary.upstream_count),
+    },
+    upstream: (context.upstream ?? []).map(mapLifecycleRelation),
+  };
 }
 
 export async function fetchManagementBugs(): Promise<BugRecord[]> {

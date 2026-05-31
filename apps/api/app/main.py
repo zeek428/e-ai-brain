@@ -3580,14 +3580,19 @@ def get_code_review_report(
 def audit_events(
     request: Request,
     ai_task_id: str | None = None,
+    actor_id: str | None = None,
     subject_type: str | None = None,
     subject_id: str | None = None,
     event_type: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
     current_store = store(request)
     items = list(current_store.audit_events)
+    if actor_id:
+        items = [item for item in items if item.get("actor_id") == actor_id]
     if event_type:
         items = [item for item in items if item.get("event_type") == event_type]
     if ai_task_id:
@@ -3596,6 +3601,18 @@ def audit_events(
         items = [item for item in items if item.get("subject_type") == subject_type]
     if subject_id:
         items = [item for item in items if item.get("subject_id") == subject_id]
+    if created_from or created_to:
+        from_at = _parse_iso_datetime(created_from, "created_from") if created_from else None
+        to_at = _parse_iso_datetime(created_to, "created_to") if created_to else None
+        filtered_items = []
+        for item in items:
+            event_at = _parse_iso_datetime(str(item.get("created_at") or ""), "created_at")
+            if from_at and event_at < from_at:
+                continue
+            if to_at and event_at > to_at:
+                continue
+            filtered_items.append(item)
+        items = filtered_items
     items.sort(key=lambda item: item["sequence"], reverse=True)
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
@@ -3640,6 +3657,19 @@ def empty_list_payload() -> dict[str, Any]:
         "items": [],
         "total": 0,
     }
+
+
+def _parse_iso_datetime(value: str, field_name: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    if len(normalized) >= 6 and normalized[-6] == " " and normalized[-3] == ":":
+        normalized = f"{normalized[:-6]}+{normalized[-5:]}"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise api_error(400, "VALIDATION_ERROR", f"Invalid {field_name}") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _lifecycle_relation(

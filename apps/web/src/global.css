@@ -111,6 +111,19 @@ body {
   margin-bottom: 12px;
 }
 
+.audit-json {
+  max-height: 280px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .capability-list {
   display: grid;
   gap: 12px;
@@ -183,6 +196,17 @@ body {
 
 .dashboard-list-item:last-child {
   padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.audit-trace-item {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid #edf1f7;
+}
+
+.audit-trace-item:last-child {
   border-bottom: 0;
 }
 

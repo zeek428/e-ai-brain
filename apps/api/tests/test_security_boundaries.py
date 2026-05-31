@@ -111,6 +111,47 @@ def test_role_boundaries_for_product_audit_and_gitlab_preview(monkeypatch):
     assert filtered_audit[0]["created_at"].startswith("20")
 
 
+def test_audit_events_filter_by_actor_and_time_range():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    store = app.state.store
+    outside = store.audit(
+        event_type="requirement.created",
+        actor_id="user_admin",
+        subject_type="requirement",
+        subject_id="requirement_old",
+    )
+    outside["created_at"] = "2026-05-30T08:00:00+00:00"
+    included = store.audit(
+        event_type="requirement.approved",
+        actor_id="user_admin",
+        subject_type="requirement",
+        subject_id="requirement_new",
+    )
+    included["created_at"] = "2026-05-31T08:00:00+00:00"
+    other_actor = store.audit(
+        event_type="requirement.approved",
+        actor_id="user_reviewer",
+        subject_type="requirement",
+        subject_id="requirement_new",
+    )
+    other_actor["created_at"] = "2026-05-31T09:00:00+00:00"
+
+    filtered = client.get(
+        "/api/audit/events"
+        "?actor_id=user_admin"
+        "&subject_type=requirement"
+        "&created_from=2026-05-31T00:00:00+00:00"
+        "&created_to=2026-05-31T23:59:59+00:00",
+        headers=admin_headers,
+    ).json()["data"]
+
+    assert filtered["total"] == 1
+    assert filtered["items"][0]["id"] == included["id"]
+    assert outside["id"] not in [item["id"] for item in filtered["items"]]
+    assert other_actor["id"] not in [item["id"] for item in filtered["items"]]
+
+
 def test_seeded_default_users_are_disabled_outside_local_env():
     original_env = settings.app_env
     original_persistence_mode = settings.persistence_mode
