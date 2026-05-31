@@ -46,6 +46,7 @@
 - 新增 `002_persistence_users.sql` 可重复迁移脚本和 API 启动迁移入口，已有数据库卷通过 SQL 脚本升级，不再需要清空 volume。
 - PostgreSQL 服务默认切换到本地项目镜像别名 `e-ai-brain-postgres-pgvector:0.8.2-pg18-trixie`，对应官方 `pgvector/pgvector:0.8.2-pg18-trixie`，并保留本地 PG18 + pgvector 构建 Dockerfile 作为网络受限 fallback，避免已有 PostgreSQL 18 数据卷被误切到 PG16 镜像。
 - 产品配置开始细粒度 PostgreSQL 持久化，产品、版本、模块和 Git 资源会同步写入 `products`、`product_versions`、`product_modules`、`product_git_repositories`，并在 API 启动时从结构表恢复。
+- 相关系统开始细粒度 PostgreSQL 持久化，纳入产品配置仓储并同步写入 `related_systems`，API 启动时恢复相关系统和 `system` 计数器。
 - 需求台账开始细粒度 PostgreSQL 持久化，需求创建、审批、驳回、关闭和任务引用会同步写入 `requirements`，并在 API 启动时从结构表恢复。
 - AI 任务开始细粒度 PostgreSQL 持久化，任务类型、标题、状态、需求快照、产品上下文、输入输出和当前步骤会同步写入 `ai_tasks`，并在 API 启动时从结构表恢复。
 - 人工确认和 Graph 运行态开始细粒度 PostgreSQL 持久化，`human_reviews`、`graph_runs`、`graph_checkpoints` 会记录 Review 决策、运行状态、检查点和 state snapshot，并在 API 启动时回填任务运行关联。

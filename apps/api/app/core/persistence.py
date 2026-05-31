@@ -12,6 +12,7 @@ PRODUCT_CONFIG_FIELDS = [
     "product_versions",
     "product_modules",
     "product_git_repositories",
+    "related_systems",
 ]
 REQUIREMENT_FIELDS = [
     "requirements",
@@ -452,6 +453,7 @@ def _sync_product_config_counters(payload: dict[str, Any]) -> None:
         ("version", "product_versions"),
         ("module", "product_modules"),
         ("repo", "product_git_repositories"),
+        ("system", "related_systems"),
     ]:
         counters[prefix] = max(
             counters.get(prefix, 0),
@@ -962,11 +964,13 @@ class PostgresSnapshotRepository:
                 versions = self._load_product_versions(cursor)
                 modules = self._load_product_modules(cursor)
                 repositories = self._load_product_git_repositories(cursor)
+                related_systems = self._load_related_systems(cursor)
         return {
             "product_git_repositories": repositories,
             "product_modules": modules,
             "product_versions": versions,
             "products": products,
+            "related_systems": related_systems,
         }
 
     def load_requirements(self) -> dict[str, Any]:
@@ -1046,8 +1050,10 @@ class PostgresSnapshotRepository:
         versions = payload.get("product_versions", {})
         modules = payload.get("product_modules", {})
         repositories = payload.get("product_git_repositories", {})
+        related_systems = payload.get("related_systems", {})
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                self._delete_missing(cursor, "related_systems", related_systems)
                 self._delete_missing(cursor, "product_git_repositories", repositories)
                 self._delete_missing(cursor, "product_modules", modules)
                 self._delete_missing(cursor, "product_versions", versions)
@@ -1056,6 +1062,7 @@ class PostgresSnapshotRepository:
                 self._upsert_product_versions(cursor, versions)
                 self._upsert_product_modules(cursor, modules)
                 self._upsert_product_git_repositories(cursor, repositories)
+                self._upsert_related_systems(cursor, related_systems)
 
     def save_requirements(self, payload: dict[str, Any]) -> None:
         requirements = payload.get("requirements", {})
@@ -1234,6 +1241,27 @@ class PostgresSnapshotRepository:
                 "repo_type": row[2],
                 "root_path": row[10],
                 "status": row[11],
+            }
+            for row in cursor.fetchall()
+        }
+
+    def _load_related_systems(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, code, name, description, owner_team, status, display_order
+            FROM related_systems
+            ORDER BY display_order, code
+            """
+        )
+        return {
+            row[0]: {
+                "code": row[1],
+                "description": row[3],
+                "display_order": row[6],
+                "id": row[0],
+                "name": row[2],
+                "owner_team": row[4],
+                "status": row[5],
             }
             for row in cursor.fetchall()
         }
@@ -1893,6 +1921,38 @@ class PostgresSnapshotRepository:
                     repository.get("default_branch", "main"),
                     repository.get("root_path", "/"),
                     repository.get("status", "active"),
+                ),
+            )
+
+    def _upsert_related_systems(
+        self,
+        cursor,
+        related_systems: dict[str, dict[str, Any]],
+    ) -> None:
+        for related_system in related_systems.values():
+            cursor.execute(
+                """
+                INSERT INTO related_systems (
+                  id, code, name, description, owner_team, status, display_order, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (id) DO UPDATE SET
+                  code = EXCLUDED.code,
+                  name = EXCLUDED.name,
+                  description = EXCLUDED.description,
+                  owner_team = EXCLUDED.owner_team,
+                  status = EXCLUDED.status,
+                  display_order = EXCLUDED.display_order,
+                  updated_at = now()
+                """,
+                (
+                    related_system["id"],
+                    related_system["code"],
+                    related_system["name"],
+                    related_system.get("description"),
+                    related_system.get("owner_team"),
+                    related_system.get("status", "active"),
+                    related_system.get("display_order", 0),
                 ),
             )
 
