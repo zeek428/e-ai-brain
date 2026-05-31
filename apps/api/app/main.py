@@ -2434,6 +2434,20 @@ def snapshot_gitlab_mr(
     diff_size_bytes = len(diff_payload.encode())
     diff_limit_bytes = 204_800
     if diff_size_bytes > diff_limit_bytes:
+        current_store.audit(
+            event_type="gitlab_mr.snapshot_failed",
+            actor_id=user["id"],
+            subject_type="product_git_repository",
+            subject_id=repository_id,
+            payload={
+                "diff_limit_bytes": diff_limit_bytes,
+                "diff_size_bytes": diff_size_bytes,
+                "mr_iid": mr_iid,
+                "reason": "diff_too_large",
+                "requirement_id": payload.requirement_id,
+                "technical_solution_task_id": payload.technical_solution_task_id,
+            },
+        )
         raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
 
     snapshot_hash = hashlib.sha256(diff_payload.encode()).hexdigest()

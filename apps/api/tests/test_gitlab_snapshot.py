@@ -209,6 +209,64 @@ def test_gitlab_mr_preview_and_snapshot_are_read_only_and_immutable(monkeypatch)
     assert [event["event_type"] for event in audit_events] == ["gitlab_mr.snapshotted"]
 
 
+def test_gitlab_snapshot_records_audit_when_diff_exceeds_limit(monkeypatch):
+    headers = auth_headers()
+    context = build_confirmed_solution_context(headers)
+
+    def oversized_preview(repository: dict, mr_iid: int) -> dict:
+        return {
+            "author": {"username": "alice", "name": "Alice"},
+            "base_sha": "base-large",
+            "changed_file_count": 1,
+            "changed_files_summary": [
+                {
+                    "additions": 1,
+                    "deletions": 0,
+                    "path": f"apps/api/{'large-path-' * 25_000}.py",
+                }
+            ],
+            "diff_refs": {"base_sha": "base-large", "head_sha": "head-large"},
+            "head_sha": "head-large",
+            "mr_iid": mr_iid,
+            "project_id": repository.get("project_id"),
+            "project_path": repository["project_path"],
+            "repository_id": repository["id"],
+            "source_branch": "feature/large-diff",
+            "target_branch": "main",
+            "title": "超大 MR",
+            "web_url": "https://gitlab.example.com/platform/ai-brain/-/merge_requests/99",
+            "writeback_allowed": False,
+        }
+
+    monkeypatch.setattr("app.main._gitlab_preview", oversized_preview)
+
+    response = client.post(
+        f"/api/devops/gitlab/merge-requests/{context['repository_id']}/99/snapshot",
+        json={
+            "requirement_id": context["requirement_id"],
+            "technical_solution_task_id": context["technical_solution_task_id"],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "GITLAB_MR_DIFF_TOO_LARGE"
+    assert app.state.store.gitlab_mr_snapshots == {}
+
+    audit_events = client.get(
+        "/api/audit/events?event_type=gitlab_mr.snapshot_failed",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert len(audit_events) == 1
+    failure_event = audit_events[0]
+    assert failure_event["subject_type"] == "product_git_repository"
+    assert failure_event["subject_id"] == context["repository_id"]
+    assert failure_event["payload"]["reason"] == "diff_too_large"
+    assert failure_event["payload"]["mr_iid"] == 99
+    assert failure_event["payload"]["diff_limit_bytes"] == 204_800
+    assert failure_event["payload"]["diff_size_bytes"] > 204_800
+
+
 def test_gitlab_snapshot_rejects_cross_product_requirement_context():
     headers = auth_headers()
     context = build_confirmed_solution_context(headers)
