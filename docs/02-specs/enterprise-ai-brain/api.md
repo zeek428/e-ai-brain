@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.8 |
+| 功能版本 | v1.1.9 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -30,6 +30,7 @@
 | v1.1.6 | 2026-05-31 | 补齐审计事件按操作者和创建时间范围过滤，并对齐审计列表详情与链路追踪操作 | Codex |
 | v1.1.7 | 2026-05-31 | 对齐 MVP-B code_review 执行器失败错误语义，结构化报告生成失败返回专用错误码和审计事件 | Codex |
 | v1.1.8 | 2026-05-31 | 补齐 GitLab MR diff 超限失败审计，记录实际大小、限制和关联上下文 | Codex |
+| v1.1.9 | 2026-05-31 | 补齐 GitLab MR 变更文件数限制，超限时拒绝快照并记录审计指标 | Codex |
 
 ---
 
@@ -742,7 +743,7 @@ GET /api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview
 }
 ```
 
-MR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持内部 GitLab 只读项目绑定、MR 预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再预览 MR、生成快照，最后用 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`。`remote_url` 用于推导 GitLab base URL，也可由 `GITLAB_BASE_URL` 提供；`credential_ref` 推荐使用 `env:GITLAB_READONLY_TOKEN`，响应不得返回凭据值。MR diff 超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录 `gitlab_mr.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
+MR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持内部 GitLab 只读项目绑定、MR 预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再预览 MR、生成快照，最后用 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`。`remote_url` 用于推导 GitLab base URL，也可由 `GITLAB_BASE_URL` 提供；`credential_ref` 推荐使用 `env:GITLAB_READONLY_TOKEN`，响应不得返回凭据值。MR diff 或变更文件数超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录 `gitlab_mr.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`changed_file_count` 或 `changed_file_limit`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
 
 生成 MR diff 快照：
 
@@ -1432,7 +1433,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | POST `/api/reviews/{review_id}/reject` | 400 | VALIDATION_ERROR | 否 | 成功必须记录 rejection reason。 | 要求填写驳回原因。 |
 | POST `/api/reviews/{review_id}/request-more-info` | 400 | VALIDATION_ERROR | 否 | 成功必须记录补充问题。 | 要求填写明确问题。 |
 | GET GitLab MR preview | 404/403 | GITLAB_MR_NOT_FOUND / FORBIDDEN | 否 | 记录只读预览失败原因。 | 提示检查项目绑定、MR IID 和权限。 |
-| POST GitLab MR snapshot | 413 | GITLAB_MR_DIFF_TOO_LARGE | 否 | 记录 `gitlab_mr.snapshot_failed`，包含 diff_size_bytes 和限制。 | 提示拆分 MR 或缩小范围。 |
+| POST GitLab MR snapshot | 413 | GITLAB_MR_DIFF_TOO_LARGE | 否 | 记录 `gitlab_mr.snapshot_failed`，包含 diff_size_bytes、changed_file_count 和限制。 | 提示拆分 MR 或缩小范围。 |
 | POST GitLab MR snapshot | 502/503 | DEVOPS_SOURCE_UNAVAILABLE | 是 | 记录 GitLab API 超时、限流或不可用。 | 提示稍后重试，保留 MR 输入。 |
 | GET `/api/ai-tasks/{task_id}/code-review-report` | 404 | NOT_FOUND | 否 | 不要求审计。 | 显示报告尚未生成或不存在。 |
 | code-review 执行器生成报告 | 502/503 | CODE_REVIEW_EXECUTOR_FAILED | 是 | 记录 executor_type、executor_name、阶段和 retryable。 | 显示执行器失败，可重跑或联系管理员。 |

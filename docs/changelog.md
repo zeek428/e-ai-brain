@@ -65,7 +65,7 @@
 - 任务管理操作弹窗标题收敛为固定“任务操作”，长任务名保留在摘要区展示，避免弹窗标题区拥挤并保持与需求管理等管理弹窗一致。
 - 任务管理创建 Code Review 的参数区改为弹窗内纵向表单，并清理旧任务中心左右分栏样式遗留，保持与需求管理等管理页一致。
 - GitLab MR 预览和 diff 快照改为读取真实 GitLab 只读 API；产品 Git 资源需配置可解析的 `remote_url` 或 `GITLAB_BASE_URL` 以及只读 token 凭据引用，缺失配置时返回明确错误，不再静默生成本地假 MR。
-- GitLab MR diff 超限时记录 `gitlab_mr.snapshot_failed` 审计事件，保留实际 diff 大小、限制和关联需求/技术方案任务。
+- GitLab MR diff 或变更文件数超限时记录 `gitlab_mr.snapshot_failed` 审计事件，保留实际 diff 大小、文件数、限制和关联需求/技术方案任务。
 - AI 任务启动接入 active/default OpenAI-compatible 模型网关配置，调用真实 `/chat/completions` 并解析 JSON 输出；模型日志只记录脱敏元数据，缺失密钥或 provider 调用失败时任务进入 failed，不再静默回退本地输出。
 - Code Review 执行器失败语义补齐：结构化报告生成失败返回 `CODE_REVIEW_EXECUTOR_FAILED`，任务停在 `code_review_executor_failed` 并记录 `code_review.executor_failed` 审计事件。
 - 审计与运行列表新增真实详情弹窗和生命周期链路追踪操作，可从审计主体查看上下游、风险信号和缺失上下文。

@@ -267,6 +267,59 @@ def test_gitlab_snapshot_records_audit_when_diff_exceeds_limit(monkeypatch):
     assert failure_event["payload"]["diff_size_bytes"] > 204_800
 
 
+def test_gitlab_snapshot_rejects_changed_file_count_over_limit(monkeypatch):
+    headers = auth_headers()
+    context = build_confirmed_solution_context(headers)
+
+    def too_many_files_preview(repository: dict, mr_iid: int) -> dict:
+        return {
+            "author": {"username": "alice", "name": "Alice"},
+            "base_sha": "base-many-files",
+            "changed_file_count": 51,
+            "changed_files_summary": [
+                {"additions": 1, "deletions": 0, "path": f"apps/api/file_{index}.py"}
+                for index in range(51)
+            ],
+            "diff_refs": {"base_sha": "base-many-files", "head_sha": "head-many-files"},
+            "head_sha": "head-many-files",
+            "mr_iid": mr_iid,
+            "project_id": repository.get("project_id"),
+            "project_path": repository["project_path"],
+            "repository_id": repository["id"],
+            "source_branch": "feature/many-files",
+            "target_branch": "main",
+            "title": "过多文件 MR",
+            "web_url": "https://gitlab.example.com/platform/ai-brain/-/merge_requests/100",
+            "writeback_allowed": False,
+        }
+
+    monkeypatch.setattr("app.main._gitlab_preview", too_many_files_preview)
+
+    response = client.post(
+        f"/api/devops/gitlab/merge-requests/{context['repository_id']}/100/snapshot",
+        json={
+            "requirement_id": context["requirement_id"],
+            "technical_solution_task_id": context["technical_solution_task_id"],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "GITLAB_MR_DIFF_TOO_LARGE"
+    assert app.state.store.gitlab_mr_snapshots == {}
+
+    audit_events = client.get(
+        "/api/audit/events?event_type=gitlab_mr.snapshot_failed",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert len(audit_events) == 1
+    failure_event = audit_events[0]
+    assert failure_event["payload"]["reason"] == "changed_file_count_too_large"
+    assert failure_event["payload"]["changed_file_count"] == 51
+    assert failure_event["payload"]["changed_file_limit"] == 50
+    assert failure_event["payload"]["diff_size_bytes"] <= 204_800
+
+
 def test_gitlab_snapshot_rejects_cross_product_requirement_context():
     headers = auth_headers()
     context = build_confirmed_solution_context(headers)
