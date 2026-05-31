@@ -27,6 +27,7 @@ WORKFLOW_RUNTIME_FIELDS = [
 ]
 KNOWLEDGE_FIELDS = [
     "knowledge_documents",
+    "knowledge_chunks",
     "knowledge_deposits",
 ]
 AUDIT_FIELDS = [
@@ -57,6 +58,7 @@ COLLECTION_FIELDS = [
     "gitlab_mr_snapshots",
     "code_review_reports",
     "knowledge_documents",
+    "knowledge_chunks",
     "knowledge_deposits",
     "mock_writebacks",
     "bugs",
@@ -663,7 +665,13 @@ def _sync_code_review_report_links(payload: dict[str, Any]) -> None:
 def _drop_knowledge_without_context(payload: dict[str, Any]) -> None:
     ai_tasks = payload.get("ai_tasks", {})
     knowledge_documents = payload.get("knowledge_documents", {})
+    knowledge_chunks = payload.get("knowledge_chunks", {})
     knowledge_deposits = payload.get("knowledge_deposits", {})
+    payload["knowledge_chunks"] = {
+        chunk_id: chunk
+        for chunk_id, chunk in knowledge_chunks.items()
+        if chunk.get("document_id") in knowledge_documents
+    }
     cleaned_deposits = {}
     for deposit_id, deposit in knowledge_deposits.items():
         if ai_tasks and deposit.get("ai_task_id") not in ai_tasks:
@@ -1001,8 +1009,10 @@ class PostgresSnapshotRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 knowledge_documents = self._load_knowledge_documents(cursor)
+                knowledge_chunks = self._load_knowledge_chunks(cursor)
                 knowledge_deposits = self._load_knowledge_deposits(cursor)
         return {
+            "knowledge_chunks": knowledge_chunks,
             "knowledge_deposits": knowledge_deposits,
             "knowledge_documents": knowledge_documents,
         }
@@ -1093,14 +1103,21 @@ class PostgresSnapshotRepository:
 
     def save_knowledge(self, payload: dict[str, Any]) -> None:
         documents = payload.get("knowledge_documents", {})
+        chunks = self._clean_knowledge_chunk_references(
+            documents,
+            payload.get("knowledge_chunks", {}),
+        )
         deposits = payload.get("knowledge_deposits", {})
         deposits = self._clean_knowledge_deposit_references(documents, deposits)
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._clear_dangling_knowledge_deposit_documents(cursor, documents)
+                self._clear_dangling_knowledge_chunk_documents(cursor, documents)
                 self._delete_missing(cursor, "knowledge_deposits", deposits)
+                self._delete_missing(cursor, "knowledge_chunks", chunks)
                 self._delete_missing(cursor, "knowledge_documents", documents)
                 self._upsert_knowledge_documents(cursor, documents)
+                self._upsert_knowledge_chunks(cursor, chunks)
                 self._upsert_knowledge_deposits(cursor, deposits)
 
     def save_audit_events(self, payload: dict[str, Any]) -> None:
@@ -1463,6 +1480,36 @@ class PostgresSnapshotRepository:
                 document.pop("permission_scope")
             documents[row[0]] = document
         return documents
+
+    def _load_knowledge_chunks(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, document_id, chunk_index, content, metadata, permission_scope, created_at
+            FROM knowledge_chunks
+            ORDER BY document_id, chunk_index, id
+            """
+        )
+        chunks = {}
+        for row in cursor.fetchall():
+            permission_scope = dict(row[5] or {})
+            chunk = {
+                "chunk_index": row[2],
+                "content": row[3],
+                "created_at": row[6].isoformat() if row[6] else None,
+                "document_id": row[1],
+                "id": row[0],
+                "metadata": dict(row[4] or {}),
+                "permission_roles": list(permission_scope.get("roles") or []),
+                "permission_scope": permission_scope,
+            }
+            if not chunk["permission_roles"]:
+                chunk.pop("permission_roles")
+            if not chunk["permission_scope"]:
+                chunk.pop("permission_scope")
+            if chunk["created_at"] is None:
+                chunk.pop("created_at")
+            chunks[row[0]] = chunk
+        return chunks
 
     def _load_knowledge_deposits(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -2187,6 +2234,34 @@ class PostgresSnapshotRepository:
                 deposit["knowledge_document_id"] = None
         return cleaned
 
+    def _clean_knowledge_chunk_references(
+        self,
+        documents: dict[str, dict[str, Any]],
+        chunks: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        return {
+            chunk_id: chunk
+            for chunk_id, chunk in deepcopy(chunks).items()
+            if chunk.get("document_id") in documents
+        }
+
+    def _clear_dangling_knowledge_chunk_documents(
+        self,
+        cursor,
+        documents: dict[str, dict[str, Any]],
+    ) -> None:
+        if not documents:
+            cursor.execute("DELETE FROM knowledge_chunks")
+            return
+        placeholders = ", ".join(["%s"] * len(documents))
+        cursor.execute(
+            f"""
+            DELETE FROM knowledge_chunks
+            WHERE document_id NOT IN ({placeholders})
+            """,  # noqa: S608
+            tuple(documents.keys()),
+        )
+
     def _clear_dangling_knowledge_deposit_documents(
         self,
         cursor,
@@ -2261,6 +2336,45 @@ class PostgresSnapshotRepository:
                     document["created_by"],
                     created_at,
                     updated_at,
+                ),
+            )
+
+    def _upsert_knowledge_chunks(
+        self,
+        cursor,
+        chunks: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for chunk in chunks.values():
+            permission_scope = deepcopy(chunk.get("permission_scope", {}))
+            if chunk.get("permission_roles"):
+                permission_scope["roles"] = list(chunk["permission_roles"])
+            cursor.execute(
+                """
+                INSERT INTO knowledge_chunks (
+                  id, document_id, chunk_index, content, embedding, metadata,
+                  permission_scope, created_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, NULL, %s::jsonb, %s::jsonb,
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  document_id = EXCLUDED.document_id,
+                  chunk_index = EXCLUDED.chunk_index,
+                  content = EXCLUDED.content,
+                  metadata = EXCLUDED.metadata,
+                  permission_scope = EXCLUDED.permission_scope
+                """,
+                (
+                    chunk["id"],
+                    chunk["document_id"],
+                    chunk["chunk_index"],
+                    chunk["content"],
+                    json.dumps(chunk.get("metadata", {}), ensure_ascii=False),
+                    json.dumps(permission_scope, ensure_ascii=False),
+                    chunk.get("created_at"),
                 ),
             )
 

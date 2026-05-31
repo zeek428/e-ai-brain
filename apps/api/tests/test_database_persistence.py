@@ -1093,6 +1093,14 @@ def test_knowledge_and_audit_are_persisted_through_fine_grained_repository_paylo
         "tags": ["persistence"],
         "title": "知识结构表验证",
     }
+    current_store.knowledge_chunks["knowledge_009_chunk_001"] = {
+        "chunk_index": 1,
+        "content": "真实系统知识文档必须写入结构表",
+        "document_id": "knowledge_009",
+        "id": "knowledge_009_chunk_001",
+        "metadata": {"title": "知识结构表验证"},
+        "permission_roles": ["admin", "knowledge_owner"],
+    }
     current_store.knowledge_deposits["deposit_004"] = {
         "ai_task_id": "task_002",
         "content": "任务输出摘要",
@@ -1119,6 +1127,9 @@ def test_knowledge_and_audit_are_persisted_through_fine_grained_repository_paylo
     assert repository.knowledge_payload["knowledge_documents"]["knowledge_009"]["title"] == (
         "知识结构表验证"
     )
+    assert repository.knowledge_payload["knowledge_chunks"]["knowledge_009_chunk_001"][
+        "document_id"
+    ] == "knowledge_009"
     assert repository.knowledge_payload["knowledge_deposits"]["deposit_004"][
         "knowledge_document_id"
     ] == "knowledge_009"
@@ -1185,6 +1196,16 @@ def test_structured_knowledge_and_audit_restore_and_sync_counters():
                 "title": "结构表知识",
             }
         },
+        "knowledge_chunks": {
+            "knowledge_009_chunk_001": {
+                "chunk_index": 1,
+                "content": "结构表知识",
+                "document_id": "knowledge_009",
+                "id": "knowledge_009_chunk_001",
+                "metadata": {"title": "结构表知识"},
+                "permission_roles": ["admin"],
+            }
+        },
     }
     repository.audit_events_payload = {
         "audit_events": [
@@ -1201,6 +1222,7 @@ def test_structured_knowledge_and_audit_restore_and_sync_counters():
     rebuilt_store = PersistentMemoryStore.from_repository(repository)
 
     assert list(rebuilt_store.knowledge_documents) == ["knowledge_009"]
+    assert list(rebuilt_store.knowledge_chunks) == ["knowledge_009_chunk_001"]
     assert rebuilt_store.knowledge_deposits["deposit_004"]["title"] == "结构表沉淀"
     assert [event["id"] for event in rebuilt_store.audit_events] == ["audit_007"]
     assert rebuilt_store.new_id("knowledge") == "knowledge_010"
@@ -1444,6 +1466,9 @@ def test_knowledge_api_writes_fine_grained_repository_and_audit_payload():
         persisted = repository.knowledge_payload["knowledge_documents"][document["id"]]
         assert persisted["title"] == "知识结构表 API 验证"
         assert persisted["permission_roles"] == ["admin", "knowledge_owner"]
+        chunk_items = list(repository.knowledge_payload["knowledge_chunks"].values())
+        assert [chunk["document_id"] for chunk in chunk_items] == [document["id"]]
+        assert chunk_items[0]["content"] == "知识文档必须从结构表恢复"
 
         assert repository.audit_events_payload is not None
         assert repository.audit_events_payload["audit_events"][-1]["event_type"] == (

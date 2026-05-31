@@ -95,6 +95,84 @@ def test_knowledge_search_filters_permissions_and_deposits_are_reviewable():
     assert approved["knowledge_document_id"].startswith("knowledge_")
 
 
+def test_knowledge_search_returns_permission_filtered_chunks_and_reindexes_on_update():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    viewer_username = "chunk-viewer@example.com"
+    client.post(
+        "/api/users",
+        json={
+            "display_name": "Chunk Viewer",
+            "password": "viewer123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": viewer_username,
+        },
+        headers=admin_headers,
+    )
+    viewer_headers = auth_headers(viewer_username, "viewer123")
+
+    document = client.post(
+        "/api/knowledge/documents",
+        json={
+            "title": "Review 分层指南",
+            "content": (
+                "第一段说明普通研发流程。\n\n"
+                "第二段包含 reviewer-only chunk retrieval marker，必须作为单独来源返回。\n\n"
+                "第三段说明发布检查。"
+            ),
+            "permission_roles": ["reviewer"],
+            "tags": ["chunk"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    results = client.post(
+        "/api/knowledge/search",
+        json={"query": "retrieval marker", "top_k": 5},
+        headers=reviewer_headers,
+    ).json()["data"]["items"]
+
+    assert len(results) == 1
+    assert results[0]["document_id"] == document["id"]
+    assert results[0]["chunk_id"] == f"{document['id']}_chunk_002"
+    assert results[0]["chunk_index"] == 2
+    assert results[0]["content"] == (
+        "第二段包含 reviewer-only chunk retrieval marker，必须作为单独来源返回。"
+    )
+    assert results[0]["source"]["chunk_id"] == f"{document['id']}_chunk_002"
+    assert "第一段说明普通研发流程" not in results[0]["content"]
+
+    forbidden = client.post(
+        "/api/knowledge/search",
+        json={"query": "retrieval marker", "top_k": 5},
+        headers=viewer_headers,
+    ).json()["data"]["items"]
+    assert forbidden == []
+
+    updated = client.patch(
+        f"/api/knowledge/documents/{document['id']}",
+        json={"content": "更新后的 chunk 只包含 new-search-token。"},
+        headers=admin_headers,
+    ).json()["data"]
+    assert updated["chunk_count"] == 1
+
+    stale_results = client.post(
+        "/api/knowledge/search",
+        json={"query": "retrieval marker", "top_k": 5},
+        headers=reviewer_headers,
+    ).json()["data"]["items"]
+    fresh_results = client.post(
+        "/api/knowledge/search",
+        json={"query": "new-search-token", "top_k": 5},
+        headers=reviewer_headers,
+    ).json()["data"]["items"]
+
+    assert stale_results == []
+    assert [item["chunk_id"] for item in fresh_results] == [f"{document['id']}_chunk_001"]
+
+
 def test_mock_issue_writeback_is_idempotent_for_completed_task():
     app.state.store.reset()
     headers = auth_headers()

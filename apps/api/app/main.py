@@ -3329,7 +3329,80 @@ def list_knowledge_documents(
     if index_status:
         items = [item for item in items if item["index_status"] == index_status]
     items.sort(key=lambda item: item["id"])
-    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+    return envelope(
+        {
+            "items": [_knowledge_document_response(current_store, item) for item in items],
+            "total": len(items),
+        },
+        get_trace_id(request),
+    )
+
+
+def _split_knowledge_content(content: str) -> list[str]:
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n+", content) if part.strip()]
+    if not paragraphs:
+        paragraphs = [content.strip()]
+    chunks: list[str] = []
+    max_chars = 1200
+    for paragraph in paragraphs:
+        if len(paragraph) <= max_chars:
+            chunks.append(paragraph)
+            continue
+        for start in range(0, len(paragraph), max_chars):
+            chunk = paragraph[start : start + max_chars].strip()
+            if chunk:
+                chunks.append(chunk)
+    return chunks
+
+
+def _knowledge_document_chunks(
+    current_store: MemoryStore,
+    document_id: str,
+) -> list[dict[str, Any]]:
+    chunks = [
+        chunk
+        for chunk in current_store.knowledge_chunks.values()
+        if chunk.get("document_id") == document_id
+    ]
+    return sorted(chunks, key=lambda chunk: (chunk.get("chunk_index", 0), chunk.get("id", "")))
+
+
+def _knowledge_document_response(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+) -> dict[str, Any]:
+    response = current_store.snapshot(document)
+    response["chunk_count"] = len(_knowledge_document_chunks(current_store, document["id"]))
+    return response
+
+
+def _replace_knowledge_chunks(current_store: MemoryStore, document: dict[str, Any]) -> None:
+    document_id = document["id"]
+    current_store.knowledge_chunks = {
+        chunk_id: chunk
+        for chunk_id, chunk in current_store.knowledge_chunks.items()
+        if chunk.get("document_id") != document_id
+    }
+    chunks = _split_knowledge_content(document["content"])
+    permission_roles = list(document.get("permission_roles", ["admin"]))
+    for chunk_index, content in enumerate(chunks, start=1):
+        chunk_id = f"{document_id}_chunk_{chunk_index:03d}"
+        current_store.knowledge_chunks[chunk_id] = {
+            "chunk_index": chunk_index,
+            "content": content,
+            "document_id": document_id,
+            "id": chunk_id,
+            "metadata": {
+                "doc_type": document.get("doc_type", "manual"),
+                "tags": list(document.get("tags", [])),
+                "title": document["title"],
+            },
+            "permission_roles": permission_roles,
+            "permission_scope": {"roles": permission_roles},
+        }
+    document["chunk_count"] = len(chunks)
+    document["index_status"] = "indexed"
+    document.pop("index_error", None)
 
 
 @app.post("/api/knowledge/documents")
@@ -3355,13 +3428,14 @@ def create_knowledge_document(
         "created_by": user["id"],
     }
     current_store.knowledge_documents[document_id] = document
+    _replace_knowledge_chunks(current_store, document)
     current_store.audit(
         event_type="knowledge_document.created",
         actor_id=user["id"],
         subject_type="knowledge_document",
         subject_id=document_id,
     )
-    return envelope(document, get_trace_id(request))
+    return envelope(_knowledge_document_response(current_store, document), get_trace_id(request))
 
 
 @app.patch("/api/knowledge/documents/{document_id}")
@@ -3385,13 +3459,15 @@ def patch_knowledge_document(
         _ensure_roles(updates["permission_roles"])
     document.update(updates)
     document["updated_at"] = datetime.now(UTC).isoformat()
+    if {"content", "title", "permission_roles", "doc_type", "tags"}.intersection(updates):
+        _replace_knowledge_chunks(current_store, document)
     current_store.audit(
         event_type="knowledge_document.updated",
         actor_id=user["id"],
         subject_type="knowledge_document",
         subject_id=document_id,
     )
-    return envelope(document, get_trace_id(request))
+    return envelope(_knowledge_document_response(current_store, document), get_trace_id(request))
 
 
 @app.delete("/api/knowledge/documents/{document_id}")
@@ -3405,6 +3481,11 @@ def delete_knowledge_document(
     if document_id not in current_store.knowledge_documents:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     del current_store.knowledge_documents[document_id]
+    current_store.knowledge_chunks = {
+        chunk_id: chunk
+        for chunk_id, chunk in current_store.knowledge_chunks.items()
+        if chunk.get("document_id") != document_id
+    }
     for deposit in current_store.knowledge_deposits.values():
         if deposit.get("knowledge_document_id") == document_id:
             deposit["knowledge_document_id"] = None
@@ -3424,22 +3505,47 @@ def search_knowledge(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    query = payload.query.lower()
+    query = _ensure_non_blank(payload.query, "query").lower()
     items = []
     for document in current_store.knowledge_documents.values():
+        if document.get("index_status") != "indexed":
+            continue
         if not _user_can_read_roles(user, document["permission_roles"]):
             continue
-        haystack = f"{document['title']} {document['content']}".lower()
-        if query not in haystack:
-            continue
-        items.append(
-            {
-                "document_id": document["id"],
-                "title": document["title"],
-                "content": document["content"],
-                "source": {"doc_type": document["doc_type"], "title": document["title"]},
-            }
-        )
+        chunks = _knowledge_document_chunks(current_store, document["id"])
+        if not chunks:
+            chunks = [
+                {
+                    "chunk_index": 1,
+                    "content": document["content"],
+                    "document_id": document["id"],
+                    "id": f"{document['id']}_chunk_001",
+                    "metadata": {"doc_type": document["doc_type"], "title": document["title"]},
+                    "permission_roles": list(document.get("permission_roles", [])),
+                }
+            ]
+        for chunk in chunks:
+            chunk_roles = chunk.get("permission_roles", document["permission_roles"])
+            if not _user_can_read_roles(user, chunk_roles):
+                continue
+            haystack = f"{document['title']} {chunk['content']}".lower()
+            if query not in haystack:
+                continue
+            items.append(
+                {
+                    "chunk_id": chunk["id"],
+                    "chunk_index": chunk["chunk_index"],
+                    "document_id": document["id"],
+                    "title": document["title"],
+                    "content": chunk["content"],
+                    "source": {
+                        "chunk_id": chunk["id"],
+                        "doc_type": document["doc_type"],
+                        "title": document["title"],
+                    },
+                }
+            )
+    items.sort(key=lambda item: (item["document_id"], item["chunk_index"]))
     return envelope({"items": items[: payload.top_k], "total": len(items)}, get_trace_id(request))
 
 
@@ -3484,6 +3590,7 @@ def approve_knowledge_deposit(
         "created_by": user["id"],
     }
     current_store.knowledge_documents[document_id] = document
+    _replace_knowledge_chunks(current_store, document)
     deposit["status"] = "approved"
     deposit["knowledge_document_id"] = document_id
     current_store.audit(

@@ -55,6 +55,7 @@
 - 模型网关配置和调用元数据日志开始细粒度 PostgreSQL 持久化，`model_gateway_configs`、`model_gateway_logs` 会记录默认配置、密钥配置状态和脱敏调用元数据，并在 API 启动时恢复默认模型网关和日志计数器。
 - GitLab MR 快照和 Code Review 报告开始细粒度 PostgreSQL 持久化，`gitlab_mr_snapshots`、`code_review_reports` 会记录 MVP-B 证据链并在 API 启动时恢复报告反链和计数器。
 - 模拟 Issue 回写开始细粒度 PostgreSQL 持久化，`mock_issues` 会记录幂等键、来源任务、Issue 标题、状态和 payload，并在 API 启动时恢复回写结果与 `mock_issue` 计数器。
+- 知识检索升级为 chunk 级命中结果，文档创建、更新和知识沉淀采纳会生成 `knowledge_chunks`，搜索返回 `chunk_id`、`chunk_index` 和来源引用，并在返回前完成角色权限过滤。
 - 后端补齐当前管理主体 CRUD：产品及版本/模块/Git 资源、相关系统、模型网关配置、需求、知识文档、Bug 和用户均支持新增/更新/删除，删除前保留依赖占用校验和审计记录。
 - 前端产品管理、需求管理、Bug 管理、知识中心和用户管理新增真实表单弹窗、编辑按钮、删除按钮和接口刷新逻辑，不再停留在列表 demo。
 - 新增“系统管理”一级菜单，并将“用户管理”作为其二级菜单；`/users` 旧入口重定向到 `/system/users`。

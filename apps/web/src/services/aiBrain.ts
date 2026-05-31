@@ -287,6 +287,8 @@ export type KnowledgeDepositApprovePayload = {
 };
 
 export type KnowledgeSearchResultRecord = {
+  chunkId?: string;
+  chunkIndex?: number;
   content: string;
   documentId: string;
   id: string;
@@ -593,9 +595,12 @@ type KnowledgeDepositListItem = {
 };
 
 type KnowledgeSearchResultItem = {
+  chunk_id?: string;
+  chunk_index?: number;
   content?: string;
   document_id: string;
   source?: {
+    chunk_id?: string;
     doc_type?: string;
     title?: string;
   };
@@ -1899,11 +1904,17 @@ export async function fetchKnowledgeDeposits(
 }
 
 function mapKnowledgeSearchResult(item: KnowledgeSearchResultItem, index: number): KnowledgeSearchResultRecord {
-  const sourceParts = [item.source?.doc_type, item.source?.title].filter(Boolean);
+  const sourceParts = [
+    item.source?.doc_type,
+    item.source?.title,
+    item.chunk_index ? `chunk ${item.chunk_index}` : undefined,
+  ].filter(Boolean);
   return {
+    chunkId: item.chunk_id ?? item.source?.chunk_id,
+    chunkIndex: item.chunk_index,
     content: item.content ?? '-',
     documentId: item.document_id,
-    id: `${item.document_id}:${index}`,
+    id: item.chunk_id ?? `${item.document_id}:${index}`,
     sourceLabel: sourceParts.length ? sourceParts.join(' · ') : '-',
     title: item.title ?? item.document_id,
   };
