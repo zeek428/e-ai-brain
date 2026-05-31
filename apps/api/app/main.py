@@ -664,6 +664,18 @@ def _estimate_tokens(value: Any) -> int:
     return max(1, len(serialized) // 4)
 
 
+class ModelGatewayCallError(Exception):
+    def __init__(self, log: dict[str, Any]):
+        super().__init__("Model gateway request failed")
+        self.log = log
+
+
+class ModelGatewayConfigError(Exception):
+    def __init__(self, message: str, current_step: str = "model_gateway_config_invalid"):
+        super().__init__(message)
+        self.current_step = current_step
+
+
 def _model_gateway_metadata(
     current_store: MemoryStore,
 ) -> tuple[str, str, str | None]:
@@ -679,11 +691,197 @@ def _model_gateway_metadata(
     return "local_fallback", f"local-{settings.model_gateway_default_chat_model}", None
 
 
+def _model_gateway_chat_completions_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/chat/completions"):
+        return normalized
+    return f"{normalized}/chat/completions"
+
+
+def _model_gateway_messages(task: dict[str, Any]) -> list[dict[str, str]]:
+    payload = {
+        "input_json": task.get("input_json", {}),
+        "product_context": task.get("product_context", {}),
+        "requirement_snapshot": task.get("requirement_snapshot", {}),
+        "task_type": task["task_type"],
+        "title": task["title"],
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are the AI Brain model gateway. Return one JSON object only, "
+                "without markdown, comments, or explanatory text."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        },
+    ]
+
+
+def _model_gateway_log(
+    current_store: MemoryStore,
+    *,
+    task: dict[str, Any],
+    provider: str,
+    model: str,
+    config_id: str | None,
+    tokens: dict[str, int],
+    latency_ms: int,
+    status: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    log = {
+        "id": current_store.new_id("model_log"),
+        "ai_task_id": task["id"],
+        "provider": provider,
+        "model": model,
+        "purpose": task["task_type"],
+        "tokens": tokens,
+        "latency_ms": latency_ms,
+        "status": status,
+        "error": error,
+        "model_gateway_config_id": config_id,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    current_store.model_gateway_logs.append(log)
+    return log
+
+
+def _parse_model_gateway_output(
+    response_payload: dict[str, Any],
+    task: dict[str, Any],
+) -> dict[str, Any]:
+    choices = response_payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("Model gateway response is missing choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(message, dict):
+        raise ValueError("Model gateway response is missing message")
+    content = message.get("content")
+    if isinstance(content, str):
+        parsed = json.loads(content)
+    elif isinstance(content, dict):
+        parsed = content
+    else:
+        raise ValueError("Model gateway response content must be a JSON object")
+    if not isinstance(parsed, dict):
+        raise ValueError("Model gateway response content must be a JSON object")
+
+    output = parsed
+    if not isinstance(output.get("summary"), str) or not output["summary"].strip():
+        raise ValueError("Model gateway response content is missing summary")
+    if task["task_type"] == "code_review":
+        if not isinstance(output.get("risk_level"), str):
+            raise ValueError("Code review response is missing risk_level")
+        if not isinstance(output.get("findings"), list):
+            raise ValueError("Code review response is missing findings")
+        if not isinstance(output.get("executor"), dict):
+            raise ValueError("Code review response is missing executor")
+    return output
+
+
+def _openai_usage_tokens(
+    usage: Any,
+    *,
+    messages: list[dict[str, str]],
+    output: dict[str, Any],
+) -> dict[str, int]:
+    if not isinstance(usage, dict):
+        prompt = _estimate_tokens(messages)
+        completion = _estimate_tokens(output)
+        return {"prompt": prompt, "completion": completion, "total": prompt + completion}
+    prompt = int(usage.get("prompt_tokens") or _estimate_tokens(messages))
+    completion = int(usage.get("completion_tokens") or _estimate_tokens(output))
+    total = int(usage.get("total_tokens") or prompt + completion)
+    return {"prompt": prompt, "completion": completion, "total": total}
+
+
+def _call_openai_compatible_model_gateway(
+    current_store: MemoryStore,
+    *,
+    config: dict[str, Any],
+    task: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    provider = config["provider"]
+    model = config["default_chat_model"]
+    config_id = config["id"]
+    messages = _model_gateway_messages(task)
+    body = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+    }
+    request = UrlRequest(
+        _model_gateway_chat_completions_url(config["base_url"]),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config['api_key']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    started = perf_counter()
+    try:
+        with urlopen(request, int(config.get("timeout_seconds") or 60)) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+        output = _parse_model_gateway_output(response_payload, task)
+        latency_ms = int((perf_counter() - started) * 1000)
+        log = _model_gateway_log(
+            current_store,
+            task=task,
+            provider=provider,
+            model=model,
+            config_id=config_id,
+            tokens=_openai_usage_tokens(
+                response_payload.get("usage"),
+                messages=messages,
+                output=output,
+            ),
+            latency_ms=latency_ms,
+            status="succeeded",
+        )
+        return output, log
+    except (
+        AttributeError,
+        HTTPError,
+        URLError,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        latency_ms = int((perf_counter() - started) * 1000)
+        prompt_tokens = _estimate_tokens(messages)
+        log = _model_gateway_log(
+            current_store,
+            task=task,
+            provider=provider,
+            model=model,
+            config_id=config_id,
+            tokens={"prompt": prompt_tokens, "completion": 0, "total": prompt_tokens},
+            latency_ms=latency_ms,
+            status="failed",
+            error="Model gateway request failed",
+        )
+        raise ModelGatewayCallError(log) from exc
+
+
 def _call_model_gateway_for_task(
     current_store: MemoryStore,
     *,
     task: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    config = _default_model_gateway_config(current_store)
+    if config and config.get("provider") == "openai_compatible":
+        if not config.get("api_key"):
+            raise ModelGatewayConfigError("Active model gateway config is missing api_key")
+        return _call_openai_compatible_model_gateway(current_store, config=config, task=task)
+
     provider, model, config_id = _model_gateway_metadata(current_store)
     started = perf_counter()
     output = _local_task_output(task)
@@ -696,24 +894,20 @@ def _call_model_gateway_for_task(
         }
     )
     completion_tokens = _estimate_tokens(output)
-    log = {
-        "id": current_store.new_id("model_log"),
-        "ai_task_id": task["id"],
-        "provider": provider,
-        "model": model,
-        "purpose": task["task_type"],
-        "tokens": {
+    log = _model_gateway_log(
+        current_store,
+        task=task,
+        provider=provider,
+        model=model,
+        config_id=config_id,
+        tokens={
             "prompt": prompt_tokens,
             "completion": completion_tokens,
             "total": prompt_tokens + completion_tokens,
         },
-        "latency_ms": latency_ms,
-        "status": "succeeded",
-        "error": None,
-        "model_gateway_config_id": config_id,
-        "created_at": datetime.now(UTC).isoformat(),
-    }
-    current_store.model_gateway_logs.append(log)
+        latency_ms=latency_ms,
+        status="succeeded",
+    )
     return output, log
 
 
@@ -2651,7 +2845,50 @@ def start_ai_task(
     if task["status"] != "draft":
         raise api_error(409, "TASK_STATE_INVALID", "Task cannot be started from current status")
 
-    task["output_json"], model_log = _call_model_gateway_for_task(current_store, task=task)
+    try:
+        task["output_json"], model_log = _call_model_gateway_for_task(current_store, task=task)
+    except ModelGatewayConfigError as exc:
+        task["status"] = "failed"
+        task["current_step"] = exc.current_step
+        current_store.audit(
+            event_type="ai_task.failed",
+            actor_id="system",
+            ai_task_id=task_id,
+            subject_type="ai_task",
+            subject_id=task_id,
+            payload={
+                "current_step": task["current_step"],
+                "reason": "model_gateway_config_invalid",
+            },
+        )
+        raise api_error(400, "MODEL_GATEWAY_CONFIG_INVALID", str(exc)) from exc
+    except ModelGatewayCallError as exc:
+        task["status"] = "failed"
+        task["current_step"] = "model_gateway_failed"
+        current_store.audit(
+            event_type="model_gateway.called",
+            actor_id="system",
+            ai_task_id=task_id,
+            subject_type="model_gateway_log",
+            subject_id=exc.log["id"],
+            payload={
+                "model_log_id": exc.log["id"],
+                "provider": exc.log["provider"],
+                "model": exc.log["model"],
+                "purpose": exc.log["purpose"],
+                "status": exc.log["status"],
+            },
+        )
+        current_store.audit(
+            event_type="ai_task.failed",
+            actor_id="system",
+            ai_task_id=task_id,
+            subject_type="ai_task",
+            subject_id=task_id,
+            payload={"current_step": task["current_step"]},
+        )
+        raise api_error(502, "MODEL_GATEWAY_FAILED", "Model gateway request failed") from exc
+
     task["status"] = "waiting_review"
     current_store.audit(
         event_type="model_gateway.called",
