@@ -31,12 +31,14 @@ import {
   fetchTaskCenterTasks,
   fetchTaskWritebackResult,
   previewGitLabMergeRequest,
+  requestTaskCenterReviewMoreInfo,
   snapshotGitLabMergeRequest,
   type CodeReviewReportRecord,
   type GitLabMergeRequestPreview,
   type ProductGitRepositoryOption,
   type TaskWritebackResultRecord,
   startTaskCenterTask,
+  submitTaskCenterMoreInfo,
   type TaskCenterReviewRecord,
   type TaskCenterTaskRecord,
 } from '../../services/aiBrain';
@@ -55,6 +57,12 @@ const taskStatusLabels: Record<string, { color: string; label: string }> = {
   writing_back: { color: 'purple', label: '写回中' },
 };
 
+const taskTypeLabels: Record<string, string> = {
+  code_review: 'Code Review',
+  product_detail_design: '产品详细设计',
+  technical_solution: '技术方案',
+};
+
 const writebackStatusLabels: Record<string, { color: string; label: string }> = {
   completed: { color: 'green', label: '已生成' },
   failed: { color: 'red', label: '失败' },
@@ -67,6 +75,21 @@ type TaskActionItem = {
   onClick: () => void;
   type?: 'default' | 'primary';
 };
+
+type RequestMoreInfoFormValues = {
+  questions: string;
+};
+
+type SubmitMoreInfoFormValues = {
+  answer: string;
+};
+
+function splitTextLines(value: string) {
+  return value
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
 function formatFinding(finding: unknown, index: number) {
   if (!finding || typeof finding !== 'object' || Array.isArray(finding)) {
@@ -81,6 +104,8 @@ function formatFinding(finding: unknown, index: number) {
 }
 
 export default function TaskCenterPage() {
+  const [requestMoreInfoForm] = Form.useForm<RequestMoreInfoFormValues>();
+  const [submitMoreInfoForm] = Form.useForm<SubmitMoreInfoFormValues>();
   const [markdownPreview, setMarkdownPreview] = useState<{
     content: string;
     title: string;
@@ -110,6 +135,14 @@ export default function TaskCenterPage() {
   }>();
   const [reviewDialog, setReviewDialog] = useState<{
     task?: TaskCenterTaskRecord;
+  }>();
+  const [requestMoreInfoDialog, setRequestMoreInfoDialog] = useState<{
+    review: TaskCenterReviewRecord;
+    submitting: boolean;
+  }>();
+  const [submitMoreInfoDialog, setSubmitMoreInfoDialog] = useState<{
+    submitting: boolean;
+    task: TaskCenterTaskRecord;
   }>();
   const {
     error,
@@ -162,6 +195,71 @@ export default function TaskCenterPage() {
       message.error(formatMutationError(reviewError));
     }
   }, [reloadTaskCenter]);
+
+  const openRequestMoreInfoDialog = useCallback((review: TaskCenterReviewRecord) => {
+    requestMoreInfoForm.resetFields();
+    setRequestMoreInfoDialog({ review, submitting: false });
+  }, [requestMoreInfoForm]);
+
+  const handleRequestMoreInfo = useCallback(async () => {
+    if (!requestMoreInfoDialog) {
+      return;
+    }
+    const values = await requestMoreInfoForm.validateFields();
+    const questions = splitTextLines(values.questions);
+    if (questions.length === 0) {
+      requestMoreInfoForm.setFields([
+        { errors: ['请输入需要补充的问题'], name: 'questions' },
+      ]);
+      return;
+    }
+    setRequestMoreInfoDialog((current) => (current ? { ...current, submitting: true } : current));
+    try {
+      await requestTaskCenterReviewMoreInfo(
+        requestMoreInfoDialog.review.id,
+        requestMoreInfoDialog.review.version,
+        questions,
+      );
+      message.success('已要求补充信息');
+      setRequestMoreInfoDialog(undefined);
+      setReviewDialog(undefined);
+      await reloadTaskCenter();
+    } catch (reviewError) {
+      setRequestMoreInfoDialog((current) => (current ? { ...current, submitting: false } : current));
+      message.error(formatMutationError(reviewError));
+    }
+  }, [reloadTaskCenter, requestMoreInfoDialog, requestMoreInfoForm]);
+
+  const openSubmitMoreInfoDialog = useCallback((task: TaskCenterTaskRecord) => {
+    submitMoreInfoForm.resetFields();
+    setSubmitMoreInfoDialog({ submitting: false, task });
+  }, [submitMoreInfoForm]);
+
+  const handleSubmitMoreInfo = useCallback(async () => {
+    if (!submitMoreInfoDialog) {
+      return;
+    }
+    const values = await submitMoreInfoForm.validateFields();
+    const answer = values.answer.trim();
+    if (!answer) {
+      submitMoreInfoForm.setFields([
+        { errors: ['请输入补充说明'], name: 'answer' },
+      ]);
+      return;
+    }
+    setSubmitMoreInfoDialog((current) => (current ? { ...current, submitting: true } : current));
+    try {
+      await submitTaskCenterMoreInfo(submitMoreInfoDialog.task.id, [
+        { answer, question: '补充说明' },
+      ]);
+      message.success('补充信息已提交，任务已回到草稿');
+      setSubmitMoreInfoDialog(undefined);
+      await reloadTaskCenter();
+    } catch (taskError) {
+      setSubmitMoreInfoDialog((current) => (current ? { ...current, submitting: false } : current));
+      message.error(formatMutationError(taskError));
+    }
+  }, [reloadTaskCenter, submitMoreInfoDialog, submitMoreInfoForm]);
 
   const handleCreateTechnicalSolution = useCallback(async (task: TaskCenterTaskRecord) => {
     try {
@@ -339,6 +437,15 @@ export default function TaskCenterPage() {
       });
     }
 
+    if (selectedActionTask.status === 'waiting_more_info') {
+      actions.push({
+        key: 'submit-more-info',
+        label: '提交补充信息',
+        onClick: closeAndRun(() => openSubmitMoreInfoDialog(selectedActionTask)),
+        type: 'primary',
+      });
+    }
+
     if (
       selectedActionTask.type === 'product_detail_design' &&
       selectedActionTask.status === 'completed'
@@ -394,6 +501,7 @@ export default function TaskCenterPage() {
     handleOpenCodeReviewReport,
     handleOpenWriteback,
     handleStartTask,
+    openSubmitMoreInfoDialog,
     openReviewDialog,
     selectedActionTask,
   ]);
@@ -407,7 +515,7 @@ export default function TaskCenterPage() {
         render: (_value, row) => (
           <span className="task-name">
             <strong>{row.label}</strong>
-            <small>{row.type}</small>
+            <small>{taskTypeLabels[row.type] ?? row.type}</small>
           </span>
         ),
       },
@@ -468,13 +576,18 @@ export default function TaskCenterPage() {
         title: '操作',
         valueType: 'option',
         render: (_, row) => (
-          <Button onClick={() => handleApproveReview(row)} type="link">
-            确认通过
-          </Button>
+          <Space size={4}>
+            <Button onClick={() => handleApproveReview(row)} type="link">
+              确认通过
+            </Button>
+            <Button onClick={() => openRequestMoreInfoDialog(row)} type="link">
+              要求补充
+            </Button>
+          </Space>
         ),
       },
     ],
-    [handleApproveReview],
+    [handleApproveReview, openRequestMoreInfoDialog],
   );
 
   return (
@@ -501,6 +614,7 @@ export default function TaskCenterPage() {
             options: [
               { label: '草稿', value: 'draft' },
               { label: '运行中', value: 'running' },
+              { label: '待补充', value: 'waiting_more_info' },
               { label: '待确认', value: 'waiting_review' },
               { label: '已完成', value: 'completed' },
               { label: '失败', value: 'failed' },
@@ -561,6 +675,30 @@ export default function TaskCenterPage() {
       </Modal>
 
       <Modal
+        confirmLoading={requestMoreInfoDialog?.submitting}
+        okText="提交补充问题"
+        onCancel={() => setRequestMoreInfoDialog(undefined)}
+        onOk={() => void handleRequestMoreInfo()}
+        open={Boolean(requestMoreInfoDialog)}
+        title={
+          requestMoreInfoDialog?.review.id
+            ? `要求补充信息：${requestMoreInfoDialog.review.id}`
+            : '要求补充信息'
+        }
+        width={640}
+      >
+        <Form<RequestMoreInfoFormValues> form={requestMoreInfoForm} layout="vertical">
+          <Form.Item
+            label="补充问题"
+            name="questions"
+            rules={[{ message: '请输入需要补充的问题', required: true, whitespace: true }]}
+          >
+            <Input.TextArea rows={4} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
         footer={null}
         onCancel={() => setActionDialog(undefined)}
         open={Boolean(actionDialog)}
@@ -568,18 +706,26 @@ export default function TaskCenterPage() {
         width={560}
       >
         {selectedActionTask ? (
-          <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-            <Descriptions column={1} size="small">
-              <Descriptions.Item label="任务类型">{selectedActionTask.type}</Descriptions.Item>
-              <Descriptions.Item label="状态">
+          <div className="task-operation-dialog" data-testid="task-operation-dialog">
+            <div className="task-operation-summary" data-testid="task-operation-summary">
+              <Text type="secondary">当前任务</Text>
+              <Text className="task-operation-title" strong>
+                {selectedActionTask.label}
+              </Text>
+              <Space size={8} wrap>
+                <Tag>{taskTypeLabels[selectedActionTask.type] ?? selectedActionTask.type}</Tag>
                 <StatusTag
                   color={taskStatusLabels[selectedActionTask.status]?.color ?? 'default'}
                   label={taskStatusLabels[selectedActionTask.status]?.label ?? selectedActionTask.status}
                 />
-              </Descriptions.Item>
-              <Descriptions.Item label="负责人">{selectedActionTask.owner}</Descriptions.Item>
-            </Descriptions>
-            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+                <Tag>{selectedActionTask.owner}</Tag>
+              </Space>
+            </div>
+            <div
+              aria-label="可执行操作"
+              className="task-operation-actions"
+              data-testid="task-operation-actions"
+            >
               {taskActionItems.length ? (
                 taskActionItems.map((item) => (
                   <Button block key={item.key} onClick={item.onClick} type={item.type}>
@@ -589,9 +735,33 @@ export default function TaskCenterPage() {
               ) : (
                 <Text type="secondary">当前状态暂无可执行操作。</Text>
               )}
-            </Space>
-          </Space>
+            </div>
+          </div>
         ) : null}
+      </Modal>
+
+      <Modal
+        confirmLoading={submitMoreInfoDialog?.submitting}
+        okText="提交补充内容"
+        onCancel={() => setSubmitMoreInfoDialog(undefined)}
+        onOk={() => void handleSubmitMoreInfo()}
+        open={Boolean(submitMoreInfoDialog)}
+        title={
+          submitMoreInfoDialog?.task.label
+            ? `提交补充信息：${submitMoreInfoDialog.task.label}`
+            : '提交补充信息'
+        }
+        width={640}
+      >
+        <Form<SubmitMoreInfoFormValues> form={submitMoreInfoForm} layout="vertical">
+          <Form.Item
+            label="补充说明"
+            name="answer"
+            rules={[{ message: '请输入补充说明', required: true, whitespace: true }]}
+          >
+            <Input.TextArea rows={4} />
+          </Form.Item>
+        </Form>
       </Modal>
 
       <Modal

@@ -278,9 +278,11 @@ import {
   previewGitLabMergeRequest,
   rejectKnowledgeDeposit,
   rejectManagementRequirement,
+  requestTaskCenterReviewMoreInfo,
   snapshotGitLabMergeRequest,
   saveCurrentUser,
   startTaskCenterTask,
+  submitTaskCenterMoreInfo,
   updateManagementBug,
   updateManagementKnowledgeDocument,
   updateManagementProduct,
@@ -596,7 +598,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('MVP-A 基础 + GitLab 输入闭环')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '运行 MVP 演示流程' })).not.toBeInTheDocument();
     expect(await screen.findByText('接口任务')).toBeInTheDocument();
-    expect(screen.getAllByText('product_detail_design')).not.toHaveLength(0);
+    expect(screen.getAllByText('产品详细设计')).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: '待确认' })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '操作' })).toHaveLength(4);
     expect(screen.queryByRole('button', { name: '确认输出' })).not.toBeInTheDocument();
@@ -607,6 +609,18 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByRole('button', { name: '查看报告' })).not.toBeInTheDocument();
     expect(screen.queryByText('确认台')).not.toBeInTheDocument();
     expect(screen.queryByText('确认编号')).not.toBeInTheDocument();
+    const completedTaskRow = screen.getByText('技术方案：接口任务').closest('tr');
+    expect(completedTaskRow).not.toBeNull();
+    fireEvent.click(within(completedTaskRow as HTMLElement).getByRole('button', { name: '操作' }));
+    const operationDialog = await screen.findByTestId('task-operation-dialog');
+    const summarySection = screen.getByTestId('task-operation-summary');
+    const actionSection = screen.getByTestId('task-operation-actions');
+    expect(operationDialog).toContainElement(summarySection);
+    expect(operationDialog).toContainElement(actionSection);
+    expect(summarySection.compareDocumentPosition(actionSection)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(actionSection).toHaveClass('task-operation-actions');
+    expect(screen.getByRole('button', { name: '创建 Code Review' })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByLabelText('Close')[0]);
     fireEvent.click(screen.getByRole('button', { name: '待确认' }));
     expect(await screen.findByText('接口任务输出摘要')).toBeInTheDocument();
     expect(screen.getAllByText('确认编号')).not.toHaveLength(0);
@@ -700,6 +714,110 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/writeback/results/task_solution_done', 'GET'],
       ['/api/writeback/results/task_solution_done', 'POST'],
     ]);
+  });
+
+  it('requests and submits more information from task management dialogs', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/ai-tasks') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'task_more_info',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'waiting_more_info',
+                task_type: 'product_detail_design',
+                title: '待补充详细设计',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/reviews/pending') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                ai_task_id: 'task_review',
+                content: { summary: '需要人工确认的输出' },
+                id: 'review_more_info',
+                stage: 'product_detail_design',
+                status: 'pending',
+                version: 1,
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/reviews/review_more_info/request-more-info') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          questions: ['请补充验收边界'],
+          version: 1,
+        });
+        return jsonResponse({
+          data: {
+            review_status: 'requested_more_info',
+            task_status: 'waiting_more_info',
+          },
+        });
+      }
+      if (input === '/api/ai-tasks/task_more_info/more-info') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          answers: [{ answer: '补充 P0 验收边界', question: '补充说明' }],
+        });
+        return jsonResponse({ data: { id: 'task_more_info', status: 'draft' } });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    expect(await screen.findByText('待补充详细设计')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '待确认' }));
+    expect(await screen.findByText('需要人工确认的输出')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '要求补充' }));
+    fireEvent.change(screen.getByLabelText('补充问题'), {
+      target: { value: '请补充验收边界' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '提交补充问题' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
+        '/api/reviews/review_more_info/request-more-info',
+        'POST',
+      ]),
+    );
+
+    const taskRow = screen.getByText('待补充详细设计').closest('tr');
+    expect(taskRow).not.toBeNull();
+    fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
+    expect(await screen.findByText(/任务操作：待补充详细设计/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '提交补充信息' }));
+    fireEvent.change(screen.getByLabelText('补充说明'), {
+      target: { value: '补充 P0 验收边界' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '提交补充内容' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
+        '/api/ai-tasks/task_more_info/more-info',
+        'POST',
+      ]),
+    );
   });
 
   it('opens knowledge deposit review and approves a pending deposit', async () => {
@@ -1455,6 +1573,60 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(window.location.search).toBe(
       '?redirect=%2Fdelivery%2Frequirements%3Fpriority%3DP0',
     );
+  });
+
+  it('sends review and task more-info mutations to backend APIs', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/review_api/request-more-info') {
+        expect(init?.method).toBe('POST');
+        expect(init?.body).toBe(
+          JSON.stringify({
+            questions: ['请补充验收边界'],
+            version: 1,
+          }),
+        );
+        return jsonResponse({
+          data: {
+            review_status: 'requested_more_info',
+            task_status: 'waiting_more_info',
+          },
+        });
+      }
+      if (input === '/api/ai-tasks/task_api/more-info') {
+        expect(init?.method).toBe('POST');
+        expect(init?.body).toBe(
+          JSON.stringify({
+            answers: [{ answer: '补充 P0 验收边界', question: '补充说明' }],
+          }),
+        );
+        return jsonResponse({ data: { id: 'task_api', status: 'draft' } });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      requestTaskCenterReviewMoreInfo('review_api', 1, ['请补充验收边界']),
+    ).resolves.toMatchObject({
+      review_status: 'requested_more_info',
+      task_status: 'waiting_more_info',
+    });
+    await expect(
+      submitTaskCenterMoreInfo('task_api', [
+        { answer: '补充 P0 验收边界', question: '补充说明' },
+      ]),
+    ).resolves.toMatchObject({ id: 'task_api', status: 'draft' });
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ['/api/reviews/review_api/request-more-info', 'POST'],
+      ['/api/ai-tasks/task_api/more-info', 'POST'],
+    ]);
   });
 
   it('sends management CRUD mutations to backend APIs with the stored token', async () => {

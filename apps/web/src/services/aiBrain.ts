@@ -112,6 +112,11 @@ export type TaskCenterReviewRecord = {
   version: number;
 };
 
+export type TaskMoreInfoAnswer = {
+  answer: string;
+  question: string;
+};
+
 export type OperationalMetricRecord = {
   category: string;
   id: string;
@@ -1075,6 +1080,31 @@ export async function approveTaskCenterReview(reviewId: string, version: number)
       token,
     },
   );
+}
+
+export async function requestTaskCenterReviewMoreInfo(
+  reviewId: string,
+  version: number,
+  questions: string[],
+) {
+  const token = requireAccessToken();
+  return apiRequest<{ review_status: string; task_status: string }>(
+    `/api/reviews/${reviewId}/request-more-info`,
+    {
+      body: { questions, version },
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function submitTaskCenterMoreInfo(taskId: string, answers: TaskMoreInfoAnswer[]) {
+  const token = requireAccessToken();
+  return apiRequest<{ id: string; status: string }>(`/api/ai-tasks/${taskId}/more-info`, {
+    body: { answers },
+    method: 'POST',
+    token,
+  });
 }
 
 function technicalSolutionTitleFromDesignTask(task: TaskCenterTaskRecord) {
