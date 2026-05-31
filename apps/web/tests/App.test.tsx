@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@ant-design/pro-components', async () => {
@@ -250,9 +250,13 @@ import RequirementsPage from '../src/pages/Requirements';
 import UsersPage from '../src/pages/Users';
 import {
   approveManagementRequirement,
+  approveKnowledgeDeposit,
   approveTaskCenterReview,
   apiRequest,
+  AUTH_STATE_EVENT,
+  clearAccessToken,
   createManagementBug,
+  createTaskWritebackResult,
   createManagementKnowledgeDocument,
   createManagementProduct,
   createManagementRequirement,
@@ -266,11 +270,15 @@ import {
   deleteManagementUser,
   fetchTaskMarkdown,
   fetchCodeReviewReport,
+  fetchKnowledgeDeposits,
   fetchProductGitRepositories,
+  fetchTaskWritebackResult,
   generateRequirementTask,
   previewGitLabMergeRequest,
+  rejectKnowledgeDeposit,
   rejectManagementRequirement,
   snapshotGitLabMergeRequest,
+  saveCurrentUser,
   startTaskCenterTask,
   updateManagementBug,
   updateManagementKnowledgeDocument,
@@ -389,6 +397,22 @@ describe('AI Brain Ant Design Pro workbench', () => {
       },
     });
     expect(window.localStorage.getItem('ai_brain_current_user')).toContain('real@example.com');
+  });
+
+  it('notifies the layout when local auth state changes', () => {
+    const listener = vi.fn();
+    window.addEventListener(AUTH_STATE_EVENT, listener);
+
+    saveCurrentUser({
+      display_name: 'AI Brain Admin',
+      id: 'user_admin',
+      roles: ['admin'],
+      username: 'admin@example.com',
+    });
+    clearAccessToken();
+
+    window.removeEventListener(AUTH_STATE_EVENT, listener);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it('sends already authenticated users away from the login page', async () => {
@@ -573,11 +597,13 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(await screen.findByText('接口任务')).toBeInTheDocument();
     expect(screen.getAllByText('product_detail_design')).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: '待确认' })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: '确认输出' })).not.toHaveLength(0);
-    expect(screen.getByRole('button', { name: '生成技术方案' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '导出 Markdown' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '创建 Code Review' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '查看报告' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '操作' })).toHaveLength(4);
+    expect(screen.queryByRole('button', { name: '确认输出' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成技术方案' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '导出 Markdown' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '模拟 Issue' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '创建 Code Review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看报告' })).not.toBeInTheDocument();
     expect(screen.queryByText('确认台')).not.toBeInTheDocument();
     expect(screen.queryByText('确认编号')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '待确认' }));
@@ -585,6 +611,173 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getAllByText('确认编号')).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  });
+
+  it('opens mock issue writeback from completed task rows', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/pending') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ai-tasks') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'task_solution_done',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'technical_solution',
+                title: '技术方案：写回需求',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/writeback/results/task_solution_done' && init?.method !== 'POST') {
+        return jsonResponse({
+          data: {
+            idempotency_key: 'mock_issue:task_solution_done',
+            issues: [],
+            status: 'not_written',
+            task_id: 'task_solution_done',
+          },
+        });
+      }
+      if (input === '/api/writeback/results/task_solution_done' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            idempotency_key: 'mock_issue:task_solution_done',
+            issues: [
+              {
+                id: 'mock_issue_api',
+                source_task_id: 'task_solution_done',
+                status: 'open',
+                title: '技术方案：写回需求',
+              },
+            ],
+            status: 'completed',
+            task_id: 'task_solution_done',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    expect(await screen.findByText('技术方案：写回需求')).toBeInTheDocument();
+    const taskRow = screen.getByText('技术方案：写回需求').closest('tr');
+    expect(taskRow).not.toBeNull();
+    fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
+
+    expect(await screen.findByText(/任务操作：技术方案：写回需求/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '创建 Code Review' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '模拟 Issue' }));
+
+    expect(await screen.findByText(/模拟 Issue 写回/)).toBeInTheDocument();
+    expect(screen.getByText('未写回')).toBeInTheDocument();
+    expect(screen.getByText('mock_issue:task_solution_done')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '生成模拟 Issue' }));
+
+    expect(await screen.findByText('已生成')).toBeInTheDocument();
+    expect(screen.getByText('mock_issue_api')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ['/api/ai-tasks', 'GET'],
+      ['/api/reviews/pending', 'GET'],
+      ['/api/writeback/results/task_solution_done', 'GET'],
+      ['/api/writeback/results/task_solution_done', 'POST'],
+    ]);
+  });
+
+  it('opens knowledge deposit review and approves a pending deposit', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/knowledge/documents') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                doc_type: 'Spec',
+                id: 'knowledge_api',
+                index_status: 'indexed',
+                permission_roles: ['admin'],
+                title: '接口知识',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/deposits?status=pending') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                ai_task_id: 'task_solution_done',
+                content: '沉淀内容摘要',
+                id: 'deposit_api',
+                knowledge_document_id: null,
+                status: 'pending',
+                title: '技术方案知识沉淀',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/deposits/deposit_api/approve') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          permission_roles: ['admin'],
+          title: '技术方案知识沉淀',
+        });
+        return jsonResponse({
+          data: {
+            ai_task_id: 'task_solution_done',
+            id: 'deposit_api',
+            knowledge_document_id: 'knowledge_deposit_api',
+            status: 'approved',
+            title: '技术方案知识沉淀',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<KnowledgePage />);
+
+    expect(await screen.findByText('接口知识')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '沉淀审核' }));
+
+    expect(await screen.findByText('技术方案知识沉淀')).toBeInTheDocument();
+    expect(screen.getByText('沉淀内容摘要')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '批准入库' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
+        '/api/knowledge/deposits/deposit_api/approve',
+        'POST',
+      ]),
+    );
   });
 
   it('renders dashboard and operation pages without placeholder data', async () => {
@@ -1400,6 +1593,109 @@ describe('AI Brain Ant Design Pro workbench', () => {
         title: 'Code Review：CRUD 需求 MR !42',
       }),
     );
+  });
+
+  it('sends MVP-C writeback and knowledge deposit mutations to backend APIs', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/writeback/results/task_solution') {
+        return jsonResponse({
+          data: {
+            idempotency_key: 'mock_issue:task_solution',
+            issues: [
+              {
+                id: 'mock_issue_api',
+                source_task_id: 'task_solution',
+                status: 'open',
+                title: '技术方案：CRUD 需求',
+              },
+            ],
+            status: init?.method === 'POST' ? 'completed' : 'not_written',
+            task_id: 'task_solution',
+          },
+        });
+      }
+      if (input === '/api/knowledge/deposits?status=pending') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                ai_task_id: 'task_solution',
+                content: '沉淀内容',
+                id: 'deposit_api',
+                status: 'pending',
+                title: '技术方案知识沉淀',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/deposits/deposit_api/approve') {
+        return jsonResponse({
+          data: {
+            id: 'deposit_api',
+            knowledge_document_id: 'knowledge_api',
+            status: 'approved',
+          },
+        });
+      }
+      if (input === '/api/knowledge/deposits/deposit_api/reject') {
+        return jsonResponse({
+          data: {
+            id: 'deposit_api',
+            rejection_reason: '内容重复',
+            status: 'rejected',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchTaskWritebackResult('task_solution')).resolves.toMatchObject({
+      idempotencyKey: 'mock_issue:task_solution',
+      status: 'not_written',
+    });
+    await expect(createTaskWritebackResult('task_solution')).resolves.toMatchObject({
+      issues: [{ id: 'mock_issue_api', title: '技术方案：CRUD 需求' }],
+      status: 'completed',
+    });
+    await expect(fetchKnowledgeDeposits('pending')).resolves.toMatchObject([
+      {
+        aiTaskId: 'task_solution',
+        id: 'deposit_api',
+        status: 'pending',
+        title: '技术方案知识沉淀',
+      },
+    ]);
+    await approveKnowledgeDeposit('deposit_api', {
+      permissionRoles: ['admin', 'rd_owner'],
+      title: '批准标题',
+    });
+    await rejectKnowledgeDeposit('deposit_api', '内容重复');
+
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toEqual([
+      ['/api/writeback/results/task_solution', 'GET', undefined],
+      ['/api/writeback/results/task_solution', 'POST', undefined],
+      ['/api/knowledge/deposits?status=pending', 'GET', undefined],
+      [
+        '/api/knowledge/deposits/deposit_api/approve',
+        'POST',
+        JSON.stringify({ permission_roles: ['admin', 'rd_owner'], title: '批准标题' }),
+      ],
+      [
+        '/api/knowledge/deposits/deposit_api/reject',
+        'POST',
+        JSON.stringify({ reason: '内容重复' }),
+      ],
+    ]);
   });
 
 });

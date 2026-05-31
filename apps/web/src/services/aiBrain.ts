@@ -34,6 +34,14 @@ type ListResponse<T> = {
 
 const ACCESS_TOKEN_STORAGE_KEY = 'ai_brain_access_token';
 const CURRENT_USER_STORAGE_KEY = 'ai_brain_current_user';
+export const AUTH_STATE_EVENT = 'ai-brain-auth-state-changed';
+
+function emitAuthStateChanged() {
+  if (typeof globalThis.dispatchEvent !== 'function' || typeof Event !== 'function') {
+    return;
+  }
+  globalThis.dispatchEvent(new Event(AUTH_STATE_EVENT));
+}
 
 export class ApiRequestError extends Error {
   code?: string;
@@ -162,6 +170,35 @@ export type CodeReviewReportRecord = {
   riskLevel: string;
   status: string;
   summary: string;
+};
+
+export type TaskWritebackIssueRecord = {
+  id: string;
+  sourceTaskId?: string;
+  status: string;
+  title: string;
+};
+
+export type TaskWritebackResultRecord = {
+  idempotencyKey: string;
+  issues: TaskWritebackIssueRecord[];
+  status: string;
+  taskId: string;
+};
+
+export type KnowledgeDepositRecord = {
+  aiTaskId: string;
+  content: string;
+  id: string;
+  knowledgeDocumentId?: string | null;
+  rejectionReason?: string;
+  status: string;
+  title: string;
+};
+
+export type KnowledgeDepositApprovePayload = {
+  permissionRoles?: string[];
+  title?: string;
 };
 
 type ProductListItem = {
@@ -343,6 +380,30 @@ type CodeReviewReportResponse = {
   summary?: string;
 };
 
+type TaskWritebackIssueResponse = {
+  id: string;
+  source_task_id?: string;
+  status?: string;
+  title?: string;
+};
+
+type TaskWritebackResultResponse = {
+  idempotency_key?: string;
+  issues?: TaskWritebackIssueResponse[];
+  status?: string;
+  task_id?: string;
+};
+
+type KnowledgeDepositListItem = {
+  ai_task_id: string;
+  content?: string;
+  id: string;
+  knowledge_document_id?: string | null;
+  rejection_reason?: string;
+  status?: string;
+  title?: string;
+};
+
 type PendingReviewListItem = {
   ai_task_id: string;
   content?: Record<string, unknown>;
@@ -437,6 +498,7 @@ export function saveCurrentUser(user: CurrentUserResponse) {
     return;
   }
   globalThis.localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
+  emitAuthStateChanged();
 }
 
 export function getStoredCurrentUser(): CurrentUserResponse | undefined {
@@ -461,6 +523,7 @@ export function clearAccessToken() {
   }
   globalThis.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
   globalThis.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+  emitAuthStateChanged();
 }
 
 function handleUnauthorizedApiResponse() {
@@ -1148,6 +1211,107 @@ export async function fetchCodeReviewReport(taskId: string): Promise<CodeReviewR
     status: report.status ?? '-',
     summary: report.summary ?? '-',
   };
+}
+
+function mapTaskWritebackResult(
+  response: TaskWritebackResultResponse,
+  fallbackTaskId: string,
+): TaskWritebackResultRecord {
+  return {
+    idempotencyKey: response.idempotency_key ?? `mock_issue:${fallbackTaskId}`,
+    issues: (response.issues ?? []).map((issue) => ({
+      id: issue.id,
+      sourceTaskId: issue.source_task_id,
+      status: issue.status ?? '-',
+      title: issue.title ?? issue.id,
+    })),
+    status: response.status ?? '-',
+    taskId: response.task_id ?? fallbackTaskId,
+  };
+}
+
+export async function fetchTaskWritebackResult(
+  taskId: string,
+): Promise<TaskWritebackResultRecord> {
+  const token = requireAccessToken();
+  const result = await apiRequest<TaskWritebackResultResponse>(
+    `/api/writeback/results/${taskId}`,
+    { token },
+  );
+  return mapTaskWritebackResult(result, taskId);
+}
+
+export async function createTaskWritebackResult(
+  taskId: string,
+): Promise<TaskWritebackResultRecord> {
+  const token = requireAccessToken();
+  const result = await apiRequest<TaskWritebackResultResponse>(
+    `/api/writeback/results/${taskId}`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
+  return mapTaskWritebackResult(result, taskId);
+}
+
+function mapKnowledgeDeposit(deposit: KnowledgeDepositListItem): KnowledgeDepositRecord {
+  return {
+    aiTaskId: deposit.ai_task_id,
+    content: deposit.content ?? '-',
+    id: deposit.id,
+    knowledgeDocumentId: deposit.knowledge_document_id,
+    rejectionReason: deposit.rejection_reason,
+    status: deposit.status ?? '-',
+    title: deposit.title ?? deposit.id,
+  };
+}
+
+export async function fetchKnowledgeDeposits(
+  status = 'pending',
+): Promise<KnowledgeDepositRecord[]> {
+  const token = requireAccessToken();
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  const deposits = await apiRequest<ListResponse<KnowledgeDepositListItem>>(
+    `/api/knowledge/deposits${query}`,
+    { token },
+  );
+  return deposits.items.map(mapKnowledgeDeposit);
+}
+
+export async function approveKnowledgeDeposit(
+  depositId: string,
+  payload: KnowledgeDepositApprovePayload = {},
+): Promise<KnowledgeDepositRecord> {
+  const token = requireAccessToken();
+  const deposit = await apiRequest<KnowledgeDepositListItem>(
+    `/api/knowledge/deposits/${depositId}/approve`,
+    {
+      body: {
+        permission_roles: payload.permissionRoles ?? ['admin'],
+        title: payload.title,
+      },
+      method: 'POST',
+      token,
+    },
+  );
+  return mapKnowledgeDeposit(deposit);
+}
+
+export async function rejectKnowledgeDeposit(
+  depositId: string,
+  reason: string,
+): Promise<KnowledgeDepositRecord> {
+  const token = requireAccessToken();
+  const deposit = await apiRequest<KnowledgeDepositListItem>(
+    `/api/knowledge/deposits/${depositId}/reject`,
+    {
+      body: { reason },
+      method: 'POST',
+      token,
+    },
+  );
+  return mapKnowledgeDeposit(deposit);
 }
 
 export async function fetchTaskMarkdown(taskId: string): Promise<string> {

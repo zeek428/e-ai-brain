@@ -2,6 +2,7 @@ import { ClusterOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons
 import { ConfigProvider, Dropdown, theme } from 'antd';
 import type { ReactNode } from 'react';
 
+import { CurrentUserTitle } from './components/CurrentUserTitle';
 import { handleLogout, redirectToLoginIfNeeded } from './runtimeAuth';
 import { fetchCurrentUser, getStoredCurrentUser } from './services/aiBrain';
 import './global.css';
@@ -70,7 +71,7 @@ export const layout = ({ initialState }: { initialState?: InitialState }) => ({
         </button>
       </Dropdown>
     ),
-    title: initialState?.currentUser?.name ?? 'admin',
+    title: <CurrentUserTitle fallback={initialState?.currentUser?.name ?? '未登录'} />,
   },
   contentStyle: {
     padding: 0,

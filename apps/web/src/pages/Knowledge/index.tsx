@@ -1,16 +1,21 @@
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
+import { Button, Form, Input, Modal, Popconfirm, Select, Space, Typography, message } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { KnowledgeRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
+  approveKnowledgeDeposit,
   createManagementKnowledgeDocument,
   deleteManagementKnowledgeDocument,
+  fetchKnowledgeDeposits,
   fetchManagementKnowledge,
+  rejectKnowledgeDeposit,
   updateManagementKnowledgeDocument,
+  type KnowledgeDepositRecord,
 } from '../../services/aiBrain';
 import {
   formatMutationError,
@@ -18,11 +23,19 @@ import {
   splitCommaText,
 } from '../../utils/managementCrud';
 
+const { Text } = Typography;
+
 const statusLabels: Record<KnowledgeRecord['status'], { color: string; label: string }> = {
   failed: { color: 'red', label: '索引失败' },
   indexed: { color: 'green', label: '已索引' },
   pending_index: { color: 'gold', label: '待索引' },
   review_pending: { color: 'blue', label: '待审核' },
+};
+
+const depositStatusLabels: Record<string, { color: string; label: string }> = {
+  approved: { color: 'green', label: '已入库' },
+  pending: { color: 'gold', label: '待审核' },
+  rejected: { color: 'red', label: '已拒绝' },
 };
 
 type KnowledgeFormValues = {
@@ -34,10 +47,19 @@ type KnowledgeFormValues = {
   title: string;
 };
 
+type RejectDepositFormValues = {
+  reason: string;
+};
+
 export default function KnowledgePage() {
   const [form] = Form.useForm<KnowledgeFormValues>();
+  const [rejectDepositForm] = Form.useForm<RejectDepositFormValues>();
+  const [depositRows, setDepositRows] = useState<KnowledgeDepositRecord[]>([]);
+  const [depositsLoading, setDepositsLoading] = useState(false);
+  const [isDepositsModalOpen, setIsDepositsModalOpen] = useState(false);
   const [editingDocument, setEditingDocument] = useState<KnowledgeRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [rejectingDeposit, setRejectingDeposit] = useState<KnowledgeDepositRecord | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const {
     error,
@@ -55,6 +77,23 @@ export default function KnowledgePage() {
     });
     setIsModalOpen(true);
   };
+
+  const reloadDeposits = useCallback(async () => {
+    setDepositsLoading(true);
+    try {
+      const deposits = await fetchKnowledgeDeposits('pending');
+      setDepositRows(deposits);
+    } catch (depositError) {
+      message.error(formatMutationError(depositError));
+    } finally {
+      setDepositsLoading(false);
+    }
+  }, []);
+
+  const openDepositsModal = useCallback(() => {
+    setIsDepositsModalOpen(true);
+    void reloadDeposits();
+  }, [reloadDeposits]);
 
   const openEditModal = useCallback((row: KnowledgeRecord) => {
     setEditingDocument(row);
@@ -108,6 +147,39 @@ export default function KnowledgePage() {
     }
   }, [reload]);
 
+  const handleApproveDeposit = useCallback(async (row: KnowledgeDepositRecord) => {
+    try {
+      await approveKnowledgeDeposit(row.id, {
+        permissionRoles: ['admin'],
+        title: row.title,
+      });
+      message.success('知识沉淀已入库');
+      await Promise.all([reloadDeposits(), reload()]);
+    } catch (depositError) {
+      message.error(formatMutationError(depositError));
+    }
+  }, [reload, reloadDeposits]);
+
+  const openRejectDepositModal = useCallback((row: KnowledgeDepositRecord) => {
+    setRejectingDeposit(row);
+    rejectDepositForm.resetFields();
+  }, [rejectDepositForm]);
+
+  const handleRejectDeposit = async () => {
+    if (!rejectingDeposit) {
+      return;
+    }
+    const values = await rejectDepositForm.validateFields();
+    try {
+      await rejectKnowledgeDeposit(rejectingDeposit.id, values.reason.trim());
+      message.success('知识沉淀已拒绝');
+      setRejectingDeposit(null);
+      await reloadDeposits();
+    } catch (depositError) {
+      message.error(formatMutationError(depositError));
+    }
+  };
+
   const columns = useMemo<ProColumns<KnowledgeRecord>[]>(
     () => [
       {
@@ -159,6 +231,52 @@ export default function KnowledgePage() {
     [handleDelete, openEditModal],
   );
 
+  const depositColumns = useMemo<ProColumns<KnowledgeDepositRecord>[]>(
+    () => [
+      {
+        dataIndex: 'id',
+        title: '沉淀编号',
+      },
+      {
+        dataIndex: 'title',
+        title: '沉淀标题',
+      },
+      {
+        dataIndex: 'aiTaskId',
+        title: '任务编号',
+      },
+      {
+        dataIndex: 'content',
+        title: '内容摘要',
+      },
+      {
+        dataIndex: 'status',
+        title: '状态',
+        render: (_, row) => {
+          const label = depositStatusLabels[row.status] ?? { color: 'default', label: row.status };
+          return <StatusTag color={label.color} label={label.label} />;
+        },
+      },
+      {
+        key: 'actions',
+        title: '操作',
+        valueType: 'option',
+        render: (_, row) =>
+          row.status === 'pending' ? (
+            <Space size={4}>
+              <Button onClick={() => handleApproveDeposit(row)} type="link">
+                批准入库
+              </Button>
+              <Button danger onClick={() => openRejectDepositModal(row)} type="link">
+                拒绝
+              </Button>
+            </Space>
+          ) : null,
+      },
+    ],
+    [handleApproveDeposit, openRejectDepositModal],
+  );
+
   return (
     <>
       <ManagementListPage<KnowledgeRecord>
@@ -199,7 +317,32 @@ export default function KnowledgePage() {
         rowKey="id"
         tableTitle="知识列表"
         title="知识中心"
+        toolbarActions={[
+          <Button key="deposit-review" onClick={openDepositsModal}>
+            沉淀审核
+          </Button>,
+        ]}
       />
+      <Modal
+        footer={null}
+        onCancel={() => setIsDepositsModalOpen(false)}
+        open={isDepositsModalOpen}
+        title="沉淀审核"
+        width={920}
+      >
+        <ProTable<KnowledgeDepositRecord>
+          columns={depositColumns}
+          dataSource={depositRows}
+          loading={depositsLoading}
+          options={false}
+          pagination={false}
+          rowKey="id"
+          search={false}
+        />
+        {depositRows.length === 0 && !depositsLoading ? (
+          <Text type="secondary">当前没有待审核知识沉淀。</Text>
+        ) : null}
+      </Modal>
       <Modal
         confirmLoading={isSaving}
         destroyOnHidden
@@ -235,6 +378,18 @@ export default function KnowledgePage() {
           ) : null}
           <Form.Item label="内容" name="content" rules={[{ required: true, message: '请输入知识内容' }]}>
             <Input.TextArea autoSize={{ minRows: 5 }} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        onCancel={() => setRejectingDeposit(null)}
+        onOk={() => void handleRejectDeposit()}
+        open={Boolean(rejectingDeposit)}
+        title={rejectingDeposit ? `拒绝沉淀：${rejectingDeposit.title}` : '拒绝沉淀'}
+      >
+        <Form<RejectDepositFormValues> form={rejectDepositForm} layout="vertical">
+          <Form.Item label="拒绝原因" name="reason" rules={[{ required: true, message: '请输入拒绝原因' }]}>
+            <Input.TextArea autoSize={{ minRows: 3 }} />
           </Form.Item>
         </Form>
       </Modal>

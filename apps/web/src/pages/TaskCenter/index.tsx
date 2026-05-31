@@ -1,3 +1,4 @@
+import { MoreOutlined } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
@@ -22,16 +23,19 @@ import {
   approveTaskCenterReview,
   createCodeReviewTask,
   createTechnicalSolutionTask,
+  createTaskWritebackResult,
   fetchCodeReviewReport,
   fetchProductGitRepositories,
   fetchTaskMarkdown,
   fetchTaskCenterPendingReviews,
   fetchTaskCenterTasks,
+  fetchTaskWritebackResult,
   previewGitLabMergeRequest,
   snapshotGitLabMergeRequest,
   type CodeReviewReportRecord,
   type GitLabMergeRequestPreview,
   type ProductGitRepositoryOption,
+  type TaskWritebackResultRecord,
   startTaskCenterTask,
   type TaskCenterReviewRecord,
   type TaskCenterTaskRecord,
@@ -49,6 +53,19 @@ const taskStatusLabels: Record<string, { color: string; label: string }> = {
   waiting_more_info: { color: 'orange', label: '待补充' },
   waiting_review: { color: 'gold', label: '待确认' },
   writing_back: { color: 'purple', label: '写回中' },
+};
+
+const writebackStatusLabels: Record<string, { color: string; label: string }> = {
+  completed: { color: 'green', label: '已生成' },
+  failed: { color: 'red', label: '失败' },
+  not_written: { color: 'default', label: '未写回' },
+};
+
+type TaskActionItem = {
+  key: string;
+  label: string;
+  onClick: () => void;
+  type?: 'default' | 'primary';
 };
 
 function formatFinding(finding: unknown, index: number) {
@@ -82,6 +99,15 @@ export default function TaskCenterPage() {
     report?: CodeReviewReportRecord;
     task: TaskCenterTaskRecord;
   }>();
+  const [writebackDialog, setWritebackDialog] = useState<{
+    loading: boolean;
+    result?: TaskWritebackResultRecord;
+    submitting: boolean;
+    task: TaskCenterTaskRecord;
+  }>();
+  const [actionDialog, setActionDialog] = useState<{
+    task: TaskCenterTaskRecord;
+  }>();
   const [reviewDialog, setReviewDialog] = useState<{
     task?: TaskCenterTaskRecord;
   }>();
@@ -109,6 +135,7 @@ export default function TaskCenterPage() {
         : reviewRows,
     [reviewDialog, reviewRows],
   );
+  const selectedActionTask = actionDialog?.task;
 
   const openReviewDialog = useCallback((task?: TaskCenterTaskRecord) => {
     setReviewDialog({ task });
@@ -245,6 +272,132 @@ export default function TaskCenterPage() {
     }
   }, []);
 
+  const handleOpenWriteback = useCallback(async (task: TaskCenterTaskRecord) => {
+    setWritebackDialog({ loading: true, submitting: false, task });
+    try {
+      const result = await fetchTaskWritebackResult(task.id);
+      setWritebackDialog((current) =>
+        current?.task.id === task.id ? { ...current, loading: false, result } : current,
+      );
+    } catch (taskError) {
+      setWritebackDialog((current) =>
+        current?.task.id === task.id ? { ...current, loading: false } : current,
+      );
+      message.error(formatMutationError(taskError));
+    }
+  }, []);
+
+  const handleCreateWriteback = useCallback(async () => {
+    if (!writebackDialog?.task) {
+      return;
+    }
+    const { task } = writebackDialog;
+    setWritebackDialog((current) => (current ? { ...current, submitting: true } : current));
+    try {
+      const result = await createTaskWritebackResult(task.id);
+      setWritebackDialog((current) =>
+        current?.task.id === task.id
+          ? { ...current, loading: false, result, submitting: false }
+          : current,
+      );
+      message.success('模拟 Issue 已生成');
+    } catch (taskError) {
+      setWritebackDialog((current) => (current ? { ...current, submitting: false } : current));
+      message.error(formatMutationError(taskError));
+    }
+  }, [writebackDialog]);
+
+  const taskActionItems = useMemo<TaskActionItem[]>(() => {
+    if (!selectedActionTask) {
+      return [];
+    }
+
+    const closeAndRun =
+      (action: () => void | Promise<void>) =>
+      () => {
+        setActionDialog(undefined);
+        void action();
+      };
+
+    const actions: TaskActionItem[] = [];
+
+    if (selectedActionTask.status === 'draft') {
+      actions.push({
+        key: 'start',
+        label: '启动任务',
+        onClick: closeAndRun(() => handleStartTask(selectedActionTask)),
+        type: 'primary',
+      });
+    }
+
+    if (selectedActionTask.status === 'waiting_review') {
+      actions.push({
+        key: 'review',
+        label: '确认输出',
+        onClick: closeAndRun(() => openReviewDialog(selectedActionTask)),
+        type: 'primary',
+      });
+    }
+
+    if (
+      selectedActionTask.type === 'product_detail_design' &&
+      selectedActionTask.status === 'completed'
+    ) {
+      actions.push({
+        key: 'create-solution',
+        label: '生成技术方案',
+        onClick: closeAndRun(() => handleCreateTechnicalSolution(selectedActionTask)),
+        type: 'primary',
+      });
+    }
+
+    if (
+      selectedActionTask.type === 'technical_solution' &&
+      selectedActionTask.status === 'completed'
+    ) {
+      actions.push(
+        {
+          key: 'create-code-review',
+          label: '创建 Code Review',
+          onClick: closeAndRun(() => handleOpenCodeReview(selectedActionTask)),
+          type: 'primary',
+        },
+        {
+          key: 'export-markdown',
+          label: '导出 Markdown',
+          onClick: closeAndRun(() => handleExportMarkdown(selectedActionTask)),
+        },
+      );
+    }
+
+    if (selectedActionTask.status === 'completed') {
+      actions.push({
+        key: 'writeback',
+        label: '模拟 Issue',
+        onClick: closeAndRun(() => handleOpenWriteback(selectedActionTask)),
+      });
+    }
+
+    if (selectedActionTask.type === 'code_review') {
+      actions.push({
+        key: 'code-review-report',
+        label: '查看报告',
+        onClick: closeAndRun(() => handleOpenCodeReviewReport(selectedActionTask)),
+      });
+    }
+
+    return actions;
+  }, [
+    handleCreateTechnicalSolution,
+    handleExportMarkdown,
+    handleOpenCodeReview,
+    handleOpenCodeReviewReport,
+    handleOpenWriteback,
+    handleStartTask,
+    openReviewDialog,
+    selectedActionTask,
+  ]);
+
   const columns = useMemo<ProColumns<TaskCenterTaskRecord>[]>(
     () => [
       {
@@ -277,49 +430,18 @@ export default function TaskCenterPage() {
         title: '操作',
         valueType: 'option',
         render: (_, row) => (
-          <Space size={4}>
-            {row.status === 'draft' ? (
-              <Button onClick={() => handleStartTask(row)} type="link">
-                启动任务
-              </Button>
-            ) : null}
-            {row.status === 'waiting_review' ? (
-              <Button onClick={() => openReviewDialog(row)} type="link">
-                确认输出
-              </Button>
-            ) : null}
-            {row.type === 'product_detail_design' && row.status === 'completed' ? (
-              <Button onClick={() => handleCreateTechnicalSolution(row)} type="link">
-                生成技术方案
-              </Button>
-            ) : null}
-            {row.type === 'technical_solution' && row.status === 'completed' ? (
-              <>
-                <Button onClick={() => handleOpenCodeReview(row)} type="link">
-                  创建 Code Review
-                </Button>
-                <Button onClick={() => handleExportMarkdown(row)} type="link">
-                  导出 Markdown
-                </Button>
-              </>
-            ) : null}
-            {row.type === 'code_review' ? (
-              <Button onClick={() => handleOpenCodeReviewReport(row)} type="link">
-                查看报告
-              </Button>
-            ) : null}
-          </Space>
+          <Button
+            aria-label="操作"
+            icon={<MoreOutlined />}
+            onClick={() => setActionDialog({ task: row })}
+            type="link"
+          >
+            操作
+          </Button>
         ),
       },
     ],
-    [
-      handleCreateTechnicalSolution,
-      handleExportMarkdown,
-      handleOpenCodeReview,
-      handleOpenCodeReviewReport,
-      handleStartTask,
-      openReviewDialog,
-    ],
+    [],
   );
 
   const reviewColumns = useMemo<ProColumns<TaskCenterReviewRecord>[]>(
@@ -439,6 +561,102 @@ export default function TaskCenterPage() {
       </Modal>
 
       <Modal
+        footer={null}
+        onCancel={() => setActionDialog(undefined)}
+        open={Boolean(actionDialog)}
+        title={selectedActionTask?.label ? `任务操作：${selectedActionTask.label}` : '任务操作'}
+        width={560}
+      >
+        {selectedActionTask ? (
+          <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+            <Descriptions column={1} size="small">
+              <Descriptions.Item label="任务类型">{selectedActionTask.type}</Descriptions.Item>
+              <Descriptions.Item label="状态">
+                <StatusTag
+                  color={taskStatusLabels[selectedActionTask.status]?.color ?? 'default'}
+                  label={taskStatusLabels[selectedActionTask.status]?.label ?? selectedActionTask.status}
+                />
+              </Descriptions.Item>
+              <Descriptions.Item label="负责人">{selectedActionTask.owner}</Descriptions.Item>
+            </Descriptions>
+            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+              {taskActionItems.length ? (
+                taskActionItems.map((item) => (
+                  <Button block key={item.key} onClick={item.onClick} type={item.type}>
+                    {item.label}
+                  </Button>
+                ))
+              ) : (
+                <Text type="secondary">当前状态暂无可执行操作。</Text>
+              )}
+            </Space>
+          </Space>
+        ) : null}
+      </Modal>
+
+      <Modal
+        footer={null}
+        onCancel={() => setWritebackDialog(undefined)}
+        open={Boolean(writebackDialog)}
+        title={
+          writebackDialog?.task.label
+            ? `模拟 Issue 写回：${writebackDialog.task.label}`
+            : '模拟 Issue 写回'
+        }
+        width={760}
+      >
+        {writebackDialog?.loading ? <Text type="secondary">写回结果加载中...</Text> : null}
+        {writebackDialog?.result ? (
+          <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+            <Descriptions column={1} size="small">
+              <Descriptions.Item label="状态">
+                <StatusTag
+                  color={
+                    writebackStatusLabels[writebackDialog.result.status]?.color ?? 'default'
+                  }
+                  label={
+                    writebackStatusLabels[writebackDialog.result.status]?.label ??
+                    writebackDialog.result.status
+                  }
+                />
+              </Descriptions.Item>
+              <Descriptions.Item label="幂等键">
+                {writebackDialog.result.idempotencyKey}
+              </Descriptions.Item>
+            </Descriptions>
+            {writebackDialog.result.status === 'not_written' ? (
+              <Button
+                loading={writebackDialog.submitting}
+                onClick={() => void handleCreateWriteback()}
+                type="primary"
+              >
+                生成模拟 Issue
+              </Button>
+            ) : null}
+            <ProTable
+              columns={[
+                { dataIndex: 'id', title: 'Issue 编号' },
+                { dataIndex: 'title', title: '标题' },
+                {
+                  dataIndex: 'status',
+                  title: '状态',
+                  render: (_, row) => <StatusTag color="blue" label={String(row.status)} />,
+                },
+              ]}
+              dataSource={writebackDialog.result.issues}
+              options={false}
+              pagination={false}
+              rowKey="id"
+              search={false}
+            />
+            {writebackDialog.result.issues.length === 0 ? (
+              <Text type="secondary">当前还没有模拟 Issue。</Text>
+            ) : null}
+          </Space>
+        ) : null}
+      </Modal>
+
+      <Modal
         confirmLoading={codeReviewDraft?.submitting}
         okText="生成快照并创建任务"
         onCancel={() => setCodeReviewDraft(undefined)}
@@ -451,7 +669,7 @@ export default function TaskCenterPage() {
         }
         width={760}
       >
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
           <Form component={false} layout="inline">
             <Form.Item label="GitLab 仓库">
               <Select
@@ -525,7 +743,7 @@ export default function TaskCenterPage() {
       >
         {codeReviewReport?.loading ? <Text type="secondary">报告加载中...</Text> : null}
         {codeReviewReport?.report ? (
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={12} style={{ width: '100%' }}>
             <Descriptions column={1} size="small">
               <Descriptions.Item label="状态">{codeReviewReport.report.status}</Descriptions.Item>
               <Descriptions.Item label="风险等级">
