@@ -44,7 +44,7 @@ class Settings:
     def model_gateway_status(self) -> str:
         if self.model_gateway_base_url and self.model_gateway_api_key:
             return "configured"
-        return "local_fallback"
+        return "not_configured"
 
 
 @lru_cache

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.23 |
+| 功能版本 | v1.1.24 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -45,6 +45,7 @@
 | v1.1.21 | 2026-05-31 | 将 GitLab MR 快照和 Code Review 报告同步到 PostgreSQL 结构表，支持证据链恢复和任务反链回填 | Codex |
 | v1.1.22 | 2026-05-31 | 将模拟 Issue 回写同步到 PostgreSQL `mock_issues` 结构表，支持幂等结果恢复 | Codex |
 | v1.1.23 | 2026-05-31 | 将相关系统同步到 PostgreSQL `related_systems` 结构表，纳入产品配置恢复范围 | Codex |
+| v1.1.24 | 2026-05-31 | 移除 AI 任务启动本地输出 fallback，无模型网关配置时明确失败，不再生成伪输出 | Codex |
 
 ---
 
@@ -54,7 +55,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环；产品配置、需求、知识文档、Bug、用户管理和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、职责、数据范围、决策范围、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。产品管理页面可维护产品版本、模块和 Git 资源；产品、版本、模块、Git 资源、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_deposits`、`audit_events`、`bugs`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`，Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，调用日志只保存脱敏元数据。配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；产品配置、需求台账、AI 任务核心字段、人工确认、Graph 运行态、GitLab MR 快照、Code Review 报告、知识文档、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写和模型网关配置/调用日志从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps 和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环；产品配置、需求、知识文档、Bug、用户管理和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、职责、数据范围、决策范围、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。产品管理页面可维护产品版本、模块和 Git 资源；产品、版本、模块、Git 资源、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_deposits`、`audit_events`、`bugs`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`，Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；产品配置、需求台账、AI 任务核心字段、人工确认、Graph 运行态、GitLab MR 快照、Code Review 报告、知识文档、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写和模型网关配置/调用日志从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps 和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
 
 ## 认证方式
 
@@ -262,7 +263,7 @@ GET /health
   "status": "ok",
   "postgres": "ok",
   "redis": "ok",
-  "model_gateway": "local_fallback",
+  "model_gateway": "not_configured",
   "trace_id": "trace_health_001"
 }
 ```
@@ -276,7 +277,7 @@ GET /health
 | status | `ok` 或 `degraded` |
 | postgres | `ok` 或 `error` |
 | redis | `ok` 或 `error` |
-| model_gateway | `configured` 或 `local_fallback` |
+| model_gateway | `configured` 或 `not_configured` |
 
 ### 登录
 
@@ -692,7 +693,7 @@ GET /api/ai-tasks?status=waiting_review&task_type=code_review&page=1&page_size=2
 POST /api/ai-tasks/{task_id}/start
 ```
 
-当前实现会同步运行到下一个人工确认点或失败状态。若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；无 active/default 配置时仅允许本地开发 fallback。active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；非 code_review 任务的 provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。这些失败都会把任务置为 `failed`，并保留模型调用元数据日志。
+当前实现会同步运行到下一个人工确认点或失败状态。若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；若没有结构化默认配置但设置了 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY`，则使用环境模型网关。缺少可用模型网关或 active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；非 code_review 任务的 provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。这些失败都会把任务置为 `failed`，并保留模型调用元数据日志；任务启动不得生成本地 fallback 输出。
 典型响应：
 启动权限按任务类型收敛：`product_detail_design` 和 `technical_solution` 仅允许 `product_owner`/`rd_owner`，`code_review` 仅允许 `reviewer`/`rd_owner`；`admin` 可执行全部本地管理操作。
 
@@ -1543,6 +1544,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.24 | 2026-05-31 | 移除 AI 任务启动本地输出 fallback，无模型网关配置时明确失败，不再生成伪输出。 |
 | v1.1.23 | 2026-05-31 | 将相关系统同步到 PostgreSQL `related_systems` 结构表，纳入产品配置恢复范围。 |
 | v1.1.22 | 2026-05-31 | 将模拟 Issue 回写同步到 PostgreSQL `mock_issues` 结构表，支持幂等结果恢复。 |
 | v1.1.21 | 2026-05-31 | 将 GitLab MR 快照和 Code Review 报告同步到 PostgreSQL 结构表，支持证据链恢复和任务反链回填。 |

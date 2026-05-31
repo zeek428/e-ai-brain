@@ -62,7 +62,7 @@ VECTOR_DIMENSION=1536
 LOG_LEVEL=INFO
 ```
 
-默认配置不访问外部模型时，后端使用本地兜底生成器，便于离线开发和端到端自测。`/health` 返回 `model_gateway=configured` 表示已进入真实网关路径，返回 `local_fallback` 表示仍在本地兜底。
+默认配置不访问外部模型时，`/health` 返回 `model_gateway=not_configured`，AI 任务启动会返回明确错误，不生成本地兜底输出。配置 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY` 后，`/health` 返回 `model_gateway=configured`，任务启动才会进入真实 OpenAI-compatible 网关路径。
 
 真实 `.env` 不提交到仓库。
 
@@ -138,11 +138,11 @@ curl http://localhost:8000/health
   "status": "ok",
   "postgres": "ok",
   "redis": "ok",
-  "model_gateway": "local_fallback"
+  "model_gateway": "not_configured"
 }
 ```
 
-`model_gateway` 当前取值为 `configured` 或 `local_fallback`。默认 `.env.example` 未配置真实模型 API Key 时会返回 `local_fallback`。
+`model_gateway` 当前取值为 `configured` 或 `not_configured`。默认 `.env.example` 未配置真实模型 API Key 时会返回 `not_configured`。
 
 可选基础设施验证：
 

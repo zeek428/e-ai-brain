@@ -3,6 +3,7 @@ from urllib.error import URLError
 
 from fastapi.testclient import TestClient
 
+import app.main as main
 from app.main import app
 
 client = TestClient(app)
@@ -61,17 +62,17 @@ def test_model_gateway_call_logs_metadata_without_prompt_or_output_payload():
     assert len(logs) == 1
     log = logs[0]
     assert log["ai_task_id"] == task_id
-    assert log["provider"] == "local_fallback"
+    assert log["provider"] == "openai_compatible"
     assert log["purpose"] == "product_detail_design"
-    assert log["model"].startswith("local-")
+    assert log["model"] == "test-chat-model"
+    assert log["model_gateway_config_id"] is None
     assert log["status"] == "succeeded"
-    assert log["tokens"]["prompt"] > 0
-    assert log["tokens"]["completion"] > 0
+    assert log["tokens"] == {"prompt": 11, "completion": 22, "total": 33}
     assert log["latency_ms"] >= 0
     assert "prompt" not in log
     assert "output" not in log
     assert "secret-business-context" not in str(log)
-    assert "围绕" not in str(log)
+    assert "测试模型生成" not in str(log)
 
     audit_events = client.get(
         f"/api/audit/events?ai_task_id={task_id}&event_type=model_gateway.called",
@@ -79,6 +80,23 @@ def test_model_gateway_call_logs_metadata_without_prompt_or_output_payload():
     ).json()["data"]["items"]
     assert len(audit_events) == 1
     assert audit_events[0]["payload"]["model_log_id"] == log["id"]
+
+
+def test_missing_model_gateway_configuration_does_not_generate_local_output(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    monkeypatch.setattr(main.settings, "model_gateway_base_url", "")
+    monkeypatch.setattr(main.settings, "model_gateway_api_key", "")
+    task = create_draft_design_task(headers)
+
+    response = client.post(f"/api/ai-tasks/{task['task_id']}/start", headers=headers)
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "MODEL_GATEWAY_CONFIG_INVALID"
+    detail = client.get(f"/api/ai-tasks/{task['task_id']}", headers=headers).json()["data"]
+    assert detail["status"] == "failed"
+    assert detail["current_step"] == "model_gateway_config_invalid"
+    assert detail["output"] is None
 
 
 def test_model_gateway_logs_are_admin_only():

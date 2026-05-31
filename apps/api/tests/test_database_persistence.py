@@ -1682,7 +1682,7 @@ def test_structured_model_gateway_restore_and_sync_counters():
                 "ai_task_id": "task_001",
                 "id": "model_log_002",
                 "model": "snapshot-chat",
-                "provider": "local_fallback",
+                "provider": "openai_compatible",
                 "purpose": "product_detail_design",
                 "status": "succeeded",
                 "tokens": {},

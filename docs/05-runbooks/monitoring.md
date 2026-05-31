@@ -79,7 +79,7 @@ GET /health
   "status": "ok",
   "postgres": "ok",
   "redis": "ok",
-  "model_gateway": "local_fallback"
+  "model_gateway": "not_configured"
 }
 ```
 
@@ -90,9 +90,9 @@ GET /health
 | status | `ok` 或 `degraded` |
 | postgres | `ok` 或 `error` |
 | redis | `ok` 或 `error` |
-| model_gateway | `configured` 或 `local_fallback` |
+| model_gateway | `configured` 或 `not_configured` |
 
-模型网关健康检查默认只验证配置，不建议每次真实调用模型。未配置真实 API Key 或仍使用占位 Base URL 时返回 `local_fallback`。
+模型网关健康检查默认只验证配置，不建议每次真实调用模型。未配置真实 API Key 或 Base URL 时返回 `not_configured`；AI 任务启动会返回明确错误，不生成本地输出。
 
 ## 日志配置
 

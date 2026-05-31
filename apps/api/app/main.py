@@ -679,21 +679,6 @@ class ModelGatewayConfigError(Exception):
         self.current_step = current_step
 
 
-def _model_gateway_metadata(
-    current_store: MemoryStore,
-) -> tuple[str, str, str | None]:
-    config = _default_model_gateway_config(current_store)
-    if config:
-        return config["provider"], config["default_chat_model"], config["id"]
-    if settings.model_gateway_status == "configured":
-        return (
-            "openai_compatible",
-            settings.model_gateway_default_chat_model,
-            None,
-        )
-    return "local_fallback", f"local-{settings.model_gateway_default_chat_model}", None
-
-
 def _model_gateway_chat_completions_url(base_url: str) -> str:
     normalized = base_url.rstrip("/")
     if normalized.endswith("/chat/completions"):
@@ -880,38 +865,31 @@ def _call_model_gateway_for_task(
     task: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     config = _default_model_gateway_config(current_store)
-    if config and config.get("provider") == "openai_compatible":
+    if config:
+        if config.get("provider") != "openai_compatible":
+            raise ModelGatewayConfigError("Active model gateway provider is not supported")
         if not config.get("api_key"):
             raise ModelGatewayConfigError("Active model gateway config is missing api_key")
         return _call_openai_compatible_model_gateway(current_store, config=config, task=task)
 
-    provider, model, config_id = _model_gateway_metadata(current_store)
-    started = perf_counter()
-    output = _local_task_output(task)
-    latency_ms = int((perf_counter() - started) * 1000)
-    prompt_tokens = _estimate_tokens(
-        {
-            "task_type": task["task_type"],
-            "requirement_id": task["requirement_id"],
-            "product_id": task["product_id"],
-        }
+    if settings.model_gateway_status == "configured":
+        return _call_openai_compatible_model_gateway(
+            current_store,
+            config={
+                "api_key": settings.model_gateway_api_key,
+                "base_url": settings.model_gateway_base_url,
+                "default_chat_model": settings.model_gateway_default_chat_model,
+                "id": None,
+                "provider": "openai_compatible",
+                "timeout_seconds": 60,
+            },
+            task=task,
+        )
+
+    raise ModelGatewayConfigError(
+        "No active/default model gateway config is configured",
+        current_step="model_gateway_config_invalid",
     )
-    completion_tokens = _estimate_tokens(output)
-    log = _model_gateway_log(
-        current_store,
-        task=task,
-        provider=provider,
-        model=model,
-        config_id=config_id,
-        tokens={
-            "prompt": prompt_tokens,
-            "completion": completion_tokens,
-            "total": prompt_tokens + completion_tokens,
-        },
-        latency_ms=latency_ms,
-        status="succeeded",
-    )
-    return output, log
 
 
 async def get_current_user(
@@ -2143,60 +2121,6 @@ def generate_task_from_requirement(
         {"task_id": task_id, "task_type": task["task_type"], "task_status": task["status"]},
         get_trace_id(request),
     )
-
-
-def _local_task_output(task: dict[str, Any]) -> dict[str, Any]:
-    requirement = task["requirement_snapshot"]
-    if task["task_type"] == "product_detail_design":
-        return {
-            "kind": "product_detail_design",
-            "summary": f"围绕“{requirement['title']}”形成产品详细设计。",
-            "user_value": requirement["content"],
-            "acceptance_points": [
-                "需求已审批并固化快照",
-                "产出等待人工确认",
-                "确认后可作为技术方案输入",
-            ],
-        }
-    if task["task_type"] == "technical_solution":
-        return {
-            "kind": "technical_solution",
-            "summary": f"围绕“{requirement['title']}”形成 FastAPI 模块化单体技术方案。",
-            "architecture": [
-                "通过 product_config、requirement、ai_task、review 和 audit 模块形成 MVP-A 主链路",
-                "所有模型调用保留在 model_gateway 边界内",
-                "高影响 AI 输出进入 human_reviews 后等待确认",
-            ],
-            "implementation_notes": [
-                "任务保留 requirement_snapshot 和 product_context",
-                "技术方案引用已确认产品详细设计任务",
-                "Markdown 导出只使用已确认输出",
-            ],
-        }
-    if task["task_type"] == "code_review":
-        return {
-            "kind": "code_review_report",
-            "summary": "MR diff 存在一处高风险实现集中度问题，建议拆分并补充边界测试。",
-            "risk_level": "medium",
-            "findings": [
-                {
-                    "severity": "high",
-                    "file_path": "apps/api/app/main.py",
-                    "line_start": 120,
-                    "line_end": 168,
-                    "category": "maintainability",
-                    "message": "接口编排和状态更新集中在单一模块，后续扩展时容易引入回归。",
-                    "suggestion": "抽取领域服务并为状态机动作补充单元测试。",
-                    "confidence": 0.82,
-                }
-            ],
-            "executor": {
-                "executor_type": "local_fallback",
-                "executor_name": "deterministic-code-review",
-                "retryable": False,
-            },
-        }
-    return {"kind": task["task_type"], "summary": "Local fallback output"}
 
 
 def _gitlab_base_url(repository: dict[str, Any]) -> str | None:

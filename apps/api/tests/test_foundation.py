@@ -2,12 +2,16 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import app.main as main
 from app.main import _tcp_endpoint_from_url, app
 
 client = TestClient(app)
 
 
-def test_health_includes_dependencies_and_trace_id():
+def test_health_includes_dependencies_and_trace_id(monkeypatch):
+    monkeypatch.setattr(main.settings, "model_gateway_base_url", "")
+    monkeypatch.setattr(main.settings, "model_gateway_api_key", "")
+
     response = client.get("/health")
 
     assert response.status_code == 200
@@ -15,7 +19,7 @@ def test_health_includes_dependencies_and_trace_id():
     assert body["status"] in {"ok", "degraded"}
     assert body["postgres"] in {"ok", "error"}
     assert body["redis"] in {"ok", "error"}
-    assert body["model_gateway"] in {"configured", "local_fallback"}
+    assert body["model_gateway"] == "not_configured"
     assert body["trace_id"].startswith("trace_")
 
 
