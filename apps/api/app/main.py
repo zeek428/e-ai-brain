@@ -2435,6 +2435,7 @@ def snapshot_gitlab_mr(
     diff_limit_bytes = 204_800
     changed_file_count = len(preview["changed_files_summary"])
     changed_file_limit = 50
+    file_diff_line_limit = 2_000
     if changed_file_count > changed_file_limit:
         current_store.audit(
             event_type="gitlab_mr.snapshot_failed",
@@ -2448,6 +2449,37 @@ def snapshot_gitlab_mr(
                 "diff_size_bytes": diff_size_bytes,
                 "mr_iid": mr_iid,
                 "reason": "changed_file_count_too_large",
+                "requirement_id": payload.requirement_id,
+                "technical_solution_task_id": payload.technical_solution_task_id,
+            },
+        )
+        raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
+    oversized_file = next(
+        (
+            item
+            for item in preview["changed_files_summary"]
+            if int(item.get("additions") or 0) + int(item.get("deletions") or 0)
+            > file_diff_line_limit
+        ),
+        None,
+    )
+    if oversized_file:
+        file_diff_line_count = int(oversized_file.get("additions") or 0) + int(
+            oversized_file.get("deletions") or 0
+        )
+        current_store.audit(
+            event_type="gitlab_mr.snapshot_failed",
+            actor_id=user["id"],
+            subject_type="product_git_repository",
+            subject_id=repository_id,
+            payload={
+                "diff_limit_bytes": diff_limit_bytes,
+                "diff_size_bytes": diff_size_bytes,
+                "file_diff_line_count": file_diff_line_count,
+                "file_diff_line_limit": file_diff_line_limit,
+                "file_path": oversized_file.get("path") or "-",
+                "mr_iid": mr_iid,
+                "reason": "single_file_diff_too_large",
                 "requirement_id": payload.requirement_id,
                 "technical_solution_task_id": payload.technical_solution_task_id,
             },

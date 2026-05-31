@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.6 |
+| 功能版本 | v1.1.7 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -29,6 +29,7 @@
 | v1.1.4 | 2026-05-31 | 对齐 code_review 执行器失败状态、错误码和审计事件 | Codex |
 | v1.1.5 | 2026-05-31 | 补齐 GitLab MR diff 超限失败审计和快照状态机事件 | Codex |
 | v1.1.6 | 2026-05-31 | 补齐 GitLab MR 变更文件数限制和审计指标 | Codex |
+| v1.1.7 | 2026-05-31 | 补齐 GitLab MR 单文件 diff 行数限制和审计指标 | Codex |
 
 ---
 
@@ -825,7 +826,7 @@ suggested → rejected
 |----------|------|----------|------|----------------|----------|
 | no_snapshot | preview_mr | previewed | Reviewer | 只读，不保存完整 diff。 | gitlab_mr.previewed |
 | previewed | create_snapshot | snapshotted | Reviewer | 每次快照生成不可变 snapshot_hash。 | gitlab_mr.snapshotted |
-| previewed | create_snapshot_too_large | failed | Reviewer | 不创建快照，记录 diff_size_bytes、diff_limit_bytes、changed_file_count 和 changed_file_limit。 | gitlab_mr.snapshot_failed |
+| previewed | create_snapshot_too_large | failed | Reviewer | 不创建快照，记录 diff_size_bytes、diff_limit_bytes、changed_file_count、changed_file_limit、file_diff_line_count 和 file_diff_line_limit。 | gitlab_mr.snapshot_failed |
 | snapshotted | create_code_review_task | report_pending | Reviewer | code_review 任务只引用已有快照。 | ai_task.created |
 | report_pending | executor_success | pending_human_review | system | 输出必须通过 schema 校验。 | code_review.generated |
 | report_pending | executor_failed | failed | system | 记录 executor 错误和 retryable。 | code_review.executor_failed |
