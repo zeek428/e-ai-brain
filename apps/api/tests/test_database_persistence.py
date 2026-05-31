@@ -19,6 +19,7 @@ class FakeSnapshotRepository:
         self.knowledge_payload: dict | None = None
         self.audit_events_payload: dict | None = None
         self.bugs_payload: dict | None = None
+        self.model_gateway_payload: dict | None = None
 
     def load(self) -> dict | None:
         return self.payload
@@ -67,6 +68,12 @@ class FakeSnapshotRepository:
 
     def save_bugs(self, payload: dict) -> None:
         self.bugs_payload = payload
+
+    def load_model_gateway(self) -> dict | None:
+        return self.model_gateway_payload
+
+    def save_model_gateway(self, payload: dict) -> None:
+        self.model_gateway_payload = payload
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
@@ -1421,6 +1428,181 @@ def test_bug_api_writes_fine_grained_repository_payload():
         assert persisted["title"] == "Bug API 结构表验证"
         assert persisted["version_id"] == version["id"]
         assert persisted["status"] == "open"
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_model_gateway_config_and_logs_are_persisted_through_fine_grained_repository_payload():
+    repository = FakeSnapshotRepository()
+    current_store = PersistentMemoryStore.from_repository(repository)
+    current_store.model_gateway_configs["model_gateway_config_009"] = {
+        "api_key": "sk-db-secret",
+        "base_url": "https://llm.example.com/v1",
+        "default_chat_model": "gpt-real",
+        "default_embedding_model": "text-embedding-real",
+        "id": "model_gateway_config_009",
+        "is_default": True,
+        "max_retries": 2,
+        "name": "真实模型网关",
+        "provider": "openai_compatible",
+        "status": "active",
+        "timeout_seconds": 45,
+    }
+    current_store.model_gateway_logs.append(
+        {
+            "ai_task_id": "task_002",
+            "created_at": "2026-05-31T10:00:00+00:00",
+            "error": None,
+            "id": "model_log_007",
+            "latency_ms": 321,
+            "model": "gpt-real",
+            "model_gateway_config_id": "model_gateway_config_009",
+            "provider": "openai_compatible",
+            "purpose": "product_detail_design",
+            "status": "succeeded",
+            "tokens": {"prompt": 10, "completion": 20, "total": 30},
+        }
+    )
+
+    current_store.persist()
+
+    assert repository.model_gateway_payload == {
+        "model_gateway_configs": {
+            "model_gateway_config_009": {
+                "api_key": "sk-db-secret",
+                "base_url": "https://llm.example.com/v1",
+                "default_chat_model": "gpt-real",
+                "default_embedding_model": "text-embedding-real",
+                "id": "model_gateway_config_009",
+                "is_default": True,
+                "max_retries": 2,
+                "name": "真实模型网关",
+                "provider": "openai_compatible",
+                "status": "active",
+                "timeout_seconds": 45,
+            }
+        },
+        "model_gateway_logs": [
+            {
+                "ai_task_id": "task_002",
+                "created_at": "2026-05-31T10:00:00+00:00",
+                "error": None,
+                "id": "model_log_007",
+                "latency_ms": 321,
+                "model": "gpt-real",
+                "model_gateway_config_id": "model_gateway_config_009",
+                "provider": "openai_compatible",
+                "purpose": "product_detail_design",
+                "status": "succeeded",
+                "tokens": {"prompt": 10, "completion": 20, "total": 30},
+            }
+        ],
+    }
+
+
+def test_structured_model_gateway_restore_and_sync_counters():
+    repository = FakeSnapshotRepository()
+    repository.payload = {
+        "model_gateway_configs": {
+            "model_gateway_config_002": {
+                "api_key": "snapshot-secret",
+                "base_url": "https://snapshot.example.com/v1",
+                "default_chat_model": "snapshot-chat",
+                "default_embedding_model": "snapshot-embedding",
+                "id": "model_gateway_config_002",
+                "is_default": True,
+                "max_retries": 1,
+                "name": "旧快照模型网关",
+                "provider": "openai_compatible",
+                "status": "active",
+                "timeout_seconds": 60,
+            }
+        },
+        "model_gateway_logs": [
+            {
+                "ai_task_id": "task_001",
+                "id": "model_log_002",
+                "model": "snapshot-chat",
+                "provider": "local_fallback",
+                "purpose": "product_detail_design",
+                "status": "succeeded",
+                "tokens": {},
+            }
+        ],
+    }
+    repository.model_gateway_payload = {
+        "model_gateway_configs": {
+            "model_gateway_config_009": {
+                "api_key": "structured-secret",
+                "base_url": "https://structured.example.com/v1",
+                "default_chat_model": "structured-chat",
+                "default_embedding_model": "structured-embedding",
+                "id": "model_gateway_config_009",
+                "is_default": True,
+                "max_retries": 2,
+                "name": "结构表模型网关",
+                "provider": "openai_compatible",
+                "status": "active",
+                "timeout_seconds": 30,
+            }
+        },
+        "model_gateway_logs": [
+            {
+                "ai_task_id": "task_002",
+                "id": "model_log_007",
+                "model": "structured-chat",
+                "provider": "openai_compatible",
+                "purpose": "product_detail_design",
+                "status": "succeeded",
+                "tokens": {"total": 33},
+            }
+        ],
+    }
+
+    rebuilt_store = PersistentMemoryStore.from_repository(repository)
+
+    assert list(rebuilt_store.model_gateway_configs) == ["model_gateway_config_009"]
+    assert rebuilt_store.model_gateway_configs["model_gateway_config_009"]["api_key"] == (
+        "structured-secret"
+    )
+    assert [log["id"] for log in rebuilt_store.model_gateway_logs] == ["model_log_007"]
+    assert rebuilt_store.new_id("model_gateway_config") == "model_gateway_config_010"
+    assert rebuilt_store.new_id("model_log") == "model_log_008"
+
+
+def test_model_gateway_config_api_writes_fine_grained_repository_payload():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    app.state.store = PersistentMemoryStore.from_repository(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        config = client.post(
+            "/api/system/model-gateway-configs",
+            json={
+                "api_key": "sk-api-secret",
+                "base_url": "https://api.example.com/v1",
+                "default_chat_model": "gpt-api",
+                "default_embedding_model": "text-embedding-api",
+                "is_default": True,
+                "name": "API 模型网关",
+                "provider": "openai_compatible",
+                "status": "active",
+                "timeout_seconds": 30,
+            },
+            headers=headers,
+        ).json()["data"]
+
+        assert config["api_key_configured"] is True
+        assert "api_key" not in config
+        assert repository.model_gateway_payload is not None
+        persisted = repository.model_gateway_payload["model_gateway_configs"][config["id"]]
+        assert persisted["api_key"] == "sk-api-secret"
+        assert persisted["is_default"] is True
+        assert persisted["default_chat_model"] == "gpt-api"
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users

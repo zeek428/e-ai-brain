@@ -34,6 +34,10 @@ AUDIT_FIELDS = [
 BUG_FIELDS = [
     "bugs",
 ]
+MODEL_GATEWAY_FIELDS = [
+    "model_gateway_configs",
+    "model_gateway_logs",
+]
 COLLECTION_FIELDS = [
     "products",
     "product_versions",
@@ -106,6 +110,12 @@ class BugRepository(Protocol):
     def save_bugs(self, payload: dict[str, Any]) -> None: ...
 
 
+class ModelGatewayRepository(Protocol):
+    def load_model_gateway(self) -> dict[str, Any] | None: ...
+
+    def save_model_gateway(self, payload: dict[str, Any]) -> None: ...
+
+
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in PRODUCT_CONFIG_FIELDS}
 
@@ -132,6 +142,13 @@ def _audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _bugs_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in BUG_FIELDS}
+
+
+def _model_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "model_gateway_configs": deepcopy(payload.get("model_gateway_configs", {})),
+        "model_gateway_logs": deepcopy(payload.get("model_gateway_logs", [])),
+    }
 
 
 def _ai_tasks_merge_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -254,6 +271,13 @@ def _repository_load_bugs(repository: SnapshotRepository) -> dict[str, Any] | No
     return load_bugs()
 
 
+def _repository_load_model_gateway(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_model_gateway = getattr(repository, "load_model_gateway", None)
+    if load_model_gateway is None:
+        return None
+    return load_model_gateway()
+
+
 def _repository_save_workflow_runtime(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -290,6 +314,15 @@ def _repository_save_bugs(
         save_bugs(_bugs_payload(payload))
 
 
+def _repository_save_model_gateway(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_model_gateway = getattr(repository, "save_model_gateway", None)
+    if save_model_gateway is not None:
+        save_model_gateway(_model_gateway_payload(payload))
+
+
 def _has_product_config_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in PRODUCT_CONFIG_FIELDS)
 
@@ -316,6 +349,10 @@ def _has_audit_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_bug_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in BUG_FIELDS)
+
+
+def _has_model_gateway_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in MODEL_GATEWAY_FIELDS)
 
 
 def _max_numeric_suffix(items: dict[str, dict[str, Any]], prefix: str) -> int:
@@ -411,6 +448,22 @@ def _sync_bug_counters(payload: dict[str, Any]) -> None:
     counters["bug"] = max(
         counters.get("bug", 0),
         _max_numeric_suffix(payload.get("bugs", {}), "bug"),
+    )
+    payload["counters"] = counters
+
+
+def _sync_model_gateway_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["model_gateway_config"] = max(
+        counters.get("model_gateway_config", 0),
+        _max_numeric_suffix(
+            payload.get("model_gateway_configs", {}),
+            "model_gateway_config",
+        ),
+    )
+    counters["model_log"] = max(
+        counters.get("model_log", 0),
+        _max_numeric_suffix_from_values(payload.get("model_gateway_logs", []), "model_log"),
     )
     payload["counters"] = counters
 
@@ -609,6 +662,14 @@ class PersistentMemoryStore(MemoryStore):
                 BUG_FIELDS,
             )
             _sync_bug_counters(payload)
+        model_gateway_payload = _repository_load_model_gateway(repository)
+        if _has_model_gateway_items(model_gateway_payload):
+            _replace_collection_payload(
+                payload,
+                _model_gateway_payload(model_gateway_payload),
+                MODEL_GATEWAY_FIELDS,
+            )
+            _sync_model_gateway_counters(payload)
         if has_structured_product_config:
             _drop_requirements_without_product_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
@@ -643,6 +704,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_knowledge(self.repository, payload)
         _repository_save_audit_events(self.repository, payload)
         _repository_save_bugs(self.repository, payload)
+        _repository_save_model_gateway(self.repository, payload)
 
 
 class PostgresSnapshotRepository:
@@ -747,6 +809,16 @@ class PostgresSnapshotRepository:
                 bugs = self._load_bugs(cursor)
         return {"bugs": bugs}
 
+    def load_model_gateway(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                configs = self._load_model_gateway_configs(cursor)
+                logs = self._load_model_gateway_logs(cursor)
+        return {
+            "model_gateway_configs": configs,
+            "model_gateway_logs": logs,
+        }
+
     def save_product_config(self, payload: dict[str, Any]) -> None:
         products = payload.get("products", {})
         versions = payload.get("product_versions", {})
@@ -820,6 +892,20 @@ class PostgresSnapshotRepository:
                 self._clear_dangling_bug_duplicates(cursor, bugs)
                 self._delete_missing(cursor, "bugs", bugs)
                 self._upsert_bugs(cursor, bugs)
+
+    def save_model_gateway(self, payload: dict[str, Any]) -> None:
+        configs = payload.get("model_gateway_configs", {})
+        logs = payload.get("model_gateway_logs", [])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing_ids(
+                    cursor,
+                    "model_gateway_logs",
+                    [str(log["id"]) for log in logs if log.get("id")],
+                )
+                self._delete_missing(cursor, "model_gateway_configs", configs)
+                self._upsert_model_gateway_configs(cursor, configs)
+                self._upsert_model_gateway_logs(cursor, logs)
 
     def _load_products(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -1219,6 +1305,74 @@ class PostgresSnapshotRepository:
                     bug.pop(optional_key)
             bugs[row[0]] = bug
         return bugs
+
+    def _load_model_gateway_configs(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, name, provider, base_url, api_key_ref, default_chat_model,
+                   default_embedding_model, timeout_seconds, max_retries, status,
+                   is_default, created_at, updated_at
+            FROM model_gateway_configs
+            ORDER BY id
+            """
+        )
+        configs = {}
+        for row in cursor.fetchall():
+            config = {
+                "api_key": row[4],
+                "base_url": row[3],
+                "created_at": row[11].isoformat() if row[11] else None,
+                "default_chat_model": row[5],
+                "default_embedding_model": row[6],
+                "id": row[0],
+                "is_default": row[10],
+                "max_retries": row[8],
+                "name": row[1],
+                "provider": row[2],
+                "status": row[9],
+                "timeout_seconds": row[7],
+                "updated_at": row[12].isoformat() if row[12] else None,
+            }
+            for optional_key in ("api_key", "created_at", "updated_at"):
+                if config[optional_key] is None:
+                    config.pop(optional_key)
+            configs[row[0]] = config
+        return configs
+
+    def _load_model_gateway_logs(self, cursor) -> list[dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
+                   status, error, model_gateway_config_id, created_at
+            FROM model_gateway_logs
+            ORDER BY created_at, id
+            """
+        )
+        logs = []
+        for row in cursor.fetchall():
+            log = {
+                "ai_task_id": row[1],
+                "created_at": row[10].isoformat() if row[10] else None,
+                "error": row[8],
+                "id": row[0],
+                "latency_ms": row[6],
+                "model": row[3],
+                "model_gateway_config_id": row[9],
+                "provider": row[2],
+                "purpose": row[4],
+                "status": row[7],
+                "tokens": dict(row[5] or {}),
+            }
+            for optional_key in (
+                "ai_task_id",
+                "created_at",
+                "error",
+                "model_gateway_config_id",
+            ):
+                if log[optional_key] is None:
+                    log.pop(optional_key)
+            logs.append(log)
+        return logs
 
     def _delete_missing(
         self,
@@ -1867,3 +2021,95 @@ class PostgresSnapshotRepository:
                     """,
                     (duplicate_of_bug_id, bug.get("updated_at"), bug["id"]),
                 )
+
+    def _upsert_model_gateway_configs(
+        self,
+        cursor,
+        configs: dict[str, dict[str, Any]],
+    ) -> None:
+        cursor.execute("UPDATE model_gateway_configs SET is_default = false")
+        for config in configs.values():
+            created_at = config.get("created_at")
+            updated_at = config.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO model_gateway_configs (
+                  id, name, provider, base_url, api_key_ref, default_chat_model,
+                  default_embedding_model, timeout_seconds, max_retries, status,
+                  is_default, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  name = EXCLUDED.name,
+                  provider = EXCLUDED.provider,
+                  base_url = EXCLUDED.base_url,
+                  api_key_ref = EXCLUDED.api_key_ref,
+                  default_chat_model = EXCLUDED.default_chat_model,
+                  default_embedding_model = EXCLUDED.default_embedding_model,
+                  timeout_seconds = EXCLUDED.timeout_seconds,
+                  max_retries = EXCLUDED.max_retries,
+                  status = EXCLUDED.status,
+                  is_default = EXCLUDED.is_default,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    config["id"],
+                    config["name"],
+                    config.get("provider", "openai_compatible"),
+                    config["base_url"],
+                    config.get("api_key"),
+                    config["default_chat_model"],
+                    config["default_embedding_model"],
+                    config.get("timeout_seconds", 60),
+                    config.get("max_retries", 1),
+                    config.get("status", "active"),
+                    config.get("is_default", False),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_model_gateway_logs(self, cursor, logs: list[dict[str, Any]]) -> None:
+        import json
+
+        for log in logs:
+            cursor.execute(
+                """
+                INSERT INTO model_gateway_logs (
+                  id, ai_task_id, provider, model, purpose, tokens, latency_ms,
+                  status, error, model_gateway_config_id, created_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  ai_task_id = EXCLUDED.ai_task_id,
+                  provider = EXCLUDED.provider,
+                  model = EXCLUDED.model,
+                  purpose = EXCLUDED.purpose,
+                  tokens = EXCLUDED.tokens,
+                  latency_ms = EXCLUDED.latency_ms,
+                  status = EXCLUDED.status,
+                  error = EXCLUDED.error,
+                  model_gateway_config_id = EXCLUDED.model_gateway_config_id,
+                  created_at = EXCLUDED.created_at
+                """,
+                (
+                    log["id"],
+                    log.get("ai_task_id"),
+                    log["provider"],
+                    log["model"],
+                    log["purpose"],
+                    json.dumps(log.get("tokens", {}), ensure_ascii=False),
+                    log.get("latency_ms", 0),
+                    log["status"],
+                    log.get("error"),
+                    log.get("model_gateway_config_id"),
+                    log.get("created_at"),
+                ),
+            )
