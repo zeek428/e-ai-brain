@@ -50,6 +50,7 @@
 - AI 任务开始细粒度 PostgreSQL 持久化，任务类型、标题、状态、需求快照、产品上下文、输入输出和当前步骤会同步写入 `ai_tasks`，并在 API 启动时从结构表恢复。
 - 人工确认和 Graph 运行态开始细粒度 PostgreSQL 持久化，`human_reviews`、`graph_runs`、`graph_checkpoints` 会记录 Review 决策、运行状态、检查点和 state snapshot，并在 API 启动时回填任务运行关联。
 - 知识文档、知识沉淀候选和审计事件开始细粒度 PostgreSQL 持久化，`knowledge_documents`、`knowledge_deposits`、`audit_events` 会记录知识治理和主体级审计数据，并在 API 启动时从结构表恢复。
+- Bug 管理开始细粒度 PostgreSQL 持久化，`bugs` 会记录来源、严重级别、状态流转、负责人、复现步骤、证据和重复归并关系，并在 API 启动时从结构表恢复。
 - 后端补齐当前管理主体 CRUD：产品及版本/模块/Git 资源、相关系统、模型网关配置、需求、知识文档、Bug 和用户均支持新增/更新/删除，删除前保留依赖占用校验和审计记录。
 - 前端产品管理、需求管理、Bug 管理、知识中心和用户管理新增真实表单弹窗、编辑按钮、删除按钮和接口刷新逻辑，不再停留在列表 demo。
 - 新增“系统管理”一级菜单，并将“用户管理”作为其二级菜单；`/users` 旧入口重定向到 `/system/users`。

@@ -31,6 +31,9 @@ KNOWLEDGE_FIELDS = [
 AUDIT_FIELDS = [
     "audit_events",
 ]
+BUG_FIELDS = [
+    "bugs",
+]
 COLLECTION_FIELDS = [
     "products",
     "product_versions",
@@ -97,6 +100,12 @@ class AuditRepository(Protocol):
     def save_audit_events(self, payload: dict[str, Any]) -> None: ...
 
 
+class BugRepository(Protocol):
+    def load_bugs(self) -> dict[str, Any] | None: ...
+
+    def save_bugs(self, payload: dict[str, Any]) -> None: ...
+
+
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in PRODUCT_CONFIG_FIELDS}
 
@@ -119,6 +128,10 @@ def _knowledge_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, [])) for field in AUDIT_FIELDS}
+
+
+def _bugs_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in BUG_FIELDS}
 
 
 def _ai_tasks_merge_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -234,6 +247,13 @@ def _repository_load_audit_events(repository: SnapshotRepository) -> dict[str, A
     return load_audit_events()
 
 
+def _repository_load_bugs(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_bugs = getattr(repository, "load_bugs", None)
+    if load_bugs is None:
+        return None
+    return load_bugs()
+
+
 def _repository_save_workflow_runtime(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -261,6 +281,15 @@ def _repository_save_audit_events(
         save_audit_events(_audit_payload(payload))
 
 
+def _repository_save_bugs(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_bugs = getattr(repository, "save_bugs", None)
+    if save_bugs is not None:
+        save_bugs(_bugs_payload(payload))
+
+
 def _has_product_config_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in PRODUCT_CONFIG_FIELDS)
 
@@ -283,6 +312,10 @@ def _has_knowledge_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_audit_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in AUDIT_FIELDS)
+
+
+def _has_bug_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in BUG_FIELDS)
 
 
 def _max_numeric_suffix(items: dict[str, dict[str, Any]], prefix: str) -> int:
@@ -369,6 +402,15 @@ def _sync_audit_counters(payload: dict[str, Any]) -> None:
     counters["audit"] = max(
         counters.get("audit", 0),
         _max_numeric_suffix_from_values(payload.get("audit_events", []), "audit"),
+    )
+    payload["counters"] = counters
+
+
+def _sync_bug_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["bug"] = max(
+        counters.get("bug", 0),
+        _max_numeric_suffix(payload.get("bugs", {}), "bug"),
     )
     payload["counters"] = counters
 
@@ -470,6 +512,38 @@ def _drop_knowledge_without_context(payload: dict[str, Any]) -> None:
     payload["knowledge_deposits"] = cleaned_deposits
 
 
+def _drop_bugs_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    versions = payload.get("product_versions", {})
+    requirements = payload.get("requirements", {})
+    ai_tasks = payload.get("ai_tasks", {})
+    bugs = payload.get("bugs", {})
+    cleaned_bugs = {}
+    for bug_id, bug in bugs.items():
+        product_id = bug.get("product_id")
+        version_id = bug.get("version_id")
+        requirement_id = bug.get("requirement_id")
+        related_task_id = bug.get("related_task_id")
+        if products and product_id not in products:
+            continue
+        if version_id and versions and (
+            version_id not in versions or versions[version_id].get("product_id") != product_id
+        ):
+            continue
+        if requirement_id and requirements and requirement_id not in requirements:
+            continue
+        if related_task_id and ai_tasks and related_task_id not in ai_tasks:
+            continue
+        cleaned_bugs[bug_id] = deepcopy(bug)
+    for bug_id, bug in cleaned_bugs.items():
+        duplicate_of_bug_id = bug.get("duplicate_of_bug_id")
+        if duplicate_of_bug_id and duplicate_of_bug_id not in cleaned_bugs:
+            bug["duplicate_of_bug_id"] = None
+        if duplicate_of_bug_id == bug_id:
+            bug["duplicate_of_bug_id"] = None
+    payload["bugs"] = cleaned_bugs
+
+
 class PersistentMemoryStore(MemoryStore):
     def __init__(self, repository: SnapshotRepository) -> None:
         super().__init__()
@@ -527,6 +601,14 @@ class PersistentMemoryStore(MemoryStore):
         if _has_audit_items(audit_payload):
             _merge_audit_payload(payload, _audit_payload(audit_payload))
             _sync_audit_counters(payload)
+        bugs_payload = _repository_load_bugs(repository)
+        if _has_bug_items(bugs_payload):
+            _replace_collection_payload(
+                payload,
+                _bugs_payload(bugs_payload),
+                BUG_FIELDS,
+            )
+            _sync_bug_counters(payload)
         if has_structured_product_config:
             _drop_requirements_without_product_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
@@ -534,6 +616,8 @@ class PersistentMemoryStore(MemoryStore):
         if has_structured_ai_tasks:
             _drop_workflow_runtime_without_tasks(payload)
             _drop_knowledge_without_context(payload)
+        if has_structured_product_config or _has_requirement_items(requirements_payload):
+            _drop_bugs_without_context(payload)
         _ensure_ai_task_defaults(payload)
         _sync_task_runtime_links(payload)
         if payload:
@@ -558,6 +642,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_workflow_runtime(self.repository, payload)
         _repository_save_knowledge(self.repository, payload)
         _repository_save_audit_events(self.repository, payload)
+        _repository_save_bugs(self.repository, payload)
 
 
 class PostgresSnapshotRepository:
@@ -656,6 +741,12 @@ class PostgresSnapshotRepository:
                 audit_events = self._load_audit_events(cursor)
         return {"audit_events": audit_events}
 
+    def load_bugs(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                bugs = self._load_bugs(cursor)
+        return {"bugs": bugs}
+
     def save_product_config(self, payload: dict[str, Any]) -> None:
         products = payload.get("products", {})
         versions = payload.get("product_versions", {})
@@ -721,6 +812,14 @@ class PostgresSnapshotRepository:
                     [str(event["id"]) for event in audit_events if event.get("id")],
                 )
                 self._upsert_audit_events(cursor, audit_events)
+
+    def save_bugs(self, payload: dict[str, Any]) -> None:
+        bugs = self._clean_bug_references(payload.get("bugs", {}))
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._clear_dangling_bug_duplicates(cursor, bugs)
+                self._delete_missing(cursor, "bugs", bugs)
+                self._upsert_bugs(cursor, bugs)
 
     def _load_products(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -1072,6 +1171,54 @@ class PostgresSnapshotRepository:
             }
             for row in cursor.fetchall()
         ]
+
+    def _load_bugs(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, product_id, version_id, module_code, source, title, severity,
+                   description, status, assignee, related_task_id, requirement_id,
+                   reproduce_steps, evidence, duplicate_of_bug_id, created_by,
+                   created_at, updated_at
+            FROM bugs
+            ORDER BY created_at, id
+            """
+        )
+        bugs = {}
+        for row in cursor.fetchall():
+            bug = {
+                "assignee": row[9],
+                "created_at": row[16].isoformat() if row[16] else None,
+                "created_by": row[15],
+                "description": row[7],
+                "duplicate_of_bug_id": row[14],
+                "evidence": dict(row[13] or {}),
+                "id": row[0],
+                "module_code": row[3],
+                "product_id": row[1],
+                "related_task_id": row[10],
+                "reproduce_steps": list(row[12] or []),
+                "requirement_id": row[11],
+                "severity": row[6],
+                "source": row[4],
+                "status": row[8],
+                "title": row[5],
+                "updated_at": row[17].isoformat() if row[17] else None,
+                "version_id": row[2],
+            }
+            for optional_key in (
+                "assignee",
+                "created_at",
+                "duplicate_of_bug_id",
+                "module_code",
+                "related_task_id",
+                "requirement_id",
+                "updated_at",
+                "version_id",
+            ):
+                if bug[optional_key] is None:
+                    bug.pop(optional_key)
+            bugs[row[0]] = bug
+        return bugs
 
     def _delete_missing(
         self,
@@ -1620,3 +1767,103 @@ class PostgresSnapshotRepository:
                     event.get("created_at"),
                 ),
             )
+
+    def _clean_bug_references(
+        self,
+        bugs: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        cleaned = deepcopy(bugs)
+        for bug_id, bug in cleaned.items():
+            duplicate_of_bug_id = bug.get("duplicate_of_bug_id")
+            if duplicate_of_bug_id == bug_id or duplicate_of_bug_id not in cleaned:
+                bug["duplicate_of_bug_id"] = None
+        return cleaned
+
+    def _clear_dangling_bug_duplicates(
+        self,
+        cursor,
+        bugs: dict[str, dict[str, Any]],
+    ) -> None:
+        if not bugs:
+            cursor.execute("UPDATE bugs SET duplicate_of_bug_id = NULL")
+            return
+        placeholders = ", ".join(["%s"] * len(bugs))
+        cursor.execute(
+            f"""
+            UPDATE bugs
+            SET duplicate_of_bug_id = NULL
+            WHERE duplicate_of_bug_id IS NOT NULL
+              AND duplicate_of_bug_id NOT IN ({placeholders})
+            """,  # noqa: S608
+            tuple(bugs.keys()),
+        )
+
+    def _upsert_bugs(self, cursor, bugs: dict[str, dict[str, Any]]) -> None:
+        import json
+
+        for bug in bugs.values():
+            created_at = bug.get("created_at")
+            updated_at = bug.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO bugs (
+                  id, product_id, version_id, module_code, source, title, severity,
+                  description, status, assignee, related_task_id, requirement_id,
+                  reproduce_steps, evidence, duplicate_of_bug_id, created_by,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  %s::jsonb, %s::jsonb, NULL, %s,
+                  COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  module_code = EXCLUDED.module_code,
+                  source = EXCLUDED.source,
+                  title = EXCLUDED.title,
+                  severity = EXCLUDED.severity,
+                  description = EXCLUDED.description,
+                  status = EXCLUDED.status,
+                  assignee = EXCLUDED.assignee,
+                  related_task_id = EXCLUDED.related_task_id,
+                  requirement_id = EXCLUDED.requirement_id,
+                  reproduce_steps = EXCLUDED.reproduce_steps,
+                  evidence = EXCLUDED.evidence,
+                  duplicate_of_bug_id = NULL,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    bug["id"],
+                    bug["product_id"],
+                    bug.get("version_id"),
+                    bug.get("module_code"),
+                    bug["source"],
+                    bug["title"],
+                    bug["severity"],
+                    bug["description"],
+                    bug.get("status", "open"),
+                    bug.get("assignee"),
+                    bug.get("related_task_id"),
+                    bug.get("requirement_id"),
+                    json.dumps(bug.get("reproduce_steps", []), ensure_ascii=False),
+                    json.dumps(bug.get("evidence", {}), ensure_ascii=False),
+                    bug["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+        for bug in bugs.values():
+            duplicate_of_bug_id = bug.get("duplicate_of_bug_id")
+            if duplicate_of_bug_id:
+                cursor.execute(
+                    """
+                    UPDATE bugs
+                    SET duplicate_of_bug_id = %s, updated_at = COALESCE(%s::timestamptz, updated_at)
+                    WHERE id = %s
+                    """,
+                    (duplicate_of_bug_id, bug.get("updated_at"), bug["id"]),
+                )

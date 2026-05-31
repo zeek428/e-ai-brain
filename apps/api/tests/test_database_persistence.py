@@ -18,6 +18,7 @@ class FakeSnapshotRepository:
         self.workflow_runtime_payload: dict | None = None
         self.knowledge_payload: dict | None = None
         self.audit_events_payload: dict | None = None
+        self.bugs_payload: dict | None = None
 
     def load(self) -> dict | None:
         return self.payload
@@ -60,6 +61,12 @@ class FakeSnapshotRepository:
 
     def save_audit_events(self, payload: dict) -> None:
         self.audit_events_payload = payload
+
+    def load_bugs(self) -> dict | None:
+        return self.bugs_payload
+
+    def save_bugs(self, payload: dict) -> None:
+        self.bugs_payload = payload
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
@@ -1278,6 +1285,142 @@ def test_knowledge_api_writes_fine_grained_repository_and_audit_payload():
             "knowledge_document.created"
         )
         assert repository.audit_events_payload["audit_events"][-1]["subject_id"] == document["id"]
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_bugs_are_persisted_through_fine_grained_repository_payload():
+    repository = FakeSnapshotRepository()
+    current_store = PersistentMemoryStore.from_repository(repository)
+    current_store.bugs["bug_009"] = {
+        "assignee": "rd_owner@example.com",
+        "created_at": "2026-05-31T10:00:00+00:00",
+        "created_by": "user_admin",
+        "description": "结构表持久化验证",
+        "duplicate_of_bug_id": None,
+        "evidence": {"browser": "chrome"},
+        "id": "bug_009",
+        "module_code": "knowledge",
+        "product_id": "product_001",
+        "related_task_id": None,
+        "reproduce_steps": ["打开知识检索"],
+        "requirement_id": None,
+        "severity": "major",
+        "source": "manual_test",
+        "status": "assigned",
+        "title": "Bug 结构表验证",
+        "updated_at": "2026-05-31T10:05:00+00:00",
+        "version_id": "version_001",
+    }
+
+    current_store.persist()
+
+    assert repository.bugs_payload == {
+        "bugs": {
+            "bug_009": {
+                "assignee": "rd_owner@example.com",
+                "created_at": "2026-05-31T10:00:00+00:00",
+                "created_by": "user_admin",
+                "description": "结构表持久化验证",
+                "duplicate_of_bug_id": None,
+                "evidence": {"browser": "chrome"},
+                "id": "bug_009",
+                "module_code": "knowledge",
+                "product_id": "product_001",
+                "related_task_id": None,
+                "reproduce_steps": ["打开知识检索"],
+                "requirement_id": None,
+                "severity": "major",
+                "source": "manual_test",
+                "status": "assigned",
+                "title": "Bug 结构表验证",
+                "updated_at": "2026-05-31T10:05:00+00:00",
+                "version_id": "version_001",
+            }
+        }
+    }
+
+
+def test_structured_bugs_restore_and_sync_counter():
+    repository = FakeSnapshotRepository()
+    repository.payload = {
+        "bugs": {
+            "bug_002": {
+                "created_by": "user_admin",
+                "description": "旧快照 Bug",
+                "evidence": {},
+                "id": "bug_002",
+                "product_id": "product_001",
+                "reproduce_steps": [],
+                "severity": "major",
+                "source": "manual_test",
+                "status": "open",
+                "title": "旧快照 Bug",
+            }
+        }
+    }
+    repository.bugs_payload = {
+        "bugs": {
+            "bug_009": {
+                "created_by": "user_admin",
+                "description": "结构表 Bug",
+                "evidence": {},
+                "id": "bug_009",
+                "product_id": "product_001",
+                "reproduce_steps": ["复现步骤"],
+                "severity": "critical",
+                "source": "manual_test",
+                "status": "triaged",
+                "title": "结构表 Bug",
+            }
+        }
+    }
+
+    rebuilt_store = PersistentMemoryStore.from_repository(repository)
+
+    assert list(rebuilt_store.bugs) == ["bug_009"]
+    assert rebuilt_store.bugs["bug_009"]["status"] == "triaged"
+    assert rebuilt_store.new_id("bug") == "bug_010"
+
+
+def test_bug_api_writes_fine_grained_repository_payload():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    app.state.store = PersistentMemoryStore.from_repository(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        product = client.post(
+            "/api/products",
+            json={"code": "bug-persist", "name": "Bug 持久化产品"},
+            headers=headers,
+        ).json()["data"]
+        version = client.post(
+            f"/api/products/{product['id']}/versions",
+            json={"code": "v1", "name": "v1"},
+            headers=headers,
+        ).json()["data"]
+        bug = client.post(
+            "/api/bugs",
+            json={
+                "description": "Bug 创建必须写入结构表 payload",
+                "product_id": product["id"],
+                "severity": "major",
+                "source": "manual_test",
+                "title": "Bug API 结构表验证",
+                "version_id": version["id"],
+            },
+            headers=headers,
+        ).json()["data"]
+
+        assert repository.bugs_payload is not None
+        persisted = repository.bugs_payload["bugs"][bug["id"]]
+        assert persisted["title"] == "Bug API 结构表验证"
+        assert persisted["version_id"] == version["id"]
+        assert persisted["status"] == "open"
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users
