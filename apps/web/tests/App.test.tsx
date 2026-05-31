@@ -271,6 +271,7 @@ import {
   fetchTaskMarkdown,
   fetchCodeReviewReport,
   fetchKnowledgeDeposits,
+  fetchKnowledgeSearchResults,
   fetchProductGitRepositories,
   fetchTaskWritebackResult,
   generateRequirementTask,
@@ -778,6 +779,71 @@ describe('AI Brain Ant Design Pro workbench', () => {
         'POST',
       ]),
     );
+  });
+
+  it('opens knowledge search and shows permission-filtered sources', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/knowledge/documents') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '需求评估规则内容',
+                doc_type: 'manual',
+                id: 'knowledge_api',
+                index_status: 'indexed',
+                permission_roles: ['admin'],
+                title: '需求评估规则',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/search') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          query: '需求评估',
+          top_k: 5,
+        });
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '需求评估规则内容',
+                document_id: 'knowledge_api',
+                source: { doc_type: 'manual', title: '需求评估规则' },
+                title: '需求评估规则',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<KnowledgePage />);
+
+    expect(await screen.findByText('需求评估规则')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '知识检索' }));
+    fireEvent.change(screen.getByLabelText('检索关键词'), { target: { value: '需求评估' } });
+    fireEvent.click(screen.getByRole('button', { name: '检索' }));
+
+    expect(await screen.findByText('需求评估规则内容')).toBeInTheDocument();
+    expect(screen.getByText('manual · 需求评估规则')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ['/api/knowledge/documents', 'GET'],
+      ['/api/knowledge/search', 'POST'],
+    ]);
   });
 
   it('renders dashboard and operation pages without placeholder data', async () => {
@@ -1645,6 +1711,28 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (input === '/api/knowledge/search') {
+        expect(init?.method).toBe('POST');
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '方案检索内容',
+                document_id: 'knowledge_search_api',
+                source: { doc_type: 'Spec', title: '技术方案知识' },
+                title: '技术方案知识',
+              },
+              {
+                content: '方案检索内容二',
+                document_id: 'knowledge_search_api',
+                source: { doc_type: 'Spec', title: '技术方案知识' },
+                title: '技术方案知识',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
       if (input === '/api/knowledge/deposits/deposit_api/reject') {
         return jsonResponse({
           data: {
@@ -1675,6 +1763,20 @@ describe('AI Brain Ant Design Pro workbench', () => {
         title: '技术方案知识沉淀',
       },
     ]);
+    await expect(fetchKnowledgeSearchResults('方案', 5)).resolves.toMatchObject([
+      {
+        documentId: 'knowledge_search_api',
+        id: 'knowledge_search_api:0',
+        sourceLabel: 'Spec · 技术方案知识',
+        title: '技术方案知识',
+      },
+      {
+        documentId: 'knowledge_search_api',
+        id: 'knowledge_search_api:1',
+        sourceLabel: 'Spec · 技术方案知识',
+        title: '技术方案知识',
+      },
+    ]);
     await approveKnowledgeDeposit('deposit_api', {
       permissionRoles: ['admin', 'rd_owner'],
       title: '批准标题',
@@ -1685,6 +1787,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/writeback/results/task_solution', 'GET', undefined],
       ['/api/writeback/results/task_solution', 'POST', undefined],
       ['/api/knowledge/deposits?status=pending', 'GET', undefined],
+      ['/api/knowledge/search', 'POST', JSON.stringify({ query: '方案', top_k: 5 })],
       [
         '/api/knowledge/deposits/deposit_api/approve',
         'POST',

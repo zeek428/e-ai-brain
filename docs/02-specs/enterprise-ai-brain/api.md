@@ -914,9 +914,7 @@ POST /api/knowledge/search
 
 ```json
 {
-  "brain_app_code": "rd_brain",
   "query": "需求评估规则",
-  "filters": {},
   "top_k": 5
 }
 ```
@@ -928,16 +926,22 @@ POST /api/knowledge/search
   "data": {
     "items": [
       {
-        "id": "doc_001",
+        "document_id": "doc_001",
         "title": "研发需求拆解模板",
-        "snippet": "研发需求拆解应包含背景、业务目标...",
-        "source": "seed"
+        "content": "研发需求拆解应包含背景、业务目标...",
+        "source": {
+          "doc_type": "manual",
+          "title": "研发需求拆解模板"
+        }
       }
-    ]
+    ],
+    "total": 1
   },
   "trace_id": "trace_008"
 }
 ```
+
+前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源和内容摘要；无结果时展示真实空状态，不回退到示例数据。
 
 知识沉淀：
 

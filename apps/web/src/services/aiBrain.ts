@@ -201,6 +201,14 @@ export type KnowledgeDepositApprovePayload = {
   title?: string;
 };
 
+export type KnowledgeSearchResultRecord = {
+  content: string;
+  documentId: string;
+  id: string;
+  sourceLabel: string;
+  title: string;
+};
+
 type ProductListItem = {
   code?: string;
   current_version_name?: string;
@@ -401,6 +409,16 @@ type KnowledgeDepositListItem = {
   knowledge_document_id?: string | null;
   rejection_reason?: string;
   status?: string;
+  title?: string;
+};
+
+type KnowledgeSearchResultItem = {
+  content?: string;
+  document_id: string;
+  source?: {
+    doc_type?: string;
+    title?: string;
+  };
   title?: string;
 };
 
@@ -1277,6 +1295,36 @@ export async function fetchKnowledgeDeposits(
     { token },
   );
   return deposits.items.map(mapKnowledgeDeposit);
+}
+
+function mapKnowledgeSearchResult(item: KnowledgeSearchResultItem, index: number): KnowledgeSearchResultRecord {
+  const sourceParts = [item.source?.doc_type, item.source?.title].filter(Boolean);
+  return {
+    content: item.content ?? '-',
+    documentId: item.document_id,
+    id: `${item.document_id}:${index}`,
+    sourceLabel: sourceParts.length ? sourceParts.join(' · ') : '-',
+    title: item.title ?? item.document_id,
+  };
+}
+
+export async function fetchKnowledgeSearchResults(
+  query: string,
+  topK = 5,
+): Promise<KnowledgeSearchResultRecord[]> {
+  const token = requireAccessToken();
+  const results = await apiRequest<ListResponse<KnowledgeSearchResultItem>>(
+    '/api/knowledge/search',
+    {
+      body: {
+        query,
+        top_k: topK,
+      },
+      method: 'POST',
+      token,
+    },
+  );
+  return results.items.map(mapKnowledgeSearchResult);
 }
 
 export async function approveKnowledgeDeposit(

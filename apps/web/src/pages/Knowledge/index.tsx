@@ -1,7 +1,7 @@
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, SearchOutlined } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, Typography, message } from 'antd';
+import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Typography, message } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
@@ -12,10 +12,12 @@ import {
   createManagementKnowledgeDocument,
   deleteManagementKnowledgeDocument,
   fetchKnowledgeDeposits,
+  fetchKnowledgeSearchResults,
   fetchManagementKnowledge,
   rejectKnowledgeDeposit,
   updateManagementKnowledgeDocument,
   type KnowledgeDepositRecord,
+  type KnowledgeSearchResultRecord,
 } from '../../services/aiBrain';
 import {
   formatMutationError,
@@ -51,15 +53,25 @@ type RejectDepositFormValues = {
   reason: string;
 };
 
+type KnowledgeSearchFormValues = {
+  query: string;
+  top_k?: number;
+};
+
 export default function KnowledgePage() {
   const [form] = Form.useForm<KnowledgeFormValues>();
   const [rejectDepositForm] = Form.useForm<RejectDepositFormValues>();
+  const [searchForm] = Form.useForm<KnowledgeSearchFormValues>();
   const [depositRows, setDepositRows] = useState<KnowledgeDepositRecord[]>([]);
   const [depositsLoading, setDepositsLoading] = useState(false);
   const [isDepositsModalOpen, setIsDepositsModalOpen] = useState(false);
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [editingDocument, setEditingDocument] = useState<KnowledgeRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [rejectingDeposit, setRejectingDeposit] = useState<KnowledgeDepositRecord | null>(null);
+  const [searchRows, setSearchRows] = useState<KnowledgeSearchResultRecord[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const {
     error,
@@ -94,6 +106,13 @@ export default function KnowledgePage() {
     setIsDepositsModalOpen(true);
     void reloadDeposits();
   }, [reloadDeposits]);
+
+  const openSearchModal = useCallback(() => {
+    searchForm.setFieldsValue({ top_k: 5 });
+    setSearchRows([]);
+    setHasSearched(false);
+    setIsSearchModalOpen(true);
+  }, [searchForm]);
 
   const openEditModal = useCallback((row: KnowledgeRecord) => {
     setEditingDocument(row);
@@ -177,6 +196,20 @@ export default function KnowledgePage() {
       await reloadDeposits();
     } catch (depositError) {
       message.error(formatMutationError(depositError));
+    }
+  };
+
+  const handleSearch = async () => {
+    const values = await searchForm.validateFields();
+    setSearchLoading(true);
+    try {
+      const results = await fetchKnowledgeSearchResults(values.query.trim(), values.top_k ?? 5);
+      setSearchRows(results);
+      setHasSearched(true);
+    } catch (searchError) {
+      message.error(formatMutationError(searchError));
+    } finally {
+      setSearchLoading(false);
     }
   };
 
@@ -277,6 +310,24 @@ export default function KnowledgePage() {
     [handleApproveDeposit, openRejectDepositModal],
   );
 
+  const searchColumns = useMemo<ProColumns<KnowledgeSearchResultRecord>[]>(
+    () => [
+      {
+        dataIndex: 'title',
+        title: '知识标题',
+      },
+      {
+        dataIndex: 'sourceLabel',
+        title: '来源',
+      },
+      {
+        dataIndex: 'content',
+        title: '内容摘要',
+      },
+    ],
+    [],
+  );
+
   return (
     <>
       <ManagementListPage<KnowledgeRecord>
@@ -318,11 +369,58 @@ export default function KnowledgePage() {
         tableTitle="知识列表"
         title="知识中心"
         toolbarActions={[
+          <Button aria-label="知识检索" icon={<SearchOutlined />} key="knowledge-search" onClick={openSearchModal}>
+            知识检索
+          </Button>,
           <Button key="deposit-review" onClick={openDepositsModal}>
             沉淀审核
           </Button>,
         ]}
       />
+      <Modal
+        footer={null}
+        onCancel={() => setIsSearchModalOpen(false)}
+        open={isSearchModalOpen}
+        title="知识检索"
+        width={860}
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Form<KnowledgeSearchFormValues> form={searchForm} layout="inline">
+            <Form.Item
+              label="检索关键词"
+              name="query"
+              rules={[{ required: true, message: '请输入检索关键词' }]}
+            >
+              <Input aria-label="检索关键词" placeholder="输入需求、技术方案或规则关键词" />
+            </Form.Item>
+            <Form.Item label="返回条数" name="top_k">
+              <InputNumber min={1} max={20} precision={0} />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                aria-label="检索"
+                loading={searchLoading}
+                onClick={() => void handleSearch()}
+                type="primary"
+              >
+                检索
+              </Button>
+            </Form.Item>
+          </Form>
+          <ProTable<KnowledgeSearchResultRecord>
+            columns={searchColumns}
+            dataSource={searchRows}
+            loading={searchLoading}
+            options={false}
+            pagination={false}
+            rowKey="id"
+            search={false}
+          />
+          {hasSearched && searchRows.length === 0 && !searchLoading ? (
+            <Text type="secondary">没有检索到可访问的知识结果。</Text>
+          ) : null}
+        </Space>
+      </Modal>
       <Modal
         footer={null}
         onCancel={() => setIsDepositsModalOpen(false)}
