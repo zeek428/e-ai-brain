@@ -42,6 +42,9 @@ GITLAB_REVIEW_FIELDS = [
     "gitlab_mr_snapshots",
     "code_review_reports",
 ]
+MOCK_WRITEBACK_FIELDS = [
+    "mock_writebacks",
+]
 COLLECTION_FIELDS = [
     "products",
     "product_versions",
@@ -126,6 +129,12 @@ class GitlabReviewRepository(Protocol):
     def save_gitlab_review(self, payload: dict[str, Any]) -> None: ...
 
 
+class MockWritebackRepository(Protocol):
+    def load_mock_writebacks(self) -> dict[str, Any] | None: ...
+
+    def save_mock_writebacks(self, payload: dict[str, Any]) -> None: ...
+
+
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in PRODUCT_CONFIG_FIELDS}
 
@@ -163,6 +172,10 @@ def _model_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _gitlab_review_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in GITLAB_REVIEW_FIELDS}
+
+
+def _mock_writebacks_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in MOCK_WRITEBACK_FIELDS}
 
 
 def _ai_tasks_merge_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -299,6 +312,13 @@ def _repository_load_gitlab_review(repository: SnapshotRepository) -> dict[str, 
     return load_gitlab_review()
 
 
+def _repository_load_mock_writebacks(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_mock_writebacks = getattr(repository, "load_mock_writebacks", None)
+    if load_mock_writebacks is None:
+        return None
+    return load_mock_writebacks()
+
+
 def _repository_save_workflow_runtime(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -355,6 +375,17 @@ def _repository_save_gitlab_review(
         save_gitlab_review(_gitlab_review_payload(clean_payload))
 
 
+def _repository_save_mock_writebacks(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_mock_writebacks = getattr(repository, "save_mock_writebacks", None)
+    if save_mock_writebacks is not None:
+        clean_payload = deepcopy(payload)
+        _drop_mock_writebacks_without_tasks(clean_payload)
+        save_mock_writebacks(_mock_writebacks_payload(clean_payload))
+
+
 def _has_product_config_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in PRODUCT_CONFIG_FIELDS)
 
@@ -389,6 +420,10 @@ def _has_model_gateway_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_gitlab_review_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in GITLAB_REVIEW_FIELDS)
+
+
+def _has_mock_writeback_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in MOCK_WRITEBACK_FIELDS)
 
 
 def _max_numeric_suffix(items: dict[str, dict[str, Any]], prefix: str) -> int:
@@ -513,6 +548,21 @@ def _sync_gitlab_review_counters(payload: dict[str, Any]) -> None:
     counters["report"] = max(
         counters.get("report", 0),
         _max_numeric_suffix(payload.get("code_review_reports", {}), "report"),
+    )
+    payload["counters"] = counters
+
+
+def _sync_mock_writeback_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    issue_items = {
+        str(issue.get("id")): issue
+        for writeback in payload.get("mock_writebacks", {}).values()
+        for issue in writeback.get("issues", [])
+        if issue.get("id")
+    }
+    counters["mock_issue"] = max(
+        counters.get("mock_issue", 0),
+        _max_numeric_suffix(issue_items, "mock_issue"),
     )
     payload["counters"] = counters
 
@@ -710,6 +760,28 @@ def _drop_gitlab_review_without_context(payload: dict[str, Any]) -> None:
     payload["code_review_reports"] = cleaned_reports
 
 
+def _drop_mock_writebacks_without_tasks(payload: dict[str, Any]) -> None:
+    ai_tasks = payload.get("ai_tasks", {})
+    cleaned_writebacks = {}
+    for idempotency_key, writeback in payload.get("mock_writebacks", {}).items():
+        task_id = writeback.get("task_id")
+        if task_id not in ai_tasks:
+            continue
+        cleaned_issues = []
+        for issue in writeback.get("issues", []):
+            if issue.get("source_task_id") != task_id:
+                continue
+            cleaned_issues.append(deepcopy(issue))
+        if not cleaned_issues:
+            continue
+        cleaned_writeback = deepcopy(writeback)
+        cleaned_writeback["idempotency_key"] = writeback.get("idempotency_key") or idempotency_key
+        cleaned_writeback["issues"] = cleaned_issues
+        cleaned_writeback["task_id"] = task_id
+        cleaned_writebacks[idempotency_key] = cleaned_writeback
+    payload["mock_writebacks"] = cleaned_writebacks
+
+
 class PersistentMemoryStore(MemoryStore):
     def __init__(self, repository: SnapshotRepository) -> None:
         super().__init__()
@@ -791,6 +863,14 @@ class PersistentMemoryStore(MemoryStore):
                 GITLAB_REVIEW_FIELDS,
             )
             _sync_gitlab_review_counters(payload)
+        mock_writebacks_payload = _repository_load_mock_writebacks(repository)
+        if _has_mock_writeback_items(mock_writebacks_payload):
+            _replace_collection_payload(
+                payload,
+                _mock_writebacks_payload(mock_writebacks_payload),
+                MOCK_WRITEBACK_FIELDS,
+            )
+            _sync_mock_writeback_counters(payload)
         if has_structured_product_config:
             _drop_requirements_without_product_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
@@ -801,6 +881,7 @@ class PersistentMemoryStore(MemoryStore):
         if has_structured_product_config or _has_requirement_items(requirements_payload):
             _drop_bugs_without_context(payload)
         _drop_gitlab_review_without_context(payload)
+        _drop_mock_writebacks_without_tasks(payload)
         _ensure_ai_task_defaults(payload)
         _sync_task_runtime_links(payload)
         _sync_code_review_report_links(payload)
@@ -829,6 +910,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_bugs(self.repository, payload)
         _repository_save_model_gateway(self.repository, payload)
         _repository_save_gitlab_review(self.repository, payload)
+        _repository_save_mock_writebacks(self.repository, payload)
 
 
 class PostgresSnapshotRepository:
@@ -953,6 +1035,12 @@ class PostgresSnapshotRepository:
             "gitlab_mr_snapshots": snapshots,
         }
 
+    def load_mock_writebacks(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                writebacks = self._load_mock_writebacks(cursor)
+        return {"mock_writebacks": writebacks}
+
     def save_product_config(self, payload: dict[str, Any]) -> None:
         products = payload.get("products", {})
         versions = payload.get("product_versions", {})
@@ -1050,6 +1138,13 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "gitlab_mr_snapshots", snapshots)
                 self._upsert_gitlab_mr_snapshots(cursor, snapshots)
                 self._upsert_code_review_reports(cursor, reports)
+
+    def save_mock_writebacks(self, payload: dict[str, Any]) -> None:
+        issues = self._mock_issue_rows(payload.get("mock_writebacks", {}))
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "mock_issues", issues)
+                self._upsert_mock_issues(cursor, issues)
 
     def _load_products(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -1609,6 +1704,39 @@ class PostgresSnapshotRepository:
                     report.pop(optional_key)
             reports[row[0]] = report
         return reports
+
+    def _load_mock_writebacks(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, source_task_id, title, status, idempotency_key, payload, created_at
+            FROM mock_issues
+            ORDER BY created_at, id
+            """
+        )
+        writebacks: dict[str, dict[str, Any]] = {}
+        for row in cursor.fetchall():
+            issue_payload = dict(row[5] or {})
+            issue = {
+                **issue_payload,
+                "id": row[0],
+                "source_task_id": row[1],
+                "status": row[3],
+                "title": row[2],
+            }
+            if row[6] is not None:
+                issue["created_at"] = row[6].isoformat()
+            idempotency_key = row[4]
+            writeback = writebacks.setdefault(
+                idempotency_key,
+                {
+                    "idempotency_key": idempotency_key,
+                    "issues": [],
+                    "status": "completed",
+                    "task_id": row[1],
+                },
+            )
+            writeback["issues"].append(issue)
+        return writebacks
 
     def _delete_missing(
         self,
@@ -2347,6 +2475,62 @@ class PostgresSnapshotRepository:
                     log.get("error"),
                     log.get("model_gateway_config_id"),
                     log.get("created_at"),
+                ),
+            )
+
+    def _mock_issue_rows(
+        self,
+        writebacks: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        rows = {}
+        for fallback_key, writeback in writebacks.items():
+            idempotency_key = writeback.get("idempotency_key") or fallback_key
+            task_id = writeback.get("task_id")
+            for issue in writeback.get("issues", []):
+                issue_id = issue.get("id")
+                source_task_id = issue.get("source_task_id") or task_id
+                if not issue_id or not source_task_id:
+                    continue
+                rows[str(issue_id)] = {
+                    "id": str(issue_id),
+                    "idempotency_key": idempotency_key,
+                    "payload": deepcopy(issue),
+                    "source_task_id": source_task_id,
+                    "status": issue.get("status", "open"),
+                    "title": issue["title"],
+                }
+        return rows
+
+    def _upsert_mock_issues(
+        self,
+        cursor,
+        issues: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for issue in issues.values():
+            cursor.execute(
+                """
+                INSERT INTO mock_issues (
+                  id, source_task_id, title, status, idempotency_key, payload, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()))
+                ON CONFLICT (id) DO UPDATE SET
+                  source_task_id = EXCLUDED.source_task_id,
+                  title = EXCLUDED.title,
+                  status = EXCLUDED.status,
+                  idempotency_key = EXCLUDED.idempotency_key,
+                  payload = EXCLUDED.payload,
+                  created_at = EXCLUDED.created_at
+                """,
+                (
+                    issue["id"],
+                    issue["source_task_id"],
+                    issue["title"],
+                    issue.get("status", "open"),
+                    issue["idempotency_key"],
+                    json.dumps(issue.get("payload", {}), ensure_ascii=False),
+                    issue.get("payload", {}).get("created_at"),
                 ),
             )
 
