@@ -122,6 +122,12 @@ const routes = [
         icon: 'TeamOutlined',
         component: './Users',
       },
+      {
+        path: '/system/model-gateway',
+        name: '模型网关',
+        icon: 'ApiOutlined',
+        component: './ModelGateway',
+      },
     ],
   },
   {
@@ -182,6 +188,11 @@ const routes = [
   {
     path: '/users',
     redirect: '/system/users',
+    hideInMenu: true,
+  },
+  {
+    path: '/model-gateway',
+    redirect: '/system/model-gateway',
     hideInMenu: true,
   },
   {

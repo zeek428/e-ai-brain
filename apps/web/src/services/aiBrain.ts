@@ -2,6 +2,7 @@ import type {
   AuditRecord,
   BugRecord,
   KnowledgeRecord,
+  ModelGatewayConfigRecord,
   ProductContextOption,
   ProductRecord,
   ProductVersionOption,
@@ -293,6 +294,19 @@ export type UserMutationPayload = {
   username?: string;
 };
 
+export type ModelGatewayConfigMutationPayload = {
+  api_key?: string;
+  base_url?: string;
+  default_chat_model?: string;
+  default_embedding_model?: string;
+  is_default?: boolean;
+  max_retries?: number;
+  name?: string;
+  provider?: string;
+  status?: string;
+  timeout_seconds?: number;
+};
+
 type RequirementListItem = {
   content?: string;
   created_at?: string;
@@ -360,6 +374,20 @@ type ProductGitRepositoryListItem = {
   project_id?: string | null;
   project_path?: string | null;
   status?: string;
+};
+
+type ModelGatewayConfigListItem = {
+  api_key_configured?: boolean;
+  base_url?: string;
+  default_chat_model?: string;
+  default_embedding_model?: string;
+  id: string;
+  is_default?: boolean;
+  max_retries?: number;
+  name: string;
+  provider?: string;
+  status?: string;
+  timeout_seconds?: number;
 };
 
 type GitLabMergeRequestPreviewResponse = {
@@ -666,6 +694,10 @@ function normalizeBugSource(source?: string): BugRecord['source'] {
   return source === 'ai_auto_test' ? 'ai_auto_test' : 'manual_test';
 }
 
+function normalizeModelGatewayStatus(status?: string): ModelGatewayConfigRecord['status'] {
+  return status === 'inactive' ? 'inactive' : 'active';
+}
+
 function formatUnknownValue(value: unknown): string {
   if (value === null || value === undefined || value === '') {
     return '-';
@@ -838,6 +870,65 @@ export async function deleteManagementUser(userId: string) {
     method: 'DELETE',
     token,
   });
+}
+
+function mapModelGatewayConfig(config: ModelGatewayConfigListItem): ModelGatewayConfigRecord {
+  const apiKeyConfigured = Boolean(config.api_key_configured);
+  return {
+    apiKeyConfigured,
+    baseUrl: config.base_url ?? '-',
+    defaultChatModel: config.default_chat_model ?? '-',
+    defaultEmbeddingModel: config.default_embedding_model ?? '-',
+    id: config.id,
+    isDefault: Boolean(config.is_default),
+    keyStatus: apiKeyConfigured ? '已配置' : '未配置',
+    maxRetries: config.max_retries ?? 0,
+    name: config.name,
+    provider: config.provider ?? '-',
+    status: normalizeModelGatewayStatus(config.status),
+    timeoutSeconds: config.timeout_seconds ?? 0,
+  };
+}
+
+export async function fetchModelGatewayConfigs(): Promise<ModelGatewayConfigRecord[]> {
+  const token = requireAccessToken();
+  const configs = await apiRequest<ListResponse<ModelGatewayConfigListItem>>(
+    '/api/system/model-gateway-configs',
+    { token },
+  );
+  return configs.items.map(mapModelGatewayConfig);
+}
+
+export async function createModelGatewayConfig(payload: ModelGatewayConfigMutationPayload) {
+  const token = requireAccessToken();
+  return apiRequest<ModelGatewayConfigListItem>('/api/system/model-gateway-configs', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateModelGatewayConfig(
+  configId: string,
+  payload: ModelGatewayConfigMutationPayload,
+) {
+  const token = requireAccessToken();
+  return apiRequest<ModelGatewayConfigListItem>(`/api/system/model-gateway-configs/${configId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function deleteModelGatewayConfig(configId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(
+    `/api/system/model-gateway-configs/${configId}`,
+    {
+      method: 'DELETE',
+      token,
+    },
+  );
 }
 
 export async function fetchManagementRequirements(): Promise<RequirementRecord[]> {

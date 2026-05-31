@@ -245,6 +245,7 @@ import DevopsPage from '../src/pages/Devops';
 import InsightsPage from '../src/pages/Insights';
 import KnowledgePage from '../src/pages/Knowledge';
 import LoginPage from '../src/pages/Login';
+import ModelGatewayPage from '../src/pages/ModelGateway';
 import ProductsPage from '../src/pages/Products';
 import RequirementsPage from '../src/pages/Requirements';
 import UsersPage from '../src/pages/Users';
@@ -256,6 +257,7 @@ import {
   AUTH_STATE_EVENT,
   clearAccessToken,
   createManagementBug,
+  createModelGatewayConfig,
   createTaskWritebackResult,
   createManagementKnowledgeDocument,
   createManagementProduct,
@@ -264,10 +266,12 @@ import {
   createCodeReviewTask,
   createTechnicalSolutionTask,
   deleteManagementBug,
+  deleteModelGatewayConfig,
   deleteManagementKnowledgeDocument,
   deleteManagementProduct,
   deleteManagementRequirement,
   deleteManagementUser,
+  fetchModelGatewayConfigs,
   fetchTaskMarkdown,
   fetchCodeReviewReport,
   fetchKnowledgeDeposits,
@@ -288,6 +292,7 @@ import {
   updateManagementProduct,
   updateManagementRequirement,
   updateManagementUser,
+  updateModelGatewayConfig,
 } from '../src/services/aiBrain';
 import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
 import TaskCenterPage from '../src/pages/TaskCenter';
@@ -331,6 +336,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(routes).not.toContain("path: '/governance/users'");
     expect(routes).toContain("path: '/system/users'");
     expect(routes).toContain("name: '用户管理'");
+    expect(routes).toContain("path: '/system/model-gateway'");
+    expect(routes).toContain("name: '模型网关'");
+    expect(routes).toContain("component: './ModelGateway'");
     expect(routes).toContain("component: './TaskCenter'");
   });
 
@@ -816,6 +824,147 @@ describe('AI Brain Ant Design Pro workbench', () => {
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
         '/api/ai-tasks/task_more_info/more-info',
         'POST',
+      ]),
+    );
+  });
+
+  it('manages model gateway configs without exposing api keys', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/system/model-gateway-configs') {
+        if (init?.method === 'POST') {
+          expect(JSON.parse(String(init.body))).toMatchObject({
+            api_key: 'sk-live-secret',
+            base_url: 'https://api.example.com/v1',
+            default_chat_model: 'gpt-4.1',
+            default_embedding_model: 'text-embedding-3-large',
+            is_default: true,
+            max_retries: 2,
+            name: '新模型网关',
+            provider: 'openai_compatible',
+            status: 'active',
+            timeout_seconds: 90,
+          });
+          return jsonResponse({
+            data: {
+              api_key_configured: true,
+              base_url: 'https://api.example.com/v1',
+              default_chat_model: 'gpt-4.1',
+              default_embedding_model: 'text-embedding-3-large',
+              id: 'model_config_new',
+              is_default: true,
+              max_retries: 2,
+              name: '新模型网关',
+              provider: 'openai_compatible',
+              status: 'active',
+              timeout_seconds: 90,
+            },
+          });
+        }
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                api_key_configured: true,
+                base_url: 'https://api.example.com/v1',
+                default_chat_model: 'gpt-4.1',
+                default_embedding_model: 'text-embedding-3-large',
+                id: 'model_config_default',
+                is_default: true,
+                max_retries: 1,
+                name: '默认模型网关',
+                provider: 'openai_compatible',
+                status: 'active',
+                timeout_seconds: 60,
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/system/model-gateway-configs/model_config_default') {
+        if (init?.method === 'PATCH') {
+          const body = JSON.parse(String(init.body));
+          expect(body).toMatchObject({
+            base_url: 'https://api.example.com/v1',
+            default_chat_model: 'gpt-4.1-mini',
+            default_embedding_model: 'text-embedding-3-large',
+            is_default: true,
+            max_retries: 1,
+            name: '默认模型网关',
+            provider: 'openai_compatible',
+            status: 'active',
+            timeout_seconds: 60,
+          });
+          expect(body).not.toHaveProperty('api_key');
+          return jsonResponse({
+            data: {
+              api_key_configured: true,
+              base_url: 'https://api.example.com/v1',
+              default_chat_model: 'gpt-4.1-mini',
+              default_embedding_model: 'text-embedding-3-large',
+              id: 'model_config_default',
+              is_default: true,
+              max_retries: 1,
+              name: '默认模型网关',
+              provider: 'openai_compatible',
+              status: 'active',
+              timeout_seconds: 60,
+            },
+          });
+        }
+        if (init?.method === 'DELETE') {
+          return jsonResponse({ data: { deleted: true, id: 'model_config_default' } });
+        }
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ModelGatewayPage />);
+
+    expect(await screen.findByText('默认模型网关')).toBeInTheDocument();
+    expect(screen.getByText('模型网关配置')).toBeInTheDocument();
+    expect(screen.getByText('已配置')).toBeInTheDocument();
+    expect(screen.queryByText('sk-live-secret')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /新增配置/ }));
+    let dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('配置名称'), { target: { value: '新模型网关' } });
+    fireEvent.change(within(dialog).getByLabelText('Provider'), { target: { value: 'openai_compatible' } });
+    fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://api.example.com/v1' } });
+    fireEvent.change(within(dialog).getByLabelText('API Key'), { target: { value: 'sk-live-secret' } });
+    fireEvent.change(within(dialog).getByLabelText('默认 Chat 模型'), { target: { value: 'gpt-4.1' } });
+    fireEvent.change(within(dialog).getByLabelText('默认 Embedding 模型'), {
+      target: { value: 'text-embedding-3-large' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('超时秒数'), { target: { value: '90' } });
+    fireEvent.change(within(dialog).getByLabelText('最大重试'), { target: { value: '2' } });
+    fireEvent.click(within(dialog).getByLabelText('默认配置'));
+    fireEvent.click(within(dialog).getByRole('button', { name: /保\s*存/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
+        '/api/system/model-gateway-configs',
+        'POST',
+      ]),
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: /编辑/ })[0]);
+    dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('默认 Chat 模型'), { target: { value: 'gpt-4.1-mini' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /保\s*存/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
+        '/api/system/model-gateway-configs/model_config_default',
+        'PATCH',
       ]),
     );
   });
@@ -1626,6 +1775,103 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
       ['/api/reviews/review_api/request-more-info', 'POST'],
       ['/api/ai-tasks/task_api/more-info', 'POST'],
+    ]);
+  });
+
+  it('sends model gateway config CRUD mutations to backend APIs without plaintext in list rows', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/system/model-gateway-configs' && init?.method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                api_key_configured: true,
+                base_url: 'https://api.example.com/v1',
+                default_chat_model: 'gpt-4.1',
+                default_embedding_model: 'text-embedding-3-large',
+                id: 'model_config_api',
+                is_default: true,
+                max_retries: 1,
+                name: '默认模型网关',
+                provider: 'openai_compatible',
+                status: 'active',
+                timeout_seconds: 60,
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/system/model-gateway-configs' && init?.method === 'POST') {
+        expect(init.body).toBe(
+          JSON.stringify({
+            api_key: 'sk-live-secret',
+            base_url: 'https://api.example.com/v1',
+            default_chat_model: 'gpt-4.1',
+            default_embedding_model: 'text-embedding-3-large',
+            is_default: true,
+            max_retries: 1,
+            name: '默认模型网关',
+            provider: 'openai_compatible',
+            status: 'active',
+            timeout_seconds: 60,
+          }),
+        );
+        return jsonResponse({ data: { id: 'model_config_api', status: 'active' } });
+      }
+      if (input === '/api/system/model-gateway-configs/model_config_api' && init?.method === 'PATCH') {
+        expect(init.body).toBe(
+          JSON.stringify({
+            default_chat_model: 'gpt-4.1-mini',
+            status: 'active',
+          }),
+        );
+        return jsonResponse({ data: { id: 'model_config_api', status: 'active' } });
+      }
+      if (input === '/api/system/model-gateway-configs/model_config_api' && init?.method === 'DELETE') {
+        return jsonResponse({ data: { deleted: true, id: 'model_config_api' } });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchModelGatewayConfigs()).resolves.toEqual([
+      expect.objectContaining({
+        apiKeyConfigured: true,
+        keyStatus: '已配置',
+        name: '默认模型网关',
+      }),
+    ]);
+    await createModelGatewayConfig({
+      api_key: 'sk-live-secret',
+      base_url: 'https://api.example.com/v1',
+      default_chat_model: 'gpt-4.1',
+      default_embedding_model: 'text-embedding-3-large',
+      is_default: true,
+      max_retries: 1,
+      name: '默认模型网关',
+      provider: 'openai_compatible',
+      status: 'active',
+      timeout_seconds: 60,
+    });
+    await updateModelGatewayConfig('model_config_api', {
+      default_chat_model: 'gpt-4.1-mini',
+      status: 'active',
+    });
+    await deleteModelGatewayConfig('model_config_api');
+
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ['/api/system/model-gateway-configs', 'GET'],
+      ['/api/system/model-gateway-configs', 'POST'],
+      ['/api/system/model-gateway-configs/model_config_api', 'PATCH'],
+      ['/api/system/model-gateway-configs/model_config_api', 'DELETE'],
     ]);
   });
 

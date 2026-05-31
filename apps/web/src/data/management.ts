@@ -86,3 +86,18 @@ export type UserRecord = {
   status: 'active' | 'inactive';
   username: string;
 };
+
+export type ModelGatewayConfigRecord = {
+  apiKeyConfigured: boolean;
+  baseUrl: string;
+  defaultChatModel: string;
+  defaultEmbeddingModel: string;
+  id: string;
+  isDefault: boolean;
+  keyStatus: string;
+  maxRetries: number;
+  name: string;
+  provider: string;
+  status: 'active' | 'inactive';
+  timeoutSeconds: number;
+};
