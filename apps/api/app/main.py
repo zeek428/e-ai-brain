@@ -2864,7 +2864,10 @@ def start_ai_task(
         raise api_error(400, "MODEL_GATEWAY_CONFIG_INVALID", str(exc)) from exc
     except ModelGatewayCallError as exc:
         task["status"] = "failed"
-        task["current_step"] = "model_gateway_failed"
+        is_code_review = task["task_type"] == "code_review"
+        task["current_step"] = (
+            "code_review_executor_failed" if is_code_review else "model_gateway_failed"
+        )
         current_store.audit(
             event_type="model_gateway.called",
             actor_id="system",
@@ -2879,14 +2882,38 @@ def start_ai_task(
                 "status": exc.log["status"],
             },
         )
+        if is_code_review:
+            current_store.audit(
+                event_type="code_review.executor_failed",
+                actor_id="system",
+                ai_task_id=task_id,
+                subject_type="ai_task",
+                subject_id=task_id,
+                payload={
+                    "current_step": task["current_step"],
+                    "model_log_id": exc.log["id"],
+                    "retryable": True,
+                },
+            )
         current_store.audit(
             event_type="ai_task.failed",
             actor_id="system",
             ai_task_id=task_id,
             subject_type="ai_task",
             subject_id=task_id,
-            payload={"current_step": task["current_step"]},
+            payload={
+                "current_step": task["current_step"],
+                "reason": (
+                    "code_review_executor_failed" if is_code_review else "model_gateway_failed"
+                ),
+            },
         )
+        if is_code_review:
+            raise api_error(
+                502,
+                "CODE_REVIEW_EXECUTOR_FAILED",
+                "Code review executor failed",
+            ) from exc
         raise api_error(502, "MODEL_GATEWAY_FAILED", "Model gateway request failed") from exc
 
     task["status"] = "waiting_review"

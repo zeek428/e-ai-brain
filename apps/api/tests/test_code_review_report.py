@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
@@ -188,3 +190,79 @@ def test_code_review_report_edit_approve_also_confirms_and_archives_report(monke
     assert archived["archived_at"].startswith("20")
     assert archived["summary"] == "人工确认后保留一处高风险问题并补充边界测试建议。"
     assert archived["gitlab_writeback_performed"] is False
+
+
+def test_code_review_executor_failure_uses_executor_error_code(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    requirement_id, snapshot_id = build_mr_snapshot(headers)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {"kind": "code_review", "summary": "缺少 executor 字段"},
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 8, "prompt_tokens": 12, "total_tokens": 20},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, _timeout):
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "api_key": "sk-code-review",
+            "base_url": "https://llm.example.com/v1",
+            "default_chat_model": "gpt-review",
+            "default_embedding_model": "text-embedding-review",
+            "is_default": True,
+            "name": "Code Review 执行器",
+            "provider": "openai_compatible",
+            "status": "active",
+        },
+        headers=headers,
+    )
+    task = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "code_review",
+            "title": "Review MR !42 executor failure",
+            "requirement_id": requirement_id,
+            "input": {"gitlab_mr_snapshot_id": snapshot_id},
+        },
+        headers=headers,
+    ).json()["data"]
+
+    response = client.post(f"/api/ai-tasks/{task['id']}/start", headers=headers)
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "CODE_REVIEW_EXECUTOR_FAILED"
+    detail = client.get(f"/api/ai-tasks/{task['id']}", headers=headers).json()["data"]
+    assert detail["status"] == "failed"
+    assert detail["current_step"] == "code_review_executor_failed"
+
+    audit_events = client.get(
+        f"/api/audit/events?ai_task_id={task['id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    event_types = [event["event_type"] for event in audit_events]
+    assert "code_review.executor_failed" in event_types
+    assert "ai_task.failed" in event_types
