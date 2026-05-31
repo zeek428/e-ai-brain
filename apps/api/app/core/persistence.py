@@ -16,6 +16,9 @@ PRODUCT_CONFIG_FIELDS = [
 REQUIREMENT_FIELDS = [
     "requirements",
 ]
+AI_TASK_FIELDS = [
+    "ai_tasks",
+]
 COLLECTION_FIELDS = [
     "products",
     "product_versions",
@@ -58,6 +61,12 @@ class RequirementRepository(Protocol):
     def save_requirements(self, payload: dict[str, Any]) -> None: ...
 
 
+class AiTaskRepository(Protocol):
+    def load_ai_tasks(self) -> dict[str, Any] | None: ...
+
+    def save_ai_tasks(self, payload: dict[str, Any]) -> None: ...
+
+
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in PRODUCT_CONFIG_FIELDS}
 
@@ -66,16 +75,39 @@ def _requirements_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in REQUIREMENT_FIELDS}
 
 
+def _ai_tasks_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in AI_TASK_FIELDS}
+
+
+def _ai_tasks_merge_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    merge_payload = _ai_tasks_payload(payload or {})
+    for task in merge_payload.get("ai_tasks", {}).values():
+        for field in ("graph_run_ids", "review_ids"):
+            if task.get(field) == []:
+                task.pop(field)
+    return merge_payload
+
+
 def _merge_collection_payload(
     payload: dict[str, Any],
     overlay: dict[str, Any],
     fields: list[str],
+    *,
+    merge_items: bool = False,
 ) -> None:
     for field in fields:
-        payload[field] = {
-            **deepcopy(payload.get(field, {})),
-            **deepcopy(overlay.get(field, {})),
-        }
+        existing_items = deepcopy(payload.get(field, {}))
+        overlay_items = deepcopy(overlay.get(field, {}))
+        if merge_items:
+            merged_items = existing_items
+            for item_id, item in overlay_items.items():
+                merged_items[item_id] = {
+                    **deepcopy(merged_items.get(item_id, {})),
+                    **item,
+                }
+            payload[field] = merged_items
+        else:
+            payload[field] = {**existing_items, **overlay_items}
 
 
 def _repository_load_product_config(repository: SnapshotRepository) -> dict[str, Any] | None:
@@ -110,12 +142,32 @@ def _repository_save_requirements(
         save_requirements(_requirements_payload(payload))
 
 
+def _repository_load_ai_tasks(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_ai_tasks = getattr(repository, "load_ai_tasks", None)
+    if load_ai_tasks is None:
+        return None
+    return load_ai_tasks()
+
+
+def _repository_save_ai_tasks(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_ai_tasks = getattr(repository, "save_ai_tasks", None)
+    if save_ai_tasks is not None:
+        save_ai_tasks(_ai_tasks_payload(payload))
+
+
 def _has_product_config_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in PRODUCT_CONFIG_FIELDS)
 
 
 def _has_requirement_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in REQUIREMENT_FIELDS)
+
+
+def _has_ai_task_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in AI_TASK_FIELDS)
 
 
 def _max_numeric_suffix(items: dict[str, dict[str, Any]], prefix: str) -> int:
@@ -154,6 +206,15 @@ def _sync_requirement_counters(payload: dict[str, Any]) -> None:
     payload["counters"] = counters
 
 
+def _sync_ai_task_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["task"] = max(
+        counters.get("task", 0),
+        _max_numeric_suffix(payload.get("ai_tasks", {}), "task"),
+    )
+    payload["counters"] = counters
+
+
 def _drop_requirements_without_product_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     versions = payload.get("product_versions", {})
@@ -165,6 +226,31 @@ def _drop_requirements_without_product_context(payload: dict[str, Any]) -> None:
         and requirement.get("version_id") in versions
         and versions[requirement["version_id"]].get("product_id") == requirement.get("product_id")
     }
+
+
+def _drop_ai_tasks_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    versions = payload.get("product_versions", {})
+    requirements = payload.get("requirements", {})
+    ai_tasks = payload.get("ai_tasks", {})
+    payload["ai_tasks"] = {
+        task_id: task
+        for task_id, task in ai_tasks.items()
+        if task.get("product_id") in products
+        and task.get("version_id") in versions
+        and task.get("requirement_id") in requirements
+        and versions[task["version_id"]].get("product_id") == task.get("product_id")
+        and requirements[task["requirement_id"]].get("product_id") == task.get("product_id")
+        and requirements[task["requirement_id"]].get("version_id") == task.get("version_id")
+    }
+
+
+def _ensure_ai_task_defaults(payload: dict[str, Any]) -> None:
+    for task in payload.get("ai_tasks", {}).values():
+        task.setdefault("graph_run_ids", [])
+        task.setdefault("input_json", {})
+        task.setdefault("product_context", {})
+        task.setdefault("review_ids", [])
 
 
 class PersistentMemoryStore(MemoryStore):
@@ -193,8 +279,21 @@ class PersistentMemoryStore(MemoryStore):
                 REQUIREMENT_FIELDS,
             )
             _sync_requirement_counters(payload)
+        ai_tasks_payload = _repository_load_ai_tasks(repository)
+        has_structured_ai_tasks = _has_ai_task_items(ai_tasks_payload)
+        if has_structured_ai_tasks:
+            _merge_collection_payload(
+                payload,
+                _ai_tasks_merge_payload(ai_tasks_payload),
+                AI_TASK_FIELDS,
+                merge_items=True,
+            )
+            _sync_ai_task_counters(payload)
         if has_structured_product_config:
             _drop_requirements_without_product_context(payload)
+        if has_structured_product_config or _has_requirement_items(requirements_payload):
+            _drop_ai_tasks_without_context(payload)
+        _ensure_ai_task_defaults(payload)
         if payload:
             store.load_payload(payload)
         return store
@@ -213,6 +312,7 @@ class PersistentMemoryStore(MemoryStore):
         self.repository.save(payload)
         _repository_save_product_config(self.repository, payload)
         _repository_save_requirements(self.repository, payload)
+        _repository_save_ai_tasks(self.repository, payload)
 
 
 class PostgresSnapshotRepository:
@@ -277,6 +377,12 @@ class PostgresSnapshotRepository:
                 requirements = self._load_requirements(cursor)
         return {"requirements": requirements}
 
+    def load_ai_tasks(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                ai_tasks = self._load_ai_tasks(cursor)
+        return {"ai_tasks": ai_tasks}
+
     def save_product_config(self, payload: dict[str, Any]) -> None:
         products = payload.get("products", {})
         versions = payload.get("product_versions", {})
@@ -299,6 +405,13 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "requirements", requirements)
                 self._upsert_requirements(cursor, requirements)
+
+    def save_ai_tasks(self, payload: dict[str, Any]) -> None:
+        ai_tasks = payload.get("ai_tasks", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "ai_tasks", ai_tasks)
+                self._upsert_ai_tasks(cursor, ai_tasks)
 
     def _load_products(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -424,6 +537,43 @@ class PostgresSnapshotRepository:
                 requirement["rejection_reason"] = row[10]
             requirements[row[0]] = requirement
         return requirements
+
+    def _load_ai_tasks(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, requirement_id, task_type, title, status, product_id, version_id,
+                   module_code, requirement_snapshot, product_context, input_json, output_json,
+                   current_step, error_code, error_message, created_by, created_at, updated_at
+            FROM ai_tasks
+            ORDER BY id
+            """
+        )
+        ai_tasks = {}
+        for row in cursor.fetchall():
+            task = {
+                "created_at": row[16].isoformat() if row[16] else None,
+                "created_by": row[15],
+                "current_step": row[12],
+                "error_code": row[13],
+                "error_message": row[14],
+                "graph_run_ids": [],
+                "id": row[0],
+                "input_json": dict(row[10] or {}),
+                "module_code": row[7],
+                "output_json": row[11],
+                "product_context": dict(row[9] or {}),
+                "product_id": row[5],
+                "requirement_id": row[1],
+                "requirement_snapshot": row[8],
+                "review_ids": [],
+                "status": row[4],
+                "task_type": row[2],
+                "title": row[3],
+                "updated_at": row[17].isoformat() if row[17] else None,
+                "version_id": row[6],
+            }
+            ai_tasks[row[0]] = task
+        return ai_tasks
 
     def _delete_missing(
         self,
@@ -617,6 +767,64 @@ class PostgresSnapshotRepository:
                     requirement.get("approval_comment"),
                     requirement.get("rejection_reason"),
                     json.dumps(requirement.get("task_ids", []), ensure_ascii=False),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_ai_tasks(self, cursor, ai_tasks: dict[str, dict[str, Any]]) -> None:
+        import json
+
+        for task in ai_tasks.values():
+            created_at = task.get("created_at")
+            updated_at = task.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO ai_tasks (
+                  id, requirement_id, task_type, title, status, product_id, version_id,
+                  module_code, requirement_snapshot, product_context, input_json, output_json,
+                  current_step, error_code, error_message, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
+                  %s::jsonb, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  requirement_id = EXCLUDED.requirement_id,
+                  task_type = EXCLUDED.task_type,
+                  title = EXCLUDED.title,
+                  status = EXCLUDED.status,
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  module_code = EXCLUDED.module_code,
+                  requirement_snapshot = EXCLUDED.requirement_snapshot,
+                  product_context = EXCLUDED.product_context,
+                  input_json = EXCLUDED.input_json,
+                  output_json = EXCLUDED.output_json,
+                  current_step = EXCLUDED.current_step,
+                  error_code = EXCLUDED.error_code,
+                  error_message = EXCLUDED.error_message,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    task["id"],
+                    task["requirement_id"],
+                    task["task_type"],
+                    task["title"],
+                    task.get("status", "draft"),
+                    task["product_id"],
+                    task["version_id"],
+                    task.get("module_code"),
+                    json.dumps(task.get("requirement_snapshot"), ensure_ascii=False),
+                    json.dumps(task.get("product_context", {}), ensure_ascii=False),
+                    json.dumps(task.get("input_json", {}), ensure_ascii=False),
+                    json.dumps(task.get("output_json"), ensure_ascii=False),
+                    task.get("current_step"),
+                    task.get("error_code"),
+                    task.get("error_message"),
+                    task["created_by"],
                     created_at,
                     updated_at,
                 ),
