@@ -3926,6 +3926,127 @@ def _lifecycle_relation(
     }
 
 
+def _lifecycle_mock_issue(
+    current_store: MemoryStore,
+    subject_id: str,
+) -> dict[str, Any] | None:
+    for result in current_store.mock_writebacks.values():
+        for issue in result["issues"]:
+            if issue["id"] == subject_id:
+                return issue
+    return None
+
+
+def _lifecycle_audit_event(
+    current_store: MemoryStore,
+    subject_id: str,
+) -> dict[str, Any] | None:
+    return next(
+        (event for event in current_store.audit_events if event["id"] == subject_id),
+        None,
+    )
+
+
+def _lifecycle_require_tasks_by_requirement(
+    current_store: MemoryStore,
+    requirement_id: str,
+) -> list[dict[str, Any]]:
+    requirement = current_store.requirements.get(requirement_id)
+    if requirement is None:
+        raise api_error(404, "NOT_FOUND", "Requirement not found")
+    return [
+        task
+        for task in current_store.ai_tasks.values()
+        if task.get("requirement_id") == requirement_id
+    ]
+
+
+def _lifecycle_require_task(
+    current_store: MemoryStore,
+    task_id: str | None,
+) -> dict[str, Any]:
+    task = current_store.ai_tasks.get(str(task_id))
+    if task is None:
+        raise api_error(404, "NOT_FOUND", "AI task not found")
+    return task
+
+
+def _lifecycle_subject_tasks(
+    current_store: MemoryStore,
+    *,
+    subject_type: str,
+    subject_id: str,
+    resolving_audit_subject: bool = False,
+) -> list[dict[str, Any]]:
+    if subject_type == "requirement":
+        return _lifecycle_require_tasks_by_requirement(current_store, subject_id)
+    if subject_type == "ai_task":
+        return [_lifecycle_require_task(current_store, subject_id)]
+    if subject_type == "product":
+        if subject_id not in current_store.products:
+            raise api_error(404, "NOT_FOUND", "Product not found")
+        return [
+            task
+            for task in current_store.ai_tasks.values()
+            if task.get("product_id") == subject_id
+        ]
+    if subject_type == "human_review":
+        review = current_store.human_reviews.get(subject_id)
+        if review is None:
+            raise api_error(404, "NOT_FOUND", "Review not found")
+        return [_lifecycle_require_task(current_store, review.get("ai_task_id"))]
+    if subject_type == "code_review_report":
+        report = current_store.code_review_reports.get(subject_id)
+        if report is None:
+            raise api_error(404, "NOT_FOUND", "Code review report not found")
+        return [_lifecycle_require_task(current_store, report.get("task_id"))]
+    if subject_type == "gitlab_mr_snapshot":
+        snapshot = current_store.gitlab_mr_snapshots.get(subject_id)
+        if snapshot is None:
+            raise api_error(404, "NOT_FOUND", "GitLab MR snapshot not found")
+        return [_lifecycle_require_task(current_store, snapshot.get("technical_solution_task_id"))]
+    if subject_type == "mock_issue":
+        issue = _lifecycle_mock_issue(current_store, subject_id)
+        if issue is None:
+            raise api_error(404, "NOT_FOUND", "Mock issue not found")
+        return [_lifecycle_require_task(current_store, issue.get("source_task_id"))]
+    if subject_type == "knowledge_deposit":
+        deposit = current_store.knowledge_deposits.get(subject_id)
+        if deposit is None:
+            raise api_error(404, "NOT_FOUND", "Knowledge deposit not found")
+        return [_lifecycle_require_task(current_store, deposit.get("ai_task_id"))]
+    if subject_type == "audit_event":
+        event = _lifecycle_audit_event(current_store, subject_id)
+        if event is None:
+            raise api_error(404, "NOT_FOUND", "Audit event not found")
+        if event.get("ai_task_id"):
+            return [_lifecycle_require_task(current_store, event.get("ai_task_id"))]
+        nested_type = event.get("subject_type")
+        nested_id = event.get("subject_id")
+        if nested_type and nested_id and not resolving_audit_subject:
+            return _lifecycle_subject_tasks(
+                current_store,
+                subject_type=nested_type,
+                subject_id=nested_id,
+                resolving_audit_subject=True,
+            )
+        return []
+    if subject_type == "bug":
+        bug = current_store.bugs.get(subject_id)
+        if bug is None:
+            raise api_error(404, "NOT_FOUND", "Bug not found")
+        if bug.get("related_task_id"):
+            return [_lifecycle_require_task(current_store, bug.get("related_task_id"))]
+        if bug.get("requirement_id"):
+            return _lifecycle_require_tasks_by_requirement(current_store, bug["requirement_id"])
+        return [
+            task
+            for task in current_store.ai_tasks.values()
+            if task.get("product_id") == bug.get("product_id")
+        ]
+    raise api_error(400, "VALIDATION_ERROR", "Unsupported lifecycle subject_type")
+
+
 def _tasks_for_lifecycle_subject(
     current_store: MemoryStore,
     *,
@@ -3935,20 +4056,14 @@ def _tasks_for_lifecycle_subject(
     version_id: str | None,
     module_code: str | None,
 ) -> list[dict[str, Any]]:
-    if subject_type == "requirement":
-        requirement = current_store.requirements.get(str(subject_id))
-        if requirement is None:
-            raise api_error(404, "NOT_FOUND", "Requirement not found")
-        tasks = [
-            task
-            for task in current_store.ai_tasks.values()
-            if task.get("requirement_id") == subject_id
-        ]
-    elif subject_type == "ai_task":
-        task = current_store.ai_tasks.get(str(subject_id))
-        if task is None:
-            raise api_error(404, "NOT_FOUND", "AI task not found")
-        tasks = [task]
+    if subject_type:
+        if not subject_id:
+            raise api_error(400, "VALIDATION_ERROR", "subject_id is required")
+        tasks = _lifecycle_subject_tasks(
+            current_store,
+            subject_type=subject_type,
+            subject_id=str(subject_id),
+        )
     else:
         tasks = [
             task
@@ -3973,16 +4088,30 @@ def _lifecycle_subject(
     subject_id: str | None,
     product_id: str | None,
 ) -> dict[str, Any]:
-    if subject_type == "requirement":
-        requirement = current_store.requirements.get(str(subject_id))
-        if requirement is None:
-            raise api_error(404, "NOT_FOUND", "Requirement not found")
-        return {"type": "requirement", "id": subject_id, "product_id": requirement["product_id"]}
-    if subject_type == "ai_task":
-        task = current_store.ai_tasks.get(str(subject_id))
-        if task is None:
-            raise api_error(404, "NOT_FOUND", "AI task not found")
-        return {"type": "ai_task", "id": subject_id, "product_id": task["product_id"]}
+    if subject_type and subject_id:
+        normalized_subject_id = str(subject_id)
+        tasks = _lifecycle_subject_tasks(
+            current_store,
+            subject_type=subject_type,
+            subject_id=normalized_subject_id,
+        )
+        resolved_product_id = tasks[0]["product_id"] if tasks else None
+        if subject_type == "requirement":
+            requirement = current_store.requirements[normalized_subject_id]
+            resolved_product_id = requirement["product_id"]
+        elif subject_type == "product":
+            resolved_product_id = normalized_subject_id
+        elif subject_type == "gitlab_mr_snapshot":
+            snapshot = current_store.gitlab_mr_snapshots[normalized_subject_id]
+            resolved_product_id = snapshot["product_id"]
+        elif subject_type == "bug":
+            bug = current_store.bugs[normalized_subject_id]
+            resolved_product_id = bug["product_id"]
+        return {
+            "type": subject_type,
+            "id": normalized_subject_id,
+            "product_id": resolved_product_id,
+        }
     return {"type": "product", "id": product_id, "product_id": product_id}
 
 
@@ -3990,28 +4119,35 @@ def _lifecycle_upstream(
     current_store: MemoryStore,
     *,
     subject_type: str | None,
-    subject_id: str | None,
+    tasks: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    if subject_type != "ai_task":
+    if subject_type in {None, "product", "requirement"}:
         return []
-    task = current_store.ai_tasks[str(subject_id)]
-    requirement = current_store.requirements.get(task["requirement_id"])
-    if requirement is None:
-        return []
-    return [
-        _lifecycle_relation(
-            subject_type="requirement",
-            subject_id=requirement["id"],
-            relation_type="derived_from_requirement",
-            summary=requirement["title"],
-            product_id=requirement["product_id"],
-            version_id=requirement["version_id"],
-            module_code=requirement.get("module_code"),
-            source_module="requirement",
-            observed_at=requirement.get("created_at"),
-            metadata={"status": requirement["status"]},
+    relations: list[dict[str, Any]] = []
+    seen_requirement_ids: set[str] = set()
+    for task in tasks:
+        requirement_id = task.get("requirement_id")
+        if not requirement_id or requirement_id in seen_requirement_ids:
+            continue
+        requirement = current_store.requirements.get(requirement_id)
+        if requirement is None:
+            continue
+        seen_requirement_ids.add(requirement_id)
+        relations.append(
+            _lifecycle_relation(
+                subject_type="requirement",
+                subject_id=requirement["id"],
+                relation_type="derived_from_requirement",
+                summary=requirement["title"],
+                product_id=requirement["product_id"],
+                version_id=requirement["version_id"],
+                module_code=requirement.get("module_code"),
+                source_module="requirement",
+                observed_at=requirement.get("created_at"),
+                metadata={"status": requirement["status"]},
+            )
         )
-    ]
+    return relations
 
 
 def _lifecycle_downstream(
@@ -4510,7 +4646,7 @@ def lifecycle_context(
         _require_task_read_role(user, subject_task)
     tasks = [task for task in tasks if _can_read_task(user, task)]
     upstream = (
-        _lifecycle_upstream(current_store, subject_type=subject_type, subject_id=subject_id)
+        _lifecycle_upstream(current_store, subject_type=subject_type, tasks=tasks)
         if direction in {"upstream", "both"}
         else []
     )

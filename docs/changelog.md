@@ -151,6 +151,7 @@
 - 修复 Markdown 导出接口未复用 AI 任务读取权限的问题，产品详细设计和技术方案导出不再对无关角色开放。
 - 修复登录后 ProLayout 右上角用户标题仍可能停留在“未登录”的问题，登录态保存和退出会即时通知布局刷新。
 - 修复历史 `app_state_snapshots` 中残留 GitLab MR 快照引用已删除 Git 仓库时，结构化持久化触发外键错误并导致登录等请求返回 500 的问题；恢复和保存前会清理无效 GitLab Review 记录。
+- 修复生命周期链路追踪对 `human_review`、`code_review_report`、`gitlab_mr_snapshot`、`mock_issue`、`knowledge_deposit`、`audit_event` 和 `bug` 等审计主体退化为产品级结果的问题，现在会解析到对应任务链路，未知主体类型返回明确校验错误。
 
 ### Security
 - 后端 MVP 骨架补充轻量角色边界：产品/需求维护、GitLab MR 只读预览、Review 决策、知识治理、模拟写回和审计查询按系统角色收敛，并覆盖 403 测试。
