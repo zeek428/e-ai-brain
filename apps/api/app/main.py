@@ -81,6 +81,9 @@ BUG_STATUSES = {
     "closed",
     "reopened",
 }
+USER_FEEDBACK_TYPES = {"bug", "complaint", "improvement", "praise", "question"}
+USER_FEEDBACK_SENTIMENTS = {"negative", "neutral", "positive"}
+USER_FEEDBACK_STATUSES = {"archived", "linked", "open", "resolved", "triaged"}
 USER_ROLES = ASSIGNABLE_ROLE_CODES
 USER_STATUSES = {"active", "inactive"}
 PRODUCT_STATUSES = {"active", "inactive"}
@@ -352,6 +355,28 @@ class BugPatchRequest(BaseModel):
     duplicate_of_bug_id: str | None = None
 
 
+class UserFeedbackRequest(BaseModel):
+    product_id: str
+    module_code: str | None = None
+    feature_code: str | None = None
+    source_channel: str = "in_app"
+    feedback_type: str
+    sentiment: str | None = None
+    satisfaction_score: int | None = None
+    content: str
+    tags: list[str] = Field(default_factory=list)
+    related_requirement_id: str | None = None
+
+
+class UserFeedbackPatchRequest(BaseModel):
+    status: str | None = None
+    sentiment: str | None = None
+    satisfaction_score: int | None = None
+    content: str | None = None
+    tags: list[str] | None = None
+    triage_note: str | None = None
+
+
 @app.middleware("http")
 async def trace_middleware(request: Request, call_next):
     request.state.trace_id = new_trace_id()
@@ -567,6 +592,55 @@ def _ensure_bug_status_transition(current_status: str, next_status: str) -> None
     allowed = BUG_STATUS_TRANSITIONS.get(current_status, set())
     if next_status not in allowed:
         raise api_error(409, "BUG_STATE_INVALID", "Bug cannot move to requested status")
+
+
+def _require_user_feedback_triage_role(user: dict[str, Any]) -> None:
+    _require_roles(user, {"product_owner", "rd_owner"})
+
+
+def _validate_user_feedback_enums(
+    *,
+    feedback_type: str | None = None,
+    sentiment: str | None = None,
+    status: str | None = None,
+) -> None:
+    _ensure_enum(feedback_type, USER_FEEDBACK_TYPES, "feedback_type")
+    _ensure_enum(sentiment, USER_FEEDBACK_SENTIMENTS, "sentiment")
+    _ensure_enum(status, USER_FEEDBACK_STATUSES, "status")
+
+
+def _validate_satisfaction_score(score: int | None) -> None:
+    if score is not None and (score < 1 or score > 5):
+        raise api_error(400, "VALIDATION_ERROR", "satisfaction_score must be between 1 and 5")
+
+
+def _validate_user_feedback_context(
+    current_store: MemoryStore,
+    *,
+    product_id: str,
+    module_code: str | None = None,
+    related_requirement_id: str | None = None,
+) -> None:
+    if product_id not in current_store.products:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if module_code is not None and not any(
+        module["product_id"] == product_id and module["code"] == module_code
+        for module in current_store.product_modules.values()
+    ):
+        raise api_error(404, "NOT_FOUND", "Product module not found")
+    if related_requirement_id is not None:
+        requirement = current_store.requirements.get(related_requirement_id)
+        if requirement is None or requirement["product_id"] != product_id:
+            raise api_error(404, "NOT_FOUND", "Requirement not found")
+
+
+def _normalized_tags(tags: list[str]) -> list[str]:
+    normalized = []
+    for tag in tags:
+        value = tag.strip()
+        if value and value not in normalized:
+            normalized.append(value)
+    return normalized
 
 
 def _payload_updates(payload: BaseModel) -> dict[str, Any]:
@@ -4819,9 +4893,121 @@ def usage_metrics(
 @app.get("/api/insights/user-feedback")
 def user_feedback(
     request: Request,
+    product_id: str | None = None,
+    module_code: str | None = None,
+    feature_code: str | None = None,
+    status: str | None = None,
+    created_by: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(empty_list_payload(), get_trace_id(request))
+    _validate_user_feedback_enums(status=status)
+    current_store = store(request)
+    items = []
+    for feedback in current_store.user_feedback.values():
+        if product_id is not None and feedback.get("product_id") != product_id:
+            continue
+        if module_code is not None and feedback.get("module_code") != module_code:
+            continue
+        if feature_code is not None and feedback.get("feature_code") != feature_code:
+            continue
+        if status is not None and feedback.get("status") != status:
+            continue
+        if created_by is not None and feedback.get("created_by") != created_by:
+            continue
+        items.append(feedback)
+    items.sort(
+        key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+        reverse=True,
+    )
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/insights/user-feedback")
+def create_user_feedback(
+    payload: UserFeedbackRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    current_store = store(request)
+    _validate_user_feedback_enums(
+        feedback_type=payload.feedback_type,
+        sentiment=payload.sentiment,
+    )
+    _validate_satisfaction_score(payload.satisfaction_score)
+    _validate_user_feedback_context(
+        current_store,
+        product_id=payload.product_id,
+        module_code=payload.module_code,
+        related_requirement_id=payload.related_requirement_id,
+    )
+    now = datetime.now(UTC).isoformat()
+    feedback = {
+        "content": _ensure_non_blank(payload.content, "content"),
+        "created_at": now,
+        "created_by": user["id"],
+        "feature_code": payload.feature_code.strip() if payload.feature_code else None,
+        "feedback_type": payload.feedback_type,
+        "id": current_store.new_id("feedback"),
+        "module_code": payload.module_code,
+        "product_id": payload.product_id,
+        "related_requirement_id": payload.related_requirement_id,
+        "satisfaction_score": payload.satisfaction_score,
+        "sentiment": payload.sentiment,
+        "source_channel": _ensure_non_blank(payload.source_channel, "source_channel"),
+        "status": "open",
+        "tags": _normalized_tags(payload.tags),
+        "updated_at": now,
+    }
+    current_store.user_feedback[feedback["id"]] = feedback
+    current_store.audit(
+        event_type="user_feedback.created",
+        actor_id=user["id"],
+        subject_type="user_feedback",
+        subject_id=feedback["id"],
+        payload={
+            "feedback_type": feedback["feedback_type"],
+            "product_id": feedback["product_id"],
+            "status": feedback["status"],
+        },
+    )
+    return envelope(feedback, get_trace_id(request))
+
+
+@app.patch("/api/insights/user-feedback/{feedback_id}")
+def patch_user_feedback(
+    feedback_id: str,
+    payload: UserFeedbackPatchRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_user_feedback_triage_role(user)
+    current_store = store(request)
+    feedback = current_store.user_feedback.get(feedback_id)
+    if feedback is None:
+        raise api_error(404, "NOT_FOUND", "User feedback not found")
+    updates = _payload_updates(payload)
+    _validate_user_feedback_enums(
+        sentiment=updates.get("sentiment"),
+        status=updates.get("status"),
+    )
+    _validate_satisfaction_score(updates.get("satisfaction_score"))
+    if "content" in updates:
+        updates["content"] = _ensure_non_blank(updates["content"], "content")
+    if "tags" in updates:
+        updates["tags"] = _normalized_tags(updates["tags"])
+    feedback.update(updates)
+    feedback["updated_at"] = datetime.now(UTC).isoformat()
+    current_store.audit(
+        event_type="user_feedback.updated",
+        actor_id=user["id"],
+        subject_type="user_feedback",
+        subject_id=feedback_id,
+        payload={
+            "status": feedback["status"],
+            "updated_fields": sorted(updates.keys()),
+        },
+    )
+    return envelope(feedback, get_trace_id(request))
 
 
 @app.get("/api/planning/iteration-suggestions")

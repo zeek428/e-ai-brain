@@ -133,11 +133,36 @@ export type OperationalMetricRecord = {
 
 export type UserInsightRecord = {
   category: string;
+  featureCode?: string;
+  feedbackType?: string;
   id: string;
+  moduleCode?: string;
   owner: string;
+  productId?: string;
   status: string;
   summary: string;
   updatedAt: string;
+};
+
+export type UserFeedbackCreatePayload = {
+  content: string;
+  feedback_type: string;
+  feature_code?: string;
+  module_code?: string;
+  product_id: string;
+  satisfaction_score?: number;
+  sentiment?: string;
+  source_channel: string;
+  tags?: string[];
+};
+
+export type UserFeedbackPatchPayload = {
+  content?: string;
+  satisfaction_score?: number;
+  sentiment?: string;
+  status?: string;
+  tags?: string[];
+  triage_note?: string;
 };
 
 export type DashboardSummary = {
@@ -2063,8 +2088,12 @@ export async function fetchDevopsMetrics(): Promise<OperationalMetricRecord[]> {
 function mapUserInsights(category: string, items: FlexibleListItem[]): UserInsightRecord[] {
   return items.map((item, index) => ({
     category,
+    featureCode: formatUnknownValue(item.feature_code),
+    feedbackType: formatUnknownValue(item.feedback_type),
     id: formatUnknownValue(item.id ?? `${category}-${index}`),
+    moduleCode: formatUnknownValue(item.module_code),
     owner: formatUnknownValue(firstKnownValue(item, ['user_id', 'owner_id', 'created_by', 'actor_id'])),
+    productId: formatUnknownValue(item.product_id),
     status: formatUnknownValue(item.status),
     summary: formatUnknownValue(
       firstKnownValue(item, ['summary', 'content', 'feedback_text', 'suggestion', 'feature_code']),
@@ -2088,4 +2117,25 @@ export async function fetchUserInsights(): Promise<UserInsightRecord[]> {
     ...mapUserInsights('用户反馈', feedbackItems.items),
     ...mapUserInsights('迭代建议', iterationSuggestions.items),
   ];
+}
+
+export async function createUserFeedback(payload: UserFeedbackCreatePayload): Promise<FlexibleListItem> {
+  const token = requireAccessToken();
+  return apiRequest<FlexibleListItem>('/api/insights/user-feedback', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateUserFeedback(
+  feedbackId: string,
+  payload: UserFeedbackPatchPayload,
+): Promise<FlexibleListItem> {
+  const token = requireAccessToken();
+  return apiRequest<FlexibleListItem>(`/api/insights/user-feedback/${feedbackId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
 }

@@ -139,7 +139,13 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
           ...toolbarActions,
           ...(primaryAction
             ? [
-                <Button icon={<PlusOutlined />} key="primary" onClick={onPrimaryAction} type="primary">
+                <Button
+                  aria-label={primaryAction}
+                  icon={<PlusOutlined />}
+                  key="primary"
+                  onClick={onPrimaryAction}
+                  type="primary"
+                >
                   {primaryAction}
                 </Button>,
               ]

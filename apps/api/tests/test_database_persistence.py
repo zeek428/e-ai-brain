@@ -22,6 +22,7 @@ class FakeSnapshotRepository:
         self.model_gateway_payload: dict | None = None
         self.gitlab_review_payload: dict | None = None
         self.mock_writebacks_payload: dict | None = None
+        self.user_feedback_payload: dict | None = None
 
     def load(self) -> dict | None:
         return self.payload
@@ -88,6 +89,12 @@ class FakeSnapshotRepository:
 
     def save_mock_writebacks(self, payload: dict) -> None:
         self.mock_writebacks_payload = payload
+
+    def load_user_feedback(self) -> dict | None:
+        return self.user_feedback_payload
+
+    def save_user_feedback(self, payload: dict) -> None:
+        self.user_feedback_payload = payload
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
@@ -2210,3 +2217,71 @@ def test_admin_can_manage_users_through_repository():
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users
+
+
+def test_user_feedback_is_persisted_through_fine_grained_repository_payload():
+    repository = FakeSnapshotRepository()
+    store = PersistentMemoryStore(repository)
+    store.products = {
+        "product_001": {
+            "code": "feedback-product",
+            "id": "product_001",
+            "name": "反馈产品",
+            "status": "active",
+        }
+    }
+    store.product_modules = {
+        "module_001": {
+            "code": "knowledge",
+            "id": "module_001",
+            "name": "知识中心",
+            "product_id": "product_001",
+            "status": "active",
+        }
+    }
+    store.user_feedback = {
+        "feedback_010": {
+            "content": "知识检索相关性不足。",
+            "created_at": "2026-06-01T08:00:00+00:00",
+            "created_by": "user_reviewer",
+            "feature_code": "search",
+            "feedback_type": "improvement",
+            "id": "feedback_010",
+            "module_code": "knowledge",
+            "product_id": "product_001",
+            "satisfaction_score": 2,
+            "sentiment": "negative",
+            "source_channel": "in_app",
+            "status": "triaged",
+            "tags": ["search"],
+            "triage_note": "进入知识检索优化池。",
+            "updated_at": "2026-06-01T08:10:00+00:00",
+        }
+    }
+
+    store.persist()
+
+    assert repository.user_feedback_payload == {"user_feedback": store.user_feedback}
+
+    restored_repository = FakeSnapshotRepository()
+    restored_repository.product_config_payload = {
+        "product_git_repositories": {},
+        "product_modules": store.product_modules,
+        "product_versions": {},
+        "products": store.products,
+        "related_systems": {},
+    }
+    restored_repository.user_feedback_payload = {
+        "user_feedback": {
+            "feedback_011": {
+                **store.user_feedback["feedback_010"],
+                "id": "feedback_011",
+                "status": "resolved",
+            }
+        }
+    }
+
+    rebuilt_store = PersistentMemoryStore.from_repository(restored_repository)
+
+    assert rebuilt_store.user_feedback["feedback_011"]["status"] == "resolved"
+    assert rebuilt_store.new_id("feedback") == "feedback_012"

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.33 |
+| 功能版本 | v1.1.34 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -55,6 +55,7 @@
 | v1.1.31 | 2026-06-01 | 低层 AI 任务创建同步回写需求任务引用，并拒绝已关闭或未审批需求继续创建任务 | Codex |
 | v1.1.32 | 2026-06-01 | 模型网关配置入口拒绝非 OpenAI-compatible provider，避免无效配置延迟到任务启动才失败 | Codex |
 | v1.1.33 | 2026-06-01 | 知识索引接入 OpenAI-compatible embeddings，chunk 写入 pgvector embedding，检索按权限过滤后进行向量排序 | Codex |
+| v1.1.34 | 2026-06-01 | 将用户反馈从空集合入口升级为真实登记、筛选、状态更新和 PostgreSQL 结构表持久化 | Codex |
 
 ---
 
@@ -64,7 +65,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环；产品配置、需求、知识文档、Bug、用户管理和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。产品管理页面可维护产品版本、模块和 Git 资源；产品、版本、模块、Git 资源、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`，Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。知识文档创建、更新和知识沉淀采纳会同步重建 chunk，并通过 active/default OpenAI-compatible 模型网关或环境模型网关调用 `/embeddings` 生成 `knowledge_chunks.embedding`；索引失败进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`score` 和来源引用，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；产品配置、需求台账、AI 任务核心字段、人工确认、Graph 运行态、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写和模型网关配置/调用日志从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。用户洞察和迭代规划的写接口仍属于后续阶段目标；DevOps 和洞察类 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环；产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。产品管理页面可维护产品版本、模块和 Git 资源；产品、版本、模块、Git 资源、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、用户反馈、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`user_feedback`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`，Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。知识文档创建、更新和知识沉淀采纳会同步重建 chunk，并通过 active/default OpenAI-compatible 模型网关或环境模型网关调用 `/embeddings` 生成 `knowledge_chunks.embedding`；索引失败进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`score` 和来源引用，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，创建人可为任意已登录用户，状态处理需产品负责人、研发负责人或管理员权限，写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；产品配置、需求台账、AI 任务核心字段、人工确认、Graph 运行态、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、用户反馈、模拟 Issue 回写和模型网关配置/调用日志从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。用户使用指标和迭代规划建议写接口仍属于后续阶段目标；DevOps、使用指标和迭代规划 GET 接口在未接入真实采集器前返回空集合，不提供占位状态或伪造统计数据。
 
 生命周期视图和首页 IT 团队看板的 AI 任务、待确认 Review、知识沉淀和风险信号聚合必须先按任务类型读权限过滤，不能通过聚合接口绕过任务详情权限。
 
@@ -1171,7 +1172,7 @@ PATCH /api/insights/user-feedback/{feedback_id}
 }
 ```
 
-反馈状态建议支持：`open | triaged | linked | resolved | archived`。
+反馈状态支持：`open | triaged | linked | resolved | archived`。`POST /api/insights/user-feedback` 允许任意已登录用户登记真实反馈；`PATCH /api/insights/user-feedback/{feedback_id}` 仅允许 `product_owner`、`rd_owner` 或 `admin` 更新状态、标签、情绪、评分和处理备注；GET 支持按 `product_id`、`module_code`、`feature_code`、`status` 和 `created_by` 筛选。反馈写入 `user_feedback` 结构表，并记录 `user_feedback.created` / `user_feedback.updated` 审计事件。
 
 迭代规划建议查询和生成：
 
@@ -1583,6 +1584,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.34 | 2026-06-01 | 用户反馈接口支持真实登记、筛选、状态更新和 `user_feedback` PostgreSQL 持久化。 |
 | v1.1.29 | 2026-06-01 | 知识检索不再为缺失 chunk 的 indexed 文档合成结果，索引不一致时返回真实空结果。 |
 | v1.1.30 | 2026-06-01 | GitLab MR diff 快照按 repository_id + snapshot_hash 复用已有快照，并记录复用审计事件。 |
 | v1.1.28 | 2026-06-01 | 生命周期视图支持从审计主体、Review、Code Review 报告、MR 快照、模拟 Issue 和知识沉淀精准追踪上下文。 |

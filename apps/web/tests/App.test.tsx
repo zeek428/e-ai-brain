@@ -1372,7 +1372,109 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('待接入')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
     expect(screen.getByText('使用趋势')).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(7));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
+  });
+
+  it('creates and triages real user feedback from the insights page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/products') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products/product_api/versions') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/insights/user-feedback' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            content: '新反馈内容',
+            created_by: 'user_admin',
+            id: 'feedback_created',
+            product_id: 'product_api',
+            status: 'open',
+          },
+        });
+      }
+      if (input === '/api/insights/user-feedback/feedback_existing' && init?.method === 'PATCH') {
+        return jsonResponse({
+          data: {
+            content: '已有反馈内容',
+            id: 'feedback_existing',
+            product_id: 'product_api',
+            status: 'triaged',
+            triage_note: '已纳入优化池',
+          },
+        });
+      }
+      if (input === '/api/insights/user-feedback') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '已有反馈内容',
+                created_by: 'user_admin',
+                id: 'feedback_existing',
+                product_id: 'product_api',
+                status: 'open',
+                updated_at: '2026-06-01T08:00:00Z',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<InsightsPage />);
+
+    expect(await screen.findByText('已有反馈内容')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '登记反馈' }));
+    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
+    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
+    fireEvent.change(screen.getByLabelText('反馈内容'), { target: { value: '新反馈内容' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/insights/user-feedback',
+        'POST',
+        JSON.stringify({
+          content: '新反馈内容',
+          feedback_type: 'improvement',
+          product_id: 'product_api',
+          source_channel: 'in_app',
+        }),
+      ]),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '处理反馈' }));
+    fireEvent.mouseDown(screen.getByLabelText('处理状态'));
+    fireEvent.click(await screen.findByRole('option', { name: '已分诊' }));
+    fireEvent.change(screen.getByLabelText('处理备注'), { target: { value: '已纳入优化池' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/insights/user-feedback/feedback_existing',
+        'PATCH',
+        JSON.stringify({
+          status: 'triaged',
+          triage_note: '已纳入优化池',
+        }),
+      ]),
+    );
   });
 
   it('renders management modules as query filters with table lists', async () => {

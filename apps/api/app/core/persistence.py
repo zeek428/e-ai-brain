@@ -36,6 +36,9 @@ AUDIT_FIELDS = [
 BUG_FIELDS = [
     "bugs",
 ]
+USER_FEEDBACK_FIELDS = [
+    "user_feedback",
+]
 MODEL_GATEWAY_FIELDS = [
     "model_gateway_configs",
     "model_gateway_logs",
@@ -62,6 +65,7 @@ COLLECTION_FIELDS = [
     "knowledge_deposits",
     "mock_writebacks",
     "bugs",
+    "user_feedback",
     "requirements",
     "ai_tasks",
     "graph_runs",
@@ -118,6 +122,12 @@ class BugRepository(Protocol):
     def load_bugs(self) -> dict[str, Any] | None: ...
 
     def save_bugs(self, payload: dict[str, Any]) -> None: ...
+
+
+class UserFeedbackRepository(Protocol):
+    def load_user_feedback(self) -> dict[str, Any] | None: ...
+
+    def save_user_feedback(self, payload: dict[str, Any]) -> None: ...
 
 
 class ModelGatewayRepository(Protocol):
@@ -186,6 +196,10 @@ def _audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _bugs_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in BUG_FIELDS}
+
+
+def _user_feedback_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in USER_FEEDBACK_FIELDS}
 
 
 def _model_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -323,6 +337,13 @@ def _repository_load_bugs(repository: SnapshotRepository) -> dict[str, Any] | No
     return load_bugs()
 
 
+def _repository_load_user_feedback(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_user_feedback = getattr(repository, "load_user_feedback", None)
+    if load_user_feedback is None:
+        return None
+    return load_user_feedback()
+
+
 def _repository_load_model_gateway(repository: SnapshotRepository) -> dict[str, Any] | None:
     load_model_gateway = getattr(repository, "load_model_gateway", None)
     if load_model_gateway is None:
@@ -378,6 +399,17 @@ def _repository_save_bugs(
     save_bugs = getattr(repository, "save_bugs", None)
     if save_bugs is not None:
         save_bugs(_bugs_payload(payload))
+
+
+def _repository_save_user_feedback(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_user_feedback = getattr(repository, "save_user_feedback", None)
+    if save_user_feedback is not None:
+        clean_payload = deepcopy(payload)
+        _drop_user_feedback_without_context(clean_payload)
+        save_user_feedback(_user_feedback_payload(clean_payload))
 
 
 def _repository_save_model_gateway(
@@ -437,6 +469,10 @@ def _has_audit_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_bug_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in BUG_FIELDS)
+
+
+def _has_user_feedback_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in USER_FEEDBACK_FIELDS)
 
 
 def _has_model_gateway_items(payload: dict[str, Any] | None) -> bool:
@@ -545,6 +581,15 @@ def _sync_bug_counters(payload: dict[str, Any]) -> None:
     counters["bug"] = max(
         counters.get("bug", 0),
         _max_numeric_suffix(payload.get("bugs", {}), "bug"),
+    )
+    payload["counters"] = counters
+
+
+def _sync_user_feedback_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["feedback"] = max(
+        counters.get("feedback", 0),
+        _max_numeric_suffix(payload.get("user_feedback", {}), "feedback"),
     )
     payload["counters"] = counters
 
@@ -737,6 +782,22 @@ def _drop_bugs_without_context(payload: dict[str, Any]) -> None:
     payload["bugs"] = cleaned_bugs
 
 
+def _drop_user_feedback_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    requirements = payload.get("requirements", {})
+    feedback_items = payload.get("user_feedback", {})
+    cleaned_feedback = {}
+    for feedback_id, feedback in feedback_items.items():
+        product_id = feedback.get("product_id")
+        requirement_id = feedback.get("related_requirement_id")
+        if products and product_id not in products:
+            continue
+        if requirement_id and requirements and requirement_id not in requirements:
+            continue
+        cleaned_feedback[feedback_id] = deepcopy(feedback)
+    payload["user_feedback"] = cleaned_feedback
+
+
 def _drop_gitlab_review_without_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     repositories = payload.get("product_git_repositories", {})
@@ -879,6 +940,14 @@ class PersistentMemoryStore(MemoryStore):
                 BUG_FIELDS,
             )
             _sync_bug_counters(payload)
+        user_feedback_payload = _repository_load_user_feedback(repository)
+        if _has_user_feedback_items(user_feedback_payload):
+            _replace_collection_payload(
+                payload,
+                _user_feedback_payload(user_feedback_payload),
+                USER_FEEDBACK_FIELDS,
+            )
+            _sync_user_feedback_counters(payload)
         model_gateway_payload = _repository_load_model_gateway(repository)
         if _has_model_gateway_items(model_gateway_payload):
             _replace_collection_payload(
@@ -912,6 +981,7 @@ class PersistentMemoryStore(MemoryStore):
             _drop_knowledge_without_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
             _drop_bugs_without_context(payload)
+            _drop_user_feedback_without_context(payload)
         _drop_gitlab_review_without_context(payload)
         _drop_mock_writebacks_without_tasks(payload)
         _ensure_ai_task_defaults(payload)
@@ -940,6 +1010,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_knowledge(self.repository, payload)
         _repository_save_audit_events(self.repository, payload)
         _repository_save_bugs(self.repository, payload)
+        _repository_save_user_feedback(self.repository, payload)
         _repository_save_model_gateway(self.repository, payload)
         _repository_save_gitlab_review(self.repository, payload)
         _repository_save_mock_writebacks(self.repository, payload)
@@ -1051,6 +1122,12 @@ class PostgresSnapshotRepository:
                 bugs = self._load_bugs(cursor)
         return {"bugs": bugs}
 
+    def load_user_feedback(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                feedback = self._load_user_feedback(cursor)
+        return {"user_feedback": feedback}
+
     def load_model_gateway(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -1160,6 +1237,13 @@ class PostgresSnapshotRepository:
                 self._clear_dangling_bug_duplicates(cursor, bugs)
                 self._delete_missing(cursor, "bugs", bugs)
                 self._upsert_bugs(cursor, bugs)
+
+    def save_user_feedback(self, payload: dict[str, Any]) -> None:
+        feedback = payload.get("user_feedback", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "user_feedback", feedback)
+                self._upsert_user_feedback(cursor, feedback)
 
     def save_model_gateway(self, payload: dict[str, Any]) -> None:
         configs = payload.get("model_gateway_configs", {})
@@ -1645,6 +1729,52 @@ class PostgresSnapshotRepository:
                     bug.pop(optional_key)
             bugs[row[0]] = bug
         return bugs
+
+    def _load_user_feedback(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, product_id, module_code, feature_code, source_channel,
+                   feedback_type, sentiment, satisfaction_score, content, tags,
+                   related_requirement_id, status, triage_note, created_by,
+                   created_at, updated_at
+            FROM user_feedback
+            ORDER BY created_at, id
+            """
+        )
+        feedback_items = {}
+        for row in cursor.fetchall():
+            feedback = {
+                "content": row[8],
+                "created_at": row[14].isoformat() if row[14] else None,
+                "created_by": row[13],
+                "feature_code": row[3],
+                "feedback_type": row[5],
+                "id": row[0],
+                "module_code": row[2],
+                "product_id": row[1],
+                "related_requirement_id": row[10],
+                "satisfaction_score": row[7],
+                "sentiment": row[6],
+                "source_channel": row[4],
+                "status": row[11],
+                "tags": list(row[9] or []),
+                "triage_note": row[12],
+                "updated_at": row[15].isoformat() if row[15] else None,
+            }
+            for optional_key in (
+                "created_at",
+                "feature_code",
+                "module_code",
+                "related_requirement_id",
+                "satisfaction_score",
+                "sentiment",
+                "triage_note",
+                "updated_at",
+            ):
+                if feedback[optional_key] is None:
+                    feedback.pop(optional_key)
+            feedback_items[row[0]] = feedback
+        return feedback_items
 
     def _load_model_gateway_configs(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -2587,6 +2717,65 @@ class PostgresSnapshotRepository:
                     """,
                     (duplicate_of_bug_id, bug.get("updated_at"), bug["id"]),
                 )
+
+    def _upsert_user_feedback(
+        self,
+        cursor,
+        feedback_items: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for feedback in feedback_items.values():
+            created_at = feedback.get("created_at")
+            updated_at = feedback.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO user_feedback (
+                  id, product_id, module_code, feature_code, source_channel,
+                  feedback_type, sentiment, satisfaction_score, content, tags,
+                  related_requirement_id, status, triage_note, created_by,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  module_code = EXCLUDED.module_code,
+                  feature_code = EXCLUDED.feature_code,
+                  source_channel = EXCLUDED.source_channel,
+                  feedback_type = EXCLUDED.feedback_type,
+                  sentiment = EXCLUDED.sentiment,
+                  satisfaction_score = EXCLUDED.satisfaction_score,
+                  content = EXCLUDED.content,
+                  tags = EXCLUDED.tags,
+                  related_requirement_id = EXCLUDED.related_requirement_id,
+                  status = EXCLUDED.status,
+                  triage_note = EXCLUDED.triage_note,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    feedback["id"],
+                    feedback["product_id"],
+                    feedback.get("module_code"),
+                    feedback.get("feature_code"),
+                    feedback.get("source_channel", "in_app"),
+                    feedback["feedback_type"],
+                    feedback.get("sentiment"),
+                    feedback.get("satisfaction_score"),
+                    feedback["content"],
+                    json.dumps(feedback.get("tags", []), ensure_ascii=False),
+                    feedback.get("related_requirement_id"),
+                    feedback.get("status", "open"),
+                    feedback.get("triage_note"),
+                    feedback["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
 
     def _upsert_model_gateway_configs(
         self,
