@@ -86,6 +86,7 @@ USER_FEEDBACK_SENTIMENTS = {"negative", "neutral", "positive"}
 USER_FEEDBACK_STATUSES = {"archived", "linked", "open", "resolved", "triaged"}
 GITLAB_DAILY_METRIC_STATUSES = {"collected", "failed", "partial"}
 JENKINS_RELEASE_STATUSES = {"canceled", "failed", "running", "success"}
+ONLINE_LOG_METRIC_STATUSES = {"collected", "failed", "partial"}
 ITERATION_SUGGESTION_STATUSES = {
     "accepted",
     "converted_to_requirement",
@@ -400,6 +401,23 @@ class JenkinsReleaseRequest(BaseModel):
     started_at: str | None = None
     deployed_at: str | None = None
     failure_reason: str | None = None
+    source_channel: str | None = None
+
+
+class OnlineLogMetricRequest(BaseModel):
+    product_id: str
+    module_code: str | None = None
+    environment: str = "prod"
+    window_start: str
+    window_end: str
+    request_count: int = 0
+    error_count: int = 0
+    p95_latency_ms: float | None = None
+    p99_latency_ms: float | None = None
+    core_event_count: int = 0
+    top_errors: list[dict[str, Any]] = Field(default_factory=list)
+    anomaly_summary: str | None = None
+    status: str = "collected"
     source_channel: str | None = None
 
 
@@ -780,6 +798,56 @@ def _validate_jenkins_release_context(
         raise api_error(404, "NOT_FOUND", "Product version not found")
     if version["status"] == "archived":
         raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
+
+
+def _validate_online_log_metric_context(
+    current_store: MemoryStore,
+    *,
+    product_id: str,
+    module_code: str | None = None,
+) -> None:
+    product = current_store.products.get(product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
+    if module_code is not None and not any(
+        module["product_id"] == product_id
+        and module["code"] == module_code
+        and module.get("status", "active") == "active"
+        for module in current_store.product_modules.values()
+    ):
+        raise api_error(404, "NOT_FOUND", "Product module not found")
+
+
+def _validate_online_log_metric_payload(
+    payload: OnlineLogMetricRequest,
+) -> tuple[str, str, float]:
+    _ensure_non_blank(payload.environment, "environment")
+    _ensure_enum(payload.status, ONLINE_LOG_METRIC_STATUSES, "status")
+    for field_name in ("request_count", "error_count", "core_event_count"):
+        if getattr(payload, field_name) < 0:
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                f"{field_name} must be greater than or equal to 0",
+            )
+    for field_name in ("p95_latency_ms", "p99_latency_ms"):
+        value = getattr(payload, field_name)
+        if value is not None and value < 0:
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                f"{field_name} must be greater than or equal to 0",
+            )
+    if payload.error_count > payload.request_count:
+        raise api_error(400, "VALIDATION_ERROR", "error_count cannot exceed request_count")
+    window_start = _parse_usage_window(payload.window_start, "window_start")
+    window_end = _parse_usage_window(payload.window_end, "window_end")
+    if window_end <= window_start:
+        raise api_error(400, "VALIDATION_ERROR", "window_end must be after window_start")
+    error_rate = payload.error_count / payload.request_count if payload.request_count else 0.0
+    return window_start, window_end, error_rate
 
 
 def _validate_user_feedback_enums(
@@ -5479,9 +5547,100 @@ def create_jenkins_release(
 @app.get("/api/ops/online-log-metrics")
 def online_log_metrics(
     request: Request,
+    product_id: str | None = None,
+    module_code: str | None = None,
+    environment: str | None = None,
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(empty_list_payload(), get_trace_id(request))
+    current_store = store(request)
+    from_value = _parse_usage_window(from_, "from") if from_ is not None else None
+    to_value = _parse_usage_window(to, "to") if to is not None else None
+    items = []
+    for metric in current_store.online_log_metrics.values():
+        if product_id is not None and metric.get("product_id") != product_id:
+            continue
+        if module_code is not None and metric.get("module_code") != module_code:
+            continue
+        if environment is not None and metric.get("environment") != environment:
+            continue
+        if from_value is not None and metric.get("window_end") < from_value:
+            continue
+        if to_value is not None and metric.get("window_start") > to_value:
+            continue
+        items.append(metric)
+    items.sort(
+        key=lambda item: (
+            item.get("window_start") or "",
+            item.get("updated_at") or item.get("created_at") or "",
+        ),
+        reverse=True,
+    )
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/ops/online-log-metrics")
+def create_online_log_metric(
+    payload: OnlineLogMetricRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = store(request)
+    _validate_online_log_metric_context(
+        current_store,
+        product_id=payload.product_id,
+        module_code=payload.module_code,
+    )
+    window_start, window_end, error_rate = _validate_online_log_metric_payload(payload)
+    now = datetime.now(UTC).isoformat()
+    metric_id = current_store.new_id("online_log_metric")
+    metric = {
+        "anomaly_summary": payload.anomaly_summary,
+        "core_event_count": payload.core_event_count,
+        "created_at": now,
+        "created_by": user["id"],
+        "environment": _ensure_non_blank(payload.environment, "environment"),
+        "error_count": payload.error_count,
+        "error_rate": error_rate,
+        "id": metric_id,
+        "module_code": payload.module_code,
+        "p95_latency_ms": payload.p95_latency_ms,
+        "p99_latency_ms": payload.p99_latency_ms,
+        "product_id": payload.product_id,
+        "request_count": payload.request_count,
+        "source_channel": payload.source_channel,
+        "status": payload.status,
+        "top_errors": payload.top_errors,
+        "updated_at": now,
+        "window_end": window_end,
+        "window_start": window_start,
+    }
+    for optional_key in (
+        "anomaly_summary",
+        "module_code",
+        "p95_latency_ms",
+        "p99_latency_ms",
+        "source_channel",
+    ):
+        if metric[optional_key] is None:
+            metric.pop(optional_key)
+    current_store.online_log_metrics[metric_id] = metric
+    current_store.audit(
+        event_type="online_log_metric.created",
+        actor_id=user["id"],
+        subject_type="online_log_metric",
+        subject_id=metric_id,
+        payload={
+            "environment": metric["environment"],
+            "error_rate": metric["error_rate"],
+            "product_id": metric["product_id"],
+            "window_end": metric["window_end"],
+            "window_start": metric["window_start"],
+        },
+    )
+    return envelope(metric, get_trace_id(request))
 
 
 @app.get("/api/insights/usage-metrics")

@@ -42,6 +42,9 @@ GITLAB_DAILY_CODE_METRIC_FIELDS = [
 JENKINS_RELEASE_RECORD_FIELDS = [
     "jenkins_release_records",
 ]
+ONLINE_LOG_METRIC_FIELDS = [
+    "online_log_metrics",
+]
 USER_USAGE_METRIC_FIELDS = [
     "user_usage_metrics",
 ]
@@ -80,6 +83,7 @@ COLLECTION_FIELDS = [
     "bugs",
     "gitlab_daily_code_metrics",
     "jenkins_release_records",
+    "online_log_metrics",
     "user_usage_metrics",
     "user_feedback",
     "iteration_plan_suggestions",
@@ -152,6 +156,12 @@ class JenkinsReleaseRecordRepository(Protocol):
     def load_jenkins_release_records(self) -> dict[str, Any] | None: ...
 
     def save_jenkins_release_records(self, payload: dict[str, Any]) -> None: ...
+
+
+class OnlineLogMetricRepository(Protocol):
+    def load_online_log_metrics(self) -> dict[str, Any] | None: ...
+
+    def save_online_log_metrics(self, payload: dict[str, Any]) -> None: ...
 
 
 class UserUsageMetricRepository(Protocol):
@@ -246,6 +256,10 @@ def _gitlab_daily_code_metric_payload(payload: dict[str, Any]) -> dict[str, Any]
 
 def _jenkins_release_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in JENKINS_RELEASE_RECORD_FIELDS}
+
+
+def _online_log_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in ONLINE_LOG_METRIC_FIELDS}
 
 
 def _user_usage_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -421,6 +435,15 @@ def _repository_load_jenkins_release_records(
     return load_jenkins_release_records()
 
 
+def _repository_load_online_log_metrics(
+    repository: SnapshotRepository,
+) -> dict[str, Any] | None:
+    load_online_log_metrics = getattr(repository, "load_online_log_metrics", None)
+    if load_online_log_metrics is None:
+        return None
+    return load_online_log_metrics()
+
+
 def _repository_load_user_usage_metrics(
     repository: SnapshotRepository,
 ) -> dict[str, Any] | None:
@@ -533,6 +556,17 @@ def _repository_save_jenkins_release_records(
         save_jenkins_release_records(_jenkins_release_record_payload(clean_payload))
 
 
+def _repository_save_online_log_metrics(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_online_log_metrics = getattr(repository, "save_online_log_metrics", None)
+    if save_online_log_metrics is not None:
+        clean_payload = deepcopy(payload)
+        _drop_online_log_metrics_without_context(clean_payload)
+        save_online_log_metrics(_online_log_metric_payload(clean_payload))
+
+
 def _repository_save_user_usage_metrics(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -631,6 +665,10 @@ def _has_gitlab_daily_code_metric_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_jenkins_release_record_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in JENKINS_RELEASE_RECORD_FIELDS)
+
+
+def _has_online_log_metric_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in ONLINE_LOG_METRIC_FIELDS)
 
 
 def _has_user_usage_metric_items(payload: dict[str, Any] | None) -> bool:
@@ -774,6 +812,18 @@ def _sync_jenkins_release_record_counters(payload: dict[str, Any]) -> None:
         _max_numeric_suffix(
             payload.get("jenkins_release_records", {}),
             "jenkins_release",
+        ),
+    )
+    payload["counters"] = counters
+
+
+def _sync_online_log_metric_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["online_log_metric"] = max(
+        counters.get("online_log_metric", 0),
+        _max_numeric_suffix(
+            payload.get("online_log_metrics", {}),
+            "online_log_metric",
         ),
     )
     payload["counters"] = counters
@@ -1068,6 +1118,18 @@ def _drop_jenkins_release_records_without_context(payload: dict[str, Any]) -> No
     payload["jenkins_release_records"] = cleaned_releases
 
 
+def _drop_online_log_metrics_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    metrics = payload.get("online_log_metrics", {})
+    cleaned_metrics = {}
+    for metric_id, metric in metrics.items():
+        product_id = metric.get("product_id")
+        if products and product_id not in products:
+            continue
+        cleaned_metrics[metric_id] = deepcopy(metric)
+    payload["online_log_metrics"] = cleaned_metrics
+
+
 def _drop_iteration_planning_without_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     versions = payload.get("product_versions", {})
@@ -1265,6 +1327,14 @@ class PersistentMemoryStore(MemoryStore):
                 JENKINS_RELEASE_RECORD_FIELDS,
             )
             _sync_jenkins_release_record_counters(payload)
+        online_log_metric_payload = _repository_load_online_log_metrics(repository)
+        if _has_online_log_metric_items(online_log_metric_payload):
+            _replace_collection_payload(
+                payload,
+                _online_log_metric_payload(online_log_metric_payload),
+                ONLINE_LOG_METRIC_FIELDS,
+            )
+            _sync_online_log_metric_counters(payload)
         user_usage_metric_payload = _repository_load_user_usage_metrics(repository)
         if _has_user_usage_metric_items(user_usage_metric_payload):
             _replace_collection_payload(
@@ -1324,6 +1394,7 @@ class PersistentMemoryStore(MemoryStore):
             _drop_bugs_without_context(payload)
             _drop_gitlab_daily_code_metrics_without_context(payload)
             _drop_jenkins_release_records_without_context(payload)
+            _drop_online_log_metrics_without_context(payload)
             _drop_user_usage_metrics_without_context(payload)
             _drop_user_feedback_without_context(payload)
             _drop_iteration_planning_without_context(payload)
@@ -1357,6 +1428,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_bugs(self.repository, payload)
         _repository_save_gitlab_daily_code_metrics(self.repository, payload)
         _repository_save_jenkins_release_records(self.repository, payload)
+        _repository_save_online_log_metrics(self.repository, payload)
         _repository_save_user_usage_metrics(self.repository, payload)
         _repository_save_user_feedback(self.repository, payload)
         _repository_save_iteration_planning(self.repository, payload)
@@ -1482,6 +1554,12 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 releases = self._load_jenkins_release_records(cursor)
         return {"jenkins_release_records": releases}
+
+    def load_online_log_metrics(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                metrics = self._load_online_log_metrics(cursor)
+        return {"online_log_metrics": metrics}
 
     def load_user_feedback(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -1628,6 +1706,13 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "jenkins_release_records", releases)
                 self._upsert_jenkins_release_records(cursor, releases)
+
+    def save_online_log_metrics(self, payload: dict[str, Any]) -> None:
+        metrics = payload.get("online_log_metrics", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "online_log_metrics", metrics)
+                self._upsert_online_log_metrics(cursor, metrics)
 
     def save_user_feedback(self, payload: dict[str, Any]) -> None:
         feedback = payload.get("user_feedback", {})
@@ -2333,6 +2418,60 @@ class PostgresSnapshotRepository:
                     release.pop(optional_key)
             releases[row[0]] = release
         return releases
+
+    def _load_online_log_metrics(self, cursor) -> dict[str, dict[str, Any]]:
+        import json
+
+        cursor.execute(
+            """
+            SELECT id, product_id, module_code, environment, window_start, window_end,
+                   request_count, error_count, error_rate, p95_latency_ms,
+                   p99_latency_ms, core_event_count, top_errors, anomaly_summary,
+                   status, source_channel, created_by, created_at, updated_at
+            FROM online_log_metrics
+            ORDER BY window_start, id
+            """
+        )
+        metrics = {}
+        for row in cursor.fetchall():
+            top_errors = row[12] or []
+            if isinstance(top_errors, str):
+                top_errors = json.loads(top_errors)
+            metric = {
+                "anomaly_summary": row[13],
+                "core_event_count": row[11],
+                "created_at": row[17].isoformat() if row[17] else None,
+                "created_by": row[16],
+                "environment": row[3],
+                "error_count": row[7],
+                "error_rate": float(row[8]) if row[8] is not None else None,
+                "id": row[0],
+                "module_code": row[2],
+                "p95_latency_ms": float(row[9]) if row[9] is not None else None,
+                "p99_latency_ms": float(row[10]) if row[10] is not None else None,
+                "product_id": row[1],
+                "request_count": row[6],
+                "source_channel": row[15],
+                "status": row[14],
+                "top_errors": top_errors,
+                "updated_at": row[18].isoformat() if row[18] else None,
+                "window_end": row[5].isoformat() if row[5] else None,
+                "window_start": row[4].isoformat() if row[4] else None,
+            }
+            for optional_key in (
+                "anomaly_summary",
+                "created_at",
+                "error_rate",
+                "module_code",
+                "p95_latency_ms",
+                "p99_latency_ms",
+                "source_channel",
+                "updated_at",
+            ):
+                if metric[optional_key] is None:
+                    metric.pop(optional_key)
+            metrics[row[0]] = metric
+        return metrics
 
     def _load_iteration_plan_suggestions(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -3609,6 +3748,71 @@ class PostgresSnapshotRepository:
                     release.get("failure_reason"),
                     release.get("source_channel"),
                     release["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_online_log_metrics(
+        self,
+        cursor,
+        metrics: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for metric in metrics.values():
+            created_at = metric.get("created_at")
+            updated_at = metric.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO online_log_metrics (
+                  id, product_id, module_code, environment, window_start, window_end,
+                  request_count, error_count, error_rate, p95_latency_ms,
+                  p99_latency_ms, core_event_count, top_errors, anomaly_summary,
+                  status, source_channel, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s::timestamptz, %s::timestamptz,
+                  %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s,
+                  %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  module_code = EXCLUDED.module_code,
+                  environment = EXCLUDED.environment,
+                  window_start = EXCLUDED.window_start,
+                  window_end = EXCLUDED.window_end,
+                  request_count = EXCLUDED.request_count,
+                  error_count = EXCLUDED.error_count,
+                  error_rate = EXCLUDED.error_rate,
+                  p95_latency_ms = EXCLUDED.p95_latency_ms,
+                  p99_latency_ms = EXCLUDED.p99_latency_ms,
+                  core_event_count = EXCLUDED.core_event_count,
+                  top_errors = EXCLUDED.top_errors,
+                  anomaly_summary = EXCLUDED.anomaly_summary,
+                  status = EXCLUDED.status,
+                  source_channel = EXCLUDED.source_channel,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    metric["id"],
+                    metric["product_id"],
+                    metric.get("module_code"),
+                    metric.get("environment", "prod"),
+                    metric["window_start"],
+                    metric["window_end"],
+                    metric.get("request_count", 0),
+                    metric.get("error_count", 0),
+                    metric.get("error_rate"),
+                    metric.get("p95_latency_ms"),
+                    metric.get("p99_latency_ms"),
+                    metric.get("core_event_count", 0),
+                    json.dumps(metric.get("top_errors", []), ensure_ascii=False),
+                    metric.get("anomaly_summary"),
+                    metric.get("status", "collected"),
+                    metric.get("source_channel"),
+                    metric["created_by"],
                     created_at,
                     updated_at,
                 ),

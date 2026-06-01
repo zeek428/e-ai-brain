@@ -82,7 +82,7 @@ FastAPI 模块化单体
 → 生成 mock_issues / code_review_reports / Bug / Markdown / knowledge_deposits
 → lifecycle_context 写入需求、任务、提交、Review、测试、Bug、发布、日志和知识之间的关系边
 → lifecycle_context 归集需求变更、设计缺口、代码质量、Review、测试、Bug、发布和线上异常风险信号
-→ GitLab、Jenkins、线上日志定时采集并映射产品归属
+→ GitLab、Jenkins、线上日志通过真实登记/导入或定时采集映射产品归属
 → 用户使用数据和用户反馈定时采集并映射产品、模块、功能和用户群体
 → iteration_planning 结合需求池、Bug、线上日志、发布记录、用户使用和用户反馈生成迭代规划建议
 → AI 自动测试和人工测试登记 Bug，关联产品、任务、提交、发布或日志
@@ -126,7 +126,7 @@ API 容器启动入口会在服务启动前按顺序执行 `apps/api/app/db/migr
 | OpenAI-compatible 模型服务 | chat completion 和 embedding。 |
 | 本地 GitLab | v1 MVP 拉取 Merge Request 元信息和 diff 快照用于内部代码 Review；v1.2 再采集提交、Merge Request、代码变更量、质量评分和风险摘要，按产品 Git 资源归属。 |
 | Jenkins | v1 采集 job、build、部署环境、发布版本、触发人、耗时、状态和失败原因。 |
-| 线上运行日志源 | v1 聚合错误率、P95 延迟、核心业务事件、top errors 和异常趋势。 |
+| 线上运行日志源 | v1 可登记/导入真实聚合指标，后续接入自动采集；聚合错误率、P95 延迟、核心业务事件、top errors 和异常趋势。 |
 | 用户使用和反馈数据源 | v1 聚合活跃、功能访问、关键路径转化、异常退出、低使用功能和反馈趋势。 |
 | 未来 GitHub/Jira/飞书等系统 | v1 仅预留适配器，默认使用模拟 Issue。 |
 
@@ -138,11 +138,11 @@ API 容器启动入口会在服务启动前按顺序执行 `apps/api/app/db/migr
 - 模型调用日志默认不保存完整 prompt 和输出。
 - 所有写操作、AI 高影响动作和研发运营采集结果写入审计事件或运行记录。
 - GitLab MR 代码 Review 只读取授权产品 Git 资源和 Merge Request，报告归档在 AI Brain 内部，不回写 GitLab 评论、审批状态或分支变更。
-- GitLab、Jenkins 和线上日志采集失败时保留最后成功时间、失败原因和待归属状态。
+- GitLab、Jenkins 和线上日志登记/导入或采集失败时保留失败原因，不得生成兜底指标；自动采集接入后保留最后成功时间和待归属状态。
 
 ## 扩展性设计
 
 v1 不拆微服务，但模块边界保留未来提取点：`graph-runtime-worker`、`knowledge-service`、`long-memory-service`、`model-gateway-service`、`gitlab-review-service`、`code-review-executor-service`、`devops-metrics-worker`、`user-insights-worker`、`iteration-planning-service`、`bug-service`、`dashboard-service`、`integration-service`。
 
 ---
-最后更新: 2026-05-29
+最后更新: 2026-06-01

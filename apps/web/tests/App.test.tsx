@@ -1766,6 +1766,102 @@ describe('AI Brain Ant Design Pro workbench', () => {
     );
   });
 
+  it('records real online log metrics from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/ops/online-log-metrics' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            environment: 'prod',
+            id: 'online_log_metric_created',
+            product_id: 'product_ops',
+            status: 'collected',
+            window_start: '2026-06-01T00:00:00Z',
+          },
+        });
+      }
+      if (input === '/api/devops/gitlab/daily-code-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/devops/jenkins/releases') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ops/online-log-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'ops-platform',
+                id: 'product_ops',
+                modules: [{ code: 'checkout', id: 'module_checkout', name: '结算模块', status: 'active' }],
+                name: '线上运营平台',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products/product_ops/versions?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    await screen.findByRole('button', { name: '登记线上日志' });
+    fireEvent.click(screen.getByRole('button', { name: '登记线上日志' }));
+    fireEvent.change(screen.getByLabelText('模块编码'), { target: { value: 'checkout' } });
+    fireEvent.change(screen.getByLabelText('运行环境'), { target: { value: 'prod' } });
+    fireEvent.change(screen.getByLabelText('窗口开始'), { target: { value: '2026-06-01T00:00:00Z' } });
+    fireEvent.change(screen.getByLabelText('窗口结束'), { target: { value: '2026-06-01T01:00:00Z' } });
+    fireEvent.change(screen.getByLabelText('请求数'), { target: { value: '2400' } });
+    fireEvent.change(screen.getByLabelText('错误数'), { target: { value: '12' } });
+    fireEvent.change(screen.getByLabelText('P95 延迟毫秒'), { target: { value: '318.5' } });
+    fireEvent.change(screen.getByLabelText('P99 延迟毫秒'), { target: { value: '640.25' } });
+    fireEvent.change(screen.getByLabelText('核心事件数'), { target: { value: '240' } });
+    fireEvent.change(screen.getByLabelText('Top Errors JSON'), {
+      target: { value: '[{"count":7,"message":"PaymentTimeout"}]' },
+    });
+    fireEvent.change(screen.getByLabelText('异常摘要'), {
+      target: { value: 'checkout error spike after release' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/ops/online-log-metrics',
+        'POST',
+        JSON.stringify({
+          anomaly_summary: 'checkout error spike after release',
+          core_event_count: 240,
+          environment: 'prod',
+          error_count: 12,
+          module_code: 'checkout',
+          p95_latency_ms: 318.5,
+          p99_latency_ms: 640.25,
+          product_id: 'product_ops',
+          request_count: 2400,
+          source_channel: 'manual_import',
+          status: 'collected',
+          top_errors: [{ count: 7, message: 'PaymentTimeout' }],
+          window_end: '2026-06-01T01:00:00Z',
+          window_start: '2026-06-01T00:00:00Z',
+        }),
+      ]),
+    );
+  });
+
   it('generates and decides real iteration suggestions from the insights page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

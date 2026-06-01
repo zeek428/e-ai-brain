@@ -8,11 +8,13 @@ import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows'
 import {
   createGitLabDailyCodeMetric,
   createJenkinsRelease,
+  createOnlineLogMetric,
   fetchDevopsMetrics,
   fetchProductContextOptions,
   fetchProductGitRepositories,
   type GitLabDailyCodeMetricCreatePayload,
   type JenkinsReleaseCreatePayload,
+  type OnlineLogMetricCreatePayload,
   type OperationalMetricRecord,
   type ProductGitRepositoryOption,
 } from '../../services/aiBrain';
@@ -47,14 +49,61 @@ type JenkinsReleaseFormValues = {
   versionId: string;
 };
 
+type OnlineLogMetricFormValues = {
+  anomalySummary?: string;
+  coreEventCount?: string;
+  environment?: string;
+  errorCount?: string;
+  moduleCode?: string;
+  p95LatencyMs?: string;
+  p99LatencyMs?: string;
+  productId: string;
+  requestCount?: string;
+  topErrors?: string;
+  windowEnd: string;
+  windowStart: string;
+};
+
 const gitlabMetricStatus = 'collected';
 const jenkinsReleaseStatus = 'success';
+const onlineLogMetricStatus = 'collected';
 const jenkinsStatusOptions = [
   { label: 'success', value: 'success' },
   { label: 'failed', value: 'failed' },
   { label: 'running', value: 'running' },
   { label: 'canceled', value: 'canceled' },
 ];
+
+function parseTopErrors(value?: string): Record<string, unknown>[] {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const parsed = JSON.parse(trimmed) as unknown;
+  return Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : [];
+}
+
+function topErrorsJsonRule() {
+  return {
+    validator: async (_: unknown, value?: string) => {
+      const trimmed = value?.trim();
+      if (!trimmed) {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (!Array.isArray(parsed)) {
+          throw new Error('Top Errors JSON 请输入数组 JSON');
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('数组 JSON')) {
+          throw error;
+        }
+        throw new Error('Top Errors JSON 请输入合法 JSON');
+      }
+    },
+  };
+}
 
 function optionalNonNegativeNumberRule(label: string, max?: number) {
   return {
@@ -156,6 +205,25 @@ function buildJenkinsReleasePayload(values: JenkinsReleaseFormValues): JenkinsRe
   };
 }
 
+function buildOnlineLogMetricPayload(values: OnlineLogMetricFormValues): OnlineLogMetricCreatePayload {
+  return {
+    anomaly_summary: optionalText(values.anomalySummary),
+    core_event_count: numberOrZero(values.coreEventCount),
+    environment: optionalText(values.environment) ?? 'prod',
+    error_count: numberOrZero(values.errorCount),
+    module_code: optionalText(values.moduleCode),
+    p95_latency_ms: optionalNumber(values.p95LatencyMs),
+    p99_latency_ms: optionalNumber(values.p99LatencyMs),
+    product_id: values.productId,
+    request_count: numberOrZero(values.requestCount),
+    source_channel: 'manual_import',
+    status: onlineLogMetricStatus,
+    top_errors: parseTopErrors(values.topErrors),
+    window_end: values.windowEnd.trim(),
+    window_start: values.windowStart.trim(),
+  };
+}
+
 const columns: ProColumns<OperationalMetricRecord>[] = [
   {
     dataIndex: 'category',
@@ -183,8 +251,10 @@ const columns: ProColumns<OperationalMetricRecord>[] = [
 export default function DevopsPage() {
   const [metricForm] = Form.useForm<GitLabMetricFormValues>();
   const [jenkinsForm] = Form.useForm<JenkinsReleaseFormValues>();
+  const [onlineLogForm] = Form.useForm<OnlineLogMetricFormValues>();
   const [metricOpen, setMetricOpen] = useState(false);
   const [jenkinsOpen, setJenkinsOpen] = useState(false);
+  const [onlineLogOpen, setOnlineLogOpen] = useState(false);
   const [productContexts, setProductContexts] = useState<ProductContextOption[]>([]);
   const [repositoryState, setRepositoryState] = useState<{
     items: ProductGitRepositoryOption[];
@@ -252,6 +322,13 @@ export default function DevopsPage() {
   }, [jenkinsForm, jenkinsOpen, productOptions]);
 
   useEffect(() => {
+    if (!onlineLogOpen || productOptions.length !== 1 || onlineLogForm.getFieldValue('productId')) {
+      return;
+    }
+    onlineLogForm.setFieldValue('productId', productOptions[0]?.value);
+  }, [onlineLogForm, onlineLogOpen, productOptions]);
+
+  useEffect(() => {
     if (!jenkinsOpen || jenkinsVersionOptions.length !== 1 || jenkinsForm.getFieldValue('versionId')) {
       return;
     }
@@ -307,6 +384,17 @@ export default function DevopsPage() {
     await reload();
   };
 
+  const submitOnlineLogMetric = async () => {
+    if (!onlineLogForm.getFieldValue('productId') && productOptions.length === 1) {
+      onlineLogForm.setFieldValue('productId', productOptions[0]?.value);
+    }
+    const values = await onlineLogForm.validateFields();
+    await createOnlineLogMetric(buildOnlineLogMetricPayload(values));
+    setOnlineLogOpen(false);
+    onlineLogForm.resetFields();
+    await reload();
+  };
+
   return (
     <>
       <ManagementListPage<OperationalMetricRecord>
@@ -339,6 +427,9 @@ export default function DevopsPage() {
           </Button>,
           <Button aria-label="登记 Jenkins 发布" key="jenkins-release" onClick={() => setJenkinsOpen(true)}>
             登记 Jenkins 发布
+          </Button>,
+          <Button aria-label="登记线上日志" key="online-log" onClick={() => setOnlineLogOpen(true)}>
+            登记线上日志
           </Button>,
         ]}
       />
@@ -436,6 +527,55 @@ export default function DevopsPage() {
             <Input placeholder="2026-06-01T12:30:00Z" />
           </Form.Item>
           <Form.Item label="失败原因" name="failureReason">
+            <Input.TextArea rows={3} />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        okText="保存"
+        okButtonProps={{ 'aria-label': '保存' }}
+        onCancel={() => setOnlineLogOpen(false)}
+        onOk={() => void submitOnlineLogMetric()}
+        open={onlineLogOpen}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        title="登记线上日志"
+      >
+        <Form<OnlineLogMetricFormValues> form={onlineLogForm} layout="vertical">
+          <Form.Item label="所属产品" name="productId" rules={[{ required: true, message: '请选择所属产品' }]}>
+            <Select options={productOptions} />
+          </Form.Item>
+          <Form.Item label="模块编码" name="moduleCode">
+            <Input />
+          </Form.Item>
+          <Form.Item label="运行环境" name="environment">
+            <Input placeholder="prod" />
+          </Form.Item>
+          <Form.Item label="窗口开始" name="windowStart" rules={[{ required: true, message: '请输入窗口开始时间' }]}>
+            <Input placeholder="2026-06-01T00:00:00Z" />
+          </Form.Item>
+          <Form.Item label="窗口结束" name="windowEnd" rules={[{ required: true, message: '请输入窗口结束时间' }]}>
+            <Input placeholder="2026-06-01T01:00:00Z" />
+          </Form.Item>
+          <Form.Item label="请求数" name="requestCount" rules={[optionalNonNegativeIntegerRule('请求数')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="错误数" name="errorCount" rules={[optionalNonNegativeIntegerRule('错误数')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="P95 延迟毫秒" name="p95LatencyMs" rules={[optionalNonNegativeNumberRule('P95 延迟毫秒')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="P99 延迟毫秒" name="p99LatencyMs" rules={[optionalNonNegativeNumberRule('P99 延迟毫秒')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="核心事件数" name="coreEventCount" rules={[optionalNonNegativeIntegerRule('核心事件数')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="Top Errors JSON" name="topErrors" rules={[topErrorsJsonRule()]}>
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item label="异常摘要" name="anomalySummary">
             <Input.TextArea rows={3} />
           </Form.Item>
         </Form>

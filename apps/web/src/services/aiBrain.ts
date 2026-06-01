@@ -221,6 +221,23 @@ export type JenkinsReleaseCreatePayload = {
   version_id: string;
 };
 
+export type OnlineLogMetricCreatePayload = {
+  anomaly_summary?: string;
+  core_event_count?: number;
+  environment?: string;
+  error_count?: number;
+  module_code?: string;
+  p95_latency_ms?: number;
+  p99_latency_ms?: number;
+  product_id: string;
+  request_count?: number;
+  source_channel?: string;
+  status?: string;
+  top_errors?: Record<string, unknown>[];
+  window_end: string;
+  window_start: string;
+};
+
 export type IterationSuggestionCreatePayload = {
   constraints?: Record<string, unknown>;
   module_codes?: string[];
@@ -2141,6 +2158,8 @@ function mapOperationalMetrics(
         'job_name',
         'build_id',
         'metric_date',
+        'environment',
+        'window_start',
       ]),
     ),
     status: formatUnknownValue(item.status),
@@ -2148,7 +2167,18 @@ function mapOperationalMetrics(
       formatUnknownValue(firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'date'])),
     ),
     value: formatUnknownValue(
-      firstKnownValue(item, ['value', 'count', 'score', 'summary', 'commit_count', 'build_id', 'duration_seconds']),
+      firstKnownValue(item, [
+        'value',
+        'count',
+        'score',
+        'summary',
+        'commit_count',
+        'build_id',
+        'duration_seconds',
+        'error_rate',
+        'request_count',
+        'p95_latency_ms',
+      ]),
     ),
   }));
 }
@@ -2184,6 +2214,17 @@ export async function createJenkinsRelease(
 ): Promise<FlexibleListItem> {
   const token = requireAccessToken();
   return apiRequest<FlexibleListItem>('/api/devops/jenkins/releases', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function createOnlineLogMetric(
+  payload: OnlineLogMetricCreatePayload,
+): Promise<FlexibleListItem> {
+  const token = requireAccessToken();
+  return apiRequest<FlexibleListItem>('/api/ops/online-log-metrics', {
     body: payload,
     method: 'POST',
     token,

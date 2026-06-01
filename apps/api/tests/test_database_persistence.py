@@ -24,6 +24,7 @@ class FakeSnapshotRepository:
         self.mock_writebacks_payload: dict | None = None
         self.gitlab_daily_code_metrics_payload: dict | None = None
         self.jenkins_release_records_payload: dict | None = None
+        self.online_log_metrics_payload: dict | None = None
         self.user_usage_metrics_payload: dict | None = None
         self.user_feedback_payload: dict | None = None
         self.iteration_planning_payload: dict | None = None
@@ -105,6 +106,12 @@ class FakeSnapshotRepository:
 
     def save_jenkins_release_records(self, payload: dict) -> None:
         self.jenkins_release_records_payload = payload
+
+    def load_online_log_metrics(self) -> dict | None:
+        return self.online_log_metrics_payload
+
+    def save_online_log_metrics(self, payload: dict) -> None:
+        self.online_log_metrics_payload = payload
 
     def load_user_feedback(self) -> dict | None:
         return self.user_feedback_payload
@@ -2510,6 +2517,74 @@ def test_jenkins_release_records_are_persisted_through_fine_grained_repository_p
 
     assert rebuilt_store.jenkins_release_records["jenkins_release_010"]["status"] == "success"
     assert rebuilt_store.new_id("jenkins_release") == "jenkins_release_011"
+
+
+def test_online_log_metrics_are_persisted_through_fine_grained_repository_payload():
+    repository = FakeSnapshotRepository()
+    store = PersistentMemoryStore(repository)
+    store.products = {
+        "product_001": {
+            "code": "ops-product",
+            "id": "product_001",
+            "name": "线上运营产品",
+            "status": "active",
+        }
+    }
+    store.product_modules = {
+        "module_001": {
+            "code": "checkout",
+            "id": "module_001",
+            "name": "结算模块",
+            "product_id": "product_001",
+            "status": "active",
+        }
+    }
+    store.online_log_metrics = {
+        "online_log_metric_010": {
+            "anomaly_summary": "checkout error spike after release",
+            "core_event_count": 240,
+            "created_at": "2026-06-01T01:05:00+00:00",
+            "created_by": "user_admin",
+            "environment": "prod",
+            "error_count": 12,
+            "error_rate": 0.005,
+            "id": "online_log_metric_010",
+            "module_code": "checkout",
+            "p95_latency_ms": 318.5,
+            "p99_latency_ms": 640.25,
+            "product_id": "product_001",
+            "request_count": 2400,
+            "source_channel": "manual_import",
+            "status": "collected",
+            "top_errors": [{"count": 7, "message": "PaymentTimeout"}],
+            "updated_at": "2026-06-01T01:05:00+00:00",
+            "window_end": "2026-06-01T01:00:00+00:00",
+            "window_start": "2026-06-01T00:00:00+00:00",
+        }
+    }
+
+    store.persist()
+
+    assert repository.online_log_metrics_payload == {
+        "online_log_metrics": store.online_log_metrics,
+    }
+
+    restored_repository = FakeSnapshotRepository()
+    restored_repository.product_config_payload = {
+        "product_git_repositories": {},
+        "product_modules": store.product_modules,
+        "product_versions": {},
+        "products": store.products,
+        "related_systems": {},
+    }
+    restored_repository.online_log_metrics_payload = {
+        "online_log_metrics": store.online_log_metrics,
+    }
+
+    rebuilt_store = PersistentMemoryStore.from_repository(restored_repository)
+
+    assert rebuilt_store.online_log_metrics["online_log_metric_010"]["environment"] == "prod"
+    assert rebuilt_store.new_id("online_log_metric") == "online_log_metric_011"
 
 
 def test_iteration_planning_is_persisted_through_fine_grained_repository_payload():
