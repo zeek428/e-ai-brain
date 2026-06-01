@@ -31,8 +31,41 @@ def fake_openai_compatible_model_gateway(monkeypatch):
         def read(self) -> bytes:
             return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
 
-    def fake_urlopen(request, _timeout):
+    def fake_urlopen(request, timeout):
         request_body = json.loads(request.data.decode("utf-8"))
+        if request.full_url.endswith("/embeddings"):
+            inputs = request_body.get("input", [])
+            if isinstance(inputs, str):
+                inputs = [inputs]
+            embeddings = []
+            for index, text in enumerate(inputs):
+                normalized_text = text.lower()
+                vector = [0.0] * 1536
+                if "retrieval marker" in normalized_text:
+                    vector[0] = 1.0
+                elif "new-search-token" in normalized_text:
+                    vector[1] = 1.0
+                elif "retry-index-token" in normalized_text:
+                    vector[2] = 1.0
+                elif "review" in normalized_text:
+                    vector[3] = 1.0
+                else:
+                    vector[4] = 1.0
+                embeddings.append(
+                    {
+                        "embedding": vector,
+                        "index": index,
+                    }
+                )
+            return FakeResponse(
+                {
+                    "data": embeddings,
+                    "usage": {
+                        "prompt_tokens": 7 * len(inputs),
+                        "total_tokens": 7 * len(inputs),
+                    },
+                }
+            )
         messages = request_body.get("messages", [])
         user_content = next(
             (message.get("content") for message in messages if message.get("role") == "user"),

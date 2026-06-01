@@ -1097,6 +1097,7 @@ def test_knowledge_and_audit_are_persisted_through_fine_grained_repository_paylo
         "chunk_index": 1,
         "content": "真实系统知识文档必须写入结构表",
         "document_id": "knowledge_009",
+        "embedding": [0.25, *([0.0] * 1535)],
         "id": "knowledge_009_chunk_001",
         "metadata": {"title": "知识结构表验证"},
         "permission_roles": ["admin", "knowledge_owner"],
@@ -1130,6 +1131,9 @@ def test_knowledge_and_audit_are_persisted_through_fine_grained_repository_paylo
     assert repository.knowledge_payload["knowledge_chunks"]["knowledge_009_chunk_001"][
         "document_id"
     ] == "knowledge_009"
+    assert repository.knowledge_payload["knowledge_chunks"]["knowledge_009_chunk_001"][
+        "embedding"
+    ] == [0.25, *([0.0] * 1535)]
     assert repository.knowledge_payload["knowledge_deposits"]["deposit_004"][
         "knowledge_document_id"
     ] == "knowledge_009"
@@ -1201,6 +1205,7 @@ def test_structured_knowledge_and_audit_restore_and_sync_counters():
                 "chunk_index": 1,
                 "content": "结构表知识",
                 "document_id": "knowledge_009",
+                "embedding": [0.5, *([0.0] * 1535)],
                 "id": "knowledge_009_chunk_001",
                 "metadata": {"title": "结构表知识"},
                 "permission_roles": ["admin"],
@@ -1223,6 +1228,10 @@ def test_structured_knowledge_and_audit_restore_and_sync_counters():
 
     assert list(rebuilt_store.knowledge_documents) == ["knowledge_009"]
     assert list(rebuilt_store.knowledge_chunks) == ["knowledge_009_chunk_001"]
+    assert rebuilt_store.knowledge_chunks["knowledge_009_chunk_001"]["embedding"] == [
+        0.5,
+        *([0.0] * 1535),
+    ]
     assert rebuilt_store.knowledge_deposits["deposit_004"]["title"] == "结构表沉淀"
     assert [event["id"] for event in rebuilt_store.audit_events] == ["audit_007"]
     assert rebuilt_store.new_id("knowledge") == "knowledge_010"

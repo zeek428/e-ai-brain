@@ -689,6 +689,13 @@ def _model_gateway_chat_completions_url(base_url: str) -> str:
     return f"{normalized}/chat/completions"
 
 
+def _model_gateway_embeddings_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/embeddings"):
+        return normalized
+    return f"{normalized}/embeddings"
+
+
 def _model_gateway_messages(task: dict[str, Any]) -> list[dict[str, str]]:
     payload = {
         "input_json": task.get("input_json", {}),
@@ -715,21 +722,24 @@ def _model_gateway_messages(task: dict[str, Any]) -> list[dict[str, str]]:
 def _model_gateway_log(
     current_store: MemoryStore,
     *,
-    task: dict[str, Any],
     provider: str,
     model: str,
     config_id: str | None,
     tokens: dict[str, int],
     latency_ms: int,
     status: str,
+    task: dict[str, Any] | None = None,
+    purpose: str | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
+    ai_task_id = task["id"] if task else None
+    resolved_purpose = purpose or (task["task_type"] if task else "model_gateway")
     log = {
         "id": current_store.new_id("model_log"),
-        "ai_task_id": task["id"],
+        "ai_task_id": ai_task_id,
         "provider": provider,
         "model": model,
-        "purpose": task["task_type"],
+        "purpose": resolved_purpose,
         "tokens": tokens,
         "latency_ms": latency_ms,
         "status": status,
@@ -790,6 +800,143 @@ def _openai_usage_tokens(
     return {"prompt": prompt, "completion": completion, "total": total}
 
 
+def _openai_embedding_usage_tokens(
+    usage: Any,
+    *,
+    inputs: list[str],
+) -> dict[str, int]:
+    if not isinstance(usage, dict):
+        prompt = _estimate_tokens(inputs)
+        return {"prompt": prompt, "completion": 0, "total": prompt}
+    prompt = int(usage.get("prompt_tokens") or _estimate_tokens(inputs))
+    total = int(usage.get("total_tokens") or prompt)
+    return {"prompt": prompt, "completion": 0, "total": total}
+
+
+def _parse_embedding_response(
+    response_payload: dict[str, Any],
+    *,
+    expected_count: int,
+) -> list[list[float]]:
+    data = response_payload.get("data")
+    if not isinstance(data, list) or len(data) != expected_count:
+        raise ValueError("Embedding response data count does not match request")
+    embeddings_by_index: dict[int, list[float]] = {}
+    for fallback_index, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError("Embedding response item must be an object")
+        index = int(item.get("index", fallback_index))
+        embedding = item.get("embedding")
+        if not isinstance(embedding, list):
+            raise ValueError("Embedding response item is missing embedding")
+        vector = [float(value) for value in embedding]
+        if len(vector) != settings.vector_dimension:
+            raise ValueError("Embedding dimension does not match configured vector dimension")
+        embeddings_by_index[index] = vector
+    return [embeddings_by_index[index] for index in range(expected_count)]
+
+
+def _model_gateway_embedding_config(current_store: MemoryStore) -> dict[str, Any]:
+    config = _default_model_gateway_config(current_store)
+    if config:
+        if config.get("provider") != "openai_compatible":
+            raise ModelGatewayConfigError("Active model gateway provider is not supported")
+        if not config.get("api_key"):
+            raise ModelGatewayConfigError("Active model gateway config is missing api_key")
+        return config
+    if settings.model_gateway_status == "configured":
+        return {
+            "api_key": settings.model_gateway_api_key,
+            "base_url": settings.model_gateway_base_url,
+            "default_embedding_model": settings.model_gateway_default_embedding_model,
+            "id": None,
+            "provider": "openai_compatible",
+            "timeout_seconds": 60,
+        }
+    raise ModelGatewayConfigError(
+        "No active/default model gateway config is configured",
+        current_step="model_gateway_config_invalid",
+    )
+
+
+def _call_openai_compatible_embeddings(
+    current_store: MemoryStore,
+    *,
+    config: dict[str, Any],
+    inputs: list[str],
+) -> tuple[list[list[float]], dict[str, Any]]:
+    provider = config["provider"]
+    model = config["default_embedding_model"]
+    config_id = config["id"]
+    body = {"model": model, "input": inputs}
+    request = UrlRequest(
+        _model_gateway_embeddings_url(config["base_url"]),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config['api_key']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    started = perf_counter()
+    try:
+        with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+        embeddings = _parse_embedding_response(response_payload, expected_count=len(inputs))
+        latency_ms = int((perf_counter() - started) * 1000)
+        log = _model_gateway_log(
+            current_store,
+            purpose="knowledge_embedding",
+            provider=provider,
+            model=model,
+            config_id=config_id,
+            tokens=_openai_embedding_usage_tokens(
+                response_payload.get("usage"),
+                inputs=inputs,
+            ),
+            latency_ms=latency_ms,
+            status="succeeded",
+        )
+        return embeddings, log
+    except (
+        AttributeError,
+        HTTPError,
+        URLError,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        latency_ms = int((perf_counter() - started) * 1000)
+        prompt_tokens = _estimate_tokens(inputs)
+        log = _model_gateway_log(
+            current_store,
+            purpose="knowledge_embedding",
+            provider=provider,
+            model=model,
+            config_id=config_id,
+            tokens={"prompt": prompt_tokens, "completion": 0, "total": prompt_tokens},
+            latency_ms=latency_ms,
+            status="failed",
+            error="Model gateway embedding request failed",
+        )
+        raise ModelGatewayCallError(log) from exc
+
+
+def _call_model_gateway_embeddings(
+    current_store: MemoryStore,
+    inputs: list[str],
+) -> list[list[float]]:
+    config = _model_gateway_embedding_config(current_store)
+    embeddings, _log = _call_openai_compatible_embeddings(
+        current_store,
+        config=config,
+        inputs=inputs,
+    )
+    return embeddings
+
+
 def _call_openai_compatible_model_gateway(
     current_store: MemoryStore,
     *,
@@ -817,7 +964,7 @@ def _call_openai_compatible_model_gateway(
     )
     started = perf_counter()
     try:
-        with urlopen(request, int(config.get("timeout_seconds") or 60)) as response:
+        with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
             response_payload = json.loads(response.read().decode("utf-8"))
         output = _parse_model_gateway_output(response_payload, task)
         latency_ms = int((perf_counter() - started) * 1000)
@@ -3463,6 +3610,18 @@ def _replace_knowledge_chunks(current_store: MemoryStore, document: dict[str, An
     if not chunks:
         _mark_knowledge_index_failed(current_store, document, "NO_INDEXABLE_CONTENT")
         return
+    try:
+        embeddings = _call_model_gateway_embeddings(current_store, chunks)
+    except ModelGatewayConfigError as exc:
+        _mark_knowledge_index_failed(current_store, document, str(exc))
+        return
+    except ModelGatewayCallError as exc:
+        _mark_knowledge_index_failed(
+            current_store,
+            document,
+            exc.log.get("error") or "Model gateway embedding request failed",
+        )
+        return
     permission_roles = list(document.get("permission_roles", ["admin"]))
     for chunk_index, content in enumerate(chunks, start=1):
         chunk_id = f"{document_id}_chunk_{chunk_index:03d}"
@@ -3470,6 +3629,7 @@ def _replace_knowledge_chunks(current_store: MemoryStore, document: dict[str, An
             "chunk_index": chunk_index,
             "content": content,
             "document_id": document_id,
+            "embedding": embeddings[chunk_index - 1],
             "id": chunk_id,
             "metadata": {
                 "doc_type": document.get("doc_type", "manual"),
@@ -3482,6 +3642,25 @@ def _replace_knowledge_chunks(current_store: MemoryStore, document: dict[str, An
     document["chunk_count"] = len(chunks)
     document["index_status"] = "indexed"
     document.pop("index_error", None)
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    dot_product = sum(a * b for a, b in zip(left, right, strict=True))
+    left_norm = sum(value * value for value in left) ** 0.5
+    right_norm = sum(value * value for value in right) ** 0.5
+    if left_norm == 0 or right_norm == 0:
+        return 0.0
+    return dot_product / (left_norm * right_norm)
+
+
+def _knowledge_query_embedding(
+    current_store: MemoryStore,
+    query: str,
+) -> list[float] | None:
+    try:
+        return _call_model_gateway_embeddings(current_store, [query])[0]
+    except (ModelGatewayConfigError, ModelGatewayCallError):
+        return None
 
 
 @app.post("/api/knowledge/documents")
@@ -3630,6 +3809,7 @@ def search_knowledge(
 ) -> dict[str, Any]:
     current_store = store(request)
     query = _ensure_non_blank(payload.query, "query").lower()
+    query_embedding = _knowledge_query_embedding(current_store, query)
     items = []
     for document in current_store.knowledge_documents.values():
         if document.get("index_status") != "indexed":
@@ -3644,7 +3824,13 @@ def search_knowledge(
             if not _user_can_read_roles(user, chunk_roles):
                 continue
             haystack = f"{document['title']} {chunk['content']}".lower()
-            if query not in haystack:
+            embedding = chunk.get("embedding")
+            score = None
+            if query_embedding is not None and isinstance(embedding, list):
+                score = _cosine_similarity(query_embedding, [float(value) for value in embedding])
+                if score <= 0 and query not in haystack:
+                    continue
+            elif query not in haystack:
                 continue
             items.append(
                 {
@@ -3653,6 +3839,7 @@ def search_knowledge(
                     "document_id": document["id"],
                     "title": document["title"],
                     "content": chunk["content"],
+                    "score": round(score, 6) if score is not None else None,
                     "source": {
                         "chunk_id": chunk["id"],
                         "doc_type": document["doc_type"],
@@ -3660,7 +3847,13 @@ def search_knowledge(
                     },
                 }
             )
-    items.sort(key=lambda item: (item["document_id"], item["chunk_index"]))
+    items.sort(
+        key=lambda item: (
+            -(item["score"] if item["score"] is not None else -1.0),
+            item["document_id"],
+            item["chunk_index"],
+        )
+    )
     return envelope({"items": items[: payload.top_k], "total": len(items)}, get_trace_id(request))
 
 

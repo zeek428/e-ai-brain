@@ -209,7 +209,7 @@ def test_model_gateway_failure_marks_task_failed_and_logs_error(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
 
-    def fake_urlopen(_request, _timeout):
+    def fake_urlopen(_request, timeout):
         raise URLError("connection refused")
 
     monkeypatch.setattr("app.main.urlopen", fake_urlopen)

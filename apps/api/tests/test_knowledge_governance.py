@@ -1,5 +1,8 @@
+import json
+
 from fastapi.testclient import TestClient
 
+import app.main as main
 from app.main import app
 
 client = TestClient(app)
@@ -171,6 +174,99 @@ def test_knowledge_search_returns_permission_filtered_chunks_and_reindexes_on_up
 
     assert stale_results == []
     assert [item["chunk_id"] for item in fresh_results] == [f"{document['id']}_chunk_001"]
+
+
+def test_knowledge_search_uses_model_gateway_embeddings_for_semantic_rank(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    embedding_size = 1536
+
+    class FakeResponse:
+        def __init__(self, payload: dict):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+    def vector_for(text: str) -> list[float]:
+        if "semantic-target" in text or "deployment intent" in text:
+            return [1.0, *([0.0] * (embedding_size - 1))]
+        if "payroll" in text:
+            return [0.0, 1.0, *([0.0] * (embedding_size - 2))]
+        return [0.5, 0.5, *([0.0] * (embedding_size - 2))]
+
+    embedding_calls: list[dict[str, object]] = []
+
+    def fake_urlopen(request, timeout):
+        assert request.full_url == "https://llm.test/v1/embeddings"
+        payload = json.loads(request.data.decode("utf-8"))
+        embedding_calls.append({"payload": payload, "timeout": timeout})
+        inputs = payload["input"]
+        if isinstance(inputs, str):
+            inputs = [inputs]
+        return FakeResponse(
+            {
+                "data": [
+                    {"embedding": vector_for(text), "index": index}
+                    for index, text in enumerate(inputs)
+                ],
+                "usage": {"prompt_tokens": 7 * len(inputs), "total_tokens": 7 * len(inputs)},
+            }
+        )
+
+    monkeypatch.setattr(main, "urlopen", fake_urlopen)
+
+    target = client.post(
+        "/api/knowledge/documents",
+        json={
+            "title": "部署语义手册",
+            "content": "semantic-target release checklist",
+            "permission_roles": ["admin"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    client.post(
+        "/api/knowledge/documents",
+        json={
+            "title": "薪资制度",
+            "content": "payroll reimbursement policy",
+            "permission_roles": ["admin"],
+        },
+        headers=admin_headers,
+    )
+
+    results = client.post(
+        "/api/knowledge/search",
+        json={"query": "deployment intent", "top_k": 1},
+        headers=admin_headers,
+    ).json()["data"]["items"]
+
+    assert [item["document_id"] for item in results] == [target["id"]]
+    assert results[0]["score"] == 1.0
+    stored_embeddings = [
+        chunk["embedding"]
+        for chunk in app.state.store.knowledge_chunks.values()
+        if chunk["document_id"] == target["id"]
+    ]
+    assert len(stored_embeddings) == 1
+    assert len(stored_embeddings[0]) == embedding_size
+    assert embedding_calls[0]["payload"]["model"] == "test-embedding-model"
+    assert embedding_calls[-1]["payload"]["input"] == ["deployment intent"]
+
+    logs = client.get(
+        "/api/model-gateway/logs?status=succeeded",
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    embedding_logs = [log for log in logs if log["purpose"] == "knowledge_embedding"]
+    assert embedding_logs
+    assert all(log["model"] == "test-embedding-model" for log in embedding_logs)
+    assert "semantic-target" not in str(embedding_logs)
 
 
 def test_knowledge_search_does_not_synthesize_chunks_when_index_rows_are_missing():

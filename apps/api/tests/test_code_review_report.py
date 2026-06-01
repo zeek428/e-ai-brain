@@ -222,7 +222,7 @@ def test_code_review_executor_failure_uses_executor_error_code(monkeypatch):
                 ensure_ascii=False,
             ).encode("utf-8")
 
-    def fake_urlopen(_request, _timeout):
+    def fake_urlopen(_request, timeout):
         return FakeResponse()
 
     monkeypatch.setattr("app.main.urlopen", fake_urlopen)

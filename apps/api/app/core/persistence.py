@@ -158,6 +158,28 @@ def _knowledge_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in KNOWLEDGE_FIELDS}
 
 
+def _parse_vector_text(value: Any) -> list[float] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [float(item) for item in value]
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    if not text:
+        return []
+    return [float(item) for item in text.split(",")]
+
+
+def _vector_sql_literal(value: Any) -> str | None:
+    vector = _parse_vector_text(value)
+    if vector is None:
+        return None
+    return "[" + ",".join(f"{item:.12g}" for item in vector) + "]"
+
+
 def _audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, [])) for field in AUDIT_FIELDS}
 
@@ -1484,24 +1506,28 @@ class PostgresSnapshotRepository:
     def _load_knowledge_chunks(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
-            SELECT id, document_id, chunk_index, content, metadata, permission_scope, created_at
+            SELECT id, document_id, chunk_index, content, embedding::text, metadata,
+                   permission_scope, created_at
             FROM knowledge_chunks
             ORDER BY document_id, chunk_index, id
             """
         )
         chunks = {}
         for row in cursor.fetchall():
-            permission_scope = dict(row[5] or {})
+            permission_scope = dict(row[6] or {})
             chunk = {
                 "chunk_index": row[2],
                 "content": row[3],
-                "created_at": row[6].isoformat() if row[6] else None,
+                "created_at": row[7].isoformat() if row[7] else None,
                 "document_id": row[1],
+                "embedding": _parse_vector_text(row[4]),
                 "id": row[0],
-                "metadata": dict(row[4] or {}),
+                "metadata": dict(row[5] or {}),
                 "permission_roles": list(permission_scope.get("roles") or []),
                 "permission_scope": permission_scope,
             }
+            if chunk["embedding"] is None:
+                chunk.pop("embedding")
             if not chunk["permission_roles"]:
                 chunk.pop("permission_roles")
             if not chunk["permission_scope"]:
@@ -2357,13 +2383,14 @@ class PostgresSnapshotRepository:
                   permission_scope, created_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, NULL, %s::jsonb, %s::jsonb,
+                  %s, %s, %s, %s, %s::vector, %s::jsonb, %s::jsonb,
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   document_id = EXCLUDED.document_id,
                   chunk_index = EXCLUDED.chunk_index,
                   content = EXCLUDED.content,
+                  embedding = EXCLUDED.embedding,
                   metadata = EXCLUDED.metadata,
                   permission_scope = EXCLUDED.permission_scope
                 """,
@@ -2372,6 +2399,7 @@ class PostgresSnapshotRepository:
                     chunk["document_id"],
                     chunk["chunk_index"],
                     chunk["content"],
+                    _vector_sql_literal(chunk.get("embedding")),
                     json.dumps(chunk.get("metadata", {}), ensure_ascii=False),
                     json.dumps(permission_scope, ensure_ascii=False),
                     chunk.get("created_at"),
