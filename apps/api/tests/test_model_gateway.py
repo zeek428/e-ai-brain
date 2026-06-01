@@ -269,3 +269,60 @@ def test_active_model_gateway_without_api_key_does_not_fallback_to_local_output(
     detail = client.get(f"/api/ai-tasks/{task['task_id']}", headers=headers).json()["data"]
     assert detail["status"] == "failed"
     assert detail["current_step"] == "model_gateway_config_invalid"
+
+
+def test_model_gateway_config_rejects_unsupported_provider():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    response = client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "api_key": "sk-local",
+            "base_url": "https://llm.example.com/v1",
+            "default_chat_model": "gpt-local",
+            "default_embedding_model": "text-embedding-local",
+            "is_default": True,
+            "name": "错误 provider",
+            "provider": "direct_sdk",
+            "status": "active",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+    configs = client.get("/api/system/model-gateway-configs", headers=headers).json()["data"]
+    assert configs["items"] == []
+
+
+def test_model_gateway_config_patch_rejects_unsupported_provider():
+    headers = auth_headers()
+    app.state.store.reset()
+    config = client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "api_key": "sk-local",
+            "base_url": "https://llm.example.com/v1",
+            "default_chat_model": "gpt-local",
+            "default_embedding_model": "text-embedding-local",
+            "is_default": True,
+            "name": "正确 provider",
+            "provider": "openai_compatible",
+            "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    response = client.patch(
+        f"/api/system/model-gateway-configs/{config['id']}",
+        json={"provider": "direct_sdk"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+    unchanged = client.get("/api/system/model-gateway-configs", headers=headers).json()["data"][
+        "items"
+    ][0]
+    assert unchanged["provider"] == "openai_compatible"

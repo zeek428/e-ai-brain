@@ -88,6 +88,7 @@ VERSION_STATUSES = {"planning", "active", "archived"}
 MODULE_STATUSES = {"active", "inactive"}
 GIT_REPO_STATUSES = {"active", "inactive"}
 RELATED_SYSTEM_STATUSES = {"active", "inactive"}
+MODEL_GATEWAY_PROVIDERS = {"openai_compatible"}
 MODEL_GATEWAY_STATUSES = {"active", "inactive"}
 KNOWLEDGE_INDEX_STATUSES = {"archived", "importing", "indexed", "index_failed", "pending_index"}
 BUG_STATUS_TRANSITIONS = {
@@ -1705,6 +1706,7 @@ def create_model_gateway_config(
         payload.default_embedding_model,
         "default_embedding_model",
     )
+    _ensure_enum(payload.provider, MODEL_GATEWAY_PROVIDERS, "model gateway provider")
     _ensure_enum(payload.status, MODEL_GATEWAY_STATUSES, "model gateway status")
     config_id = current_store.new_id("model_gateway_config")
     config = {
@@ -1764,6 +1766,8 @@ def patch_model_gateway_config(
         )
     if "status" in updates:
         _ensure_enum(updates["status"], MODEL_GATEWAY_STATUSES, "model gateway status")
+    if "provider" in updates:
+        _ensure_enum(updates["provider"], MODEL_GATEWAY_PROVIDERS, "model gateway provider")
     config.update(updates)
     _set_default_model_gateway_config(
         current_store,

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.26 |
+| 功能版本 | v1.1.27 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -49,6 +49,7 @@
 | v1.1.24 | 2026-05-31 | 明确角色业务映射、可见入口和限制边界，并补齐知识索引失败原因与重试契约 | Codex |
 | v1.1.25 | 2026-06-01 | 补齐生命周期上下文从审计主体和 MVP 证据主体精准解析到任务链路的实现约束 | Codex |
 | v1.1.26 | 2026-06-01 | 明确低层 AI 任务创建必须回写需求任务引用并遵守需求关闭状态边界 | Codex |
+| v1.1.27 | 2026-06-01 | 收敛模型网关 provider 配置边界，非 OpenAI-compatible provider 在配置入口拒绝 | Codex |
 
 ---
 
@@ -736,6 +737,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 **职责**: 统一模型调用入口，支持聊天和 embedding。
 
 **核心规则**:
+- MVP 仅支持 `openai_compatible` provider，配置入口必须拒绝目录外 provider。
 - 结构化输出必须要求 JSON 并做 schema 校验。
 - 调用前进行基础敏感信息过滤。
 - 日志记录 provider、model、purpose、tokens、latency、status、error，不默认记录完整 prompt。

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.31 |
+| 功能版本 | v1.1.32 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -53,6 +53,7 @@
 | v1.1.29 | 2026-06-01 | 知识检索不再为缺失 chunk 的 indexed 文档合成结果，索引不一致时返回真实空结果 | Codex |
 | v1.1.30 | 2026-06-01 | GitLab MR diff 快照按 repository_id + snapshot_hash 复用已有快照，并记录复用审计事件 | Codex |
 | v1.1.31 | 2026-06-01 | 低层 AI 任务创建同步回写需求任务引用，并拒绝已关闭或未审批需求继续创建任务 | Codex |
+| v1.1.32 | 2026-06-01 | 模型网关配置入口拒绝非 OpenAI-compatible provider，避免无效配置延迟到任务启动才失败 | Codex |
 
 ---
 
@@ -541,6 +542,7 @@ DELETE /api/system/model-gateway-configs/{config_id}
 ```
 
 响应不会返回明文 `api_key`、密钥前缀或后缀，只返回 `api_key_configured`。
+`provider` 目前仅允许 `openai_compatible`；新增或编辑提交其他 provider 返回 `400 VALIDATION_ERROR`，不得保存为 active/default 配置。
 
 模型调用日志：
 

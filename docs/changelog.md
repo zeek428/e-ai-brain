@@ -85,6 +85,7 @@
 - 角色目录补齐业务角色映射、可见入口和限制边界，角色管理和用户管理角色目录同步展示。
 - 知识文档索引失败保留 `index_error` 并支持 `/api/knowledge/documents/{document_id}/retry-index` 重试，前端显示失败原因和重试操作。
 - AI 任务启动接入 active/default OpenAI-compatible 模型网关配置，调用真实 `/chat/completions` 并解析 JSON 输出；模型日志只记录脱敏元数据，缺失密钥或 provider 调用失败时任务进入 failed，不再静默回退本地输出。
+- 模型网关配置新增 provider 固定目录校验，新增或编辑时只允许 `openai_compatible`，避免错误 provider 保存为默认配置后污染任务执行。
 - Code Review 执行器失败语义补齐：结构化报告生成失败返回 `CODE_REVIEW_EXECUTOR_FAILED`，任务停在 `code_review_executor_failed` 并记录 `code_review.executor_failed` 审计事件。
 - 审计与运行列表新增真实详情弹窗和生命周期链路追踪操作，可从审计主体查看上下游、风险信号和缺失上下文。
 
