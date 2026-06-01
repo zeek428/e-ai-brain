@@ -276,6 +276,8 @@ import {
   deleteManagementProduct,
   deleteManagementRequirement,
   deleteManagementUser,
+  fetchActiveProductOptions,
+  fetchItTeamDashboard,
   fetchModelGatewayConfigs,
   fetchTaskMarkdown,
   fetchCodeReviewReport,
@@ -1443,6 +1445,104 @@ describe('AI Brain Ant Design Pro workbench', () => {
         ]),
       ),
     );
+  });
+
+  it('reloads the dashboard with a selected product filter', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              { code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' },
+              { code: 'ops-platform', id: 'product_ops', name: '运营平台', status: 'active' },
+            ],
+            total: 2,
+          },
+        });
+      }
+      if (input === '/api/dashboard/it-team?product_id=product_api') {
+        return jsonResponse({
+          data: {
+            latest_tasks: [
+              {
+                id: 'task_product_dashboard',
+                status: 'waiting_review',
+                task_type: 'technical_solution',
+                title: '研发平台筛选任务',
+              },
+            ],
+            pending_reviews: [],
+            recent_audit_events: [],
+            recent_knowledge_documents: [],
+            requirement_status_counts: [{ count: 2, status: 'approved' }],
+            summary: {
+              active_products: 1,
+              ai_tasks: 1,
+              audit_events: 0,
+              knowledge_deposits: 0,
+              knowledge_documents: 0,
+              pending_reviews: 0,
+              requirements: 2,
+            },
+            task_status_counts: [{ count: 1, status: 'waiting_review' }],
+            time_range: 'all',
+          },
+        });
+      }
+      if (input === '/api/dashboard/it-team') {
+        return jsonResponse({
+          data: {
+            latest_tasks: [],
+            pending_reviews: [],
+            recent_audit_events: [],
+            recent_knowledge_documents: [],
+            requirement_status_counts: [],
+            summary: {
+              active_products: 2,
+              ai_tasks: 0,
+              audit_events: 0,
+              knowledge_deposits: 0,
+              knowledge_documents: 0,
+              pending_reviews: 0,
+              requirements: 0,
+            },
+            task_status_counts: [],
+            time_range: 'all',
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DashboardPage />);
+
+    expect(await screen.findByText('IT 团队看板')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/products?active_only=true'),
+    );
+    fireEvent.change(await screen.findByLabelText('产品筛选'), {
+      target: { value: 'product_api' },
+    });
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
+        '/api/dashboard/it-team?product_id=product_api',
+      ),
+    );
+    expect(await screen.findByText('研发平台筛选任务')).toBeInTheDocument();
+    expect(screen.getAllByText('2')).not.toHaveLength(0);
+    expect(
+      fetchMock.mock.calls
+        .map(([path]) => String(path))
+        .some((path) => path.includes('/versions?active_only=true')),
+    ).toBe(false);
   });
 
   it('creates and triages real user feedback from the insights page', async () => {
@@ -3212,6 +3312,72 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/system/model-gateway-configs/model_config_api', 'PATCH'],
       ['/api/system/model-gateway-configs/model_config_api', 'DELETE'],
     ]);
+  });
+
+  it('fetches the dashboard with product query parameters', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(input).toBe('/api/dashboard/it-team?product_id=product_api');
+      return jsonResponse({
+        data: {
+          latest_tasks: [],
+          pending_reviews: [],
+          recent_audit_events: [],
+          recent_knowledge_documents: [],
+          requirement_status_counts: [{ count: 2, status: 'approved' }],
+          summary: {
+            active_products: 1,
+            ai_tasks: 1,
+            audit_events: 0,
+            knowledge_deposits: 0,
+            knowledge_documents: 0,
+            pending_reviews: 0,
+            requirements: 2,
+          },
+          task_status_counts: [],
+          time_range: 'all',
+        },
+      });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchItTeamDashboard({ productId: 'product_api' })).resolves.toMatchObject({
+      requirementStatusCounts: [{ count: 2, status: 'approved' }],
+      summary: expect.objectContaining({ activeProducts: 1, requirements: 2 }),
+    });
+  });
+
+  it('fetches active product filter options without loading versions', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(input).toBe('/api/products?active_only=true');
+      return jsonResponse({
+        data: {
+          items: [
+            { code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' },
+          ],
+          total: 1,
+        },
+      });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchActiveProductOptions()).resolves.toEqual([
+      { code: 'rd-platform', id: 'product_api', name: '研发平台' },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('sends management CRUD mutations to backend APIs with the stored token', async () => {

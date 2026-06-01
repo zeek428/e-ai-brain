@@ -410,6 +410,12 @@ export type KnowledgeSearchResultRecord = {
   title: string;
 };
 
+export type ProductFilterOption = {
+  code: string;
+  id: string;
+  name: string;
+};
+
 type ProductListItem = {
   code?: string;
   current_version_name?: string;
@@ -1066,9 +1072,21 @@ function mapDashboardStatusCounts(
   }));
 }
 
-export async function fetchItTeamDashboard(): Promise<ItTeamDashboard> {
+export async function fetchItTeamDashboard(
+  params: { productId?: string; timeRange?: string } = {},
+): Promise<ItTeamDashboard> {
   const token = requireAccessToken();
-  const dashboard = await apiRequest<DashboardResponse>('/api/dashboard/it-team', { token });
+  const query = new URLSearchParams();
+  if (params.productId) {
+    query.set('product_id', params.productId);
+  }
+  if (params.timeRange) {
+    query.set('time_range', params.timeRange);
+  }
+  const path = query.toString()
+    ? `/api/dashboard/it-team?${query.toString()}`
+    : '/api/dashboard/it-team';
+  const dashboard = await apiRequest<DashboardResponse>(path, { token });
   const summary = dashboard.summary ?? {};
   return {
     latestTasks: (dashboard.latest_tasks ?? []).map((task, index) => ({
@@ -1361,6 +1379,18 @@ export async function fetchProductContextOptions(): Promise<ProductContextOption
       };
     }),
   );
+}
+
+export async function fetchActiveProductOptions(): Promise<ProductFilterOption[]> {
+  const token = requireAccessToken();
+  const products = await apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', {
+    token,
+  });
+  return products.items.map((product) => ({
+    code: product.code ?? product.id,
+    id: product.id,
+    name: product.name,
+  }));
 }
 
 function mapRoleDefinition(role: RoleDefinitionListItem): UserRoleDefinition {

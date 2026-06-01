@@ -9,19 +9,22 @@ import {
 } from '@ant-design/icons';
 import { PageContainer, StatisticCard } from '@ant-design/pro-components';
 import { Alert, Button, Empty, Space, Tag, Typography } from 'antd';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { formatRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
+  fetchActiveProductOptions,
   fetchItTeamDashboard,
   type DashboardAuditSummary,
   type DashboardKnowledgeSummary,
   type DashboardStatusCount,
   type DashboardTaskSummary,
   type ItTeamDashboard,
+  type ProductFilterOption,
 } from '../../services/aiBrain';
 
 const { Text, Title } = Typography;
+const allProductsValue = '__all_products__';
 
 const statusLabels: Record<string, { color: string; label: string }> = {
   approved: { color: 'green', label: '已审批' },
@@ -127,12 +130,22 @@ export default function DashboardPage() {
   const [dashboard, setDashboard] = useState<ItTeamDashboard>();
   const [error, setError] = useState<RemoteRowsError>();
   const [loading, setLoading] = useState(true);
+  const [productOptionsSource, setProductOptionsSource] = useState<ProductFilterOption[]>([]);
+  const [selectedProductId, setSelectedProductId] = useState<string>();
+
+  const productOptions = useMemo(
+    () => [
+      { label: '全部产品', value: allProductsValue },
+      ...productOptionsSource.map((product) => ({ label: product.name, value: product.id })),
+    ],
+    [productOptionsSource],
+  );
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(undefined);
     try {
-      const nextDashboard = await fetchItTeamDashboard();
+      const nextDashboard = await fetchItTeamDashboard({ productId: selectedProductId });
       setDashboard(nextDashboard);
     } catch (loadError) {
       setDashboard(undefined);
@@ -140,11 +153,11 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedProductId]);
 
   useEffect(() => {
     let isCurrent = true;
-    fetchItTeamDashboard()
+    fetchItTeamDashboard({ productId: selectedProductId })
       .then((nextDashboard) => {
         if (isCurrent) {
           setDashboard(nextDashboard);
@@ -165,6 +178,24 @@ export default function DashboardPage() {
     return () => {
       isCurrent = false;
     };
+  }, [selectedProductId]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    void fetchActiveProductOptions()
+      .then((items) => {
+        if (isCurrent) {
+          setProductOptionsSource(items);
+        }
+      })
+      .catch(() => {
+        if (isCurrent) {
+          setProductOptionsSource([]);
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
   }, []);
 
   return (
@@ -174,9 +205,26 @@ export default function DashboardPage() {
           <Title level={3}>IT 团队看板</Title>
           <Text type="secondary">真实数据窗口：{dashboard?.timeRange ?? '-'}</Text>
         </div>
-        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void reload()}>
-          刷新
-        </Button>
+        <div className="dashboard-actions">
+          <select
+            aria-label="产品筛选"
+            className="dashboard-product-select"
+            onChange={(event) => {
+              const { value } = event.currentTarget;
+              setSelectedProductId(value === allProductsValue ? undefined : value);
+            }}
+            value={selectedProductId ?? allProductsValue}
+          >
+            {productOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void reload()}>
+            刷新
+          </Button>
+        </div>
       </div>
       {error ? (
         <Alert className="management-list-alert" showIcon title={formatRemoteRowsError(error)} type="error" />

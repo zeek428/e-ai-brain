@@ -156,6 +156,21 @@ body {
   margin-bottom: 4px;
 }
 
+.dashboard-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.dashboard-product-select {
+  min-width: 180px;
+  height: 32px;
+  padding: 4px 28px 4px 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
 .dashboard-stat-grid {
   margin-bottom: 16px;
 }
@@ -214,6 +229,15 @@ body {
   .dashboard-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .dashboard-actions {
+    width: 100%;
+  }
+
+  .dashboard-product-select {
+    flex: 1;
+    min-width: 0;
   }
 
   .dashboard-grid {
