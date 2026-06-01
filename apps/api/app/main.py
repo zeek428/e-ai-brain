@@ -84,6 +84,7 @@ BUG_STATUSES = {
 USER_FEEDBACK_TYPES = {"bug", "complaint", "improvement", "praise", "question"}
 USER_FEEDBACK_SENTIMENTS = {"negative", "neutral", "positive"}
 USER_FEEDBACK_STATUSES = {"archived", "linked", "open", "resolved", "triaged"}
+GITLAB_DAILY_METRIC_STATUSES = {"collected", "failed", "partial"}
 ITERATION_SUGGESTION_STATUSES = {
     "accepted",
     "converted_to_requirement",
@@ -367,6 +368,23 @@ class BugPatchRequest(BaseModel):
     duplicate_of_bug_id: str | None = None
 
 
+class GitlabDailyCodeMetricRequest(BaseModel):
+    product_id: str
+    repository_id: str
+    metric_date: str
+    commit_count: int = 0
+    active_author_count: int = 0
+    merge_request_count: int = 0
+    changed_files: int = 0
+    additions: int = 0
+    deletions: int = 0
+    quality_score: float | None = None
+    risk_count: int = 0
+    author_metrics: list[dict[str, Any]] = Field(default_factory=list)
+    status: str = "collected"
+    source_channel: str | None = None
+
+
 class UserFeedbackRequest(BaseModel):
     product_id: str
     module_code: str | None = None
@@ -642,6 +660,58 @@ def _ensure_bug_status_transition(current_status: str, next_status: str) -> None
 
 def _require_user_feedback_triage_role(user: dict[str, Any]) -> None:
     _require_roles(user, {"product_owner", "rd_owner"})
+
+
+def _parse_metric_date(value: str, field_name: str = "metric_date") -> str:
+    text = _ensure_non_blank(value, field_name)
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise api_error(400, "VALIDATION_ERROR", f"{field_name} must be YYYY-MM-DD") from exc
+
+
+def _validate_gitlab_metric_payload(payload: GitlabDailyCodeMetricRequest) -> str:
+    _ensure_enum(payload.status, GITLAB_DAILY_METRIC_STATUSES, "status")
+    for field_name in (
+        "active_author_count",
+        "additions",
+        "changed_files",
+        "commit_count",
+        "deletions",
+        "merge_request_count",
+        "risk_count",
+    ):
+        if getattr(payload, field_name) < 0:
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                f"{field_name} must be greater than or equal to 0",
+            )
+    if payload.quality_score is not None and (
+        payload.quality_score < 0 or payload.quality_score > 100
+    ):
+        raise api_error(400, "VALIDATION_ERROR", "quality_score must be between 0 and 100")
+    return _parse_metric_date(payload.metric_date)
+
+
+def _validate_gitlab_metric_context(
+    current_store: MemoryStore,
+    *,
+    product_id: str,
+    repository_id: str,
+) -> None:
+    product = current_store.products.get(product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
+    repository = current_store.product_git_repositories.get(repository_id)
+    if repository is None or repository["product_id"] != product_id:
+        raise api_error(404, "NOT_FOUND", "Product Git repository not found")
+    if repository.get("status") != "active":
+        raise api_error(400, "VALIDATION_ERROR", "Inactive Git repository cannot be used")
+    if repository.get("git_provider") != "gitlab":
+        raise api_error(400, "VALIDATION_ERROR", "Only GitLab repositories are supported")
 
 
 def _validate_user_feedback_enums(
@@ -5161,9 +5231,85 @@ def delete_bug(
 @app.get("/api/devops/gitlab/daily-code-metrics")
 def gitlab_metrics(
     request: Request,
+    product_id: str | None = None,
+    repository_id: str | None = None,
+    date: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(empty_list_payload(), get_trace_id(request))
+    metric_date = _parse_metric_date(date, "date") if date is not None else None
+    current_store = store(request)
+    items = []
+    for metric in current_store.gitlab_daily_code_metrics.values():
+        if product_id is not None and metric.get("product_id") != product_id:
+            continue
+        if repository_id is not None and metric.get("repository_id") != repository_id:
+            continue
+        if metric_date is not None and metric.get("metric_date") != metric_date:
+            continue
+        items.append(metric)
+    items.sort(
+        key=lambda item: (
+            item.get("metric_date") or "",
+            item.get("updated_at") or item.get("created_at") or "",
+        ),
+        reverse=True,
+    )
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/devops/gitlab/daily-code-metrics")
+def create_gitlab_metric(
+    payload: GitlabDailyCodeMetricRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = store(request)
+    _validate_gitlab_metric_context(
+        current_store,
+        product_id=payload.product_id,
+        repository_id=payload.repository_id,
+    )
+    metric_date = _validate_gitlab_metric_payload(payload)
+    now = datetime.now(UTC).isoformat()
+    metric_id = current_store.new_id("gitlab_metric")
+    metric = {
+        "active_author_count": payload.active_author_count,
+        "additions": payload.additions,
+        "author_metrics": payload.author_metrics,
+        "changed_files": payload.changed_files,
+        "collected_at": now,
+        "commit_count": payload.commit_count,
+        "created_at": now,
+        "created_by": user["id"],
+        "deletions": payload.deletions,
+        "id": metric_id,
+        "merge_request_count": payload.merge_request_count,
+        "metric_date": metric_date,
+        "product_id": payload.product_id,
+        "quality_score": payload.quality_score,
+        "repository_id": payload.repository_id,
+        "risk_count": payload.risk_count,
+        "source_channel": payload.source_channel,
+        "status": payload.status,
+        "updated_at": now,
+    }
+    for optional_key in ("quality_score", "source_channel"):
+        if metric[optional_key] is None:
+            metric.pop(optional_key)
+    current_store.gitlab_daily_code_metrics[metric_id] = metric
+    current_store.audit(
+        event_type="gitlab_daily_code_metric.created",
+        actor_id=user["id"],
+        subject_type="gitlab_daily_code_metric",
+        subject_id=metric_id,
+        payload={
+            "metric_date": metric["metric_date"],
+            "product_id": metric["product_id"],
+            "repository_id": metric["repository_id"],
+        },
+    )
+    return envelope(metric, get_trace_id(request))
 
 
 @app.get("/api/devops/jenkins/releases")

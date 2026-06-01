@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.36 |
+| 功能版本 | v1.1.37 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -58,6 +58,7 @@
 | v1.1.34 | 2026-06-01 | 将用户反馈从空集合入口升级为真实登记、筛选、状态更新和 PostgreSQL 结构表持久化 | Codex |
 | v1.1.35 | 2026-06-01 | 将迭代规划建议升级为基于真实反馈/Bug 证据生成、确认和可选转需求的 PostgreSQL 持久化闭环 | Codex |
 | v1.1.36 | 2026-06-01 | 将用户使用指标从空集合入口升级为真实登记、筛选、审计和 PostgreSQL 结构表持久化 | Codex |
+| v1.1.37 | 2026-06-01 | 将 GitLab 每日代码指标从空集合入口升级为真实登记、筛选、审计和 PostgreSQL 结构表持久化 | Codex |
 
 ---
 
@@ -75,11 +76,13 @@ API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研
 
 模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。
 
-任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 和用户行为自动采集器尚未接入；未接入采集器的 DevOps 接口返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
+任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；Jenkins 与线上日志接口在未接入采集器时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
 
 当前补充实现：`POST /api/planning/iteration-suggestions` 已基于库内真实 `user_feedback` 与 `bugs` 证据生成迭代建议；无证据时返回真实空集合，不生成占位建议。`POST /api/planning/iteration-suggestions/{suggestion_id}/decide` 支持产品负责人、研发负责人或管理员确认采纳、修改后采纳或驳回；只有 `accepted` / `edited_accepted` 且 `convert_to_requirement=true` 时才创建真实 `requirements` 记录。建议与确认分别写入 `iteration_plan_suggestions` 和 `iteration_plan_decisions`，并记录 `iteration_suggestion.generated` / `iteration_suggestion.decided` 审计事件。
 
 用户使用指标当前支持通过 `POST /api/insights/usage-metrics` 手工登记或导入真实聚合指标，通过 `GET /api/insights/usage-metrics` 按产品、模块、功能、用户群体和时间范围筛选；记录写入 `user_usage_metrics`，并记录 `usage_metric.created` 审计事件。无指标时返回真实空集合，不生成兜底数据。
+
+GitLab 每日代码指标当前支持通过 `POST /api/devops/gitlab/daily-code-metrics` 手工登记或导入真实聚合指标，通过 `GET /api/devops/gitlab/daily-code-metrics` 按产品、仓库和日期筛选；记录写入 `gitlab_daily_code_metrics`，并记录 `gitlab_daily_code_metric.created` 审计事件。无指标时返回真实空集合，不生成兜底数据。
 
 生命周期视图和首页 IT 团队看板的 AI 任务、待确认 Review、知识沉淀和风险信号聚合必须先按任务类型读权限过滤，不能通过聚合接口绕过任务详情权限。
 
@@ -255,7 +258,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Output | POST | `/api/writeback/results/{task_id}` | 显式生成或复用模拟回写结果，使用幂等键避免重复 Issue。 |
 | Output | GET | `/api/export/tasks/{task_id}/markdown` | 导出 Markdown 方案。 |
 | Audit | GET | `/api/audit/events` | 查询审计事件。 |
-| DevOps | GET | `/api/devops/gitlab/daily-code-metrics` | 查询 GitLab 每日提交和代码质量审核结果。 |
+| DevOps | GET | `/api/devops/gitlab/daily-code-metrics` | 查询真实 GitLab 每日提交和代码质量审核结果。 |
+| DevOps | POST | `/api/devops/gitlab/daily-code-metrics` | 登记真实 GitLab 每日提交和代码质量审核结果。 |
 | GitLab Review | GET | `/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview` | 预览内部 GitLab MR 元信息。 |
 | GitLab Review | POST | `/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/snapshot` | 拉取 MR 元信息和 diff，生成 code_review 输入快照。 |
 | Code Review | GET | `/api/ai-tasks/{task_id}/code-review-report` | 查询内部 GitLab MR 代码 Review 报告、执行器信息和确认状态。 |
@@ -1094,17 +1098,67 @@ GitLab 每日提交和代码质量：
 GET /api/devops/gitlab/daily-code-metrics?product_id=product_001&date=2026-05-28
 ```
 
-当前实现尚未接入真实采集器时返回空集合；不得返回伪造统计数据：
+当前实现支持按产品、仓库和日期筛选真实登记或导入的 GitLab 每日指标；无指标时返回真实空集合：
 
 ```json
 {
   "data": {
-    "items": [],
-    "total": 0
+    "items": [
+      {
+        "id": "gitlab_metric_001",
+        "product_id": "product_001",
+        "repository_id": "repo_001",
+        "metric_date": "2026-05-28",
+        "commit_count": 18,
+        "active_author_count": 5,
+        "merge_request_count": 3,
+        "changed_files": 42,
+        "additions": 860,
+        "deletions": 210,
+        "quality_score": 86,
+        "risk_count": 2,
+        "author_metrics": [
+          {"author": "alice", "commit_count": 7, "additions": 360, "deletions": 80, "review_issue_count": 1}
+        ],
+        "status": "collected",
+        "source_channel": "manual",
+        "created_by": "user_admin",
+        "created_at": "2026-05-28T20:10:00Z"
+      }
+    ],
+    "total": 1
   },
   "trace_id": "trace_011"
 }
 ```
+
+产品负责人、研发负责人或管理员可登记真实聚合指标：
+
+```http
+POST /api/devops/gitlab/daily-code-metrics
+Content-Type: application/json
+
+{
+  "product_id": "product_001",
+  "repository_id": "repo_001",
+  "metric_date": "2026-05-28",
+  "commit_count": 18,
+  "active_author_count": 5,
+  "merge_request_count": 3,
+  "changed_files": 42,
+  "additions": 860,
+  "deletions": 210,
+  "quality_score": 86,
+  "risk_count": 2,
+  "author_metrics": [
+    {"author": "alice", "commit_count": 7, "additions": 360, "deletions": 80, "review_issue_count": 1}
+  ],
+  "status": "collected",
+  "source_channel": "manual"
+}
+```
+
+服务端校验产品和 GitLab 仓库处于 active 状态且仓库归属该产品，计数字段不得为负数，`quality_score` 范围为 0-100；写入 `gitlab_daily_code_metrics` 后记录 `gitlab_daily_code_metric.created` 审计事件。
 
 Jenkins 发布记录：
 
@@ -1626,6 +1680,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.37 | 2026-06-01 | GitLab 每日代码指标接口支持真实登记、筛选、审计和 `gitlab_daily_code_metrics` PostgreSQL 持久化。 |
 | v1.1.36 | 2026-06-01 | 用户使用指标接口支持真实登记、筛选、审计和 `user_usage_metrics` PostgreSQL 持久化。 |
 | v1.1.35 | 2026-06-01 | 迭代规划建议接口支持基于真实反馈/Bug 证据生成、人工确认、可选转需求和 PostgreSQL 持久化。 |
 | v1.1.34 | 2026-06-01 | 用户反馈接口支持真实登记、筛选、状态更新和 `user_feedback` PostgreSQL 持久化。 |

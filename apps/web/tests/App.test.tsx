@@ -1362,7 +1362,16 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
     expect(screen.getByText('研发运营指标')).toBeInTheDocument();
     expect(screen.getByText('GitLab 指标')).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(
+        expect.arrayContaining([
+          '/api/devops/gitlab/daily-code-metrics',
+          '/api/devops/jenkins/releases',
+          '/api/ops/online-log-metrics',
+          '/api/products?active_only=true',
+        ]),
+      ),
+    );
 
     rerender(<InsightsPage />);
 
@@ -1372,7 +1381,15 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('待接入')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
     expect(screen.getByText('使用趋势')).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(
+        expect.arrayContaining([
+          '/api/insights/usage-metrics',
+          '/api/insights/user-feedback',
+          '/api/planning/iteration-suggestions',
+        ]),
+      ),
+    );
   });
 
   it('creates and triages real user feedback from the insights page', async () => {
@@ -1554,6 +1571,109 @@ describe('AI Brain Ant Design Pro workbench', () => {
           user_segment: 'rd',
           window_end: '2026-06-01T01:00:00Z',
           window_start: '2026-06-01T00:00:00Z',
+        }),
+      ]),
+    );
+  });
+
+  it('records real GitLab daily code metrics from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/devops/gitlab/daily-code-metrics' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            commit_count: 7,
+            id: 'gitlab_metric_created',
+            metric_date: '2026-06-01',
+            product_id: 'product_api',
+            repository_id: 'repo_api',
+            status: 'collected',
+          },
+        });
+      }
+      if (input === '/api/devops/gitlab/daily-code-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/devops/jenkins/releases') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ops/online-log-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products/product_api/versions?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products/product_api/git-repositories?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                default_branch: 'main',
+                git_provider: 'gitlab',
+                id: 'repo_api',
+                name: '研发平台 API',
+                project_path: 'rd/platform-api',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    await screen.findByRole('button', { name: '登记 GitLab 指标' });
+    fireEvent.click(screen.getByRole('button', { name: '登记 GitLab 指标' }));
+    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
+    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
+    fireEvent.mouseDown(screen.getByLabelText('Git 仓库'));
+    fireEvent.click(await screen.findByRole('option', { name: '研发平台 API (rd/platform-api)' }));
+    fireEvent.change(screen.getByLabelText('指标日期'), { target: { value: '2026-06-01' } });
+    fireEvent.change(screen.getByLabelText('提交数'), { target: { value: '7' } });
+    fireEvent.change(screen.getByLabelText('活跃作者数'), { target: { value: '4' } });
+    fireEvent.change(screen.getByLabelText('MR 数'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('变更文件数'), { target: { value: '18' } });
+    fireEvent.change(screen.getByLabelText('新增行数'), { target: { value: '320' } });
+    fireEvent.change(screen.getByLabelText('删除行数'), { target: { value: '48' } });
+    fireEvent.change(screen.getByLabelText('质量评分'), { target: { value: '88.5' } });
+    fireEvent.change(screen.getByLabelText('风险数量'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/devops/gitlab/daily-code-metrics',
+        'POST',
+        JSON.stringify({
+          active_author_count: 4,
+          additions: 320,
+          changed_files: 18,
+          commit_count: 7,
+          deletions: 48,
+          merge_request_count: 2,
+          metric_date: '2026-06-01',
+          product_id: 'product_api',
+          quality_score: 88.5,
+          repository_id: 'repo_api',
+          risk_count: 1,
+          source_channel: 'manual_import',
+          status: 'collected',
         }),
       ]),
     );

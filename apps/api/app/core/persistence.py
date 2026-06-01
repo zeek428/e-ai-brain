@@ -36,6 +36,9 @@ AUDIT_FIELDS = [
 BUG_FIELDS = [
     "bugs",
 ]
+GITLAB_DAILY_CODE_METRIC_FIELDS = [
+    "gitlab_daily_code_metrics",
+]
 USER_USAGE_METRIC_FIELDS = [
     "user_usage_metrics",
 ]
@@ -72,6 +75,7 @@ COLLECTION_FIELDS = [
     "knowledge_deposits",
     "mock_writebacks",
     "bugs",
+    "gitlab_daily_code_metrics",
     "user_usage_metrics",
     "user_feedback",
     "iteration_plan_suggestions",
@@ -132,6 +136,12 @@ class BugRepository(Protocol):
     def load_bugs(self) -> dict[str, Any] | None: ...
 
     def save_bugs(self, payload: dict[str, Any]) -> None: ...
+
+
+class GitlabDailyCodeMetricRepository(Protocol):
+    def load_gitlab_daily_code_metrics(self) -> dict[str, Any] | None: ...
+
+    def save_gitlab_daily_code_metrics(self, payload: dict[str, Any]) -> None: ...
 
 
 class UserUsageMetricRepository(Protocol):
@@ -218,6 +228,10 @@ def _audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _bugs_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in BUG_FIELDS}
+
+
+def _gitlab_daily_code_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in GITLAB_DAILY_CODE_METRIC_FIELDS}
 
 
 def _user_usage_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -367,6 +381,19 @@ def _repository_load_bugs(repository: SnapshotRepository) -> dict[str, Any] | No
     return load_bugs()
 
 
+def _repository_load_gitlab_daily_code_metrics(
+    repository: SnapshotRepository,
+) -> dict[str, Any] | None:
+    load_gitlab_daily_code_metrics = getattr(
+        repository,
+        "load_gitlab_daily_code_metrics",
+        None,
+    )
+    if load_gitlab_daily_code_metrics is None:
+        return None
+    return load_gitlab_daily_code_metrics()
+
+
 def _repository_load_user_usage_metrics(
     repository: SnapshotRepository,
 ) -> dict[str, Any] | None:
@@ -447,6 +474,21 @@ def _repository_save_bugs(
     save_bugs = getattr(repository, "save_bugs", None)
     if save_bugs is not None:
         save_bugs(_bugs_payload(payload))
+
+
+def _repository_save_gitlab_daily_code_metrics(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_gitlab_daily_code_metrics = getattr(
+        repository,
+        "save_gitlab_daily_code_metrics",
+        None,
+    )
+    if save_gitlab_daily_code_metrics is not None:
+        clean_payload = deepcopy(payload)
+        _drop_gitlab_daily_code_metrics_without_context(clean_payload)
+        save_gitlab_daily_code_metrics(_gitlab_daily_code_metric_payload(clean_payload))
 
 
 def _repository_save_user_usage_metrics(
@@ -539,6 +581,10 @@ def _has_audit_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_bug_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in BUG_FIELDS)
+
+
+def _has_gitlab_daily_code_metric_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in GITLAB_DAILY_CODE_METRIC_FIELDS)
 
 
 def _has_user_usage_metric_items(payload: dict[str, Any] | None) -> bool:
@@ -659,6 +705,18 @@ def _sync_bug_counters(payload: dict[str, Any]) -> None:
     counters["bug"] = max(
         counters.get("bug", 0),
         _max_numeric_suffix(payload.get("bugs", {}), "bug"),
+    )
+    payload["counters"] = counters
+
+
+def _sync_gitlab_daily_code_metric_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["gitlab_metric"] = max(
+        counters.get("gitlab_metric", 0),
+        _max_numeric_suffix(
+            payload.get("gitlab_daily_code_metrics", {}),
+            "gitlab_metric",
+        ),
     )
     payload["counters"] = counters
 
@@ -916,6 +974,24 @@ def _drop_user_usage_metrics_without_context(payload: dict[str, Any]) -> None:
     payload["user_usage_metrics"] = cleaned_metrics
 
 
+def _drop_gitlab_daily_code_metrics_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    repositories = payload.get("product_git_repositories", {})
+    metrics = payload.get("gitlab_daily_code_metrics", {})
+    cleaned_metrics = {}
+    for metric_id, metric in metrics.items():
+        product_id = metric.get("product_id")
+        repository_id = metric.get("repository_id")
+        if products and product_id not in products:
+            continue
+        if repositories and repository_id not in repositories:
+            continue
+        if repositories and repositories[repository_id].get("product_id") != product_id:
+            continue
+        cleaned_metrics[metric_id] = deepcopy(metric)
+    payload["gitlab_daily_code_metrics"] = cleaned_metrics
+
+
 def _drop_iteration_planning_without_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     versions = payload.get("product_versions", {})
@@ -1097,6 +1173,14 @@ class PersistentMemoryStore(MemoryStore):
                 BUG_FIELDS,
             )
             _sync_bug_counters(payload)
+        gitlab_daily_code_metric_payload = _repository_load_gitlab_daily_code_metrics(repository)
+        if _has_gitlab_daily_code_metric_items(gitlab_daily_code_metric_payload):
+            _replace_collection_payload(
+                payload,
+                _gitlab_daily_code_metric_payload(gitlab_daily_code_metric_payload),
+                GITLAB_DAILY_CODE_METRIC_FIELDS,
+            )
+            _sync_gitlab_daily_code_metric_counters(payload)
         user_usage_metric_payload = _repository_load_user_usage_metrics(repository)
         if _has_user_usage_metric_items(user_usage_metric_payload):
             _replace_collection_payload(
@@ -1154,6 +1238,7 @@ class PersistentMemoryStore(MemoryStore):
             _drop_knowledge_without_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
             _drop_bugs_without_context(payload)
+            _drop_gitlab_daily_code_metrics_without_context(payload)
             _drop_user_usage_metrics_without_context(payload)
             _drop_user_feedback_without_context(payload)
             _drop_iteration_planning_without_context(payload)
@@ -1185,6 +1270,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_knowledge(self.repository, payload)
         _repository_save_audit_events(self.repository, payload)
         _repository_save_bugs(self.repository, payload)
+        _repository_save_gitlab_daily_code_metrics(self.repository, payload)
         _repository_save_user_usage_metrics(self.repository, payload)
         _repository_save_user_feedback(self.repository, payload)
         _repository_save_iteration_planning(self.repository, payload)
@@ -1298,6 +1384,12 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 bugs = self._load_bugs(cursor)
         return {"bugs": bugs}
+
+    def load_gitlab_daily_code_metrics(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                metrics = self._load_gitlab_daily_code_metrics(cursor)
+        return {"gitlab_daily_code_metrics": metrics}
 
     def load_user_feedback(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -1430,6 +1522,13 @@ class PostgresSnapshotRepository:
                 self._clear_dangling_bug_duplicates(cursor, bugs)
                 self._delete_missing(cursor, "bugs", bugs)
                 self._upsert_bugs(cursor, bugs)
+
+    def save_gitlab_daily_code_metrics(self, payload: dict[str, Any]) -> None:
+        metrics = payload.get("gitlab_daily_code_metrics", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "gitlab_daily_code_metrics", metrics)
+                self._upsert_gitlab_daily_code_metrics(cursor, metrics)
 
     def save_user_feedback(self, payload: dict[str, Any]) -> None:
         feedback = payload.get("user_feedback", {})
@@ -2026,6 +2125,58 @@ class PostgresSnapshotRepository:
                 "conversion_rate",
                 "created_at",
                 "module_code",
+                "source_channel",
+                "updated_at",
+            ):
+                if metric[optional_key] is None:
+                    metric.pop(optional_key)
+            metrics[row[0]] = metric
+        return metrics
+
+    def _load_gitlab_daily_code_metrics(self, cursor) -> dict[str, dict[str, Any]]:
+        import json
+
+        cursor.execute(
+            """
+            SELECT id, product_id, repository_id, metric_date, commit_count,
+                   active_author_count, merge_request_count, changed_files,
+                   additions, deletions, quality_score, risk_count,
+                   author_metrics, status, source_channel, collected_at,
+                   created_by, created_at, updated_at
+            FROM gitlab_daily_code_metrics
+            ORDER BY metric_date, id
+            """
+        )
+        metrics = {}
+        for row in cursor.fetchall():
+            author_metrics = row[12] or []
+            if isinstance(author_metrics, str):
+                author_metrics = json.loads(author_metrics)
+            metric = {
+                "active_author_count": row[5],
+                "additions": row[8],
+                "author_metrics": author_metrics,
+                "changed_files": row[7],
+                "collected_at": row[15].isoformat() if row[15] else None,
+                "commit_count": row[4],
+                "created_at": row[17].isoformat() if row[17] else None,
+                "created_by": row[16],
+                "deletions": row[9],
+                "id": row[0],
+                "merge_request_count": row[6],
+                "metric_date": row[3].isoformat() if row[3] else None,
+                "product_id": row[1],
+                "quality_score": float(row[10]) if row[10] is not None else None,
+                "repository_id": row[2],
+                "risk_count": row[11],
+                "source_channel": row[14],
+                "status": row[13],
+                "updated_at": row[18].isoformat() if row[18] else None,
+            }
+            for optional_key in (
+                "collected_at",
+                "created_at",
+                "quality_score",
                 "source_channel",
                 "updated_at",
             ):
@@ -3175,6 +3326,77 @@ class PostgresSnapshotRepository:
                     metric.get("bounce_rate"),
                     metric.get("error_count", 0),
                     metric.get("source_channel"),
+                    metric["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_gitlab_daily_code_metrics(
+        self,
+        cursor,
+        metrics: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for metric in metrics.values():
+            created_at = metric.get("created_at")
+            updated_at = metric.get("updated_at") or created_at
+            collected_at = metric.get("collected_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO gitlab_daily_code_metrics (
+                  id, product_id, repository_id, metric_date, commit_count,
+                  active_author_count, merge_request_count, changed_files,
+                  additions, deletions, quality_score, risk_count,
+                  author_metrics, status, source_channel, collected_at,
+                  created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s::date, %s,
+                  %s, %s, %s, %s, %s, %s, %s,
+                  %s::jsonb, %s, %s,
+                  COALESCE(%s::timestamptz, now()),
+                  %s,
+                  COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  repository_id = EXCLUDED.repository_id,
+                  metric_date = EXCLUDED.metric_date,
+                  commit_count = EXCLUDED.commit_count,
+                  active_author_count = EXCLUDED.active_author_count,
+                  merge_request_count = EXCLUDED.merge_request_count,
+                  changed_files = EXCLUDED.changed_files,
+                  additions = EXCLUDED.additions,
+                  deletions = EXCLUDED.deletions,
+                  quality_score = EXCLUDED.quality_score,
+                  risk_count = EXCLUDED.risk_count,
+                  author_metrics = EXCLUDED.author_metrics,
+                  status = EXCLUDED.status,
+                  source_channel = EXCLUDED.source_channel,
+                  collected_at = EXCLUDED.collected_at,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    metric["id"],
+                    metric["product_id"],
+                    metric["repository_id"],
+                    metric["metric_date"],
+                    metric.get("commit_count", 0),
+                    metric.get("active_author_count", 0),
+                    metric.get("merge_request_count", 0),
+                    metric.get("changed_files", 0),
+                    metric.get("additions", 0),
+                    metric.get("deletions", 0),
+                    metric.get("quality_score"),
+                    metric.get("risk_count", 0),
+                    json.dumps(metric.get("author_metrics", []), ensure_ascii=False),
+                    metric.get("status", "collected"),
+                    metric.get("source_channel"),
+                    collected_at,
                     metric["created_by"],
                     created_at,
                     updated_at,

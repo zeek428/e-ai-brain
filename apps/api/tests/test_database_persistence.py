@@ -22,6 +22,7 @@ class FakeSnapshotRepository:
         self.model_gateway_payload: dict | None = None
         self.gitlab_review_payload: dict | None = None
         self.mock_writebacks_payload: dict | None = None
+        self.gitlab_daily_code_metrics_payload: dict | None = None
         self.user_usage_metrics_payload: dict | None = None
         self.user_feedback_payload: dict | None = None
         self.iteration_planning_payload: dict | None = None
@@ -91,6 +92,12 @@ class FakeSnapshotRepository:
 
     def save_mock_writebacks(self, payload: dict) -> None:
         self.mock_writebacks_payload = payload
+
+    def load_gitlab_daily_code_metrics(self) -> dict | None:
+        return self.gitlab_daily_code_metrics_payload
+
+    def save_gitlab_daily_code_metrics(self, payload: dict) -> None:
+        self.gitlab_daily_code_metrics_payload = payload
 
     def load_user_feedback(self) -> dict | None:
         return self.user_feedback_payload
@@ -2357,6 +2364,79 @@ def test_user_usage_metrics_are_persisted_through_fine_grained_repository_payloa
 
     assert rebuilt_store.user_usage_metrics["usage_010"]["feature_code"] == "semantic-search"
     assert rebuilt_store.new_id("usage") == "usage_011"
+
+
+def test_gitlab_daily_code_metrics_are_persisted_through_fine_grained_repository_payload():
+    repository = FakeSnapshotRepository()
+    store = PersistentMemoryStore(repository)
+    store.products = {
+        "product_001": {
+            "code": "devops-product",
+            "id": "product_001",
+            "name": "研发运营产品",
+            "status": "active",
+        }
+    }
+    store.product_git_repositories = {
+        "repo_001": {
+            "default_branch": "main",
+            "git_provider": "gitlab",
+            "id": "repo_001",
+            "name": "devops-api",
+            "product_id": "product_001",
+            "project_path": "rd/devops-api",
+            "remote_url": "https://gitlab.internal/rd/devops-api.git",
+            "repo_type": "code",
+            "root_path": "/",
+            "status": "active",
+        }
+    }
+    store.gitlab_daily_code_metrics = {
+        "gitlab_metric_010": {
+            "active_author_count": 4,
+            "additions": 320,
+            "author_metrics": [{"author": "alice", "commit_count": 3}],
+            "changed_files": 18,
+            "collected_at": "2026-06-01T08:00:00+00:00",
+            "commit_count": 7,
+            "created_at": "2026-06-01T08:00:00+00:00",
+            "created_by": "user_admin",
+            "deletions": 48,
+            "id": "gitlab_metric_010",
+            "merge_request_count": 2,
+            "metric_date": "2026-06-01",
+            "product_id": "product_001",
+            "quality_score": 88.5,
+            "repository_id": "repo_001",
+            "risk_count": 1,
+            "source_channel": "manual_import",
+            "status": "collected",
+            "updated_at": "2026-06-01T08:05:00+00:00",
+        }
+    }
+
+    store.persist()
+
+    assert repository.gitlab_daily_code_metrics_payload == {
+        "gitlab_daily_code_metrics": store.gitlab_daily_code_metrics,
+    }
+
+    restored_repository = FakeSnapshotRepository()
+    restored_repository.product_config_payload = {
+        "product_git_repositories": store.product_git_repositories,
+        "product_modules": {},
+        "product_versions": {},
+        "products": store.products,
+        "related_systems": {},
+    }
+    restored_repository.gitlab_daily_code_metrics_payload = {
+        "gitlab_daily_code_metrics": store.gitlab_daily_code_metrics,
+    }
+
+    rebuilt_store = PersistentMemoryStore.from_repository(restored_repository)
+
+    assert rebuilt_store.gitlab_daily_code_metrics["gitlab_metric_010"]["commit_count"] == 7
+    assert rebuilt_store.new_id("gitlab_metric") == "gitlab_metric_011"
 
 
 def test_iteration_planning_is_persisted_through_fine_grained_repository_payload():

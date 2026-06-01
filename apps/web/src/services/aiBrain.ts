@@ -187,6 +187,23 @@ export type UserUsageMetricCreatePayload = {
   window_start: string;
 };
 
+export type GitLabDailyCodeMetricCreatePayload = {
+  active_author_count?: number;
+  additions?: number;
+  author_metrics?: Array<Record<string, unknown>>;
+  changed_files?: number;
+  commit_count?: number;
+  deletions?: number;
+  merge_request_count?: number;
+  metric_date: string;
+  product_id: string;
+  quality_score?: number;
+  repository_id: string;
+  risk_count?: number;
+  source_channel?: string;
+  status?: string;
+};
+
 export type IterationSuggestionCreatePayload = {
   constraints?: Record<string, unknown>;
   module_codes?: string[];
@@ -2098,13 +2115,13 @@ function mapOperationalMetrics(
     category,
     id: formatUnknownValue(item.id ?? `${category}-${index}`),
     name: formatUnknownValue(
-      firstKnownValue(item, ['name', 'metric_name', 'repository_name', 'release_name', 'title']),
+      firstKnownValue(item, ['name', 'metric_name', 'repository_name', 'release_name', 'title', 'metric_date']),
     ),
     status: formatUnknownValue(item.status),
     updatedAt: formatListDate(
       formatUnknownValue(firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'date'])),
     ),
-    value: formatUnknownValue(firstKnownValue(item, ['value', 'count', 'score', 'summary'])),
+    value: formatUnknownValue(firstKnownValue(item, ['value', 'count', 'score', 'summary', 'commit_count'])),
   }));
 }
 
@@ -2121,6 +2138,17 @@ export async function fetchDevopsMetrics(): Promise<OperationalMetricRecord[]> {
     ...mapOperationalMetrics('Jenkins 发布', jenkinsReleases.items),
     ...mapOperationalMetrics('线上日志', onlineLogs.items),
   ];
+}
+
+export async function createGitLabDailyCodeMetric(
+  payload: GitLabDailyCodeMetricCreatePayload,
+): Promise<FlexibleListItem> {
+  const token = requireAccessToken();
+  return apiRequest<FlexibleListItem>('/api/devops/gitlab/daily-code-metrics', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
 }
 
 function mapUserInsights(category: string, items: FlexibleListItem[]): UserInsightRecord[] {
