@@ -75,7 +75,7 @@ export type BugRecord = {
   module: string;
   productId?: string;
   severity: 'blocker' | 'critical' | 'major' | 'minor';
-  source: 'ai_auto_test' | 'manual_test';
+  source: 'ai_auto_test' | 'ai_post_release' | 'manual_test';
   status:
     | 'assigned'
     | 'closed'

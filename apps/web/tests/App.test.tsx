@@ -259,6 +259,8 @@ import {
   clearAccessToken,
   createAutomatedTestingTask,
   createDevelopmentPlanningTask,
+  createPostReleaseAnalysisTask,
+  createReleaseReadinessTask,
   createManagementBug,
   createModelGatewayConfig,
   createTaskWritebackResult,
@@ -660,6 +662,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByRole('button', { name: '创建 Code Review' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '生成开发计划' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '生成自动化测试' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成发布评估' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看报告' })).not.toBeInTheDocument();
     expect(screen.queryByText('确认台')).not.toBeInTheDocument();
     expect(screen.queryByText('确认编号')).not.toBeInTheDocument();
@@ -677,6 +680,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(actionSection).toHaveClass('task-operation-actions');
     expect(screen.getByRole('button', { name: '生成开发计划' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '生成自动化测试' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '生成发布评估' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '创建 Code Review' })).toBeInTheDocument();
     fireEvent.click(screen.getAllByLabelText('Close')[0]);
     fireEvent.click(screen.getByRole('button', { name: '待确认' }));
@@ -754,6 +758,49 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(codeReviewForm).toHaveClass('ant-form-vertical');
     expect(codeReviewForm).not.toHaveClass('ant-form-inline');
     expect(screen.getByText('AI Brain 仓库 (platform/ai-brain)')).toBeInTheDocument();
+  });
+
+  it('offers post-release analysis from completed release readiness rows', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/pending') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      expect(input).toBe('/api/ai-tasks');
+      return jsonResponse({
+        data: {
+          items: [
+            {
+              created_by: 'user_admin',
+              id: 'task_release_done',
+              product_id: 'product_api',
+              requirement_id: 'requirement_api',
+              status: 'completed',
+              task_type: 'release_readiness',
+              title: '发布评估：弹窗操作',
+            },
+          ],
+          total: 1,
+        },
+      });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    expect(await screen.findByText('发布评估：弹窗操作')).toBeInTheDocument();
+    const taskRow = screen.getByText('发布评估：弹窗操作').closest('tr');
+    expect(taskRow).not.toBeNull();
+    fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
+
+    expect(await screen.findByText('任务操作')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '生成上线后分析' })).toBeInTheDocument();
   });
 
   it('opens mock issue writeback from completed task rows', async () => {
@@ -2862,7 +2909,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 id: 'bug_api',
                 module_code: 'knowledge',
                 severity: 'critical',
-                source: 'ai_auto_test',
+                source: 'ai_post_release',
                 status: 'needs_info',
                 title: '接口 Bug',
               },
@@ -2910,6 +2957,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(await screen.findByText('接口 Bug')).toBeInTheDocument();
     expect(screen.getAllByText('致命')).not.toHaveLength(0);
     expect(screen.getAllByText('待补充')).not.toHaveLength(0);
+    expect(screen.getByText('AI 上线后分析')).toBeInTheDocument();
 
     rerender(<KnowledgePage />);
 
@@ -3307,6 +3355,24 @@ describe('AI Brain Ant Design Pro workbench', () => {
       status: 'completed',
       type: 'technical_solution',
     });
+    await createReleaseReadinessTask({
+      id: 'task_solution',
+      label: '技术方案：CRUD 需求',
+      owner: 'user_admin',
+      productId: 'product_api',
+      requirementId: 'requirement_api',
+      status: 'completed',
+      type: 'technical_solution',
+    });
+    await createPostReleaseAnalysisTask({
+      id: 'task_release',
+      label: '发布评估：CRUD 需求',
+      owner: 'user_admin',
+      productId: 'product_api',
+      requirementId: 'requirement_api',
+      status: 'completed',
+      type: 'release_readiness',
+    });
     await expect(fetchTaskMarkdown('task_solution')).resolves.toBe('# Markdown 导出');
     await fetchProductGitRepositories('product_api');
     await previewGitLabMergeRequest('repo_api', 42);
@@ -3359,6 +3425,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/ai-tasks', 'POST'],
       ['/api/ai-tasks', 'POST'],
       ['/api/ai-tasks', 'POST'],
+      ['/api/ai-tasks', 'POST'],
+      ['/api/ai-tasks', 'POST'],
       ['/api/export/tasks/task_solution/markdown', 'GET'],
       ['/api/products/product_api/git-repositories?active_only=true', 'GET'],
       ['/api/devops/gitlab/merge-requests/repo_api/42/preview', 'GET'],
@@ -3390,13 +3458,29 @@ describe('AI Brain Ant Design Pro workbench', () => {
         title: '自动化测试：CRUD 需求',
       }),
     );
-    expect(fetchMock.mock.calls[26]?.[1]?.body).toBe(
+    expect(fetchMock.mock.calls[23]?.[1]?.body).toBe(
+      JSON.stringify({
+        input: { technical_solution_task_id: 'task_solution' },
+        requirement_id: 'requirement_api',
+        task_type: 'release_readiness',
+        title: '发布评估：CRUD 需求',
+      }),
+    );
+    expect(fetchMock.mock.calls[24]?.[1]?.body).toBe(
+      JSON.stringify({
+        input: { release_readiness_task_id: 'task_release' },
+        requirement_id: 'requirement_api',
+        task_type: 'post_release_analysis',
+        title: '上线后分析：CRUD 需求',
+      }),
+    );
+    expect(fetchMock.mock.calls[28]?.[1]?.body).toBe(
       JSON.stringify({
         requirement_id: 'requirement_api',
         technical_solution_task_id: 'task_solution',
       }),
     );
-    expect(fetchMock.mock.calls[27]?.[1]?.body).toBe(
+    expect(fetchMock.mock.calls[29]?.[1]?.body).toBe(
       JSON.stringify({
         input: { gitlab_mr_snapshot_id: 'snapshot_api' },
         requirement_id: 'requirement_api',

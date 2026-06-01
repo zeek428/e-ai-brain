@@ -84,6 +84,7 @@
 - 任务管理操作弹窗标题收敛为固定“任务操作”，长任务名保留在摘要区展示，避免弹窗标题区拥挤并保持与需求管理等管理弹窗一致。
 - 任务管理创建 Code Review 的参数区改为弹窗内纵向表单，并清理旧任务中心左右分栏样式遗留，保持与需求管理等管理页一致。
 - 任务中心新增从已确认技术方案创建开发计划和自动化测试任务的真实入口；自动化测试任务人工确认后会把 `bug_suggestions` 转为 `ai_auto_test` 来源 Bug 记录。
+- 任务中心新增从已确认技术方案创建发布评估、从已确认发布评估创建上线后分析的真实入口；发布评估保存真实 Bug、Jenkins、线上日志和 GitLab 指标上下文，上线后分析人工确认后会把 `bug_suggestions` 转为 `ai_post_release` 来源 Bug 记录。
 - GitLab MR 预览和 diff 快照改为读取真实 GitLab 只读 API；产品 Git 资源需配置可解析的 `remote_url` 或 `GITLAB_BASE_URL` 以及只读 token 凭据引用，缺失配置时返回明确错误，不再静默生成本地假 MR。
 - GitLab MR diff、变更文件数或单文件 diff 行数超限时记录 `gitlab_mr.snapshot_failed` 审计事件，保留实际 diff 大小、文件数、单文件行数、限制和关联需求/技术方案任务。
 - GitLab MR diff 快照现在按 `repository_id + snapshot_hash` 复用已有快照，重复拉取相同 diff 不重复入库，并记录 `gitlab_mr.snapshot_reused` 审计事件。

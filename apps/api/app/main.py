@@ -69,14 +69,21 @@ BRAIN_APPS = {
                 "technical_solution",
                 "development_planning",
                 "automated_testing",
+                "release_readiness",
+                "post_release_analysis",
                 "code_review",
             ],
         },
     }
 }
 
-TECHNICAL_SOLUTION_FOLLOWUP_TASK_TYPES = {"development_planning", "automated_testing"}
-BUG_SOURCES = {"ai_auto_test", "manual_test"}
+TECHNICAL_SOLUTION_FOLLOWUP_TASK_TYPES = {
+    "development_planning",
+    "automated_testing",
+    "release_readiness",
+}
+RELEASE_READINESS_FOLLOWUP_TASK_TYPES = {"post_release_analysis"}
+BUG_SOURCES = {"ai_auto_test", "ai_post_release", "manual_test"}
 BUG_SEVERITIES = {"blocker", "critical", "major", "minor"}
 BUG_STATUSES = {
     "open",
@@ -3089,6 +3096,201 @@ def _ensure_confirmed_technical_solution_task(
     return technical_solution
 
 
+def _ensure_confirmed_release_readiness_task(
+    current_store: MemoryStore,
+    *,
+    requirement: dict[str, Any],
+    release_readiness_task_id: Any,
+) -> dict[str, Any]:
+    release_readiness = current_store.ai_tasks.get(str(release_readiness_task_id))
+    if (
+        release_readiness is None
+        or release_readiness["task_type"] != "release_readiness"
+        or release_readiness["status"] != "completed"
+    ):
+        raise api_error(
+            400,
+            "RELEASE_READINESS_NOT_CONFIRMED",
+            "Task requires a confirmed release readiness task",
+        )
+    _ensure_task_matches_requirement(
+        release_readiness,
+        requirement,
+        source_label="Release readiness",
+    )
+    return release_readiness
+
+
+def _collection_snapshot(
+    current_store: MemoryStore,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return current_store.snapshot({"items": items, "total": len(items)})
+
+
+def _source_task_context(current_store: MemoryStore, task: dict[str, Any]) -> dict[str, Any]:
+    return current_store.snapshot(
+        {
+            "id": task["id"],
+            "task_type": task["task_type"],
+            "title": task["title"],
+            "status": task["status"],
+            "summary": (task.get("output_json") or {}).get("summary"),
+            "output": task.get("output_json"),
+        }
+    )
+
+
+def _matching_bugs_for_task_context(
+    current_store: MemoryStore,
+    task: dict[str, Any],
+    *,
+    include_closed: bool = False,
+) -> list[dict[str, Any]]:
+    bugs = []
+    for bug in current_store.bugs.values():
+        if bug["product_id"] != task["product_id"]:
+            continue
+        if bug.get("version_id") not in {None, task["version_id"]}:
+            continue
+        if bug.get("requirement_id") not in {None, task["requirement_id"]}:
+            continue
+        if not include_closed and bug["status"] == "closed":
+            continue
+        bugs.append(bug)
+    bugs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return bugs
+
+
+def _matching_jenkins_releases(
+    current_store: MemoryStore,
+    task: dict[str, Any],
+) -> list[dict[str, Any]]:
+    releases = [
+        release
+        for release in current_store.jenkins_release_records.values()
+        if release.get("product_id") == task["product_id"]
+        and release.get("version_id") == task["version_id"]
+    ]
+    releases.sort(
+        key=lambda item: (
+            item.get("deployed_at") or item.get("created_at") or "",
+            item.get("updated_at") or "",
+        ),
+        reverse=True,
+    )
+    return releases
+
+
+def _matching_online_log_metrics(
+    current_store: MemoryStore,
+    task: dict[str, Any],
+) -> list[dict[str, Any]]:
+    module_code = task.get("module_code")
+    metrics = []
+    for metric in current_store.online_log_metrics.values():
+        if metric.get("product_id") != task["product_id"]:
+            continue
+        if module_code is not None and metric.get("module_code") not in {None, module_code}:
+            continue
+        metrics.append(metric)
+    metrics.sort(
+        key=lambda item: (
+            item.get("window_start") or "",
+            item.get("updated_at") or item.get("created_at") or "",
+        ),
+        reverse=True,
+    )
+    return metrics
+
+
+def _matching_gitlab_daily_code_metrics(
+    current_store: MemoryStore,
+    task: dict[str, Any],
+) -> list[dict[str, Any]]:
+    product_repository_ids = {
+        repository["id"]
+        for repository in current_store.product_git_repositories.values()
+        if repository["product_id"] == task["product_id"]
+    }
+    metrics = [
+        metric
+        for metric in current_store.gitlab_daily_code_metrics.values()
+        if metric.get("product_id") == task["product_id"]
+        and metric.get("repository_id") in product_repository_ids
+    ]
+    metrics.sort(
+        key=lambda item: (
+            item.get("metric_date") or "",
+            item.get("updated_at") or item.get("created_at") or "",
+        ),
+        reverse=True,
+    )
+    return metrics
+
+
+def _release_readiness_context(
+    current_store: MemoryStore,
+    *,
+    requirement: dict[str, Any],
+    technical_solution: dict[str, Any],
+) -> dict[str, Any]:
+    task_context = {
+        "product_id": requirement["product_id"],
+        "version_id": requirement["version_id"],
+        "module_code": requirement.get("module_code"),
+        "requirement_id": requirement["id"],
+    }
+    return {
+        "source_technical_solution": _source_task_context(current_store, technical_solution),
+        "bugs": _collection_snapshot(
+            current_store,
+            _matching_bugs_for_task_context(current_store, task_context),
+        ),
+        "jenkins_releases": _collection_snapshot(
+            current_store,
+            _matching_jenkins_releases(current_store, task_context),
+        ),
+        "online_log_metrics": _collection_snapshot(
+            current_store,
+            _matching_online_log_metrics(current_store, task_context),
+        ),
+        "gitlab_daily_code_metrics": _collection_snapshot(
+            current_store,
+            _matching_gitlab_daily_code_metrics(current_store, task_context),
+        ),
+    }
+
+
+def _post_release_analysis_context(
+    current_store: MemoryStore,
+    *,
+    requirement: dict[str, Any],
+    release_readiness: dict[str, Any],
+) -> dict[str, Any]:
+    task_context = {
+        "product_id": requirement["product_id"],
+        "version_id": requirement["version_id"],
+        "module_code": requirement.get("module_code"),
+        "requirement_id": requirement["id"],
+    }
+    return {
+        "source_release_readiness": _source_task_context(current_store, release_readiness),
+        "bugs": _collection_snapshot(
+            current_store,
+            _matching_bugs_for_task_context(current_store, task_context, include_closed=True),
+        ),
+        "jenkins_releases": _collection_snapshot(
+            current_store,
+            _matching_jenkins_releases(current_store, task_context),
+        ),
+        "online_log_metrics": _collection_snapshot(
+            current_store,
+            _matching_online_log_metrics(current_store, task_context),
+        ),
+    }
+
+
 @app.get("/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview")
 def preview_gitlab_mr(
     repository_id: str,
@@ -3324,6 +3526,7 @@ def create_ai_task(
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
 
+    input_json = current_store.snapshot(payload.input)
     if payload.task_type == "technical_solution":
         _require_roles(user, {"product_owner", "rd_owner"})
         design_task_id = payload.input.get("product_detail_design_task_id")
@@ -3345,10 +3548,32 @@ def create_ai_task(
         )
     elif payload.task_type in TECHNICAL_SOLUTION_FOLLOWUP_TASK_TYPES:
         _require_roles(user, {"product_owner", "rd_owner"})
-        _ensure_confirmed_technical_solution_task(
+        technical_solution = _ensure_confirmed_technical_solution_task(
             current_store,
             requirement=requirement,
             technical_solution_task_id=payload.input.get("technical_solution_task_id"),
+        )
+        if payload.task_type == "release_readiness":
+            input_json.update(
+                _release_readiness_context(
+                    current_store,
+                    requirement=requirement,
+                    technical_solution=technical_solution,
+                )
+            )
+    elif payload.task_type in RELEASE_READINESS_FOLLOWUP_TASK_TYPES:
+        _require_roles(user, {"product_owner", "rd_owner"})
+        release_readiness = _ensure_confirmed_release_readiness_task(
+            current_store,
+            requirement=requirement,
+            release_readiness_task_id=payload.input.get("release_readiness_task_id"),
+        )
+        input_json.update(
+            _post_release_analysis_context(
+                current_store,
+                requirement=requirement,
+                release_readiness=release_readiness,
+            )
         )
     elif payload.task_type == "code_review":
         _require_roles(user, {"reviewer", "rd_owner"})
@@ -3402,7 +3627,7 @@ def create_ai_task(
         "module_code": requirement.get("module_code"),
         "requirement_snapshot": current_store.snapshot(requirement),
         "product_context": _product_context(current_store, requirement),
-        "input_json": current_store.snapshot(payload.input),
+        "input_json": input_json,
         "output_json": None,
         "review_ids": [],
         "graph_run_ids": [],
@@ -3477,7 +3702,11 @@ def _bug_suggestion_text(
     return fallback
 
 
-def _bug_suggestion_steps(suggestion: dict[str, Any]) -> list[str]:
+def _bug_suggestion_steps(
+    suggestion: dict[str, Any],
+    *,
+    fallback: str = "执行自动化测试建议中的用例并复现失败。",
+) -> list[str]:
     raw_steps = suggestion.get("reproduce_steps") or suggestion.get("steps") or []
     if isinstance(raw_steps, str):
         raw_steps = [raw_steps]
@@ -3486,7 +3715,7 @@ def _bug_suggestion_steps(suggestion: dict[str, Any]) -> list[str]:
     steps = [str(step).strip() for step in raw_steps if str(step).strip()]
     if steps:
         return steps
-    return ["执行自动化测试建议中的用例并复现失败。"]
+    return [fallback]
 
 
 def _create_automated_testing_bugs(
@@ -3570,6 +3799,90 @@ def _create_automated_testing_bugs(
     return created_bug_ids
 
 
+def _create_post_release_bugs(
+    current_store: MemoryStore,
+    *,
+    actor_id: str,
+    task: dict[str, Any],
+) -> list[str]:
+    if task["task_type"] != "post_release_analysis":
+        return []
+    output = task.get("output_json") or {}
+    suggestions = output.get("bug_suggestions")
+    if not isinstance(suggestions, list):
+        return []
+
+    created_bug_ids: list[str] = []
+    now = datetime.now(UTC).isoformat()
+    for index, raw_suggestion in enumerate(suggestions, start=1):
+        suggestion = raw_suggestion if isinstance(raw_suggestion, dict) else {}
+        severity = str(suggestion.get("severity") or "major")
+        if severity not in BUG_SEVERITIES:
+            severity = "major"
+        assignee = suggestion.get("assignee")
+        bug_id = current_store.new_id("bug")
+        bug = {
+            "id": bug_id,
+            "product_id": task["product_id"],
+            "version_id": task["version_id"],
+            "module_code": task.get("module_code"),
+            "source": "ai_post_release",
+            "title": _bug_suggestion_text(
+                suggestion,
+                "title",
+                f"上线后分析发现 {index}：{task['title']}",
+            ),
+            "severity": severity,
+            "description": _bug_suggestion_text(
+                suggestion,
+                "description",
+                "上线后分析任务确认后生成的缺陷建议。",
+            ),
+            "status": "open",
+            "assignee": assignee if isinstance(assignee, str) else None,
+            "related_task_id": task["id"],
+            "requirement_id": task["requirement_id"],
+            "reproduce_steps": _bug_suggestion_steps(
+                suggestion,
+                fallback="结合上线后观测窗口和日志异常复现问题。",
+            ),
+            "evidence": {
+                "generated_by_task_type": task["task_type"],
+                "suggestion": current_store.snapshot(suggestion),
+            },
+            "duplicate_of_bug_id": None,
+            "created_by": actor_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        current_store.bugs[bug_id] = bug
+        created_bug_ids.append(bug_id)
+        current_store.audit(
+            event_type="bug.created",
+            actor_id=actor_id,
+            ai_task_id=task["id"],
+            subject_type="bug",
+            subject_id=bug_id,
+            payload={
+                "severity": bug["severity"],
+                "source": bug["source"],
+                "status": bug["status"],
+            },
+        )
+
+    if created_bug_ids:
+        task["generated_bug_ids"] = created_bug_ids
+        current_store.audit(
+            event_type="post_release_analysis.bugs_created",
+            actor_id=actor_id,
+            ai_task_id=task["id"],
+            subject_type="ai_task",
+            subject_id=task["id"],
+            payload={"bug_ids": created_bug_ids},
+        )
+    return created_bug_ids
+
+
 def _ensure_review_decidable(
     current_store: MemoryStore,
     *,
@@ -3603,6 +3916,7 @@ def _complete_review_with_edited_approval(
     task["status"] = "completed"
     _confirm_code_review_report(current_store, task)
     _create_automated_testing_bugs(current_store, actor_id=actor_id, task=task)
+    _create_post_release_bugs(current_store, actor_id=actor_id, task=task)
     _create_knowledge_deposit(current_store, task)
     _transition_latest_graph_run(
         current_store,
@@ -4087,6 +4401,7 @@ def approve_review(
     task["status"] = "completed"
     _confirm_code_review_report(current_store, task)
     _create_automated_testing_bugs(current_store, actor_id=user["id"], task=task)
+    _create_post_release_bugs(current_store, actor_id=user["id"], task=task)
     _create_knowledge_deposit(current_store, task)
     _transition_latest_graph_run(
         current_store,

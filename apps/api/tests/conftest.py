@@ -145,6 +145,51 @@ def fake_openai_compatible_model_gateway(monkeypatch):
                 "summary": "测试模型生成的自动化测试建议。",
                 "test_cases": ["覆盖 v1.1 后续任务创建、启动、确认。"],
             }
+        elif task_type == "release_readiness":
+            content = {
+                "checklist": [
+                    {"item": "发布包构建成功", "status": "passed"},
+                    {"item": "线上错误率低于阈值", "status": "warning"},
+                ],
+                "go_live_decision": "conditional_go",
+                "kind": "release_readiness",
+                "risk_assessment": [
+                    {
+                        "evidence": "自动化测试和线上日志仍有风险项。",
+                        "risk": "上线后结算链路需重点观察。",
+                        "severity": "medium",
+                    }
+                ],
+                "risk_level": "medium",
+                "rollback_plan": ["保留上一版本镜像。", "异常率超过阈值时回滚。"],
+                "summary": "测试模型生成的发布评估。",
+            }
+        elif task_type == "post_release_analysis":
+            content = {
+                "anomaly_trends": [
+                    {
+                        "metric": "error_rate",
+                        "observation": "发布后一小时错误率小幅上升。",
+                        "severity": "medium",
+                    }
+                ],
+                "bug_suggestions": [
+                    {
+                        "description": "上线后日志显示结算接口偶发超时。",
+                        "reproduce_steps": ["发布新版本。", "连续调用结算接口。"],
+                        "severity": "major",
+                        "title": "上线后结算接口偶发超时",
+                    }
+                ],
+                "health_report": {
+                    "availability": "healthy",
+                    "latency": "watch",
+                    "overall": "degraded",
+                },
+                "kind": "post_release_analysis",
+                "optimization_suggestions": ["优化结算接口依赖超时配置。"],
+                "summary": "测试模型生成的上线后分析。",
+            }
         else:
             content = {
                 "acceptance_points": ["测试环境模拟 provider 响应。"],

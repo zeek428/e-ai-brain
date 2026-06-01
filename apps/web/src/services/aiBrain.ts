@@ -1012,7 +1012,10 @@ function normalizeBugStatus(status?: string): BugRecord['status'] {
 }
 
 function normalizeBugSource(source?: string): BugRecord['source'] {
-  return source === 'ai_auto_test' ? 'ai_auto_test' : 'manual_test';
+  if (source === 'ai_auto_test' || source === 'ai_post_release') {
+    return source;
+  }
+  return 'manual_test';
 }
 
 function normalizeModelGatewayStatus(status?: string): ModelGatewayConfigRecord['status'] {
@@ -1841,6 +1844,16 @@ function automatedTestingTitleFromTechnicalSolutionTask(task: TaskCenterTaskReco
   return `自动化测试：${title || task.label}`;
 }
 
+function releaseReadinessTitleFromTechnicalSolutionTask(task: TaskCenterTaskRecord) {
+  const title = task.label.replace(/^技术方案[:：]\s*/, '').trim();
+  return `发布评估：${title || task.label}`;
+}
+
+function postReleaseAnalysisTitleFromReleaseReadinessTask(task: TaskCenterTaskRecord) {
+  const title = task.label.replace(/^发布评估[:：]\s*/, '').trim();
+  return `上线后分析：${title || task.label}`;
+}
+
 export async function createTechnicalSolutionTask(task: TaskCenterTaskRecord) {
   const token = requireAccessToken();
   if (!task.requirementId) {
@@ -1898,6 +1911,48 @@ export async function createAutomatedTestingTask(task: TaskCenterTaskRecord) {
       requirement_id: task.requirementId,
       task_type: 'automated_testing',
       title: automatedTestingTitleFromTechnicalSolutionTask(task),
+    },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function createReleaseReadinessTask(task: TaskCenterTaskRecord) {
+  const token = requireAccessToken();
+  if (!task.requirementId) {
+    throw new ApiRequestError({
+      code: 'VALIDATION_ERROR',
+      message: '缺少需求编号，无法创建发布评估任务。',
+      status: 400,
+    });
+  }
+  return apiRequest<{ id: string; status: string }>('/api/ai-tasks', {
+    body: {
+      input: { technical_solution_task_id: task.id },
+      requirement_id: task.requirementId,
+      task_type: 'release_readiness',
+      title: releaseReadinessTitleFromTechnicalSolutionTask(task),
+    },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function createPostReleaseAnalysisTask(task: TaskCenterTaskRecord) {
+  const token = requireAccessToken();
+  if (!task.requirementId) {
+    throw new ApiRequestError({
+      code: 'VALIDATION_ERROR',
+      message: '缺少需求编号，无法创建上线后分析任务。',
+      status: 400,
+    });
+  }
+  return apiRequest<{ id: string; status: string }>('/api/ai-tasks', {
+    body: {
+      input: { release_readiness_task_id: task.id },
+      requirement_id: task.requirementId,
+      task_type: 'post_release_analysis',
+      title: postReleaseAnalysisTitleFromReleaseReadinessTask(task),
     },
     method: 'POST',
     token,

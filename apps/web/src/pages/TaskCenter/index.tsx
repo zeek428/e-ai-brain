@@ -24,6 +24,8 @@ import {
   createAutomatedTestingTask,
   createCodeReviewTask,
   createDevelopmentPlanningTask,
+  createPostReleaseAnalysisTask,
+  createReleaseReadinessTask,
   createTechnicalSolutionTask,
   createTaskWritebackResult,
   fetchCodeReviewReport,
@@ -63,7 +65,9 @@ const taskTypeLabels: Record<string, string> = {
   automated_testing: '自动化测试',
   code_review: 'Code Review',
   development_planning: '开发计划',
+  post_release_analysis: '上线后分析',
   product_detail_design: '产品详细设计',
+  release_readiness: '发布评估',
   technical_solution: '技术方案',
 };
 
@@ -295,6 +299,26 @@ export default function TaskCenterPage() {
     }
   }, [reloadTaskCenter]);
 
+  const handleCreateReleaseReadiness = useCallback(async (task: TaskCenterTaskRecord) => {
+    try {
+      await createReleaseReadinessTask(task);
+      message.success('发布评估任务已创建');
+      await reloadTaskCenter();
+    } catch (taskError) {
+      message.error(formatMutationError(taskError));
+    }
+  }, [reloadTaskCenter]);
+
+  const handleCreatePostReleaseAnalysis = useCallback(async (task: TaskCenterTaskRecord) => {
+    try {
+      await createPostReleaseAnalysisTask(task);
+      message.success('上线后分析任务已创建');
+      await reloadTaskCenter();
+    } catch (taskError) {
+      message.error(formatMutationError(taskError));
+    }
+  }, [reloadTaskCenter]);
+
   const handleOpenCodeReview = useCallback(async (task: TaskCenterTaskRecord) => {
     if (!task.productId) {
       message.error('缺少产品编号，无法加载产品 Git 仓库。');
@@ -499,6 +523,11 @@ export default function TaskCenterPage() {
           onClick: closeAndRun(() => handleCreateAutomatedTesting(selectedActionTask)),
         },
         {
+          key: 'create-release-readiness',
+          label: '生成发布评估',
+          onClick: closeAndRun(() => handleCreateReleaseReadiness(selectedActionTask)),
+        },
+        {
           key: 'create-code-review',
           label: '创建 Code Review',
           onClick: closeAndRun(() => handleOpenCodeReview(selectedActionTask)),
@@ -509,6 +538,18 @@ export default function TaskCenterPage() {
           onClick: closeAndRun(() => handleExportMarkdown(selectedActionTask)),
         },
       );
+    }
+
+    if (
+      selectedActionTask.type === 'release_readiness' &&
+      selectedActionTask.status === 'completed'
+    ) {
+      actions.push({
+        key: 'create-post-release-analysis',
+        label: '生成上线后分析',
+        onClick: closeAndRun(() => handleCreatePostReleaseAnalysis(selectedActionTask)),
+        type: 'primary',
+      });
     }
 
     if (selectedActionTask.status === 'completed') {
@@ -531,6 +572,8 @@ export default function TaskCenterPage() {
   }, [
     handleCreateAutomatedTesting,
     handleCreateDevelopmentPlanning,
+    handleCreatePostReleaseAnalysis,
+    handleCreateReleaseReadiness,
     handleCreateTechnicalSolution,
     handleExportMarkdown,
     handleOpenCodeReview,
@@ -642,6 +685,8 @@ export default function TaskCenterPage() {
               { label: '技术方案', value: 'technical_solution' },
               { label: '开发计划', value: 'development_planning' },
               { label: '自动化测试', value: 'automated_testing' },
+              { label: '发布评估', value: 'release_readiness' },
+              { label: '上线后分析', value: 'post_release_analysis' },
               { label: 'Code Review', value: 'code_review' },
             ],
             type: 'select',

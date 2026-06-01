@@ -33,6 +33,12 @@ const statusLabels: Record<BugRecord['status'], { color: string; label: string }
   verified: { color: 'green', label: '已验证' },
 };
 
+const sourceLabels: Record<BugRecord['source'], { color: string; label: string }> = {
+  ai_auto_test: { color: 'purple', label: 'AI 自动测试' },
+  ai_post_release: { color: 'cyan', label: 'AI 上线后分析' },
+  manual_test: { color: 'default', label: '人工登记' },
+};
+
 type BugFormValues = {
   assignee?: string;
   description: string;
@@ -194,12 +200,10 @@ export default function BugsPage() {
       {
         dataIndex: 'source',
         title: '来源',
-        render: (_, row) =>
-          row.source === 'ai_auto_test' ? (
-            <StatusTag color="purple" label="AI 自动测试" />
-          ) : (
-            <StatusTag color="default" label="人工登记" />
-          ),
+        render: (_, row) => {
+          const source = sourceLabels[row.source];
+          return <StatusTag color={source.color} label={source.label} />;
+        },
       },
       {
         dataIndex: 'assignee',
@@ -312,6 +316,7 @@ export default function BugsPage() {
                   options={[
                     { label: '人工登记', value: 'manual_test' },
                     { label: 'AI 自动测试', value: 'ai_auto_test' },
+                    { label: 'AI 上线后分析', value: 'ai_post_release' },
                   ]}
                 />
               </Form.Item>
