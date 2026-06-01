@@ -39,6 +39,10 @@ BUG_FIELDS = [
 USER_FEEDBACK_FIELDS = [
     "user_feedback",
 ]
+ITERATION_PLANNING_FIELDS = [
+    "iteration_plan_suggestions",
+    "iteration_plan_decisions",
+]
 MODEL_GATEWAY_FIELDS = [
     "model_gateway_configs",
     "model_gateway_logs",
@@ -66,6 +70,8 @@ COLLECTION_FIELDS = [
     "mock_writebacks",
     "bugs",
     "user_feedback",
+    "iteration_plan_suggestions",
+    "iteration_plan_decisions",
     "requirements",
     "ai_tasks",
     "graph_runs",
@@ -128,6 +134,12 @@ class UserFeedbackRepository(Protocol):
     def load_user_feedback(self) -> dict[str, Any] | None: ...
 
     def save_user_feedback(self, payload: dict[str, Any]) -> None: ...
+
+
+class IterationPlanningRepository(Protocol):
+    def load_iteration_planning(self) -> dict[str, Any] | None: ...
+
+    def save_iteration_planning(self, payload: dict[str, Any]) -> None: ...
 
 
 class ModelGatewayRepository(Protocol):
@@ -200,6 +212,10 @@ def _bugs_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _user_feedback_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in USER_FEEDBACK_FIELDS}
+
+
+def _iteration_planning_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in ITERATION_PLANNING_FIELDS}
 
 
 def _model_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -344,6 +360,15 @@ def _repository_load_user_feedback(repository: SnapshotRepository) -> dict[str, 
     return load_user_feedback()
 
 
+def _repository_load_iteration_planning(
+    repository: SnapshotRepository,
+) -> dict[str, Any] | None:
+    load_iteration_planning = getattr(repository, "load_iteration_planning", None)
+    if load_iteration_planning is None:
+        return None
+    return load_iteration_planning()
+
+
 def _repository_load_model_gateway(repository: SnapshotRepository) -> dict[str, Any] | None:
     load_model_gateway = getattr(repository, "load_model_gateway", None)
     if load_model_gateway is None:
@@ -412,6 +437,17 @@ def _repository_save_user_feedback(
         save_user_feedback(_user_feedback_payload(clean_payload))
 
 
+def _repository_save_iteration_planning(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_iteration_planning = getattr(repository, "save_iteration_planning", None)
+    if save_iteration_planning is not None:
+        clean_payload = deepcopy(payload)
+        _drop_iteration_planning_without_context(clean_payload)
+        save_iteration_planning(_iteration_planning_payload(clean_payload))
+
+
 def _repository_save_model_gateway(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -473,6 +509,10 @@ def _has_bug_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_user_feedback_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in USER_FEEDBACK_FIELDS)
+
+
+def _has_iteration_planning_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in ITERATION_PLANNING_FIELDS)
 
 
 def _has_model_gateway_items(payload: dict[str, Any] | None) -> bool:
@@ -590,6 +630,25 @@ def _sync_user_feedback_counters(payload: dict[str, Any]) -> None:
     counters["feedback"] = max(
         counters.get("feedback", 0),
         _max_numeric_suffix(payload.get("user_feedback", {}), "feedback"),
+    )
+    payload["counters"] = counters
+
+
+def _sync_iteration_planning_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["suggestion"] = max(
+        counters.get("suggestion", 0),
+        _max_numeric_suffix(
+            payload.get("iteration_plan_suggestions", {}),
+            "suggestion",
+        ),
+    )
+    counters["iteration_decision"] = max(
+        counters.get("iteration_decision", 0),
+        _max_numeric_suffix(
+            payload.get("iteration_plan_decisions", {}),
+            "iteration_decision",
+        ),
     )
     payload["counters"] = counters
 
@@ -798,6 +857,45 @@ def _drop_user_feedback_without_context(payload: dict[str, Any]) -> None:
     payload["user_feedback"] = cleaned_feedback
 
 
+def _drop_iteration_planning_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    versions = payload.get("product_versions", {})
+    requirements = payload.get("requirements", {})
+    suggestions = payload.get("iteration_plan_suggestions", {})
+    decisions = payload.get("iteration_plan_decisions", {})
+    cleaned_suggestions = {}
+    for suggestion_id, suggestion in suggestions.items():
+        product_id = suggestion.get("product_id")
+        version_id = suggestion.get("version_id")
+        if products and product_id not in products:
+            continue
+        if version_id and versions and (
+            version_id not in versions or versions[version_id].get("product_id") != product_id
+        ):
+            continue
+        cleaned = deepcopy(suggestion)
+        converted_requirement_id = cleaned.get("converted_requirement_id")
+        if (
+            converted_requirement_id
+            and requirements
+            and converted_requirement_id not in requirements
+        ):
+            cleaned["converted_requirement_id"] = None
+        cleaned_suggestions[suggestion_id] = cleaned
+    cleaned_decisions = {}
+    for decision_id, decision in decisions.items():
+        suggestion_id = decision.get("suggestion_id")
+        if suggestion_id not in cleaned_suggestions:
+            continue
+        cleaned = deepcopy(decision)
+        requirement_id = cleaned.get("created_requirement_id")
+        if requirement_id and requirements and requirement_id not in requirements:
+            cleaned["created_requirement_id"] = None
+        cleaned_decisions[decision_id] = cleaned
+    payload["iteration_plan_suggestions"] = cleaned_suggestions
+    payload["iteration_plan_decisions"] = cleaned_decisions
+
+
 def _drop_gitlab_review_without_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     repositories = payload.get("product_git_repositories", {})
@@ -948,6 +1046,14 @@ class PersistentMemoryStore(MemoryStore):
                 USER_FEEDBACK_FIELDS,
             )
             _sync_user_feedback_counters(payload)
+        iteration_planning_payload = _repository_load_iteration_planning(repository)
+        if _has_iteration_planning_items(iteration_planning_payload):
+            _replace_collection_payload(
+                payload,
+                _iteration_planning_payload(iteration_planning_payload),
+                ITERATION_PLANNING_FIELDS,
+            )
+            _sync_iteration_planning_counters(payload)
         model_gateway_payload = _repository_load_model_gateway(repository)
         if _has_model_gateway_items(model_gateway_payload):
             _replace_collection_payload(
@@ -982,6 +1088,7 @@ class PersistentMemoryStore(MemoryStore):
         if has_structured_product_config or _has_requirement_items(requirements_payload):
             _drop_bugs_without_context(payload)
             _drop_user_feedback_without_context(payload)
+            _drop_iteration_planning_without_context(payload)
         _drop_gitlab_review_without_context(payload)
         _drop_mock_writebacks_without_tasks(payload)
         _ensure_ai_task_defaults(payload)
@@ -1011,6 +1118,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_audit_events(self.repository, payload)
         _repository_save_bugs(self.repository, payload)
         _repository_save_user_feedback(self.repository, payload)
+        _repository_save_iteration_planning(self.repository, payload)
         _repository_save_model_gateway(self.repository, payload)
         _repository_save_gitlab_review(self.repository, payload)
         _repository_save_mock_writebacks(self.repository, payload)
@@ -1128,6 +1236,16 @@ class PostgresSnapshotRepository:
                 feedback = self._load_user_feedback(cursor)
         return {"user_feedback": feedback}
 
+    def load_iteration_planning(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                suggestions = self._load_iteration_plan_suggestions(cursor)
+                decisions = self._load_iteration_plan_decisions(cursor)
+        return {
+            "iteration_plan_decisions": decisions,
+            "iteration_plan_suggestions": suggestions,
+        }
+
     def load_model_gateway(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -1244,6 +1362,16 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "user_feedback", feedback)
                 self._upsert_user_feedback(cursor, feedback)
+
+    def save_iteration_planning(self, payload: dict[str, Any]) -> None:
+        suggestions = payload.get("iteration_plan_suggestions", {})
+        decisions = payload.get("iteration_plan_decisions", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "iteration_plan_decisions", decisions)
+                self._delete_missing(cursor, "iteration_plan_suggestions", suggestions)
+                self._upsert_iteration_plan_suggestions(cursor, suggestions)
+                self._upsert_iteration_plan_decisions(cursor, decisions)
 
     def save_model_gateway(self, payload: dict[str, Any]) -> None:
         configs = payload.get("model_gateway_configs", {})
@@ -1775,6 +1903,89 @@ class PostgresSnapshotRepository:
                     feedback.pop(optional_key)
             feedback_items[row[0]] = feedback
         return feedback_items
+
+    def _load_iteration_plan_suggestions(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, product_id, planning_cycle, version_id, module_codes, title,
+                   status, priority, priority_score, confidence_level,
+                   recommendation_reason, business_value, risk_signals, dependencies,
+                   estimated_effort, evidence, evidence_insufficient, created_by,
+                   converted_requirement_id, created_at, updated_at
+            FROM iteration_plan_suggestions
+            ORDER BY created_at, id
+            """
+        )
+        suggestions = {}
+        for row in cursor.fetchall():
+            suggestion = {
+                "business_value": row[11],
+                "confidence_level": row[9],
+                "converted_requirement_id": row[18],
+                "created_at": row[19].isoformat() if row[19] else None,
+                "created_by": row[17],
+                "dependencies": list(row[13] or []),
+                "estimated_effort": row[14],
+                "evidence": list(row[15] or []),
+                "evidence_insufficient": row[16],
+                "id": row[0],
+                "module_codes": list(row[4] or []),
+                "planning_cycle": row[2],
+                "priority": row[7],
+                "priority_score": row[8],
+                "product_id": row[1],
+                "recommendation_reason": row[10],
+                "risk_signals": list(row[12] or []),
+                "status": row[6],
+                "title": row[5],
+                "updated_at": row[20].isoformat() if row[20] else None,
+                "version_id": row[3],
+            }
+            for optional_key in (
+                "converted_requirement_id",
+                "created_at",
+                "updated_at",
+                "version_id",
+            ):
+                if suggestion[optional_key] is None:
+                    suggestion.pop(optional_key)
+            suggestions[row[0]] = suggestion
+        return suggestions
+
+    def _load_iteration_plan_decisions(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, suggestion_id, decision, comment, edited_title, edited_scope,
+                   convert_to_requirement, created_requirement_id, decided_by, decided_at
+            FROM iteration_plan_decisions
+            ORDER BY decided_at, id
+            """
+        )
+        decisions = {}
+        for row in cursor.fetchall():
+            decision = {
+                "comment": row[3],
+                "convert_to_requirement": row[6],
+                "created_requirement_id": row[7],
+                "decided_at": row[9].isoformat() if row[9] else None,
+                "decided_by": row[8],
+                "decision": row[2],
+                "edited_scope": row[5],
+                "edited_title": row[4],
+                "id": row[0],
+                "suggestion_id": row[1],
+            }
+            for optional_key in (
+                "comment",
+                "created_requirement_id",
+                "decided_at",
+                "edited_scope",
+                "edited_title",
+            ):
+                if decision[optional_key] is None:
+                    decision.pop(optional_key)
+            decisions[row[0]] = decision
+        return decisions
 
     def _load_model_gateway_configs(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -2774,6 +2985,118 @@ class PostgresSnapshotRepository:
                     feedback["created_by"],
                     created_at,
                     updated_at,
+                ),
+            )
+
+    def _upsert_iteration_plan_suggestions(
+        self,
+        cursor,
+        suggestions: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for suggestion in suggestions.values():
+            created_at = suggestion.get("created_at")
+            updated_at = suggestion.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO iteration_plan_suggestions (
+                  id, product_id, planning_cycle, version_id, module_codes, title,
+                  status, priority, priority_score, confidence_level,
+                  recommendation_reason, business_value, risk_signals, dependencies,
+                  estimated_effort, evidence, evidence_insufficient, created_by,
+                  converted_requirement_id, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
+                  %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  planning_cycle = EXCLUDED.planning_cycle,
+                  version_id = EXCLUDED.version_id,
+                  module_codes = EXCLUDED.module_codes,
+                  title = EXCLUDED.title,
+                  status = EXCLUDED.status,
+                  priority = EXCLUDED.priority,
+                  priority_score = EXCLUDED.priority_score,
+                  confidence_level = EXCLUDED.confidence_level,
+                  recommendation_reason = EXCLUDED.recommendation_reason,
+                  business_value = EXCLUDED.business_value,
+                  risk_signals = EXCLUDED.risk_signals,
+                  dependencies = EXCLUDED.dependencies,
+                  estimated_effort = EXCLUDED.estimated_effort,
+                  evidence = EXCLUDED.evidence,
+                  evidence_insufficient = EXCLUDED.evidence_insufficient,
+                  created_by = EXCLUDED.created_by,
+                  converted_requirement_id = EXCLUDED.converted_requirement_id,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    suggestion["id"],
+                    suggestion["product_id"],
+                    suggestion["planning_cycle"],
+                    suggestion.get("version_id"),
+                    json.dumps(suggestion.get("module_codes", []), ensure_ascii=False),
+                    suggestion["title"],
+                    suggestion.get("status", "suggested"),
+                    suggestion.get("priority", "P2"),
+                    suggestion.get("priority_score", 0),
+                    suggestion.get("confidence_level", "low"),
+                    suggestion["recommendation_reason"],
+                    suggestion["business_value"],
+                    json.dumps(suggestion.get("risk_signals", []), ensure_ascii=False),
+                    json.dumps(suggestion.get("dependencies", []), ensure_ascii=False),
+                    suggestion.get("estimated_effort", "medium"),
+                    json.dumps(suggestion.get("evidence", []), ensure_ascii=False),
+                    suggestion.get("evidence_insufficient", False),
+                    suggestion["created_by"],
+                    suggestion.get("converted_requirement_id"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_iteration_plan_decisions(
+        self,
+        cursor,
+        decisions: dict[str, dict[str, Any]],
+    ) -> None:
+        for decision in decisions.values():
+            cursor.execute(
+                """
+                INSERT INTO iteration_plan_decisions (
+                  id, suggestion_id, decision, comment, edited_title, edited_scope,
+                  convert_to_requirement, created_requirement_id, decided_by, decided_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  suggestion_id = EXCLUDED.suggestion_id,
+                  decision = EXCLUDED.decision,
+                  comment = EXCLUDED.comment,
+                  edited_title = EXCLUDED.edited_title,
+                  edited_scope = EXCLUDED.edited_scope,
+                  convert_to_requirement = EXCLUDED.convert_to_requirement,
+                  created_requirement_id = EXCLUDED.created_requirement_id,
+                  decided_by = EXCLUDED.decided_by,
+                  decided_at = EXCLUDED.decided_at
+                """,
+                (
+                    decision["id"],
+                    decision["suggestion_id"],
+                    decision["decision"],
+                    decision.get("comment"),
+                    decision.get("edited_title"),
+                    decision.get("edited_scope"),
+                    decision.get("convert_to_requirement", False),
+                    decision.get("created_requirement_id"),
+                    decision["decided_by"],
+                    decision.get("decided_at"),
                 ),
             )
 

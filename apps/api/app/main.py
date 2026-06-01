@@ -84,6 +84,18 @@ BUG_STATUSES = {
 USER_FEEDBACK_TYPES = {"bug", "complaint", "improvement", "praise", "question"}
 USER_FEEDBACK_SENTIMENTS = {"negative", "neutral", "positive"}
 USER_FEEDBACK_STATUSES = {"archived", "linked", "open", "resolved", "triaged"}
+ITERATION_SUGGESTION_STATUSES = {
+    "accepted",
+    "converted_to_requirement",
+    "draft",
+    "edited_accepted",
+    "rejected",
+    "suggested",
+}
+ITERATION_DECISIONS = {"accepted", "edited_accepted", "rejected"}
+ITERATION_PRIORITIES = {"P0", "P1", "P2", "P3"}
+ITERATION_CONFIDENCE_LEVELS = {"high", "low", "medium"}
+ITERATION_EFFORTS = {"high", "low", "medium"}
 USER_ROLES = ASSIGNABLE_ROLE_CODES
 USER_STATUSES = {"active", "inactive"}
 PRODUCT_STATUSES = {"active", "inactive"}
@@ -377,6 +389,23 @@ class UserFeedbackPatchRequest(BaseModel):
     triage_note: str | None = None
 
 
+class IterationSuggestionRequest(BaseModel):
+    product_id: str
+    planning_cycle: str
+    version_id: str | None = None
+    module_codes: list[str] = Field(default_factory=list)
+    include_evidence: bool = True
+    constraints: dict[str, Any] = Field(default_factory=dict)
+
+
+class IterationSuggestionDecisionRequest(BaseModel):
+    decision: str
+    edited_title: str | None = None
+    edited_scope: str | None = None
+    comment: str | None = None
+    convert_to_requirement: bool = False
+
+
 @app.middleware("http")
 async def trace_middleware(request: Request, call_next):
     request.state.trace_id = new_trace_id()
@@ -641,6 +670,206 @@ def _normalized_tags(tags: list[str]) -> list[str]:
         if value and value not in normalized:
             normalized.append(value)
     return normalized
+
+
+def _require_iteration_planning_role(user: dict[str, Any]) -> None:
+    _require_roles(user, {"product_owner", "rd_owner"})
+
+
+def _validate_iteration_enums(
+    *,
+    decision: str | None = None,
+    status: str | None = None,
+) -> None:
+    _ensure_enum(decision, ITERATION_DECISIONS, "decision")
+    _ensure_enum(status, ITERATION_SUGGESTION_STATUSES, "status")
+
+
+def _normalized_module_codes(module_codes: list[str]) -> list[str]:
+    normalized = []
+    for module_code in module_codes:
+        value = module_code.strip()
+        if value and value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _validate_iteration_context(
+    current_store: MemoryStore,
+    *,
+    product_id: str,
+    version_id: str | None = None,
+    module_codes: list[str] | None = None,
+) -> None:
+    product = current_store.products.get(product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
+    if version_id is not None:
+        version = current_store.product_versions.get(version_id)
+        if version is None or version["product_id"] != product_id:
+            raise api_error(404, "NOT_FOUND", "Product version not found")
+        if version["status"] == "archived":
+            raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
+    for module_code in module_codes or []:
+        if not any(
+            module["product_id"] == product_id and module["code"] == module_code
+            for module in current_store.product_modules.values()
+        ):
+            raise api_error(404, "NOT_FOUND", "Product module not found")
+
+
+def _iteration_evidence_matches_modules(
+    item: dict[str, Any],
+    module_codes: list[str],
+) -> bool:
+    return not module_codes or item.get("module_code") in module_codes
+
+
+def _collect_iteration_evidence(
+    current_store: MemoryStore,
+    *,
+    product_id: str,
+    module_codes: list[str],
+    include_evidence: bool,
+) -> list[dict[str, Any]]:
+    if not include_evidence:
+        return []
+    feedback_evidence = [
+        {
+            "subject_id": feedback["id"],
+            "subject_type": "user_feedback",
+            "summary": feedback["content"],
+        }
+        for feedback in sorted(
+            current_store.user_feedback.values(),
+            key=lambda item: (item.get("created_at") or "", item["id"]),
+        )
+        if feedback["product_id"] == product_id
+        and feedback.get("status") not in {"archived", "resolved"}
+        and _iteration_evidence_matches_modules(feedback, module_codes)
+    ]
+    bug_evidence = [
+        {
+            "subject_id": bug["id"],
+            "subject_type": "bug",
+            "summary": bug["title"],
+        }
+        for bug in sorted(
+            current_store.bugs.values(),
+            key=lambda item: (item.get("created_at") or "", item["id"]),
+        )
+        if bug["product_id"] == product_id
+        and bug.get("status") not in {"closed", "verified"}
+        and _iteration_evidence_matches_modules(bug, module_codes)
+    ]
+    return (feedback_evidence + bug_evidence)[:12]
+
+
+def _build_iteration_suggestion(
+    current_store: MemoryStore,
+    *,
+    evidence: list[dict[str, Any]],
+    module_codes: list[str],
+    payload: IterationSuggestionRequest,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    product_name = current_store.products[payload.product_id]["name"]
+    module_scope = "、".join(module_codes) if module_codes else product_name
+    evidence_types = {item["subject_type"] for item in evidence}
+    if len(evidence) >= 4:
+        confidence_level = "high"
+        priority_score = 88
+    elif len(evidence) >= 2:
+        confidence_level = "medium"
+        priority_score = 76
+    else:
+        confidence_level = "low"
+        priority_score = 52
+    risk_signals = []
+    if "user_feedback" in evidence_types:
+        risk_signals.append("user_feedback_signal")
+    if "bug" in evidence_types:
+        risk_signals.append("bug_quality_signal")
+    return {
+        "business_value": f"提升 {module_scope} 的用户体验和交付质量。",
+        "confidence_level": confidence_level,
+        "created_at": now,
+        "created_by": user["id"],
+        "dependencies": ["产品负责人确认范围", "研发负责人评估投入"],
+        "estimated_effort": "medium",
+        "evidence": evidence,
+        "evidence_insufficient": confidence_level == "low",
+        "id": current_store.new_id("suggestion"),
+        "module_codes": module_codes,
+        "planning_cycle": _ensure_non_blank(payload.planning_cycle, "planning_cycle"),
+        "priority": "P1",
+        "priority_score": priority_score,
+        "product_id": payload.product_id,
+        "recommendation_reason": (
+            f"{module_scope} 已出现 {len(evidence)} 条真实反馈或缺陷证据，"
+            "建议进入下一阶段迭代评估。"
+        ),
+        "risk_signals": risk_signals,
+        "status": "suggested",
+        "title": f"优化{module_scope}反馈与缺陷集中问题",
+        "updated_at": now,
+        "version_id": payload.version_id,
+    }
+
+
+def _create_iteration_requirement(
+    current_store: MemoryStore,
+    *,
+    payload: IterationSuggestionDecisionRequest,
+    suggestion: dict[str, Any],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    version_id = suggestion.get("version_id")
+    if not version_id:
+        raise api_error(
+            400,
+            "ITERATION_PLAN_VERSION_REQUIRED",
+            "version_id is required to convert suggestion to requirement",
+        )
+    title = _ensure_non_blank(
+        payload.edited_title or suggestion["title"],
+        "edited_title",
+    )
+    scope = payload.edited_scope or suggestion["recommendation_reason"]
+    now = datetime.now(UTC).isoformat()
+    requirement_id = current_store.new_id("requirement")
+    requirement = {
+        "content": "\n".join(
+            [
+                scope,
+                "",
+                f"业务价值：{suggestion['business_value']}",
+                f"推荐理由：{suggestion['recommendation_reason']}",
+            ]
+        ),
+        "created_at": now,
+        "created_by": user["id"],
+        "id": requirement_id,
+        "module_code": suggestion["module_codes"][0] if suggestion["module_codes"] else None,
+        "priority": suggestion["priority"],
+        "product_id": suggestion["product_id"],
+        "status": "pending_approval",
+        "task_ids": [],
+        "title": title,
+        "version_id": version_id,
+    }
+    current_store.requirements[requirement_id] = requirement
+    current_store.audit(
+        event_type="requirement.created",
+        actor_id=user["id"],
+        subject_type="requirement",
+        subject_id=requirement_id,
+        payload={"source": "iteration_plan_suggestion", "suggestion_id": suggestion["id"]},
+    )
+    return requirement
 
 
 def _payload_updates(payload: BaseModel) -> dict[str, Any]:
@@ -5013,9 +5242,153 @@ def patch_user_feedback(
 @app.get("/api/planning/iteration-suggestions")
 def iteration_suggestions(
     request: Request,
+    product_id: str | None = None,
+    planning_cycle: str | None = None,
+    status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(empty_list_payload(), get_trace_id(request))
+    _validate_iteration_enums(status=status)
+    current_store = store(request)
+    items = []
+    for suggestion in current_store.iteration_plan_suggestions.values():
+        if product_id is not None and suggestion.get("product_id") != product_id:
+            continue
+        if planning_cycle is not None and suggestion.get("planning_cycle") != planning_cycle:
+            continue
+        if status is not None and suggestion.get("status") != status:
+            continue
+        items.append(suggestion)
+    items.sort(
+        key=lambda item: (
+            item.get("priority_score", 0),
+            item.get("updated_at") or item.get("created_at") or "",
+        ),
+        reverse=True,
+    )
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/planning/iteration-suggestions")
+def create_iteration_suggestions(
+    payload: IterationSuggestionRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_iteration_planning_role(user)
+    current_store = store(request)
+    module_codes = _normalized_module_codes(payload.module_codes)
+    _validate_iteration_context(
+        current_store,
+        product_id=payload.product_id,
+        version_id=payload.version_id,
+        module_codes=module_codes,
+    )
+    evidence = _collect_iteration_evidence(
+        current_store,
+        product_id=payload.product_id,
+        module_codes=module_codes,
+        include_evidence=payload.include_evidence,
+    )
+    if not evidence:
+        return envelope(empty_list_payload(), get_trace_id(request))
+    suggestion = _build_iteration_suggestion(
+        current_store,
+        evidence=evidence,
+        module_codes=module_codes,
+        payload=payload,
+        user=user,
+    )
+    current_store.iteration_plan_suggestions[suggestion["id"]] = suggestion
+    current_store.audit(
+        event_type="iteration_suggestion.generated",
+        actor_id=user["id"],
+        subject_type="iteration_plan_suggestion",
+        subject_id=suggestion["id"],
+        payload={
+            "evidence_count": len(evidence),
+            "planning_cycle": suggestion["planning_cycle"],
+            "product_id": suggestion["product_id"],
+            "status": suggestion["status"],
+        },
+    )
+    return envelope({"items": [suggestion], "total": 1}, get_trace_id(request))
+
+
+@app.post("/api/planning/iteration-suggestions/{suggestion_id}/decide")
+def decide_iteration_suggestion(
+    suggestion_id: str,
+    payload: IterationSuggestionDecisionRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_iteration_planning_role(user)
+    _validate_iteration_enums(decision=payload.decision)
+    current_store = store(request)
+    suggestion = current_store.iteration_plan_suggestions.get(suggestion_id)
+    if suggestion is None:
+        raise api_error(404, "NOT_FOUND", "Iteration suggestion not found")
+    if suggestion["status"] not in {"suggested", "accepted", "edited_accepted"}:
+        raise api_error(
+            409,
+            "ITERATION_PLAN_STATE_INVALID",
+            "Suggestion cannot be decided from current status",
+        )
+    if payload.convert_to_requirement and payload.decision == "rejected":
+        raise api_error(
+            400,
+            "ITERATION_PLAN_DECISION_INVALID",
+            "Rejected suggestion cannot convert to requirement",
+        )
+    requirement = None
+    if payload.convert_to_requirement:
+        requirement = _create_iteration_requirement(
+            current_store,
+            payload=payload,
+            suggestion=suggestion,
+            user=user,
+        )
+    now = datetime.now(UTC).isoformat()
+    suggestion["status"] = (
+        "converted_to_requirement" if requirement is not None else payload.decision
+    )
+    suggestion["decision"] = payload.decision
+    if payload.edited_title:
+        suggestion["title"] = _ensure_non_blank(payload.edited_title, "edited_title")
+    if requirement is not None:
+        suggestion["converted_requirement_id"] = requirement["id"]
+    suggestion["updated_at"] = now
+    decision = {
+        "comment": payload.comment,
+        "convert_to_requirement": payload.convert_to_requirement,
+        "created_requirement_id": requirement["id"] if requirement is not None else None,
+        "decided_at": now,
+        "decided_by": user["id"],
+        "decision": payload.decision,
+        "edited_scope": payload.edited_scope,
+        "edited_title": payload.edited_title,
+        "id": current_store.new_id("iteration_decision"),
+        "suggestion_id": suggestion_id,
+    }
+    current_store.iteration_plan_decisions[decision["id"]] = decision
+    current_store.audit(
+        event_type="iteration_suggestion.decided",
+        actor_id=user["id"],
+        subject_type="iteration_plan_suggestion",
+        subject_id=suggestion_id,
+        payload={
+            "converted_requirement_id": suggestion.get("converted_requirement_id"),
+            "decision": payload.decision,
+            "status": suggestion["status"],
+        },
+    )
+    return envelope(
+        {
+            **suggestion,
+            "converted_requirement_id": suggestion.get("converted_requirement_id"),
+            "decision": payload.decision,
+        },
+        get_trace_id(request),
+    )
 
 
 @app.get("/api/lifecycle/context")

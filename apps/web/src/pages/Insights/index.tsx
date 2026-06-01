@@ -1,15 +1,19 @@
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Select, Space } from 'antd';
+import { Button, Checkbox, Form, Input, Modal, Select, Space } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import type { ProductRecord } from '../../data/management';
+import type { ProductContextOption } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
+  createIterationSuggestions,
   createUserFeedback,
-  fetchManagementProducts,
+  decideIterationSuggestion,
+  fetchProductContextOptions,
   fetchUserInsights,
   updateUserFeedback,
+  type IterationSuggestionCreatePayload,
+  type IterationSuggestionDecisionPayload,
   type UserFeedbackCreatePayload,
   type UserInsightRecord,
 } from '../../services/aiBrain';
@@ -24,6 +28,20 @@ type FeedbackFormValues = {
 type TriageFormValues = {
   status: string;
   triageNote?: string;
+};
+
+type SuggestionFormValues = {
+  planningCycle: string;
+  productId: string;
+  versionId: string;
+};
+
+type DecisionFormValues = {
+  comment?: string;
+  convertToRequirement?: boolean;
+  decision: string;
+  editedScope?: string;
+  editedTitle?: string;
 };
 
 const feedbackTypeOptions = [
@@ -42,6 +60,12 @@ const feedbackStatusOptions = [
   { label: '已归档', value: 'archived' },
 ];
 
+const iterationDecisionOptions = [
+  { label: '采纳', value: 'accepted' },
+  { label: '修改后采纳', value: 'edited_accepted' },
+  { label: '驳回', value: 'rejected' },
+];
+
 function buildFeedbackPayload(values: FeedbackFormValues): UserFeedbackCreatePayload {
   return {
     content: values.content.trim(),
@@ -51,22 +75,50 @@ function buildFeedbackPayload(values: FeedbackFormValues): UserFeedbackCreatePay
   };
 }
 
+function buildSuggestionPayload(values: SuggestionFormValues): IterationSuggestionCreatePayload {
+  return {
+    constraints: { max_suggestions: 10 },
+    planning_cycle: values.planningCycle.trim(),
+    product_id: values.productId,
+    version_id: values.versionId,
+  };
+}
+
+function buildDecisionPayload(values: DecisionFormValues): IterationSuggestionDecisionPayload {
+  const convertToRequirement = Boolean(values.convertToRequirement && values.decision !== 'rejected');
+  return {
+    comment: values.comment?.trim() || undefined,
+    convert_to_requirement: convertToRequirement,
+    decision: values.decision,
+    edited_scope: convertToRequirement ? values.editedScope?.trim() || undefined : undefined,
+    edited_title: convertToRequirement ? values.editedTitle?.trim() || undefined : undefined,
+  };
+}
+
 function statusColor(status: string) {
-  if (status === 'resolved' || status === 'archived') {
+  if (
+    status === 'accepted' ||
+    status === 'archived' ||
+    status === 'converted_to_requirement' ||
+    status === 'resolved'
+  ) {
     return 'green';
   }
   if (status === 'open') {
     return 'blue';
   }
+  if (status === 'rejected') {
+    return 'red';
+  }
   return status === '-' ? 'default' : 'gold';
 }
 
-function useProductOptions() {
-  const [products, setProducts] = useState<ProductRecord[]>([]);
+function useProductContexts() {
+  const [products, setProducts] = useState<ProductContextOption[]>([]);
 
   useEffect(() => {
     let mounted = true;
-    void fetchManagementProducts()
+    void fetchProductContextOptions()
       .then((items) => {
         if (mounted) {
           setProducts(items);
@@ -82,17 +134,31 @@ function useProductOptions() {
     };
   }, []);
 
-  return useMemo(
-    () =>
-      products.map((product) => ({
-        label: product.name,
-        value: product.id,
-      })),
-    [products],
+  return products;
+}
+
+function productOptionsFromContexts(productContexts: ProductContextOption[]) {
+  return productContexts.map((product) => ({
+    label: product.name,
+    value: product.id,
+  }));
+}
+
+function versionOptionsFromContexts(productContexts: ProductContextOption[], productId?: string) {
+  return (
+    productContexts
+      .find((product) => product.id === productId)
+      ?.versions.map((version) => ({
+        label: version.name,
+        value: version.id,
+      })) ?? []
   );
 }
 
-function useInsightColumns(onTriage: (row: UserInsightRecord) => void) {
+function useInsightColumns(
+  onDecide: (row: UserInsightRecord) => void,
+  onTriage: (row: UserInsightRecord) => void,
+) {
   return useMemo<ProColumns<UserInsightRecord>[]>(
     () => [
       {
@@ -118,38 +184,73 @@ function useInsightColumns(onTriage: (row: UserInsightRecord) => void) {
       },
       {
         key: 'actions',
-        render: (_, row) =>
-          row.category === '用户反馈' ? (
-            <Button onClick={() => onTriage(row)} size="small" type="link">
-              处理反馈
-            </Button>
-          ) : null,
+        render: (_, row) => {
+          if (row.category === '用户反馈') {
+            return (
+              <Button onClick={() => onTriage(row)} size="small" type="link">
+                处理反馈
+              </Button>
+            );
+          }
+          if (row.category === '迭代建议' && row.status === 'suggested') {
+            return (
+              <Button onClick={() => onDecide(row)} size="small" type="link">
+                确认建议
+              </Button>
+            );
+          }
+          return null;
+        },
         title: '操作',
       },
     ],
-    [onTriage],
+    [onDecide, onTriage],
   );
 }
 
 export default function InsightsPage() {
   const [createOpen, setCreateOpen] = useState(false);
+  const [decisionTarget, setDecisionTarget] = useState<UserInsightRecord | null>(null);
+  const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [triageTarget, setTriageTarget] = useState<UserInsightRecord | null>(null);
   const [createForm] = Form.useForm<FeedbackFormValues>();
+  const [decisionForm] = Form.useForm<DecisionFormValues>();
+  const [suggestionForm] = Form.useForm<SuggestionFormValues>();
   const [triageForm] = Form.useForm<TriageFormValues>();
-  const productOptions = useProductOptions();
+  const productContexts = useProductContexts();
+  const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
+  const suggestionProductId = Form.useWatch('productId', suggestionForm);
+  const decisionValue = Form.useWatch('decision', decisionForm);
+  const convertToRequirement = Form.useWatch('convertToRequirement', decisionForm);
+  const versionOptions = useMemo(
+    () => versionOptionsFromContexts(productContexts, suggestionProductId),
+    [productContexts, suggestionProductId],
+  );
   const {
     error,
     reload,
     rows: dataSource,
     status,
   } = useRemoteRows(fetchUserInsights);
-  const columns = useInsightColumns((row) => {
-    setTriageTarget(row);
-    triageForm.setFieldsValue({
-      status: row.status === '-' || row.status === 'open' ? 'triaged' : row.status,
-      triageNote: undefined,
-    });
-  });
+  const columns = useInsightColumns(
+    (row) => {
+      setDecisionTarget(row);
+      decisionForm.setFieldsValue({
+        comment: undefined,
+        convertToRequirement: false,
+        decision: 'edited_accepted',
+        editedScope: undefined,
+        editedTitle: undefined,
+      });
+    },
+    (row) => {
+      setTriageTarget(row);
+      triageForm.setFieldsValue({
+        status: row.status === '-' || row.status === 'open' ? 'triaged' : row.status,
+        triageNote: undefined,
+      });
+    },
+  );
 
   useEffect(() => {
     if (!createOpen || productOptions.length !== 1 || createForm.getFieldValue('productId')) {
@@ -158,11 +259,39 @@ export default function InsightsPage() {
     createForm.setFieldValue('productId', productOptions[0]?.value);
   }, [createForm, createOpen, productOptions]);
 
+  useEffect(() => {
+    if (!suggestionOpen || productOptions.length !== 1 || suggestionForm.getFieldValue('productId')) {
+      return;
+    }
+    suggestionForm.setFieldValue('productId', productOptions[0]?.value);
+  }, [productOptions, suggestionForm, suggestionOpen]);
+
+  useEffect(() => {
+    if (!suggestionOpen || versionOptions.length !== 1 || suggestionForm.getFieldValue('versionId')) {
+      return;
+    }
+    suggestionForm.setFieldValue('versionId', versionOptions[0]?.value);
+  }, [suggestionForm, suggestionOpen, versionOptions]);
+
+  useEffect(() => {
+    if (decisionValue === 'rejected' && decisionForm.getFieldValue('convertToRequirement')) {
+      decisionForm.setFieldValue('convertToRequirement', false);
+    }
+  }, [decisionForm, decisionValue]);
+
   const submitFeedback = async () => {
     const values = await createForm.validateFields();
     await createUserFeedback(buildFeedbackPayload(values));
     setCreateOpen(false);
     createForm.resetFields();
+    await reload();
+  };
+
+  const submitSuggestion = async () => {
+    const values = await suggestionForm.validateFields();
+    await createIterationSuggestions(buildSuggestionPayload(values));
+    setSuggestionOpen(false);
+    suggestionForm.resetFields();
     await reload();
   };
 
@@ -177,6 +306,17 @@ export default function InsightsPage() {
     });
     setTriageTarget(null);
     triageForm.resetFields();
+    await reload();
+  };
+
+  const submitDecision = async () => {
+    if (!decisionTarget) {
+      return;
+    }
+    const values = await decisionForm.validateFields();
+    await decideIterationSuggestion(decisionTarget.id, buildDecisionPayload(values));
+    setDecisionTarget(null);
+    decisionForm.resetFields();
     await reload();
   };
 
@@ -208,7 +348,33 @@ export default function InsightsPage() {
         rowKey="id"
         tableTitle="用户洞察/迭代规划"
         title="用户洞察/迭代规划"
+        toolbarActions={[
+          <Button aria-label="生成迭代建议" key="suggestion" onClick={() => setSuggestionOpen(true)}>
+            生成迭代建议
+          </Button>,
+        ]}
       />
+      <Modal
+        destroyOnHidden
+        okText="保存"
+        okButtonProps={{ 'aria-label': '保存' }}
+        onCancel={() => setSuggestionOpen(false)}
+        onOk={() => void submitSuggestion()}
+        open={suggestionOpen}
+        title="生成迭代建议"
+      >
+        <Form<SuggestionFormValues> form={suggestionForm} layout="vertical">
+          <Form.Item label="所属产品" name="productId" rules={[{ required: true, message: '请选择所属产品' }]}>
+            <Select options={productOptions} />
+          </Form.Item>
+          <Form.Item label="目标版本" name="versionId" rules={[{ required: true, message: '请选择目标版本' }]}>
+            <Select options={versionOptions} />
+          </Form.Item>
+          <Form.Item label="规划周期" name="planningCycle" rules={[{ required: true, message: '请输入规划周期' }]}>
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
       <Modal
         destroyOnHidden
         okText="保存"
@@ -252,6 +418,40 @@ export default function InsightsPage() {
             <Form.Item label="处理备注" name="triageNote">
               <Input.TextArea rows={3} />
             </Form.Item>
+          </Form>
+        </Space>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        okText="保存"
+        okButtonProps={{ 'aria-label': '保存' }}
+        onCancel={() => setDecisionTarget(null)}
+        onOk={() => void submitDecision()}
+        open={Boolean(decisionTarget)}
+        title="确认迭代建议"
+      >
+        <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+          <div>{decisionTarget?.summary}</div>
+          <Form<DecisionFormValues> form={decisionForm} layout="vertical">
+            <Form.Item label="确认结论" name="decision" rules={[{ required: true, message: '请选择确认结论' }]}>
+              <Select options={iterationDecisionOptions} />
+            </Form.Item>
+            <Form.Item label="确认备注" name="comment">
+              <Input.TextArea rows={3} />
+            </Form.Item>
+            <Form.Item name="convertToRequirement" valuePropName="checked">
+              <Checkbox disabled={decisionValue === 'rejected'}>转为正式需求</Checkbox>
+            </Form.Item>
+            {convertToRequirement ? (
+              <>
+                <Form.Item label="需求标题" name="editedTitle">
+                  <Input />
+                </Form.Item>
+                <Form.Item label="需求范围" name="editedScope">
+                  <Input.TextArea rows={3} />
+                </Form.Item>
+              </>
+            ) : null}
           </Form>
         </Space>
       </Modal>

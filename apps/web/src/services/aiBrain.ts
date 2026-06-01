@@ -133,15 +133,20 @@ export type OperationalMetricRecord = {
 
 export type UserInsightRecord = {
   category: string;
+  confidenceLevel?: string;
+  convertedRequirementId?: string;
   featureCode?: string;
   feedbackType?: string;
   id: string;
   moduleCode?: string;
   owner: string;
+  planningCycle?: string;
+  priority?: string;
   productId?: string;
   status: string;
   summary: string;
   updatedAt: string;
+  versionId?: string;
 };
 
 export type UserFeedbackCreatePayload = {
@@ -163,6 +168,22 @@ export type UserFeedbackPatchPayload = {
   status?: string;
   tags?: string[];
   triage_note?: string;
+};
+
+export type IterationSuggestionCreatePayload = {
+  constraints?: Record<string, unknown>;
+  module_codes?: string[];
+  planning_cycle: string;
+  product_id: string;
+  version_id?: string;
+};
+
+export type IterationSuggestionDecisionPayload = {
+  comment?: string;
+  convert_to_requirement: boolean;
+  decision: string;
+  edited_scope?: string;
+  edited_title?: string;
 };
 
 export type DashboardSummary = {
@@ -2088,19 +2109,32 @@ export async function fetchDevopsMetrics(): Promise<OperationalMetricRecord[]> {
 function mapUserInsights(category: string, items: FlexibleListItem[]): UserInsightRecord[] {
   return items.map((item, index) => ({
     category,
+    confidenceLevel: formatUnknownValue(item.confidence_level),
+    convertedRequirementId: formatUnknownValue(item.converted_requirement_id),
     featureCode: formatUnknownValue(item.feature_code),
     feedbackType: formatUnknownValue(item.feedback_type),
     id: formatUnknownValue(item.id ?? `${category}-${index}`),
     moduleCode: formatUnknownValue(item.module_code),
     owner: formatUnknownValue(firstKnownValue(item, ['user_id', 'owner_id', 'created_by', 'actor_id'])),
+    planningCycle: formatUnknownValue(item.planning_cycle),
+    priority: formatUnknownValue(item.priority),
     productId: formatUnknownValue(item.product_id),
     status: formatUnknownValue(item.status),
     summary: formatUnknownValue(
-      firstKnownValue(item, ['summary', 'content', 'feedback_text', 'suggestion', 'feature_code']),
+      firstKnownValue(item, [
+        'summary',
+        'title',
+        'content',
+        'feedback_text',
+        'suggestion',
+        'recommendation_reason',
+        'feature_code',
+      ]),
     ),
     updatedAt: formatListDate(
       formatUnknownValue(firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'window_start'])),
     ),
+    versionId: formatUnknownValue(item.version_id),
   }));
 }
 
@@ -2136,6 +2170,29 @@ export async function updateUserFeedback(
   return apiRequest<FlexibleListItem>(`/api/insights/user-feedback/${feedbackId}`, {
     body: payload,
     method: 'PATCH',
+    token,
+  });
+}
+
+export async function createIterationSuggestions(
+  payload: IterationSuggestionCreatePayload,
+): Promise<ListResponse<FlexibleListItem>> {
+  const token = requireAccessToken();
+  return apiRequest<ListResponse<FlexibleListItem>>('/api/planning/iteration-suggestions', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function decideIterationSuggestion(
+  suggestionId: string,
+  payload: IterationSuggestionDecisionPayload,
+): Promise<FlexibleListItem> {
+  const token = requireAccessToken();
+  return apiRequest<FlexibleListItem>(`/api/planning/iteration-suggestions/${suggestionId}/decide`, {
+    body: payload,
+    method: 'POST',
     token,
   });
 }

@@ -1382,7 +1382,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
         status: 200,
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (input === '/api/products') {
+      if (input === '/api/products?active_only=true') {
         return jsonResponse({
           data: {
             items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
@@ -1390,7 +1390,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/products/product_api/versions') {
+      if (input === '/api/products/product_api/versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/insights/user-feedback' && init?.method === 'POST') {
@@ -1472,6 +1472,131 @@ describe('AI Brain Ant Design Pro workbench', () => {
         JSON.stringify({
           status: 'triaged',
           triage_note: '已纳入优化池',
+        }),
+      ]),
+    );
+  });
+
+  it('generates and decides real iteration suggestions from the insights page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products/product_api/versions?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: '2026Q3', id: 'version_api', name: '2026 Q3', status: 'planning' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/planning/iteration-suggestions' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                id: 'suggestion_generated',
+                planning_cycle: '2026Q3',
+                priority: 'P1',
+                product_id: 'product_api',
+                status: 'suggested',
+                title: '新迭代建议',
+                updated_at: '2026-06-01T08:30:00Z',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (
+        input === '/api/planning/iteration-suggestions/suggestion_existing/decide' &&
+        init?.method === 'POST'
+      ) {
+        return jsonResponse({
+          data: {
+            converted_requirement_id: 'requirement_from_suggestion',
+            decision: 'edited_accepted',
+            id: 'suggestion_existing',
+            status: 'converted_to_requirement',
+            title: '优化知识检索',
+          },
+        });
+      }
+      if (input === '/api/planning/iteration-suggestions') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                confidence_level: 'medium',
+                id: 'suggestion_existing',
+                planning_cycle: '2026Q3',
+                priority: 'P1',
+                product_id: 'product_api',
+                status: 'suggested',
+                title: '优化知识检索',
+                updated_at: '2026-06-01T08:00:00Z',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<InsightsPage />);
+
+    expect(await screen.findByText('优化知识检索')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '生成迭代建议' }));
+    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
+    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
+    fireEvent.mouseDown(screen.getByLabelText('目标版本'));
+    fireEvent.click(await screen.findByRole('option', { name: '2026 Q3' }));
+    fireEvent.change(screen.getByLabelText('规划周期'), { target: { value: '2026Q3' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/planning/iteration-suggestions',
+        'POST',
+        JSON.stringify({
+          constraints: { max_suggestions: 10 },
+          planning_cycle: '2026Q3',
+          product_id: 'product_api',
+          version_id: 'version_api',
+        }),
+      ]),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '确认建议' }));
+    fireEvent.change(screen.getByLabelText('确认备注'), { target: { value: '进入下阶段' } });
+    fireEvent.click(screen.getByLabelText('转为正式需求'));
+    fireEvent.change(await screen.findByLabelText('需求标题'), { target: { value: '优化知识检索体验' } });
+    fireEvent.change(screen.getByLabelText('需求范围'), { target: { value: '优先处理检索召回与排序' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/planning/iteration-suggestions/suggestion_existing/decide',
+        'POST',
+        JSON.stringify({
+          comment: '进入下阶段',
+          convert_to_requirement: true,
+          decision: 'edited_accepted',
+          edited_scope: '优先处理检索召回与排序',
+          edited_title: '优化知识检索体验',
         }),
       ]),
     );
