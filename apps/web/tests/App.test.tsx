@@ -1477,6 +1477,88 @@ describe('AI Brain Ant Design Pro workbench', () => {
     );
   });
 
+  it('records real usage metrics from the insights page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products/product_api/versions?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/insights/usage-metrics' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            active_users: 42,
+            feature_code: 'semantic-search',
+            id: 'usage_created',
+            product_id: 'product_api',
+            user_segment: 'rd',
+            window_start: '2026-06-01T00:00:00Z',
+          },
+        });
+      }
+      if (input === '/api/insights/usage-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<InsightsPage />);
+
+    await screen.findByRole('button', { name: '登记使用指标' });
+    fireEvent.click(screen.getByRole('button', { name: '登记使用指标' }));
+    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
+    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
+    fireEvent.change(screen.getByLabelText('模块编码'), { target: { value: 'search' } });
+    fireEvent.change(screen.getByLabelText('功能编码'), { target: { value: 'semantic-search' } });
+    fireEvent.change(screen.getByLabelText('用户分群'), { target: { value: 'rd' } });
+    fireEvent.change(screen.getByLabelText('窗口开始'), { target: { value: '2026-06-01T00:00:00Z' } });
+    fireEvent.change(screen.getByLabelText('窗口结束'), { target: { value: '2026-06-01T01:00:00Z' } });
+    fireEvent.change(screen.getByLabelText('活跃用户'), { target: { value: '42' } });
+    fireEvent.change(screen.getByLabelText('事件次数'), { target: { value: '120' } });
+    fireEvent.change(screen.getByLabelText('转化次数'), { target: { value: '15' } });
+    fireEvent.change(screen.getByLabelText('转化率'), { target: { value: '0.36' } });
+    fireEvent.change(screen.getByLabelText('平均时长秒'), { target: { value: '36.5' } });
+    fireEvent.change(screen.getByLabelText('跳出率'), { target: { value: '0.18' } });
+    fireEvent.change(screen.getByLabelText('错误次数'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/insights/usage-metrics',
+        'POST',
+        JSON.stringify({
+          active_users: 42,
+          avg_duration_seconds: 36.5,
+          bounce_rate: 0.18,
+          conversion_count: 15,
+          conversion_rate: 0.36,
+          error_count: 2,
+          event_count: 120,
+          feature_code: 'semantic-search',
+          module_code: 'search',
+          product_id: 'product_api',
+          source_channel: 'manual_import',
+          user_segment: 'rd',
+          window_end: '2026-06-01T01:00:00Z',
+          window_start: '2026-06-01T00:00:00Z',
+        }),
+      ]),
+    );
+  });
+
   it('generates and decides real iteration suggestions from the insights page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

@@ -8,6 +8,7 @@ import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows'
 import {
   createIterationSuggestions,
   createUserFeedback,
+  createUserUsageMetric,
   decideIterationSuggestion,
   fetchProductContextOptions,
   fetchUserInsights,
@@ -16,6 +17,7 @@ import {
   type IterationSuggestionDecisionPayload,
   type UserFeedbackCreatePayload,
   type UserInsightRecord,
+  type UserUsageMetricCreatePayload,
 } from '../../services/aiBrain';
 
 type FeedbackFormValues = {
@@ -29,6 +31,53 @@ type TriageFormValues = {
   status: string;
   triageNote?: string;
 };
+
+type UsageMetricFormValues = {
+  activeUsers?: string;
+  avgDurationSeconds?: string;
+  bounceRate?: string;
+  conversionCount?: string;
+  conversionRate?: string;
+  errorCount?: string;
+  eventCount?: string;
+  featureCode: string;
+  moduleCode?: string;
+  productId: string;
+  sourceChannel?: string;
+  userSegment?: string;
+  windowEnd: string;
+  windowStart: string;
+};
+
+function optionalNonNegativeNumberRule(label: string, max?: number) {
+  return {
+    validator: async (_: unknown, value?: string) => {
+      const trimmed = value?.trim();
+      if (!trimmed) {
+        return;
+      }
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed) || parsed < 0 || (max !== undefined && parsed > max)) {
+        throw new Error(`${label}请输入${max === 1 ? '0 到 1 之间的' : '非负'}数字`);
+      }
+    },
+  };
+}
+
+function optionalNonNegativeIntegerRule(label: string) {
+  return {
+    validator: async (_: unknown, value?: string) => {
+      const trimmed = value?.trim();
+      if (!trimmed) {
+        return;
+      }
+      const parsed = Number(trimmed);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        throw new Error(`${label}请输入非负整数`);
+      }
+    },
+  };
+}
 
 type SuggestionFormValues = {
   planningCycle: string;
@@ -81,6 +130,38 @@ function buildSuggestionPayload(values: SuggestionFormValues): IterationSuggesti
     planning_cycle: values.planningCycle.trim(),
     product_id: values.productId,
     version_id: values.versionId,
+  };
+}
+
+function optionalNumber(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function numberOrZero(value?: string) {
+  return optionalNumber(value) ?? 0;
+}
+
+function buildUsageMetricPayload(values: UsageMetricFormValues): UserUsageMetricCreatePayload {
+  return {
+    active_users: numberOrZero(values.activeUsers),
+    avg_duration_seconds: optionalNumber(values.avgDurationSeconds),
+    bounce_rate: optionalNumber(values.bounceRate),
+    conversion_count: numberOrZero(values.conversionCount),
+    conversion_rate: optionalNumber(values.conversionRate),
+    error_count: numberOrZero(values.errorCount),
+    event_count: numberOrZero(values.eventCount),
+    feature_code: values.featureCode.trim(),
+    module_code: values.moduleCode?.trim() || undefined,
+    product_id: values.productId,
+    source_channel: values.sourceChannel?.trim() || 'manual_import',
+    user_segment: values.userSegment?.trim() || 'all',
+    window_end: values.windowEnd.trim(),
+    window_start: values.windowStart.trim(),
   };
 }
 
@@ -213,10 +294,12 @@ export default function InsightsPage() {
   const [decisionTarget, setDecisionTarget] = useState<UserInsightRecord | null>(null);
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [triageTarget, setTriageTarget] = useState<UserInsightRecord | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
   const [createForm] = Form.useForm<FeedbackFormValues>();
   const [decisionForm] = Form.useForm<DecisionFormValues>();
   const [suggestionForm] = Form.useForm<SuggestionFormValues>();
   const [triageForm] = Form.useForm<TriageFormValues>();
+  const [usageForm] = Form.useForm<UsageMetricFormValues>();
   const productContexts = useProductContexts();
   const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
   const suggestionProductId = Form.useWatch('productId', suggestionForm);
@@ -260,6 +343,13 @@ export default function InsightsPage() {
   }, [createForm, createOpen, productOptions]);
 
   useEffect(() => {
+    if (!usageOpen || productOptions.length !== 1 || usageForm.getFieldValue('productId')) {
+      return;
+    }
+    usageForm.setFieldValue('productId', productOptions[0]?.value);
+  }, [productOptions, usageForm, usageOpen]);
+
+  useEffect(() => {
     if (!suggestionOpen || productOptions.length !== 1 || suggestionForm.getFieldValue('productId')) {
       return;
     }
@@ -292,6 +382,14 @@ export default function InsightsPage() {
     await createIterationSuggestions(buildSuggestionPayload(values));
     setSuggestionOpen(false);
     suggestionForm.resetFields();
+    await reload();
+  };
+
+  const submitUsageMetric = async () => {
+    const values = await usageForm.validateFields();
+    await createUserUsageMetric(buildUsageMetricPayload(values));
+    setUsageOpen(false);
+    usageForm.resetFields();
     await reload();
   };
 
@@ -349,6 +447,9 @@ export default function InsightsPage() {
         tableTitle="用户洞察/迭代规划"
         title="用户洞察/迭代规划"
         toolbarActions={[
+          <Button aria-label="登记使用指标" key="usage" onClick={() => setUsageOpen(true)}>
+            登记使用指标
+          </Button>,
           <Button aria-label="生成迭代建议" key="suggestion" onClick={() => setSuggestionOpen(true)}>
             生成迭代建议
           </Button>,
@@ -371,6 +472,65 @@ export default function InsightsPage() {
             <Select options={versionOptions} />
           </Form.Item>
           <Form.Item label="规划周期" name="planningCycle" rules={[{ required: true, message: '请输入规划周期' }]}>
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        okText="保存"
+        okButtonProps={{ 'aria-label': '保存' }}
+        onCancel={() => setUsageOpen(false)}
+        onOk={() => void submitUsageMetric()}
+        open={usageOpen}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        title="登记使用指标"
+      >
+        <Form<UsageMetricFormValues>
+          form={usageForm}
+          initialValues={{ sourceChannel: 'manual_import', userSegment: 'all' }}
+          layout="vertical"
+        >
+          <Form.Item label="所属产品" name="productId" rules={[{ required: true, message: '请选择所属产品' }]}>
+            <Select options={productOptions} />
+          </Form.Item>
+          <Form.Item label="模块编码" name="moduleCode">
+            <Input />
+          </Form.Item>
+          <Form.Item label="功能编码" name="featureCode" rules={[{ required: true, message: '请输入功能编码' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="用户分群" name="userSegment">
+            <Input />
+          </Form.Item>
+          <Form.Item label="窗口开始" name="windowStart" rules={[{ required: true, message: '请输入窗口开始时间' }]}>
+            <Input placeholder="2026-06-01T00:00:00Z" />
+          </Form.Item>
+          <Form.Item label="窗口结束" name="windowEnd" rules={[{ required: true, message: '请输入窗口结束时间' }]}>
+            <Input placeholder="2026-06-01T01:00:00Z" />
+          </Form.Item>
+          <Form.Item label="活跃用户" name="activeUsers" rules={[optionalNonNegativeIntegerRule('活跃用户')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="事件次数" name="eventCount" rules={[optionalNonNegativeIntegerRule('事件次数')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="转化次数" name="conversionCount" rules={[optionalNonNegativeIntegerRule('转化次数')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="转化率" name="conversionRate" rules={[optionalNonNegativeNumberRule('转化率', 1)]}>
+            <Input placeholder="0.36" />
+          </Form.Item>
+          <Form.Item label="平均时长秒" name="avgDurationSeconds" rules={[optionalNonNegativeNumberRule('平均时长秒')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="跳出率" name="bounceRate" rules={[optionalNonNegativeNumberRule('跳出率', 1)]}>
+            <Input placeholder="0.18" />
+          </Form.Item>
+          <Form.Item label="错误次数" name="errorCount" rules={[optionalNonNegativeIntegerRule('错误次数')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="来源渠道" name="sourceChannel">
             <Input />
           </Form.Item>
         </Form>

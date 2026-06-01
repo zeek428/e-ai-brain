@@ -13,7 +13,7 @@ from urllib.parse import quote, urlparse
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -389,6 +389,23 @@ class UserFeedbackPatchRequest(BaseModel):
     triage_note: str | None = None
 
 
+class UserUsageMetricRequest(BaseModel):
+    product_id: str
+    module_code: str | None = None
+    feature_code: str
+    user_segment: str = "all"
+    window_start: str
+    window_end: str
+    active_users: int = 0
+    event_count: int = 0
+    conversion_count: int = 0
+    conversion_rate: float | None = None
+    avg_duration_seconds: float | None = None
+    bounce_rate: float | None = None
+    error_count: int = 0
+    source_channel: str | None = None
+
+
 class IterationSuggestionRequest(BaseModel):
     product_id: str
     planning_cycle: str
@@ -643,6 +660,42 @@ def _validate_satisfaction_score(score: int | None) -> None:
         raise api_error(400, "VALIDATION_ERROR", "satisfaction_score must be between 1 and 5")
 
 
+def _parse_usage_window(value: str, field_name: str) -> str:
+    text = _ensure_non_blank(value, field_name)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise api_error(400, "VALIDATION_ERROR", f"{field_name} must be an ISO datetime") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat()
+
+
+def _validate_usage_metric_payload(payload: UserUsageMetricRequest) -> tuple[str, str]:
+    for field_name in ("active_users", "event_count", "conversion_count", "error_count"):
+        if getattr(payload, field_name) < 0:
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                f"{field_name} must be greater than or equal to 0",
+            )
+    for field_name in ("conversion_rate", "bounce_rate"):
+        value = getattr(payload, field_name)
+        if value is not None and (value < 0 or value > 1):
+            raise api_error(400, "VALIDATION_ERROR", f"{field_name} must be between 0 and 1")
+    if payload.avg_duration_seconds is not None and payload.avg_duration_seconds < 0:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "avg_duration_seconds must be greater than or equal to 0",
+        )
+    window_start = _parse_usage_window(payload.window_start, "window_start")
+    window_end = _parse_usage_window(payload.window_end, "window_end")
+    if window_end <= window_start:
+        raise api_error(400, "VALIDATION_ERROR", "window_end must be after window_start")
+    return window_start, window_end
+
+
 def _validate_user_feedback_context(
     current_store: MemoryStore,
     *,
@@ -661,6 +714,24 @@ def _validate_user_feedback_context(
         requirement = current_store.requirements.get(related_requirement_id)
         if requirement is None or requirement["product_id"] != product_id:
             raise api_error(404, "NOT_FOUND", "Requirement not found")
+
+
+def _validate_usage_metric_context(
+    current_store: MemoryStore,
+    *,
+    product_id: str,
+    module_code: str | None = None,
+) -> None:
+    product = current_store.products.get(product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
+    if module_code is not None and not any(
+        module["product_id"] == product_id and module["code"] == module_code
+        for module in current_store.product_modules.values()
+    ):
+        raise api_error(404, "NOT_FOUND", "Product module not found")
 
 
 def _normalized_tags(tags: list[str]) -> list[str]:
@@ -5114,9 +5185,101 @@ def online_log_metrics(
 @app.get("/api/insights/usage-metrics")
 def usage_metrics(
     request: Request,
+    product_id: str | None = None,
+    module_code: str | None = None,
+    feature_code: str | None = None,
+    user_segment: str | None = None,
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(empty_list_payload(), get_trace_id(request))
+    current_store = store(request)
+    from_value = _parse_usage_window(from_, "from") if from_ is not None else None
+    to_value = _parse_usage_window(to, "to") if to is not None else None
+    items = []
+    for metric in current_store.user_usage_metrics.values():
+        if product_id is not None and metric.get("product_id") != product_id:
+            continue
+        if module_code is not None and metric.get("module_code") != module_code:
+            continue
+        if feature_code is not None and metric.get("feature_code") != feature_code:
+            continue
+        if user_segment is not None and metric.get("user_segment") != user_segment:
+            continue
+        if from_value is not None and metric.get("window_end") < from_value:
+            continue
+        if to_value is not None and metric.get("window_start") > to_value:
+            continue
+        items.append(metric)
+    items.sort(
+        key=lambda item: (
+            item.get("window_start") or "",
+            item.get("updated_at") or item.get("created_at") or "",
+        ),
+        reverse=True,
+    )
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/insights/usage-metrics")
+def create_usage_metric(
+    payload: UserUsageMetricRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = store(request)
+    _validate_usage_metric_context(
+        current_store,
+        product_id=payload.product_id,
+        module_code=payload.module_code,
+    )
+    window_start, window_end = _validate_usage_metric_payload(payload)
+    now = datetime.now(UTC).isoformat()
+    metric_id = current_store.new_id("usage")
+    metric = {
+        "active_users": payload.active_users,
+        "avg_duration_seconds": payload.avg_duration_seconds,
+        "bounce_rate": payload.bounce_rate,
+        "conversion_count": payload.conversion_count,
+        "conversion_rate": payload.conversion_rate,
+        "created_at": now,
+        "created_by": user["id"],
+        "error_count": payload.error_count,
+        "event_count": payload.event_count,
+        "feature_code": _ensure_non_blank(payload.feature_code, "feature_code"),
+        "id": metric_id,
+        "module_code": payload.module_code,
+        "product_id": payload.product_id,
+        "source_channel": payload.source_channel,
+        "updated_at": now,
+        "user_segment": _ensure_non_blank(payload.user_segment, "user_segment"),
+        "window_end": window_end,
+        "window_start": window_start,
+    }
+    for optional_key in (
+        "avg_duration_seconds",
+        "bounce_rate",
+        "conversion_rate",
+        "module_code",
+        "source_channel",
+    ):
+        if metric[optional_key] is None:
+            metric.pop(optional_key)
+    current_store.user_usage_metrics[metric_id] = metric
+    current_store.audit(
+        event_type="usage_metric.created",
+        actor_id=user["id"],
+        subject_type="usage_metric",
+        subject_id=metric_id,
+        payload={
+            "feature_code": metric["feature_code"],
+            "product_id": metric["product_id"],
+            "window_end": metric["window_end"],
+            "window_start": metric["window_start"],
+        },
+    )
+    return envelope(metric, get_trace_id(request))
 
 
 @app.get("/api/insights/user-feedback")

@@ -36,6 +36,9 @@ AUDIT_FIELDS = [
 BUG_FIELDS = [
     "bugs",
 ]
+USER_USAGE_METRIC_FIELDS = [
+    "user_usage_metrics",
+]
 USER_FEEDBACK_FIELDS = [
     "user_feedback",
 ]
@@ -69,6 +72,7 @@ COLLECTION_FIELDS = [
     "knowledge_deposits",
     "mock_writebacks",
     "bugs",
+    "user_usage_metrics",
     "user_feedback",
     "iteration_plan_suggestions",
     "iteration_plan_decisions",
@@ -128,6 +132,12 @@ class BugRepository(Protocol):
     def load_bugs(self) -> dict[str, Any] | None: ...
 
     def save_bugs(self, payload: dict[str, Any]) -> None: ...
+
+
+class UserUsageMetricRepository(Protocol):
+    def load_user_usage_metrics(self) -> dict[str, Any] | None: ...
+
+    def save_user_usage_metrics(self, payload: dict[str, Any]) -> None: ...
 
 
 class UserFeedbackRepository(Protocol):
@@ -208,6 +218,10 @@ def _audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _bugs_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in BUG_FIELDS}
+
+
+def _user_usage_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in USER_USAGE_METRIC_FIELDS}
 
 
 def _user_feedback_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -353,6 +367,15 @@ def _repository_load_bugs(repository: SnapshotRepository) -> dict[str, Any] | No
     return load_bugs()
 
 
+def _repository_load_user_usage_metrics(
+    repository: SnapshotRepository,
+) -> dict[str, Any] | None:
+    load_user_usage_metrics = getattr(repository, "load_user_usage_metrics", None)
+    if load_user_usage_metrics is None:
+        return None
+    return load_user_usage_metrics()
+
+
 def _repository_load_user_feedback(repository: SnapshotRepository) -> dict[str, Any] | None:
     load_user_feedback = getattr(repository, "load_user_feedback", None)
     if load_user_feedback is None:
@@ -424,6 +447,17 @@ def _repository_save_bugs(
     save_bugs = getattr(repository, "save_bugs", None)
     if save_bugs is not None:
         save_bugs(_bugs_payload(payload))
+
+
+def _repository_save_user_usage_metrics(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_user_usage_metrics = getattr(repository, "save_user_usage_metrics", None)
+    if save_user_usage_metrics is not None:
+        clean_payload = deepcopy(payload)
+        _drop_user_usage_metrics_without_context(clean_payload)
+        save_user_usage_metrics(_user_usage_metric_payload(clean_payload))
 
 
 def _repository_save_user_feedback(
@@ -505,6 +539,10 @@ def _has_audit_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_bug_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in BUG_FIELDS)
+
+
+def _has_user_usage_metric_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in USER_USAGE_METRIC_FIELDS)
 
 
 def _has_user_feedback_items(payload: dict[str, Any] | None) -> bool:
@@ -621,6 +659,15 @@ def _sync_bug_counters(payload: dict[str, Any]) -> None:
     counters["bug"] = max(
         counters.get("bug", 0),
         _max_numeric_suffix(payload.get("bugs", {}), "bug"),
+    )
+    payload["counters"] = counters
+
+
+def _sync_user_usage_metric_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["usage"] = max(
+        counters.get("usage", 0),
+        _max_numeric_suffix(payload.get("user_usage_metrics", {}), "usage"),
     )
     payload["counters"] = counters
 
@@ -857,6 +904,18 @@ def _drop_user_feedback_without_context(payload: dict[str, Any]) -> None:
     payload["user_feedback"] = cleaned_feedback
 
 
+def _drop_user_usage_metrics_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    metrics = payload.get("user_usage_metrics", {})
+    cleaned_metrics = {}
+    for metric_id, metric in metrics.items():
+        product_id = metric.get("product_id")
+        if products and product_id not in products:
+            continue
+        cleaned_metrics[metric_id] = deepcopy(metric)
+    payload["user_usage_metrics"] = cleaned_metrics
+
+
 def _drop_iteration_planning_without_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     versions = payload.get("product_versions", {})
@@ -1038,6 +1097,14 @@ class PersistentMemoryStore(MemoryStore):
                 BUG_FIELDS,
             )
             _sync_bug_counters(payload)
+        user_usage_metric_payload = _repository_load_user_usage_metrics(repository)
+        if _has_user_usage_metric_items(user_usage_metric_payload):
+            _replace_collection_payload(
+                payload,
+                _user_usage_metric_payload(user_usage_metric_payload),
+                USER_USAGE_METRIC_FIELDS,
+            )
+            _sync_user_usage_metric_counters(payload)
         user_feedback_payload = _repository_load_user_feedback(repository)
         if _has_user_feedback_items(user_feedback_payload):
             _replace_collection_payload(
@@ -1087,6 +1154,7 @@ class PersistentMemoryStore(MemoryStore):
             _drop_knowledge_without_context(payload)
         if has_structured_product_config or _has_requirement_items(requirements_payload):
             _drop_bugs_without_context(payload)
+            _drop_user_usage_metrics_without_context(payload)
             _drop_user_feedback_without_context(payload)
             _drop_iteration_planning_without_context(payload)
         _drop_gitlab_review_without_context(payload)
@@ -1117,6 +1185,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_knowledge(self.repository, payload)
         _repository_save_audit_events(self.repository, payload)
         _repository_save_bugs(self.repository, payload)
+        _repository_save_user_usage_metrics(self.repository, payload)
         _repository_save_user_feedback(self.repository, payload)
         _repository_save_iteration_planning(self.repository, payload)
         _repository_save_model_gateway(self.repository, payload)
@@ -1235,6 +1304,12 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 feedback = self._load_user_feedback(cursor)
         return {"user_feedback": feedback}
+
+    def load_user_usage_metrics(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                metrics = self._load_user_usage_metrics(cursor)
+        return {"user_usage_metrics": metrics}
 
     def load_iteration_planning(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -1362,6 +1437,13 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "user_feedback", feedback)
                 self._upsert_user_feedback(cursor, feedback)
+
+    def save_user_usage_metrics(self, payload: dict[str, Any]) -> None:
+        metrics = payload.get("user_usage_metrics", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "user_usage_metrics", metrics)
+                self._upsert_user_usage_metrics(cursor, metrics)
 
     def save_iteration_planning(self, payload: dict[str, Any]) -> None:
         suggestions = payload.get("iteration_plan_suggestions", {})
@@ -1903,6 +1985,54 @@ class PostgresSnapshotRepository:
                     feedback.pop(optional_key)
             feedback_items[row[0]] = feedback
         return feedback_items
+
+    def _load_user_usage_metrics(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, product_id, module_code, feature_code, user_segment,
+                   window_start, window_end, active_users, event_count,
+                   conversion_count, conversion_rate, avg_duration_seconds,
+                   bounce_rate, error_count, source_channel, created_by,
+                   created_at, updated_at
+            FROM user_usage_metrics
+            ORDER BY window_start, id
+            """
+        )
+        metrics = {}
+        for row in cursor.fetchall():
+            metric = {
+                "active_users": row[7],
+                "avg_duration_seconds": float(row[11]) if row[11] is not None else None,
+                "bounce_rate": float(row[12]) if row[12] is not None else None,
+                "conversion_count": row[9],
+                "conversion_rate": float(row[10]) if row[10] is not None else None,
+                "created_at": row[16].isoformat() if row[16] else None,
+                "created_by": row[15],
+                "error_count": row[13],
+                "event_count": row[8],
+                "feature_code": row[3],
+                "id": row[0],
+                "module_code": row[2],
+                "product_id": row[1],
+                "source_channel": row[14],
+                "updated_at": row[17].isoformat() if row[17] else None,
+                "user_segment": row[4],
+                "window_end": row[6].isoformat() if row[6] else None,
+                "window_start": row[5].isoformat() if row[5] else None,
+            }
+            for optional_key in (
+                "avg_duration_seconds",
+                "bounce_rate",
+                "conversion_rate",
+                "created_at",
+                "module_code",
+                "source_channel",
+                "updated_at",
+            ):
+                if metric[optional_key] is None:
+                    metric.pop(optional_key)
+            metrics[row[0]] = metric
+        return metrics
 
     def _load_iteration_plan_suggestions(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -2983,6 +3113,69 @@ class PostgresSnapshotRepository:
                     feedback.get("status", "open"),
                     feedback.get("triage_note"),
                     feedback["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_user_usage_metrics(
+        self,
+        cursor,
+        metrics: dict[str, dict[str, Any]],
+    ) -> None:
+        for metric in metrics.values():
+            created_at = metric.get("created_at")
+            updated_at = metric.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO user_usage_metrics (
+                  id, product_id, module_code, feature_code, user_segment,
+                  window_start, window_end, active_users, event_count,
+                  conversion_count, conversion_rate, avg_duration_seconds,
+                  bounce_rate, error_count, source_channel, created_by,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  module_code = EXCLUDED.module_code,
+                  feature_code = EXCLUDED.feature_code,
+                  user_segment = EXCLUDED.user_segment,
+                  window_start = EXCLUDED.window_start,
+                  window_end = EXCLUDED.window_end,
+                  active_users = EXCLUDED.active_users,
+                  event_count = EXCLUDED.event_count,
+                  conversion_count = EXCLUDED.conversion_count,
+                  conversion_rate = EXCLUDED.conversion_rate,
+                  avg_duration_seconds = EXCLUDED.avg_duration_seconds,
+                  bounce_rate = EXCLUDED.bounce_rate,
+                  error_count = EXCLUDED.error_count,
+                  source_channel = EXCLUDED.source_channel,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    metric["id"],
+                    metric["product_id"],
+                    metric.get("module_code"),
+                    metric["feature_code"],
+                    metric.get("user_segment", "all"),
+                    metric["window_start"],
+                    metric["window_end"],
+                    metric.get("active_users", 0),
+                    metric.get("event_count", 0),
+                    metric.get("conversion_count", 0),
+                    metric.get("conversion_rate"),
+                    metric.get("avg_duration_seconds"),
+                    metric.get("bounce_rate"),
+                    metric.get("error_count", 0),
+                    metric.get("source_channel"),
+                    metric["created_by"],
                     created_at,
                     updated_at,
                 ),

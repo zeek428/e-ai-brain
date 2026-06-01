@@ -170,6 +170,23 @@ export type UserFeedbackPatchPayload = {
   triage_note?: string;
 };
 
+export type UserUsageMetricCreatePayload = {
+  active_users?: number;
+  avg_duration_seconds?: number;
+  bounce_rate?: number;
+  conversion_count?: number;
+  conversion_rate?: number;
+  error_count?: number;
+  event_count?: number;
+  feature_code: string;
+  module_code?: string;
+  product_id: string;
+  source_channel?: string;
+  user_segment?: string;
+  window_end: string;
+  window_start: string;
+};
+
 export type IterationSuggestionCreatePayload = {
   constraints?: Record<string, unknown>;
   module_codes?: string[];
@@ -2156,6 +2173,17 @@ export async function fetchUserInsights(): Promise<UserInsightRecord[]> {
 export async function createUserFeedback(payload: UserFeedbackCreatePayload): Promise<FlexibleListItem> {
   const token = requireAccessToken();
   return apiRequest<FlexibleListItem>('/api/insights/user-feedback', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function createUserUsageMetric(
+  payload: UserUsageMetricCreatePayload,
+): Promise<FlexibleListItem> {
+  const token = requireAccessToken();
+  return apiRequest<FlexibleListItem>('/api/insights/usage-metrics', {
     body: payload,
     method: 'POST',
     token,
