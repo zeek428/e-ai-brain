@@ -182,3 +182,15 @@ def test_initial_migration_matches_runtime_record_shapes():
     assert "executor_name text NOT NULL" not in migration
 
     assert "created_by text NOT NULL" in migration
+
+
+def test_pgvector_migration_defines_knowledge_embedding_index():
+    migrations = "\n".join(
+        path.read_text()
+        for path in sorted(Path("app/db/migrations").glob("*.sql"))
+    )
+
+    assert "CREATE EXTENSION IF NOT EXISTS vector" in migrations
+    assert "idx_knowledge_chunks_embedding" in migrations
+    assert "USING hnsw" in migrations
+    assert "vector_cosine_ops" in migrations
