@@ -252,6 +252,42 @@ def test_gitlab_mr_preview_and_snapshot_are_read_only_and_immutable(monkeypatch)
     assert [event["event_type"] for event in audit_events] == ["gitlab_mr.snapshotted"]
 
 
+def test_gitlab_mr_snapshot_reuses_existing_snapshot_for_same_diff(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    context = build_confirmed_solution_context(headers)
+
+    first = client.post(
+        f"/api/devops/gitlab/merge-requests/{context['repository_id']}/42/snapshot",
+        json={
+            "requirement_id": context["requirement_id"],
+            "technical_solution_task_id": context["technical_solution_task_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    second = client.post(
+        f"/api/devops/gitlab/merge-requests/{context['repository_id']}/42/snapshot",
+        json={
+            "requirement_id": context["requirement_id"],
+            "technical_solution_task_id": context["technical_solution_task_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+
+    assert second["id"] == first["id"]
+    assert second["snapshot_hash"] == first["snapshot_hash"]
+    assert list(app.state.store.gitlab_mr_snapshots) == [first["id"]]
+
+    audit_events = client.get(
+        f"/api/audit/events?subject_type=gitlab_mr_snapshot&subject_id={first['id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert [event["event_type"] for event in audit_events] == [
+        "gitlab_mr.snapshot_reused",
+        "gitlab_mr.snapshotted",
+    ]
+
+
 def test_gitlab_snapshot_records_audit_when_diff_exceeds_limit(monkeypatch):
     headers = auth_headers()
     context = build_confirmed_solution_context(headers)

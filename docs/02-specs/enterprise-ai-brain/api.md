@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.29 |
+| 功能版本 | v1.1.30 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -51,6 +51,7 @@
 | v1.1.27 | 2026-05-31 | 明确角色业务映射、菜单范围、限制边界，并补充知识索引失败原因与重试接口 | Codex |
 | v1.1.28 | 2026-06-01 | 生命周期视图支持从审计主体、Review、Code Review 报告、MR 快照、模拟 Issue 和知识沉淀精准追踪上下文 | Codex |
 | v1.1.29 | 2026-06-01 | 知识检索不再为缺失 chunk 的 indexed 文档合成结果，索引不一致时返回真实空结果 | Codex |
+| v1.1.30 | 2026-06-01 | GitLab MR diff 快照按 repository_id + snapshot_hash 复用已有快照，并记录复用审计事件 | Codex |
 
 ---
 
@@ -822,7 +823,7 @@ GET /api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview
 }
 ```
 
-MR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持内部 GitLab 只读项目绑定、MR 预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再预览 MR、生成快照，最后用 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`。`remote_url` 用于推导 GitLab base URL，也可由 `GITLAB_BASE_URL` 提供；`credential_ref` 推荐使用 `env:GITLAB_READONLY_TOKEN`，响应不得返回凭据值。MR diff、变更文件数或单文件 diff 行数超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录 `gitlab_mr.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`changed_file_count`、`changed_file_limit`、`file_diff_line_count`、`file_diff_line_limit`、`file_path`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
+MR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持内部 GitLab 只读项目绑定、MR 预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再预览 MR、生成快照，最后用 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`。`remote_url` 用于推导 GitLab base URL，也可由 `GITLAB_BASE_URL` 提供；`credential_ref` 推荐使用 `env:GITLAB_READONLY_TOKEN`，响应不得返回凭据值。同一 `repository_id + snapshot_hash` 已存在时，快照接口返回已有 snapshot 并记录 `gitlab_mr.snapshot_reused`，不得重复入库。MR diff、变更文件数或单文件 diff 行数超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录 `gitlab_mr.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`changed_file_count`、`changed_file_limit`、`file_diff_line_count`、`file_diff_line_limit`、`file_path`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
 
 生成 MR diff 快照：
 
@@ -900,6 +901,7 @@ GET /api/ai-tasks/{task_id}/code-review-report
 约束：
 
 - MR diff 快照不可被 GitLab 后续变更静默覆盖；重新 Review 必须创建新快照或新运行记录。
+- 重复拉取相同仓库的相同 diff 时返回已有快照，并通过 `gitlab_mr.snapshot_reused` 保留审计痕迹。
 - Review 报告经人工确认或修改后采纳后才可归档为正式结论。
 - v1 MVP 不提供 GitLab 评论、审批状态、request changes、合并状态或分支变更回写接口。
 - 首页 IT 团队看板返回当前业务数据聚合，不返回空集合占位；研发运营看板和用户洞察/迭代规划在未接入真实采集器前返回空集合响应，响应必须包含 `items` 和 `total`，不得返回占位状态或伪造统计数据。Bug 管理已进入 v1.1 基础实现，不再使用空集合替代业务数据。
@@ -1576,6 +1578,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
 | v1.1.29 | 2026-06-01 | 知识检索不再为缺失 chunk 的 indexed 文档合成结果，索引不一致时返回真实空结果。 |
+| v1.1.30 | 2026-06-01 | GitLab MR diff 快照按 repository_id + snapshot_hash 复用已有快照，并记录复用审计事件。 |
 | v1.1.28 | 2026-06-01 | 生命周期视图支持从审计主体、Review、Code Review 报告、MR 快照、模拟 Issue 和知识沉淀精准追踪上下文。 |
 | v1.1.27 | 2026-05-31 | 角色目录补充业务角色、可见入口和限制边界；知识文档索引失败保留 `index_error` 并支持重试。 |
 | v1.1.26 | 2026-05-31 | 生命周期视图和首页看板聚合按任务读权限过滤，避免聚合接口泄露无权任务或 Review。 |

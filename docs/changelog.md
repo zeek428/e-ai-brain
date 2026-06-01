@@ -77,6 +77,7 @@
 - 任务管理创建 Code Review 的参数区改为弹窗内纵向表单，并清理旧任务中心左右分栏样式遗留，保持与需求管理等管理页一致。
 - GitLab MR 预览和 diff 快照改为读取真实 GitLab 只读 API；产品 Git 资源需配置可解析的 `remote_url` 或 `GITLAB_BASE_URL` 以及只读 token 凭据引用，缺失配置时返回明确错误，不再静默生成本地假 MR。
 - GitLab MR diff、变更文件数或单文件 diff 行数超限时记录 `gitlab_mr.snapshot_failed` 审计事件，保留实际 diff 大小、文件数、单文件行数、限制和关联需求/技术方案任务。
+- GitLab MR diff 快照现在按 `repository_id + snapshot_hash` 复用已有快照，重复拉取相同 diff 不重复入库，并记录 `gitlab_mr.snapshot_reused` 审计事件。
 - 明确 MVP 用户角色目录，新增 `/api/auth/roles` 角色查询接口、PostgreSQL `role_definitions` 可重复迁移脚本，并将用户管理角色录入改为固定多选。
 - 角色目录补齐职责、数据范围、决策范围、权限点、可分配状态和排序信息；用户管理和知识权限配置均从后端角色目录加载固定选项，不再依赖前端静态角色定义或自由文本录入。
 - 系统管理新增“角色管理”二级菜单，只读展示后端角色目录、职责、数据范围、决策范围和权限点，明确 MVP 不自由创建未定义角色。

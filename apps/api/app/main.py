@@ -2443,6 +2443,30 @@ def snapshot_gitlab_mr(
         raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
 
     snapshot_hash = hashlib.sha256(diff_payload.encode()).hexdigest()
+    existing_snapshot = next(
+        (
+            snapshot
+            for snapshot in current_store.gitlab_mr_snapshots.values()
+            if snapshot.get("repository_id") == repository_id
+            and snapshot.get("snapshot_hash") == snapshot_hash
+        ),
+        None,
+    )
+    if existing_snapshot is not None:
+        current_store.audit(
+            event_type="gitlab_mr.snapshot_reused",
+            actor_id=user["id"],
+            subject_type="gitlab_mr_snapshot",
+            subject_id=existing_snapshot["id"],
+            payload={
+                "repository_id": repository_id,
+                "mr_iid": mr_iid,
+                "requirement_id": payload.requirement_id,
+                "technical_solution_task_id": payload.technical_solution_task_id,
+            },
+        )
+        return envelope(existing_snapshot, get_trace_id(request))
+
     snapshot_id = current_store.new_id("snapshot")
     snapshot = {
         "id": snapshot_id,
