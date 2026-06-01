@@ -3599,16 +3599,7 @@ def search_knowledge(
             continue
         chunks = _knowledge_document_chunks(current_store, document["id"])
         if not chunks:
-            chunks = [
-                {
-                    "chunk_index": 1,
-                    "content": document["content"],
-                    "document_id": document["id"],
-                    "id": f"{document['id']}_chunk_001",
-                    "metadata": {"doc_type": document["doc_type"], "title": document["title"]},
-                    "permission_roles": list(document.get("permission_roles", [])),
-                }
-            ]
+            continue
         for chunk in chunks:
             chunk_roles = chunk.get("permission_roles", document["permission_roles"])
             if not _user_can_read_roles(user, chunk_roles):

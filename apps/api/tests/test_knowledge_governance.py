@@ -173,6 +173,34 @@ def test_knowledge_search_returns_permission_filtered_chunks_and_reindexes_on_up
     assert [item["chunk_id"] for item in fresh_results] == [f"{document['id']}_chunk_001"]
 
 
+def test_knowledge_search_does_not_synthesize_chunks_when_index_rows_are_missing():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    document = client.post(
+        "/api/knowledge/documents",
+        json={
+            "title": "索引缺失文档",
+            "content": "missing-chunk-token must not be returned without a stored chunk.",
+            "permission_roles": ["admin"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    app.state.store.knowledge_chunks = {
+        chunk_id: chunk
+        for chunk_id, chunk in app.state.store.knowledge_chunks.items()
+        if chunk["document_id"] != document["id"]
+    }
+
+    results = client.post(
+        "/api/knowledge/search",
+        json={"query": "missing-chunk-token", "top_k": 5},
+        headers=admin_headers,
+    ).json()["data"]["items"]
+
+    assert results == []
+
+
 def test_knowledge_index_failure_keeps_error_and_retry_rebuilds_chunks():
     app.state.store.reset()
     admin_headers = auth_headers()
