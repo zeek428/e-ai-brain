@@ -2598,6 +2598,13 @@ def create_ai_task(
     else:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported task_type")
 
+    if requirement["status"] not in {"approved", "task_created"}:
+        raise api_error(
+            409,
+            "REQUIREMENT_STATE_INVALID",
+            "Requirement must be approved or task_created before creating AI tasks",
+        )
+
     task_id = current_store.new_id("task")
     task = {
         "id": task_id,
@@ -2618,6 +2625,10 @@ def create_ai_task(
         "created_by": user["id"],
     }
     current_store.ai_tasks[task_id] = task
+    requirement["status"] = "task_created"
+    task_ids = requirement.setdefault("task_ids", [])
+    if task_id not in task_ids:
+        task_ids.append(task_id)
     current_store.audit(
         event_type="ai_task.created",
         actor_id=user["id"],

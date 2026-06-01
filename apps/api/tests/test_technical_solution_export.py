@@ -98,6 +98,53 @@ def test_technical_solution_requires_confirmed_design_and_exports_markdown():
     assert "审批后需要生成详细设计和技术方案。" in markdown.text
 
 
+def test_followup_task_creation_updates_requirement_task_references():
+    headers = auth_headers()
+    requirement, design_task_id = create_confirmed_product_detail_task(headers)
+
+    created = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "technical_solution",
+            "title": "技术方案：补齐需求任务链路",
+            "requirement_id": requirement["id"],
+            "input": {"product_detail_design_task_id": design_task_id},
+        },
+        headers=headers,
+    ).json()["data"]
+
+    requirement_detail = client.get(
+        f"/api/requirements/{requirement['id']}",
+        headers=headers,
+    ).json()["data"]
+    assert requirement_detail["status"] == "task_created"
+    assert requirement_detail["task_ids"] == [design_task_id, created["id"]]
+
+
+def test_closed_requirement_rejects_followup_task_creation():
+    headers = auth_headers()
+    requirement, design_task_id = create_confirmed_product_detail_task(headers)
+    closed = client.post(
+        f"/api/requirements/{requirement['id']}/close",
+        headers=headers,
+    ).json()["data"]
+    assert closed["status"] == "closed"
+
+    response = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "technical_solution",
+            "title": "技术方案：关闭后不允许创建",
+            "requirement_id": requirement["id"],
+            "input": {"product_detail_design_task_id": design_task_id},
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "REQUIREMENT_STATE_INVALID"
+
+
 def test_markdown_export_obeys_task_read_permissions():
     headers = auth_headers()
     requirement, design_task_id = create_confirmed_product_detail_task(headers)

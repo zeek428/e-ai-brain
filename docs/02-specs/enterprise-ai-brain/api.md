@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.30 |
+| 功能版本 | v1.1.31 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -52,6 +52,7 @@
 | v1.1.28 | 2026-06-01 | 生命周期视图支持从审计主体、Review、Code Review 报告、MR 快照、模拟 Issue 和知识沉淀精准追踪上下文 | Codex |
 | v1.1.29 | 2026-06-01 | 知识检索不再为缺失 chunk 的 indexed 文档合成结果，索引不一致时返回真实空结果 | Codex |
 | v1.1.30 | 2026-06-01 | GitLab MR diff 快照按 repository_id + snapshot_hash 复用已有快照，并记录复用审计事件 | Codex |
+| v1.1.31 | 2026-06-01 | 低层 AI 任务创建同步回写需求任务引用，并拒绝已关闭或未审批需求继续创建任务 | Codex |
 
 ---
 
@@ -678,6 +679,7 @@ POST /api/ai-tasks
 - `input.product_id` 和 `input.version_id` 必填，且必须指向可用产品和未归档版本。
 - `input.module_codes` 可选；提供时必须属于所选产品且处于启用状态。
 - 后端会把产品、版本、模块和 Git 资源解析到 `input.product_context`。
+- 需求状态必须为 `approved` 或 `task_created`；创建成功后需求保持 `task_created` 并追加该任务到 `task_ids`。`closed`、`pending_approval`、`rejected` 等状态返回 `409 REQUIREMENT_STATE_INVALID`。
 - `task_type = code_review` 时，`input.gitlab_mr_snapshot_id` 必填；快照必须先通过 MR 预览/快照接口生成，并且当前用户必须对快照所属产品 Git 资源和 MR 具备 Review 权限。
 - 后端创建 code_review 任务时只引用已有不可变快照，不在任务创建接口中重复拉取 MR diff。
 - code_review 任务只归档 AI Brain 内部 Review 报告，不向 GitLab 回写评论、审批状态、request changes、合并状态或分支变更。
