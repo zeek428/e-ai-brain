@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.39 |
+| 功能版本 | v1.1.40 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -61,6 +61,7 @@
 | v1.1.37 | 2026-06-01 | 将 GitLab 每日代码指标从空集合入口升级为真实登记、筛选、审计和 PostgreSQL 结构表持久化 | Codex |
 | v1.1.38 | 2026-06-01 | 将 Jenkins 发布记录从空集合入口升级为真实登记、筛选、审计和 PostgreSQL 结构表持久化 | Codex |
 | v1.1.39 | 2026-06-01 | 将线上运行日志指标从空集合入口升级为真实登记、筛选、审计和 PostgreSQL 结构表持久化 | Codex |
+| v1.1.40 | 2026-06-01 | 补齐 development_planning 和 automated_testing 低层任务创建、人工确认门禁和自动化测试 Bug 建议入库契约 | Codex |
 
 ---
 
@@ -78,7 +79,7 @@ API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研
 
 模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。
 
-任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录，线上运行日志指标可通过 `/api/ops/online-log-metrics` 登记和筛选真实产品/模块/环境/时间窗口聚合指标；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志可手工登记或导入真实聚合指标，无记录时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
+任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务、基于已确认技术方案创建 `development_planning` 和 `automated_testing` 任务，并对已完成技术方案导出 Markdown。`automated_testing` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_auto_test` 并关联产品、版本、需求和 AI 任务。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录，线上运行日志指标可通过 `/api/ops/online-log-metrics` 登记和筛选真实产品/模块/环境/时间窗口聚合指标；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志可手工登记或导入真实聚合指标，无记录时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
 
 当前补充实现：`POST /api/planning/iteration-suggestions` 已基于库内真实 `user_feedback` 与 `bugs` 证据生成迭代建议；无证据时返回真实空集合，不生成占位建议。`POST /api/planning/iteration-suggestions/{suggestion_id}/decide` 支持产品负责人、研发负责人或管理员确认采纳、修改后采纳或驳回；只有 `accepted` / `edited_accepted` 且 `convert_to_requirement=true` 时才创建真实 `requirements` 记录。建议与确认分别写入 `iteration_plan_suggestions` 和 `iteration_plan_decisions`，并记录 `iteration_suggestion.generated` / `iteration_suggestion.decided` 审计事件。
 
@@ -669,18 +670,11 @@ POST /api/ai-tasks
 
 ```json
 {
-  "brain_app_code": "rd_brain",
-  "task_type": "product_detail_design",
-  "title": "支持企业知识库导入 Markdown",
-  "priority": "P1",
+  "task_type": "technical_solution",
+  "title": "技术方案：支持企业知识库导入 Markdown",
+  "requirement_id": "requirement_001",
   "input": {
-    "background": "团队知识散落在 Markdown 文档中",
-    "goal": "导入后可被研发大脑检索引用",
-    "constraints": ["v1 使用 PostgreSQL + pgvector"],
-    "product_id": "product_001",
-    "version_id": "version_001",
-    "module_codes": ["knowledge"],
-    "related_system_codes": ["rd"]
+    "product_detail_design_task_id": "task_design_001"
   }
 }
 ```
@@ -689,17 +683,24 @@ POST /api/ai-tasks
 
 ```json
 {
-  "brain_app_code": "rd_brain",
   "task_type": "code_review",
   "title": "Review MR !42: 知识导入",
-  "priority": "P0",
+  "requirement_id": "requirement_001",
   "input": {
-    "product_id": "product_001",
-    "version_id": "version_001",
-    "module_codes": ["knowledge"],
-    "requirement_id": "requirement_001",
-    "technical_solution_task_id": "task_tech_001",
     "gitlab_mr_snapshot_id": "mr_snapshot_001"
+  }
+}
+```
+
+`development_planning` 和 `automated_testing` 任务请求体示例：
+
+```json
+{
+  "task_type": "development_planning",
+  "title": "开发计划：知识导入",
+  "requirement_id": "requirement_001",
+  "input": {
+    "technical_solution_task_id": "task_tech_001"
   }
 }
 ```
@@ -707,13 +708,14 @@ POST /api/ai-tasks
 规则：
 
 - `title` 必填。
-- `input.product_id` 和 `input.version_id` 必填，且必须指向可用产品和未归档版本。
-- `input.module_codes` 可选；提供时必须属于所选产品且处于启用状态。
-- 后端会把产品、版本、模块和 Git 资源解析到 `input.product_context`。
+- `requirement_id` 必填，后端从需求解析产品、版本、模块、Git 资源和相关系统上下文并写入任务快照。
 - 需求状态必须为 `approved` 或 `task_created`；创建成功后需求保持 `task_created` 并追加该任务到 `task_ids`。`closed`、`pending_approval`、`rejected` 等状态返回 `409 REQUIREMENT_STATE_INVALID`。
+- `task_type = technical_solution` 时，`input.product_detail_design_task_id` 必须指向同一需求、同一产品版本下已完成的 `product_detail_design` 任务。
+- `task_type = development_planning` 或 `automated_testing` 时，`input.technical_solution_task_id` 必须指向同一需求、同一产品版本下已完成的 `technical_solution` 任务；否则返回 `TECHNICAL_SOLUTION_NOT_CONFIRMED` 或上下文不匹配错误。
 - `task_type = code_review` 时，`input.gitlab_mr_snapshot_id` 必填；快照必须先通过 MR 预览/快照接口生成，并且当前用户必须对快照所属产品 Git 资源和 MR 具备 Review 权限。
 - 后端创建 code_review 任务时只引用已有不可变快照，不在任务创建接口中重复拉取 MR diff。
 - code_review 任务只归档 AI Brain 内部 Review 报告，不向 GitLab 回写评论、审批状态、request changes、合并状态或分支变更。
+- `automated_testing` 任务进入人工确认前不会登记 Bug；人工确认 `approve` 或 `edit-approve` 后，输出中的 `bug_suggestions` 才会生成 `source=ai_auto_test` 的 Bug 记录。
 - 前端默认通过需求审批后的 `generate-task` 创建 AI 任务，不直接调用该低层接口。
 
 响应：

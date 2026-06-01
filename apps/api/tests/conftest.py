@@ -103,6 +103,48 @@ def fake_openai_compatible_model_gateway(monkeypatch):
                 "kind": "technical_solution",
                 "summary": "测试模型生成的技术方案。",
             }
+        elif task_type == "development_planning":
+            content = {
+                "code_change_suggestions": [
+                    {
+                        "file_path": "apps/api/app/main.py",
+                        "suggestion": "补充 v1.1 任务类型创建和评审闭环。",
+                    }
+                ],
+                "development_tasks": [
+                    {
+                        "estimate": "1d",
+                        "owner_role": "rd_owner",
+                        "title": "实现开发计划任务链路",
+                    }
+                ],
+                "implementation_steps": ["从已确认技术方案生成开发计划。", "进入人工确认。"],
+                "kind": "development_planning",
+                "summary": "测试模型生成的开发计划。",
+            }
+        elif task_type == "automated_testing":
+            content = {
+                "automation_script_suggestions": [
+                    {
+                        "framework": "pytest",
+                        "path": "apps/api/tests/test_v1_1_task_types.py",
+                    }
+                ],
+                "bug_suggestions": [
+                    {
+                        "description": "自动化测试发现任务类型未接入真实创建链路。",
+                        "reproduce_steps": [
+                            "创建已确认技术方案任务。",
+                            "创建 automated_testing 任务并启动。",
+                        ],
+                        "severity": "major",
+                        "title": "自动化测试任务类型未落库",
+                    }
+                ],
+                "kind": "automated_testing",
+                "summary": "测试模型生成的自动化测试建议。",
+                "test_cases": ["覆盖 v1.1 后续任务创建、启动、确认。"],
+            }
         else:
             content = {
                 "acceptance_points": ["测试环境模拟 provider 响应。"],

@@ -21,7 +21,9 @@ import { ManagementListPage, StatusTag } from '../../components/ManagementListPa
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   approveTaskCenterReview,
+  createAutomatedTestingTask,
   createCodeReviewTask,
+  createDevelopmentPlanningTask,
   createTechnicalSolutionTask,
   createTaskWritebackResult,
   fetchCodeReviewReport,
@@ -58,7 +60,9 @@ const taskStatusLabels: Record<string, { color: string; label: string }> = {
 };
 
 const taskTypeLabels: Record<string, string> = {
+  automated_testing: '自动化测试',
   code_review: 'Code Review',
+  development_planning: '开发计划',
   product_detail_design: '产品详细设计',
   technical_solution: '技术方案',
 };
@@ -271,6 +275,26 @@ export default function TaskCenterPage() {
     }
   }, [reloadTaskCenter]);
 
+  const handleCreateDevelopmentPlanning = useCallback(async (task: TaskCenterTaskRecord) => {
+    try {
+      await createDevelopmentPlanningTask(task);
+      message.success('开发计划任务已创建');
+      await reloadTaskCenter();
+    } catch (taskError) {
+      message.error(formatMutationError(taskError));
+    }
+  }, [reloadTaskCenter]);
+
+  const handleCreateAutomatedTesting = useCallback(async (task: TaskCenterTaskRecord) => {
+    try {
+      await createAutomatedTestingTask(task);
+      message.success('自动化测试任务已创建');
+      await reloadTaskCenter();
+    } catch (taskError) {
+      message.error(formatMutationError(taskError));
+    }
+  }, [reloadTaskCenter]);
+
   const handleOpenCodeReview = useCallback(async (task: TaskCenterTaskRecord) => {
     if (!task.productId) {
       message.error('缺少产品编号，无法加载产品 Git 仓库。');
@@ -464,10 +488,20 @@ export default function TaskCenterPage() {
     ) {
       actions.push(
         {
+          key: 'create-development-planning',
+          label: '生成开发计划',
+          onClick: closeAndRun(() => handleCreateDevelopmentPlanning(selectedActionTask)),
+          type: 'primary',
+        },
+        {
+          key: 'create-automated-testing',
+          label: '生成自动化测试',
+          onClick: closeAndRun(() => handleCreateAutomatedTesting(selectedActionTask)),
+        },
+        {
           key: 'create-code-review',
           label: '创建 Code Review',
           onClick: closeAndRun(() => handleOpenCodeReview(selectedActionTask)),
-          type: 'primary',
         },
         {
           key: 'export-markdown',
@@ -495,6 +529,8 @@ export default function TaskCenterPage() {
 
     return actions;
   }, [
+    handleCreateAutomatedTesting,
+    handleCreateDevelopmentPlanning,
     handleCreateTechnicalSolution,
     handleExportMarkdown,
     handleOpenCodeReview,
@@ -604,6 +640,8 @@ export default function TaskCenterPage() {
             options: [
               { label: '产品详细设计', value: 'product_detail_design' },
               { label: '技术方案', value: 'technical_solution' },
+              { label: '开发计划', value: 'development_planning' },
+              { label: '自动化测试', value: 'automated_testing' },
               { label: 'Code Review', value: 'code_review' },
             ],
             type: 'select',

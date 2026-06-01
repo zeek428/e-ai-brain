@@ -64,11 +64,18 @@ BRAIN_APPS = {
         "status": "active",
         "description": "把研发需求转成可确认、可回写、可沉淀的任务方案。",
         "config": {
-            "default_task_types": ["product_detail_design", "technical_solution", "code_review"],
+            "default_task_types": [
+                "product_detail_design",
+                "technical_solution",
+                "development_planning",
+                "automated_testing",
+                "code_review",
+            ],
         },
     }
 }
 
+TECHNICAL_SOLUTION_FOLLOWUP_TASK_TYPES = {"development_planning", "automated_testing"}
 BUG_SOURCES = {"ai_auto_test", "manual_test"}
 BUG_SEVERITIES = {"blocker", "critical", "major", "minor"}
 BUG_STATUSES = {
@@ -2795,10 +2802,25 @@ def _product_context(current_store: MemoryStore, requirement: dict[str, Any]) ->
         ),
         None,
     )
+    repositories = [
+        repository
+        for repository in current_store.product_git_repositories.values()
+        if repository["product_id"] == product["id"] and repository.get("status") == "active"
+    ]
+    related_systems = [
+        related_system
+        for related_system in current_store.related_systems.values()
+        if related_system["product_id"] == product["id"]
+        and related_system.get("status") == "active"
+    ]
     return {
         "product": current_store.snapshot(product),
         "version": current_store.snapshot(version),
         "module": current_store.snapshot(module) if module else None,
+        "repositories": current_store.snapshot({"items": repositories, "total": len(repositories)}),
+        "related_systems": current_store.snapshot(
+            {"items": related_systems, "total": len(related_systems)}
+        ),
     }
 
 
@@ -3040,6 +3062,31 @@ def _ensure_gitlab_snapshot_context(
         _raise_gitlab_context_mismatch(
             "Technical solution task and requirement must belong to the same version"
         )
+
+
+def _ensure_confirmed_technical_solution_task(
+    current_store: MemoryStore,
+    *,
+    requirement: dict[str, Any],
+    technical_solution_task_id: Any,
+) -> dict[str, Any]:
+    technical_solution = current_store.ai_tasks.get(str(technical_solution_task_id))
+    if (
+        technical_solution is None
+        or technical_solution["task_type"] != "technical_solution"
+        or technical_solution["status"] != "completed"
+    ):
+        raise api_error(
+            400,
+            "TECHNICAL_SOLUTION_NOT_CONFIRMED",
+            "Task requires a confirmed technical solution",
+        )
+    _ensure_task_matches_requirement(
+        technical_solution,
+        requirement,
+        source_label="Technical solution",
+    )
+    return technical_solution
 
 
 @app.get("/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview")
@@ -3296,6 +3343,13 @@ def create_ai_task(
             requirement,
             source_label="Product detail design",
         )
+    elif payload.task_type in TECHNICAL_SOLUTION_FOLLOWUP_TASK_TYPES:
+        _require_roles(user, {"product_owner", "rd_owner"})
+        _ensure_confirmed_technical_solution_task(
+            current_store,
+            requirement=requirement,
+            technical_solution_task_id=payload.input.get("technical_solution_task_id"),
+        )
     elif payload.task_type == "code_review":
         _require_roles(user, {"reviewer", "rd_owner"})
         snapshot_id = payload.input.get("gitlab_mr_snapshot_id")
@@ -3412,6 +3466,110 @@ def _confirm_code_review_report(current_store: MemoryStore, task: dict[str, Any]
     report["archived_at"] = datetime.now(UTC).isoformat()
 
 
+def _bug_suggestion_text(
+    suggestion: dict[str, Any],
+    key: str,
+    fallback: str,
+) -> str:
+    value = suggestion.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return fallback
+
+
+def _bug_suggestion_steps(suggestion: dict[str, Any]) -> list[str]:
+    raw_steps = suggestion.get("reproduce_steps") or suggestion.get("steps") or []
+    if isinstance(raw_steps, str):
+        raw_steps = [raw_steps]
+    if not isinstance(raw_steps, list):
+        raw_steps = []
+    steps = [str(step).strip() for step in raw_steps if str(step).strip()]
+    if steps:
+        return steps
+    return ["执行自动化测试建议中的用例并复现失败。"]
+
+
+def _create_automated_testing_bugs(
+    current_store: MemoryStore,
+    *,
+    actor_id: str,
+    task: dict[str, Any],
+) -> list[str]:
+    if task["task_type"] != "automated_testing":
+        return []
+    output = task.get("output_json") or {}
+    suggestions = output.get("bug_suggestions")
+    if not isinstance(suggestions, list):
+        return []
+
+    created_bug_ids: list[str] = []
+    now = datetime.now(UTC).isoformat()
+    for index, raw_suggestion in enumerate(suggestions, start=1):
+        suggestion = raw_suggestion if isinstance(raw_suggestion, dict) else {}
+        severity = str(suggestion.get("severity") or "major")
+        if severity not in BUG_SEVERITIES:
+            severity = "major"
+        assignee = suggestion.get("assignee")
+        bug_id = current_store.new_id("bug")
+        bug = {
+            "id": bug_id,
+            "product_id": task["product_id"],
+            "version_id": task["version_id"],
+            "module_code": task.get("module_code"),
+            "source": "ai_auto_test",
+            "title": _bug_suggestion_text(
+                suggestion,
+                "title",
+                f"自动化测试发现 {index}：{task['title']}",
+            ),
+            "severity": severity,
+            "description": _bug_suggestion_text(
+                suggestion,
+                "description",
+                "自动化测试任务确认后生成的缺陷建议。",
+            ),
+            "status": "open",
+            "assignee": assignee if isinstance(assignee, str) else None,
+            "related_task_id": task["id"],
+            "requirement_id": task["requirement_id"],
+            "reproduce_steps": _bug_suggestion_steps(suggestion),
+            "evidence": {
+                "generated_by_task_type": task["task_type"],
+                "suggestion": current_store.snapshot(suggestion),
+            },
+            "duplicate_of_bug_id": None,
+            "created_by": actor_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        current_store.bugs[bug_id] = bug
+        created_bug_ids.append(bug_id)
+        current_store.audit(
+            event_type="bug.created",
+            actor_id=actor_id,
+            ai_task_id=task["id"],
+            subject_type="bug",
+            subject_id=bug_id,
+            payload={
+                "severity": bug["severity"],
+                "source": bug["source"],
+                "status": bug["status"],
+            },
+        )
+
+    if created_bug_ids:
+        task["generated_bug_ids"] = created_bug_ids
+        current_store.audit(
+            event_type="automated_testing.bugs_created",
+            actor_id=actor_id,
+            ai_task_id=task["id"],
+            subject_type="ai_task",
+            subject_id=task["id"],
+            payload={"bug_ids": created_bug_ids},
+        )
+    return created_bug_ids
+
+
 def _ensure_review_decidable(
     current_store: MemoryStore,
     *,
@@ -3444,6 +3602,7 @@ def _complete_review_with_edited_approval(
     review["decided_by"] = actor_id
     task["status"] = "completed"
     _confirm_code_review_report(current_store, task)
+    _create_automated_testing_bugs(current_store, actor_id=actor_id, task=task)
     _create_knowledge_deposit(current_store, task)
     _transition_latest_graph_run(
         current_store,
@@ -3927,6 +4086,7 @@ def approve_review(
     review["decided_by"] = user["id"]
     task["status"] = "completed"
     _confirm_code_review_report(current_store, task)
+    _create_automated_testing_bugs(current_store, actor_id=user["id"], task=task)
     _create_knowledge_deposit(current_store, task)
     _transition_latest_graph_run(
         current_store,

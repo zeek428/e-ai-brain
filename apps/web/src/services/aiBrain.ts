@@ -1831,6 +1831,16 @@ function codeReviewTitleFromTechnicalSolutionTask(task: TaskCenterTaskRecord, mr
   return `Code Review：${title || task.label} MR !${mrIid}`;
 }
 
+function developmentPlanningTitleFromTechnicalSolutionTask(task: TaskCenterTaskRecord) {
+  const title = task.label.replace(/^技术方案[:：]\s*/, '').trim();
+  return `开发计划：${title || task.label}`;
+}
+
+function automatedTestingTitleFromTechnicalSolutionTask(task: TaskCenterTaskRecord) {
+  const title = task.label.replace(/^技术方案[:：]\s*/, '').trim();
+  return `自动化测试：${title || task.label}`;
+}
+
 export async function createTechnicalSolutionTask(task: TaskCenterTaskRecord) {
   const token = requireAccessToken();
   if (!task.requirementId) {
@@ -1846,6 +1856,48 @@ export async function createTechnicalSolutionTask(task: TaskCenterTaskRecord) {
       requirement_id: task.requirementId,
       task_type: 'technical_solution',
       title: technicalSolutionTitleFromDesignTask(task),
+    },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function createDevelopmentPlanningTask(task: TaskCenterTaskRecord) {
+  const token = requireAccessToken();
+  if (!task.requirementId) {
+    throw new ApiRequestError({
+      code: 'VALIDATION_ERROR',
+      message: '缺少需求编号，无法创建开发计划任务。',
+      status: 400,
+    });
+  }
+  return apiRequest<{ id: string; status: string }>('/api/ai-tasks', {
+    body: {
+      input: { technical_solution_task_id: task.id },
+      requirement_id: task.requirementId,
+      task_type: 'development_planning',
+      title: developmentPlanningTitleFromTechnicalSolutionTask(task),
+    },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function createAutomatedTestingTask(task: TaskCenterTaskRecord) {
+  const token = requireAccessToken();
+  if (!task.requirementId) {
+    throw new ApiRequestError({
+      code: 'VALIDATION_ERROR',
+      message: '缺少需求编号，无法创建自动化测试任务。',
+      status: 400,
+    });
+  }
+  return apiRequest<{ id: string; status: string }>('/api/ai-tasks', {
+    body: {
+      input: { technical_solution_task_id: task.id },
+      requirement_id: task.requirementId,
+      task_type: 'automated_testing',
+      title: automatedTestingTitleFromTechnicalSolutionTask(task),
     },
     method: 'POST',
     token,

@@ -257,6 +257,8 @@ import {
   apiRequest,
   AUTH_STATE_EVENT,
   clearAccessToken,
+  createAutomatedTestingTask,
+  createDevelopmentPlanningTask,
   createManagementBug,
   createModelGatewayConfig,
   createTaskWritebackResult,
@@ -656,6 +658,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByRole('button', { name: '导出 Markdown' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '模拟 Issue' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '创建 Code Review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成开发计划' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成自动化测试' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看报告' })).not.toBeInTheDocument();
     expect(screen.queryByText('确认台')).not.toBeInTheDocument();
     expect(screen.queryByText('确认编号')).not.toBeInTheDocument();
@@ -671,6 +675,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(operationDialog).toContainElement(actionSection);
     expect(summarySection.compareDocumentPosition(actionSection)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(actionSection).toHaveClass('task-operation-actions');
+    expect(screen.getByRole('button', { name: '生成开发计划' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '生成自动化测试' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '创建 Code Review' })).toBeInTheDocument();
     fireEvent.click(screen.getAllByLabelText('Close')[0]);
     fireEvent.click(screen.getByRole('button', { name: '待确认' }));
@@ -3283,6 +3289,24 @@ describe('AI Brain Ant Design Pro workbench', () => {
       status: 'completed',
       type: 'product_detail_design',
     });
+    await createDevelopmentPlanningTask({
+      id: 'task_solution',
+      label: '技术方案：CRUD 需求',
+      owner: 'user_admin',
+      productId: 'product_api',
+      requirementId: 'requirement_api',
+      status: 'completed',
+      type: 'technical_solution',
+    });
+    await createAutomatedTestingTask({
+      id: 'task_solution',
+      label: '技术方案：CRUD 需求',
+      owner: 'user_admin',
+      productId: 'product_api',
+      requirementId: 'requirement_api',
+      status: 'completed',
+      type: 'technical_solution',
+    });
     await expect(fetchTaskMarkdown('task_solution')).resolves.toBe('# Markdown 导出');
     await fetchProductGitRepositories('product_api');
     await previewGitLabMergeRequest('repo_api', 42);
@@ -3333,6 +3357,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/ai-tasks/task_api/start', 'POST'],
       ['/api/reviews/review_api/approve', 'POST'],
       ['/api/ai-tasks', 'POST'],
+      ['/api/ai-tasks', 'POST'],
+      ['/api/ai-tasks', 'POST'],
       ['/api/export/tasks/task_solution/markdown', 'GET'],
       ['/api/products/product_api/git-repositories?active_only=true', 'GET'],
       ['/api/devops/gitlab/merge-requests/repo_api/42/preview', 'GET'],
@@ -3348,13 +3374,29 @@ describe('AI Brain Ant Design Pro workbench', () => {
         title: '技术方案：CRUD 需求',
       }),
     );
-    expect(fetchMock.mock.calls[24]?.[1]?.body).toBe(
+    expect(fetchMock.mock.calls[21]?.[1]?.body).toBe(
+      JSON.stringify({
+        input: { technical_solution_task_id: 'task_solution' },
+        requirement_id: 'requirement_api',
+        task_type: 'development_planning',
+        title: '开发计划：CRUD 需求',
+      }),
+    );
+    expect(fetchMock.mock.calls[22]?.[1]?.body).toBe(
+      JSON.stringify({
+        input: { technical_solution_task_id: 'task_solution' },
+        requirement_id: 'requirement_api',
+        task_type: 'automated_testing',
+        title: '自动化测试：CRUD 需求',
+      }),
+    );
+    expect(fetchMock.mock.calls[26]?.[1]?.body).toBe(
       JSON.stringify({
         requirement_id: 'requirement_api',
         technical_solution_task_id: 'task_solution',
       }),
     );
-    expect(fetchMock.mock.calls[25]?.[1]?.body).toBe(
+    expect(fetchMock.mock.calls[27]?.[1]?.body).toBe(
       JSON.stringify({
         input: { gitlab_mr_snapshot_id: 'snapshot_api' },
         requirement_id: 'requirement_api',
