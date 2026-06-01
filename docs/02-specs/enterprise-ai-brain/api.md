@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.37 |
+| 功能版本 | v1.1.38 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -59,6 +59,7 @@
 | v1.1.35 | 2026-06-01 | 将迭代规划建议升级为基于真实反馈/Bug 证据生成、确认和可选转需求的 PostgreSQL 持久化闭环 | Codex |
 | v1.1.36 | 2026-06-01 | 将用户使用指标从空集合入口升级为真实登记、筛选、审计和 PostgreSQL 结构表持久化 | Codex |
 | v1.1.37 | 2026-06-01 | 将 GitLab 每日代码指标从空集合入口升级为真实登记、筛选、审计和 PostgreSQL 结构表持久化 | Codex |
+| v1.1.38 | 2026-06-01 | 将 Jenkins 发布记录从空集合入口升级为真实登记、筛选、审计和 PostgreSQL 结构表持久化 | Codex |
 
 ---
 
@@ -70,19 +71,21 @@ API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研
 
 当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
 
-产品管理页面可维护产品版本、模块和 Git 资源；产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、用户反馈、用户使用指标、迭代规划建议/确认、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`user_feedback`、`user_usage_metrics`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
+产品管理页面可维护产品版本、模块和 Git 资源；产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、用户反馈、用户使用指标、迭代规划建议/确认、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`user_feedback`、`user_usage_metrics`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 
 知识文档创建、更新和知识沉淀采纳会同步重建 chunk，并通过 active/default OpenAI-compatible 模型网关或环境模型网关调用 `/embeddings` 生成 `knowledge_chunks.embedding`；索引失败进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`score` 和来源引用，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。
 
 模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。
 
-任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；Jenkins 与线上日志接口在未接入采集器时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
+任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务，并对已完成技术方案导出 Markdown。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志接口在未接入采集器时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
 
 当前补充实现：`POST /api/planning/iteration-suggestions` 已基于库内真实 `user_feedback` 与 `bugs` 证据生成迭代建议；无证据时返回真实空集合，不生成占位建议。`POST /api/planning/iteration-suggestions/{suggestion_id}/decide` 支持产品负责人、研发负责人或管理员确认采纳、修改后采纳或驳回；只有 `accepted` / `edited_accepted` 且 `convert_to_requirement=true` 时才创建真实 `requirements` 记录。建议与确认分别写入 `iteration_plan_suggestions` 和 `iteration_plan_decisions`，并记录 `iteration_suggestion.generated` / `iteration_suggestion.decided` 审计事件。
 
 用户使用指标当前支持通过 `POST /api/insights/usage-metrics` 手工登记或导入真实聚合指标，通过 `GET /api/insights/usage-metrics` 按产品、模块、功能、用户群体和时间范围筛选；记录写入 `user_usage_metrics`，并记录 `usage_metric.created` 审计事件。无指标时返回真实空集合，不生成兜底数据。
 
 GitLab 每日代码指标当前支持通过 `POST /api/devops/gitlab/daily-code-metrics` 手工登记或导入真实聚合指标，通过 `GET /api/devops/gitlab/daily-code-metrics` 按产品、仓库和日期筛选；记录写入 `gitlab_daily_code_metrics`，并记录 `gitlab_daily_code_metric.created` 审计事件。无指标时返回真实空集合，不生成兜底数据。
+
+Jenkins 发布记录当前支持通过 `POST /api/devops/jenkins/releases` 手工登记或导入真实发布记录，通过 `GET /api/devops/jenkins/releases` 按产品、版本、状态和环境筛选；记录写入 `jenkins_release_records`，并记录 `jenkins_release.created` 审计事件。无记录时返回真实空集合，不生成兜底数据。
 
 生命周期视图和首页 IT 团队看板的 AI 任务、待确认 Review、知识沉淀和风险信号聚合必须先按任务类型读权限过滤，不能通过聚合接口绕过任务详情权限。
 
@@ -264,6 +267,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | GitLab Review | POST | `/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/snapshot` | 拉取 MR 元信息和 diff，生成 code_review 输入快照。 |
 | Code Review | GET | `/api/ai-tasks/{task_id}/code-review-report` | 查询内部 GitLab MR 代码 Review 报告、执行器信息和确认状态。 |
 | DevOps | GET | `/api/devops/jenkins/releases` | 查询 Jenkins 发布记录。 |
+| DevOps | POST | `/api/devops/jenkins/releases` | 登记真实 Jenkins 发布记录。 |
 | Ops | GET | `/api/ops/online-log-metrics` | 查询线上运行日志运营指标。 |
 | Bug | GET | `/api/bugs` | 查询 Bug 列表。 |
 | Bug | POST | `/api/bugs` | v1.1 基础接口，登记 AI 自动测试或人工测试 Bug。 |
@@ -1166,17 +1170,61 @@ Jenkins 发布记录：
 GET /api/devops/jenkins/releases?product_id=product_001&version_id=version_001
 ```
 
-当前实现尚未接入真实 Jenkins 采集器时返回空集合；不得返回伪造发布数据：
+当前实现支持按产品、版本、状态和环境筛选真实登记或导入的 Jenkins 发布记录；无记录时返回真实空集合：
 
 ```json
 {
   "data": {
-    "items": [],
-    "total": 0
+    "items": [
+      {
+        "id": "jenkins_release_001",
+        "product_id": "product_001",
+        "version_id": "version_001",
+        "job_name": "rd-brain-deploy",
+        "build_id": "build-20260601-001",
+        "build_number": 128,
+        "environment": "prod",
+        "status": "success",
+        "trigger_actor": "release-bot",
+        "commit_sha": "8f6b7c1",
+        "duration_seconds": 420,
+        "started_at": "2026-06-01T12:20:00Z",
+        "deployed_at": "2026-06-01T12:27:00Z",
+        "source_channel": "manual_import",
+        "created_by": "user_admin",
+        "created_at": "2026-06-01T12:30:00Z"
+      }
+    ],
+    "total": 1
   },
   "trace_id": "trace_012"
 }
 ```
+
+产品负责人、研发负责人或管理员可登记真实发布记录：
+
+```http
+POST /api/devops/jenkins/releases
+Content-Type: application/json
+
+{
+  "product_id": "product_001",
+  "version_id": "version_001",
+  "job_name": "rd-brain-deploy",
+  "build_id": "build-20260601-001",
+  "build_number": 128,
+  "environment": "prod",
+  "status": "success",
+  "trigger_actor": "release-bot",
+  "commit_sha": "8f6b7c1",
+  "duration_seconds": 420,
+  "started_at": "2026-06-01T12:20:00Z",
+  "deployed_at": "2026-06-01T12:27:00Z",
+  "source_channel": "manual_import"
+}
+```
+
+服务端校验产品处于 active 状态且版本归属该产品，archived 版本不得登记发布记录；`status` 只能为 `success`、`failed`、`running` 或 `canceled`，构建编号和耗时不得为负数，部署时间不得早于开始时间；写入 `jenkins_release_records` 后记录 `jenkins_release.created` 审计事件。
 
 线上运行日志运营指标：
 

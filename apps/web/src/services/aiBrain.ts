@@ -204,6 +204,23 @@ export type GitLabDailyCodeMetricCreatePayload = {
   status?: string;
 };
 
+export type JenkinsReleaseCreatePayload = {
+  build_id: string;
+  build_number?: number;
+  commit_sha?: string;
+  deployed_at?: string;
+  duration_seconds?: number;
+  environment?: string;
+  failure_reason?: string;
+  job_name: string;
+  product_id: string;
+  source_channel?: string;
+  started_at?: string;
+  status?: string;
+  trigger_actor?: string;
+  version_id: string;
+};
+
 export type IterationSuggestionCreatePayload = {
   constraints?: Record<string, unknown>;
   module_codes?: string[];
@@ -2115,13 +2132,24 @@ function mapOperationalMetrics(
     category,
     id: formatUnknownValue(item.id ?? `${category}-${index}`),
     name: formatUnknownValue(
-      firstKnownValue(item, ['name', 'metric_name', 'repository_name', 'release_name', 'title', 'metric_date']),
+      firstKnownValue(item, [
+        'name',
+        'metric_name',
+        'repository_name',
+        'release_name',
+        'title',
+        'job_name',
+        'build_id',
+        'metric_date',
+      ]),
     ),
     status: formatUnknownValue(item.status),
     updatedAt: formatListDate(
       formatUnknownValue(firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'date'])),
     ),
-    value: formatUnknownValue(firstKnownValue(item, ['value', 'count', 'score', 'summary', 'commit_count'])),
+    value: formatUnknownValue(
+      firstKnownValue(item, ['value', 'count', 'score', 'summary', 'commit_count', 'build_id', 'duration_seconds']),
+    ),
   }));
 }
 
@@ -2145,6 +2173,17 @@ export async function createGitLabDailyCodeMetric(
 ): Promise<FlexibleListItem> {
   const token = requireAccessToken();
   return apiRequest<FlexibleListItem>('/api/devops/gitlab/daily-code-metrics', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function createJenkinsRelease(
+  payload: JenkinsReleaseCreatePayload,
+): Promise<FlexibleListItem> {
+  const token = requireAccessToken();
+  return apiRequest<FlexibleListItem>('/api/devops/jenkins/releases', {
     body: payload,
     method: 'POST',
     token,

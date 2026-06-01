@@ -39,6 +39,9 @@ BUG_FIELDS = [
 GITLAB_DAILY_CODE_METRIC_FIELDS = [
     "gitlab_daily_code_metrics",
 ]
+JENKINS_RELEASE_RECORD_FIELDS = [
+    "jenkins_release_records",
+]
 USER_USAGE_METRIC_FIELDS = [
     "user_usage_metrics",
 ]
@@ -76,6 +79,7 @@ COLLECTION_FIELDS = [
     "mock_writebacks",
     "bugs",
     "gitlab_daily_code_metrics",
+    "jenkins_release_records",
     "user_usage_metrics",
     "user_feedback",
     "iteration_plan_suggestions",
@@ -142,6 +146,12 @@ class GitlabDailyCodeMetricRepository(Protocol):
     def load_gitlab_daily_code_metrics(self) -> dict[str, Any] | None: ...
 
     def save_gitlab_daily_code_metrics(self, payload: dict[str, Any]) -> None: ...
+
+
+class JenkinsReleaseRecordRepository(Protocol):
+    def load_jenkins_release_records(self) -> dict[str, Any] | None: ...
+
+    def save_jenkins_release_records(self, payload: dict[str, Any]) -> None: ...
 
 
 class UserUsageMetricRepository(Protocol):
@@ -232,6 +242,10 @@ def _bugs_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _gitlab_daily_code_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in GITLAB_DAILY_CODE_METRIC_FIELDS}
+
+
+def _jenkins_release_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in JENKINS_RELEASE_RECORD_FIELDS}
 
 
 def _user_usage_metric_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -394,6 +408,19 @@ def _repository_load_gitlab_daily_code_metrics(
     return load_gitlab_daily_code_metrics()
 
 
+def _repository_load_jenkins_release_records(
+    repository: SnapshotRepository,
+) -> dict[str, Any] | None:
+    load_jenkins_release_records = getattr(
+        repository,
+        "load_jenkins_release_records",
+        None,
+    )
+    if load_jenkins_release_records is None:
+        return None
+    return load_jenkins_release_records()
+
+
 def _repository_load_user_usage_metrics(
     repository: SnapshotRepository,
 ) -> dict[str, Any] | None:
@@ -491,6 +518,21 @@ def _repository_save_gitlab_daily_code_metrics(
         save_gitlab_daily_code_metrics(_gitlab_daily_code_metric_payload(clean_payload))
 
 
+def _repository_save_jenkins_release_records(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_jenkins_release_records = getattr(
+        repository,
+        "save_jenkins_release_records",
+        None,
+    )
+    if save_jenkins_release_records is not None:
+        clean_payload = deepcopy(payload)
+        _drop_jenkins_release_records_without_context(clean_payload)
+        save_jenkins_release_records(_jenkins_release_record_payload(clean_payload))
+
+
 def _repository_save_user_usage_metrics(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -585,6 +627,10 @@ def _has_bug_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_gitlab_daily_code_metric_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in GITLAB_DAILY_CODE_METRIC_FIELDS)
+
+
+def _has_jenkins_release_record_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in JENKINS_RELEASE_RECORD_FIELDS)
 
 
 def _has_user_usage_metric_items(payload: dict[str, Any] | None) -> bool:
@@ -716,6 +762,18 @@ def _sync_gitlab_daily_code_metric_counters(payload: dict[str, Any]) -> None:
         _max_numeric_suffix(
             payload.get("gitlab_daily_code_metrics", {}),
             "gitlab_metric",
+        ),
+    )
+    payload["counters"] = counters
+
+
+def _sync_jenkins_release_record_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["jenkins_release"] = max(
+        counters.get("jenkins_release", 0),
+        _max_numeric_suffix(
+            payload.get("jenkins_release_records", {}),
+            "jenkins_release",
         ),
     )
     payload["counters"] = counters
@@ -992,6 +1050,24 @@ def _drop_gitlab_daily_code_metrics_without_context(payload: dict[str, Any]) -> 
     payload["gitlab_daily_code_metrics"] = cleaned_metrics
 
 
+def _drop_jenkins_release_records_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    versions = payload.get("product_versions", {})
+    releases = payload.get("jenkins_release_records", {})
+    cleaned_releases = {}
+    for release_id, release in releases.items():
+        product_id = release.get("product_id")
+        version_id = release.get("version_id")
+        if products and product_id not in products:
+            continue
+        if versions and version_id not in versions:
+            continue
+        if versions and versions[version_id].get("product_id") != product_id:
+            continue
+        cleaned_releases[release_id] = deepcopy(release)
+    payload["jenkins_release_records"] = cleaned_releases
+
+
 def _drop_iteration_planning_without_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     versions = payload.get("product_versions", {})
@@ -1181,6 +1257,14 @@ class PersistentMemoryStore(MemoryStore):
                 GITLAB_DAILY_CODE_METRIC_FIELDS,
             )
             _sync_gitlab_daily_code_metric_counters(payload)
+        jenkins_release_record_payload = _repository_load_jenkins_release_records(repository)
+        if _has_jenkins_release_record_items(jenkins_release_record_payload):
+            _replace_collection_payload(
+                payload,
+                _jenkins_release_record_payload(jenkins_release_record_payload),
+                JENKINS_RELEASE_RECORD_FIELDS,
+            )
+            _sync_jenkins_release_record_counters(payload)
         user_usage_metric_payload = _repository_load_user_usage_metrics(repository)
         if _has_user_usage_metric_items(user_usage_metric_payload):
             _replace_collection_payload(
@@ -1239,6 +1323,7 @@ class PersistentMemoryStore(MemoryStore):
         if has_structured_product_config or _has_requirement_items(requirements_payload):
             _drop_bugs_without_context(payload)
             _drop_gitlab_daily_code_metrics_without_context(payload)
+            _drop_jenkins_release_records_without_context(payload)
             _drop_user_usage_metrics_without_context(payload)
             _drop_user_feedback_without_context(payload)
             _drop_iteration_planning_without_context(payload)
@@ -1271,6 +1356,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_audit_events(self.repository, payload)
         _repository_save_bugs(self.repository, payload)
         _repository_save_gitlab_daily_code_metrics(self.repository, payload)
+        _repository_save_jenkins_release_records(self.repository, payload)
         _repository_save_user_usage_metrics(self.repository, payload)
         _repository_save_user_feedback(self.repository, payload)
         _repository_save_iteration_planning(self.repository, payload)
@@ -1390,6 +1476,12 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 metrics = self._load_gitlab_daily_code_metrics(cursor)
         return {"gitlab_daily_code_metrics": metrics}
+
+    def load_jenkins_release_records(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                releases = self._load_jenkins_release_records(cursor)
+        return {"jenkins_release_records": releases}
 
     def load_user_feedback(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -1529,6 +1621,13 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "gitlab_daily_code_metrics", metrics)
                 self._upsert_gitlab_daily_code_metrics(cursor, metrics)
+
+    def save_jenkins_release_records(self, payload: dict[str, Any]) -> None:
+        releases = payload.get("jenkins_release_records", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "jenkins_release_records", releases)
+                self._upsert_jenkins_release_records(cursor, releases)
 
     def save_user_feedback(self, payload: dict[str, Any]) -> None:
         feedback = payload.get("user_feedback", {})
@@ -2184,6 +2283,56 @@ class PostgresSnapshotRepository:
                     metric.pop(optional_key)
             metrics[row[0]] = metric
         return metrics
+
+    def _load_jenkins_release_records(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, product_id, version_id, job_name, build_id, build_number,
+                   environment, status, trigger_actor, commit_sha, duration_seconds,
+                   started_at, deployed_at, failure_reason, source_channel,
+                   created_by, created_at, updated_at
+            FROM jenkins_release_records
+            ORDER BY COALESCE(deployed_at, created_at), id
+            """
+        )
+        releases = {}
+        for row in cursor.fetchall():
+            release = {
+                "build_id": row[4],
+                "build_number": row[5],
+                "commit_sha": row[9],
+                "created_at": row[16].isoformat() if row[16] else None,
+                "created_by": row[15],
+                "deployed_at": row[12].isoformat() if row[12] else None,
+                "duration_seconds": row[10],
+                "environment": row[6],
+                "failure_reason": row[13],
+                "id": row[0],
+                "job_name": row[3],
+                "product_id": row[1],
+                "source_channel": row[14],
+                "started_at": row[11].isoformat() if row[11] else None,
+                "status": row[7],
+                "trigger_actor": row[8],
+                "updated_at": row[17].isoformat() if row[17] else None,
+                "version_id": row[2],
+            }
+            for optional_key in (
+                "build_number",
+                "commit_sha",
+                "created_at",
+                "deployed_at",
+                "duration_seconds",
+                "failure_reason",
+                "source_channel",
+                "started_at",
+                "trigger_actor",
+                "updated_at",
+            ):
+                if release[optional_key] is None:
+                    release.pop(optional_key)
+            releases[row[0]] = release
+        return releases
 
     def _load_iteration_plan_suggestions(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -3398,6 +3547,68 @@ class PostgresSnapshotRepository:
                     metric.get("source_channel"),
                     collected_at,
                     metric["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_jenkins_release_records(
+        self,
+        cursor,
+        releases: dict[str, dict[str, Any]],
+    ) -> None:
+        for release in releases.values():
+            created_at = release.get("created_at")
+            updated_at = release.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO jenkins_release_records (
+                  id, product_id, version_id, job_name, build_id, build_number,
+                  environment, status, trigger_actor, commit_sha, duration_seconds,
+                  started_at, deployed_at, failure_reason, source_channel,
+                  created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s,
+                  %s::timestamptz, %s::timestamptz, %s, %s,
+                  %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  job_name = EXCLUDED.job_name,
+                  build_id = EXCLUDED.build_id,
+                  build_number = EXCLUDED.build_number,
+                  environment = EXCLUDED.environment,
+                  status = EXCLUDED.status,
+                  trigger_actor = EXCLUDED.trigger_actor,
+                  commit_sha = EXCLUDED.commit_sha,
+                  duration_seconds = EXCLUDED.duration_seconds,
+                  started_at = EXCLUDED.started_at,
+                  deployed_at = EXCLUDED.deployed_at,
+                  failure_reason = EXCLUDED.failure_reason,
+                  source_channel = EXCLUDED.source_channel,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    release["id"],
+                    release["product_id"],
+                    release["version_id"],
+                    release["job_name"],
+                    release["build_id"],
+                    release.get("build_number"),
+                    release.get("environment", "prod"),
+                    release.get("status", "success"),
+                    release.get("trigger_actor"),
+                    release.get("commit_sha"),
+                    release.get("duration_seconds"),
+                    release.get("started_at"),
+                    release.get("deployed_at"),
+                    release.get("failure_reason"),
+                    release.get("source_channel"),
+                    release["created_by"],
                     created_at,
                     updated_at,
                 ),

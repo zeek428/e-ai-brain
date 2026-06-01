@@ -85,6 +85,7 @@ USER_FEEDBACK_TYPES = {"bug", "complaint", "improvement", "praise", "question"}
 USER_FEEDBACK_SENTIMENTS = {"negative", "neutral", "positive"}
 USER_FEEDBACK_STATUSES = {"archived", "linked", "open", "resolved", "triaged"}
 GITLAB_DAILY_METRIC_STATUSES = {"collected", "failed", "partial"}
+JENKINS_RELEASE_STATUSES = {"canceled", "failed", "running", "success"}
 ITERATION_SUGGESTION_STATUSES = {
     "accepted",
     "converted_to_requirement",
@@ -382,6 +383,23 @@ class GitlabDailyCodeMetricRequest(BaseModel):
     risk_count: int = 0
     author_metrics: list[dict[str, Any]] = Field(default_factory=list)
     status: str = "collected"
+    source_channel: str | None = None
+
+
+class JenkinsReleaseRequest(BaseModel):
+    product_id: str
+    version_id: str
+    job_name: str
+    build_id: str
+    build_number: int | None = None
+    environment: str = "prod"
+    status: str = "success"
+    trigger_actor: str | None = None
+    commit_sha: str | None = None
+    duration_seconds: int | None = None
+    started_at: str | None = None
+    deployed_at: str | None = None
+    failure_reason: str | None = None
     source_channel: str | None = None
 
 
@@ -712,6 +730,56 @@ def _validate_gitlab_metric_context(
         raise api_error(400, "VALIDATION_ERROR", "Inactive Git repository cannot be used")
     if repository.get("git_provider") != "gitlab":
         raise api_error(400, "VALIDATION_ERROR", "Only GitLab repositories are supported")
+
+
+def _parse_optional_release_time(value: str | None, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _parse_usage_window(value, field_name)
+
+
+def _validate_jenkins_release_payload(
+    payload: JenkinsReleaseRequest,
+) -> tuple[str | None, str | None]:
+    _ensure_non_blank(payload.job_name, "job_name")
+    _ensure_non_blank(payload.build_id, "build_id")
+    _ensure_non_blank(payload.environment, "environment")
+    _ensure_enum(payload.status, JENKINS_RELEASE_STATUSES, "status")
+    if payload.build_number is not None and payload.build_number < 0:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "build_number must be greater than or equal to 0",
+        )
+    if payload.duration_seconds is not None and payload.duration_seconds < 0:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "duration_seconds must be greater than or equal to 0",
+        )
+    started_at = _parse_optional_release_time(payload.started_at, "started_at")
+    deployed_at = _parse_optional_release_time(payload.deployed_at, "deployed_at")
+    if started_at is not None and deployed_at is not None and deployed_at < started_at:
+        raise api_error(400, "VALIDATION_ERROR", "deployed_at must be after started_at")
+    return started_at, deployed_at
+
+
+def _validate_jenkins_release_context(
+    current_store: MemoryStore,
+    *,
+    product_id: str,
+    version_id: str,
+) -> None:
+    product = current_store.products.get(product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
+    version = current_store.product_versions.get(version_id)
+    if version is None or version["product_id"] != product_id:
+        raise api_error(404, "NOT_FOUND", "Product version not found")
+    if version["status"] == "archived":
+        raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
 
 
 def _validate_user_feedback_enums(
@@ -5315,9 +5383,97 @@ def create_gitlab_metric(
 @app.get("/api/devops/jenkins/releases")
 def jenkins_releases(
     request: Request,
+    product_id: str | None = None,
+    version_id: str | None = None,
+    status: str | None = None,
+    environment: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    return envelope(empty_list_payload(), get_trace_id(request))
+    _ensure_enum(status, JENKINS_RELEASE_STATUSES, "status")
+    current_store = store(request)
+    items = []
+    for release in current_store.jenkins_release_records.values():
+        if product_id is not None and release.get("product_id") != product_id:
+            continue
+        if version_id is not None and release.get("version_id") != version_id:
+            continue
+        if status is not None and release.get("status") != status:
+            continue
+        if environment is not None and release.get("environment") != environment:
+            continue
+        items.append(release)
+    items.sort(
+        key=lambda item: (
+            item.get("deployed_at") or item.get("created_at") or "",
+            item.get("updated_at") or "",
+        ),
+        reverse=True,
+    )
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/devops/jenkins/releases")
+def create_jenkins_release(
+    payload: JenkinsReleaseRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = store(request)
+    _validate_jenkins_release_context(
+        current_store,
+        product_id=payload.product_id,
+        version_id=payload.version_id,
+    )
+    started_at, deployed_at = _validate_jenkins_release_payload(payload)
+    now = datetime.now(UTC).isoformat()
+    release_id = current_store.new_id("jenkins_release")
+    release = {
+        "build_id": _ensure_non_blank(payload.build_id, "build_id"),
+        "build_number": payload.build_number,
+        "commit_sha": payload.commit_sha,
+        "created_at": now,
+        "created_by": user["id"],
+        "deployed_at": deployed_at,
+        "duration_seconds": payload.duration_seconds,
+        "environment": _ensure_non_blank(payload.environment, "environment"),
+        "failure_reason": payload.failure_reason,
+        "id": release_id,
+        "job_name": _ensure_non_blank(payload.job_name, "job_name"),
+        "product_id": payload.product_id,
+        "source_channel": payload.source_channel,
+        "started_at": started_at,
+        "status": payload.status,
+        "trigger_actor": payload.trigger_actor,
+        "updated_at": now,
+        "version_id": payload.version_id,
+    }
+    for optional_key in (
+        "build_number",
+        "commit_sha",
+        "deployed_at",
+        "duration_seconds",
+        "failure_reason",
+        "source_channel",
+        "started_at",
+        "trigger_actor",
+    ):
+        if release[optional_key] is None:
+            release.pop(optional_key)
+    current_store.jenkins_release_records[release_id] = release
+    current_store.audit(
+        event_type="jenkins_release.created",
+        actor_id=user["id"],
+        subject_type="jenkins_release",
+        subject_id=release_id,
+        payload={
+            "build_id": release["build_id"],
+            "job_name": release["job_name"],
+            "product_id": release["product_id"],
+            "version_id": release["version_id"],
+        },
+    )
+    return envelope(release, get_trace_id(request))
 
 
 @app.get("/api/ops/online-log-metrics")

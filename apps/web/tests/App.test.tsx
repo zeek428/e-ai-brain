@@ -1679,6 +1679,93 @@ describe('AI Brain Ant Design Pro workbench', () => {
     );
   });
 
+  it('records real Jenkins release records from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/devops/jenkins/releases' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            build_id: 'build-20260601-17',
+            id: 'jenkins_release_created',
+            job_name: 'rd-platform-deploy',
+            product_id: 'product_release',
+            status: 'success',
+            version_id: 'version_release',
+          },
+        });
+      }
+      if (input === '/api/devops/gitlab/daily-code-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/devops/jenkins/releases') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ops/online-log-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'release-platform', id: 'product_release', name: '发布平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products/product_release/versions?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'v1.2.0', id: 'version_release', name: 'v1.2.0', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    await screen.findByRole('button', { name: '登记 Jenkins 发布' });
+    fireEvent.click(screen.getByRole('button', { name: '登记 Jenkins 发布' }));
+    fireEvent.change(screen.getByLabelText('Jenkins Job'), { target: { value: 'rd-platform-deploy' } });
+    fireEvent.change(screen.getByLabelText('Build ID'), { target: { value: 'build-20260601-17' } });
+    fireEvent.change(screen.getByLabelText('Build 编号'), { target: { value: '17' } });
+    fireEvent.change(screen.getByLabelText('发布环境'), { target: { value: 'staging' } });
+    fireEvent.change(screen.getByLabelText('触发人'), { target: { value: 'jenkins-admin' } });
+    fireEvent.change(screen.getByLabelText('Commit SHA'), { target: { value: 'abc123def456' } });
+    fireEvent.change(screen.getByLabelText('耗时秒数'), { target: { value: '480' } });
+    fireEvent.change(screen.getByLabelText('开始时间'), { target: { value: '2026-06-01T12:22:00Z' } });
+    fireEvent.change(screen.getByLabelText('部署时间'), { target: { value: '2026-06-01T12:30:00Z' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/devops/jenkins/releases',
+        'POST',
+        JSON.stringify({
+          build_id: 'build-20260601-17',
+          build_number: 17,
+          commit_sha: 'abc123def456',
+          deployed_at: '2026-06-01T12:30:00Z',
+          duration_seconds: 480,
+          environment: 'staging',
+          job_name: 'rd-platform-deploy',
+          product_id: 'product_release',
+          source_channel: 'manual_import',
+          started_at: '2026-06-01T12:22:00Z',
+          status: 'success',
+          trigger_actor: 'jenkins-admin',
+          version_id: 'version_release',
+        }),
+      ]),
+    );
+  });
+
   it('generates and decides real iteration suggestions from the insights page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

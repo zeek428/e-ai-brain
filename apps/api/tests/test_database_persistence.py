@@ -23,6 +23,7 @@ class FakeSnapshotRepository:
         self.gitlab_review_payload: dict | None = None
         self.mock_writebacks_payload: dict | None = None
         self.gitlab_daily_code_metrics_payload: dict | None = None
+        self.jenkins_release_records_payload: dict | None = None
         self.user_usage_metrics_payload: dict | None = None
         self.user_feedback_payload: dict | None = None
         self.iteration_planning_payload: dict | None = None
@@ -98,6 +99,12 @@ class FakeSnapshotRepository:
 
     def save_gitlab_daily_code_metrics(self, payload: dict) -> None:
         self.gitlab_daily_code_metrics_payload = payload
+
+    def load_jenkins_release_records(self) -> dict | None:
+        return self.jenkins_release_records_payload
+
+    def save_jenkins_release_records(self, payload: dict) -> None:
+        self.jenkins_release_records_payload = payload
 
     def load_user_feedback(self) -> dict | None:
         return self.user_feedback_payload
@@ -2437,6 +2444,72 @@ def test_gitlab_daily_code_metrics_are_persisted_through_fine_grained_repository
 
     assert rebuilt_store.gitlab_daily_code_metrics["gitlab_metric_010"]["commit_count"] == 7
     assert rebuilt_store.new_id("gitlab_metric") == "gitlab_metric_011"
+
+
+def test_jenkins_release_records_are_persisted_through_fine_grained_repository_payload():
+    repository = FakeSnapshotRepository()
+    store = PersistentMemoryStore(repository)
+    store.products = {
+        "product_001": {
+            "code": "release-product",
+            "id": "product_001",
+            "name": "发布验证产品",
+            "status": "active",
+        }
+    }
+    store.product_versions = {
+        "version_001": {
+            "code": "v1.2.0",
+            "id": "version_001",
+            "name": "v1.2.0",
+            "product_id": "product_001",
+            "status": "active",
+        }
+    }
+    store.jenkins_release_records = {
+        "jenkins_release_010": {
+            "build_id": "build-20260601-17",
+            "build_number": 17,
+            "commit_sha": "abc123def456",
+            "created_at": "2026-06-01T12:30:00+00:00",
+            "created_by": "user_admin",
+            "deployed_at": "2026-06-01T12:30:00+00:00",
+            "duration_seconds": 480,
+            "environment": "staging",
+            "id": "jenkins_release_010",
+            "job_name": "rd-platform-deploy",
+            "product_id": "product_001",
+            "source_channel": "manual_import",
+            "started_at": "2026-06-01T12:22:00+00:00",
+            "status": "success",
+            "trigger_actor": "jenkins-admin",
+            "updated_at": "2026-06-01T12:30:00+00:00",
+            "version_id": "version_001",
+        }
+    }
+
+    store.persist()
+
+    assert repository.jenkins_release_records_payload == {
+        "jenkins_release_records": store.jenkins_release_records,
+    }
+
+    restored_repository = FakeSnapshotRepository()
+    restored_repository.product_config_payload = {
+        "product_git_repositories": {},
+        "product_modules": {},
+        "product_versions": store.product_versions,
+        "products": store.products,
+        "related_systems": {},
+    }
+    restored_repository.jenkins_release_records_payload = {
+        "jenkins_release_records": store.jenkins_release_records,
+    }
+
+    rebuilt_store = PersistentMemoryStore.from_repository(restored_repository)
+
+    assert rebuilt_store.jenkins_release_records["jenkins_release_010"]["status"] == "success"
+    assert rebuilt_store.new_id("jenkins_release") == "jenkins_release_011"
 
 
 def test_iteration_planning_is_persisted_through_fine_grained_repository_payload():

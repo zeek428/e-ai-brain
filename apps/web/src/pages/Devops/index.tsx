@@ -7,10 +7,12 @@ import type { ProductContextOption } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createGitLabDailyCodeMetric,
+  createJenkinsRelease,
   fetchDevopsMetrics,
   fetchProductContextOptions,
   fetchProductGitRepositories,
   type GitLabDailyCodeMetricCreatePayload,
+  type JenkinsReleaseCreatePayload,
   type OperationalMetricRecord,
   type ProductGitRepositoryOption,
 } from '../../services/aiBrain';
@@ -29,7 +31,30 @@ type GitLabMetricFormValues = {
   riskCount?: string;
 };
 
+type JenkinsReleaseFormValues = {
+  buildId: string;
+  buildNumber?: string;
+  commitSha?: string;
+  deployedAt?: string;
+  durationSeconds?: string;
+  environment?: string;
+  failureReason?: string;
+  jobName: string;
+  productId: string;
+  startedAt?: string;
+  status?: string;
+  triggerActor?: string;
+  versionId: string;
+};
+
 const gitlabMetricStatus = 'collected';
+const jenkinsReleaseStatus = 'success';
+const jenkinsStatusOptions = [
+  { label: 'success', value: 'success' },
+  { label: 'failed', value: 'failed' },
+  { label: 'running', value: 'running' },
+  { label: 'canceled', value: 'canceled' },
+];
 
 function optionalNonNegativeNumberRule(label: string, max?: number) {
   return {
@@ -70,6 +95,11 @@ function optionalNumber(value?: string) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function optionalText(value?: string) {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
 function numberOrZero(value?: string) {
   return optionalNumber(value) ?? 0;
 }
@@ -78,6 +108,14 @@ function productOptionsFromContexts(productContexts: ProductContextOption[]) {
   return productContexts.map((product) => ({
     label: product.name,
     value: product.id,
+  }));
+}
+
+function versionOptionsFromContexts(productContexts: ProductContextOption[], productId?: string) {
+  const product = productContexts.find((item) => item.id === productId);
+  return (product?.versions ?? []).map((version) => ({
+    label: version.name,
+    value: version.id,
   }));
 }
 
@@ -96,6 +134,25 @@ function buildGitLabMetricPayload(values: GitLabMetricFormValues): GitLabDailyCo
     risk_count: numberOrZero(values.riskCount),
     source_channel: 'manual_import',
     status: gitlabMetricStatus,
+  };
+}
+
+function buildJenkinsReleasePayload(values: JenkinsReleaseFormValues): JenkinsReleaseCreatePayload {
+  return {
+    build_id: values.buildId.trim(),
+    build_number: optionalNumber(values.buildNumber),
+    commit_sha: optionalText(values.commitSha),
+    deployed_at: optionalText(values.deployedAt),
+    duration_seconds: optionalNumber(values.durationSeconds),
+    environment: optionalText(values.environment) ?? 'prod',
+    failure_reason: optionalText(values.failureReason),
+    job_name: values.jobName.trim(),
+    product_id: values.productId,
+    source_channel: 'manual_import',
+    started_at: optionalText(values.startedAt),
+    status: values.status ?? jenkinsReleaseStatus,
+    trigger_actor: optionalText(values.triggerActor),
+    version_id: values.versionId,
   };
 }
 
@@ -125,7 +182,9 @@ const columns: ProColumns<OperationalMetricRecord>[] = [
 
 export default function DevopsPage() {
   const [metricForm] = Form.useForm<GitLabMetricFormValues>();
+  const [jenkinsForm] = Form.useForm<JenkinsReleaseFormValues>();
   const [metricOpen, setMetricOpen] = useState(false);
+  const [jenkinsOpen, setJenkinsOpen] = useState(false);
   const [productContexts, setProductContexts] = useState<ProductContextOption[]>([]);
   const [repositoryState, setRepositoryState] = useState<{
     items: ProductGitRepositoryOption[];
@@ -138,7 +197,12 @@ export default function DevopsPage() {
     status,
   } = useRemoteRows(fetchDevopsMetrics);
   const selectedProductId = Form.useWatch('productId', metricForm);
+  const selectedJenkinsProductId = Form.useWatch('productId', jenkinsForm);
   const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
+  const jenkinsVersionOptions = useMemo(
+    () => versionOptionsFromContexts(productContexts, selectedJenkinsProductId),
+    [productContexts, selectedJenkinsProductId],
+  );
   const repositoryOptions = useMemo(
     () =>
       repositoryState !== null && repositoryState.productId === selectedProductId
@@ -181,6 +245,20 @@ export default function DevopsPage() {
   }, [metricForm, metricOpen, productOptions]);
 
   useEffect(() => {
+    if (!jenkinsOpen || productOptions.length !== 1 || jenkinsForm.getFieldValue('productId')) {
+      return;
+    }
+    jenkinsForm.setFieldValue('productId', productOptions[0]?.value);
+  }, [jenkinsForm, jenkinsOpen, productOptions]);
+
+  useEffect(() => {
+    if (!jenkinsOpen || jenkinsVersionOptions.length !== 1 || jenkinsForm.getFieldValue('versionId')) {
+      return;
+    }
+    jenkinsForm.setFieldValue('versionId', jenkinsVersionOptions[0]?.value);
+  }, [jenkinsForm, jenkinsOpen, jenkinsVersionOptions]);
+
+  useEffect(() => {
     if (!metricOpen || !selectedProductId) {
       return;
     }
@@ -213,6 +291,22 @@ export default function DevopsPage() {
     await reload();
   };
 
+  const submitJenkinsRelease = async () => {
+    if (!jenkinsForm.getFieldValue('productId') && productOptions.length === 1) {
+      jenkinsForm.setFieldValue('productId', productOptions[0]?.value);
+    }
+    const productId = jenkinsForm.getFieldValue('productId') as string | undefined;
+    const currentVersionOptions = versionOptionsFromContexts(productContexts, productId);
+    if (!jenkinsForm.getFieldValue('versionId') && currentVersionOptions.length === 1) {
+      jenkinsForm.setFieldValue('versionId', currentVersionOptions[0]?.value);
+    }
+    const values = await jenkinsForm.validateFields();
+    await createJenkinsRelease(buildJenkinsReleasePayload(values));
+    setJenkinsOpen(false);
+    jenkinsForm.resetFields();
+    await reload();
+  };
+
   return (
     <>
       <ManagementListPage<OperationalMetricRecord>
@@ -242,6 +336,9 @@ export default function DevopsPage() {
         toolbarActions={[
           <Button aria-label="登记 GitLab 指标" key="gitlab-metric" onClick={() => setMetricOpen(true)}>
             登记 GitLab 指标
+          </Button>,
+          <Button aria-label="登记 Jenkins 发布" key="jenkins-release" onClick={() => setJenkinsOpen(true)}>
+            登记 Jenkins 发布
           </Button>,
         ]}
       />
@@ -288,6 +385,58 @@ export default function DevopsPage() {
           </Form.Item>
           <Form.Item label="风险数量" name="riskCount" rules={[optionalNonNegativeIntegerRule('风险数量')]}>
             <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        okText="保存"
+        okButtonProps={{ 'aria-label': '保存' }}
+        onCancel={() => setJenkinsOpen(false)}
+        onOk={() => void submitJenkinsRelease()}
+        open={jenkinsOpen}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        title="登记 Jenkins 发布"
+      >
+        <Form<JenkinsReleaseFormValues> form={jenkinsForm} layout="vertical">
+          <Form.Item label="所属产品" name="productId" rules={[{ required: true, message: '请选择所属产品' }]}>
+            <Select options={productOptions} />
+          </Form.Item>
+          <Form.Item label="产品版本" name="versionId" rules={[{ required: true, message: '请选择产品版本' }]}>
+            <Select options={jenkinsVersionOptions} />
+          </Form.Item>
+          <Form.Item label="Jenkins Job" name="jobName" rules={[{ required: true, message: '请输入 Jenkins Job' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="Build ID" name="buildId" rules={[{ required: true, message: '请输入 Build ID' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="Build 编号" name="buildNumber" rules={[optionalNonNegativeIntegerRule('Build 编号')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="发布环境" name="environment">
+            <Input placeholder="prod" />
+          </Form.Item>
+          <Form.Item label="发布状态" name="status" initialValue={jenkinsReleaseStatus}>
+            <Select options={jenkinsStatusOptions} />
+          </Form.Item>
+          <Form.Item label="触发人" name="triggerActor">
+            <Input />
+          </Form.Item>
+          <Form.Item label="Commit SHA" name="commitSha">
+            <Input />
+          </Form.Item>
+          <Form.Item label="耗时秒数" name="durationSeconds" rules={[optionalNonNegativeIntegerRule('耗时秒数')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="开始时间" name="startedAt">
+            <Input placeholder="2026-06-01T12:22:00Z" />
+          </Form.Item>
+          <Form.Item label="部署时间" name="deployedAt">
+            <Input placeholder="2026-06-01T12:30:00Z" />
+          </Form.Item>
+          <Form.Item label="失败原因" name="failureReason">
+            <Input.TextArea rows={3} />
           </Form.Item>
         </Form>
       </Modal>
