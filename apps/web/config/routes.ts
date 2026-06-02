@@ -11,7 +11,7 @@ const routes = [
   },
   {
     path: '/welcome',
-    name: '欢迎',
+    name: '团队看板',
     icon: 'HomeOutlined',
     component: './Dashboard',
   },

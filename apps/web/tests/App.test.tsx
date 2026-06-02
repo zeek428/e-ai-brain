@@ -361,7 +361,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(routes).toContain("component: './Login'");
     expect(routes).toContain('layout: false');
     expect(routes).toContain("path: '/welcome'");
-    expect(routes).toContain("name: '欢迎'");
+    expect(routes).toContain("name: '团队看板'");
+    expect(routes).not.toContain("name: '欢迎'");
     expect(routes).toContain("path: '/tasks'");
     expect(routes).toContain("name: '任务中心'");
     expect(routes).toContain("path: '/tasks/management'");
