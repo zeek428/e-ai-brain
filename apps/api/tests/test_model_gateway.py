@@ -110,6 +110,42 @@ def test_model_gateway_logs_are_admin_only():
     assert response.json()["detail"]["code"] == "FORBIDDEN"
 
 
+def test_model_gateway_logs_filter_ignores_logs_without_ai_task_id():
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.model_gateway_logs.extend(
+        [
+            {
+                "created_at": "2026-06-02T00:00:00+00:00",
+                "id": "model_log_assistant",
+                "latency_ms": 10,
+                "model": "chat",
+                "provider": "openai_compatible",
+                "purpose": "assistant_chat",
+                "status": "succeeded",
+                "tokens": {"total": 1},
+            },
+            {
+                "ai_task_id": "task_123",
+                "created_at": "2026-06-02T00:01:00+00:00",
+                "id": "model_log_task",
+                "latency_ms": 20,
+                "model": "chat",
+                "provider": "openai_compatible",
+                "purpose": "technical_solution",
+                "status": "succeeded",
+                "tokens": {"total": 2},
+            },
+        ]
+    )
+
+    response = client.get("/api/model-gateway/logs?ai_task_id=task_123", headers=headers)
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    assert [item["id"] for item in items] == ["model_log_task"]
+
+
 def test_active_model_gateway_config_calls_openai_compatible_chat_completion(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()

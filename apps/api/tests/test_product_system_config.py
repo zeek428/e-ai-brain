@@ -211,6 +211,60 @@ def test_related_systems_are_saved_in_generated_task_product_context():
     assert [item["code"] for item in related_systems] == ["crm"]
 
 
+def test_generated_task_product_context_does_not_expose_git_credentials():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    product = client.post(
+        "/api/products",
+        json={"code": "context-credential-product", "name": "凭据上下文产品"},
+        headers=headers,
+    ).json()["data"]
+    version = client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": "v1", "name": "v1"},
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        f"/api/products/{product['id']}/git-repositories",
+        json={
+            "credential_ref": "secret://git/readonly",
+            "git_provider": "github",
+            "name": "代码仓库",
+            "project_path": "org/repo",
+            "remote_url": "git@github.com:org/repo.git",
+        },
+        headers=headers,
+    )
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "content": "生成任务上下文时不能泄露 Git 凭据",
+            "product_id": product["id"],
+            "title": "Git 凭据脱敏需求",
+            "version_id": version["id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    client.post(f"/api/requirements/{requirement['id']}/approve", json={}, headers=headers)
+
+    generated = client.post(
+        f"/api/requirements/{requirement['id']}/generate-task",
+        headers=headers,
+    ).json()["data"]
+    task_detail = client.get(
+        f"/api/ai-tasks/{generated['task_id']}",
+        headers=headers,
+    ).json()["data"]
+
+    repositories = task_detail["product_context"]["repositories"]["items"]
+    input_repositories = task_detail["input"]["product_context"]["repositories"]["items"]
+    assert repositories[0]["credential_ref_configured"] is True
+    assert input_repositories[0]["credential_ref_configured"] is True
+    assert "credential_ref" not in repositories[0]
+    assert "credential_ref" not in input_repositories[0]
+
+
 def test_product_config_rejects_duplicate_codes_and_invalid_statuses():
     app.state.store.reset()
     headers = auth_headers()

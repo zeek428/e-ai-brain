@@ -1659,8 +1659,26 @@ def _public_git_repository(repository: dict[str, Any]) -> dict[str, Any]:
         for key, value in repository.items()
         if key != "credential_ref"
     }
-    public_repository["credential_ref_configured"] = bool(repository.get("credential_ref"))
+    public_repository["credential_ref_configured"] = bool(
+        repository.get("credential_ref") or repository.get("credential_ref_configured")
+    )
     return public_repository
+
+
+def _public_product_context(product_context: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(product_context, dict):
+        return {}
+    public_context = json.loads(json.dumps(product_context, ensure_ascii=False))
+    repositories = public_context.get("repositories")
+    if isinstance(repositories, dict):
+        items = repositories.get("items")
+        if isinstance(items, list):
+            repositories["items"] = [
+                _public_git_repository(item) if isinstance(item, dict) else item
+                for item in items
+            ]
+            repositories["total"] = len(repositories["items"])
+    return public_context
 
 
 def _set_default_model_gateway_config(
@@ -1716,7 +1734,7 @@ def _model_gateway_embeddings_url(base_url: str) -> str:
 def _model_gateway_messages(task: dict[str, Any]) -> list[dict[str, str]]:
     payload = {
         "input_json": task.get("input_json", {}),
-        "product_context": task.get("product_context", {}),
+        "product_context": _public_product_context(task.get("product_context")),
         "requirement_snapshot": task.get("requirement_snapshot", {}),
         "task_type": task["task_type"],
         "title": task["title"],
@@ -2309,7 +2327,7 @@ def _code_review_executor_payload(
             "title": task["title"],
             "task_type": task["task_type"],
             "input_json": current_store.snapshot(task.get("input_json", {})),
-            "product_context": current_store.snapshot(task.get("product_context", {})),
+            "product_context": _public_product_context(task.get("product_context")),
             "requirement_snapshot": current_store.snapshot(task.get("requirement_snapshot", {})),
         },
         "gitlab_mr_snapshot": current_store.snapshot(snapshot),
@@ -3497,7 +3515,7 @@ def list_model_gateway_logs(
     current_store = store(request)
     items = list(current_store.model_gateway_logs)
     if ai_task_id:
-        items = [item for item in items if item["ai_task_id"] == ai_task_id]
+        items = [item for item in items if item.get("ai_task_id") == ai_task_id]
     if purpose:
         items = [item for item in items if item["purpose"] == purpose]
     if status:
@@ -3847,7 +3865,7 @@ def _product_context(current_store: MemoryStore, requirement: dict[str, Any]) ->
         None,
     )
     repositories = [
-        repository
+        _public_git_repository(repository)
         for repository in current_store.product_git_repositories.values()
         if repository["product_id"] == product["id"] and repository.get("status") == "active"
     ]
@@ -5406,6 +5424,7 @@ def _transition_latest_graph_run(
 
 def _task_detail_projection(current_store: MemoryStore, task: dict[str, Any]) -> dict[str, Any]:
     detail = current_store.snapshot(task)
+    detail["product_context"] = _public_product_context(task.get("product_context"))
     reviews = [
         current_store.human_reviews[review_id]
         for review_id in task.get("review_ids", [])
@@ -5421,7 +5440,7 @@ def _task_detail_projection(current_store: MemoryStore, task: dict[str, Any]) ->
         "brain_app_id": task.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
         "requirement_id": task.get("requirement_id"),
         "requirement_snapshot": task.get("requirement_snapshot"),
-        "product_context": task.get("product_context"),
+        "product_context": _public_product_context(task.get("product_context")),
         **task.get("input_json", {}),
     }
     detail["output"] = task.get("output_json")
