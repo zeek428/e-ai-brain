@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.46 |
+| 功能版本 | v1.1.47 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -68,6 +68,7 @@
 | v1.1.44 | 2026-06-02 | 首页 IT 团队看板扩展 Bug、DevOps、线上日志、用户洞察和迭代规划真实聚合，并约定产品/时间范围下钻上下文 | Codex |
 | v1.1.45 | 2026-06-02 | 生命周期上下文扩展真实 Bug、GitLab/Jenkins/线上日志、用户使用、用户反馈和迭代建议证据主体及风险来源契约 | Codex |
 | v1.1.46 | 2026-06-02 | 新增采集运行记录 GET/POST/PATCH API、状态约束、审计事件和 `collector_runs` 结构表契约 | Codex |
+| v1.1.47 | 2026-06-02 | 新增待归属数据队列查询、登记、归属/忽略 API、状态约束、审计事件和 `pending_attribution_items` 持久化契约 | Codex |
 
 ---
 
@@ -79,13 +80,13 @@ API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研
 
 当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
 
-产品管理页面可维护产品版本、模块和 Git 资源；产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、迭代规划建议/确认、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
+产品管理页面可维护产品版本、模块和 Git 资源；产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 
 知识文档创建、更新和知识沉淀采纳会同步重建 chunk，并通过 active/default OpenAI-compatible 模型网关或环境模型网关调用 `/embeddings` 生成 `knowledge_chunks.embedding`；知识文档可选绑定 `product_id` 作为产品归属上下文，首页 IT 团队看板按产品筛选时只统计该产品归属或该产品任务沉淀产生的知识文档；索引失败进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`score` 和来源引用，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。
 
 模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。
 
-任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务、基于已确认技术方案创建 `development_planning`、`automated_testing` 和 `release_readiness` 任务，基于已确认发布评估创建 `post_release_analysis` 任务，并对已完成技术方案导出 Markdown。`automated_testing` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_auto_test`；`post_release_analysis` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_post_release`，两者均关联产品、版本、需求和 AI 任务。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录，线上运行日志指标可通过 `/api/ops/online-log-metrics` 登记和筛选真实产品/模块/环境/时间窗口聚合指标；采集运行记录可通过 `/api/collectors/runs` 登记、筛选和结束，不自动生成指标或反馈数据；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。生命周期上下文已支持从 `bug`、`gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback` 和 `iteration_plan_suggestion` 起点回溯同产品/版本/模块任务链路，并对未关闭严重 Bug、GitLab 风险、Jenkins 失败、线上高错误率、负面反馈和低置信度迭代建议返回来源明确的风险信号。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计、Bug、GitLab 指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划摘要；传入 `product_id` 时，所有可归属主体必须按产品归属过滤，不展示其他产品的数据；传入 `time_range` 时，运营类指标按可解析的日期或时间窗口过滤。看板下钻到 Bug、研发运营、用户洞察和审计页面时保留产品和时间范围上下文。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志可手工登记或导入真实聚合指标，无记录时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
+任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务、基于已确认技术方案创建 `development_planning`、`automated_testing` 和 `release_readiness` 任务，基于已确认发布评估创建 `post_release_analysis` 任务，并对已完成技术方案导出 Markdown。`automated_testing` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_auto_test`；`post_release_analysis` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_post_release`，两者均关联产品、版本、需求和 AI 任务。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录，线上运行日志指标可通过 `/api/ops/online-log-metrics` 登记和筛选真实产品/模块/环境/时间窗口聚合指标；采集运行记录可通过 `/api/collectors/runs` 登记、筛选和结束，不自动生成指标或反馈数据；无法映射产品、模块、需求或导入主体的真实数据可通过 `/api/attribution/pending-items` 进入待归属队列，并通过 `/api/attribution/pending-items/{item_id}/resolve` 人工归属或忽略，处理本身不自动生成指标、反馈、需求或迭代建议；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。生命周期上下文已支持从 `bug`、`gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback` 和 `iteration_plan_suggestion` 起点回溯同产品/版本/模块任务链路，并对未关闭严重 Bug、GitLab 风险、Jenkins 失败、线上高错误率、负面反馈和低置信度迭代建议返回来源明确的风险信号。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计、Bug、GitLab 指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划摘要；传入 `product_id` 时，所有可归属主体必须按产品归属过滤，不展示其他产品的数据；传入 `time_range` 时，运营类指标按可解析的日期或时间窗口过滤。看板下钻到 Bug、研发运营、用户洞察和审计页面时保留产品和时间范围上下文。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志可手工登记或导入真实聚合指标，无记录时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
 
 当前补充实现：`POST /api/planning/iteration-suggestions` 已基于库内真实 `user_feedback` 与 `bugs` 证据生成迭代建议；无证据时返回真实空集合，不生成占位建议。`POST /api/planning/iteration-suggestions/{suggestion_id}/decide` 支持产品负责人、研发负责人或管理员确认采纳、修改后采纳或驳回；只有 `accepted` / `edited_accepted` 且 `convert_to_requirement=true` 时才创建真实 `requirements` 记录。建议与确认分别写入 `iteration_plan_suggestions` 和 `iteration_plan_decisions`，并记录 `iteration_suggestion.generated` / `iteration_suggestion.decided` 审计事件。
 
@@ -276,6 +277,9 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Collectors | GET | `/api/collectors/runs` | 查询 DevOps/洞察采集运行记录。 |
 | Collectors | POST | `/api/collectors/runs` | 登记一次真实采集或导入运行。 |
 | Collectors | PATCH | `/api/collectors/runs/{run_id}` | 更新采集运行状态、导入数量、错误说明或摘要。 |
+| Attribution | GET | `/api/attribution/pending-items` | 查询待归属数据队列。 |
+| Attribution | POST | `/api/attribution/pending-items` | 登记无法映射产品、模块、需求或导入主体的真实数据。 |
+| Attribution | POST | `/api/attribution/pending-items/{item_id}/resolve` | 将待归属项归属到已有上下文或忽略为噪声。 |
 | GitLab Review | GET | `/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview` | 预览内部 GitLab MR 元信息。 |
 | GitLab Review | POST | `/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/snapshot` | 拉取 MR 元信息和 diff，生成 code_review 输入快照。 |
 | Code Review | GET | `/api/ai-tasks/{task_id}/code-review-report` | 查询内部 GitLab MR 代码 Review 报告、执行器信息和确认状态。 |
@@ -1411,6 +1415,105 @@ Content-Type: application/json
 
 `collector_type` 只允许 `gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback`、`iteration_plan_suggestion`；`status` 只允许 `running`、`succeeded`、`failed`、`cancelled`。`product_id` 如传入必须指向 active 产品；`source_system` 必须非空；`records_imported` 不得为负数；`failed` 必须提供非空 `error_message`；`succeeded / failed / cancelled` 为终态，不得再转回 `running` 或其他状态。创建和更新分别写入 `collector_run.created` 与 `collector_run.updated` 审计事件。采集运行记录只记录采集尝试和结果，不自动写入 GitLab/Jenkins/线上日志/用户使用/用户反馈/迭代建议业务数据。
 
+待归属数据队列：
+
+```http
+GET /api/attribution/pending-items?status=pending&source_type=user_feedback
+```
+
+响应返回 `pending_attribution_items` 结构表中的真实队列项；没有数据时返回 `items: []` 和 `total: 0`，不返回示例队列项：
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "pending_attr_001",
+        "source_type": "user_feedback",
+        "source_system": "feedback-api",
+        "collector_run_id": "collector_run_001",
+        "raw_subject_id": "feedback-ext-7788",
+        "summary": "无法映射到产品的登录失败反馈",
+        "raw_payload": {
+          "channel": "support"
+        },
+        "suggested_product_id": null,
+        "suggested_module_code": null,
+        "confidence": 0.62,
+        "status": "pending",
+        "resolution_action": null,
+        "resolution_note": null,
+        "resolved_product_id": null,
+        "resolved_module_code": null,
+        "resolved_requirement_id": null,
+        "resolved_subject_type": null,
+        "resolved_subject_id": null,
+        "resolved_by": null,
+        "resolved_at": null,
+        "created_by": "user_admin",
+        "created_at": "2026-06-02T08:00:00Z",
+        "updated_at": "2026-06-02T08:00:00Z"
+      }
+    ],
+    "total": 1
+  },
+  "trace_id": "trace_015"
+}
+```
+
+产品负责人、研发负责人或管理员可登记待归属项：
+
+```http
+POST /api/attribution/pending-items
+Content-Type: application/json
+
+{
+  "source_type": "user_feedback",
+  "source_system": "feedback-api",
+  "collector_run_id": "collector_run_001",
+  "raw_subject_id": "feedback-ext-7788",
+  "summary": "无法映射到产品的登录失败反馈",
+  "raw_payload": {
+    "channel": "support",
+    "message": "login failed after release"
+  },
+  "suggested_product_id": null,
+  "suggested_module_code": null,
+  "confidence": 0.62
+}
+```
+
+将队列项归属到已有上下文：
+
+```http
+POST /api/attribution/pending-items/pending_attr_001/resolve
+Content-Type: application/json
+
+{
+  "resolution_action": "link_existing_context",
+  "resolved_product_id": "product_001",
+  "resolved_module_code": "login",
+  "resolved_requirement_id": "req_001",
+  "resolved_subject_type": "user_feedback",
+  "resolved_subject_id": "feedback_001",
+  "resolution_note": "已确认属于登录模块反馈"
+}
+```
+
+忽略噪声数据：
+
+```http
+POST /api/attribution/pending-items/pending_attr_002/resolve
+Content-Type: application/json
+
+{
+  "resolution_action": "ignore_as_noise",
+  "resolution_note": "重复导入且无业务归属"
+}
+```
+
+`source_type` 只允许 `gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback`、`iteration_plan_suggestion`；`status` 只允许 `pending`、`resolved`、`ignored`；`resolution_action` 只允许 `link_existing_context` 或 `ignore_as_noise`。`collector_run_id` 如传入必须存在；建议产品和归属产品必须为 active；建议模块和归属模块必须属于对应产品；归属需求必须属于归属产品。`link_existing_context` 必须提交 `resolved_product_id`，可选提交模块、需求或目标业务主体；`ignore_as_noise` 不允许提交任何归属上下文字段。队列项一旦 `resolved` 或 `ignored` 即为终态，重复处理返回 `409 PENDING_ATTRIBUTION_STATE_INVALID`。创建、归属和忽略分别写入 `pending_attribution.created`、`pending_attribution.resolved`、`pending_attribution.ignored` 审计事件。队列处理只记录人工归属结果，不自动生成 GitLab/Jenkins/线上日志/用户使用/用户反馈/迭代建议/需求等业务数据。
+
 ### 用户洞察与迭代规划
 
 用户使用指标：
@@ -1920,6 +2023,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | GET `/api/audit/events` | 403 | FORBIDDEN | 否 | 安全审计可采样记录。 | 提示无权限查看审计。 |
 | GET `/api/audit/events` | 200 | 无 | 不适用 | 查询本身不强制审计。 | 无结果返回空列表。 |
 | PATCH `/api/collectors/runs/{run_id}` | 409 | COLLECTOR_RUN_STATE_INVALID | 否 | 记录已成功的创建或更新审计；非法状态流转不要求写入业务审计。 | 刷新采集运行列表并禁用终态行操作。 |
+| POST `/api/attribution/pending-items/{item_id}/resolve` | 409 | PENDING_ATTRIBUTION_STATE_INVALID | 否 | 非法重复处理不要求写入业务审计；成功归属或忽略必须记录审计。 | 刷新待归属队列，并禁用已归属或已忽略项的处理入口。 |
 
 ---
 
@@ -1943,6 +2047,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | KNOWLEDGE_INDEX_STATE_INVALID | 知识文档当前索引状态不允许重试。 |
 | BUG_STATE_INVALID | 当前 Bug 状态不允许该操作。 |
 | COLLECTOR_RUN_STATE_INVALID | 当前采集运行终态不允许回退或切换状态。 |
+| PENDING_ATTRIBUTION_STATE_INVALID | 当前待归属项已经归属或忽略，不允许重复处理。 |
 | DEVOPS_SOURCE_UNAVAILABLE | GitLab、Jenkins、线上日志、用户使用或用户反馈数据源不可用。 |
 | GITLAB_MR_NOT_FOUND | 内部 GitLab Merge Request 不存在或不可访问。 |
 | GITLAB_MR_DIFF_TOO_LARGE | MR diff 超过 v1 MVP code_review 处理限制，需要拆分 MR 或缩小范围。 |
@@ -1960,6 +2065,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.47 | 2026-06-02 | 新增待归属数据队列 API、状态约束、审计事件和 `pending_attribution_items` 持久化契约。 |
 | v1.1.46 | 2026-06-02 | 新增采集运行记录 API、状态约束、审计事件和 `collector_runs` 持久化契约。 |
 | v1.1.43 | 2026-06-02 | Bug 管理工作台对齐完整生命周期字段，支持复现步骤、证据 JSON、重复归并和只读来源展示。 |
 | v1.1.42 | 2026-06-01 | 首页 IT 团队看板按产品过滤知识文档和审计事件。 |

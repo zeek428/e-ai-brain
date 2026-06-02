@@ -594,7 +594,7 @@ Expected: all frontend tests pass and build succeeds.
 - Modify: `docs/02-specs/enterprise-ai-brain/test-case.md`
 - Modify: `docs/changelog.md`
 
-- [ ] **Step 1: Update docs**
+- [x] **Step 1: Update docs**
 
 Document:
 - `pending_attribution_items` table and migration `013_pending_attribution_items.sql`;
@@ -603,7 +603,7 @@ Document:
 - no placeholder data and no automatic metric creation;
 - audit events and role permissions.
 
-- [ ] **Step 2: Apply SQL to existing local DB**
+- [x] **Step 2: Apply SQL to existing local DB**
 
 Run the migration against the current PostgreSQL container without clearing volumes:
 
@@ -613,7 +613,7 @@ Run the migration against the current PostgreSQL container without clearing volu
 
 Expected: `CREATE TABLE` and index creation messages, or idempotent notices on rerun.
 
-- [ ] **Step 3: Browser smoke**
+- [x] **Step 3: Browser smoke**
 
 Use source-run API/Web:
 - API: `http://127.0.0.1:8000`
@@ -628,7 +628,7 @@ Smoke path:
 6. Reload page and confirm status remains `resolved`.
 7. Confirm console has no relevant errors and no placeholder rows are shown.
 
-- [ ] **Step 4: Final verification**
+- [x] **Step 4: Final verification**
 
 Run:
 
@@ -646,7 +646,7 @@ Expected:
 - build succeeds;
 - diff check succeeds.
 
-- [ ] **Step 5: Commit and push**
+- [x] **Step 5: Commit and push**
 
 Run:
 
@@ -661,4 +661,4 @@ git push origin master
 - Spec coverage: This plan covers PRD page requirement 9, AC14, AC20, spec B3/B3.1/B5 pending attribution rules, API additions, database persistence, audit, DevOps/Insights visibility, SQL migration, tests, browser smoke, and commit/push.
 - Boundary preserved: This plan does not implement real external collectors, automatic metric creation, or real external writeback. It only gives those future adapters a durable queue for unmapped records.
 - No demo data: Empty API responses remain `items: []` and `total: 0`; frontend must not create placeholder rows.
-- Confirmation status: Not executed. Await user confirmation before coding this slice.
+- Confirmation status: Executed after user confirmed option 2 on 2026-06-02.

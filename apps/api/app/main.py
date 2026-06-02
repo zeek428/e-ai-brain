@@ -123,6 +123,9 @@ COLLECTOR_TYPES = {
 }
 COLLECTOR_RUN_STATUSES = {"cancelled", "failed", "running", "succeeded"}
 COLLECTOR_TERMINAL_STATUSES = {"cancelled", "failed", "succeeded"}
+PENDING_ATTRIBUTION_SOURCE_TYPES = COLLECTOR_TYPES
+PENDING_ATTRIBUTION_STATUSES = {"ignored", "pending", "resolved"}
+PENDING_ATTRIBUTION_RESOLUTION_ACTIONS = {"ignore_as_noise", "link_existing_context"}
 USER_ROLES = ASSIGNABLE_ROLE_CODES
 USER_STATUSES = {"active", "inactive"}
 PRODUCT_STATUSES = {"active", "inactive"}
@@ -503,6 +506,28 @@ class CollectorRunPatchRequest(BaseModel):
     payload_summary: dict[str, Any] | None = None
     records_imported: int | None = None
     status: str | None = None
+
+
+class PendingAttributionRequest(BaseModel):
+    collector_run_id: str | None = None
+    confidence: float | None = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+    raw_subject_id: str | None = None
+    source_system: str
+    source_type: str
+    suggested_module_code: str | None = None
+    suggested_product_id: str | None = None
+    summary: str
+
+
+class PendingAttributionResolveRequest(BaseModel):
+    resolution_action: str
+    resolution_note: str | None = None
+    resolved_module_code: str | None = None
+    resolved_product_id: str | None = None
+    resolved_requirement_id: str | None = None
+    resolved_subject_id: str | None = None
+    resolved_subject_type: str | None = None
 
 
 class IterationSuggestionRequest(BaseModel):
@@ -1074,6 +1099,132 @@ def _collector_run_patch_updates(
     if status == "running":
         updates["finished_at"] = None
     return updates
+
+
+def _require_pending_attribution_write_role(user: dict[str, Any]) -> None:
+    _require_roles(user, {"product_owner", "rd_owner"})
+
+
+def _validate_pending_attribution_suggested_context(
+    current_store: MemoryStore,
+    *,
+    suggested_product_id: str | None,
+    suggested_module_code: str | None,
+) -> None:
+    if suggested_product_id is None:
+        return
+    product = current_store.products.get(suggested_product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Suggested product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive suggested product cannot be used")
+    if suggested_module_code is not None and not any(
+        module["product_id"] == suggested_product_id and module["code"] == suggested_module_code
+        for module in current_store.product_modules.values()
+    ):
+        raise api_error(404, "NOT_FOUND", "Suggested product module not found")
+
+
+def _validate_pending_attribution_create_request(
+    current_store: MemoryStore,
+    payload: PendingAttributionRequest,
+) -> tuple[str, str, str | None, str | None]:
+    _ensure_enum(payload.source_type, PENDING_ATTRIBUTION_SOURCE_TYPES, "source_type")
+    source_system = _ensure_non_blank(payload.source_system, "source_system")
+    summary = _ensure_non_blank(payload.summary, "summary")
+    raw_subject_id = payload.raw_subject_id.strip() if payload.raw_subject_id else None
+    suggested_module_code = (
+        payload.suggested_module_code.strip() if payload.suggested_module_code else None
+    )
+    if payload.confidence is not None and (
+        payload.confidence < 0 or payload.confidence > 1
+    ):
+        raise api_error(400, "VALIDATION_ERROR", "confidence must be between 0 and 1")
+    if payload.collector_run_id is not None and payload.collector_run_id not in (
+        current_store.collector_runs
+    ):
+        raise api_error(404, "NOT_FOUND", "Collector run not found")
+    _validate_pending_attribution_suggested_context(
+        current_store,
+        suggested_product_id=payload.suggested_product_id,
+        suggested_module_code=suggested_module_code,
+    )
+    return source_system, summary, raw_subject_id, suggested_module_code
+
+
+def _validate_pending_attribution_resolve_request(
+    current_store: MemoryStore,
+    item: dict[str, Any],
+    payload: PendingAttributionResolveRequest,
+) -> tuple[str, str | None, str | None, str | None, str | None, str | None]:
+    if item["status"] != "pending":
+        raise api_error(
+            409,
+            "PENDING_ATTRIBUTION_STATE_INVALID",
+            "Pending attribution item is already terminal",
+        )
+    _ensure_enum(
+        payload.resolution_action,
+        PENDING_ATTRIBUTION_RESOLUTION_ACTIONS,
+        "resolution_action",
+    )
+    resolution_note = (
+        payload.resolution_note.strip() if payload.resolution_note else None
+    )
+    resolved_module_code = (
+        payload.resolved_module_code.strip() if payload.resolved_module_code else None
+    )
+    resolved_subject_type = (
+        payload.resolved_subject_type.strip() if payload.resolved_subject_type else None
+    )
+    resolved_subject_id = (
+        payload.resolved_subject_id.strip() if payload.resolved_subject_id else None
+    )
+    if payload.resolution_action == "ignore_as_noise":
+        if any(
+            (
+                payload.resolved_product_id,
+                resolved_module_code,
+                payload.resolved_requirement_id,
+                resolved_subject_type,
+                resolved_subject_id,
+            )
+        ):
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                "Ignored attribution item cannot include resolved context",
+            )
+        return resolution_note, None, None, None, None, None
+    if payload.resolved_product_id is None:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "resolved_product_id is required for link_existing_context",
+        )
+    product = current_store.products.get(payload.resolved_product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Resolved product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive resolved product cannot be used")
+    if resolved_module_code is not None and not any(
+        module["product_id"] == payload.resolved_product_id
+        and module["code"] == resolved_module_code
+        for module in current_store.product_modules.values()
+    ):
+        raise api_error(404, "NOT_FOUND", "Resolved product module not found")
+    if payload.resolved_requirement_id is not None:
+        requirement = current_store.requirements.get(payload.resolved_requirement_id)
+        if requirement is None or requirement["product_id"] != payload.resolved_product_id:
+            raise api_error(404, "NOT_FOUND", "Resolved requirement not found")
+    return (
+        resolution_note,
+        payload.resolved_product_id,
+        resolved_module_code,
+        payload.resolved_requirement_id,
+        resolved_subject_type,
+        resolved_subject_id,
+    )
 
 
 def _normalized_tags(tags: list[str]) -> list[str]:
@@ -6753,6 +6904,151 @@ def patch_collector_run(
         },
     )
     return envelope(run, get_trace_id(request))
+
+
+@app.get("/api/attribution/pending-items")
+def pending_attribution_items(
+    request: Request,
+    source_type: str | None = None,
+    status: str | None = None,
+    resolved_product_id: str | None = None,
+    collector_run_id: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _ensure_enum(source_type, PENDING_ATTRIBUTION_SOURCE_TYPES, "source_type")
+    _ensure_enum(status, PENDING_ATTRIBUTION_STATUSES, "status")
+    current_store = store(request)
+    items = []
+    for item in current_store.pending_attribution_items.values():
+        if source_type is not None and item.get("source_type") != source_type:
+            continue
+        if status is not None and item.get("status") != status:
+            continue
+        if (
+            resolved_product_id is not None
+            and item.get("resolved_product_id") != resolved_product_id
+        ):
+            continue
+        if collector_run_id is not None and item.get("collector_run_id") != collector_run_id:
+            continue
+        items.append(item)
+    items.sort(
+        key=lambda item: (
+            item.get("created_at") or "",
+            item.get("updated_at") or "",
+            item["id"],
+        ),
+        reverse=True,
+    )
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/attribution/pending-items")
+def create_pending_attribution_item(
+    payload: PendingAttributionRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_pending_attribution_write_role(user)
+    current_store = store(request)
+    source_system, summary, raw_subject_id, suggested_module_code = (
+        _validate_pending_attribution_create_request(current_store, payload)
+    )
+    now = datetime.now(UTC).isoformat()
+    item_id = current_store.new_id("pending_attr")
+    item = {
+        "collector_run_id": payload.collector_run_id,
+        "confidence": payload.confidence,
+        "created_at": now,
+        "created_by": user["id"],
+        "id": item_id,
+        "raw_payload": payload.raw_payload,
+        "raw_subject_id": raw_subject_id,
+        "resolution_action": None,
+        "resolution_note": None,
+        "resolved_at": None,
+        "resolved_by": None,
+        "resolved_module_code": None,
+        "resolved_product_id": None,
+        "resolved_requirement_id": None,
+        "resolved_subject_id": None,
+        "resolved_subject_type": None,
+        "source_system": source_system,
+        "source_type": payload.source_type,
+        "status": "pending",
+        "suggested_module_code": suggested_module_code,
+        "suggested_product_id": payload.suggested_product_id,
+        "summary": summary,
+        "updated_at": now,
+    }
+    current_store.pending_attribution_items[item_id] = item
+    current_store.audit(
+        event_type="pending_attribution.created",
+        actor_id=user["id"],
+        subject_type="pending_attribution_item",
+        subject_id=item_id,
+        payload={
+            "source_system": item["source_system"],
+            "source_type": item["source_type"],
+            "status": item["status"],
+        },
+    )
+    return envelope(item, get_trace_id(request))
+
+
+@app.post("/api/attribution/pending-items/{item_id}/resolve")
+def resolve_pending_attribution_item(
+    item_id: str,
+    payload: PendingAttributionResolveRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_pending_attribution_write_role(user)
+    current_store = store(request)
+    item = current_store.pending_attribution_items.get(item_id)
+    if item is None:
+        raise api_error(404, "NOT_FOUND", "Pending attribution item not found")
+    (
+        resolution_note,
+        resolved_product_id,
+        resolved_module_code,
+        resolved_requirement_id,
+        resolved_subject_type,
+        resolved_subject_id,
+    ) = _validate_pending_attribution_resolve_request(current_store, item, payload)
+    now = datetime.now(UTC).isoformat()
+    status = "resolved" if payload.resolution_action == "link_existing_context" else "ignored"
+    item.update(
+        {
+            "resolution_action": payload.resolution_action,
+            "resolution_note": resolution_note,
+            "resolved_at": now,
+            "resolved_by": user["id"],
+            "resolved_module_code": resolved_module_code,
+            "resolved_product_id": resolved_product_id,
+            "resolved_requirement_id": resolved_requirement_id,
+            "resolved_subject_id": resolved_subject_id,
+            "resolved_subject_type": resolved_subject_type,
+            "status": status,
+            "updated_at": now,
+        }
+    )
+    current_store.audit(
+        event_type=(
+            "pending_attribution.resolved"
+            if status == "resolved"
+            else "pending_attribution.ignored"
+        ),
+        actor_id=user["id"],
+        subject_type="pending_attribution_item",
+        subject_id=item_id,
+        payload={
+            "resolution_action": item["resolution_action"],
+            "resolved_product_id": item.get("resolved_product_id"),
+            "status": item["status"],
+        },
+    )
+    return envelope(item, get_trace_id(request))
 
 
 @app.get("/api/devops/gitlab/daily-code-metrics")

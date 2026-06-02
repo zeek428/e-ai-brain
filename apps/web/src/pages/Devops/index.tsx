@@ -1,9 +1,9 @@
 import { ProTable, type ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Form, Input, Modal, Select, Space } from 'antd';
+import { Alert, Button, Form, Input, Modal, Radio, Select, Space } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import type { ProductContextOption } from '../../data/management';
+import type { ProductContextOption, ProductModuleRecord, RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   createGitLabDailyCodeMetric,
@@ -12,8 +12,12 @@ import {
   createCollectorRun,
   fetchCollectorRuns,
   fetchDevopsMetrics,
+  fetchManagementRequirements,
+  fetchPendingAttributionItems,
   fetchProductContextOptions,
   fetchProductGitRepositories,
+  fetchProductModules,
+  resolvePendingAttributionItem,
   updateCollectorRun,
   type CollectorRunCreatePayload,
   type CollectorRunRecord,
@@ -21,6 +25,8 @@ import {
   type JenkinsReleaseCreatePayload,
   type OnlineLogMetricCreatePayload,
   type OperationalMetricRecord,
+  type PendingAttributionItem,
+  type PendingAttributionResolvePayload,
   type ProductGitRepositoryOption,
 } from '../../services/aiBrain';
 
@@ -84,6 +90,16 @@ type CollectorRunFailureFormValues = {
   errorMessage: string;
 };
 
+type PendingAttributionResolveFormValues = {
+  resolutionAction: string;
+  resolutionNote?: string;
+  resolvedModuleCode?: string;
+  resolvedProductId?: string;
+  resolvedRequirementId?: string;
+  resolvedSubjectId?: string;
+  resolvedSubjectType?: string;
+};
+
 const gitlabMetricStatus = 'collected';
 const jenkinsReleaseStatus = 'success';
 const onlineLogMetricStatus = 'collected';
@@ -107,6 +123,10 @@ const collectorRunStatusOptions = [
   { label: 'succeeded', value: 'succeeded' },
   { label: 'failed', value: 'failed' },
   { label: 'cancelled', value: 'cancelled' },
+];
+const pendingAttributionResolutionOptions = [
+  { label: '归属到已有上下文', value: 'link_existing_context' },
+  { label: '忽略为噪声', value: 'ignore_as_noise' },
 ];
 
 function parseTopErrors(value?: string): Record<string, unknown>[] {
@@ -317,6 +337,52 @@ function collectorRunStatusColor(status: string) {
   return 'blue';
 }
 
+function pendingAttributionStatusColor(status: string) {
+  if (status === 'resolved') {
+    return 'green';
+  }
+  if (status === 'ignored') {
+    return 'default';
+  }
+  return 'gold';
+}
+
+function moduleOptionsFromModules(modules: ProductModuleRecord[]) {
+  return modules.map((module) => ({
+    label: `${module.name} (${module.code})`,
+    value: module.code,
+  }));
+}
+
+function requirementOptionsFromRequirements(requirements: RequirementRecord[], productId?: string) {
+  return requirements
+    .filter((requirement) => !productId || requirement.productId === productId)
+    .map((requirement) => ({
+      label: `${requirement.title} (${requirement.id})`,
+      value: requirement.id,
+    }));
+}
+
+function buildPendingAttributionResolvePayload(
+  values: PendingAttributionResolveFormValues,
+): PendingAttributionResolvePayload {
+  if (values.resolutionAction === 'ignore_as_noise') {
+    return {
+      resolution_action: 'ignore_as_noise',
+      resolution_note: optionalText(values.resolutionNote),
+    };
+  }
+  return {
+    resolution_action: 'link_existing_context',
+    resolution_note: optionalText(values.resolutionNote),
+    resolved_module_code: optionalText(values.resolvedModuleCode),
+    resolved_product_id: optionalText(values.resolvedProductId),
+    resolved_requirement_id: optionalText(values.resolvedRequirementId),
+    resolved_subject_id: optionalText(values.resolvedSubjectId),
+    resolved_subject_type: optionalText(values.resolvedSubjectType),
+  };
+}
+
 const columns: ProColumns<OperationalMetricRecord>[] = [
   {
     dataIndex: 'category',
@@ -347,12 +413,16 @@ export default function DevopsPage() {
   const [onlineLogForm] = Form.useForm<OnlineLogMetricFormValues>();
   const [collectorRunForm] = Form.useForm<CollectorRunFormValues>();
   const [collectorRunFailureForm] = Form.useForm<CollectorRunFailureFormValues>();
+  const [pendingAttributionForm] = Form.useForm<PendingAttributionResolveFormValues>();
   const [metricOpen, setMetricOpen] = useState(false);
   const [jenkinsOpen, setJenkinsOpen] = useState(false);
   const [onlineLogOpen, setOnlineLogOpen] = useState(false);
   const [collectorRunOpen, setCollectorRunOpen] = useState(false);
   const [collectorRunFailureTarget, setCollectorRunFailureTarget] = useState<CollectorRunRecord | null>(null);
+  const [pendingAttributionTarget, setPendingAttributionTarget] = useState<PendingAttributionItem | null>(null);
   const [productContexts, setProductContexts] = useState<ProductContextOption[]>([]);
+  const [requirements, setRequirements] = useState<RequirementRecord[]>([]);
+  const [resolvedProductModules, setResolvedProductModules] = useState<ProductModuleRecord[]>([]);
   const [repositoryState, setRepositoryState] = useState<{
     items: ProductGitRepositoryOption[];
     productId: string;
@@ -369,9 +439,25 @@ export default function DevopsPage() {
     rows: collectorRuns,
     status: collectorRunRemoteStatus,
   } = useRemoteRows(fetchCollectorRuns);
+  const {
+    error: pendingAttributionError,
+    reload: reloadPendingAttribution,
+    rows: pendingAttributionItems,
+    status: pendingAttributionRemoteStatus,
+  } = useRemoteRows(fetchPendingAttributionItems);
   const selectedProductId = Form.useWatch('productId', metricForm);
   const selectedJenkinsProductId = Form.useWatch('productId', jenkinsForm);
+  const pendingAttributionResolutionAction = Form.useWatch('resolutionAction', pendingAttributionForm);
+  const pendingAttributionResolvedProductId = Form.useWatch('resolvedProductId', pendingAttributionForm);
   const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
+  const resolvedModuleOptions = useMemo(
+    () => moduleOptionsFromModules(resolvedProductModules),
+    [resolvedProductModules],
+  );
+  const resolvedRequirementOptions = useMemo(
+    () => requirementOptionsFromRequirements(requirements, pendingAttributionResolvedProductId),
+    [pendingAttributionResolvedProductId, requirements],
+  );
   const jenkinsVersionOptions = useMemo(
     () => versionOptionsFromContexts(productContexts, selectedJenkinsProductId),
     [productContexts, selectedJenkinsProductId],
@@ -409,6 +495,60 @@ export default function DevopsPage() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (pendingAttributionTarget === null) {
+      return;
+    }
+    let mounted = true;
+    void fetchManagementRequirements()
+      .then((items) => {
+        if (mounted) {
+          setRequirements(items);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setRequirements([]);
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [pendingAttributionTarget]);
+
+  useEffect(() => {
+    if (pendingAttributionTarget === null || !pendingAttributionResolvedProductId) {
+      setResolvedProductModules([]);
+      pendingAttributionForm.setFieldValue('resolvedModuleCode', undefined);
+      return;
+    }
+    let mounted = true;
+    pendingAttributionForm.setFieldValue('resolvedModuleCode', undefined);
+    void fetchProductModules(pendingAttributionResolvedProductId)
+      .then((items) => {
+        if (mounted) {
+          setResolvedProductModules(items);
+          if (
+            pendingAttributionTarget.suggestedModuleCode &&
+            items.some((item) => item.code === pendingAttributionTarget.suggestedModuleCode)
+          ) {
+            pendingAttributionForm.setFieldValue(
+              'resolvedModuleCode',
+              pendingAttributionTarget.suggestedModuleCode,
+            );
+          }
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setResolvedProductModules([]);
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [pendingAttributionForm, pendingAttributionResolvedProductId, pendingAttributionTarget]);
 
   useEffect(() => {
     if (!metricOpen || productOptions.length !== 1 || metricForm.getFieldValue('productId')) {
@@ -539,6 +679,35 @@ export default function DevopsPage() {
     await reloadCollectorRuns();
   };
 
+  const openPendingAttributionResolve = useCallback((item: PendingAttributionItem) => {
+    setPendingAttributionTarget(item);
+    setResolvedProductModules([]);
+    pendingAttributionForm.setFieldsValue({
+      resolutionAction: 'link_existing_context',
+      resolutionNote: undefined,
+      resolvedModuleCode: item.suggestedModuleCode,
+      resolvedProductId: item.suggestedProductId,
+      resolvedRequirementId: undefined,
+      resolvedSubjectId: undefined,
+      resolvedSubjectType: undefined,
+    });
+  }, [pendingAttributionForm]);
+
+  const submitPendingAttributionResolve = async () => {
+    if (pendingAttributionTarget === null) {
+      return;
+    }
+    const values = await pendingAttributionForm.validateFields();
+    await resolvePendingAttributionItem(
+      pendingAttributionTarget.id,
+      buildPendingAttributionResolvePayload(values),
+    );
+    pendingAttributionForm.resetFields();
+    setPendingAttributionTarget(null);
+    setResolvedProductModules([]);
+    await reloadPendingAttribution();
+  };
+
   const collectorRunColumns = useMemo<ProColumns<CollectorRunRecord>[]>(
     () => [
       {
@@ -627,6 +796,88 @@ export default function DevopsPage() {
     [updateCollectorRunStatus],
   );
 
+  const pendingAttributionColumns = useMemo<ProColumns<PendingAttributionItem>[]>(
+    () => [
+      {
+        dataIndex: 'id',
+        search: false,
+        title: '队列 ID',
+      },
+      {
+        dataIndex: 'sourceType',
+        search: false,
+        title: '来源类型',
+        render: (_, row) => collectorTypeLabel(row.sourceType),
+      },
+      {
+        dataIndex: 'sourceSystem',
+        search: false,
+        title: '来源系统',
+      },
+      {
+        dataIndex: 'rawSubjectId',
+        search: false,
+        title: '原始主体 ID',
+        render: (_, row) => row.rawSubjectId ?? '-',
+      },
+      {
+        dataIndex: 'summary',
+        search: false,
+        title: '摘要',
+      },
+      {
+        dataIndex: 'suggestedProductId',
+        search: false,
+        title: '建议产品',
+        render: (_, row) => row.suggestedProductId ?? '-',
+      },
+      {
+        dataIndex: 'suggestedModuleCode',
+        search: false,
+        title: '建议模块',
+        render: (_, row) => row.suggestedModuleCode ?? '-',
+      },
+      {
+        dataIndex: 'confidence',
+        search: false,
+        title: '置信度',
+        render: (_, row) => (row.confidence === undefined ? '-' : row.confidence.toFixed(2)),
+      },
+      {
+        dataIndex: 'status',
+        search: false,
+        title: '状态',
+        render: (_, row) => (
+          <StatusTag color={pendingAttributionStatusColor(row.status)} label={row.status} />
+        ),
+      },
+      {
+        dataIndex: 'createdAt',
+        search: false,
+        title: '创建时间',
+      },
+      {
+        key: 'actions',
+        search: false,
+        title: '操作',
+        render: (_, row) =>
+          row.status === 'pending' ? (
+            <Button
+              aria-label={`归属处理 ${row.id}`}
+              onClick={() => openPendingAttributionResolve(row)}
+              size="small"
+              type="link"
+            >
+              归属处理
+            </Button>
+          ) : (
+            '-'
+          ),
+      },
+    ],
+    [openPendingAttributionResolve],
+  );
+
   return (
     <>
       <ManagementListPage<OperationalMetricRecord>
@@ -705,6 +956,36 @@ export default function DevopsPage() {
           ]}
         />
       </div>
+      <div style={{ margin: '16px 24px 24px' }}>
+        {pendingAttributionError ? (
+          <Alert
+            className="management-list-alert"
+            showIcon
+            title={formatRemoteRowsError(pendingAttributionError)}
+            type="warning"
+          />
+        ) : null}
+        <ProTable<PendingAttributionItem>
+          cardBordered
+          columns={pendingAttributionColumns}
+          dataSource={pendingAttributionItems}
+          dateFormatter="string"
+          headerTitle="待归属数据队列"
+          loading={pendingAttributionRemoteStatus === 'loading'}
+          options={{
+            density: true,
+            reload: () => void reloadPendingAttribution(),
+            setting: true,
+          }}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条`,
+          }}
+          rowKey="id"
+          search={false}
+        />
+      </div>
       <Modal
         destroyOnHidden
         okText="保存"
@@ -746,6 +1027,89 @@ export default function DevopsPage() {
             <Input.TextArea rows={3} placeholder='{"repository_path":"rd/platform-api"}' />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        okText="保存"
+        okButtonProps={{ 'aria-label': '保存' }}
+        onCancel={() => {
+          pendingAttributionForm.resetFields();
+          setPendingAttributionTarget(null);
+          setResolvedProductModules([]);
+        }}
+        onOk={() => void submitPendingAttributionResolve()}
+        open={pendingAttributionTarget !== null}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        title="归属处理"
+      >
+        <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+          <div>{pendingAttributionTarget?.summary}</div>
+          <Form<PendingAttributionResolveFormValues> form={pendingAttributionForm} layout="vertical">
+            <Form.Item
+              initialValue="link_existing_context"
+              label="处理方式"
+              name="resolutionAction"
+              rules={[{ required: true, message: '请选择处理方式' }]}
+            >
+              <Radio.Group
+                optionType="button"
+                options={pendingAttributionResolutionOptions}
+              />
+            </Form.Item>
+            <Form.Item
+              label="归属产品"
+              name="resolvedProductId"
+              rules={[
+                {
+                  validator: async (_: unknown, value?: string) => {
+                    if (
+                      pendingAttributionForm.getFieldValue('resolutionAction') !==
+                        'ignore_as_noise' &&
+                      !value
+                    ) {
+                      throw new Error('请选择归属产品');
+                    }
+                  },
+                },
+              ]}
+            >
+              <Select
+                allowClear
+                disabled={pendingAttributionResolutionAction === 'ignore_as_noise'}
+                options={productOptions}
+              />
+            </Form.Item>
+            <Form.Item label="归属模块" name="resolvedModuleCode">
+              <Select
+                allowClear
+                disabled={
+                  pendingAttributionResolutionAction === 'ignore_as_noise' ||
+                  !pendingAttributionResolvedProductId
+                }
+                options={resolvedModuleOptions}
+              />
+            </Form.Item>
+            <Form.Item label="关联需求" name="resolvedRequirementId">
+              <Select
+                allowClear
+                disabled={
+                  pendingAttributionResolutionAction === 'ignore_as_noise' ||
+                  !pendingAttributionResolvedProductId
+                }
+                options={resolvedRequirementOptions}
+              />
+            </Form.Item>
+            <Form.Item label="关联主体类型" name="resolvedSubjectType">
+              <Input disabled={pendingAttributionResolutionAction === 'ignore_as_noise'} />
+            </Form.Item>
+            <Form.Item label="关联主体 ID" name="resolvedSubjectId">
+              <Input disabled={pendingAttributionResolutionAction === 'ignore_as_noise'} />
+            </Form.Item>
+            <Form.Item label="处理说明" name="resolutionNote">
+              <Input.TextArea rows={3} />
+            </Form.Item>
+          </Form>
+        </Space>
       </Modal>
       <Modal
         destroyOnHidden

@@ -72,6 +72,7 @@
 - Jenkins 发布记录从空集合入口升级为真实业务主体，支持按产品版本登记、筛选、审计记录和 `jenkins_release_records` PostgreSQL 结构表持久化。
 - 线上运行日志指标从空集合入口升级为真实业务主体，支持按产品、模块、环境和时间窗口登记、筛选、审计记录和 `online_log_metrics` PostgreSQL 结构表持久化。
 - 采集运行记录升级为真实业务主体，新增 `/api/collectors/runs` 查询、登记和状态更新接口、`collector_runs` PostgreSQL 结构表、审计事件和研发运营页面操作入口，不自动生成指标数据。
+- 待归属数据队列升级为真实业务主体，新增 `/api/attribution/pending-items` 查询、登记和处理接口、`pending_attribution_items` PostgreSQL 结构表、审计事件、DevOps 处理弹窗和用户洞察只读可见性；队列处理不自动生成指标或反馈数据。
 - 首页 IT 团队看板从静态欢迎页升级为真实 MVP 聚合视图，展示产品、需求、AI 任务、待确认 Review、知识沉淀和审计摘要。
 - 首页 IT 团队看板新增真实产品筛选控件，页面会从产品配置接口加载产品列表，并按 `product_id` 重新拉取看板聚合数据。
 - 首页 IT 团队看板产品筛选补齐后端归属过滤，知识文档和审计事件不再把其他产品的数据混入当前产品聚合；知识文档支持可选 `product_id` 归属上下文。

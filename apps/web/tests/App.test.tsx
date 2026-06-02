@@ -2168,6 +2168,202 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('示例采集运行')).not.toBeInTheDocument();
   });
 
+  it('loads real pending attribution items without placeholder rows from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === '/api/attribution/pending-items') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    await screen.findByText('待归属数据队列');
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(
+        expect.arrayContaining(['/api/attribution/pending-items']),
+      ),
+    );
+    expect(screen.queryByText('pending_attr_demo')).not.toBeInTheDocument();
+    expect(screen.queryByText('示例待归属数据')).not.toBeInTheDocument();
+  });
+
+  it('resolves pending attribution items from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (
+        input === '/api/attribution/pending-items/pending_attr_001/resolve' &&
+        init?.method === 'POST'
+      ) {
+        return jsonResponse({
+          data: {
+            id: 'pending_attr_001',
+            resolved_product_id: 'product_api',
+            source_system: 'feedback-api',
+            source_type: 'user_feedback',
+            status: 'resolved',
+            summary: 'Cannot map module search-v2',
+          },
+        });
+      }
+      if (input === '/api/attribution/pending-items') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                confidence: 0.44,
+                created_at: '2026-06-02T05:30:00Z',
+                id: 'pending_attr_001',
+                raw_payload: { module_hint: 'search-v2' },
+                raw_subject_id: 'feedback-ext-42',
+                source_system: 'feedback-api',
+                source_type: 'user_feedback',
+                status: 'pending',
+                suggested_product_id: 'product_api',
+                summary: 'Cannot map module search-v2',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products/product_api/versions?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products/product_api/modules') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/requirements') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    expect(await screen.findByText('Cannot map module search-v2')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /归属处理 pending_attr_001/ }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/attribution/pending-items/pending_attr_001/resolve',
+        'POST',
+        JSON.stringify({
+          resolution_action: 'link_existing_context',
+          resolved_product_id: 'product_api',
+        }),
+      ]),
+    );
+  });
+
+  it('ignores pending attribution items from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (
+        input === '/api/attribution/pending-items/pending_attr_noise/resolve' &&
+        init?.method === 'POST'
+      ) {
+        return jsonResponse({
+          data: {
+            id: 'pending_attr_noise',
+            source_system: 'gitlab',
+            source_type: 'gitlab_daily_code_metric',
+            status: 'ignored',
+            summary: 'Unknown repository',
+          },
+        });
+      }
+      if (input === '/api/attribution/pending-items') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                confidence: null,
+                created_at: '2026-06-02T05:40:00Z',
+                id: 'pending_attr_noise',
+                raw_payload: { repository_path: 'unknown/repo' },
+                source_system: 'gitlab',
+                source_type: 'gitlab_daily_code_metric',
+                status: 'pending',
+                summary: 'Unknown repository',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/requirements') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    expect(await screen.findByText('Unknown repository')).toBeInTheDocument();
+    expect(screen.queryByText('0.00')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /归属处理 pending_attr_noise/ }));
+    fireEvent.click(await screen.findByLabelText('忽略为噪声'));
+    fireEvent.change(screen.getByLabelText('处理说明'), { target: { value: 'Test import noise' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/attribution/pending-items/pending_attr_noise/resolve',
+        'POST',
+        JSON.stringify({
+          resolution_action: 'ignore_as_noise',
+          resolution_note: 'Test import noise',
+        }),
+      ]),
+    );
+  });
+
   it('creates real collector runs from the DevOps page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

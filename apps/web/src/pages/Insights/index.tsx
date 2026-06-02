@@ -1,6 +1,6 @@
-import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Checkbox, Form, Input, Modal, Select, Space } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { ProTable, type ProColumns } from '@ant-design/pro-components';
+import { Alert, Button, Checkbox, Form, Input, Modal, Select, Space } from 'antd';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ProductContextOption } from '../../data/management';
@@ -10,11 +10,13 @@ import {
   createUserFeedback,
   createUserUsageMetric,
   decideIterationSuggestion,
+  fetchPendingAttributionItems,
   fetchProductContextOptions,
   fetchUserInsights,
   updateUserFeedback,
   type IterationSuggestionCreatePayload,
   type IterationSuggestionDecisionPayload,
+  type PendingAttributionItem,
   type UserFeedbackCreatePayload,
   type UserInsightRecord,
   type UserUsageMetricCreatePayload,
@@ -289,6 +291,64 @@ function useInsightColumns(
   );
 }
 
+function pendingAttributionStatusColor(status: string) {
+  if (status === 'resolved') {
+    return 'green';
+  }
+  if (status === 'ignored') {
+    return 'default';
+  }
+  return 'gold';
+}
+
+function usePendingAttributionColumns() {
+  return useMemo<ProColumns<PendingAttributionItem>[]>(
+    () => [
+      {
+        dataIndex: 'sourceType',
+        search: false,
+        title: '来源类型',
+      },
+      {
+        dataIndex: 'sourceSystem',
+        search: false,
+        title: '来源系统',
+      },
+      {
+        dataIndex: 'rawSubjectId',
+        search: false,
+        title: '原始主体 ID',
+        render: (_, row) => row.rawSubjectId ?? '-',
+      },
+      {
+        dataIndex: 'summary',
+        search: false,
+        title: '摘要',
+      },
+      {
+        dataIndex: 'suggestedProductId',
+        search: false,
+        title: '建议产品',
+        render: (_, row) => row.suggestedProductId ?? '-',
+      },
+      {
+        dataIndex: 'status',
+        search: false,
+        title: '状态',
+        render: (_, row) => (
+          <StatusTag color={pendingAttributionStatusColor(row.status)} label={row.status} />
+        ),
+      },
+      {
+        dataIndex: 'createdAt',
+        search: false,
+        title: '创建时间',
+      },
+    ],
+    [],
+  );
+}
+
 export default function InsightsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState<UserInsightRecord | null>(null);
@@ -309,12 +369,26 @@ export default function InsightsPage() {
     () => versionOptionsFromContexts(productContexts, suggestionProductId),
     [productContexts, suggestionProductId],
   );
+  const loadPendingAttributionItems = useCallback(async () => {
+    const [usageItems, feedbackItems] = await Promise.all([
+      fetchPendingAttributionItems({ source_type: 'user_usage_metric' }),
+      fetchPendingAttributionItems({ source_type: 'user_feedback' }),
+    ]);
+    return [...usageItems, ...feedbackItems];
+  }, []);
   const {
     error,
     reload,
     rows: dataSource,
     status,
   } = useRemoteRows(fetchUserInsights);
+  const {
+    error: pendingAttributionError,
+    reload: reloadPendingAttribution,
+    rows: pendingAttributionItems,
+    status: pendingAttributionStatus,
+  } = useRemoteRows(loadPendingAttributionItems);
+  const pendingAttributionColumns = usePendingAttributionColumns();
   const columns = useInsightColumns(
     (row) => {
       setDecisionTarget(row);
@@ -455,6 +529,36 @@ export default function InsightsPage() {
           </Button>,
         ]}
       />
+      <div style={{ margin: '16px 24px 24px' }}>
+        {pendingAttributionError ? (
+          <Alert
+            className="management-list-alert"
+            showIcon
+            title={formatRemoteRowsError(pendingAttributionError)}
+            type="warning"
+          />
+        ) : null}
+        <ProTable<PendingAttributionItem>
+          cardBordered
+          columns={pendingAttributionColumns}
+          dataSource={pendingAttributionItems}
+          dateFormatter="string"
+          headerTitle="待归属使用/反馈数据"
+          loading={pendingAttributionStatus === 'loading'}
+          options={{
+            density: true,
+            reload: () => void reloadPendingAttribution(),
+            setting: true,
+          }}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条`,
+          }}
+          rowKey="id"
+          search={false}
+        />
+      </div>
       <Modal
         destroyOnHidden
         okText="保存"

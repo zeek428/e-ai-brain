@@ -58,6 +58,9 @@ ITERATION_PLANNING_FIELDS = [
 COLLECTOR_RUN_FIELDS = [
     "collector_runs",
 ]
+PENDING_ATTRIBUTION_FIELDS = [
+    "pending_attribution_items",
+]
 MODEL_GATEWAY_FIELDS = [
     "model_gateway_configs",
     "model_gateway_logs",
@@ -92,6 +95,7 @@ COLLECTION_FIELDS = [
     "iteration_plan_suggestions",
     "iteration_plan_decisions",
     "collector_runs",
+    "pending_attribution_items",
     "requirements",
     "ai_tasks",
     "graph_runs",
@@ -192,6 +196,12 @@ class CollectorRunRepository(Protocol):
     def save_collector_runs(self, payload: dict[str, Any]) -> None: ...
 
 
+class PendingAttributionRepository(Protocol):
+    def load_pending_attribution(self) -> dict[str, Any] | None: ...
+
+    def save_pending_attribution(self, payload: dict[str, Any]) -> None: ...
+
+
 class ModelGatewayRepository(Protocol):
     def load_model_gateway(self) -> dict[str, Any] | None: ...
 
@@ -286,6 +296,10 @@ def _iteration_planning_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _collector_run_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in COLLECTOR_RUN_FIELDS}
+
+
+def _pending_attribution_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in PENDING_ATTRIBUTION_FIELDS}
 
 
 def _model_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -490,6 +504,15 @@ def _repository_load_collector_runs(repository: SnapshotRepository) -> dict[str,
     return load_collector_runs()
 
 
+def _repository_load_pending_attribution(
+    repository: SnapshotRepository,
+) -> dict[str, Any] | None:
+    load_pending_attribution = getattr(repository, "load_pending_attribution", None)
+    if load_pending_attribution is None:
+        return None
+    return load_pending_attribution()
+
+
 def _repository_load_model_gateway(repository: SnapshotRepository) -> dict[str, Any] | None:
     load_model_gateway = getattr(repository, "load_model_gateway", None)
     if load_model_gateway is None:
@@ -632,6 +655,17 @@ def _repository_save_collector_runs(
         save_collector_runs(_collector_run_payload(clean_payload))
 
 
+def _repository_save_pending_attribution(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_pending_attribution = getattr(repository, "save_pending_attribution", None)
+    if save_pending_attribution is not None:
+        clean_payload = deepcopy(payload)
+        _clean_pending_attribution_references(clean_payload)
+        save_pending_attribution(_pending_attribution_payload(clean_payload))
+
+
 def _repository_save_model_gateway(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -717,6 +751,10 @@ def _has_iteration_planning_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_collector_run_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in COLLECTOR_RUN_FIELDS)
+
+
+def _has_pending_attribution_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in PENDING_ATTRIBUTION_FIELDS)
 
 
 def _has_model_gateway_items(payload: dict[str, Any] | None) -> bool:
@@ -907,6 +945,15 @@ def _sync_collector_run_counters(payload: dict[str, Any]) -> None:
     counters["collector_run"] = max(
         counters.get("collector_run", 0),
         _max_numeric_suffix(payload.get("collector_runs", {}), "collector_run"),
+    )
+    payload["counters"] = counters
+
+
+def _sync_pending_attribution_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["pending_attr"] = max(
+        counters.get("pending_attr", 0),
+        _max_numeric_suffix(payload.get("pending_attribution_items", {}), "pending_attr"),
     )
     payload["counters"] = counters
 
@@ -1226,6 +1273,47 @@ def _drop_collector_runs_without_context(payload: dict[str, Any]) -> None:
     payload["collector_runs"] = cleaned_runs
 
 
+def _clean_pending_attribution_references(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    modules = payload.get("product_modules", {})
+    requirements = payload.get("requirements", {})
+    collector_runs = payload.get("collector_runs", {})
+    cleaned_items = {}
+    for item_id, item in payload.get("pending_attribution_items", {}).items():
+        cleaned = deepcopy(item)
+        collector_run_id = cleaned.get("collector_run_id")
+        if collector_run_id and collector_run_id not in collector_runs:
+            cleaned["collector_run_id"] = None
+        suggested_product_id = cleaned.get("suggested_product_id")
+        if suggested_product_id and suggested_product_id not in products:
+            cleaned["suggested_product_id"] = None
+            cleaned["suggested_module_code"] = None
+        resolved_product_id = cleaned.get("resolved_product_id")
+        if resolved_product_id and resolved_product_id not in products:
+            cleaned["resolved_product_id"] = None
+            cleaned["resolved_module_code"] = None
+        resolved_requirement_id = cleaned.get("resolved_requirement_id")
+        if resolved_requirement_id and resolved_requirement_id not in requirements:
+            cleaned["resolved_requirement_id"] = None
+        if cleaned.get("resolved_requirement_id") and requirements:
+            requirement = requirements[cleaned["resolved_requirement_id"]]
+            if cleaned.get("resolved_product_id") and requirement.get("product_id") != cleaned.get(
+                "resolved_product_id"
+            ):
+                cleaned["resolved_requirement_id"] = None
+        resolved_module_code = cleaned.get("resolved_module_code")
+        if resolved_module_code and cleaned.get("resolved_product_id"):
+            module_matches = any(
+                module.get("product_id") == cleaned["resolved_product_id"]
+                and module.get("code") == resolved_module_code
+                for module in modules.values()
+            )
+            if not module_matches:
+                cleaned["resolved_module_code"] = None
+        cleaned_items[item_id] = cleaned
+    payload["pending_attribution_items"] = cleaned_items
+
+
 def _drop_gitlab_review_without_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     repositories = payload.get("product_git_repositories", {})
@@ -1424,6 +1512,14 @@ class PersistentMemoryStore(MemoryStore):
                 COLLECTOR_RUN_FIELDS,
             )
             _sync_collector_run_counters(payload)
+        pending_attribution_payload = _repository_load_pending_attribution(repository)
+        if _has_pending_attribution_items(pending_attribution_payload):
+            _replace_collection_payload(
+                payload,
+                _pending_attribution_payload(pending_attribution_payload),
+                PENDING_ATTRIBUTION_FIELDS,
+            )
+            _sync_pending_attribution_counters(payload)
         model_gateway_payload = _repository_load_model_gateway(repository)
         if _has_model_gateway_items(model_gateway_payload):
             _replace_collection_payload(
@@ -1464,6 +1560,7 @@ class PersistentMemoryStore(MemoryStore):
             _drop_user_feedback_without_context(payload)
             _drop_iteration_planning_without_context(payload)
             _drop_collector_runs_without_context(payload)
+            _clean_pending_attribution_references(payload)
         _drop_gitlab_review_without_context(payload)
         _drop_mock_writebacks_without_tasks(payload)
         _ensure_ai_task_defaults(payload)
@@ -1499,6 +1596,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_user_feedback(self.repository, payload)
         _repository_save_iteration_planning(self.repository, payload)
         _repository_save_collector_runs(self.repository, payload)
+        _repository_save_pending_attribution(self.repository, payload)
         _repository_save_model_gateway(self.repository, payload)
         _repository_save_gitlab_review(self.repository, payload)
         _repository_save_mock_writebacks(self.repository, payload)
@@ -1655,6 +1753,12 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 runs = self._load_collector_runs(cursor)
         return {"collector_runs": runs}
+
+    def load_pending_attribution(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                items = self._load_pending_attribution_items(cursor)
+        return {"pending_attribution_items": items}
 
     def load_model_gateway(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -1817,6 +1921,13 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "collector_runs", runs)
                 self._upsert_collector_runs(cursor, runs)
+
+    def save_pending_attribution(self, payload: dict[str, Any]) -> None:
+        items = payload.get("pending_attribution_items", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "pending_attribution_items", items)
+                self._upsert_pending_attribution_items(cursor, items)
 
     def save_model_gateway(self, payload: dict[str, Any]) -> None:
         configs = payload.get("model_gateway_configs", {})
@@ -2431,6 +2542,54 @@ class PostgresSnapshotRepository:
             }
             runs[row[0]] = run
         return runs
+
+    def _load_pending_attribution_items(self, cursor) -> dict[str, dict[str, Any]]:
+        import json
+
+        cursor.execute(
+            """
+            SELECT id, source_type, source_system, collector_run_id, raw_subject_id,
+                   summary, raw_payload, suggested_product_id, suggested_module_code,
+                   confidence, status, resolution_action, resolution_note,
+                   resolved_product_id, resolved_module_code, resolved_requirement_id,
+                   resolved_subject_type, resolved_subject_id, resolved_by, resolved_at,
+                   created_by, created_at, updated_at
+            FROM pending_attribution_items
+            ORDER BY created_at, id
+            """
+        )
+        items = {}
+        for row in cursor.fetchall():
+            raw_payload = row[6] or {}
+            if isinstance(raw_payload, str):
+                raw_payload = json.loads(raw_payload)
+            item = {
+                "collector_run_id": row[3],
+                "confidence": float(row[9]) if row[9] is not None else None,
+                "created_at": row[21].isoformat() if row[21] else None,
+                "created_by": row[20],
+                "id": row[0],
+                "raw_payload": raw_payload,
+                "raw_subject_id": row[4],
+                "resolution_action": row[11],
+                "resolution_note": row[12],
+                "resolved_at": row[19].isoformat() if row[19] else None,
+                "resolved_by": row[18],
+                "resolved_module_code": row[14],
+                "resolved_product_id": row[13],
+                "resolved_requirement_id": row[15],
+                "resolved_subject_id": row[17],
+                "resolved_subject_type": row[16],
+                "source_system": row[2],
+                "source_type": row[1],
+                "status": row[10],
+                "suggested_module_code": row[8],
+                "suggested_product_id": row[7],
+                "summary": row[5],
+                "updated_at": row[22].isoformat() if row[22] else None,
+            }
+            items[row[0]] = item
+        return items
 
     def _load_gitlab_daily_code_metrics(self, cursor) -> dict[str, dict[str, Any]]:
         import json
@@ -3982,6 +4141,85 @@ class PostgresSnapshotRepository:
                     run.get("error_message"),
                     json.dumps(run.get("payload_summary", {}), ensure_ascii=False),
                     run.get("created_by"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_pending_attribution_items(
+        self,
+        cursor,
+        items: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for item in items.values():
+            created_at = item.get("created_at")
+            updated_at = item.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO pending_attribution_items (
+                  id, source_type, source_system, collector_run_id, raw_subject_id,
+                  summary, raw_payload, suggested_product_id, suggested_module_code,
+                  confidence, status, resolution_action, resolution_note,
+                  resolved_product_id, resolved_module_code, resolved_requirement_id,
+                  resolved_subject_type, resolved_subject_id, resolved_by, resolved_at,
+                  created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s,
+                  %s, %s::jsonb, %s, %s,
+                  %s, %s, %s, %s,
+                  %s, %s, %s,
+                  %s, %s, %s, %s::timestamptz,
+                  %s, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  source_type = EXCLUDED.source_type,
+                  source_system = EXCLUDED.source_system,
+                  collector_run_id = EXCLUDED.collector_run_id,
+                  raw_subject_id = EXCLUDED.raw_subject_id,
+                  summary = EXCLUDED.summary,
+                  raw_payload = EXCLUDED.raw_payload,
+                  suggested_product_id = EXCLUDED.suggested_product_id,
+                  suggested_module_code = EXCLUDED.suggested_module_code,
+                  confidence = EXCLUDED.confidence,
+                  status = EXCLUDED.status,
+                  resolution_action = EXCLUDED.resolution_action,
+                  resolution_note = EXCLUDED.resolution_note,
+                  resolved_product_id = EXCLUDED.resolved_product_id,
+                  resolved_module_code = EXCLUDED.resolved_module_code,
+                  resolved_requirement_id = EXCLUDED.resolved_requirement_id,
+                  resolved_subject_type = EXCLUDED.resolved_subject_type,
+                  resolved_subject_id = EXCLUDED.resolved_subject_id,
+                  resolved_by = EXCLUDED.resolved_by,
+                  resolved_at = EXCLUDED.resolved_at,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    item["id"],
+                    item["source_type"],
+                    item["source_system"],
+                    item.get("collector_run_id"),
+                    item.get("raw_subject_id"),
+                    item["summary"],
+                    json.dumps(item.get("raw_payload", {}), ensure_ascii=False),
+                    item.get("suggested_product_id"),
+                    item.get("suggested_module_code"),
+                    item.get("confidence"),
+                    item.get("status", "pending"),
+                    item.get("resolution_action"),
+                    item.get("resolution_note"),
+                    item.get("resolved_product_id"),
+                    item.get("resolved_module_code"),
+                    item.get("resolved_requirement_id"),
+                    item.get("resolved_subject_type"),
+                    item.get("resolved_subject_id"),
+                    item.get("resolved_by"),
+                    item.get("resolved_at"),
+                    item.get("created_by"),
                     created_at,
                     updated_at,
                 ),

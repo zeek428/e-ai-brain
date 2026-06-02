@@ -272,6 +272,61 @@ export type CollectorRunPatchPayload = {
   status?: string;
 };
 
+export type PendingAttributionItem = {
+  collectorRunId?: string;
+  confidence?: number;
+  createdAt: string;
+  createdBy?: string;
+  id: string;
+  rawPayload: Record<string, unknown>;
+  rawSubjectId?: string;
+  resolutionAction?: string;
+  resolutionNote?: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  resolvedModuleCode?: string;
+  resolvedProductId?: string;
+  resolvedRequirementId?: string;
+  resolvedSubjectId?: string;
+  resolvedSubjectType?: string;
+  sourceSystem: string;
+  sourceType: string;
+  status: string;
+  suggestedModuleCode?: string;
+  suggestedProductId?: string;
+  summary: string;
+  updatedAt: string;
+};
+
+export type PendingAttributionCreatePayload = {
+  collector_run_id?: string;
+  confidence?: number;
+  raw_payload?: Record<string, unknown>;
+  raw_subject_id?: string;
+  source_system: string;
+  source_type: string;
+  suggested_module_code?: string;
+  suggested_product_id?: string;
+  summary: string;
+};
+
+export type PendingAttributionResolvePayload = {
+  resolution_action: string;
+  resolution_note?: string;
+  resolved_module_code?: string;
+  resolved_product_id?: string;
+  resolved_requirement_id?: string;
+  resolved_subject_id?: string;
+  resolved_subject_type?: string;
+};
+
+export type PendingAttributionFilters = {
+  collector_run_id?: string;
+  resolved_product_id?: string;
+  source_type?: string;
+  status?: string;
+};
+
 export type IterationSuggestionCreatePayload = {
   constraints?: Record<string, unknown>;
   module_codes?: string[];
@@ -2616,6 +2671,97 @@ export async function updateCollectorRun(
     token,
   });
   return mapCollectorRun(run);
+}
+
+function emptyToUndefined(value: string) {
+  return value === '-' ? undefined : value;
+}
+
+function mapPendingAttributionItem(item: FlexibleListItem): PendingAttributionItem {
+  const rawConfidence = item.confidence;
+  const confidence =
+    typeof rawConfidence === 'number'
+      ? rawConfidence
+      : rawConfidence === null || rawConfidence === undefined || rawConfidence === ''
+        ? undefined
+        : Number.isFinite(Number(rawConfidence))
+          ? Number(rawConfidence)
+        : undefined;
+  return {
+    collectorRunId: emptyToUndefined(formatUnknownValue(item.collector_run_id)),
+    confidence,
+    createdAt: formatListDate(formatUnknownValue(item.created_at)),
+    createdBy: emptyToUndefined(formatUnknownValue(item.created_by)),
+    id: formatUnknownValue(item.id),
+    rawPayload: normalizeObjectRecord(item.raw_payload) ?? {},
+    rawSubjectId: emptyToUndefined(formatUnknownValue(item.raw_subject_id)),
+    resolutionAction: emptyToUndefined(formatUnknownValue(item.resolution_action)),
+    resolutionNote: emptyToUndefined(formatUnknownValue(item.resolution_note)),
+    resolvedAt: emptyToUndefined(formatListDate(formatUnknownValue(item.resolved_at))),
+    resolvedBy: emptyToUndefined(formatUnknownValue(item.resolved_by)),
+    resolvedModuleCode: emptyToUndefined(formatUnknownValue(item.resolved_module_code)),
+    resolvedProductId: emptyToUndefined(formatUnknownValue(item.resolved_product_id)),
+    resolvedRequirementId: emptyToUndefined(formatUnknownValue(item.resolved_requirement_id)),
+    resolvedSubjectId: emptyToUndefined(formatUnknownValue(item.resolved_subject_id)),
+    resolvedSubjectType: emptyToUndefined(formatUnknownValue(item.resolved_subject_type)),
+    sourceSystem: formatUnknownValue(item.source_system),
+    sourceType: formatUnknownValue(item.source_type),
+    status: formatUnknownValue(item.status),
+    suggestedModuleCode: emptyToUndefined(formatUnknownValue(item.suggested_module_code)),
+    suggestedProductId: emptyToUndefined(formatUnknownValue(item.suggested_product_id)),
+    summary: formatUnknownValue(item.summary),
+    updatedAt: formatListDate(formatUnknownValue(item.updated_at ?? item.created_at)),
+  };
+}
+
+function pendingAttributionQuery(filters: PendingAttributionFilters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) {
+      params.set(key, value);
+    }
+  });
+  const query = params.toString();
+  return query ? `/api/attribution/pending-items?${query}` : '/api/attribution/pending-items';
+}
+
+export async function fetchPendingAttributionItems(
+  filters: PendingAttributionFilters = {},
+): Promise<PendingAttributionItem[]> {
+  const token = requireAccessToken();
+  const items = await apiRequest<ListResponse<FlexibleListItem>>(
+    pendingAttributionQuery(filters),
+    { token },
+  );
+  return items.items.map(mapPendingAttributionItem);
+}
+
+export async function createPendingAttributionItem(
+  payload: PendingAttributionCreatePayload,
+): Promise<PendingAttributionItem> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>('/api/attribution/pending-items', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+  return mapPendingAttributionItem(item);
+}
+
+export async function resolvePendingAttributionItem(
+  itemId: string,
+  payload: PendingAttributionResolvePayload,
+): Promise<PendingAttributionItem> {
+  const token = requireAccessToken();
+  const item = await apiRequest<FlexibleListItem>(
+    `/api/attribution/pending-items/${itemId}/resolve`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return mapPendingAttributionItem(item);
 }
 
 function mapUserInsights(category: string, items: FlexibleListItem[]): UserInsightRecord[] {
