@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 业务大脑配置收口为只读真实配置读取，`/api/brain-apps` 从运行时/`brain_apps` 加载默认 `rd_brain`；新增 `016_brain_app_task_attribution.sql`，补齐需求与 AI 任务的默认业务脑归属、`ai_tasks.brain_app_id` 和查询索引。
 - 生命周期上下文边、风险信号和首页 IT 团队看板快照开始细粒度 PostgreSQL 持久化，新增 `015_lifecycle_dashboard_persistence.sql`，`/api/lifecycle/context` 与 `/api/dashboard/it-team` 会同步真实计算结果到结构表。
 - 产品配置弹窗新增“相关系统”维护入口，相关系统支持绑定产品归属、按产品过滤，并进入生成任务时的产品上下文快照。
 - 任务中心任务操作弹窗新增“查看详情”入口，前端调用真实 `GET /api/ai-tasks/{task_id}` 详情接口并展示产品、版本、模块、需求、Graph Run 和输出内容。

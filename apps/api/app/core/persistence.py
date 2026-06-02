@@ -4,9 +4,12 @@ from copy import deepcopy
 from time import sleep
 from typing import Any, Protocol
 
-from app.core.store import MemoryStore
+from app.core.store import DEFAULT_BRAIN_APP_ID, MemoryStore
 
 STATE_KEY = "memory_store"
+BRAIN_APP_FIELDS = [
+    "brain_apps",
+]
 PRODUCT_CONFIG_FIELDS = [
     "products",
     "product_versions",
@@ -80,6 +83,7 @@ MOCK_WRITEBACK_FIELDS = [
     "mock_writebacks",
 ]
 COLLECTION_FIELDS = [
+    "brain_apps",
     "products",
     "product_versions",
     "product_modules",
@@ -126,6 +130,10 @@ class ProductConfigRepository(Protocol):
     def load_product_config(self) -> dict[str, Any] | None: ...
 
     def save_product_config(self, payload: dict[str, Any]) -> None: ...
+
+
+class BrainAppRepository(Protocol):
+    def load_brain_apps(self) -> dict[str, Any] | None: ...
 
 
 class RequirementRepository(Protocol):
@@ -244,6 +252,10 @@ class MockWritebackRepository(Protocol):
 
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in PRODUCT_CONFIG_FIELDS}
+
+
+def _brain_apps_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in BRAIN_APP_FIELDS}
 
 
 def _requirements_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -396,6 +408,13 @@ def _repository_load_product_config(repository: SnapshotRepository) -> dict[str,
     if load_product_config is None:
         return None
     return load_product_config()
+
+
+def _repository_load_brain_apps(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_brain_apps = getattr(repository, "load_brain_apps", None)
+    if load_brain_apps is None:
+        return None
+    return load_brain_apps()
 
 
 def _repository_save_product_config(
@@ -771,6 +790,10 @@ def _has_product_config_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in PRODUCT_CONFIG_FIELDS)
 
 
+def _has_brain_app_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in BRAIN_APP_FIELDS)
+
+
 def _has_requirement_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in REQUIREMENT_FIELDS)
 
@@ -1130,7 +1153,10 @@ def _drop_ai_tasks_without_context(payload: dict[str, Any]) -> None:
 
 
 def _ensure_ai_task_defaults(payload: dict[str, Any]) -> None:
+    for requirement in payload.get("requirements", {}).values():
+        requirement.setdefault("brain_app_id", DEFAULT_BRAIN_APP_ID)
     for task in payload.get("ai_tasks", {}).values():
+        task.setdefault("brain_app_id", DEFAULT_BRAIN_APP_ID)
         task.setdefault("graph_run_ids", [])
         task.setdefault("input_json", {})
         task.setdefault("product_context", {})
@@ -1592,6 +1618,13 @@ class PersistentMemoryStore(MemoryStore):
     def from_repository(cls, repository: SnapshotRepository) -> PersistentMemoryStore:
         store = cls(repository)
         payload = repository.load() or {}
+        brain_apps_payload = _repository_load_brain_apps(repository)
+        if _has_brain_app_items(brain_apps_payload):
+            _replace_collection_payload(
+                payload,
+                _brain_apps_payload(brain_apps_payload),
+                BRAIN_APP_FIELDS,
+            )
         product_config_payload = _repository_load_product_config(repository)
         has_structured_product_config = _has_product_config_items(product_config_payload)
         if has_structured_product_config:
@@ -1871,6 +1904,12 @@ class PostgresSnapshotRepository:
             "products": products,
             "related_systems": related_systems,
         }
+
+    def load_brain_apps(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                brain_apps = self._load_brain_apps(cursor)
+        return {"brain_apps": brain_apps}
 
     def load_requirements(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -2205,6 +2244,28 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "mock_issues", issues)
                 self._upsert_mock_issues(cursor, issues)
 
+    def _load_brain_apps(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, code, name, description, status, config, created_at, updated_at
+            FROM brain_apps
+            ORDER BY code
+            """
+        )
+        return {
+            row[0]: {
+                "code": row[1],
+                "config": dict(row[5] or {}),
+                "created_at": row[6].isoformat() if row[6] else None,
+                "description": row[3],
+                "id": row[0],
+                "name": row[2],
+                "status": row[4],
+                "updated_at": row[7].isoformat() if row[7] else None,
+            }
+            for row in cursor.fetchall()
+        }
+
     def _load_products(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
@@ -2322,7 +2383,8 @@ class PostgresSnapshotRepository:
     def _load_requirements(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
-            SELECT id, title, product_id, version_id, module_code, description, priority,
+            SELECT id, brain_app_id, title, product_id, version_id, module_code,
+                   description, priority,
                    status, created_by, approval_comment, rejection_reason, task_ids,
                    created_at, updated_at
             FROM requirements
@@ -2332,30 +2394,32 @@ class PostgresSnapshotRepository:
         requirements = {}
         for row in cursor.fetchall():
             requirement = {
-                "content": row[5],
-                "created_at": row[12].isoformat() if row[12] else None,
-                "created_by": row[8],
+                "brain_app_id": row[1] or DEFAULT_BRAIN_APP_ID,
+                "content": row[6],
+                "created_at": row[13].isoformat() if row[13] else None,
+                "created_by": row[9],
                 "id": row[0],
-                "module_code": row[4],
-                "priority": row[6],
-                "product_id": row[2],
-                "status": row[7],
-                "task_ids": list(row[11] or []),
-                "title": row[1],
-                "updated_at": row[13].isoformat() if row[13] else None,
-                "version_id": row[3],
+                "module_code": row[5],
+                "priority": row[7],
+                "product_id": row[3],
+                "status": row[8],
+                "task_ids": list(row[12] or []),
+                "title": row[2],
+                "updated_at": row[14].isoformat() if row[14] else None,
+                "version_id": row[4],
             }
-            if row[9] is not None:
-                requirement["approval_comment"] = row[9]
             if row[10] is not None:
-                requirement["rejection_reason"] = row[10]
+                requirement["approval_comment"] = row[10]
+            if row[11] is not None:
+                requirement["rejection_reason"] = row[11]
             requirements[row[0]] = requirement
         return requirements
 
     def _load_ai_tasks(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
-            SELECT id, requirement_id, task_type, title, status, product_id, version_id,
+            SELECT id, brain_app_id, requirement_id, task_type, title, status,
+                   product_id, version_id,
                    module_code, requirement_snapshot, product_context, input_json, output_json,
                    current_step, error_code, error_message, created_by, created_at, updated_at
             FROM ai_tasks
@@ -2365,26 +2429,27 @@ class PostgresSnapshotRepository:
         ai_tasks = {}
         for row in cursor.fetchall():
             task = {
-                "created_at": row[16].isoformat() if row[16] else None,
-                "created_by": row[15],
-                "current_step": row[12],
-                "error_code": row[13],
-                "error_message": row[14],
+                "brain_app_id": row[1] or DEFAULT_BRAIN_APP_ID,
+                "created_at": row[17].isoformat() if row[17] else None,
+                "created_by": row[16],
+                "current_step": row[13],
+                "error_code": row[14],
+                "error_message": row[15],
                 "graph_run_ids": [],
                 "id": row[0],
-                "input_json": dict(row[10] or {}),
-                "module_code": row[7],
-                "output_json": row[11],
-                "product_context": dict(row[9] or {}),
-                "product_id": row[5],
-                "requirement_id": row[1],
-                "requirement_snapshot": row[8],
+                "input_json": dict(row[11] or {}),
+                "module_code": row[8],
+                "output_json": row[12],
+                "product_context": dict(row[10] or {}),
+                "product_id": row[6],
+                "requirement_id": row[2],
+                "requirement_snapshot": row[9],
                 "review_ids": [],
-                "status": row[4],
-                "task_type": row[2],
-                "title": row[3],
-                "updated_at": row[17].isoformat() if row[17] else None,
-                "version_id": row[6],
+                "status": row[5],
+                "task_type": row[3],
+                "title": row[4],
+                "updated_at": row[18].isoformat() if row[18] else None,
+                "version_id": row[7],
             }
             ai_tasks[row[0]] = task
         return ai_tasks
@@ -3585,15 +3650,17 @@ class PostgresSnapshotRepository:
             cursor.execute(
                 """
                 INSERT INTO requirements (
-                  id, title, product_id, version_id, module_code, description, priority,
+                  id, brain_app_id, title, product_id, version_id, module_code,
+                  description, priority,
                   status, created_by, approval_comment, rejection_reason, task_ids,
                   created_at, updated_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
+                  brain_app_id = EXCLUDED.brain_app_id,
                   title = EXCLUDED.title,
                   product_id = EXCLUDED.product_id,
                   version_id = EXCLUDED.version_id,
@@ -3609,6 +3676,7 @@ class PostgresSnapshotRepository:
                 """,
                 (
                     requirement["id"],
+                    requirement.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
                     requirement["title"],
                     requirement["product_id"],
                     requirement["version_id"],
@@ -3634,16 +3702,18 @@ class PostgresSnapshotRepository:
             cursor.execute(
                 """
                 INSERT INTO ai_tasks (
-                  id, requirement_id, task_type, title, status, product_id, version_id,
+                  id, brain_app_id, requirement_id, task_type, title, status,
+                  product_id, version_id,
                   module_code, requirement_snapshot, product_context, input_json, output_json,
                   current_step, error_code, error_message, created_by, created_at, updated_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
                   %s::jsonb, %s, %s, %s, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
+                  brain_app_id = EXCLUDED.brain_app_id,
                   requirement_id = EXCLUDED.requirement_id,
                   task_type = EXCLUDED.task_type,
                   title = EXCLUDED.title,
@@ -3663,6 +3733,7 @@ class PostgresSnapshotRepository:
                 """,
                 (
                     task["id"],
+                    task.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
                     task["requirement_id"],
                     task["task_type"],
                     task["title"],

@@ -29,7 +29,7 @@ from app.core.config import get_settings
 from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
 from app.core.roles import ASSIGNABLE_ROLE_CODES, list_role_definitions
 from app.core.security import TokenError, create_access_token, parse_access_token, verify_password
-from app.core.store import MemoryStore
+from app.core.store import DEFAULT_BRAIN_APP_ID, MemoryStore
 from app.core.trace import envelope, get_trace_id, new_trace_id
 from app.core.users import SEEDED_USERS, MemoryUserRepository, PostgresUserRepository
 
@@ -62,27 +62,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-BRAIN_APPS = {
-    "rd_brain": {
-        "id": "rd_brain",
-        "code": "rd_brain",
-        "name": "研发大脑",
-        "status": "active",
-        "description": "把研发需求转成可确认、可回写、可沉淀的任务方案。",
-        "config": {
-            "default_task_types": [
-                "product_detail_design",
-                "technical_solution",
-                "development_planning",
-                "automated_testing",
-                "release_readiness",
-                "post_release_analysis",
-                "code_review",
-            ],
-        },
-    }
-}
 
 TECHNICAL_SOLUTION_FOLLOWUP_TASK_TYPES = {
     "development_planning",
@@ -2213,7 +2192,8 @@ def delete_user(
 
 @app.get("/api/brain-apps")
 def list_brain_apps(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
-    items = sorted(BRAIN_APPS.values(), key=lambda item: item["code"])
+    current_store = store(request)
+    items = sorted(current_store.brain_apps.values(), key=lambda item: item["code"])
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
 
@@ -2223,10 +2203,15 @@ def get_brain_app(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    brain_app = BRAIN_APPS.get(brain_app_id)
+    current_store = store(request)
+    brain_app = current_store.brain_apps.get(brain_app_id)
     if brain_app is None:
         brain_app = next(
-            (item for item in BRAIN_APPS.values() if item["id"] == brain_app_id),
+            (
+                item
+                for item in current_store.brain_apps.values()
+                if item["id"] == brain_app_id or item["code"] == brain_app_id
+            ),
             None,
         )
     if brain_app is None:
@@ -3035,6 +3020,7 @@ def create_requirement(
     requirement_id = current_store.new_id("requirement")
     requirement = {
         "id": requirement_id,
+        "brain_app_id": DEFAULT_BRAIN_APP_ID,
         "title": title,
         "product_id": payload.product_id,
         "version_id": payload.version_id,
@@ -3296,6 +3282,7 @@ def generate_task_from_requirement(
     task_id = current_store.new_id("task")
     task = {
         "id": task_id,
+        "brain_app_id": requirement.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
         "task_type": "product_detail_design",
         "title": f"产品详细设计：{requirement['title']}",
         "status": "draft",
@@ -3321,7 +3308,10 @@ def generate_task_from_requirement(
         ai_task_id=task_id,
         subject_type="ai_task",
         subject_id=task_id,
-        payload={"task_type": "product_detail_design"},
+        payload={
+            "brain_app_code": task["brain_app_id"],
+            "task_type": "product_detail_design",
+        },
     )
     return envelope(
         {"task_id": task_id, "task_type": task["task_type"], "task_status": task["status"]},
@@ -4062,6 +4052,7 @@ def create_ai_task(
     task_id = current_store.new_id("task")
     task = {
         "id": task_id,
+        "brain_app_id": requirement.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
         "task_type": payload.task_type,
         "title": payload.title,
         "status": "draft",
@@ -4089,7 +4080,10 @@ def create_ai_task(
         ai_task_id=task_id,
         subject_type="ai_task",
         subject_id=task_id,
-        payload={"task_type": payload.task_type},
+        payload={
+            "brain_app_code": task["brain_app_id"],
+            "task_type": payload.task_type,
+        },
     )
     return envelope(task, get_trace_id(request))
 
@@ -4514,6 +4508,7 @@ def _task_detail_projection(current_store: MemoryStore, task: dict[str, Any]) ->
     graph_runs = _graph_runs_for_task(current_store, task["id"])
     detail["input"] = {
         "task_type": task["task_type"],
+        "brain_app_id": task.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
         "requirement_id": task.get("requirement_id"),
         "requirement_snapshot": task.get("requirement_snapshot"),
         "product_context": task.get("product_context"),
@@ -4542,6 +4537,7 @@ def _task_detail_projection(current_store: MemoryStore, task: dict[str, Any]) ->
 def _task_summary_projection(task: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": task["id"],
+        "brain_app_id": task.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
         "task_type": task["task_type"],
         "title": task["title"],
         "status": task["status"],

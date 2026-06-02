@@ -5,6 +5,31 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+DEFAULT_BRAIN_APP_ID = "rd_brain"
+
+
+def default_brain_apps() -> dict[str, dict[str, Any]]:
+    return {
+        DEFAULT_BRAIN_APP_ID: {
+            "id": DEFAULT_BRAIN_APP_ID,
+            "code": DEFAULT_BRAIN_APP_ID,
+            "name": "研发大脑",
+            "status": "active",
+            "description": "把研发需求转成可确认、可回写、可沉淀的任务方案。",
+            "config": {
+                "default_task_types": [
+                    "product_detail_design",
+                    "technical_solution",
+                    "development_planning",
+                    "automated_testing",
+                    "release_readiness",
+                    "post_release_analysis",
+                    "code_review",
+                ],
+            },
+        }
+    }
+
 
 def _next_id(prefix: str, current: int) -> str:
     return f"{prefix}_{current:03d}"
@@ -12,6 +37,7 @@ def _next_id(prefix: str, current: int) -> str:
 
 @dataclass
 class MemoryStore:
+    brain_apps: dict[str, dict[str, Any]] = field(default_factory=default_brain_apps)
     products: dict[str, dict[str, Any]] = field(default_factory=dict)
     product_versions: dict[str, dict[str, Any]] = field(default_factory=dict)
     product_modules: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -47,6 +73,7 @@ class MemoryStore:
     counters: dict[str, int] = field(default_factory=dict)
 
     def reset(self) -> None:
+        self.brain_apps = default_brain_apps()
         self.products.clear()
         self.product_versions.clear()
         self.product_modules.clear()

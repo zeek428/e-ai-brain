@@ -422,6 +422,8 @@ GET /api/auth/roles
 
 ### 业务大脑
 
+业务大脑 v1 MVP 只提供只读配置读取，默认从 `brain_apps` 表加载 `rd_brain`；不提供业务大脑新增、编辑、停用或系统管理页面 CRUD。
+
 ```http
 GET /api/brain-apps
 GET /api/brain-apps/{brain_app_id}
@@ -439,7 +441,17 @@ GET /api/brain-apps/{brain_app_id}
         "name": "研发大脑",
         "status": "active",
         "description": "把研发需求转成可确认、可回写、可沉淀的任务方案。",
-        "config": {}
+        "config": {
+          "default_task_types": [
+            "product_detail_design",
+            "technical_solution",
+            "development_planning",
+            "automated_testing",
+            "release_readiness",
+            "post_release_analysis",
+            "code_review"
+          ]
+        }
       }
     ]
   },

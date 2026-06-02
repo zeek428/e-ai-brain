@@ -211,7 +211,7 @@ VALUES (
   '研发大脑',
   '把研发需求转成可确认、可回写、可沉淀的任务方案。',
   'active',
-  '{"default_task_types":["product_detail_design","technical_solution","code_review"]}'::jsonb
+  '{"default_task_types":["product_detail_design","technical_solution","development_planning","automated_testing","release_readiness","post_release_analysis","code_review"]}'::jsonb
 )
 ON CONFLICT (id) DO UPDATE SET
   code = EXCLUDED.code,
@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS model_gateway_logs (
 
 CREATE TABLE IF NOT EXISTS requirements (
   id text PRIMARY KEY,
-  brain_app_id text DEFAULT 'rd_brain',
+  brain_app_id text NOT NULL DEFAULT 'rd_brain',
   title text NOT NULL,
   product_id text NOT NULL REFERENCES products(id),
   version_id text NOT NULL REFERENCES product_versions(id),
@@ -344,6 +344,7 @@ CREATE TABLE IF NOT EXISTS requirements (
 
 CREATE TABLE IF NOT EXISTS ai_tasks (
   id text PRIMARY KEY,
+  brain_app_id text NOT NULL DEFAULT 'rd_brain',
   requirement_id text REFERENCES requirements(id),
   task_type text NOT NULL,
   title text NOT NULL,
@@ -586,6 +587,7 @@ CREATE INDEX IF NOT EXISTS idx_requirements_created_at ON requirements (created_
 CREATE INDEX IF NOT EXISTS idx_ai_tasks_status ON ai_tasks (status);
 CREATE INDEX IF NOT EXISTS idx_ai_tasks_requirement ON ai_tasks (requirement_id);
 CREATE INDEX IF NOT EXISTS idx_ai_tasks_product_status ON ai_tasks (product_id, status);
+CREATE INDEX IF NOT EXISTS idx_ai_tasks_brain_app ON ai_tasks (brain_app_id);
 CREATE INDEX IF NOT EXISTS idx_graph_runs_task ON graph_runs (ai_task_id);
 CREATE INDEX IF NOT EXISTS idx_graph_checkpoints_run ON graph_checkpoints (graph_run_id);
 CREATE INDEX IF NOT EXISTS idx_human_reviews_task ON human_reviews (ai_task_id);

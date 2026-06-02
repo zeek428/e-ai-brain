@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.core.store import MemoryStore
 from app.main import app
 
 client = TestClient(app)
@@ -60,6 +61,34 @@ def test_brain_apps_and_task_list_contracts_are_available():
         headers=headers,
     ).json()["data"]
     assert [item["id"] for item in tasks["items"]] == [context["task_id"]]
+
+
+def test_brain_app_contract_reads_runtime_configuration():
+    headers = auth_headers()
+    original_store = app.state.store
+    configured_store = MemoryStore()
+    configured_store.brain_apps = {
+        "ops_brain": {
+            "id": "ops_brain",
+            "code": "ops_brain",
+            "name": "运营大脑",
+            "status": "active",
+            "description": "运行时配置读取验证。",
+            "config": {"default_task_types": ["post_release_analysis"]},
+        }
+    }
+    app.state.store = configured_store
+    try:
+        brain_apps = client.get("/api/brain-apps", headers=headers).json()["data"]
+        assert [item["code"] for item in brain_apps["items"]] == ["ops_brain"]
+
+        detail = client.get("/api/brain-apps/ops_brain", headers=headers).json()["data"]
+        assert detail["name"] == "运营大脑"
+
+        missing = client.get("/api/brain-apps/rd_brain", headers=headers)
+        assert missing.status_code == 404
+    finally:
+        app.state.store = original_store
 
 
 def test_review_detail_cancel_task_and_knowledge_document_list_contracts():

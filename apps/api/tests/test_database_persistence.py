@@ -1514,6 +1514,7 @@ def test_ai_task_api_writes_fine_grained_repository_payload():
 
         assert repository.ai_tasks_payload is not None
         persisted = repository.ai_tasks_payload["ai_tasks"][generated["task_id"]]
+        assert persisted["brain_app_id"] == "rd_brain"
         assert persisted["task_type"] == "product_detail_design"
         assert persisted["requirement_id"] == requirement["id"]
         assert persisted["product_id"] == product["id"]
