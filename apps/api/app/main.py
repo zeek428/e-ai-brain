@@ -613,6 +613,7 @@ def health(request: Request) -> dict[str, str]:
         "postgres": postgres,
         "redis": redis,
         "model_gateway": settings.model_gateway_status,
+        "long_memory": settings.long_memory_status,
         "trace_id": get_trace_id(request),
     }
 
@@ -2070,6 +2071,32 @@ async def get_current_user(
 
 
 CurrentUser = Depends(get_current_user)
+
+
+def _long_memory_status_payload() -> dict[str, Any]:
+    configured = settings.long_memory_status == "configured"
+    return {
+        "api_key_configured": bool(settings.gbrain_api_key),
+        "base_url_configured": bool(settings.gbrain_base_url),
+        "capabilities": [
+            "hybrid_retrieval",
+            "answer_synthesis",
+            "knowledge_graph",
+        ]
+        if configured
+        else [],
+        "connector": "gbrain",
+        "fallback_retriever": "postgres_pgvector",
+        "status": settings.long_memory_status,
+    }
+
+
+@app.get("/api/long-memory/status")
+def get_long_memory_status(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(_long_memory_status_payload(), get_trace_id(request))
 
 
 def _seeded_users_enabled() -> bool:

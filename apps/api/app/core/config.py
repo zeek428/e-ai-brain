@@ -30,6 +30,8 @@ class Settings:
             "MODEL_GATEWAY_DEFAULT_EMBEDDING_MODEL",
             "local-embedding",
         )
+        self.gbrain_base_url = os.getenv("GBRAIN_BASE_URL", "")
+        self.gbrain_api_key = os.getenv("GBRAIN_API_KEY", "")
         self.code_review_executor_type = os.getenv(
             "CODE_REVIEW_EXECUTOR_TYPE",
             "claude_code_skill",
@@ -52,6 +54,12 @@ class Settings:
     @property
     def model_gateway_status(self) -> str:
         if self.model_gateway_base_url and self.model_gateway_api_key:
+            return "configured"
+        return "not_configured"
+
+    @property
+    def long_memory_status(self) -> str:
+        if self.gbrain_base_url and self.gbrain_api_key:
             return "configured"
         return "not_configured"
 

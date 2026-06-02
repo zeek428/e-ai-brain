@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.50 |
+| 功能版本 | v1.1.51 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -72,6 +72,7 @@
 | v1.1.48 | 2026-06-02 | 明确 code_review 任务通过可插拔 `code_review_executor` 边界执行，默认适配 Claude Code `code-review` skill 命令，执行器成功/失败均写入专用审计事件 | Codex |
 | v1.1.49 | 2026-06-02 | 明确相关系统可绑定产品归属并进入任务产品上下文，补齐需求详情、关闭和 Graph Run 查询接口清单 | Codex |
 | v1.1.50 | 2026-06-02 | AI 任务启动接入真实 LangGraph StateGraph，Graph Run 返回 runtime、node_path 和 checkpoint runtime 元数据 | Codex |
+| v1.1.51 | 2026-06-02 | 新增长期记忆 GBrain 状态接口，未配置时返回 `not_configured`，配置后只返回脱敏能力状态 | Codex |
 
 ---
 
@@ -208,6 +209,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | 模块 | 方法 | 路径 | 说明 |
 |------|------|------|------|
 | Health | GET | `/health` | 健康检查。 |
+| Long Memory | GET | `/api/long-memory/status` | 查询 GBrain 长期记忆连接器配置状态和可用能力。 |
 | Auth | POST | `/api/auth/login` | 登录。 |
 | Auth | GET | `/api/auth/me` | 当前用户。 |
 | Auth | POST | `/api/auth/logout` | 前端退出登录辅助接口。 |
@@ -326,6 +328,7 @@ GET /health
   "postgres": "ok",
   "redis": "ok",
   "model_gateway": "not_configured",
+  "long_memory": "not_configured",
   "trace_id": "trace_health_001"
 }
 ```
@@ -340,6 +343,31 @@ GET /health
 | postgres | `ok` 或 `error` |
 | redis | `ok` 或 `error` |
 | model_gateway | `configured` 或 `not_configured` |
+| long_memory | `configured` 或 `not_configured` |
+
+### 长期记忆状态
+
+```http
+GET /api/long-memory/status
+```
+
+响应：
+
+```json
+{
+  "data": {
+    "api_key_configured": false,
+    "base_url_configured": false,
+    "capabilities": [],
+    "connector": "gbrain",
+    "fallback_retriever": "postgres_pgvector",
+    "status": "not_configured"
+  },
+  "trace_id": "trace_long_memory_001"
+}
+```
+
+配置 `GBRAIN_BASE_URL` 和 `GBRAIN_API_KEY` 后，`status` 返回 `configured`，`capabilities` 返回 `hybrid_retrieval`、`answer_synthesis`、`knowledge_graph`；响应不得返回 GBrain URL、API Key 或密钥片段。
 
 ### 登录
 

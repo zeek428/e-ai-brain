@@ -20,6 +20,7 @@ def test_health_includes_dependencies_and_trace_id(monkeypatch):
     assert body["postgres"] in {"ok", "error"}
     assert body["redis"] in {"ok", "error"}
     assert body["model_gateway"] == "not_configured"
+    assert body["long_memory"] == "not_configured"
     assert body["trace_id"].startswith("trace_")
 
 
@@ -33,6 +34,53 @@ def test_health_dependency_endpoint_parsing_supports_docker_service_names():
         "redis",
         6379,
     )
+
+
+def auth_headers() -> dict[str, str]:
+    login_response = client.post(
+        "/api/auth/login",
+        json={"username": "admin@example.com", "password": "admin123"},
+    )
+    token = login_response.json()["data"]["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_long_memory_status_reports_not_configured_without_gbrain(monkeypatch):
+    monkeypatch.setattr(main.settings, "gbrain_base_url", "")
+    monkeypatch.setattr(main.settings, "gbrain_api_key", "")
+
+    response = client.get("/api/long-memory/status", headers=auth_headers())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trace_id"].startswith("trace_")
+    assert body["data"] == {
+        "api_key_configured": False,
+        "base_url_configured": False,
+        "capabilities": [],
+        "connector": "gbrain",
+        "fallback_retriever": "postgres_pgvector",
+        "status": "not_configured",
+    }
+
+
+def test_long_memory_status_masks_configured_gbrain_secret(monkeypatch):
+    monkeypatch.setattr(main.settings, "gbrain_base_url", "https://gbrain.internal")
+    monkeypatch.setattr(main.settings, "gbrain_api_key", "secret-gbrain-key")
+
+    response = client.get("/api/long-memory/status", headers=auth_headers())
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "configured"
+    assert data["base_url_configured"] is True
+    assert data["api_key_configured"] is True
+    assert data["capabilities"] == [
+        "hybrid_retrieval",
+        "answer_synthesis",
+        "knowledge_graph",
+    ]
+    assert "secret-gbrain-key" not in str(data)
 
 
 def test_login_and_current_user_use_bearer_token():

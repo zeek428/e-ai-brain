@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 新增 `/api/long-memory/status`，未配置 GBrain 时返回明确 `not_configured` 能力状态，配置后只暴露脱敏配置状态和能力列表，不泄露密钥。
 - AI 任务启动接入真实 LangGraph `StateGraph` 运行内核，Graph Run 记录新增 `runtime=langgraph`、节点路径和 `graph_runtime` checkpoint 元数据；新增 `017_langgraph_runtime_metadata.sql` 以 SQL 脚本升级既有 PostgreSQL 环境。
 - 业务大脑配置收口为只读真实配置读取，`/api/brain-apps` 从运行时/`brain_apps` 加载默认 `rd_brain`；新增 `016_brain_app_task_attribution.sql`，补齐需求与 AI 任务的默认业务脑归属、`ai_tasks.brain_app_id` 和查询索引。
 - 生命周期上下文边、风险信号和首页 IT 团队看板快照开始细粒度 PostgreSQL 持久化，新增 `015_lifecycle_dashboard_persistence.sql`，`/api/lifecycle/context` 与 `/api/dashboard/it-team` 会同步真实计算结果到结构表。
