@@ -42,3 +42,32 @@ def install_real_gitlab_api_stub(monkeypatch):
 
     monkeypatch.setattr(main_module, "_gitlab_request_json", fake_gitlab_request_json)
     return calls
+
+
+def install_real_github_api_stub(monkeypatch):
+    calls: list[dict[str, str]] = []
+
+    def fake_github_request_json(base_url: str, token: str, path: str) -> dict | list:
+        calls.append({"base_url": base_url, "path": path, "token": token})
+        if path == "/repos/zeek428/e-ai-brain/pulls/3":
+            return {
+                "number": 3,
+                "title": "真实 GitHub PR",
+                "user": {"login": "zeek428"},
+                "head": {"ref": "feature/github-pr", "sha": "github-head-sha"},
+                "base": {"ref": "main", "sha": "github-base-sha"},
+                "html_url": "https://github.com/zeek428/e-ai-brain/pull/3",
+            }
+        if path == "/repos/zeek428/e-ai-brain/pulls/3/files?per_page=100":
+            return [
+                {"filename": "apps/api/app/main.py", "additions": 4, "deletions": 1},
+                {
+                    "filename": "apps/web/src/pages/TaskCenter/index.tsx",
+                    "additions": 2,
+                    "deletions": 0,
+                },
+            ]
+        raise AssertionError(f"Unexpected GitHub API path: {path}")
+
+    monkeypatch.setattr(main_module, "_github_request_json", fake_github_request_json)
+    return calls

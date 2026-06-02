@@ -6,13 +6,13 @@ export type Phase = {
 
 export const phases: Phase[] = [
   {
-    name: 'MVP-A 基础 + GitLab 输入闭环',
-    scope: '登录、产品配置、需求审批、产品详细设计、技术方案、MR 预览和 diff 快照。',
+    name: 'MVP-A 基础 + Git 输入闭环',
+    scope: '登录、产品配置、需求审批、产品详细设计、技术方案、MR/PR 预览和 diff 快照。',
     state: 'active',
   },
   {
-    name: 'MVP-B GitLab Review 闭环',
-    scope: 'code_review 任务、结构化报告、人工确认、内部归档和不回写 GitLab。',
+    name: 'MVP-B Git Review 闭环',
+    scope: 'code_review 任务、结构化报告、人工确认、内部归档和不回写远端。',
     state: 'next',
   },
   {

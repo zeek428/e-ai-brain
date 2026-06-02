@@ -319,11 +319,13 @@ import {
   fetchProductGitRepositories,
   fetchTaskWritebackResult,
   generateRequirementTask,
+  previewCodeReviewPullRequest,
   previewGitLabMergeRequest,
   rejectKnowledgeDeposit,
   rejectManagementRequirement,
   rejectTaskCenterReview,
   requestTaskCenterReviewMoreInfo,
+  snapshotCodeReviewPullRequest,
   snapshotGitLabMergeRequest,
   saveCurrentUser,
   startTaskCenterTask,
@@ -1118,7 +1120,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     const codeReviewForm = screen.getByRole('form', { name: '创建 Code Review 参数' });
     expect(codeReviewForm).toHaveClass('ant-form-vertical');
     expect(codeReviewForm).not.toHaveClass('ant-form-inline');
-    expect(screen.getByText('AI Brain 仓库 (platform/ai-brain)')).toBeInTheDocument();
+    expect(screen.getByText('GitLab · AI Brain 仓库 (platform/ai-brain)')).toBeInTheDocument();
   });
 
   it('offers post-release analysis from completed release readiness rows', async () => {
@@ -3533,6 +3535,119 @@ describe('AI Brain Ant Design Pro workbench', () => {
     );
   });
 
+  it('saves GitHub provider when editing product Git resources', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/products' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'AI-BRAIN',
+                id: 'product_api',
+                module_count: 1,
+                name: 'AI Brain',
+                owner_team: 'AI Platform',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/versions' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_api/modules' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/system/related-systems?product_id=product_api' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_api/git-repositories' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                credential_ref_configured: true,
+                default_branch: 'main',
+                git_provider: 'gitlab',
+                id: 'repo_api',
+                name: 'AI Brain 仓库',
+                project_path: 'platform/ai-brain',
+                remote_url: 'https://gitlab.example.com/platform/ai-brain.git',
+                repo_type: 'code',
+                root_path: '/',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-git-repositories/repo_api' && method === 'PATCH') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          git_provider: 'github',
+          name: 'AI Brain 仓库',
+          project_path: 'zeek428/e-ai-brain',
+          remote_url: 'git@github.com:zeek428/e-ai-brain.git',
+        });
+        return jsonResponse({
+          data: {
+            credential_ref_configured: true,
+            default_branch: 'main',
+            git_provider: 'github',
+            id: 'repo_api',
+            name: 'AI Brain 仓库',
+            project_path: 'zeek428/e-ai-brain',
+            remote_url: 'git@github.com:zeek428/e-ai-brain.git',
+            repo_type: 'code',
+            root_path: '/',
+            status: 'active',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ProductsPage />);
+
+    expect(await screen.findByText('AI Brain')).toBeInTheDocument();
+    const productRow = screen.getByText('AI Brain').closest('tr');
+    expect(productRow).not.toBeNull();
+    fireEvent.click(within(productRow as HTMLElement).getByRole('button', { name: '配置' }));
+    const repositoryRow = await screen.findByText('AI Brain 仓库');
+    fireEvent.click(
+      within(repositoryRow.closest('tr') as HTMLElement).getByRole('button', { name: /编辑/ }),
+    );
+
+    fireEvent.mouseDown(screen.getByLabelText('代码平台'));
+    fireEvent.click(await screen.findByRole('option', { name: 'GitHub' }));
+    fireEvent.change(screen.getByLabelText('Remote URL'), {
+      target: { value: 'git@github.com:zeek428/e-ai-brain.git' },
+    });
+    fireEvent.change(screen.getByLabelText('Project Path'), {
+      target: { value: 'zeek428/e-ai-brain' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/product-git-repositories/repo_api',
+        'PATCH',
+      ]),
+    );
+  });
+
   it('sends product subresource CRUD requests to backend APIs without exposing git credentials', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -4701,6 +4816,74 @@ describe('AI Brain Ant Design Pro workbench', () => {
       { code: 'rd-platform', id: 'product_api', name: '研发平台' },
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes GitHub code review preview and snapshot requests to GitHub PR APIs', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === '/api/devops/github/pull-requests/repo_github/3/preview') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              author: { login: 'zeek428' },
+              changed_file_count: 2,
+              changed_files_summary: [],
+              mr_iid: 3,
+              repository_id: 'repo_github',
+              source_branch: 'feature/github-pr',
+              target_branch: 'main',
+              title: '真实 GitHub PR',
+              web_url: 'https://github.com/zeek428/e-ai-brain/pull/3',
+              writeback_allowed: false,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/devops/github/pull-requests/repo_github/3/snapshot') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              diff_limit_bytes: 204800,
+              diff_size_bytes: 1024,
+              id: 'snapshot_github',
+              mr_iid: 3,
+              repository_id: 'repo_github',
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+    const repository = {
+      defaultBranch: 'main',
+      id: 'repo_github',
+      label: 'GitHub 仓库',
+      name: 'GitHub 仓库',
+      projectPath: 'zeek428/e-ai-brain',
+      provider: 'github',
+      status: 'active',
+    };
+
+    await expect(previewCodeReviewPullRequest(repository, 3)).resolves.toMatchObject({
+      mrIid: 3,
+      title: '真实 GitHub PR',
+    });
+    await expect(
+      snapshotCodeReviewPullRequest({
+        mrIid: 3,
+        repository,
+        requirementId: 'requirement_api',
+        technicalSolutionTaskId: 'task_solution',
+      }),
+    ).resolves.toMatchObject({ id: 'snapshot_github', mrIid: 3 });
+
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+      ['/api/devops/github/pull-requests/repo_github/3/preview', 'GET'],
+      ['/api/devops/github/pull-requests/repo_github/3/snapshot', 'POST'],
+    ]);
   });
 
   it('sends management CRUD mutations to backend APIs with the stored token', async () => {

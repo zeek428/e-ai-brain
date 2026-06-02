@@ -1322,7 +1322,7 @@ function formatUnknownValue(value: unknown): string {
 function formatGitLabAuthor(value: unknown): string {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const author = value as Record<string, unknown>;
-    return formatUnknownValue(author.name ?? author.username);
+    return formatUnknownValue(author.name ?? author.username ?? author.login);
   }
   return formatUnknownValue(value);
 }
@@ -2530,6 +2530,33 @@ export async function previewGitLabMergeRequest(
   };
 }
 
+export async function previewCodeReviewPullRequest(
+  repository: ProductGitRepositoryOption,
+  mrIid: number,
+): Promise<GitLabMergeRequestPreview> {
+  if (repository.provider !== 'github') {
+    return previewGitLabMergeRequest(repository.id, mrIid);
+  }
+  const token = requireAccessToken();
+  const preview = await apiRequest<GitLabMergeRequestPreviewResponse>(
+    `/api/devops/github/pull-requests/${repository.id}/${mrIid}/preview`,
+    { token },
+  );
+
+  return {
+    author: formatGitLabAuthor(preview.author),
+    changedFileCount: preview.changed_file_count ?? 0,
+    changedFilesSummary: preview.changed_files_summary ?? [],
+    mrIid: preview.mr_iid,
+    repositoryId: preview.repository_id,
+    sourceBranch: preview.source_branch,
+    targetBranch: preview.target_branch,
+    title: preview.title ?? `PR #${preview.mr_iid}`,
+    webUrl: preview.web_url,
+    writebackAllowed: preview.writeback_allowed ?? false,
+  };
+}
+
 export async function snapshotGitLabMergeRequest({
   mrIid,
   repositoryId,
@@ -2544,6 +2571,47 @@ export async function snapshotGitLabMergeRequest({
   const token = requireAccessToken();
   const snapshot = await apiRequest<GitLabMergeRequestSnapshotResponse>(
     `/api/devops/gitlab/merge-requests/${repositoryId}/${mrIid}/snapshot`,
+    {
+      body: {
+        requirement_id: requirementId,
+        technical_solution_task_id: technicalSolutionTaskId,
+      },
+      method: 'POST',
+      token,
+    },
+  );
+
+  return {
+    diffLimitBytes: snapshot.diff_limit_bytes,
+    diffSizeBytes: snapshot.diff_size_bytes,
+    id: snapshot.id,
+    mrIid: snapshot.mr_iid,
+    repositoryId: snapshot.repository_id,
+  };
+}
+
+export async function snapshotCodeReviewPullRequest({
+  mrIid,
+  repository,
+  requirementId,
+  technicalSolutionTaskId,
+}: {
+  mrIid: number;
+  repository: ProductGitRepositoryOption;
+  requirementId: string;
+  technicalSolutionTaskId: string;
+}): Promise<GitLabMergeRequestSnapshot> {
+  if (repository.provider !== 'github') {
+    return snapshotGitLabMergeRequest({
+      mrIid,
+      repositoryId: repository.id,
+      requirementId,
+      technicalSolutionTaskId,
+    });
+  }
+  const token = requireAccessToken();
+  const snapshot = await apiRequest<GitLabMergeRequestSnapshotResponse>(
+    `/api/devops/github/pull-requests/${repository.id}/${mrIid}/snapshot`,
     {
       body: {
         requirement_id: requirementId,

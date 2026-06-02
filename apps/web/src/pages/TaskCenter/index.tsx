@@ -36,10 +36,10 @@ import {
   fetchTaskCenterTaskDetail,
   fetchTaskCenterTasks,
   fetchTaskWritebackResult,
-  previewGitLabMergeRequest,
+  previewCodeReviewPullRequest,
   rejectTaskCenterReview,
   requestTaskCenterReviewMoreInfo,
-  snapshotGitLabMergeRequest,
+  snapshotCodeReviewPullRequest,
   type CodeReviewReportRecord,
   type GitLabMergeRequestPreview,
   type ProductGitRepositoryOption,
@@ -162,6 +162,15 @@ export default function TaskCenterPage() {
     submitting: boolean;
     task: TaskCenterTaskRecord;
   }>();
+  const selectedCodeReviewRepository = useMemo(
+    () =>
+      codeReviewDraft?.repositories.find(
+        (repository) => repository.id === codeReviewDraft.repositoryId,
+      ),
+    [codeReviewDraft],
+  );
+  const codeReviewSourceLabel =
+    selectedCodeReviewRepository?.provider === 'github' ? 'GitHub PR' : 'GitLab MR';
   const [taskDetailDialog, setTaskDetailDialog] = useState<{
     detail?: TaskCenterTaskDetailRecord;
     loading: boolean;
@@ -441,15 +450,15 @@ export default function TaskCenterPage() {
   }, []);
 
   const handlePreviewCodeReview = useCallback(async () => {
-    if (!codeReviewDraft?.repositoryId) {
-      message.error('请选择 GitLab 仓库。');
+    const repository = codeReviewDraft?.repositories.find(
+      (item) => item.id === codeReviewDraft.repositoryId,
+    );
+    if (!repository) {
+      message.error('请选择代码库。');
       return;
     }
     try {
-      const preview = await previewGitLabMergeRequest(
-        codeReviewDraft.repositoryId,
-        codeReviewDraft.mrIid,
-      );
+      const preview = await previewCodeReviewPullRequest(repository, codeReviewDraft.mrIid);
       setCodeReviewDraft((current) => (current ? { ...current, preview } : current));
     } catch (taskError) {
       message.error(formatMutationError(taskError));
@@ -457,8 +466,11 @@ export default function TaskCenterPage() {
   }, [codeReviewDraft]);
 
   const handleCreateCodeReview = useCallback(async () => {
-    if (!codeReviewDraft?.repositoryId) {
-      message.error('请选择 GitLab 仓库。');
+    const repository = codeReviewDraft?.repositories.find(
+      (item) => item.id === codeReviewDraft.repositoryId,
+    );
+    if (!repository) {
+      message.error('请选择代码库。');
       return;
     }
     if (!codeReviewDraft.task.requirementId) {
@@ -467,9 +479,9 @@ export default function TaskCenterPage() {
     }
     setCodeReviewDraft((current) => (current ? { ...current, submitting: true } : current));
     try {
-      const snapshot = await snapshotGitLabMergeRequest({
+      const snapshot = await snapshotCodeReviewPullRequest({
         mrIid: codeReviewDraft.mrIid,
-        repositoryId: codeReviewDraft.repositoryId,
+        repository,
         requirementId: codeReviewDraft.task.requirementId,
         technicalSolutionTaskId: codeReviewDraft.task.id,
       });
@@ -1169,7 +1181,7 @@ export default function TaskCenterPage() {
       >
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
           <Form aria-label="创建 Code Review 参数" className="task-code-review-form" layout="vertical">
-            <Form.Item label="GitLab 仓库">
+            <Form.Item label="代码库">
               <Select
                 disabled={codeReviewDraft?.loading}
                 onChange={(repositoryId) =>
@@ -1178,15 +1190,17 @@ export default function TaskCenterPage() {
                   )
                 }
                 options={codeReviewDraft?.repositories.map((repository) => ({
-                  label: repository.label,
+                  label: `${repository.provider === 'github' ? 'GitHub' : 'GitLab'} · ${
+                    repository.label
+                  }`,
                   value: repository.id,
                 }))}
-                placeholder="选择 GitLab 仓库"
+                placeholder="选择代码库"
                 style={{ width: '100%' }}
                 value={codeReviewDraft?.repositoryId}
               />
             </Form.Item>
-            <Form.Item label="MR 编号">
+            <Form.Item label={`${codeReviewSourceLabel} 编号`}>
               <InputNumber
                 min={1}
                 onChange={(mrIid) =>
@@ -1203,12 +1217,12 @@ export default function TaskCenterPage() {
             </Form.Item>
             <Form.Item>
               <Button loading={codeReviewDraft?.loading} onClick={handlePreviewCodeReview}>
-                预览 MR
+                预览 {codeReviewSourceLabel}
               </Button>
             </Form.Item>
           </Form>
           {codeReviewDraft?.repositories.length === 0 && !codeReviewDraft.loading ? (
-            <Text type="secondary">当前产品没有可用 GitLab 仓库。</Text>
+            <Text type="secondary">当前产品没有可用代码库。</Text>
           ) : null}
           {codeReviewDraft?.preview ? (
             <Descriptions column={1} size="small">
@@ -1221,7 +1235,7 @@ export default function TaskCenterPage() {
               <Descriptions.Item label="变更文件">
                 {codeReviewDraft.preview.changedFileCount}
               </Descriptions.Item>
-              <Descriptions.Item label="GitLab 回写">
+              <Descriptions.Item label="远端回写">
                 {codeReviewDraft.preview.writebackAllowed ? '允许' : '不回写'}
               </Descriptions.Item>
             </Descriptions>
@@ -1248,7 +1262,7 @@ export default function TaskCenterPage() {
               <Descriptions.Item label="风险等级">
                 {codeReviewReport.report.riskLevel}
               </Descriptions.Item>
-              <Descriptions.Item label="GitLab 回写">
+              <Descriptions.Item label="远端回写">
                 {codeReviewReport.report.gitlabWritebackPerformed ? '已回写' : '未回写'}
               </Descriptions.Item>
             </Descriptions>

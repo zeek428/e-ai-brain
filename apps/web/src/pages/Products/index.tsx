@@ -58,6 +58,7 @@ type ProductResourceFormValues = {
   credential_ref?: string;
   default_branch?: string;
   description?: string;
+  git_provider?: string;
   name: string;
   owner_team?: string;
   project_id?: string;
@@ -265,6 +266,7 @@ export default function ProductsPage() {
     const repository = record as ProductGitRepositoryRecord | undefined;
     resourceForm.setFieldsValue({
       default_branch: repository?.defaultBranch ?? 'main',
+      git_provider: repository?.provider ?? 'gitlab',
       name: repository?.name,
       project_id: repository?.projectId ?? undefined,
       project_path: repository?.projectPath ?? undefined,
@@ -322,7 +324,7 @@ export default function ProductsPage() {
         const payload: ProductGitRepositoryMutationPayload = {
           credential_ref: trimText(values.credential_ref),
           default_branch: trimText(values.default_branch) ?? 'main',
-          git_provider: 'gitlab',
+          git_provider: values.git_provider ?? 'gitlab',
           name: values.name.trim(),
           project_id: trimText(values.project_id),
           project_path: trimText(values.project_path),
@@ -819,6 +821,14 @@ export default function ProductsPage() {
             <>
               <Form.Item label="资源名称" name="name" rules={[{ required: true, message: '请输入资源名称' }]}>
                 <Input />
+              </Form.Item>
+              <Form.Item label="代码平台" name="git_provider" rules={[{ required: true, message: '请选择代码平台' }]}>
+                <Select
+                  options={[
+                    { label: 'GitLab', value: 'gitlab' },
+                    { label: 'GitHub', value: 'github' },
+                  ]}
+                />
               </Form.Item>
               <Form.Item label="Remote URL" name="remote_url">
                 <Input />

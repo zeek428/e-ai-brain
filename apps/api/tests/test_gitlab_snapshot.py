@@ -140,7 +140,10 @@ def test_gitlab_mr_preview_maps_gitlab_404_to_documented_error(monkeypatch):
     assert response.json()["detail"]["code"] == "GITLAB_MR_NOT_FOUND"
 
 
-def build_confirmed_solution_context(headers: dict[str, str]) -> dict[str, str]:
+def build_confirmed_solution_context(
+    headers: dict[str, str],
+    repository_payload: dict | None = None,
+) -> dict[str, str]:
     app.state.store.reset()
     product = client.post(
         "/api/products",
@@ -154,7 +157,8 @@ def build_confirmed_solution_context(headers: dict[str, str]) -> dict[str, str]:
     ).json()["data"]
     repository = client.post(
         f"/api/products/{product['id']}/git-repositories",
-        json={
+        json=repository_payload
+        or {
             "name": "AI Brain API",
             "remote_url": "https://gitlab.example.com/platform/ai-brain.git",
             "git_provider": "gitlab",

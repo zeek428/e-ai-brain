@@ -119,6 +119,7 @@ PRODUCT_STATUSES = {"active", "inactive"}
 VERSION_STATUSES = {"planning", "active", "archived"}
 MODULE_STATUSES = {"active", "inactive"}
 GIT_REPO_STATUSES = {"active", "inactive"}
+GIT_REPO_PROVIDERS = {"gitlab", "github"}
 RELATED_SYSTEM_STATUSES = {"active", "inactive"}
 MODEL_GATEWAY_PROVIDERS = {"openai_compatible"}
 MODEL_GATEWAY_STATUSES = {"active", "inactive"}
@@ -824,6 +825,20 @@ def _validate_gitlab_metric_context(
         raise api_error(400, "VALIDATION_ERROR", "Inactive Git repository cannot be used")
     if repository.get("git_provider") != "gitlab":
         raise api_error(400, "VALIDATION_ERROR", "Only GitLab repositories are supported")
+
+
+def _validate_git_repository_binding(
+    provider: str,
+    *,
+    project_id: str | None,
+    project_path: str | None,
+    remote_url: str | None,
+) -> None:
+    _ensure_enum(provider, GIT_REPO_PROVIDERS, "git provider")
+    if provider == "gitlab" and not project_id and not project_path:
+        raise api_error(400, "VALIDATION_ERROR", "GitLab project_id or project_path is required")
+    if provider == "github" and not project_path and not remote_url:
+        raise api_error(400, "VALIDATION_ERROR", "GitHub project_path or remote_url is required")
 
 
 def _parse_optional_release_time(value: str | None, field_name: str) -> str | None:
@@ -2805,10 +2820,12 @@ def create_product_git_repository(
         raise api_error(404, "NOT_FOUND", "Product not found")
     name = _ensure_non_blank(payload.name, "name")
     _ensure_enum(payload.status, GIT_REPO_STATUSES, "product Git repository status")
-    if payload.git_provider != "gitlab":
-        raise api_error(400, "VALIDATION_ERROR", "v1 MVP only supports GitLab bindings")
-    if not payload.project_id and not payload.project_path:
-        raise api_error(400, "VALIDATION_ERROR", "GitLab project_id or project_path is required")
+    _validate_git_repository_binding(
+        payload.git_provider,
+        project_id=payload.project_id,
+        project_path=payload.project_path,
+        remote_url=payload.remote_url,
+    )
 
     repository_id = current_store.new_id("repo")
     repository = {
@@ -2855,10 +2872,13 @@ def patch_product_git_repository(
     next_provider = updates.get("git_provider", repository["git_provider"])
     next_project_id = updates.get("project_id", repository.get("project_id"))
     next_project_path = updates.get("project_path", repository.get("project_path"))
-    if next_provider != "gitlab":
-        raise api_error(400, "VALIDATION_ERROR", "v1 MVP only supports GitLab bindings")
-    if not next_project_id and not next_project_path:
-        raise api_error(400, "VALIDATION_ERROR", "GitLab project_id or project_path is required")
+    next_remote_url = updates.get("remote_url", repository.get("remote_url"))
+    _validate_git_repository_binding(
+        next_provider,
+        project_id=next_project_id,
+        project_path=next_project_path,
+        remote_url=next_remote_url,
+    )
     repository.update(updates)
     current_store.audit(
         event_type="product_git_repository.updated",
@@ -3602,14 +3622,31 @@ def _credential_ref_env_candidates(credential_ref: str) -> list[str]:
     return candidates
 
 
-def _gitlab_access_token(repository: dict[str, Any]) -> str | None:
-    credential_ref = str(repository.get("credential_ref") or "").strip()
+def _credential_ref_token(
+    credential_ref: str,
+    *,
+    fallback_env_names: list[str],
+) -> str | None:
+    credential_ref = credential_ref.strip()
+    if credential_ref and not credential_ref.startswith(("env:", "secret://", "secret/")):
+        return credential_ref
     for env_name in _credential_ref_env_candidates(credential_ref):
         token = os.getenv(env_name, "").strip()
         if token:
             return token
-    configured_token = os.getenv("GITLAB_READONLY_TOKEN", "").strip()
-    return configured_token or None
+    for env_name in fallback_env_names:
+        token = os.getenv(env_name, "").strip()
+        if token:
+            return token
+    return None
+
+
+def _gitlab_access_token(repository: dict[str, Any]) -> str | None:
+    credential_ref = str(repository.get("credential_ref") or "").strip()
+    return _credential_ref_token(
+        credential_ref,
+        fallback_env_names=["GITLAB_READONLY_TOKEN"],
+    )
 
 
 def _gitlab_project_key(repository: dict[str, Any]) -> str:
@@ -3723,6 +3760,156 @@ def _gitlab_preview(repository: dict[str, Any], mr_iid: int) -> dict[str, Any]:
     return _real_gitlab_preview(repository, mr_iid)
 
 
+def _github_base_url(repository: dict[str, Any]) -> str | None:
+    configured_base_url = os.getenv("GITHUB_BASE_URL", "").strip()
+    if configured_base_url:
+        return configured_base_url.rstrip("/")
+    remote_url = str(repository.get("remote_url") or "").strip()
+    host = ""
+    if remote_url.startswith("git@") and ":" in remote_url:
+        host = remote_url.split("@", 1)[1].split(":", 1)[0]
+    elif remote_url:
+        parsed = urlparse(remote_url)
+        host = parsed.netloc
+    if host in {"github.com", "www.github.com"}:
+        return "https://api.github.com"
+    if host:
+        return f"https://{host}/api/v3"
+    return "https://api.github.com"
+
+
+def _github_access_token(repository: dict[str, Any]) -> str | None:
+    credential_ref = str(repository.get("credential_ref") or "").strip()
+    return _credential_ref_token(
+        credential_ref,
+        fallback_env_names=["GITHUB_READONLY_TOKEN", "GITHUB_TOKEN"],
+    )
+
+
+def _clean_repository_path(value: str) -> str:
+    cleaned = value.strip().strip("/")
+    if cleaned.endswith(".git"):
+        cleaned = cleaned[:-4]
+    return cleaned
+
+
+def _github_repository_path(repository: dict[str, Any]) -> str:
+    project_path = _clean_repository_path(str(repository.get("project_path") or ""))
+    if project_path and not project_path.startswith("Users/") and len(project_path.split("/")) == 2:
+        return project_path
+
+    remote_url = str(repository.get("remote_url") or "").strip()
+    candidate = ""
+    if remote_url.startswith("git@") and ":" in remote_url:
+        candidate = remote_url.split(":", 1)[1]
+    elif remote_url:
+        parsed = urlparse(remote_url)
+        candidate = parsed.path
+    candidate = _clean_repository_path(candidate)
+    if len(candidate.split("/")) == 2:
+        return candidate
+    raise api_error(
+        400,
+        "GITHUB_CONFIG_INVALID",
+        "GitHub repository owner/repo path is required",
+    )
+
+
+def _github_request_json(base_url: str, token: str, path: str) -> dict[str, Any] | list[Any]:
+    request = UrlRequest(
+        f"{base_url.rstrip('/')}{path}",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        if exc.code == 404:
+            raise api_error(404, "GITHUB_PR_NOT_FOUND", "GitHub pull request not found") from exc
+        if exc.code == 403:
+            raise api_error(403, "FORBIDDEN", "GitHub pull request is not accessible") from exc
+        if exc.code in {408, 429} or exc.code >= 500:
+            raise api_error(
+                503,
+                "DEVOPS_SOURCE_UNAVAILABLE",
+                "GitHub API source unavailable",
+            ) from exc
+        raise api_error(exc.code, "GITHUB_REQUEST_FAILED", "GitHub API request failed") from exc
+    except (OSError, URLError, json.JSONDecodeError) as exc:
+        raise api_error(503, "DEVOPS_SOURCE_UNAVAILABLE", "GitHub API source unavailable") from exc
+
+
+def _summarize_github_file(file_item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": file_item.get("filename") or "-",
+        "additions": int(file_item.get("additions") or 0),
+        "deletions": int(file_item.get("deletions") or 0),
+    }
+
+
+def _real_github_preview(repository: dict[str, Any], pr_number: int) -> dict[str, Any]:
+    base_url = _github_base_url(repository)
+    if not base_url:
+        raise api_error(
+            400,
+            "GITHUB_CONFIG_INVALID",
+            "GitHub repository remote_url or GITHUB_BASE_URL is required",
+        )
+    token = _github_access_token(repository)
+    if not token:
+        raise api_error(
+            400,
+            "GITHUB_CREDENTIAL_UNAVAILABLE",
+            "GitHub readonly credential is not available",
+        )
+    owner_repo = _github_repository_path(repository)
+    encoded_owner_repo = quote(owner_repo, safe="/")
+    pr_path = f"/repos/{encoded_owner_repo}/pulls/{pr_number}"
+    files_path = f"{pr_path}/files?per_page=100"
+    pr = _github_request_json(base_url, token, pr_path)
+    files_payload = _github_request_json(base_url, token, files_path)
+    if not isinstance(pr, dict) or not isinstance(files_payload, list):
+        raise api_error(503, "DEVOPS_SOURCE_UNAVAILABLE", "GitHub API source unavailable")
+    user = pr.get("user") if isinstance(pr.get("user"), dict) else {}
+    head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+    base = pr.get("base") if isinstance(pr.get("base"), dict) else {}
+    base_sha = base.get("sha") or pr.get("base_sha")
+    head_sha = head.get("sha") or pr.get("head_sha")
+    return {
+        "repository_id": repository["id"],
+        "project_id": repository.get("project_id"),
+        "project_path": owner_repo,
+        "mr_iid": int(pr.get("number") or pr_number),
+        "title": pr.get("title") or f"PR #{pr_number}",
+        "author": {
+            "username": user.get("login") or "-",
+            "name": user.get("name") or user.get("login") or "-",
+        },
+        "source_branch": head.get("ref"),
+        "target_branch": base.get("ref"),
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "diff_refs": {"base_sha": base_sha, "head_sha": head_sha},
+        "changed_file_count": len(files_payload),
+        "changed_files_summary": [
+            _summarize_github_file(file_item)
+            for file_item in files_payload
+            if isinstance(file_item, dict)
+        ],
+        "web_url": pr.get("html_url"),
+        "writeback_allowed": False,
+    }
+
+
+def _github_preview(repository: dict[str, Any], pr_number: int) -> dict[str, Any]:
+    return _real_github_preview(repository, pr_number)
+
+
 def _diff_payload(preview: dict[str, Any]) -> str:
     return json.dumps(
         {
@@ -3783,6 +3970,154 @@ def _ensure_confirmed_technical_solution_task(
         source_label="Technical solution",
     )
     return technical_solution
+
+
+def _create_code_review_source_snapshot(
+    current_store: MemoryStore,
+    *,
+    repository: dict[str, Any],
+    requirement: dict[str, Any],
+    mr_iid: int,
+    preview: dict[str, Any],
+    payload: GitLabSnapshotRequest,
+    user: dict[str, Any],
+    event_prefix: str,
+    diff_storage_prefix: str,
+) -> dict[str, Any]:
+    diff_payload = _diff_payload(preview)
+    diff_size_bytes = len(diff_payload.encode())
+    diff_limit_bytes = 204_800
+    changed_file_count = len(preview["changed_files_summary"])
+    changed_file_limit = 50
+    file_diff_line_limit = 2_000
+    if changed_file_count > changed_file_limit:
+        current_store.audit(
+            event_type=f"{event_prefix}.snapshot_failed",
+            actor_id=user["id"],
+            subject_type="product_git_repository",
+            subject_id=repository["id"],
+            payload={
+                "changed_file_count": changed_file_count,
+                "changed_file_limit": changed_file_limit,
+                "diff_limit_bytes": diff_limit_bytes,
+                "diff_size_bytes": diff_size_bytes,
+                "mr_iid": mr_iid,
+                "reason": "changed_file_count_too_large",
+                "requirement_id": payload.requirement_id,
+                "technical_solution_task_id": payload.technical_solution_task_id,
+            },
+        )
+        raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
+    oversized_file = next(
+        (
+            item
+            for item in preview["changed_files_summary"]
+            if int(item.get("additions") or 0) + int(item.get("deletions") or 0)
+            > file_diff_line_limit
+        ),
+        None,
+    )
+    if oversized_file:
+        file_diff_line_count = int(oversized_file.get("additions") or 0) + int(
+            oversized_file.get("deletions") or 0
+        )
+        current_store.audit(
+            event_type=f"{event_prefix}.snapshot_failed",
+            actor_id=user["id"],
+            subject_type="product_git_repository",
+            subject_id=repository["id"],
+            payload={
+                "diff_limit_bytes": diff_limit_bytes,
+                "diff_size_bytes": diff_size_bytes,
+                "file_diff_line_count": file_diff_line_count,
+                "file_diff_line_limit": file_diff_line_limit,
+                "file_path": oversized_file.get("path") or "-",
+                "mr_iid": mr_iid,
+                "reason": "single_file_diff_too_large",
+                "requirement_id": payload.requirement_id,
+                "technical_solution_task_id": payload.technical_solution_task_id,
+            },
+        )
+        raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
+    if diff_size_bytes > diff_limit_bytes:
+        current_store.audit(
+            event_type=f"{event_prefix}.snapshot_failed",
+            actor_id=user["id"],
+            subject_type="product_git_repository",
+            subject_id=repository["id"],
+            payload={
+                "diff_limit_bytes": diff_limit_bytes,
+                "diff_size_bytes": diff_size_bytes,
+                "mr_iid": mr_iid,
+                "reason": "diff_too_large",
+                "requirement_id": payload.requirement_id,
+                "technical_solution_task_id": payload.technical_solution_task_id,
+            },
+        )
+        raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
+
+    snapshot_hash = hashlib.sha256(diff_payload.encode()).hexdigest()
+    existing_snapshot = next(
+        (
+            snapshot
+            for snapshot in current_store.gitlab_mr_snapshots.values()
+            if snapshot.get("repository_id") == repository["id"]
+            and snapshot.get("snapshot_hash") == snapshot_hash
+        ),
+        None,
+    )
+    if existing_snapshot is not None:
+        current_store.audit(
+            event_type=f"{event_prefix}.snapshot_reused",
+            actor_id=user["id"],
+            subject_type="gitlab_mr_snapshot",
+            subject_id=existing_snapshot["id"],
+            payload={
+                "repository_id": repository["id"],
+                "mr_iid": mr_iid,
+                "requirement_id": payload.requirement_id,
+                "technical_solution_task_id": payload.technical_solution_task_id,
+            },
+        )
+        return existing_snapshot
+
+    snapshot_id = current_store.new_id("snapshot")
+    snapshot = {
+        "id": snapshot_id,
+        "repository_id": repository["id"],
+        "product_id": requirement["product_id"],
+        "version_id": requirement["version_id"],
+        "project_id": preview["project_id"],
+        "project_path": preview["project_path"],
+        "mr_iid": mr_iid,
+        "title": preview["title"],
+        "author": preview["author"],
+        "source_branch": preview["source_branch"],
+        "target_branch": preview["target_branch"],
+        "base_sha": preview["base_sha"],
+        "head_sha": preview["head_sha"],
+        "diff_refs": preview["diff_refs"],
+        "changed_files_summary": preview["changed_files_summary"],
+        "diff_storage_ref": f"memory://{diff_storage_prefix}/{snapshot_id}",
+        "diff_size_bytes": diff_size_bytes,
+        "diff_limit_bytes": diff_limit_bytes,
+        "snapshot_hash": snapshot_hash,
+        "requirement_id": payload.requirement_id,
+        "technical_solution_task_id": payload.technical_solution_task_id,
+        "created_by": user["id"],
+        "created_at": datetime.now(UTC).isoformat(),
+        "source_provider": repository.get("git_provider", "gitlab"),
+        "writeback_allowed": False,
+    }
+    current_store.gitlab_mr_snapshots[snapshot_id] = snapshot
+    current_store.audit(
+        event_type=f"{event_prefix}.snapshotted",
+        actor_id=user["id"],
+        subject_type="gitlab_mr_snapshot",
+        subject_id=snapshot_id,
+        payload={"repository_id": repository["id"], "mr_iid": mr_iid},
+    )
+    return snapshot
 
 
 def _ensure_confirmed_release_readiness_task(
@@ -4038,138 +4373,90 @@ def snapshot_gitlab_mr(
         technical_solution=technical_solution,
     )
 
-    preview = _gitlab_preview(repository, mr_iid)
-    diff_payload = _diff_payload(preview)
-    diff_size_bytes = len(diff_payload.encode())
-    diff_limit_bytes = 204_800
-    changed_file_count = len(preview["changed_files_summary"])
-    changed_file_limit = 50
-    file_diff_line_limit = 2_000
-    if changed_file_count > changed_file_limit:
-        current_store.audit(
-            event_type="gitlab_mr.snapshot_failed",
-            actor_id=user["id"],
-            subject_type="product_git_repository",
-            subject_id=repository_id,
-            payload={
-                "changed_file_count": changed_file_count,
-                "changed_file_limit": changed_file_limit,
-                "diff_limit_bytes": diff_limit_bytes,
-                "diff_size_bytes": diff_size_bytes,
-                "mr_iid": mr_iid,
-                "reason": "changed_file_count_too_large",
-                "requirement_id": payload.requirement_id,
-                "technical_solution_task_id": payload.technical_solution_task_id,
-            },
-        )
-        raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
-    oversized_file = next(
-        (
-            item
-            for item in preview["changed_files_summary"]
-            if int(item.get("additions") or 0) + int(item.get("deletions") or 0)
-            > file_diff_line_limit
-        ),
-        None,
+    snapshot = _create_code_review_source_snapshot(
+        current_store,
+        repository=repository,
+        requirement=requirement,
+        mr_iid=mr_iid,
+        preview=_gitlab_preview(repository, mr_iid),
+        payload=payload,
+        user=user,
+        event_prefix="gitlab_mr",
+        diff_storage_prefix="gitlab-mr-diff",
     )
-    if oversized_file:
-        file_diff_line_count = int(oversized_file.get("additions") or 0) + int(
-            oversized_file.get("deletions") or 0
-        )
-        current_store.audit(
-            event_type="gitlab_mr.snapshot_failed",
-            actor_id=user["id"],
-            subject_type="product_git_repository",
-            subject_id=repository_id,
-            payload={
-                "diff_limit_bytes": diff_limit_bytes,
-                "diff_size_bytes": diff_size_bytes,
-                "file_diff_line_count": file_diff_line_count,
-                "file_diff_line_limit": file_diff_line_limit,
-                "file_path": oversized_file.get("path") or "-",
-                "mr_iid": mr_iid,
-                "reason": "single_file_diff_too_large",
-                "requirement_id": payload.requirement_id,
-                "technical_solution_task_id": payload.technical_solution_task_id,
-            },
-        )
-        raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
-    if diff_size_bytes > diff_limit_bytes:
-        current_store.audit(
-            event_type="gitlab_mr.snapshot_failed",
-            actor_id=user["id"],
-            subject_type="product_git_repository",
-            subject_id=repository_id,
-            payload={
-                "diff_limit_bytes": diff_limit_bytes,
-                "diff_size_bytes": diff_size_bytes,
-                "mr_iid": mr_iid,
-                "reason": "diff_too_large",
-                "requirement_id": payload.requirement_id,
-                "technical_solution_task_id": payload.technical_solution_task_id,
-            },
-        )
-        raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
+    return envelope(snapshot, get_trace_id(request))
 
-    snapshot_hash = hashlib.sha256(diff_payload.encode()).hexdigest()
-    existing_snapshot = next(
-        (
-            snapshot
-            for snapshot in current_store.gitlab_mr_snapshots.values()
-            if snapshot.get("repository_id") == repository_id
-            and snapshot.get("snapshot_hash") == snapshot_hash
-        ),
-        None,
-    )
-    if existing_snapshot is not None:
-        current_store.audit(
-            event_type="gitlab_mr.snapshot_reused",
-            actor_id=user["id"],
-            subject_type="gitlab_mr_snapshot",
-            subject_id=existing_snapshot["id"],
-            payload={
-                "repository_id": repository_id,
-                "mr_iid": mr_iid,
-                "requirement_id": payload.requirement_id,
-                "technical_solution_task_id": payload.technical_solution_task_id,
-            },
-        )
-        return envelope(existing_snapshot, get_trace_id(request))
 
-    snapshot_id = current_store.new_id("snapshot")
-    snapshot = {
-        "id": snapshot_id,
-        "repository_id": repository_id,
-        "product_id": requirement["product_id"],
-        "version_id": requirement["version_id"],
-        "project_id": preview["project_id"],
-        "project_path": preview["project_path"],
-        "mr_iid": mr_iid,
-        "title": preview["title"],
-        "author": preview["author"],
-        "source_branch": preview["source_branch"],
-        "target_branch": preview["target_branch"],
-        "base_sha": preview["base_sha"],
-        "head_sha": preview["head_sha"],
-        "diff_refs": preview["diff_refs"],
-        "changed_files_summary": preview["changed_files_summary"],
-        "diff_storage_ref": f"memory://gitlab-mr-diff/{snapshot_id}",
-        "diff_size_bytes": diff_size_bytes,
-        "diff_limit_bytes": diff_limit_bytes,
-        "snapshot_hash": snapshot_hash,
-        "requirement_id": payload.requirement_id,
-        "technical_solution_task_id": payload.technical_solution_task_id,
-        "created_by": user["id"],
-        "created_at": datetime.now(UTC).isoformat(),
-        "writeback_allowed": False,
-    }
-    current_store.gitlab_mr_snapshots[snapshot_id] = snapshot
+@app.get("/api/devops/github/pull-requests/{repository_id}/{pr_number}/preview")
+def preview_github_pr(
+    repository_id: str,
+    pr_number: int,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"reviewer", "rd_owner"})
+    current_store = store(request)
+    repository = current_store.product_git_repositories.get(repository_id)
+    if repository is None:
+        raise api_error(404, "NOT_FOUND", "GitHub repository binding not found")
+    if repository["git_provider"] != "github":
+        raise api_error(400, "VALIDATION_ERROR", "Repository is not a GitHub binding")
+    preview = _github_preview(repository, pr_number)
     current_store.audit(
-        event_type="gitlab_mr.snapshotted",
+        event_type="github_pr.previewed",
         actor_id=user["id"],
-        subject_type="gitlab_mr_snapshot",
-        subject_id=snapshot_id,
-        payload={"repository_id": repository_id, "mr_iid": mr_iid},
+        subject_type="product_git_repository",
+        subject_id=repository_id,
+        payload={"pr_number": pr_number},
+    )
+    return envelope(preview, get_trace_id(request))
+
+
+@app.post("/api/devops/github/pull-requests/{repository_id}/{pr_number}/snapshot")
+def snapshot_github_pr(
+    repository_id: str,
+    pr_number: int,
+    request: Request,
+    payload: GitLabSnapshotRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"reviewer", "rd_owner"})
+    current_store = store(request)
+    repository = current_store.product_git_repositories.get(repository_id)
+    if repository is None:
+        raise api_error(404, "NOT_FOUND", "GitHub repository binding not found")
+    if repository["git_provider"] != "github":
+        raise api_error(400, "VALIDATION_ERROR", "Repository is not a GitHub binding")
+    requirement = current_store.requirements.get(payload.requirement_id)
+    if requirement is None:
+        raise api_error(404, "NOT_FOUND", "Requirement not found")
+    technical_solution = current_store.ai_tasks.get(payload.technical_solution_task_id)
+    if (
+        technical_solution is None
+        or technical_solution["task_type"] != "technical_solution"
+        or technical_solution["status"] != "completed"
+    ):
+        raise api_error(
+            400,
+            "TECHNICAL_SOLUTION_NOT_CONFIRMED",
+            "PR snapshot requires a confirmed technical solution task",
+        )
+    _ensure_gitlab_snapshot_context(
+        repository=repository,
+        requirement=requirement,
+        technical_solution=technical_solution,
+    )
+
+    snapshot = _create_code_review_source_snapshot(
+        current_store,
+        repository=repository,
+        requirement=requirement,
+        mr_iid=pr_number,
+        preview=_github_preview(repository, pr_number),
+        payload=payload,
+        user=user,
+        event_prefix="github_pr",
+        diff_storage_prefix="github-pr-diff",
     )
     return envelope(snapshot, get_trace_id(request))
 

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.55 |
+| 功能版本 | v1.1.56 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -77,6 +77,7 @@
 | v1.1.53 | 2026-06-02 | 模型网关测试检测新增 `test_target`，支持仅测试 Chat 以兼容 ChatGPT OAuth 类上游，同时保留 Embedding 检测和跳过状态 | Codex |
 | v1.1.54 | 2026-06-02 | AI 任务列表新增创建时间范围过滤，并在摘要返回产品名、创建时间和更新时间，支撑任务管理页按所属产品和时间段查询 | Codex |
 | v1.1.55 | 2026-06-02 | 所有 PostgreSQL 结构表统一补齐 `created_at` 与 `updated_at` 标准时间字段，并通过 `018_standard_timestamps.sql` 升级既有环境 | Codex |
+| v1.1.56 | 2026-06-02 | 产品 Git 资源支持 `github` provider，新增 GitHub PR 预览、PR diff 快照和本地直填凭据解析契约 | Codex |
 
 ---
 
@@ -84,13 +85,13 @@
 
 本文档定义企业 AI 大脑平台 v1 系列的 API 契约。后续版本直接维护本文档。
 
-API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、内部 GitLab MR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
+API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研发全链路 AI 任务、GitLab MR / GitHub PR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
+当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
 
 产品管理页面可维护产品版本、模块、Git 资源和产品相关系统；产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 
-知识文档创建、更新和知识沉淀采纳会同步重建 chunk，并通过 active/default OpenAI-compatible 模型网关或环境模型网关调用 `/embeddings` 生成 `knowledge_chunks.embedding`；知识文档可选绑定 `product_id` 作为产品归属上下文，首页 IT 团队看板按产品筛选时只统计该产品归属或该产品任务沉淀产生的知识文档；索引失败进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`score` 和来源引用，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。
+知识文档创建、更新和知识沉淀采纳会同步重建 chunk，并通过 active/default OpenAI-compatible 模型网关或环境模型网关调用 `/embeddings` 生成 `knowledge_chunks.embedding`；知识文档可选绑定 `product_id` 作为产品归属上下文，首页 IT 团队看板按产品筛选时只统计该产品归属或该产品任务沉淀产生的知识文档；索引失败进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`score` 和来源引用，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，GitHub PR 预览和快照读取 `project_path=owner/repo` 或可解析 owner/repo 的 `remote_url`，并通过环境变量、服务端密钥引用或本地直填只读 token 解析凭据；缺少 provider 地址、仓库路径或凭据时返回明确错误，不生成本地假 MR/PR。
 
 模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；配置页支持“测试连接”，调用 `/api/system/model-gateway-configs/test` 使用当前表单参数临时检测 provider `/chat/completions` 与 `/embeddings`，并可通过 `test_target=chat` 仅检测 Chat，适配 ChatGPT OAuth 类不提供 Embedding 的上游；测试不保存配置或密钥，不写入 `model_gateway_logs`，响应仅包含脱敏状态、模型、延迟、embedding 维度、跳过状态和错误码。active/default 且已配置密钥的 OpenAI-compatible 配置会在非 code_review 任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`。code_review 任务必须通过可插拔 `code_review_executor` 边界生成报告，默认 `CODE_REVIEW_EXECUTOR_TYPE=claude_code_skill`、`CODE_REVIEW_EXECUTOR_NAME=code-review`，由 `CODE_REVIEW_EXECUTOR_COMMAND` 指定外部命令适配器，输入 JSON 走 stdin，输出 JSON 走 stdout；测试或兼容环境可显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 复用模型网关适配器。执行器调用成功写入 `code_review.executor_called`，执行器配置、调用、解析或结构化校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。
 
@@ -175,7 +176,7 @@ curl -X POST http://localhost:8000/api/auth/login \
 | 创建需求、补充信息、取消自己创建或参与的任务 | product_owner 或 rd_owner；creator policy 由实现按产品归属和参与关系收敛 |
 | 审批需求、确认产品详细设计、采纳迭代规划建议 | product_owner |
 | 创建和启动 AI 任务、确认技术方案 | rd_owner |
-| 创建内部 GitLab MR 预览和 diff 快照、创建 code_review 任务、确认 Review 报告 | reviewer 或 rd_owner |
+| 创建 GitLab MR / GitHub PR 预览和 diff 快照、创建 code_review 任务、确认 Review 报告 | reviewer 或 rd_owner |
 | 审核知识沉淀 | knowledge_owner 或 rd_owner |
 | 登记、分派、验证或关闭 Bug | product_owner、rd_owner 或 admin；tester 角色按后续真实测试组织模型扩展 |
 | 维护产品、相关系统、模型网关配置、用户账号 | admin |
@@ -186,8 +187,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 |-----------|----------|----------|----------|----------|
 | `admin` | 系统管理员 | 用户、角色、模型网关、审计与系统级配置管理 | 全平台系统配置、审计事件和授权业务数据 | 账号、角色、模型网关和系统配置治理；不替代业务负责人做产品取舍 |
 | `product_owner` | 产品负责人 | 产品配置、版本模块、需求审批、任务生成、产品侧交付闭环和 Bug 管理 | 所负责产品、版本和模块下的需求、AI 任务、Bug、知识引用和看板摘要 | 需求审批、产品详细设计确认、迭代规划采纳和产品侧优先级决策 |
-| `rd_owner` | 研发负责人 | 研发任务启动、技术方案确认、Code Review 任务创建、Bug 处理和研发知识沉淀 | 授权产品下的 AI 任务、技术方案、GitLab 只读快照、Bug 和研发知识 | 技术方案确认、研发任务推进、Bug 处理和研发知识沉淀决策 |
-| `reviewer` | 评审负责人 | 高影响 AI 输出、需求分析、设计方案和内部 GitLab MR Code Review 的人工确认 | 分配给评审人的 AI 任务、Review 检查点、MR 只读快照和评审报告 | 对高影响 AI 输出执行批准、修改后批准、拒绝或要求补充信息 |
+| `rd_owner` | 研发负责人 | 研发任务启动、技术方案确认、Code Review 任务创建、Bug 处理和研发知识沉淀 | 授权产品下的 AI 任务、技术方案、GitLab/GitHub 只读快照、Bug 和研发知识 | 技术方案确认、研发任务推进、Bug 处理和研发知识沉淀决策 |
+| `reviewer` | 评审负责人 | 高影响 AI 输出、需求分析、设计方案和 GitLab MR / GitHub PR Code Review 的人工确认 | 分配给评审人的 AI 任务、Review 检查点、MR/PR 只读快照和评审报告 | 对高影响 AI 输出执行批准、修改后批准、拒绝或要求补充信息 |
 | `knowledge_owner` | 知识负责人 | 知识文档导入、权限角色维护、知识检索治理和知识沉淀审核 | 知识文档、chunk、检索结果、权限角色和知识沉淀候选 | 知识导入、权限配置、索引治理和沉淀候选审核 |
 | `viewer` | 查看者 | 查看有权限访问的工作台数据、任务结果、知识和看板摘要 | 授权范围内的列表、详情、任务结果、知识检索结果和看板摘要 | 无写入或审批决策权限 |
 
@@ -198,7 +199,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 - 产品接口维护长期主数据，归档版本不得用于新需求或新任务。
 - 需求接口维护业务事实和审批状态，生成任务时必须把需求快照写入任务输入。
 - AI 任务接口维护任务类型、执行状态、人工确认、回写、导出和运行结果，不承担产品主数据维护。
-- 内部 GitLab MR 代码 Review 接口只读取授权 MR 元信息和 diff 快照，生成 AI Brain 内部 Review 报告，不提供 GitLab 评论、审批、request changes、合并或分支变更回写能力。
+- GitLab MR / GitHub PR 代码 Review 接口只读取授权变更元信息和 diff 快照，生成 AI Brain 内部 Review 报告，不提供远端评论、审批、request changes、合并或分支变更回写能力。
 - 知识接口支持独立导入、索引状态查询、权限过滤检索、索引失败重试和沉淀审核。
 - Bug 接口支持 AI 自动测试和人工测试两类来源的登记、分派、修复、验证、关闭和重复归并。
 - DevOps/运营接口按产品归属暴露 GitLab 每日代码质量、Jenkins 发布、线上运行日志、用户使用、用户反馈、迭代规划建议和首页 IT 团队看板指标；首页看板中的任务、待确认 Review 和知识沉淀聚合必须先按任务读权限过滤。
@@ -295,7 +296,9 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Attribution | POST | `/api/attribution/pending-items/{item_id}/resolve` | 将待归属项归属到已有上下文或忽略为噪声。 |
 | GitLab Review | GET | `/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview` | 预览内部 GitLab MR 元信息。 |
 | GitLab Review | POST | `/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/snapshot` | 拉取 MR 元信息和 diff，生成 code_review 输入快照。 |
-| Code Review | GET | `/api/ai-tasks/{task_id}/code-review-report` | 查询内部 GitLab MR 代码 Review 报告、执行器信息和确认状态。 |
+| GitHub Review | GET | `/api/devops/github/pull-requests/{repository_id}/{pr_number}/preview` | 预览 GitHub PR 元信息。 |
+| GitHub Review | POST | `/api/devops/github/pull-requests/{repository_id}/{pr_number}/snapshot` | 拉取 PR 元信息和 diff 摘要，生成 code_review 输入快照。 |
+| Code Review | GET | `/api/ai-tasks/{task_id}/code-review-report` | 查询 GitLab MR / GitHub PR 代码 Review 报告、执行器信息和确认状态。 |
 | DevOps | GET | `/api/devops/jenkins/releases` | 查询 Jenkins 发布记录。 |
 | DevOps | POST | `/api/devops/jenkins/releases` | 登记真实 Jenkins 发布记录。 |
 | Ops | GET | `/api/ops/online-log-metrics` | 查询线上运行日志运营指标。 |
@@ -582,7 +585,8 @@ Git 资源请求体：
 - 版本状态：`planning | active | archived`。
 - Git 资源类型：`code | docs | prd | test`。
 - Git 资源状态：`active | inactive`。
-- MVP 内部 GitLab MR 代码 Review 只使用 `git_provider=gitlab` 且带有 `project_id` 或 `project_path` 的只读仓库绑定；`credential_ref` 只能引用服务端密钥或密文，API 响应只返回 `credential_ref_configured`，不返回密钥引用或明文 token。
+- `git_provider` 支持 `gitlab` 和 `github`。GitLab 绑定需提供 `project_id` 或 `project_path`；GitHub 绑定需提供 `project_path=owner/repo` 或可解析 owner/repo 的 `remote_url`。
+- `credential_ref` 推荐使用 `env:GITLAB_READONLY_TOKEN`、`env:GITHUB_READONLY_TOKEN` 或服务端密钥引用；本地联调可直填只读 token，API 响应仍只返回 `credential_ref_configured`，不返回密钥引用或明文 token。
 - 前端产品配置弹窗可提交 `credential_ref`，编辑时留空表示保留服务端已有凭据；列表只显示“已配置/未配置”状态。
 - 归档版本不可用于新需求和新 AI 任务，历史任务继续使用生成时保存的产品上下文快照。
 
@@ -765,7 +769,7 @@ POST /api/requirements
 
 - `task_type` 可选，默认生成 `product_detail_design` 任务。
 - v1 MVP 的需求审批流默认只通过该接口生成产品详细设计任务；技术方案任务在产品详细设计确认后生成。
-- `code_review` 任务需要已确认技术方案和内部 GitLab MR diff 快照，默认通过 MR 预览/快照流程和低层 `POST /api/ai-tasks` 创建，不由需求审批流一次性自动生成。
+- `code_review` 任务需要已确认技术方案和 GitLab MR / GitHub PR diff 快照，默认通过变更预览/快照流程和低层 `POST /api/ai-tasks` 创建，不由需求审批流一次性自动生成。
 
 生成任务响应：
 
@@ -790,7 +794,7 @@ POST /api/requirements
 | `product_detail_design` | 产品详细设计。 |
 | `technical_solution` | 技术方案设计。 |
 | `development_planning` | 代码开发辅助。 |
-| `code_review` | 内部 GitLab MR 代码 Review。 |
+| `code_review` | GitLab MR / GitHub PR 代码 Review。 |
 | `automated_testing` | 自动化测试。 |
 | `release_readiness` | 发布上线评估。 |
 | `post_release_analysis` | 上线后分析。 |
@@ -874,9 +878,9 @@ POST /api/ai-tasks
 - `task_type = technical_solution` 时，`input.product_detail_design_task_id` 必须指向同一需求、同一产品版本下已完成的 `product_detail_design` 任务。
 - `task_type = development_planning`、`automated_testing` 或 `release_readiness` 时，`input.technical_solution_task_id` 必须指向同一需求、同一产品版本下已完成的 `technical_solution` 任务；否则返回 `TECHNICAL_SOLUTION_NOT_CONFIRMED` 或上下文不匹配错误。`release_readiness` 创建时会把源技术方案输出、同产品/版本/需求 Bug、Jenkins 发布记录、线上日志指标和 GitLab 每日代码指标写入 `input_json` 快照；无记录时保存真实空数组。
 - `task_type = post_release_analysis` 时，`input.release_readiness_task_id` 必须指向同一需求、同一产品版本下已完成的 `release_readiness` 任务；否则返回 `RELEASE_READINESS_NOT_CONFIRMED` 或上下文不匹配错误。创建时会把源发布评估输出、Jenkins 发布记录、线上日志指标和同产品/版本/需求 Bug 写入 `input_json` 快照；无记录时保存真实空数组。
-- `task_type = code_review` 时，`input.gitlab_mr_snapshot_id` 必填；快照必须先通过 MR 预览/快照接口生成，并且当前用户必须对快照所属产品 Git 资源和 MR 具备 Review 权限。
-- 后端创建 code_review 任务时只引用已有不可变快照，不在任务创建接口中重复拉取 MR diff。
-- code_review 任务只归档 AI Brain 内部 Review 报告，不向 GitLab 回写评论、审批状态、request changes、合并状态或分支变更。
+- `task_type = code_review` 时，`input.gitlab_mr_snapshot_id` 必填；该字段是兼容名，可引用 GitLab MR 或 GitHub PR 快照。快照必须先通过 MR/PR 预览与快照接口生成，并且当前用户必须对快照所属产品 Git 资源具备 Review 权限。
+- 后端创建 code_review 任务时只引用已有不可变快照，不在任务创建接口中重复拉取 MR/PR diff。
+- code_review 任务只归档 AI Brain 内部 Review 报告，不向 GitLab/GitHub 回写评论、审批状态、request changes、合并状态或分支变更。
 - `automated_testing` 任务进入人工确认前不会登记 Bug；人工确认 `approve` 或 `edit-approve` 后，输出中的 `bug_suggestions` 才会生成 `source=ai_auto_test` 的 Bug 记录。
 - `post_release_analysis` 任务进入人工确认前不会登记 Bug；人工确认 `approve` 或 `edit-approve` 后，输出中的 `bug_suggestions` 才会生成 `source=ai_post_release` 的 Bug 记录，并记录 `bug.created` 与 `post_release_analysis.bugs_created` 审计事件。
 - 前端默认通过需求审批后的 `generate-task` 创建 AI 任务，不直接调用该低层接口。
@@ -948,7 +952,7 @@ GET /api/ai-tasks/{task_id}
 - `requirement_id`: 来源需求 ID。
 - `requirement_snapshot`: 任务生成时的需求标题、优先级、背景、目标、约束和审批结论快照。
 - `product_context`: 任务生成时的产品、版本、模块和 Git 资源上下文快照。
-- `gitlab_mr_snapshot`: `code_review` 任务的内部 GitLab MR 输入快照，包括 project_id 或 project_path、mr_iid、标题、作者、source/target branch、commit sha 或 diff refs、变更文件摘要、diff 存储引用、GitLab Web URL 和快照时间。
+- `gitlab_mr_snapshot`: `code_review` 任务的兼容命名输入快照，可来自 GitLab MR 或 GitHub PR，包括 provider、project_id 或 project_path、mr_iid/PR number、标题、作者、source/target branch、commit sha 或 diff refs、变更文件摘要、diff 存储引用、Web URL 和快照时间。
 
 补充信息：
 
@@ -990,12 +994,18 @@ POST /api/ai-tasks/{task_id}/more-info
 POST /api/ai-tasks/{task_id}/cancel
 ```
 
-### 内部 GitLab MR 代码 Review
+### GitLab MR / GitHub PR 代码 Review
 
 MR 预览：
 
 ```http
 GET /api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview
+```
+
+GitHub PR 预览：
+
+```http
+GET /api/devops/github/pull-requests/{repository_id}/{pr_number}/preview
 ```
 
 响应：
@@ -1021,12 +1031,18 @@ GET /api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview
 }
 ```
 
-MR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持内部 GitLab 只读项目绑定、MR 预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再预览 MR、生成快照，最后用 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`。`remote_url` 用于推导 GitLab base URL，也可由 `GITLAB_BASE_URL` 提供；`credential_ref` 推荐使用 `env:GITLAB_READONLY_TOKEN`，响应不得返回凭据值。同一 `repository_id + snapshot_hash` 已存在时，快照接口返回已有 snapshot 并记录 `gitlab_mr.snapshot_reused`，不得重复入库。MR diff、变更文件数或单文件 diff 行数超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录 `gitlab_mr.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`changed_file_count`、`changed_file_limit`、`file_diff_line_count`、`file_diff_line_limit`、`file_path`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
+MR/PR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持 GitLab/GitHub 只读仓库绑定、变更预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再根据 provider 预览 MR 或 PR、生成快照，最后用兼容字段 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`。GitHub API 读取 `GET /repos/{owner}/{repo}/pulls/{number}` 和 `.../files?per_page=100`，其中 `owner/repo` 来自 `project_path` 或 `remote_url`。`remote_url` 用于推导 GitLab base URL 或 GitHub Enterprise base URL，也可由 `GITLAB_BASE_URL` / `GITHUB_BASE_URL` 提供；`credential_ref` 推荐使用环境变量或服务端密钥引用，本地联调可直填只读 token，响应不得返回凭据值。同一 `repository_id + snapshot_hash` 已存在时，快照接口返回已有 snapshot 并记录 `gitlab_mr.snapshot_reused` 或 `github_pr.snapshot_reused`，不得重复入库。MR/PR diff、变更文件数或单文件 diff 行数超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录对应 provider 的 `*.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`changed_file_count`、`changed_file_limit`、`file_diff_line_count`、`file_diff_line_limit`、`file_path`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
 
 生成 MR diff 快照：
 
 ```http
 POST /api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/snapshot
+```
+
+生成 GitHub PR diff 快照：
+
+```http
+POST /api/devops/github/pull-requests/{repository_id}/{pr_number}/snapshot
 ```
 
 请求体：
@@ -1099,9 +1115,10 @@ GET /api/ai-tasks/{task_id}/code-review-report
 约束：
 
 - MR diff 快照不可被 GitLab 后续变更静默覆盖；重新 Review 必须创建新快照或新运行记录。
-- 重复拉取相同仓库的相同 diff 时返回已有快照，并通过 `gitlab_mr.snapshot_reused` 保留审计痕迹。
+- PR diff 快照不可被 GitHub 后续变更静默覆盖；重新 Review 必须创建新快照或新运行记录。
+- 重复拉取相同仓库的相同 diff 时返回已有快照，并通过 `gitlab_mr.snapshot_reused` 或 `github_pr.snapshot_reused` 保留审计痕迹。
 - Review 报告经人工确认或修改后采纳后才可归档为正式结论。
-- v1 MVP 不提供 GitLab 评论、审批状态、request changes、合并状态或分支变更回写接口。
+- v1 MVP 不提供 GitLab/GitHub 评论、审批状态、request changes、合并状态或分支变更回写接口。
 - 首页 IT 团队看板返回当前业务数据聚合，不返回空集合占位；研发运营看板等未接入真实采集器的接口返回空集合响应，响应必须包含 `items` 和 `total`，不得返回占位状态或伪造统计数据。用户使用指标、用户反馈和迭代规划建议已进入真实业务实现，不再使用空集合替代业务数据。
 
 ### 人工确认
@@ -2135,8 +2152,10 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | POST `/api/reviews/{review_id}/reject` | 400 | VALIDATION_ERROR | 否 | 成功必须记录 rejection reason。 | 要求填写驳回原因。 |
 | POST `/api/reviews/{review_id}/request-more-info` | 400 | VALIDATION_ERROR | 否 | 成功必须记录补充问题。 | 要求填写明确问题。 |
 | GET GitLab MR preview | 404/403 | GITLAB_MR_NOT_FOUND / FORBIDDEN | 否 | 记录只读预览失败原因。 | 提示检查项目绑定、MR IID 和权限。 |
+| GET GitHub PR preview | 404/403 | GITHUB_PR_NOT_FOUND / FORBIDDEN | 否 | 记录只读预览失败原因。 | 提示检查仓库绑定、PR number 和权限。 |
 | POST GitLab MR snapshot | 413 | GITLAB_MR_DIFF_TOO_LARGE | 否 | 记录 `gitlab_mr.snapshot_failed`，包含 diff_size_bytes、changed_file_count、file_diff_line_count 和限制。 | 提示拆分 MR 或缩小范围。 |
-| POST GitLab MR snapshot | 502/503 | DEVOPS_SOURCE_UNAVAILABLE | 是 | 记录 GitLab API 超时、限流或不可用。 | 提示稍后重试，保留 MR 输入。 |
+| POST GitHub PR snapshot | 413 | GITLAB_MR_DIFF_TOO_LARGE | 否 | 记录 `github_pr.snapshot_failed`，包含 diff_size_bytes、changed_file_count、file_diff_line_count 和限制。 | 提示拆分 PR 或缩小范围。 |
+| POST GitLab MR / GitHub PR snapshot | 502/503 | DEVOPS_SOURCE_UNAVAILABLE | 是 | 记录 GitLab/GitHub API 超时、限流或不可用。 | 提示稍后重试，保留 MR/PR 输入。 |
 | GET `/api/ai-tasks/{task_id}/code-review-report` | 404 | NOT_FOUND | 否 | 不要求审计。 | 显示报告尚未生成或不存在。 |
 | code-review 执行器生成报告 | 502/503 | CODE_REVIEW_EXECUTOR_FAILED | 是 | 记录 executor_type、executor_name、阶段和 retryable。 | 显示执行器失败，可重跑或联系管理员。 |
 | POST `/api/knowledge/documents` | 400 | VALIDATION_ERROR | 否 | 成功和失败均记录文档来源。 | 标出文件类型、大小或权限错误。 |
@@ -2174,11 +2193,14 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | BUG_STATE_INVALID | 当前 Bug 状态不允许该操作。 |
 | COLLECTOR_RUN_STATE_INVALID | 当前采集运行终态不允许回退或切换状态。 |
 | PENDING_ATTRIBUTION_STATE_INVALID | 当前待归属项已经归属或忽略，不允许重复处理。 |
-| DEVOPS_SOURCE_UNAVAILABLE | GitLab、Jenkins、线上日志、用户使用或用户反馈数据源不可用。 |
+| DEVOPS_SOURCE_UNAVAILABLE | GitLab、GitHub、Jenkins、线上日志、用户使用或用户反馈数据源不可用。 |
 | GITLAB_MR_NOT_FOUND | 内部 GitLab Merge Request 不存在或不可访问。 |
-| GITLAB_MR_DIFF_TOO_LARGE | MR diff 超过 v1 MVP code_review 处理限制，需要拆分 MR 或缩小范围。 |
+| GITHUB_PR_NOT_FOUND | GitHub Pull Request 不存在或不可访问。 |
+| GITHUB_CONFIG_INVALID | GitHub 仓库配置缺少可解析的 owner/repo 或 base URL。 |
+| GITHUB_CREDENTIAL_UNAVAILABLE | GitHub 只读凭据未配置或无法解析。 |
+| GITLAB_MR_DIFF_TOO_LARGE | MR/PR diff 超过 v1 MVP code_review 处理限制，需要拆分变更或缩小范围。 |
 | CODE_REVIEW_EXECUTOR_FAILED | code-review 执行器调用失败。 |
-| GITLAB_WRITEBACK_NOT_SUPPORTED | v1 MVP 不支持向 GitLab 回写评论、审批状态、request changes、合并状态或分支变更。 |
+| GITLAB_WRITEBACK_NOT_SUPPORTED | v1 MVP 不支持向 GitLab/GitHub 回写评论、审批状态、request changes、合并状态或分支变更。 |
 | PRODUCT_MAPPING_REQUIRED | 采集数据缺少产品归属，无法进入产品级统计。 |
 | ITERATION_PLAN_EVIDENCE_INSUFFICIENT | 迭代规划建议证据不足，只能生成低置信度建议。 |
 | ITERATION_PLAN_STATE_INVALID | 当前迭代规划建议状态不允许确认、驳回或转需求。 |
@@ -2191,6 +2213,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.56 | 2026-06-02 | 产品 Git 资源支持 GitHub provider，新增 GitHub PR 预览、PR diff 快照和本地直填凭据解析契约。 |
 | v1.1.55 | 2026-06-02 | 所有 PostgreSQL 结构表统一补齐 `created_at`/`updated_at`，并新增 `018_standard_timestamps.sql` 作为既有环境迁移脚本。 |
 | v1.1.54 | 2026-06-02 | AI 任务列表新增 `created_from`/`created_to` 查询和摘要时间字段，任务管理页可按所属产品与时间段筛选。 |
 | v1.1.50 | 2026-06-02 | AI 任务启动接入真实 LangGraph StateGraph，Graph Run 返回 runtime、node_path 和 checkpoint runtime 元数据。 |

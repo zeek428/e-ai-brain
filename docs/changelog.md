@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 产品 Git 资源支持选择 GitHub provider，任务中心可基于 GitHub PR 预览和 diff 快照创建 `code_review` 任务；凭据解析支持环境变量、服务端密钥引用和本地联调直填只读 token，API 响应仍不回显凭据。
 - 所有 PostgreSQL 结构表统一补齐 `created_at` 和 `updated_at` 标准时间字段，新增 `018_standard_timestamps.sql` 迁移脚本和表定义门禁测试，防止后续新表漏字段。
 - 任务管理页面新增“所属产品”和“时间段”查询条件，AI 任务列表摘要同步返回产品名、创建时间和更新时间，并支持 `created_from`/`created_to` 后端过滤。
 - 模型网关配置页新增“测试连接”能力，后端新增 `/api/system/model-gateway-configs/test`，使用临时 OpenAI-compatible 参数检测 Chat 与 Embedding 连通性，返回脱敏状态且不保存密钥或模型调用日志。
@@ -22,7 +23,7 @@
 - 任务中心待确认弹窗补齐“修改后通过”和“拒绝”决策入口，前端调用真实 Review `edit-approve`/`reject` API，完善高影响 AI 产出人工门禁体验。
 - 同步项目级文档的 MVP 真实系统状态说明，明确前端入口不得展示示例数据或占位统计，并将生产就绪门禁状态更新为脚本已提供、目标环境待通过。
 - 初始化 `apps/api` FastAPI 后端、`apps/web` Ant Design Pro 工作台、Docker Compose、本地环境示例、Dockerfile 和 PostgreSQL 初始化迁移脚本。
-- 后端实现本地账号认证、trace_id envelope、健康检查、产品配置、需求审批、AI 任务、人审确认、Markdown 导出、GitLab MR 预览与 diff 快照、内部 Code Review 报告、知识检索/沉淀、模拟 Issue 幂等和审计查询的 MVP 骨架。
+- 后端实现本地账号认证、trace_id envelope、健康检查、产品配置、需求审批、AI 任务、人审确认、Markdown 导出、GitLab MR / GitHub PR 预览与 diff 快照、内部 Code Review 报告、知识检索/沉淀、模拟 Issue 幂等和审计查询的 MVP 骨架。
 - 产品与平台配置补齐查询、局部更新、active_only 过滤、相关系统、模型网关配置、默认模型网关唯一性和 API key 脱敏响应。
 - 需求管理补齐列表、详情、按产品/状态过滤、驳回、关闭、任务引用和 inactive 产品拦截。
 - 知识沉淀补齐驳回接口、驳回原因、状态过滤和审计事件。
@@ -40,7 +41,7 @@
 - 业务页面统一关闭 `PageContainer` 顶部标题、状态标签和说明文案，使列表页和工作台页只保留主体表格、卡片和操作区。
 - 导航保留顶部 Header，并调整为左侧单栏多级菜单；首页改为 IT 团队看板，任务中心作为一级菜单并新增任务管理二级菜单，需求交付、产品资产、运营治理承载二级菜单。
 - Docker 本地开发环境固定为独立 `e-ai-brain` 项目名，并补充 `.dockerignore` 降低构建上下文体积。
-- 新增后端 pytest 覆盖基础健康/认证、MVP-A 需求到详细设计、技术方案导出、GitLab MR 快照、Code Review 报告和知识治理闭环。
+- 新增后端 pytest 覆盖基础健康/认证、MVP-A 需求到详细设计、技术方案导出、GitLab MR / GitHub PR 快照、Code Review 报告和知识治理闭环。
 - 新增并多轮优化面向管理层和非技术人员的 HTML 方案说明，概述 AI Brain v1 业务价值、AI 赋能机制、核心闭环、总体架构、MVP-A/B/C 实施路线、阶段边界和治理要点。
 - 扩展 HTML 方案说明中的企业级平台视角，补充多业务模块大脑、企业总AI大脑、技术组件可更替性和项目风险重点 review。
 - 综合修订 HTML 方案说明的术语一致性、风险应对表达、管理层可读性和代码样式展示，补齐企业总AI大脑与多业务模块大脑表述。
@@ -95,7 +96,7 @@
 - 需求管理页面新增审批通过、驳回和生成产品详细设计任务操作；任务中心新增启动 draft 任务和确认待 Review 输出的主链路操作。
 - 前端运行时用户信息改为从登录响应或 `/api/auth/me` 读取，右上角不再硬编码管理员姓名。
 - 任务中心新增基于已完成产品详细设计创建技术方案任务，以及已完成技术方案 Markdown 导出预览入口。
-- 任务中心新增基于已完成技术方案选择产品 GitLab 仓库、预览 MR、生成 diff 快照、创建 `code_review` 任务和查看内部 Code Review 报告的真实 API 链路。
+- 任务中心新增基于已完成技术方案选择产品 GitLab/GitHub 代码库、预览 MR/PR、生成 diff 快照、创建 `code_review` 任务和查看内部 Code Review 报告的真实 API 链路。
 - 任务管理页面改为与需求管理等页面一致的管理列表风格，移除阶段卡片和左右并排确认台，待确认项改为工具栏或行操作弹窗处理。
 - 任务中心新增已完成任务的模拟 Issue 查询/生成弹窗；知识中心新增知识沉淀候选审核弹窗，支持批准入库和拒绝，补齐 MVP-C 页面操作闭环。
 - 任务管理列表行内操作收敛为单一“操作”入口，启动、确认、生成方案、导出、Code Review、模拟 Issue 和查看报告统一在任务操作弹窗中触发，避免横向堆叠按钮。
