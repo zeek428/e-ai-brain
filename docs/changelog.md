@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 同步项目级文档的 MVP 真实系统状态说明，明确前端入口不得展示示例数据或占位统计，并将生产就绪门禁状态更新为脚本已提供、目标环境待通过。
 - 初始化 `apps/api` FastAPI 后端、`apps/web` Ant Design Pro 工作台、Docker Compose、本地环境示例、Dockerfile 和 PostgreSQL 初始化迁移脚本。
 - 后端实现本地账号认证、trace_id envelope、健康检查、产品配置、需求审批、AI 任务、人审确认、Markdown 导出、GitLab MR 预览与 diff 快照、内部 Code Review 报告、知识检索/沉淀、模拟 Issue 幂等和审计查询的 MVP 骨架。
 - 产品与平台配置补齐查询、局部更新、active_only 过滤、相关系统、模型网关配置、默认模型网关唯一性和 API key 脱敏响应。

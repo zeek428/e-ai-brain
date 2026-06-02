@@ -25,7 +25,7 @@ AI Brain 是企业 AI 大脑平台项目。v1 以“研发大脑”为样板，M
 
 ## 实现者最短路径
 
-当前源码已包含 FastAPI + Ant Design Pro 的 MVP 骨架。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 启动，登录账号来自 PostgreSQL `users` 表，产品、版本、模块、Git 资源、相关系统、需求、AI 任务、人工确认、Graph 运行态、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写和模型网关配置/调用元数据已开始写入 PostgreSQL 结构表，其余运行状态暂由 `app_state_snapshots` JSONB 快照表兜底；进程内 `MemoryStore` 仅用于自动化测试和显式内存模式。数据库升级通过 `apps/api/app/db/migrations/*.sql` 可重复执行脚本完成，不需要也不应清空数据库卷。内部 GitLab 预览和 diff 快照必须读取配置的 GitLab 只读 API；AI 任务启动必须使用 active/default OpenAI-compatible 模型网关或环境模型网关，缺少可用配置时明确失败，不生成本地输出。
+当前源码已包含 FastAPI + Ant Design Pro 的 MVP 真实系统骨架。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 启动，登录账号来自 PostgreSQL `users` 表，产品、版本、模块、Git 资源、相关系统、需求、AI 任务、人工确认、Graph 运行态、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、模拟 Issue 回写和模型网关配置/调用元数据已开始写入 PostgreSQL 结构表，其余运行状态暂由 `app_state_snapshots` JSONB 快照表兜底；进程内 `MemoryStore` 仅用于自动化测试和显式内存模式。数据库升级通过 `apps/api/app/db/migrations/*.sql` 可重复执行脚本完成，不需要也不应清空数据库卷。内部 GitLab 预览和 diff 快照必须读取配置的 GitLab 只读 API；非 `code_review` AI 任务启动必须使用 active/default OpenAI-compatible 模型网关或环境模型网关，`code_review` 任务必须通过可插拔 `code_review_executor` 边界生成报告。缺少可用配置时任务明确失败，不生成本地输出、示例数据或前端兜底行。
 
 PostgreSQL 服务默认使用本地项目镜像别名 `e-ai-brain-postgres-pgvector:0.8.2-pg18-trixie`，它对应官方 `pgvector/pgvector:0.8.2-pg18-trixie`，方便 Docker Desktop 中和 `e-ai-brain` 容器组一起管理，并避免已有 PG18 数据卷被错误挂载到 PG16 镜像。网络受限无法拉取官方镜像时，可用 `infra/docker/postgres-pgvector.Dockerfile` 基于本机已有 `postgres:18-alpine` 构建同主版本 fallback 镜像，并通过 `PGVECTOR_IMAGE` 指向它。
 
@@ -42,9 +42,9 @@ PGVECTOR_IMAGE=e-ai-brain-postgres-pgvector docker compose up -d --no-deps postg
 2. 再阅读技术规格中的实施切片、P0 数据表字段、状态机动作矩阵和模块边界，先按 MVP-A 落地需求审批、产品详细设计、技术方案、内部 GitLab 只读绑定、MR 预览、MR diff 快照、人工确认、导出和基础审计。
 3. 然后按 MVP-B 实现 `code_review` 任务、可插拔 code-review 执行器、Review 报告人工确认、内部归档和不回写 GitLab 的只读边界。
 4. 再按 MVP-C 实现知识中心导入、权限过滤检索、知识沉淀审核、模拟 Issue 幂等生成、主体级审计和后续阶段入口空状态。
-5. 前端页面优先实现产品配置、需求管理、任务中心待确认弹窗、知识中心、Bug 管理、审计与运行入口；研发运营、用户洞察和完整首页看板可按文档标记先做 MVP 占位或空状态。
+5. 前端页面优先实现产品配置、需求管理、任务中心待确认弹窗、知识中心、Bug 管理、审计与运行入口；研发运营、用户洞察、迭代规划和首页 IT 团队看板必须读取真实 API 与真实结构表，未接入外部自动采集器时展示真实空状态，不返回示例数据、占位统计或伪造结果。
 6. 测试按 `test-case.md` 的 MVP-A/B/C 切片和 P0 用例先跑通，再补 v1.1、v1.2 和生产就绪用例。
-7. 发布前执行部署、监控和故障响应 runbook 中的生产就绪门禁，尤其是密钥掩码、GitLab 只读边界、数据库迁移、备份恢复和审计可追踪。
+7. 发布前执行部署、监控和故障响应 runbook 中的生产就绪门禁脚本 `scripts/production_readiness_check.py`，尤其是密钥掩码、GitLab 只读边界、数据库迁移、pgvector/pgcrypto、备份恢复和审计可追踪；脚本在目标环境通过前不得宣称可发布。
 
 ## 文档结构
 
@@ -75,7 +75,7 @@ docs/
 - 每个新增模块必须同步补充 API、数据模型、权限和审计说明。
 - 所有高影响 AI 动作必须保留明确人工确认点。
 - 当实现与文档不一致时，先更新项目级文档，再更新代码；完成后同步 changelog。
-- 部署、监控和故障响应 runbook 同时记录 local、staging 和 production-readiness 门禁；当前实现状态必须以代码和验证结果为准。
+- 部署、监控和故障响应 runbook 同时记录 local、staging 和 production-readiness 门禁；当前实现状态必须以代码、`scripts/production_readiness_check.py` 和目标环境验证结果为准。
 
 ## 本地开发
 
