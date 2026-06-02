@@ -31,10 +31,10 @@ function resolveTraceParams(row: AuditRecord) {
     'user_feedback',
     'user_usage_metric',
   ]);
-  if (traceableSubjectTypes.has(row.subjectType)) {
+  if (row.subjectType && row.subjectId && traceableSubjectTypes.has(row.subjectType)) {
     return { subjectId: row.subjectId, subjectType: row.subjectType };
   }
-  if (row.subjectType === 'product') {
+  if (row.subjectType === 'product' && row.subjectId) {
     return { productId: row.subjectId };
   }
   if (row.aiTaskId) {

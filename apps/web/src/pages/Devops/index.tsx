@@ -451,8 +451,11 @@ export default function DevopsPage() {
   const pendingAttributionResolvedProductId = Form.useWatch('resolvedProductId', pendingAttributionForm);
   const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
   const resolvedModuleOptions = useMemo(
-    () => moduleOptionsFromModules(resolvedProductModules),
-    [resolvedProductModules],
+    () =>
+      pendingAttributionTarget === null || !pendingAttributionResolvedProductId
+        ? []
+        : moduleOptionsFromModules(resolvedProductModules),
+    [pendingAttributionResolvedProductId, pendingAttributionTarget, resolvedProductModules],
   );
   const resolvedRequirementOptions = useMemo(
     () => requirementOptionsFromRequirements(requirements, pendingAttributionResolvedProductId),
@@ -518,13 +521,14 @@ export default function DevopsPage() {
   }, [pendingAttributionTarget]);
 
   useEffect(() => {
-    if (pendingAttributionTarget === null || !pendingAttributionResolvedProductId) {
-      setResolvedProductModules([]);
-      pendingAttributionForm.setFieldValue('resolvedModuleCode', undefined);
+    if (pendingAttributionTarget === null) {
+      return;
+    }
+    pendingAttributionForm.setFieldValue('resolvedModuleCode', undefined);
+    if (!pendingAttributionResolvedProductId) {
       return;
     }
     let mounted = true;
-    pendingAttributionForm.setFieldValue('resolvedModuleCode', undefined);
     void fetchProductModules(pendingAttributionResolvedProductId)
       .then((items) => {
         if (mounted) {

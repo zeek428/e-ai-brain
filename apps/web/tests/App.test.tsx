@@ -276,6 +276,7 @@ import {
   deleteManagementProduct,
   deleteManagementRequirement,
   deleteManagementUser,
+  editApproveTaskCenterReview,
   fetchActiveProductOptions,
   fetchItTeamDashboard,
   fetchModelGatewayConfigs,
@@ -289,6 +290,7 @@ import {
   previewGitLabMergeRequest,
   rejectKnowledgeDeposit,
   rejectManagementRequirement,
+  rejectTaskCenterReview,
   requestTaskCenterReviewMoreInfo,
   snapshotGitLabMergeRequest,
   saveCurrentUser,
@@ -690,6 +692,160 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getAllByText('确认编号')).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  });
+
+  it('submits edit-approved review decisions from the task center dialog', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/pending') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                ai_task_id: 'task_api',
+                content: { summary: 'AI 原始技术方案摘要' },
+                id: 'review_api',
+                stage: 'technical_solution',
+                status: 'pending',
+                version: 1,
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/ai-tasks') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'task_api',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'waiting_review',
+                task_type: 'technical_solution',
+                title: '技术方案确认任务',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/reviews/review_api/edit-approve') {
+        expect(init?.method).toBe('POST');
+        expect(init?.body).toBe(
+          JSON.stringify({
+            edited_content: { summary: '人工修订后的技术方案摘要' },
+            version: 1,
+          }),
+        );
+        return jsonResponse({
+          data: { review_status: 'edited_approved', task_status: 'completed' },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    expect(await screen.findByText('技术方案确认任务')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '待确认' }));
+    expect(await screen.findByText('AI 原始技术方案摘要')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '修改后通过' }));
+    const editApproveModalTitle = await screen.findByText('修改后通过：review_api');
+    const editApproveModal = editApproveModalTitle.closest('.ant-modal') as HTMLElement;
+    fireEvent.change(screen.getByRole('textbox', { name: '修订摘要' }), {
+      target: { value: '人工修订后的技术方案摘要' },
+    });
+    fireEvent.click(within(editApproveModal).getByRole('button', { name: '修改后通过' }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([path]) => path === '/api/reviews/review_api/edit-approve')).toBe(true),
+    );
+  });
+
+  it('submits rejected review decisions from the task center dialog', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/pending') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                ai_task_id: 'task_api',
+                content: { summary: 'AI 原始技术方案摘要' },
+                id: 'review_api',
+                stage: 'technical_solution',
+                status: 'pending',
+                version: 1,
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/ai-tasks') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'task_api',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'waiting_review',
+                task_type: 'technical_solution',
+                title: '技术方案确认任务',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/reviews/review_api/reject') {
+        expect(init?.method).toBe('POST');
+        expect(init?.body).toBe(
+          JSON.stringify({
+            decision_reason: '风险过高，需要重新生成',
+            version: 1,
+          }),
+        );
+        return jsonResponse({
+          data: { review_status: 'rejected', task_status: 'failed' },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    expect(await screen.findByText('技术方案确认任务')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '待确认' }));
+    expect(await screen.findByText('AI 原始技术方案摘要')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '拒绝' }));
+    const rejectModalTitle = await screen.findByText('拒绝确认：review_api');
+    const rejectModal = rejectModalTitle.closest('.ant-modal') as HTMLElement;
+    fireEvent.change(screen.getByRole('textbox', { name: '拒绝原因' }), {
+      target: { value: '风险过高，需要重新生成' },
+    });
+    fireEvent.click(within(rejectModal).getByRole('button', { name: /拒\s*绝/ }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([path]) => path === '/api/reviews/review_api/reject')).toBe(true),
+    );
   });
 
   it('opens task row operations in vertical dialogs aligned with management pages', async () => {
@@ -3896,6 +4052,67 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
       ['/api/reviews/review_api/request-more-info', 'POST'],
       ['/api/ai-tasks/task_api/more-info', 'POST'],
+    ]);
+  });
+
+  it('sends review edit-approve and reject mutations to backend APIs', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/review_api/edit-approve') {
+        expect(init?.method).toBe('POST');
+        expect(init?.body).toBe(
+          JSON.stringify({
+            edited_content: { summary: '人工修订后的技术方案' },
+            version: 1,
+          }),
+        );
+        return jsonResponse({
+          data: {
+            review_status: 'edited_approved',
+            task_status: 'completed',
+          },
+        });
+      }
+      if (input === '/api/reviews/review_api/reject') {
+        expect(init?.method).toBe('POST');
+        expect(init?.body).toBe(
+          JSON.stringify({
+            decision_reason: '风险过高，需要重新生成',
+            version: 2,
+          }),
+        );
+        return jsonResponse({
+          data: {
+            review_status: 'rejected',
+            task_status: 'failed',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      editApproveTaskCenterReview('review_api', 1, { summary: '人工修订后的技术方案' }),
+    ).resolves.toMatchObject({
+      review_status: 'edited_approved',
+      task_status: 'completed',
+    });
+    await expect(
+      rejectTaskCenterReview('review_api', 2, '风险过高，需要重新生成'),
+    ).resolves.toMatchObject({
+      review_status: 'rejected',
+      task_status: 'failed',
+    });
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ['/api/reviews/review_api/edit-approve', 'POST'],
+      ['/api/reviews/review_api/reject', 'POST'],
     ]);
   });
 

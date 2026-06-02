@@ -2085,6 +2085,38 @@ export async function approveTaskCenterReview(reviewId: string, version: number)
   );
 }
 
+export async function editApproveTaskCenterReview(
+  reviewId: string,
+  version: number,
+  editedContent: Record<string, unknown>,
+) {
+  const token = requireAccessToken();
+  return apiRequest<{ review_status: string; task_status: string }>(
+    `/api/reviews/${reviewId}/edit-approve`,
+    {
+      body: { edited_content: editedContent, version },
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function rejectTaskCenterReview(
+  reviewId: string,
+  version: number,
+  decisionReason: string,
+) {
+  const token = requireAccessToken();
+  return apiRequest<{ review_status: string; task_status: string }>(
+    `/api/reviews/${reviewId}/reject`,
+    {
+      body: { decision_reason: decisionReason, version },
+      method: 'POST',
+      token,
+    },
+  );
+}
+
 export async function requestTaskCenterReviewMoreInfo(
   reviewId: string,
   version: number,

@@ -28,6 +28,7 @@ import {
   createReleaseReadinessTask,
   createTechnicalSolutionTask,
   createTaskWritebackResult,
+  editApproveTaskCenterReview,
   fetchCodeReviewReport,
   fetchProductGitRepositories,
   fetchTaskMarkdown,
@@ -35,6 +36,7 @@ import {
   fetchTaskCenterTasks,
   fetchTaskWritebackResult,
   previewGitLabMergeRequest,
+  rejectTaskCenterReview,
   requestTaskCenterReviewMoreInfo,
   snapshotGitLabMergeRequest,
   type CodeReviewReportRecord,
@@ -88,6 +90,14 @@ type RequestMoreInfoFormValues = {
   questions: string;
 };
 
+type EditApproveFormValues = {
+  summary: string;
+};
+
+type RejectReviewFormValues = {
+  reason: string;
+};
+
 type SubmitMoreInfoFormValues = {
   answer: string;
 };
@@ -112,6 +122,8 @@ function formatFinding(finding: unknown, index: number) {
 }
 
 export default function TaskCenterPage() {
+  const [editApproveForm] = Form.useForm<EditApproveFormValues>();
+  const [rejectReviewForm] = Form.useForm<RejectReviewFormValues>();
   const [requestMoreInfoForm] = Form.useForm<RequestMoreInfoFormValues>();
   const [submitMoreInfoForm] = Form.useForm<SubmitMoreInfoFormValues>();
   const [markdownPreview, setMarkdownPreview] = useState<{
@@ -145,6 +157,14 @@ export default function TaskCenterPage() {
     task?: TaskCenterTaskRecord;
   }>();
   const [requestMoreInfoDialog, setRequestMoreInfoDialog] = useState<{
+    review: TaskCenterReviewRecord;
+    submitting: boolean;
+  }>();
+  const [editApproveDialog, setEditApproveDialog] = useState<{
+    review: TaskCenterReviewRecord;
+    submitting: boolean;
+  }>();
+  const [rejectReviewDialog, setRejectReviewDialog] = useState<{
     review: TaskCenterReviewRecord;
     submitting: boolean;
   }>();
@@ -208,6 +228,58 @@ export default function TaskCenterPage() {
     requestMoreInfoForm.resetFields();
     setRequestMoreInfoDialog({ review, submitting: false });
   }, [requestMoreInfoForm]);
+
+  const openEditApproveDialog = useCallback((review: TaskCenterReviewRecord) => {
+    editApproveForm.setFieldsValue({ summary: review.contentSummary });
+    setEditApproveDialog({ review, submitting: false });
+  }, [editApproveForm]);
+
+  const handleEditApproveReview = useCallback(async () => {
+    if (!editApproveDialog) {
+      return;
+    }
+    const values = await editApproveForm.validateFields();
+    setEditApproveDialog((current) => (current ? { ...current, submitting: true } : current));
+    try {
+      await editApproveTaskCenterReview(editApproveDialog.review.id, editApproveDialog.review.version, {
+        summary: values.summary.trim(),
+      });
+      message.success('修改后确认已提交，任务已完成');
+      setEditApproveDialog(undefined);
+      setReviewDialog(undefined);
+      await reloadTaskCenter();
+    } catch (reviewError) {
+      setEditApproveDialog((current) => (current ? { ...current, submitting: false } : current));
+      message.error(formatMutationError(reviewError));
+    }
+  }, [editApproveDialog, editApproveForm, reloadTaskCenter]);
+
+  const openRejectReviewDialog = useCallback((review: TaskCenterReviewRecord) => {
+    rejectReviewForm.resetFields();
+    setRejectReviewDialog({ review, submitting: false });
+  }, [rejectReviewForm]);
+
+  const handleRejectReview = useCallback(async () => {
+    if (!rejectReviewDialog) {
+      return;
+    }
+    const values = await rejectReviewForm.validateFields();
+    setRejectReviewDialog((current) => (current ? { ...current, submitting: true } : current));
+    try {
+      await rejectTaskCenterReview(
+        rejectReviewDialog.review.id,
+        rejectReviewDialog.review.version,
+        values.reason.trim(),
+      );
+      message.success('已拒绝该确认项，任务已标记失败');
+      setRejectReviewDialog(undefined);
+      setReviewDialog(undefined);
+      await reloadTaskCenter();
+    } catch (reviewError) {
+      setRejectReviewDialog((current) => (current ? { ...current, submitting: false } : current));
+      message.error(formatMutationError(reviewError));
+    }
+  }, [rejectReviewDialog, rejectReviewForm, reloadTaskCenter]);
 
   const handleRequestMoreInfo = useCallback(async () => {
     if (!requestMoreInfoDialog) {
@@ -659,6 +731,12 @@ export default function TaskCenterPage() {
             <Button onClick={() => handleApproveReview(row)} type="link">
               确认通过
             </Button>
+            <Button onClick={() => openEditApproveDialog(row)} type="link">
+              修改后通过
+            </Button>
+            <Button danger onClick={() => openRejectReviewDialog(row)} type="link">
+              拒绝
+            </Button>
             <Button onClick={() => openRequestMoreInfoDialog(row)} type="link">
               要求补充
             </Button>
@@ -666,7 +744,7 @@ export default function TaskCenterPage() {
         ),
       },
     ],
-    [handleApproveReview, openRequestMoreInfoDialog],
+    [handleApproveReview, openEditApproveDialog, openRejectReviewDialog, openRequestMoreInfoDialog],
   );
 
   return (
@@ -755,6 +833,55 @@ export default function TaskCenterPage() {
         {visibleReviewRows.length === 0 && reviewsStatus === 'ready' ? (
           <Text type="secondary">当前没有待确认项。</Text>
         ) : null}
+      </Modal>
+
+      <Modal
+        confirmLoading={editApproveDialog?.submitting}
+        okText="修改后通过"
+        onCancel={() => setEditApproveDialog(undefined)}
+        onOk={() => void handleEditApproveReview()}
+        open={Boolean(editApproveDialog)}
+        title={
+          editApproveDialog?.review.id
+            ? `修改后通过：${editApproveDialog.review.id}`
+            : '修改后通过'
+        }
+        width={640}
+      >
+        <Form<EditApproveFormValues> form={editApproveForm} layout="vertical">
+          <Form.Item
+            label="修订摘要"
+            name="summary"
+            rules={[{ message: '请输入修订后的摘要', required: true, whitespace: true }]}
+          >
+            <Input.TextArea rows={5} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        confirmLoading={rejectReviewDialog?.submitting}
+        okText="拒绝"
+        okButtonProps={{ danger: true }}
+        onCancel={() => setRejectReviewDialog(undefined)}
+        onOk={() => void handleRejectReview()}
+        open={Boolean(rejectReviewDialog)}
+        title={
+          rejectReviewDialog?.review.id
+            ? `拒绝确认：${rejectReviewDialog.review.id}`
+            : '拒绝确认'
+        }
+        width={640}
+      >
+        <Form<RejectReviewFormValues> form={rejectReviewForm} layout="vertical">
+          <Form.Item
+            label="拒绝原因"
+            name="reason"
+            rules={[{ message: '请输入拒绝原因', required: true, whitespace: true }]}
+          >
+            <Input.TextArea rows={4} />
+          </Form.Item>
+        </Form>
       </Modal>
 
       <Modal
