@@ -29,6 +29,7 @@
 - [ ] 已配置默认模型网关，API Key 只存在 `.env` 或密钥管理系统中。
 - [ ] 已配置内部 GitLab 只读凭据引用和产品 Git 资源绑定；凭据不得出现在 API 响应、执行器输入或日志中。
 - [ ] 已配置 code-review 执行器适配器；未配置时必须让 code_review 任务失败为可排查状态，而不是静默跳过。
+- [ ] 已准备生产就绪门禁脚本所需变量：`READINESS_BEARER_TOKEN` 或 `READINESS_USERNAME`/`READINESS_PASSWORD`，以及 `READINESS_GITLAB_REPOSITORY_ID`、`READINESS_GITLAB_MR_IID`、`READINESS_REQUIREMENT_ID`、`READINESS_TECHNICAL_SOLUTION_TASK_ID`。如 `docker` 不在 PATH，设置 `READINESS_DOCKER_BIN=/Applications/Docker.app/Contents/Resources/bin/docker`。
 
 ## 发布准入门禁
 
@@ -71,7 +72,23 @@ docker compose ps
 docker compose logs api
 ```
 
-### 4. 验证数据库与缓存
+### 4. 运行生产就绪门禁脚本
+
+```bash
+READINESS_API_BASE_URL=http://localhost:8000 \
+READINESS_DOCKER_BIN=/Applications/Docker.app/Contents/Resources/bin/docker \
+READINESS_USERNAME=admin@example.com \
+READINESS_PASSWORD=admin123 \
+READINESS_GITLAB_REPOSITORY_ID=<repository_id> \
+READINESS_GITLAB_MR_IID=<mr_iid> \
+READINESS_REQUIREMENT_ID=<requirement_id> \
+READINESS_TECHNICAL_SOLUTION_TASK_ID=<technical_solution_task_id> \
+./scripts/production_readiness_check.py
+```
+
+该脚本会依次验证 `docker compose config --quiet`、compose 中 `api/web/postgres/redis` 运行状态、`/health`、Redis `PONG`、PostgreSQL `pgcrypto`/`vector` 扩展、模型网关配置脱敏和 active/default 配置、GitLab MR preview 与 snapshot 只读链路。脚本任一检查失败即返回非 0；不得在失败时宣称环境可发布。
+
+### 5. 验证数据库与缓存
 
 ```bash
 # PostgreSQL 容器日志
@@ -81,7 +98,7 @@ docker compose logs postgres
 docker compose logs redis
 ```
 
-### 5. 验证 v1 MVP AI 链路
+### 6. 验证 v1 MVP AI 链路
 
 ```bash
 # 登录并获取 Bearer Token 后，验证模型网关配置只返回 configured 标记
