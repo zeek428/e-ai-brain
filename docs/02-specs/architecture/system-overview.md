@@ -2,7 +2,7 @@
 
 ## 业务背景
 
-AI Brain 是企业 AI 大脑平台。v1 以产品研发大脑为样板，第一期跑通研发需求从提交、审批、产品详细设计、技术方案、内部 GitLab MR 预览和 diff 快照、内部 GitLab MR 代码 Review、人工确认、内部报告归档到知识沉淀的最小闭环；自动化测试、发布上线评估、上线后分析和完整 Bug 管理按后续阶段扩展。系统通过软件研发全流程感知把需求、设计、代码、测试、发布和线上反馈纳入同一产品上下文。
+AI Brain 是企业 AI 大脑平台。v1 以产品研发大脑为样板，第一期跑通研发需求从提交、审批、产品详细设计、技术方案、内部 GitLab MR 预览和 diff 快照、内部 GitLab MR 代码 Review、人工确认、内部报告归档到知识沉淀的最小闭环；自动化测试、发布上线评估、上线后分析和完整 Bug 管理按后续阶段扩展。系统通过软件研发全流程感知把需求、设计、代码、测试、发布和线上反馈纳入同一产品上下文，并提供 AI 助手聊天工作台，基于脱敏系统上下文回答 AI Brain 配置、需求任务、代码仓库、模型网关状态和项目开发进展问题。
 
 详细产品范围以项目级 PRD 为准：[enterprise-ai-brain/prd.md](../../01-prd/enterprise-ai-brain/prd.md)。
 
@@ -18,6 +18,7 @@ React + TypeScript 工作台（基于 Ant Design Pro 模板）
 FastAPI 模块化单体
   ├─ auth：本地账号、角色、权限
   ├─ brain_app：业务大脑配置
+  ├─ assistant：AI Brain 系统问答和项目进展助手
   ├─ product_config：产品、版本、模块、Git 资源和相关系统
   ├─ requirement：需求台账、审批和生成 AI 任务
   ├─ ai_task：AI 任务生命周期
@@ -47,8 +48,9 @@ FastAPI 模块化单体
 
 | 模块 | 职责 | 技术栈 |
 |------|------|--------|
-| web | 团队看板、任务中心/任务管理、产品管理、需求管理、Bug 管理、研发运营看板、用户洞察/迭代规划、知识中心、审计与运行 | React + TypeScript + Ant Design Pro |
+| web | 团队看板、AI 助手、任务中心/任务管理、产品管理、需求管理、Bug 管理、研发运营看板、用户洞察/迭代规划、知识中心、审计与运行 | React + TypeScript + Ant Design Pro |
 | api | JSON API、认证、产品配置、需求审批、任务管理、Bug 管理、研发运营指标和模块化领域逻辑 | FastAPI + Python |
+| assistant | 基于服务端脱敏系统上下文回答 AI Brain 系统信息、项目进展、产品、任务、Git 仓库和模型网关状态问题 | FastAPI + 模型网关 Chat |
 | product_config | 产品、版本、模块、Git 资源、内部 GitLab 项目绑定和相关系统主数据 | PostgreSQL |
 | requirement | 需求台账、审批、驳回、关闭和审批后生成 AI 任务 | PostgreSQL |
 | ai_task | AI 任务类型、生命周期、状态流转和任务详情 | PostgreSQL + LangGraph |
@@ -87,6 +89,7 @@ FastAPI 模块化单体
 → iteration_planning 结合需求池、Bug、线上日志、发布记录、用户使用和用户反馈生成迭代规划建议
 → AI 自动测试和人工测试登记 Bug，关联产品、任务、提交、发布或日志
 → 首页 IT 团队看板聚合需求、研发进展、Bug、代码质量、发布、线上健康、用户洞察、用户反馈和迭代规划建议
+→ AI 助手读取脱敏系统上下文并通过模型网关 Chat 回答系统状态和项目进展问题
 → 写入 audit_events
 ```
 
@@ -104,6 +107,7 @@ FastAPI 模块化单体
 | 数据存储 | PostgreSQL + pgvector + Redis | [技术规格](../enterprise-ai-brain/spec.md) |
 | 知识检索 | PostgreSQL + pgvector 权限过滤，GBrain 提供长期记忆、混合检索和知识图谱补充 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 模型接入 | 模型网关，不直连业务代码 | [API 文档](../enterprise-ai-brain/api.md) 和 [技术规格](../enterprise-ai-brain/spec.md) |
+| AI 助手 | 助手只通过模型网关 Chat 接入，服务端注入脱敏系统上下文，模型日志仅记录 `purpose=assistant_chat` 元数据 | [API 文档](../enterprise-ai-brain/api.md)、[技术规格](../enterprise-ai-brain/spec.md) 和 [测试用例](../enterprise-ai-brain/test-case.md) |
 | 部署 | v1 Docker Compose | [部署 Runbook](../../05-runbooks/deployment.md) |
 
 ## 部署架构
@@ -136,6 +140,7 @@ API 容器启动入口会在服务启动前按顺序执行 `apps/api/app/db/migr
 - 写操作和任务访问需要鉴权。
 - 知识检索必须在数据库查询层完成权限过滤。
 - 模型调用日志默认不保存完整 prompt 和输出。
+- AI 助手问答使用服务端生成的脱敏 `system_context`；模型调用日志不保存完整用户问题、系统上下文、助手回答或 API Key。
 - 所有写操作、AI 高影响动作和研发运营采集结果写入审计事件或运行记录。
 - GitLab MR 代码 Review 只读取授权产品 Git 资源和 Merge Request，报告归档在 AI Brain 内部，不回写 GitLab 评论、审批状态或分支变更。
 - GitLab、Jenkins 和线上日志登记/导入或采集失败时保留失败原因，不得生成兜底指标；自动采集接入后保留最后成功时间和待归属状态。
@@ -145,4 +150,4 @@ API 容器启动入口会在服务启动前按顺序执行 `apps/api/app/db/migr
 v1 不拆微服务，但模块边界保留未来提取点：`graph-runtime-worker`、`knowledge-service`、`long-memory-service`、`model-gateway-service`、`gitlab-review-service`、`code-review-executor-service`、`devops-metrics-worker`、`user-insights-worker`、`iteration-planning-service`、`bug-service`、`dashboard-service`、`integration-service`。
 
 ---
-最后更新: 2026-06-01
+最后更新: 2026-06-02
