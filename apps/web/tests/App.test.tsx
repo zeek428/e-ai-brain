@@ -694,6 +694,95 @@ describe('AI Brain Ant Design Pro workbench', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   });
 
+  it('opens real task details from task row operations', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/pending') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ai-tasks') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'task_detail_api',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'technical_solution',
+                title: '技术方案：详情入口',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/ai-tasks/task_detail_api') {
+        return jsonResponse({
+          data: {
+            current_step: 'completed',
+            graph_runs: [{ id: 'graph_run_api', status: 'completed' }],
+            id: 'task_detail_api',
+            input: {
+              product_context: {
+                module: { code: 'core', name: '工作台模块' },
+                product: { id: 'product_api', name: 'AI Brain 产品' },
+                version: { id: 'version_api', name: 'v1 MVP' },
+              },
+              requirement_snapshot: {
+                id: 'requirement_api',
+                title: '真实需求快照',
+              },
+            },
+            output: {
+              summary: '任务详情输出摘要',
+            },
+            pending_review: null,
+            product_id: 'product_api',
+            requirement_id: 'requirement_api',
+            status: 'completed',
+            task_type: 'technical_solution',
+            title: '技术方案：详情入口',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    expect(await screen.findByText('技术方案：详情入口')).toBeInTheDocument();
+    const taskRow = screen.getByText('技术方案：详情入口').closest('tr');
+    expect(taskRow).not.toBeNull();
+    fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
+
+    expect(await screen.findByText('任务操作')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+
+    expect(await screen.findByText(/任务详情：技术方案：详情入口/)).toBeInTheDocument();
+    expect(screen.getByText('AI Brain 产品')).toBeInTheDocument();
+    expect(screen.getByText('v1 MVP')).toBeInTheDocument();
+    expect(screen.getByText('工作台模块')).toBeInTheDocument();
+    expect(screen.getByText('真实需求快照')).toBeInTheDocument();
+    expect(screen.getByText('graph_run_api')).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/任务详情输出摘要/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+        ['/api/ai-tasks', 'GET'],
+        ['/api/reviews/pending', 'GET'],
+        ['/api/ai-tasks/task_detail_api', 'GET'],
+      ]),
+    );
+  });
+
   it('submits edit-approved review decisions from the task center dialog', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

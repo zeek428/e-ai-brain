@@ -108,6 +108,19 @@ export type TaskCenterTaskRecord = {
   type: string;
 };
 
+export type TaskCenterTaskDetailRecord = TaskCenterTaskRecord & {
+  currentStep: string;
+  graphRunIds: string[];
+  inputJson: unknown;
+  moduleName: string;
+  outputJson: unknown;
+  outputSummary: string;
+  pendingReviewId?: string;
+  productName: string;
+  requirementTitle: string;
+  versionName: string;
+};
+
 export type TaskCenterReviewRecord = {
   aiTaskId: string;
   contentSummary: string;
@@ -779,6 +792,20 @@ type TaskListItem = {
   status?: string;
   task_type?: string;
   title?: string;
+};
+
+type TaskDetailItem = TaskListItem & {
+  current_step?: string | null;
+  graph_runs?: unknown;
+  input?: unknown;
+  input_json?: unknown;
+  module_code?: string | null;
+  output?: unknown;
+  output_json?: unknown;
+  pending_review?: unknown;
+  product_context?: unknown;
+  requirement_snapshot?: unknown;
+  version_id?: string | null;
 };
 
 type ProductGitRepositoryListItem = {
@@ -2047,6 +2074,59 @@ export async function fetchTaskCenterTasks(): Promise<TaskCenterTaskRecord[]> {
     status: task.status ?? '-',
     type: task.task_type ?? '-',
   }));
+}
+
+export async function fetchTaskCenterTaskDetail(
+  taskId: string,
+): Promise<TaskCenterTaskDetailRecord> {
+  const token = requireAccessToken();
+  const detail = await apiRequest<TaskDetailItem>(`/api/ai-tasks/${taskId}`, { token });
+  const input = normalizeObjectRecord(detail.input) ?? {};
+  const productContext =
+    normalizeObjectRecord(input.product_context) ??
+    normalizeObjectRecord(detail.product_context) ??
+    {};
+  const product = normalizeObjectRecord(productContext.product) ?? {};
+  const version = normalizeObjectRecord(productContext.version) ?? {};
+  const module = normalizeObjectRecord(productContext.module) ?? {};
+  const requirementSnapshot =
+    normalizeObjectRecord(input.requirement_snapshot) ??
+    normalizeObjectRecord(detail.requirement_snapshot) ??
+    {};
+  const output = detail.output ?? detail.output_json;
+  const outputRecord = normalizeObjectRecord(output);
+  const pendingReview = normalizeObjectRecord(detail.pending_review);
+  const graphRunIds = Array.isArray(detail.graph_runs)
+    ? detail.graph_runs
+        .map((run) => {
+          const graphRun = normalizeObjectRecord(run);
+          return formatUnknownValue(graphRun?.id ?? graphRun?.status ?? run);
+        })
+        .filter((runId) => runId !== '-')
+    : [];
+
+  return {
+    currentStep: formatUnknownValue(detail.current_step),
+    graphRunIds,
+    id: detail.id,
+    inputJson: detail.input ?? detail.input_json ?? {},
+    label: detail.title ?? detail.task_type ?? detail.id,
+    moduleName: formatUnknownValue(module.name ?? module.code ?? detail.module_code),
+    outputJson: output ?? {},
+    outputSummary: formatUnknownValue(outputRecord?.summary ?? output),
+    owner: detail.created_by ?? '-',
+    pendingReviewId:
+      typeof pendingReview?.id === 'string' && pendingReview.id ? pendingReview.id : undefined,
+    productId: detail.product_id,
+    productName: formatUnknownValue(product.name ?? product.code ?? detail.product_id),
+    requirementId: detail.requirement_id,
+    requirementTitle: formatUnknownValue(
+      requirementSnapshot.title ?? requirementSnapshot.summary ?? detail.requirement_id,
+    ),
+    status: detail.status ?? '-',
+    type: detail.task_type ?? '-',
+    versionName: formatUnknownValue(version.name ?? version.code ?? detail.version_id),
+  };
 }
 
 export async function startTaskCenterTask(taskId: string) {

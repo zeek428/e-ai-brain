@@ -33,6 +33,7 @@ import {
   fetchProductGitRepositories,
   fetchTaskMarkdown,
   fetchTaskCenterPendingReviews,
+  fetchTaskCenterTaskDetail,
   fetchTaskCenterTasks,
   fetchTaskWritebackResult,
   previewGitLabMergeRequest,
@@ -45,6 +46,7 @@ import {
   type TaskWritebackResultRecord,
   startTaskCenterTask,
   submitTaskCenterMoreInfo,
+  type TaskCenterTaskDetailRecord,
   type TaskCenterReviewRecord,
   type TaskCenterTaskRecord,
 } from '../../services/aiBrain';
@@ -121,6 +123,16 @@ function formatFinding(finding: unknown, index: number) {
   return `${index + 1}. ${[item.severity, location, summary].filter(Boolean).join(' · ')}`;
 }
 
+function formatJsonPreview(value: unknown) {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  return JSON.stringify(value, null, 2);
+}
+
 export default function TaskCenterPage() {
   const [editApproveForm] = Form.useForm<EditApproveFormValues>();
   const [rejectReviewForm] = Form.useForm<RejectReviewFormValues>();
@@ -148,6 +160,11 @@ export default function TaskCenterPage() {
     loading: boolean;
     result?: TaskWritebackResultRecord;
     submitting: boolean;
+    task: TaskCenterTaskRecord;
+  }>();
+  const [taskDetailDialog, setTaskDetailDialog] = useState<{
+    detail?: TaskCenterTaskDetailRecord;
+    loading: boolean;
     task: TaskCenterTaskRecord;
   }>();
   const [actionDialog, setActionDialog] = useState<{
@@ -490,6 +507,21 @@ export default function TaskCenterPage() {
     }
   }, []);
 
+  const handleOpenTaskDetail = useCallback(async (task: TaskCenterTaskRecord) => {
+    setTaskDetailDialog({ loading: true, task });
+    try {
+      const detail = await fetchTaskCenterTaskDetail(task.id);
+      setTaskDetailDialog((current) =>
+        current?.task.id === task.id ? { ...current, detail, loading: false } : current,
+      );
+    } catch (taskError) {
+      setTaskDetailDialog((current) =>
+        current?.task.id === task.id ? { ...current, loading: false } : current,
+      );
+      message.error(formatMutationError(taskError));
+    }
+  }, []);
+
   const handleOpenWriteback = useCallback(async (task: TaskCenterTaskRecord) => {
     setWritebackDialog({ loading: true, submitting: false, task });
     try {
@@ -538,6 +570,12 @@ export default function TaskCenterPage() {
       };
 
     const actions: TaskActionItem[] = [];
+
+    actions.push({
+      key: 'detail',
+      label: '查看详情',
+      onClick: closeAndRun(() => handleOpenTaskDetail(selectedActionTask)),
+    });
 
     if (selectedActionTask.status === 'draft') {
       actions.push({
@@ -650,6 +688,7 @@ export default function TaskCenterPage() {
     handleExportMarkdown,
     handleOpenCodeReview,
     handleOpenCodeReviewReport,
+    handleOpenTaskDetail,
     handleOpenWriteback,
     handleStartTask,
     openSubmitMoreInfoDialog,
@@ -947,6 +986,73 @@ export default function TaskCenterPage() {
               )}
             </div>
           </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        footer={null}
+        onCancel={() => setTaskDetailDialog(undefined)}
+        open={Boolean(taskDetailDialog)}
+        title={
+          taskDetailDialog?.task.label
+            ? `任务详情：${taskDetailDialog.task.label}`
+            : '任务详情'
+        }
+        width={820}
+      >
+        {taskDetailDialog?.loading ? <Text type="secondary">任务详情加载中...</Text> : null}
+        {!taskDetailDialog?.loading && taskDetailDialog?.detail ? (
+          <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+            <Descriptions column={1} size="small">
+              <Descriptions.Item label="任务编号">{taskDetailDialog.detail.id}</Descriptions.Item>
+              <Descriptions.Item label="任务类型">
+                {taskTypeLabels[taskDetailDialog.detail.type] ?? taskDetailDialog.detail.type}
+              </Descriptions.Item>
+              <Descriptions.Item label="状态">
+                <StatusTag
+                  color={taskStatusLabels[taskDetailDialog.detail.status]?.color ?? 'default'}
+                  label={
+                    taskStatusLabels[taskDetailDialog.detail.status]?.label ??
+                    taskDetailDialog.detail.status
+                  }
+                />
+              </Descriptions.Item>
+              <Descriptions.Item label="当前步骤">
+                {taskDetailDialog.detail.currentStep}
+              </Descriptions.Item>
+              <Descriptions.Item label="产品">
+                {taskDetailDialog.detail.productName}
+              </Descriptions.Item>
+              <Descriptions.Item label="版本">
+                {taskDetailDialog.detail.versionName}
+              </Descriptions.Item>
+              <Descriptions.Item label="模块">
+                {taskDetailDialog.detail.moduleName}
+              </Descriptions.Item>
+              <Descriptions.Item label="需求">
+                {taskDetailDialog.detail.requirementTitle}
+              </Descriptions.Item>
+              <Descriptions.Item label="待确认">
+                {taskDetailDialog.detail.pendingReviewId ?? '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Graph Runs">
+                {taskDetailDialog.detail.graphRunIds.join(', ') || '-'}
+              </Descriptions.Item>
+            </Descriptions>
+            <Descriptions column={1} size="small">
+              <Descriptions.Item label="输出摘要">
+                {taskDetailDialog.detail.outputSummary}
+              </Descriptions.Item>
+            </Descriptions>
+            <Input.TextArea
+              autoSize={{ maxRows: 16, minRows: 8 }}
+              readOnly
+              value={formatJsonPreview(taskDetailDialog.detail.outputJson)}
+            />
+          </Space>
+        ) : null}
+        {!taskDetailDialog?.loading && taskDetailDialog && !taskDetailDialog.detail ? (
+          <Text type="secondary">未加载到任务详情。</Text>
         ) : null}
       </Modal>
 

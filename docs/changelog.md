@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 任务中心任务操作弹窗新增“查看详情”入口，前端调用真实 `GET /api/ai-tasks/{task_id}` 详情接口并展示产品、版本、模块、需求、Graph Run 和输出内容。
 - 任务中心待确认弹窗补齐“修改后通过”和“拒绝”决策入口，前端调用真实 Review `edit-approve`/`reject` API，完善高影响 AI 产出人工门禁体验。
 - 同步项目级文档的 MVP 真实系统状态说明，明确前端入口不得展示示例数据或占位统计，并将生产就绪门禁状态更新为脚本已提供、目标环境待通过。
 - 初始化 `apps/api` FastAPI 后端、`apps/web` Ant Design Pro 工作台、Docker Compose、本地环境示例、Dockerfile 和 PostgreSQL 初始化迁移脚本。
