@@ -1755,6 +1755,8 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 
 权限规则：当起点是 `ai_task` 时，读取权限与 AI 任务详情一致；当起点是需求、产品或可解析到任务的审计/证据主体时，返回的下游任务、人工确认、报告、知识沉淀、模拟 Issue、真实运营证据和风险信号必须先过滤掉当前用户无权读取的任务链路。
 
+持久化规则：接口会把当前查询范围内计算出的上下游关系边同步到 `lifecycle_context_edges`，把风险信号同步到 `lifecycle_risk_signals`；无关系或无风险时保持真实空集合，不生成兜底记录。
+
 响应摘要：
 
 ```json
@@ -1810,7 +1812,7 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 GET /api/dashboard/it-team?product_id=product_001&time_range=7d
 ```
 
-当前实现返回真实聚合指标，来源于产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计事件、Bug、GitLab 每日指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划建议；其中 AI 任务、待确认 Review 和知识沉淀计数、列表必须先按任务读权限过滤，`product_id` 存在时所有可归属主体必须按产品归属过滤，`time_range` 存在时运营类指标按可解析的日期或时间窗口过滤。无数据时返回真实 0 和空数组，不生成占位统计：
+当前实现返回真实聚合指标，来源于产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计事件、Bug、GitLab 每日指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划建议；其中 AI 任务、待确认 Review 和知识沉淀计数、列表必须先按任务读权限过滤，`product_id` 存在时所有可归属主体必须按产品归属过滤，`time_range` 存在时运营类指标按可解析的日期或时间窗口过滤，并把当前产品/时间窗口聚合结果同步到 `dashboard_metric_snapshots`。无数据时返回真实 0 和空数组，不生成占位统计：
 
 ```json
 {

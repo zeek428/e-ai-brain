@@ -327,6 +327,56 @@ def test_lifecycle_context_links_mvp_requirement_downstream_subjects_and_risks(m
     assert context["summary"]["downstream_count"] == len(downstream)
 
 
+def test_lifecycle_context_and_dashboard_queries_materialize_persistent_records(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    lifecycle = build_mvp_lifecycle(headers)
+    add_v1_2_lifecycle_evidence(headers, lifecycle)
+
+    context = client.get(
+        "/api/lifecycle/context"
+        f"?subject_type=requirement&subject_id={lifecycle['requirement_id']}"
+        "&direction=both&include_risks=true",
+        headers=headers,
+    ).json()["data"]
+    dashboard = client.get(
+        f"/api/dashboard/it-team?product_id={lifecycle['product_id']}&time_range=7d",
+        headers=headers,
+    ).json()["data"]
+
+    persisted_edges = app.state.store.lifecycle_context_edges
+    persisted_risks = app.state.store.lifecycle_risk_signals
+    persisted_snapshots = app.state.store.dashboard_metric_snapshots
+
+    assert persisted_edges
+    assert {
+        (edge["source_subject_type"], edge["source_subject_id"])
+        for edge in persisted_edges.values()
+    } == {("requirement", lifecycle["requirement_id"])}
+    assert {
+        (edge["target_subject_type"], edge["target_subject_id"])
+        for edge in persisted_edges.values()
+    } == {
+        (item["subject_type"], item["subject_id"])
+        for item in context["upstream"] + context["downstream"]
+    }
+
+    assert persisted_risks
+    assert {
+        (risk["source_subject_type"], risk["source_subject_id"])
+        for risk in persisted_risks.values()
+    } == {
+        (item["source_subject_type"], item["source_subject_id"])
+        for item in context["risk_signals"]
+    }
+
+    snapshot = next(iter(persisted_snapshots.values()))
+    assert snapshot["product_id"] == lifecycle["product_id"]
+    assert snapshot["time_range"] == "7d"
+    assert snapshot["metrics"]["summary"] == dashboard["summary"]
+    assert snapshot["metrics"]["online_log_summary"] == dashboard["online_log_summary"]
+
+
 def test_lifecycle_context_requires_query_anchor():
     headers = auth_headers()
 

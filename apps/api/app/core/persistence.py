@@ -55,6 +55,13 @@ ITERATION_PLANNING_FIELDS = [
     "iteration_plan_suggestions",
     "iteration_plan_decisions",
 ]
+LIFECYCLE_CONTEXT_FIELDS = [
+    "lifecycle_context_edges",
+    "lifecycle_risk_signals",
+]
+DASHBOARD_FIELDS = [
+    "dashboard_metric_snapshots",
+]
 COLLECTOR_RUN_FIELDS = [
     "collector_runs",
 ]
@@ -94,6 +101,9 @@ COLLECTION_FIELDS = [
     "user_feedback",
     "iteration_plan_suggestions",
     "iteration_plan_decisions",
+    "lifecycle_context_edges",
+    "lifecycle_risk_signals",
+    "dashboard_metric_snapshots",
     "collector_runs",
     "pending_attribution_items",
     "requirements",
@@ -188,6 +198,18 @@ class IterationPlanningRepository(Protocol):
     def load_iteration_planning(self) -> dict[str, Any] | None: ...
 
     def save_iteration_planning(self, payload: dict[str, Any]) -> None: ...
+
+
+class LifecycleContextRepository(Protocol):
+    def load_lifecycle_context(self) -> dict[str, Any] | None: ...
+
+    def save_lifecycle_context(self, payload: dict[str, Any]) -> None: ...
+
+
+class DashboardRepository(Protocol):
+    def load_dashboard_snapshots(self) -> dict[str, Any] | None: ...
+
+    def save_dashboard_snapshots(self, payload: dict[str, Any]) -> None: ...
 
 
 class CollectorRunRepository(Protocol):
@@ -292,6 +314,14 @@ def _user_feedback_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _iteration_planning_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in ITERATION_PLANNING_FIELDS}
+
+
+def _lifecycle_context_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in LIFECYCLE_CONTEXT_FIELDS}
+
+
+def _dashboard_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in DASHBOARD_FIELDS}
 
 
 def _collector_run_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -497,6 +527,24 @@ def _repository_load_iteration_planning(
     return load_iteration_planning()
 
 
+def _repository_load_lifecycle_context(
+    repository: SnapshotRepository,
+) -> dict[str, Any] | None:
+    load_lifecycle_context = getattr(repository, "load_lifecycle_context", None)
+    if load_lifecycle_context is None:
+        return None
+    return load_lifecycle_context()
+
+
+def _repository_load_dashboard_snapshots(
+    repository: SnapshotRepository,
+) -> dict[str, Any] | None:
+    load_dashboard_snapshots = getattr(repository, "load_dashboard_snapshots", None)
+    if load_dashboard_snapshots is None:
+        return None
+    return load_dashboard_snapshots()
+
+
 def _repository_load_collector_runs(repository: SnapshotRepository) -> dict[str, Any] | None:
     load_collector_runs = getattr(repository, "load_collector_runs", None)
     if load_collector_runs is None:
@@ -644,6 +692,28 @@ def _repository_save_iteration_planning(
         save_iteration_planning(_iteration_planning_payload(clean_payload))
 
 
+def _repository_save_lifecycle_context(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_lifecycle_context = getattr(repository, "save_lifecycle_context", None)
+    if save_lifecycle_context is not None:
+        clean_payload = deepcopy(payload)
+        _drop_lifecycle_context_without_context(clean_payload)
+        save_lifecycle_context(_lifecycle_context_payload(clean_payload))
+
+
+def _repository_save_dashboard_snapshots(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_dashboard_snapshots = getattr(repository, "save_dashboard_snapshots", None)
+    if save_dashboard_snapshots is not None:
+        clean_payload = deepcopy(payload)
+        _drop_dashboard_snapshots_without_context(clean_payload)
+        save_dashboard_snapshots(_dashboard_payload(clean_payload))
+
+
 def _repository_save_collector_runs(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -747,6 +817,14 @@ def _has_user_feedback_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_iteration_planning_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in ITERATION_PLANNING_FIELDS)
+
+
+def _has_lifecycle_context_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in LIFECYCLE_CONTEXT_FIELDS)
+
+
+def _has_dashboard_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in DASHBOARD_FIELDS)
 
 
 def _has_collector_run_items(payload: dict[str, Any] | None) -> bool:
@@ -935,6 +1013,25 @@ def _sync_iteration_planning_counters(payload: dict[str, Any]) -> None:
         _max_numeric_suffix(
             payload.get("iteration_plan_decisions", {}),
             "iteration_decision",
+        ),
+    )
+    payload["counters"] = counters
+
+
+def _sync_lifecycle_context_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["lifecycle_edge"] = max(
+        counters.get("lifecycle_edge", 0),
+        _max_numeric_suffix(
+            payload.get("lifecycle_context_edges", {}),
+            "lifecycle_edge",
+        ),
+    )
+    counters["lifecycle_risk"] = max(
+        counters.get("lifecycle_risk", 0),
+        _max_numeric_suffix(
+            payload.get("lifecycle_risk_signals", {}),
+            "lifecycle_risk",
         ),
     )
     payload["counters"] = counters
@@ -1261,6 +1358,101 @@ def _drop_iteration_planning_without_context(payload: dict[str, Any]) -> None:
     payload["iteration_plan_decisions"] = cleaned_decisions
 
 
+def _known_lifecycle_subject(
+    payload: dict[str, Any],
+    subject_type: str | None,
+    subject_id: str | None,
+) -> bool:
+    if not subject_type or not subject_id:
+        return False
+    subject_collections = {
+        "ai_task": "ai_tasks",
+        "bug": "bugs",
+        "code_review_report": "code_review_reports",
+        "gitlab_daily_code_metric": "gitlab_daily_code_metrics",
+        "gitlab_mr_snapshot": "gitlab_mr_snapshots",
+        "graph_checkpoint": "graph_checkpoints",
+        "graph_run": "graph_runs",
+        "human_review": "human_reviews",
+        "iteration_plan_suggestion": "iteration_plan_suggestions",
+        "jenkins_release": "jenkins_release_records",
+        "knowledge_deposit": "knowledge_deposits",
+        "knowledge_document": "knowledge_documents",
+        "mock_issue": "mock_writebacks",
+        "online_log_metric": "online_log_metrics",
+        "product": "products",
+        "requirement": "requirements",
+        "user_feedback": "user_feedback",
+        "user_usage_metric": "user_usage_metrics",
+    }
+    if subject_type == "audit_event":
+        return any(event.get("id") == subject_id for event in payload.get("audit_events", []))
+    if subject_type == "mock_issue":
+        return any(
+            issue.get("id") == subject_id
+            for writeback in payload.get("mock_writebacks", {}).values()
+            for issue in writeback.get("issues", [])
+        )
+    collection_name = subject_collections.get(subject_type)
+    if collection_name is None:
+        return True
+    collection = payload.get(collection_name, {})
+    return not collection or subject_id in collection
+
+
+def _drop_lifecycle_context_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    requirements = payload.get("requirements", {})
+    ai_tasks = payload.get("ai_tasks", {})
+    edges = payload.get("lifecycle_context_edges", {})
+    payload["lifecycle_context_edges"] = {
+        edge_id: deepcopy(edge)
+        for edge_id, edge in edges.items()
+        if (not products or not edge.get("product_id") or edge.get("product_id") in products)
+        and _known_lifecycle_subject(
+            payload,
+            edge.get("source_subject_type"),
+            edge.get("source_subject_id"),
+        )
+        and _known_lifecycle_subject(
+            payload,
+            edge.get("target_subject_type"),
+            edge.get("target_subject_id"),
+        )
+    }
+    risks = payload.get("lifecycle_risk_signals", {})
+    payload["lifecycle_risk_signals"] = {
+        risk_id: deepcopy(risk)
+        for risk_id, risk in risks.items()
+        if (not products or not risk.get("product_id") or risk.get("product_id") in products)
+        and (
+            not risk.get("requirement_id")
+            or not requirements
+            or risk.get("requirement_id") in requirements
+        )
+        and (
+            not risk.get("task_id")
+            or not ai_tasks
+            or risk.get("task_id") in ai_tasks
+        )
+        and _known_lifecycle_subject(
+            payload,
+            risk.get("source_subject_type"),
+            risk.get("source_subject_id"),
+        )
+    }
+
+
+def _drop_dashboard_snapshots_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    snapshots = payload.get("dashboard_metric_snapshots", {})
+    payload["dashboard_metric_snapshots"] = {
+        snapshot_id: deepcopy(snapshot)
+        for snapshot_id, snapshot in snapshots.items()
+        if not products or not snapshot.get("product_id") or snapshot.get("product_id") in products
+    }
+
+
 def _drop_collector_runs_without_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     runs = payload.get("collector_runs", {})
@@ -1504,6 +1696,21 @@ class PersistentMemoryStore(MemoryStore):
                 ITERATION_PLANNING_FIELDS,
             )
             _sync_iteration_planning_counters(payload)
+        lifecycle_context_payload = _repository_load_lifecycle_context(repository)
+        if _has_lifecycle_context_items(lifecycle_context_payload):
+            _replace_collection_payload(
+                payload,
+                _lifecycle_context_payload(lifecycle_context_payload),
+                LIFECYCLE_CONTEXT_FIELDS,
+            )
+            _sync_lifecycle_context_counters(payload)
+        dashboard_payload = _repository_load_dashboard_snapshots(repository)
+        if _has_dashboard_items(dashboard_payload):
+            _replace_collection_payload(
+                payload,
+                _dashboard_payload(dashboard_payload),
+                DASHBOARD_FIELDS,
+            )
         collector_run_payload = _repository_load_collector_runs(repository)
         if _has_collector_run_items(collector_run_payload):
             _replace_collection_payload(
@@ -1559,10 +1766,13 @@ class PersistentMemoryStore(MemoryStore):
             _drop_user_usage_metrics_without_context(payload)
             _drop_user_feedback_without_context(payload)
             _drop_iteration_planning_without_context(payload)
+            _drop_lifecycle_context_without_context(payload)
+            _drop_dashboard_snapshots_without_context(payload)
             _drop_collector_runs_without_context(payload)
             _clean_pending_attribution_references(payload)
         _drop_gitlab_review_without_context(payload)
         _drop_mock_writebacks_without_tasks(payload)
+        _drop_lifecycle_context_without_context(payload)
         _ensure_ai_task_defaults(payload)
         _sync_task_runtime_links(payload)
         _sync_code_review_report_links(payload)
@@ -1595,6 +1805,8 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_user_usage_metrics(self.repository, payload)
         _repository_save_user_feedback(self.repository, payload)
         _repository_save_iteration_planning(self.repository, payload)
+        _repository_save_lifecycle_context(self.repository, payload)
+        _repository_save_dashboard_snapshots(self.repository, payload)
         _repository_save_collector_runs(self.repository, payload)
         _repository_save_pending_attribution(self.repository, payload)
         _repository_save_model_gateway(self.repository, payload)
@@ -1747,6 +1959,22 @@ class PostgresSnapshotRepository:
             "iteration_plan_decisions": decisions,
             "iteration_plan_suggestions": suggestions,
         }
+
+    def load_lifecycle_context(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                edges = self._load_lifecycle_context_edges(cursor)
+                risks = self._load_lifecycle_risk_signals(cursor)
+        return {
+            "lifecycle_context_edges": edges,
+            "lifecycle_risk_signals": risks,
+        }
+
+    def load_dashboard_snapshots(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                snapshots = self._load_dashboard_metric_snapshots(cursor)
+        return {"dashboard_metric_snapshots": snapshots}
 
     def load_collector_runs(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -1914,6 +2142,23 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "iteration_plan_suggestions", suggestions)
                 self._upsert_iteration_plan_suggestions(cursor, suggestions)
                 self._upsert_iteration_plan_decisions(cursor, decisions)
+
+    def save_lifecycle_context(self, payload: dict[str, Any]) -> None:
+        edges = payload.get("lifecycle_context_edges", {})
+        risks = payload.get("lifecycle_risk_signals", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "lifecycle_risk_signals", risks)
+                self._delete_missing(cursor, "lifecycle_context_edges", edges)
+                self._upsert_lifecycle_context_edges(cursor, edges)
+                self._upsert_lifecycle_risk_signals(cursor, risks)
+
+    def save_dashboard_snapshots(self, payload: dict[str, Any]) -> None:
+        snapshots = payload.get("dashboard_metric_snapshots", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "dashboard_metric_snapshots", snapshots)
+                self._upsert_dashboard_metric_snapshots(cursor, snapshots)
 
     def save_collector_runs(self, payload: dict[str, Any]) -> None:
         runs = payload.get("collector_runs", {})
@@ -2831,6 +3076,120 @@ class PostgresSnapshotRepository:
             decisions[row[0]] = decision
         return decisions
 
+    def _load_lifecycle_context_edges(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, source_subject_type, source_subject_id, target_subject_type,
+                   target_subject_id, relation_type, product_id, version_id,
+                   module_code, confidence, source_module, observed_at, metadata,
+                   summary
+            FROM lifecycle_context_edges
+            ORDER BY observed_at, id
+            """
+        )
+        edges = {}
+        for row in cursor.fetchall():
+            edge = {
+                "confidence": float(row[9]) if row[9] is not None else 1.0,
+                "id": row[0],
+                "metadata": dict(row[12] or {}),
+                "module_code": row[8],
+                "observed_at": row[11].isoformat() if row[11] else None,
+                "product_id": row[6],
+                "relation_type": row[5],
+                "source_module": row[10],
+                "source_subject_id": row[2],
+                "source_subject_type": row[1],
+                "summary": row[13],
+                "target_subject_id": row[4],
+                "target_subject_type": row[3],
+                "version_id": row[7],
+            }
+            for optional_key in (
+                "module_code",
+                "observed_at",
+                "product_id",
+                "summary",
+                "version_id",
+            ):
+                if edge[optional_key] is None:
+                    edge.pop(optional_key)
+            edges[row[0]] = edge
+        return edges
+
+    def _load_lifecycle_risk_signals(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, product_id, version_id, module_code, requirement_id, task_id,
+                   risk_type, severity, source_subject_type, source_subject_id,
+                   impact_summary, recommendation, observed_at
+            FROM lifecycle_risk_signals
+            ORDER BY observed_at, id
+            """
+        )
+        risks = {}
+        for row in cursor.fetchall():
+            risk = {
+                "id": row[0],
+                "impact_summary": row[10],
+                "module_code": row[3],
+                "observed_at": row[12].isoformat() if row[12] else None,
+                "product_id": row[1],
+                "recommendation": row[11],
+                "requirement_id": row[4],
+                "risk_type": row[6],
+                "severity": row[7],
+                "source_subject_id": row[9],
+                "source_subject_type": row[8],
+                "task_id": row[5],
+                "version_id": row[2],
+            }
+            for optional_key in (
+                "module_code",
+                "observed_at",
+                "product_id",
+                "requirement_id",
+                "task_id",
+                "version_id",
+            ):
+                if risk[optional_key] is None:
+                    risk.pop(optional_key)
+            risks[row[0]] = risk
+        return risks
+
+    def _load_dashboard_metric_snapshots(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, product_id, time_range, window_start, window_end, metrics,
+                   created_at, updated_at
+            FROM dashboard_metric_snapshots
+            ORDER BY updated_at, id
+            """
+        )
+        snapshots = {}
+        for row in cursor.fetchall():
+            snapshot = {
+                "created_at": row[6].isoformat() if row[6] else None,
+                "id": row[0],
+                "metrics": dict(row[5] or {}),
+                "product_id": row[1],
+                "time_range": row[2],
+                "updated_at": row[7].isoformat() if row[7] else None,
+                "window_end": row[4].isoformat() if row[4] else None,
+                "window_start": row[3].isoformat() if row[3] else None,
+            }
+            for optional_key in (
+                "created_at",
+                "product_id",
+                "updated_at",
+                "window_end",
+                "window_start",
+            ):
+                if snapshot[optional_key] is None:
+                    snapshot.pop(optional_key)
+            snapshots[row[0]] = snapshot
+        return snapshots
+
     def _load_model_gateway_configs(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
@@ -3191,7 +3550,8 @@ class PostgresSnapshotRepository:
             cursor.execute(
                 """
                 INSERT INTO related_systems (
-                  id, product_id, code, name, description, owner_team, status, display_order, updated_at
+                  id, product_id, code, name, description, owner_team, status,
+                  display_order, updated_at
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
                 ON CONFLICT (id) DO UPDATE SET
@@ -4337,6 +4697,148 @@ class PostgresSnapshotRepository:
                     decision.get("created_requirement_id"),
                     decision["decided_by"],
                     decision.get("decided_at"),
+                ),
+            )
+
+    def _upsert_lifecycle_context_edges(
+        self,
+        cursor,
+        edges: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for edge in edges.values():
+            cursor.execute(
+                """
+                INSERT INTO lifecycle_context_edges (
+                  id, source_subject_type, source_subject_id, target_subject_type,
+                  target_subject_id, relation_type, product_id, version_id,
+                  module_code, confidence, source_module, observed_at, metadata,
+                  summary
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), %s::jsonb, %s
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  source_subject_type = EXCLUDED.source_subject_type,
+                  source_subject_id = EXCLUDED.source_subject_id,
+                  target_subject_type = EXCLUDED.target_subject_type,
+                  target_subject_id = EXCLUDED.target_subject_id,
+                  relation_type = EXCLUDED.relation_type,
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  module_code = EXCLUDED.module_code,
+                  confidence = EXCLUDED.confidence,
+                  source_module = EXCLUDED.source_module,
+                  observed_at = EXCLUDED.observed_at,
+                  metadata = EXCLUDED.metadata,
+                  summary = EXCLUDED.summary
+                """,
+                (
+                    edge["id"],
+                    edge["source_subject_type"],
+                    edge["source_subject_id"],
+                    edge["target_subject_type"],
+                    edge["target_subject_id"],
+                    edge["relation_type"],
+                    edge.get("product_id"),
+                    edge.get("version_id"),
+                    edge.get("module_code"),
+                    edge.get("confidence", 1.0),
+                    edge.get("source_module", "lifecycle_context"),
+                    edge.get("observed_at"),
+                    json.dumps(edge.get("metadata", {}), ensure_ascii=False),
+                    edge.get("summary"),
+                ),
+            )
+
+    def _upsert_lifecycle_risk_signals(
+        self,
+        cursor,
+        risks: dict[str, dict[str, Any]],
+    ) -> None:
+        for risk in risks.values():
+            cursor.execute(
+                """
+                INSERT INTO lifecycle_risk_signals (
+                  id, product_id, version_id, module_code, requirement_id, task_id,
+                  risk_type, severity, source_subject_type, source_subject_id,
+                  impact_summary, recommendation, observed_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  module_code = EXCLUDED.module_code,
+                  requirement_id = EXCLUDED.requirement_id,
+                  task_id = EXCLUDED.task_id,
+                  risk_type = EXCLUDED.risk_type,
+                  severity = EXCLUDED.severity,
+                  source_subject_type = EXCLUDED.source_subject_type,
+                  source_subject_id = EXCLUDED.source_subject_id,
+                  impact_summary = EXCLUDED.impact_summary,
+                  recommendation = EXCLUDED.recommendation,
+                  observed_at = EXCLUDED.observed_at
+                """,
+                (
+                    risk["id"],
+                    risk.get("product_id"),
+                    risk.get("version_id"),
+                    risk.get("module_code"),
+                    risk.get("requirement_id"),
+                    risk.get("task_id"),
+                    risk["risk_type"],
+                    risk["severity"],
+                    risk["source_subject_type"],
+                    risk["source_subject_id"],
+                    risk["impact_summary"],
+                    risk["recommendation"],
+                    risk.get("observed_at"),
+                ),
+            )
+
+    def _upsert_dashboard_metric_snapshots(
+        self,
+        cursor,
+        snapshots: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for snapshot in snapshots.values():
+            created_at = snapshot.get("created_at")
+            updated_at = snapshot.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO dashboard_metric_snapshots (
+                  id, product_id, time_range, window_start, window_end, metrics,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s::timestamptz, %s::timestamptz, %s::jsonb,
+                  COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  time_range = EXCLUDED.time_range,
+                  window_start = EXCLUDED.window_start,
+                  window_end = EXCLUDED.window_end,
+                  metrics = EXCLUDED.metrics,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    snapshot["id"],
+                    snapshot.get("product_id"),
+                    snapshot.get("time_range", "all"),
+                    snapshot.get("window_start"),
+                    snapshot.get("window_end"),
+                    json.dumps(snapshot.get("metrics", {}), ensure_ascii=False),
+                    created_at,
+                    updated_at,
                 ),
             )
 

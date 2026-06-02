@@ -6497,6 +6497,268 @@ def _lifecycle_risk_signals(
     return signals
 
 
+def _stable_record_id(prefix: str, payload: dict[str, Any]) -> str:
+    digest = hashlib.sha1(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"{prefix}_{digest}"
+
+
+def _first_lifecycle_task(tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return min(tasks, key=lambda task: task["id"]) if tasks else None
+
+
+def _lifecycle_risk_context(
+    current_store: MemoryStore,
+    signal: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source_type = signal["source_subject_type"]
+    source_id = signal["source_subject_id"]
+    task = _first_lifecycle_task(tasks)
+    context = {
+        "module_code": task.get("module_code") if task else None,
+        "observed_at": None,
+        "product_id": task.get("product_id") if task else None,
+        "requirement_id": task.get("requirement_id") if task else None,
+        "task_id": task.get("id") if task else None,
+        "version_id": task.get("version_id") if task else None,
+    }
+    if source_type == "code_review_report":
+        report = current_store.code_review_reports.get(source_id)
+        report_task = current_store.ai_tasks.get(str(report.get("task_id"))) if report else None
+        if report_task:
+            context.update(
+                {
+                    "module_code": report_task.get("module_code"),
+                    "observed_at": report.get("updated_at") or report.get("created_at"),
+                    "product_id": report_task.get("product_id"),
+                    "requirement_id": report_task.get("requirement_id"),
+                    "task_id": report_task.get("id"),
+                    "version_id": report_task.get("version_id"),
+                }
+            )
+    elif source_type == "bug":
+        bug = current_store.bugs.get(source_id)
+        if bug:
+            context.update(
+                {
+                    "module_code": bug.get("module_code"),
+                    "observed_at": bug.get("updated_at") or bug.get("created_at"),
+                    "product_id": bug.get("product_id"),
+                    "requirement_id": bug.get("requirement_id") or context["requirement_id"],
+                    "task_id": bug.get("related_task_id") or context["task_id"],
+                    "version_id": bug.get("version_id") or context["version_id"],
+                }
+            )
+    elif source_type == "gitlab_daily_code_metric":
+        metric = current_store.gitlab_daily_code_metrics.get(source_id)
+        if metric:
+            context.update(
+                {
+                    "observed_at": metric.get("metric_date") or metric.get("updated_at"),
+                    "product_id": metric.get("product_id"),
+                }
+            )
+    elif source_type == "jenkins_release":
+        release = current_store.jenkins_release_records.get(source_id)
+        if release:
+            context.update(
+                {
+                    "observed_at": release.get("deployed_at")
+                    or release.get("updated_at")
+                    or release.get("created_at"),
+                    "product_id": release.get("product_id"),
+                    "version_id": release.get("version_id") or context["version_id"],
+                }
+            )
+    elif source_type == "online_log_metric":
+        metric = current_store.online_log_metrics.get(source_id)
+        if metric:
+            context.update(
+                {
+                    "module_code": metric.get("module_code"),
+                    "observed_at": metric.get("window_end") or metric.get("updated_at"),
+                    "product_id": metric.get("product_id"),
+                }
+            )
+    elif source_type == "user_feedback":
+        feedback = current_store.user_feedback.get(source_id)
+        if feedback:
+            context.update(
+                {
+                    "module_code": feedback.get("module_code"),
+                    "observed_at": feedback.get("updated_at") or feedback.get("created_at"),
+                    "product_id": feedback.get("product_id"),
+                    "requirement_id": feedback.get("related_requirement_id")
+                    or context["requirement_id"],
+                }
+            )
+    elif source_type == "iteration_plan_suggestion":
+        suggestion = current_store.iteration_plan_suggestions.get(source_id)
+        if suggestion:
+            context.update(
+                {
+                    "module_code": ",".join(suggestion.get("module_codes", [])) or None,
+                    "observed_at": suggestion.get("updated_at") or suggestion.get("created_at"),
+                    "product_id": suggestion.get("product_id"),
+                    "version_id": suggestion.get("version_id") or context["version_id"],
+                }
+            )
+    if context["observed_at"] is None:
+        context["observed_at"] = datetime.now(UTC).isoformat()
+    return context
+
+
+def _sync_lifecycle_context_records(
+    current_store: MemoryStore,
+    *,
+    subject: dict[str, Any],
+    upstream: list[dict[str, Any]],
+    downstream: list[dict[str, Any]],
+    risk_signals: list[dict[str, Any]],
+    tasks: list[dict[str, Any]],
+) -> None:
+    anchor_type = subject.get("type")
+    anchor_id = subject.get("id")
+    if not anchor_type or not anchor_id:
+        return
+    current_store.lifecycle_context_edges = {
+        edge_id: edge
+        for edge_id, edge in current_store.lifecycle_context_edges.items()
+        if not (
+            (
+                edge.get("source_subject_type") == anchor_type
+                and edge.get("source_subject_id") == anchor_id
+            )
+            or (
+                edge.get("target_subject_type") == anchor_type
+                and edge.get("target_subject_id") == anchor_id
+            )
+        )
+    }
+    now = datetime.now(UTC).isoformat()
+
+    def upsert_edge(
+        relation: dict[str, Any],
+        *,
+        source_subject_type: str,
+        source_subject_id: str,
+        target_subject_type: str,
+        target_subject_id: str,
+    ) -> None:
+        edge_id = _stable_record_id(
+            "lifecycle_edge",
+            {
+                "relation_type": relation["relation_type"],
+                "source_subject_id": source_subject_id,
+                "source_subject_type": source_subject_type,
+                "target_subject_id": target_subject_id,
+                "target_subject_type": target_subject_type,
+            },
+        )
+        current_store.lifecycle_context_edges[edge_id] = {
+            "confidence": relation.get("confidence", 1.0),
+            "id": edge_id,
+            "metadata": current_store.snapshot(relation.get("metadata", {})),
+            "module_code": relation.get("module_code"),
+            "observed_at": relation.get("observed_at") or now,
+            "product_id": relation.get("product_id") or subject.get("product_id"),
+            "relation_type": relation["relation_type"],
+            "source_module": relation.get("source_module", "lifecycle_context"),
+            "source_subject_id": source_subject_id,
+            "source_subject_type": source_subject_type,
+            "summary": relation.get("summary"),
+            "target_subject_id": target_subject_id,
+            "target_subject_type": target_subject_type,
+            "version_id": relation.get("version_id"),
+        }
+
+    for relation in upstream:
+        upsert_edge(
+            relation,
+            source_subject_type=relation["subject_type"],
+            source_subject_id=relation["subject_id"],
+            target_subject_type=anchor_type,
+            target_subject_id=anchor_id,
+        )
+    for relation in downstream:
+        upsert_edge(
+            relation,
+            source_subject_type=anchor_type,
+            source_subject_id=anchor_id,
+            target_subject_type=relation["subject_type"],
+            target_subject_id=relation["subject_id"],
+        )
+
+    task_scope = _lifecycle_task_scope(tasks)
+    risk_source_keys = {
+        (signal["source_subject_type"], signal["source_subject_id"])
+        for signal in risk_signals
+    }
+    current_store.lifecycle_risk_signals = {
+        risk_id: risk
+        for risk_id, risk in current_store.lifecycle_risk_signals.items()
+        if not (
+            risk.get("task_id") in task_scope["task_ids"]
+            or risk.get("requirement_id") in task_scope["requirement_ids"]
+            or (risk.get("source_subject_type"), risk.get("source_subject_id"))
+            in risk_source_keys
+        )
+    }
+    for signal in risk_signals:
+        context = _lifecycle_risk_context(current_store, signal, tasks)
+        risk_id = _stable_record_id(
+            "lifecycle_risk",
+            {
+                "risk_type": signal["risk_type"],
+                "source_subject_id": signal["source_subject_id"],
+                "source_subject_type": signal["source_subject_type"],
+                "task_id": context.get("task_id"),
+            },
+        )
+        risk = {
+            **context,
+            "id": risk_id,
+            "impact_summary": signal["impact_summary"],
+            "recommendation": signal["recommendation"],
+            "risk_type": signal["risk_type"],
+            "severity": signal["severity"],
+            "source_subject_id": signal["source_subject_id"],
+            "source_subject_type": signal["source_subject_type"],
+        }
+        current_store.lifecycle_risk_signals[risk_id] = risk
+
+
+def _sync_dashboard_metric_snapshot(
+    current_store: MemoryStore,
+    *,
+    product_id: str | None,
+    time_range: str | None,
+    cutoff: datetime | None,
+    data: dict[str, Any],
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    snapshot_id = _stable_record_id(
+        "dashboard_snapshot",
+        {
+            "product_id": product_id or "all",
+            "time_range": time_range or "all",
+        },
+    )
+    existing = current_store.dashboard_metric_snapshots.get(snapshot_id, {})
+    current_store.dashboard_metric_snapshots[snapshot_id] = {
+        "created_at": existing.get("created_at") or now,
+        "id": snapshot_id,
+        "metrics": current_store.snapshot(data),
+        "product_id": product_id,
+        "time_range": time_range or "all",
+        "updated_at": now,
+        "window_end": now,
+        "window_start": cutoff.isoformat() if cutoff else None,
+    }
+
+
 def _status_counts(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     counts: dict[str, int] = {}
     for item in items:
@@ -6869,6 +7131,13 @@ def dashboard_metrics(
         "requirement_titles": [requirement["title"] for requirement in requirements[:10]],
         "time_range": time_range or "all",
     }
+    _sync_dashboard_metric_snapshot(
+        current_store,
+        product_id=product_id,
+        time_range=time_range,
+        cutoff=cutoff,
+        data=data,
+    )
     return envelope(data, get_trace_id(request))
 
 
@@ -7977,16 +8246,25 @@ def lifecycle_context(
         else []
     )
     missing_context = _lifecycle_missing_context(current_store, tasks=tasks)
+    subject = _lifecycle_subject(
+        current_store,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        product_id=product_id,
+    )
+    _sync_lifecycle_context_records(
+        current_store,
+        subject=subject,
+        upstream=upstream,
+        downstream=downstream,
+        risk_signals=risk_signals,
+        tasks=tasks,
+    )
 
     return envelope(
         {
             "status": "available",
-            "subject": _lifecycle_subject(
-                current_store,
-                subject_type=subject_type,
-                subject_id=subject_id,
-                product_id=product_id,
-            ),
+            "subject": subject,
             "upstream": upstream,
             "downstream": downstream,
             "risk_signals": risk_signals,

@@ -30,6 +30,8 @@ class FakeSnapshotRepository:
         self.iteration_planning_payload: dict | None = None
         self.collector_runs_payload: dict | None = None
         self.pending_attribution_payload: dict | None = None
+        self.lifecycle_context_payload: dict | None = None
+        self.dashboard_payload: dict | None = None
 
     def load(self) -> dict | None:
         return self.payload
@@ -144,6 +146,18 @@ class FakeSnapshotRepository:
 
     def save_pending_attribution(self, payload: dict) -> None:
         self.pending_attribution_payload = payload
+
+    def load_lifecycle_context(self) -> dict | None:
+        return self.lifecycle_context_payload
+
+    def save_lifecycle_context(self, payload: dict) -> None:
+        self.lifecycle_context_payload = payload
+
+    def load_dashboard_snapshots(self) -> dict | None:
+        return self.dashboard_payload
+
+    def save_dashboard_snapshots(self, payload: dict) -> None:
+        self.dashboard_payload = payload
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
@@ -306,6 +320,74 @@ def test_business_state_survives_store_rebuild_from_database_snapshot():
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users
+
+
+def test_lifecycle_context_and_dashboard_snapshots_persist_through_fine_grained_repository():
+    repository = FakeSnapshotRepository()
+    current_store = PersistentMemoryStore.from_repository(repository)
+    current_store.products["product_021"] = {
+        "code": "LIFE",
+        "id": "product_021",
+        "name": "生命周期产品",
+        "status": "active",
+    }
+    current_store.lifecycle_context_edges["lifecycle_edge_001"] = {
+        "confidence": 1.0,
+        "id": "lifecycle_edge_001",
+        "metadata": {"status": "completed"},
+        "module_code": "core",
+        "observed_at": "2026-06-02T10:00:00+00:00",
+        "product_id": "product_021",
+        "relation_type": "generates_technical_solution",
+        "source_module": "ai_task",
+        "source_subject_id": "requirement_021",
+        "source_subject_type": "requirement",
+        "summary": "技术方案",
+        "target_subject_id": "task_021",
+        "target_subject_type": "ai_task",
+        "version_id": "version_021",
+    }
+    current_store.lifecycle_risk_signals["lifecycle_risk_001"] = {
+        "id": "lifecycle_risk_001",
+        "impact_summary": "Review 报告提示中风险。",
+        "module_code": "core",
+        "observed_at": "2026-06-02T10:00:00+00:00",
+        "product_id": "product_021",
+        "recommendation": "补充边界测试。",
+        "requirement_id": "requirement_021",
+        "risk_type": "code_review_medium_risk",
+        "severity": "medium",
+        "source_subject_id": "report_021",
+        "source_subject_type": "code_review_report",
+        "task_id": "task_021",
+        "version_id": "version_021",
+    }
+    current_store.dashboard_metric_snapshots["dashboard_snapshot_product_021_7d"] = {
+        "id": "dashboard_snapshot_product_021_7d",
+        "metrics": {"summary": {"ai_tasks": 1, "requirements": 1}},
+        "product_id": "product_021",
+        "time_range": "7d",
+        "window_end": "2026-06-02T10:00:00+00:00",
+        "window_start": "2026-05-26T10:00:00+00:00",
+    }
+
+    current_store.persist()
+
+    assert repository.lifecycle_context_payload == {
+        "lifecycle_context_edges": current_store.lifecycle_context_edges,
+        "lifecycle_risk_signals": current_store.lifecycle_risk_signals,
+    }
+    assert repository.dashboard_payload == {
+        "dashboard_metric_snapshots": current_store.dashboard_metric_snapshots,
+    }
+
+    rebuilt_store = PersistentMemoryStore.from_repository(repository)
+    assert rebuilt_store.lifecycle_context_edges == current_store.lifecycle_context_edges
+    assert rebuilt_store.lifecycle_risk_signals == current_store.lifecycle_risk_signals
+    assert rebuilt_store.dashboard_metric_snapshots == current_store.dashboard_metric_snapshots
+    assert rebuilt_store.new_id("lifecycle_edge") == "lifecycle_edge_002"
+    assert rebuilt_store.new_id("lifecycle_risk") == "lifecycle_risk_002"
+    assert rebuilt_store.new_id("dashboard_snapshot") == "dashboard_snapshot_001"
 
 
 def test_product_config_is_persisted_through_fine_grained_repository_payload():
