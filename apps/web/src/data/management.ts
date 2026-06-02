@@ -47,6 +47,16 @@ export type ProductGitRepositoryRecord = {
   status: 'active' | 'inactive';
 };
 
+export type ProductRelatedSystemRecord = {
+  code: string;
+  description?: string | null;
+  id: string;
+  name: string;
+  ownerTeam: string;
+  productId?: string | null;
+  status: 'active' | 'inactive';
+};
+
 export type ProductContextOption = {
   code: string;
   id: string;

@@ -9,6 +9,7 @@ import type {
   ProductGitRepositoryRecord,
   ProductModuleRecord,
   ProductRecord,
+  ProductRelatedSystemRecord,
   ProductVersionRecord,
 } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
@@ -16,21 +17,26 @@ import {
   createManagementProduct,
   createProductGitRepository,
   createProductModule,
+  createProductRelatedSystem,
   createProductVersion,
   deleteManagementProduct,
   deleteProductGitRepository,
   deleteProductModule,
+  deleteProductRelatedSystem,
   deleteProductVersion,
   fetchManagementProducts,
   fetchProductGitRepositoryRecords,
   fetchProductModules,
+  fetchProductRelatedSystems,
   fetchProductVersions,
   updateManagementProduct,
   updateProductGitRepository,
   updateProductModule,
+  updateProductRelatedSystem,
   updateProductVersion,
   type ProductGitRepositoryMutationPayload,
   type ProductModuleMutationPayload,
+  type ProductRelatedSystemMutationPayload,
   type ProductVersionMutationPayload,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -45,12 +51,13 @@ type ProductFormValues = {
   status: ProductRecord['status'];
 };
 
-type ResourceKind = 'module' | 'repository' | 'version';
+type ResourceKind = 'module' | 'relatedSystem' | 'repository' | 'version';
 
 type ProductResourceFormValues = {
   code?: string;
   credential_ref?: string;
   default_branch?: string;
+  description?: string;
   name: string;
   owner_team?: string;
   project_id?: string;
@@ -65,6 +72,7 @@ type ProductResourceFormValues = {
 
 type ProductResourceEditor =
   | { kind: 'module'; record?: ProductModuleRecord; submitting: boolean }
+  | { kind: 'relatedSystem'; record?: ProductRelatedSystemRecord; submitting: boolean }
   | { kind: 'repository'; record?: ProductGitRepositoryRecord; submitting: boolean }
   | { kind: 'version'; record?: ProductVersionRecord; submitting: boolean };
 
@@ -90,6 +98,9 @@ function resourceEditorTitle(editor?: ProductResourceEditor) {
   if (editor.kind === 'module') {
     return `${action}模块`;
   }
+  if (editor.kind === 'relatedSystem') {
+    return `${action}相关系统`;
+  }
   return `${action} Git 资源`;
 }
 
@@ -103,6 +114,7 @@ export default function ProductsPage() {
   const [configLoading, setConfigLoading] = useState(false);
   const [versionRows, setVersionRows] = useState<ProductVersionRecord[]>([]);
   const [moduleRows, setModuleRows] = useState<ProductModuleRecord[]>([]);
+  const [relatedSystemRows, setRelatedSystemRows] = useState<ProductRelatedSystemRecord[]>([]);
   const [repositoryRows, setRepositoryRows] = useState<ProductGitRepositoryRecord[]>([]);
   const [resourceEditor, setResourceEditor] = useState<ProductResourceEditor>();
   const {
@@ -115,13 +127,15 @@ export default function ProductsPage() {
   const loadProductResources = useCallback(async (productId: string) => {
     setConfigLoading(true);
     try {
-      const [versions, modules, repositories] = await Promise.all([
+      const [versions, modules, relatedSystems, repositories] = await Promise.all([
         fetchProductVersions(productId),
         fetchProductModules(productId),
+        fetchProductRelatedSystems(productId),
         fetchProductGitRepositoryRecords(productId),
       ]);
       setVersionRows(versions);
       setModuleRows(modules);
+      setRelatedSystemRows(relatedSystems);
       setRepositoryRows(repositories);
     } catch (loadError) {
       message.error(formatMutationError(loadError));
@@ -161,6 +175,7 @@ export default function ProductsPage() {
     setConfigProduct(null);
     setVersionRows([]);
     setModuleRows([]);
+    setRelatedSystemRows([]);
     setRepositoryRows([]);
   }, []);
 
@@ -233,6 +248,18 @@ export default function ProductsPage() {
         status: module?.status ?? 'active',
       });
       setResourceEditor({ kind, record: module, submitting: false });
+      return;
+    }
+    if (kind === 'relatedSystem') {
+      const relatedSystem = record as ProductRelatedSystemRecord | undefined;
+      resourceForm.setFieldsValue({
+        code: relatedSystem?.code,
+        description: relatedSystem?.description ?? undefined,
+        name: relatedSystem?.name,
+        owner_team: relatedSystem?.ownerTeam === '-' ? undefined : relatedSystem?.ownerTeam,
+        status: relatedSystem?.status ?? 'active',
+      });
+      setResourceEditor({ kind, record: relatedSystem, submitting: false });
       return;
     }
     const repository = record as ProductGitRepositoryRecord | undefined;
@@ -313,6 +340,20 @@ export default function ProductsPage() {
           await createProductGitRepository(configProduct.id, payload);
         }
       }
+      if (resourceEditor.kind === 'relatedSystem') {
+        const payload: ProductRelatedSystemMutationPayload = {
+          code: trimText(values.code),
+          description: trimText(values.description),
+          name: values.name.trim(),
+          owner_team: trimText(values.owner_team),
+          status: values.status ?? 'active',
+        };
+        if (resourceEditor.record) {
+          await updateProductRelatedSystem(resourceEditor.record.id, payload);
+        } else {
+          await createProductRelatedSystem(configProduct.id, payload);
+        }
+      }
       message.success('产品配置已保存');
       setResourceEditor(undefined);
       await reloadConfigAfterMutation();
@@ -332,6 +373,9 @@ export default function ProductsPage() {
       }
       if (kind === 'repository') {
         await deleteProductGitRepository(id);
+      }
+      if (kind === 'relatedSystem') {
+        await deleteProductRelatedSystem(id);
       }
       message.success('产品配置已删除');
       await reloadConfigAfterMutation();
@@ -438,6 +482,50 @@ export default function ProductsPage() {
               编辑
             </Button>
             <Popconfirm okText="删除" onConfirm={() => handleDeleteResource('repository', row.id)} title={`删除 Git 资源 ${row.name}？`}>
+              <Button danger icon={<DeleteOutlined />} type="link">
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
+      },
+    ],
+    [handleDeleteResource, openResourceEditor],
+  );
+
+  const relatedSystemColumns = useMemo<ProColumns<ProductRelatedSystemRecord>[]>(
+    () => [
+      { dataIndex: 'code', search: false, title: '系统编码' },
+      { dataIndex: 'name', search: false, title: '系统名称' },
+      { dataIndex: 'ownerTeam', search: false, title: '负责团队' },
+      {
+        dataIndex: 'status',
+        search: false,
+        title: '状态',
+        render: (_, row) => {
+          const statusLabel = activeStatusLabels[row.status];
+          return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
+        },
+      },
+      {
+        key: 'actions',
+        search: false,
+        title: '操作',
+        valueType: 'option',
+        render: (_, row) => (
+          <Space size={4}>
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => openResourceEditor('relatedSystem', row)}
+              type="link"
+            >
+              编辑
+            </Button>
+            <Popconfirm
+              okText="删除"
+              onConfirm={() => handleDeleteResource('relatedSystem', row.id)}
+              title={`删除相关系统 ${row.code}？`}
+            >
               <Button danger icon={<DeleteOutlined />} type="link">
                 删除
               </Button>
@@ -653,6 +741,26 @@ export default function ProductsPage() {
               </Button>,
             ]}
           />
+          <ProTable<ProductRelatedSystemRecord>
+            columns={relatedSystemColumns}
+            dataSource={relatedSystemRows}
+            headerTitle="相关系统"
+            loading={configLoading}
+            options={false}
+            pagination={false}
+            rowKey="id"
+            search={false}
+            toolBarRender={() => [
+              <Button
+                aria-label="新增相关系统"
+                icon={<PlusOutlined />}
+                key="add-related-system"
+                onClick={() => openResourceEditor('relatedSystem')}
+              >
+                新增相关系统
+              </Button>,
+            ]}
+          />
         </Space>
       </Modal>
       <Modal
@@ -730,6 +838,30 @@ export default function ProductsPage() {
               </Form.Item>
               <Form.Item label="默认分支" name="default_branch">
                 <Input />
+              </Form.Item>
+              <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
+                <Select
+                  options={[
+                    { label: '启用', value: 'active' },
+                    { label: '停用', value: 'inactive' },
+                  ]}
+                />
+              </Form.Item>
+            </>
+          ) : null}
+          {resourceEditor?.kind === 'relatedSystem' ? (
+            <>
+              <Form.Item label="系统编码" name="code" rules={[{ required: true, message: '请输入系统编码' }]}>
+                <Input />
+              </Form.Item>
+              <Form.Item label="系统名称" name="name" rules={[{ required: true, message: '请输入系统名称' }]}>
+                <Input />
+              </Form.Item>
+              <Form.Item label="系统负责团队" name="owner_team">
+                <Input />
+              </Form.Item>
+              <Form.Item label="描述" name="description">
+                <Input.TextArea autoSize={{ minRows: 3 }} />
               </Form.Item>
               <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
                 <Select

@@ -2055,7 +2055,7 @@ class PostgresSnapshotRepository:
     def _load_related_systems(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
-            SELECT id, code, name, description, owner_team, status, display_order
+            SELECT id, code, name, description, owner_team, status, display_order, product_id
             FROM related_systems
             ORDER BY display_order, code
             """
@@ -2068,6 +2068,7 @@ class PostgresSnapshotRepository:
                 "id": row[0],
                 "name": row[2],
                 "owner_team": row[4],
+                "product_id": row[7],
                 "status": row[5],
             }
             for row in cursor.fetchall()
@@ -3190,10 +3191,11 @@ class PostgresSnapshotRepository:
             cursor.execute(
                 """
                 INSERT INTO related_systems (
-                  id, code, name, description, owner_team, status, display_order, updated_at
+                  id, product_id, code, name, description, owner_team, status, display_order, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
                 ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
                   code = EXCLUDED.code,
                   name = EXCLUDED.name,
                   description = EXCLUDED.description,
@@ -3204,6 +3206,7 @@ class PostgresSnapshotRepository:
                 """,
                 (
                     related_system["id"],
+                    related_system.get("product_id"),
                     related_system["code"],
                     related_system["name"],
                     related_system.get("description"),

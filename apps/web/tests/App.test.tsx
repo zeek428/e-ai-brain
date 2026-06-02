@@ -3248,6 +3248,42 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path === '/api/system/related-systems?product_id=product_api' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'billing',
+                id: 'related_system_api',
+                name: '计费系统',
+                owner_team: 'Business Platform',
+                product_id: 'product_api',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/system/related-systems' && method === 'POST') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          code: 'crm',
+          name: 'CRM 系统',
+          owner_team: 'Business Platform',
+          product_id: 'product_api',
+          status: 'active',
+        });
+        return jsonResponse({
+          data: {
+            code: 'crm',
+            id: 'related_system_new',
+            name: 'CRM 系统',
+            owner_team: 'Business Platform',
+            product_id: 'product_api',
+            status: 'active',
+          },
+        });
+      }
       if (path === '/api/products/product_api/git-repositories' && method === 'POST') {
         expect(JSON.parse(String(init?.body))).toMatchObject({
           credential_ref: 'env:GITLAB_READONLY_TOKEN',
@@ -3288,10 +3324,12 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('版本管理')).toBeInTheDocument();
     expect(screen.getByText('模块管理')).toBeInTheDocument();
     expect(screen.getByText('Git 资源')).toBeInTheDocument();
+    expect(screen.getByText('相关系统')).toBeInTheDocument();
     expect(screen.getAllByText('v1 MVP').length).toBeGreaterThan(0);
     expect(screen.getByText('知识模块')).toBeInTheDocument();
     expect(screen.getByText('platform/ai-brain')).toBeInTheDocument();
     expect(screen.getByText('已配置')).toBeInTheDocument();
+    expect(screen.getByText('计费系统')).toBeInTheDocument();
     expect(screen.queryByText('env:GITLAB_READONLY_TOKEN')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '新增版本' }));
@@ -3330,6 +3368,20 @@ describe('AI Brain Ant Design Pro workbench', () => {
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
         '/api/products/product_api/git-repositories',
+        'POST',
+      ]),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '新增相关系统' }));
+    fireEvent.change(screen.getByLabelText('系统编码'), { target: { value: 'crm' } });
+    fireEvent.change(screen.getByLabelText('系统名称'), { target: { value: 'CRM 系统' } });
+    fireEvent.change(screen.getByLabelText('系统负责团队'), {
+      target: { value: 'Business Platform' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/system/related-systems',
         'POST',
       ]),
     );
@@ -3379,6 +3431,23 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path === '/api/system/related-systems?product_id=product_api' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'billing',
+                id: 'related_system_api',
+                name: '计费系统',
+                owner_team: 'Business Platform',
+                product_id: 'product_api',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
       return jsonResponse({ data: { deleted: method === 'DELETE', id: path.split('/').at(-1), status: 'active' } });
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -3409,6 +3478,15 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
     await callService('updateProductGitRepository', 'repo_api', { default_branch: 'develop' });
     await callService('deleteProductGitRepository', 'repo_api');
+    const relatedSystems = await callService('fetchProductRelatedSystems', 'product_api');
+    await callService('createProductRelatedSystem', 'product_api', {
+      code: 'crm',
+      name: 'CRM 系统',
+      owner_team: 'Business Platform',
+      status: 'active',
+    });
+    await callService('updateProductRelatedSystem', 'related_system_api', { owner_team: 'Business Platform' });
+    await callService('deleteProductRelatedSystem', 'related_system_api');
 
     expect(gitRepositories).toEqual([
       expect.objectContaining({
@@ -3419,6 +3497,14 @@ describe('AI Brain Ant Design Pro workbench', () => {
       }),
     ]);
     expect(JSON.stringify(gitRepositories)).not.toContain('env:GITLAB_READONLY_TOKEN');
+    expect(relatedSystems).toEqual([
+      expect.objectContaining({
+        code: 'billing',
+        id: 'related_system_api',
+        name: '计费系统',
+        productId: 'product_api',
+      }),
+    ]);
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/products/product_api/versions', 'GET'],
       ['/api/products/product_api/versions', 'POST'],
@@ -3432,6 +3518,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/products/product_api/git-repositories', 'POST'],
       ['/api/product-git-repositories/repo_api', 'PATCH'],
       ['/api/product-git-repositories/repo_api', 'DELETE'],
+      ['/api/system/related-systems?product_id=product_api', 'GET'],
+      ['/api/system/related-systems', 'POST'],
+      ['/api/system/related-systems/related_system_api', 'PATCH'],
+      ['/api/system/related-systems/related_system_api', 'DELETE'],
     ]);
   });
 

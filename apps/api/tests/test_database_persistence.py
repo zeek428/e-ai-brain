@@ -361,6 +361,7 @@ def test_product_config_is_persisted_through_fine_grained_repository_payload():
         "id": "related_system_002",
         "name": "支付系统",
         "owner_team": "Business",
+        "product_id": "product_019",
         "status": "active",
     }
 
@@ -378,6 +379,9 @@ def test_product_config_is_persisted_through_fine_grained_repository_payload():
     assert repository.product_config_payload["related_systems"]["related_system_002"][
         "code"
     ] == "PAYMENT"
+    assert repository.product_config_payload["related_systems"]["related_system_002"][
+        "product_id"
+    ] == "product_019"
 
     repository.payload = {"products": {}, "product_versions": {}, "counters": {}}
     rebuilt_store = PersistentMemoryStore.from_repository(repository)
@@ -389,6 +393,7 @@ def test_product_config_is_persisted_through_fine_grained_repository_payload():
         "env:GITLAB_READONLY_TOKEN"
     )
     assert rebuilt_store.related_systems["related_system_002"]["name"] == "支付系统"
+    assert rebuilt_store.related_systems["related_system_002"]["product_id"] == "product_019"
     assert rebuilt_store.new_id("product") == "product_020"
 
 

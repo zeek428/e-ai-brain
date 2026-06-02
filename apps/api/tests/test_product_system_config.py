@@ -26,6 +26,24 @@ def test_product_config_supports_list_patch_and_active_filters():
         },
         headers=headers,
     ).json()["data"]
+    related_system = client.post(
+        "/api/system/related-systems",
+        json={
+            "code": "billing",
+            "name": "计费系统",
+            "owner_team": "business-platform",
+            "product_id": product["id"],
+            "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+    assert related_system["product_id"] == product["id"]
+    related_systems = client.get(
+        f"/api/system/related-systems?product_id={product['id']}",
+        headers=headers,
+    ).json()["data"]
+    assert [item["id"] for item in related_systems["items"]] == [related_system["id"]]
+
     inactive = client.post(
         "/api/products",
         json={"code": "legacy", "name": "Legacy", "status": "inactive"},
@@ -123,6 +141,74 @@ def test_product_config_supports_list_patch_and_active_filters():
     assert patched_repository["status"] == "inactive"
     assert "credential_ref" not in patched_repository
     assert patched_repository["credential_ref_configured"] is True
+
+
+def test_related_systems_are_saved_in_generated_task_product_context():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    product = client.post(
+        "/api/products",
+        json={"code": "context-product", "name": "上下文产品"},
+        headers=headers,
+    ).json()["data"]
+    version = client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": "v1", "name": "v1"},
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        "/api/system/related-systems",
+        json={
+            "code": "crm",
+            "name": "CRM 系统",
+            "product_id": product["id"],
+            "status": "active",
+        },
+        headers=headers,
+    )
+    other_product = client.post(
+        "/api/products",
+        json={"code": "other-context-product", "name": "其他产品"},
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        "/api/system/related-systems",
+        json={
+            "code": "other-crm",
+            "name": "其他 CRM",
+            "product_id": other_product["id"],
+            "status": "active",
+        },
+        headers=headers,
+    )
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "content": "需要把相关系统带入任务上下文",
+            "product_id": product["id"],
+            "title": "相关系统上下文需求",
+            "version_id": version["id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        f"/api/requirements/{requirement['id']}/approve",
+        json={"comment": "进入设计"},
+        headers=headers,
+    )
+
+    generated = client.post(
+        f"/api/requirements/{requirement['id']}/generate-task",
+        headers=headers,
+    ).json()["data"]
+    task_detail = client.get(
+        f"/api/ai-tasks/{generated['task_id']}",
+        headers=headers,
+    ).json()["data"]
+
+    related_systems = task_detail["product_context"]["related_systems"]["items"]
+    assert [item["code"] for item in related_systems] == ["crm"]
 
 
 def test_product_config_rejects_duplicate_codes_and_invalid_statuses():

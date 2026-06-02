@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS product_git_repositories (
 
 CREATE TABLE IF NOT EXISTS related_systems (
   id text PRIMARY KEY,
+  product_id text REFERENCES products(id) ON DELETE SET NULL,
   code text NOT NULL UNIQUE,
   name text NOT NULL,
   description text,
@@ -289,6 +290,9 @@ CREATE TABLE IF NOT EXISTS related_systems (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_related_systems_product_status
+  ON related_systems (product_id, status);
 
 CREATE TABLE IF NOT EXISTS model_gateway_configs (
   id text PRIMARY KEY,

@@ -7,6 +7,7 @@ import type {
   ProductGitRepositoryRecord,
   ProductModuleRecord,
   ProductRecord,
+  ProductRelatedSystemRecord,
   ProductVersionOption,
   ProductVersionRecord,
   RequirementRecord,
@@ -601,6 +602,16 @@ type ProductModuleListItem = {
   status?: string;
 };
 
+type ProductRelatedSystemListItem = {
+  code?: string;
+  description?: string | null;
+  id: string;
+  name: string;
+  owner_team?: string | null;
+  product_id?: string | null;
+  status?: string;
+};
+
 export type ProductMutationPayload = {
   code?: string;
   description?: string;
@@ -647,6 +658,16 @@ export type ProductGitRepositoryMutationPayload = {
   remote_url?: string;
   repo_type?: string;
   root_path?: string;
+  status?: string;
+};
+
+export type ProductRelatedSystemMutationPayload = {
+  code?: string;
+  description?: string;
+  display_order?: number;
+  name: string;
+  owner_team?: string;
+  product_id?: string;
   status?: string;
 };
 
@@ -1486,6 +1507,20 @@ function mapProductModuleRecord(module: ProductModuleListItem): ProductModuleRec
   };
 }
 
+function mapProductRelatedSystemRecord(
+  relatedSystem: ProductRelatedSystemListItem,
+): ProductRelatedSystemRecord {
+  return {
+    code: relatedSystem.code ?? relatedSystem.id,
+    description: relatedSystem.description,
+    id: relatedSystem.id,
+    name: relatedSystem.name,
+    ownerTeam: relatedSystem.owner_team ?? '-',
+    productId: relatedSystem.product_id,
+    status: normalizeActiveInactiveStatus(relatedSystem.status),
+  };
+}
+
 function mapProductGitRepositoryRecord(
   repository: ProductGitRepositoryListItem,
 ): ProductGitRepositoryRecord {
@@ -1586,6 +1621,55 @@ export async function deleteProductModule(moduleId: string) {
     method: 'DELETE',
     token,
   });
+}
+
+export async function fetchProductRelatedSystems(
+  productId: string,
+): Promise<ProductRelatedSystemRecord[]> {
+  const token = requireAccessToken();
+  const relatedSystems = await apiRequest<ListResponse<ProductRelatedSystemListItem>>(
+    `/api/system/related-systems?product_id=${encodeURIComponent(productId)}`,
+    { token },
+  );
+  return relatedSystems.items.map(mapProductRelatedSystemRecord);
+}
+
+export async function createProductRelatedSystem(
+  productId: string,
+  payload: ProductRelatedSystemMutationPayload,
+) {
+  const token = requireAccessToken();
+  return apiRequest<ProductRelatedSystemListItem>('/api/system/related-systems', {
+    body: { ...payload, product_id: productId },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateProductRelatedSystem(
+  relatedSystemId: string,
+  payload: Partial<ProductRelatedSystemMutationPayload>,
+) {
+  const token = requireAccessToken();
+  return apiRequest<ProductRelatedSystemListItem>(
+    `/api/system/related-systems/${relatedSystemId}`,
+    {
+      body: payload,
+      method: 'PATCH',
+      token,
+    },
+  );
+}
+
+export async function deleteProductRelatedSystem(relatedSystemId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(
+    `/api/system/related-systems/${relatedSystemId}`,
+    {
+      method: 'DELETE',
+      token,
+    },
+  );
 }
 
 export async function fetchProductGitRepositoryRecords(

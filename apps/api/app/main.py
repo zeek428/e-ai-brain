@@ -260,6 +260,7 @@ class RelatedSystemRequest(BaseModel):
     name: str
     description: str | None = None
     owner_team: str | None = None
+    product_id: str | None = None
     status: str = "active"
     display_order: int = 0
 
@@ -269,6 +270,7 @@ class RelatedSystemPatchRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     owner_team: str | None = None
+    product_id: str | None = None
     status: str | None = None
     display_order: int | None = None
 
@@ -2740,11 +2742,16 @@ def delete_product_git_repository(
 def list_related_systems(
     request: Request,
     active_only: bool = False,
+    product_id: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
     items = sorted(
-        current_store.related_systems.values(),
+        (
+            item
+            for item in current_store.related_systems.values()
+            if product_id is None or item.get("product_id") == product_id
+        ),
         key=lambda item: (item.get("display_order", 0), item["code"]),
     )
     return _list_payload(items, trace_id=get_trace_id(request), active_only=active_only)
@@ -2760,6 +2767,8 @@ def create_related_system(
     current_store = store(request)
     name = _ensure_non_blank(payload.name, "name")
     _ensure_enum(payload.status, RELATED_SYSTEM_STATUSES, "related system status")
+    if payload.product_id is not None and payload.product_id not in current_store.products:
+        raise api_error(404, "NOT_FOUND", "Product not found")
     system_id = current_store.new_id("system")
     code = _ensure_non_blank(payload.code or system_id, "code")
     _ensure_unique_value(
@@ -2775,6 +2784,7 @@ def create_related_system(
         "name": name,
         "description": payload.description,
         "owner_team": payload.owner_team,
+        "product_id": payload.product_id,
         "status": payload.status,
         "display_order": payload.display_order,
     }
@@ -2815,6 +2825,9 @@ def patch_related_system(
         )
     if "status" in updates:
         _ensure_enum(updates["status"], RELATED_SYSTEM_STATUSES, "related system status")
+    if "product_id" in updates and updates["product_id"] is not None:
+        if updates["product_id"] not in current_store.products:
+            raise api_error(404, "NOT_FOUND", "Product not found")
     related_system.update(updates)
     current_store.audit(
         event_type="related_system.updated",
@@ -3248,7 +3261,7 @@ def _product_context(current_store: MemoryStore, requirement: dict[str, Any]) ->
     related_systems = [
         related_system
         for related_system in current_store.related_systems.values()
-        if related_system["product_id"] == product["id"]
+        if related_system.get("product_id") == product["id"]
         and related_system.get("status") == "active"
     ]
     return {
