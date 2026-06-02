@@ -280,6 +280,80 @@ def test_model_gateway_failure_marks_task_failed_and_logs_error(monkeypatch):
     assert logs[0]["error"] == "Model gateway request failed"
 
 
+def test_model_gateway_failed_task_can_be_started_again(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    calls = {"count": 0}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "acceptance_points": ["重试成功"],
+                                        "kind": "product_detail_design",
+                                        "summary": "模型重试后生成的产品详细设计。",
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 8, "prompt_tokens": 4, "total_tokens": 12},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise URLError("temporary upstream failure")
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "api_key": "sk-retry-model",
+            "base_url": "https://llm.example.com/v1",
+            "default_chat_model": "gpt-retry",
+            "default_embedding_model": "text-embedding-real",
+            "is_default": True,
+            "name": "可重试模型网关",
+            "provider": "openai_compatible",
+            "status": "active",
+        },
+        headers=headers,
+    )
+    task = create_draft_design_task(headers)
+
+    failed = client.post(f"/api/ai-tasks/{task['task_id']}/start", headers=headers)
+    retried = client.post(f"/api/ai-tasks/{task['task_id']}/start", headers=headers)
+
+    assert failed.status_code == 502
+    assert failed.json()["detail"]["code"] == "MODEL_GATEWAY_FAILED"
+    assert retried.status_code == 200
+    detail = client.get(f"/api/ai-tasks/{task['task_id']}", headers=headers).json()["data"]
+    assert detail["status"] == "waiting_review"
+    assert detail["current_step"] == "interrupt_for_human_review"
+    assert detail["output"]["summary"] == "模型重试后生成的产品详细设计。"
+    logs = client.get(
+        f"/api/model-gateway/logs?ai_task_id={task['task_id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert [log["status"] for log in logs] == ["succeeded", "failed"]
+
+
 def test_active_model_gateway_without_api_key_does_not_fallback_to_local_output():
     headers = auth_headers()
     app.state.store.reset()

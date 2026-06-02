@@ -143,6 +143,24 @@ def test_product_config_supports_list_patch_and_active_filters():
     assert patched_repository["credential_ref_configured"] is True
 
 
+def test_product_detail_endpoint_returns_single_product():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = client.post(
+        "/api/products",
+        json={"code": "detail-product", "name": "产品详情"},
+        headers=headers,
+    ).json()["data"]
+
+    detail = client.get(f"/api/products/{product['id']}", headers=headers)
+    missing = client.get("/api/products/product_missing", headers=headers)
+
+    assert detail.status_code == 200
+    assert detail.json()["data"] == product
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["code"] == "NOT_FOUND"
+
+
 def test_related_systems_are_saved_in_generated_task_product_context():
     app.state.store.reset()
     headers = auth_headers()

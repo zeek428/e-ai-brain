@@ -8,6 +8,9 @@
 ## [Unreleased]
 
 ### Added
+- 全链路真实用例复跑后新增 GitHub PR 列表接口 `/api/devops/github/pull-requests/{repository_id}`，支持基于产品 GitHub 凭据列出可访问 PR，避免代码 Review 创建前必须手工猜 PR 编号。
+- 产品配置补齐 `GET /api/products/{product_id}` 详情接口，便于从产品管理进入配置或全链路脚本校验时直接读取产品主体。
+- AI 任务启动支持对 `model_gateway_failed` 和 `code_review_executor_failed` 的失败任务使用同一 `task_id` 原地重试，并记录 `ai_task.retry_started` 审计事件。
 - 新增 AI 助手聊天工作台和 `/api/assistant/chat`，基于模型网关 Chat 能力与服务端脱敏系统上下文回答 AI Brain 产品配置、需求任务、Git 仓库、模型网关状态和项目开发进展问题；模型调用日志仅记录 `purpose=assistant_chat` 元数据。
 - 产品 Git 资源支持选择 GitHub provider，任务中心可基于 GitHub PR 预览和 diff 快照创建 `code_review` 任务；凭据解析支持环境变量、服务端密钥引用和本地联调直填只读 token，API 响应仍不回显凭据。
 - 所有 PostgreSQL 结构表统一补齐 `created_at` 和 `updated_at` 标准时间字段，新增 `018_standard_timestamps.sql` 迁移脚本和表定义门禁测试，防止后续新表漏字段。
@@ -124,6 +127,7 @@
 - 审计与运行列表新增真实详情弹窗和生命周期链路追踪操作，可从审计主体查看上下游、风险信号和缺失上下文。
 
 ### Changed
+- `/health` 的 `model_gateway` 状态改为优先读取持久化 active/default 模型网关配置，避免运行时模型网关可用但健康检查仍显示 `not_configured`。
 - 测试用例清单增加适用阶段口径，区分 MVP 必交、MVP 空状态、v1.1、v1.2 和生产就绪验证。
 - 文档入口增加实现者最短路径，明确 P0 表、API、页面、测试和 runbook 的推荐落地顺序。
 - 前端提交需求入口调整为需求管理查询表格，新增需求和配置类表单统一使用弹窗。

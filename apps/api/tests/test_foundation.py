@@ -10,6 +10,7 @@ client = TestClient(app)
 
 
 def test_health_includes_dependencies_and_trace_id(monkeypatch):
+    app.state.store.reset()
     monkeypatch.setattr(main.settings, "model_gateway_base_url", "")
     monkeypatch.setattr(main.settings, "model_gateway_api_key", "")
 
@@ -23,6 +24,30 @@ def test_health_includes_dependencies_and_trace_id(monkeypatch):
     assert body["model_gateway"] == "not_configured"
     assert body["long_memory"] == "not_configured"
     assert body["trace_id"].startswith("trace_")
+
+
+def test_health_uses_persisted_default_model_gateway_config(monkeypatch):
+    app.state.store.reset()
+    monkeypatch.setattr(main.settings, "model_gateway_base_url", "")
+    monkeypatch.setattr(main.settings, "model_gateway_api_key", "")
+    app.state.store.model_gateway_configs["model_gateway_config_health"] = {
+        "id": "model_gateway_config_health",
+        "name": "健康检查模型网关",
+        "provider": "openai_compatible",
+        "base_url": "http://model-gateway.test/v1",
+        "api_key": "sk-health",
+        "default_chat_model": "chat",
+        "default_embedding_model": "embedding",
+        "timeout_seconds": 60,
+        "max_retries": 0,
+        "status": "active",
+        "is_default": True,
+    }
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["model_gateway"] == "configured"
 
 
 def test_health_dependency_endpoint_parsing_supports_docker_service_names():

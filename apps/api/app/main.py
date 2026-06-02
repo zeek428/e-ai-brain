@@ -124,6 +124,7 @@ RELATED_SYSTEM_STATUSES = {"active", "inactive"}
 MODEL_GATEWAY_PROVIDERS = {"openai_compatible"}
 MODEL_GATEWAY_STATUSES = {"active", "inactive"}
 MODEL_GATEWAY_TEST_TARGETS = {"chat", "chat_and_embedding", "embedding"}
+RETRYABLE_TASK_FAILURE_STEPS = {"code_review_executor_failed", "model_gateway_failed"}
 KNOWLEDGE_INDEX_STATUSES = {"archived", "importing", "indexed", "index_failed", "pending_index"}
 BUG_STATUS_TRANSITIONS = {
     "open": {"triaged", "assigned", "closed"},
@@ -621,6 +622,17 @@ def _tcp_endpoint_from_url(url: str, default_host: str, default_port: int) -> tu
     return parsed.hostname or default_host, parsed.port or default_port
 
 
+def _model_gateway_health_status(current_store: MemoryStore) -> str:
+    default_gateway = _default_model_gateway_config(current_store)
+    if (
+        default_gateway
+        and default_gateway.get("base_url")
+        and default_gateway.get("api_key")
+    ):
+        return "configured"
+    return settings.model_gateway_status
+
+
 @app.get("/health")
 def health(request: Request) -> dict[str, str]:
     postgres_host, postgres_port = _tcp_endpoint_from_url(
@@ -636,7 +648,7 @@ def health(request: Request) -> dict[str, str]:
         "status": status,
         "postgres": postgres,
         "redis": redis,
-        "model_gateway": settings.model_gateway_status,
+        "model_gateway": _model_gateway_health_status(store(request)),
         "long_memory": settings.long_memory_status,
         "trace_id": get_trace_id(request),
     }
@@ -2710,6 +2722,19 @@ def create_product(
     return envelope(product, get_trace_id(request))
 
 
+@app.get("/api/products/{product_id}")
+def get_product(
+    product_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    current_store = store(request)
+    product = current_store.products.get(product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    return envelope(product, get_trace_id(request))
+
+
 @app.patch("/api/products/{product_id}")
 def patch_product(
     product_id: str,
@@ -4205,6 +4230,85 @@ def _summarize_github_file(file_item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _github_pull_request_summary(
+    repository: dict[str, Any],
+    *,
+    owner_repo: str,
+    pull_request: dict[str, Any],
+) -> dict[str, Any]:
+    user = pull_request.get("user") if isinstance(pull_request.get("user"), dict) else {}
+    head = pull_request.get("head") if isinstance(pull_request.get("head"), dict) else {}
+    base = pull_request.get("base") if isinstance(pull_request.get("base"), dict) else {}
+    return {
+        "author": {
+            "username": user.get("login") or "-",
+            "name": user.get("name") or user.get("login") or "-",
+        },
+        "base_sha": base.get("sha") or pull_request.get("base_sha"),
+        "created_at": pull_request.get("created_at"),
+        "head_sha": head.get("sha") or pull_request.get("head_sha"),
+        "number": int(pull_request.get("number") or 0),
+        "project_path": owner_repo,
+        "repository_id": repository["id"],
+        "source_branch": head.get("ref"),
+        "state": pull_request.get("state"),
+        "target_branch": base.get("ref"),
+        "title": pull_request.get("title") or f"PR #{pull_request.get('number')}",
+        "updated_at": pull_request.get("updated_at"),
+        "web_url": pull_request.get("html_url"),
+        "writeback_allowed": False,
+    }
+
+
+def _real_github_pull_requests(
+    repository: dict[str, Any],
+    *,
+    state: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    base_url = _github_base_url(repository)
+    if not base_url:
+        raise api_error(
+            400,
+            "GITHUB_CONFIG_INVALID",
+            "GitHub repository remote_url or GITHUB_BASE_URL is required",
+        )
+    token = _github_access_token(repository)
+    if not token:
+        raise api_error(
+            400,
+            "GITHUB_CREDENTIAL_UNAVAILABLE",
+            "GitHub readonly credential is not available",
+        )
+    owner_repo = _github_repository_path(repository)
+    encoded_owner_repo = quote(owner_repo, safe="/")
+    pull_requests = _github_request_json(
+        base_url,
+        token,
+        f"/repos/{encoded_owner_repo}/pulls?state={state}&per_page={limit}",
+    )
+    if not isinstance(pull_requests, list):
+        raise api_error(503, "DEVOPS_SOURCE_UNAVAILABLE", "GitHub API source unavailable")
+    return [
+        _github_pull_request_summary(
+            repository,
+            owner_repo=owner_repo,
+            pull_request=item,
+        )
+        for item in pull_requests
+        if isinstance(item, dict)
+    ]
+
+
+def _github_pull_requests(
+    repository: dict[str, Any],
+    *,
+    state: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    return _real_github_pull_requests(repository, state=state, limit=limit)
+
+
 def _real_github_preview(repository: dict[str, Any], pr_number: int) -> dict[str, Any]:
     base_url = _github_base_url(repository)
     if not base_url:
@@ -4738,6 +4842,33 @@ def snapshot_gitlab_mr(
         diff_storage_prefix="gitlab-mr-diff",
     )
     return envelope(snapshot, get_trace_id(request))
+
+
+@app.get("/api/devops/github/pull-requests/{repository_id}")
+def list_github_pull_requests(
+    repository_id: str,
+    request: Request,
+    state: str = "open",
+    limit: int = Query(default=20, ge=1, le=100),
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"reviewer", "rd_owner"})
+    _ensure_enum(state, {"open", "closed", "all"}, "GitHub pull request state")
+    current_store = store(request)
+    repository = current_store.product_git_repositories.get(repository_id)
+    if repository is None:
+        raise api_error(404, "NOT_FOUND", "GitHub repository binding not found")
+    if repository["git_provider"] != "github":
+        raise api_error(400, "VALIDATION_ERROR", "Repository is not a GitHub binding")
+    items = _github_pull_requests(repository, state=state, limit=limit)
+    current_store.audit(
+        event_type="github_pr.listed",
+        actor_id=user["id"],
+        subject_type="product_git_repository",
+        subject_id=repository_id,
+        payload={"limit": limit, "state": state},
+    )
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
 
 @app.get("/api/devops/github/pull-requests/{repository_id}/{pr_number}/preview")
@@ -5506,8 +5637,21 @@ def start_ai_task(
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
     _require_review_decision_role(user, task)
-    if task["status"] != "draft":
+    is_retry_start = (
+        task["status"] == "failed"
+        and task.get("current_step") in RETRYABLE_TASK_FAILURE_STEPS
+    )
+    if task["status"] != "draft" and not is_retry_start:
         raise api_error(409, "TASK_STATE_INVALID", "Task cannot be started from current status")
+    if is_retry_start:
+        current_store.audit(
+            event_type="ai_task.retry_started",
+            actor_id=user["id"],
+            ai_task_id=task_id,
+            subject_type="ai_task",
+            subject_id=task_id,
+            payload={"previous_step": task.get("current_step")},
+        )
 
     if task["task_type"] == "code_review":
         try:

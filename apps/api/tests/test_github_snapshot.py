@@ -55,6 +55,63 @@ def test_github_repository_preview_reads_real_github_api(monkeypatch):
     ]
 
 
+def test_github_pull_request_list_reads_real_github_api(monkeypatch):
+    calls = install_real_github_api_stub(monkeypatch)
+    headers = auth_headers()
+    app = client.app
+    app.state.store.reset()
+    product = client.post(
+        "/api/products",
+        json={"code": "real-github-pr-list-product", "name": "真实 GitHub PR 列表产品"},
+        headers=headers,
+    ).json()["data"]
+    repository = client.post(
+        f"/api/products/{product['id']}/git-repositories",
+        json={
+            "name": "AI Brain GitHub",
+            "remote_url": "git@github.com:zeek428/e-ai-brain.git",
+            "git_provider": "github",
+            "project_path": "zeek428/e-ai-brain",
+            "credential_ref": "ghp_direct_local_token",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    response = client.get(
+        f"/api/devops/github/pull-requests/{repository['id']}?state=all&limit=2",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["total"] == 1
+    assert body["items"] == [
+        {
+            "author": {"name": "zeek428", "username": "zeek428"},
+            "base_sha": "github-base-sha",
+            "created_at": "2026-06-02T08:00:00Z",
+            "head_sha": "github-head-sha",
+            "number": 3,
+            "project_path": "zeek428/e-ai-brain",
+            "repository_id": repository["id"],
+            "source_branch": "feature/github-pr",
+            "state": "open",
+            "target_branch": "main",
+            "title": "真实 GitHub PR",
+            "updated_at": "2026-06-02T09:00:00Z",
+            "web_url": "https://github.com/zeek428/e-ai-brain/pull/3",
+            "writeback_allowed": False,
+        }
+    ]
+    assert calls == [
+        {
+            "base_url": "https://api.github.com",
+            "path": "/repos/zeek428/e-ai-brain/pulls?state=all&per_page=2",
+            "token": "ghp_direct_local_token",
+        }
+    ]
+
+
 def test_github_pull_request_snapshot_can_create_code_review_task(monkeypatch):
     install_real_github_api_stub(monkeypatch)
     headers = auth_headers()

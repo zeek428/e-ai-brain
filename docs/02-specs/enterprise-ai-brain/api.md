@@ -79,6 +79,7 @@
 | v1.1.55 | 2026-06-02 | 所有 PostgreSQL 结构表统一补齐 `created_at` 与 `updated_at` 标准时间字段，并通过 `018_standard_timestamps.sql` 升级既有环境 | Codex |
 | v1.1.56 | 2026-06-02 | 产品 Git 资源支持 `github` provider，新增 GitHub PR 预览、PR diff 快照和本地直填凭据解析契约 | Codex |
 | v1.1.57 | 2026-06-02 | 新增 AI 助手聊天接口，基于当前 AI Brain 系统上下文和模型网关回答产品、任务、进展和配置问题 | Codex |
+| v1.1.58 | 2026-06-03 | 全链路真实用例复跑后补齐产品详情、GitHub PR 列表、持久化模型网关健康检查和模型失败任务重试契约 | Codex |
 
 ---
 
@@ -227,6 +228,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Brain App | GET | `/api/brain-apps` | 业务大脑列表。 |
 | Brain App | GET | `/api/brain-apps/{brain_app_id}` | 业务大脑详情。 |
 | Product | GET | `/api/products` | 产品列表。 |
+| Product | GET | `/api/products/{product_id}` | 产品详情。 |
 | Product | POST | `/api/products` | 创建产品。 |
 | Product | PATCH | `/api/products/{product_id}` | 更新产品。 |
 | Product | DELETE | `/api/products/{product_id}` | 删除未被需求、AI 任务或 Bug 占用的产品；无业务依赖时级联清理该产品的版本、模块和 Git 资源配置。 |
@@ -264,7 +266,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Requirement | POST | `/api/requirements/{requirement_id}/generate-task` | 审批后生成 AI 任务。 |
 | AI Task | GET | `/api/ai-tasks` | 任务列表，支持按状态和任务类型筛选。 |
 | AI Task | POST | `/api/ai-tasks` | 低层任务创建接口。 |
-| AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动或重新启动任务。 |
+| AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；停在 `model_gateway_failed` 或 `code_review_executor_failed` 的失败任务可用同一 task_id 重试。 |
 | AI Task | GET | `/api/ai-tasks/{task_id}` | 任务详情。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/more-info` | 提交补充信息。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/cancel` | 取消任务。 |
@@ -298,6 +300,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Attribution | POST | `/api/attribution/pending-items/{item_id}/resolve` | 将待归属项归属到已有上下文或忽略为噪声。 |
 | GitLab Review | GET | `/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview` | 预览内部 GitLab MR 元信息。 |
 | GitLab Review | POST | `/api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/snapshot` | 拉取 MR 元信息和 diff，生成 code_review 输入快照。 |
+| GitHub Review | GET | `/api/devops/github/pull-requests/{repository_id}` | 列出产品 GitHub 仓库可访问 PR，支持 `state` 和 `limit`。 |
 | GitHub Review | GET | `/api/devops/github/pull-requests/{repository_id}/{pr_number}/preview` | 预览 GitHub PR 元信息。 |
 | GitHub Review | POST | `/api/devops/github/pull-requests/{repository_id}/{pr_number}/snapshot` | 拉取 PR 元信息和 diff 摘要，生成 code_review 输入快照。 |
 | Code Review | GET | `/api/ai-tasks/{task_id}/code-review-report` | 查询 GitLab MR / GitHub PR 代码 Review 报告、执行器信息和确认状态。 |
@@ -343,7 +346,7 @@ GET /health
 }
 ```
 
-`status` 在 PostgreSQL 或 Redis 异常时为 `degraded`。
+`status` 在 PostgreSQL 或 Redis 异常时为 `degraded`。`model_gateway` 优先根据持久化 active/default 模型网关配置判断，配置缺失时回退到 `MODEL_GATEWAY_BASE_URL` / `MODEL_GATEWAY_API_KEY` 环境变量。
 
 字段枚举：
 
@@ -951,7 +954,7 @@ GET /api/ai-tasks?status=waiting_review&task_type=code_review&product_id=product
 POST /api/ai-tasks/{task_id}/start
 ```
 
-当前实现会同步运行到下一个人工确认点或失败状态。非 code_review 任务若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；若没有结构化默认配置但设置了 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY`，则使用环境模型网关。缺少可用模型网关或 active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`。code_review 任务通过 `code_review_executor` 执行：默认 `claude_code_skill/code-review` 命令适配器由 `CODE_REVIEW_EXECUTOR_COMMAND` 配置，输入 JSON 通过 stdin 提供，输出必须是包含 `summary`、`risk_level` 和 `findings` 的 JSON 对象，系统会补齐并持久化 executor 元数据；显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 时才复用模型网关适配器。执行器配置缺失、调用失败、超时、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。这些失败都会把任务置为 `failed`；使用模型网关适配器时保留模型调用元数据日志；任务启动不得生成本地 fallback 输出。
+当前实现会同步运行到下一个人工确认点或失败状态。`draft` 任务可启动；已失败且 `current_step` 为 `model_gateway_failed` 或 `code_review_executor_failed` 的任务可用同一 `task_id` 再次调用 start 重试，并记录 `ai_task.retry_started` 审计事件。非 code_review 任务若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；若没有结构化默认配置但设置了 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY`，则使用环境模型网关。缺少可用模型网关或 active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`。code_review 任务通过 `code_review_executor` 执行：默认 `claude_code_skill/code-review` 命令适配器由 `CODE_REVIEW_EXECUTOR_COMMAND` 配置，输入 JSON 通过 stdin 提供，输出必须是包含 `summary`、`risk_level` 和 `findings` 的 JSON 对象，系统会补齐并持久化 executor 元数据；显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 时才复用模型网关适配器。执行器配置缺失、调用失败、超时、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。这些失败都会把任务置为 `failed`；使用模型网关适配器时保留模型调用元数据日志；任务启动不得生成本地 fallback 输出。
 典型响应：
 启动权限按任务类型收敛：`product_detail_design` 和 `technical_solution` 仅允许 `product_owner`/`rd_owner`，`code_review` 仅允许 `reviewer`/`rd_owner`；`admin` 可执行全部本地管理操作。
 
