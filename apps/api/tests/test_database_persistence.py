@@ -28,6 +28,7 @@ class FakeSnapshotRepository:
         self.user_usage_metrics_payload: dict | None = None
         self.user_feedback_payload: dict | None = None
         self.iteration_planning_payload: dict | None = None
+        self.collector_runs_payload: dict | None = None
 
     def load(self) -> dict | None:
         return self.payload
@@ -130,6 +131,12 @@ class FakeSnapshotRepository:
 
     def save_iteration_planning(self, payload: dict) -> None:
         self.iteration_planning_payload = payload
+
+    def load_collector_runs(self) -> dict | None:
+        return self.collector_runs_payload
+
+    def save_collector_runs(self, payload: dict) -> None:
+        self.collector_runs_payload = payload
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
@@ -2680,3 +2687,52 @@ def test_iteration_planning_is_persisted_through_fine_grained_repository_payload
     assert rebuilt_store.iteration_plan_suggestions["suggestion_011"]["status"] == "rejected"
     assert rebuilt_store.new_id("suggestion") == "suggestion_012"
     assert rebuilt_store.new_id("iteration_decision") == "iteration_decision_011"
+
+
+def test_collector_runs_are_persisted_through_fine_grained_repository_payload():
+    repository = FakeSnapshotRepository()
+    store = PersistentMemoryStore(repository)
+    store.products = {
+        "product_001": {
+            "code": "collector-product",
+            "id": "product_001",
+            "name": "采集运行产品",
+            "status": "active",
+        }
+    }
+    store.collector_runs = {
+        "collector_run_010": {
+            "collector_type": "gitlab_daily_code_metric",
+            "created_at": "2026-06-01T08:00:00+00:00",
+            "created_by": "user_admin",
+            "error_message": None,
+            "finished_at": "2026-06-01T08:05:00+00:00",
+            "id": "collector_run_010",
+            "payload_summary": {"repository_path": "rd/api"},
+            "product_id": "product_001",
+            "records_imported": 3,
+            "source_system": "gitlab",
+            "started_at": "2026-06-01T08:00:00+00:00",
+            "status": "succeeded",
+            "updated_at": "2026-06-01T08:05:00+00:00",
+        }
+    }
+
+    store.persist()
+
+    assert repository.collector_runs_payload == {"collector_runs": store.collector_runs}
+
+    restored_repository = FakeSnapshotRepository()
+    restored_repository.product_config_payload = {
+        "product_git_repositories": {},
+        "product_modules": {},
+        "product_versions": {},
+        "products": store.products,
+        "related_systems": {},
+    }
+    restored_repository.collector_runs_payload = {"collector_runs": store.collector_runs}
+
+    rebuilt_store = PersistentMemoryStore.from_repository(restored_repository)
+
+    assert rebuilt_store.collector_runs["collector_run_010"]["records_imported"] == 3
+    assert rebuilt_store.new_id("collector_run") == "collector_run_011"

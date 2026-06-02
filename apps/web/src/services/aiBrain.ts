@@ -238,6 +238,40 @@ export type OnlineLogMetricCreatePayload = {
   window_start: string;
 };
 
+export type CollectorRunRecord = {
+  collectorType: string;
+  createdBy?: string;
+  errorMessage?: string;
+  finishedAt?: string;
+  id: string;
+  payloadSummary: Record<string, unknown>;
+  productId?: string;
+  recordsImported: number;
+  sourceSystem: string;
+  startedAt: string;
+  status: string;
+  updatedAt: string;
+};
+
+export type CollectorRunCreatePayload = {
+  collector_type: string;
+  error_message?: string;
+  payload_summary?: Record<string, unknown>;
+  product_id?: string;
+  records_imported?: number;
+  source_system: string;
+  started_at?: string;
+  status?: string;
+};
+
+export type CollectorRunPatchPayload = {
+  error_message?: string;
+  finished_at?: string;
+  payload_summary?: Record<string, unknown>;
+  records_imported?: number;
+  status?: string;
+};
+
 export type IterationSuggestionCreatePayload = {
   constraints?: Record<string, unknown>;
   module_codes?: string[];
@@ -2533,6 +2567,55 @@ export async function createOnlineLogMetric(
     method: 'POST',
     token,
   });
+}
+
+function mapCollectorRun(item: FlexibleListItem): CollectorRunRecord {
+  const payloadSummary = normalizeObjectRecord(item.payload_summary) ?? {};
+  return {
+    collectorType: formatUnknownValue(item.collector_type),
+    createdBy: formatUnknownValue(item.created_by),
+    errorMessage: formatUnknownValue(item.error_message),
+    finishedAt: formatListDate(formatUnknownValue(item.finished_at)),
+    id: formatUnknownValue(item.id),
+    payloadSummary,
+    productId: formatUnknownValue(item.product_id),
+    recordsImported: Number(item.records_imported ?? 0),
+    sourceSystem: formatUnknownValue(item.source_system),
+    startedAt: formatListDate(formatUnknownValue(item.started_at)),
+    status: formatUnknownValue(item.status),
+    updatedAt: formatListDate(formatUnknownValue(item.updated_at ?? item.created_at)),
+  };
+}
+
+export async function fetchCollectorRuns(): Promise<CollectorRunRecord[]> {
+  const token = requireAccessToken();
+  const runs = await apiRequest<ListResponse<FlexibleListItem>>('/api/collectors/runs', { token });
+  return runs.items.map(mapCollectorRun);
+}
+
+export async function createCollectorRun(
+  payload: CollectorRunCreatePayload,
+): Promise<CollectorRunRecord> {
+  const token = requireAccessToken();
+  const run = await apiRequest<FlexibleListItem>('/api/collectors/runs', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+  return mapCollectorRun(run);
+}
+
+export async function updateCollectorRun(
+  runId: string,
+  payload: CollectorRunPatchPayload,
+): Promise<CollectorRunRecord> {
+  const token = requireAccessToken();
+  const run = await apiRequest<FlexibleListItem>(`/api/collectors/runs/${runId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+  return mapCollectorRun(run);
 }
 
 function mapUserInsights(category: string, items: FlexibleListItem[]): UserInsightRecord[] {

@@ -1,6 +1,6 @@
-import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Select } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { ProTable, type ProColumns } from '@ant-design/pro-components';
+import { Alert, Button, Form, Input, Modal, Select, Space } from 'antd';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ProductContextOption } from '../../data/management';
@@ -9,9 +9,14 @@ import {
   createGitLabDailyCodeMetric,
   createJenkinsRelease,
   createOnlineLogMetric,
+  createCollectorRun,
+  fetchCollectorRuns,
   fetchDevopsMetrics,
   fetchProductContextOptions,
   fetchProductGitRepositories,
+  updateCollectorRun,
+  type CollectorRunCreatePayload,
+  type CollectorRunRecord,
   type GitLabDailyCodeMetricCreatePayload,
   type JenkinsReleaseCreatePayload,
   type OnlineLogMetricCreatePayload,
@@ -64,14 +69,44 @@ type OnlineLogMetricFormValues = {
   windowStart: string;
 };
 
+type CollectorRunFormValues = {
+  collectorType: string;
+  errorMessage?: string;
+  payloadSummary?: string;
+  productId?: string;
+  recordsImported?: string;
+  sourceSystem: string;
+  startedAt?: string;
+  status?: string;
+};
+
+type CollectorRunFailureFormValues = {
+  errorMessage: string;
+};
+
 const gitlabMetricStatus = 'collected';
 const jenkinsReleaseStatus = 'success';
 const onlineLogMetricStatus = 'collected';
+const collectorRunStatus = 'running';
 const jenkinsStatusOptions = [
   { label: 'success', value: 'success' },
   { label: 'failed', value: 'failed' },
   { label: 'running', value: 'running' },
   { label: 'canceled', value: 'canceled' },
+];
+const collectorTypeOptions = [
+  { label: 'GitLab 日代码指标', value: 'gitlab_daily_code_metric' },
+  { label: 'Jenkins 发布', value: 'jenkins_release' },
+  { label: '线上日志指标', value: 'online_log_metric' },
+  { label: '用户使用指标', value: 'user_usage_metric' },
+  { label: '用户反馈', value: 'user_feedback' },
+  { label: '迭代建议', value: 'iteration_plan_suggestion' },
+];
+const collectorRunStatusOptions = [
+  { label: 'running', value: 'running' },
+  { label: 'succeeded', value: 'succeeded' },
+  { label: 'failed', value: 'failed' },
+  { label: 'cancelled', value: 'cancelled' },
 ];
 
 function parseTopErrors(value?: string): Record<string, unknown>[] {
@@ -81,6 +116,18 @@ function parseTopErrors(value?: string): Record<string, unknown>[] {
   }
   const parsed = JSON.parse(trimmed) as unknown;
   return Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : [];
+}
+
+function parseJsonObject(value?: string): Record<string, unknown> {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return {};
+  }
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('请输入对象 JSON');
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function topErrorsJsonRule() {
@@ -100,6 +147,22 @@ function topErrorsJsonRule() {
           throw error;
         }
         throw new Error('Top Errors JSON 请输入合法 JSON');
+      }
+    },
+  };
+}
+
+function payloadSummaryJsonRule() {
+  return {
+    validator: async (_: unknown, value?: string) => {
+      const trimmed = value?.trim();
+      if (!trimmed) {
+        return;
+      }
+      try {
+        parseJsonObject(trimmed);
+      } catch {
+        throw new Error('Payload 摘要 JSON 请输入对象 JSON');
       }
     },
   };
@@ -224,6 +287,36 @@ function buildOnlineLogMetricPayload(values: OnlineLogMetricFormValues): OnlineL
   };
 }
 
+function buildCollectorRunPayload(values: CollectorRunFormValues): CollectorRunCreatePayload {
+  return {
+    collector_type: values.collectorType,
+    error_message: optionalText(values.errorMessage),
+    payload_summary: parseJsonObject(values.payloadSummary),
+    product_id: optionalText(values.productId),
+    records_imported: numberOrZero(values.recordsImported),
+    source_system: values.sourceSystem.trim(),
+    started_at: optionalText(values.startedAt),
+    status: values.status ?? collectorRunStatus,
+  };
+}
+
+function collectorTypeLabel(value: string) {
+  return collectorTypeOptions.find((option) => option.value === value)?.label ?? value;
+}
+
+function collectorRunStatusColor(status: string) {
+  if (status === 'succeeded') {
+    return 'green';
+  }
+  if (status === 'failed') {
+    return 'red';
+  }
+  if (status === 'cancelled') {
+    return 'default';
+  }
+  return 'blue';
+}
+
 const columns: ProColumns<OperationalMetricRecord>[] = [
   {
     dataIndex: 'category',
@@ -252,9 +345,13 @@ export default function DevopsPage() {
   const [metricForm] = Form.useForm<GitLabMetricFormValues>();
   const [jenkinsForm] = Form.useForm<JenkinsReleaseFormValues>();
   const [onlineLogForm] = Form.useForm<OnlineLogMetricFormValues>();
+  const [collectorRunForm] = Form.useForm<CollectorRunFormValues>();
+  const [collectorRunFailureForm] = Form.useForm<CollectorRunFailureFormValues>();
   const [metricOpen, setMetricOpen] = useState(false);
   const [jenkinsOpen, setJenkinsOpen] = useState(false);
   const [onlineLogOpen, setOnlineLogOpen] = useState(false);
+  const [collectorRunOpen, setCollectorRunOpen] = useState(false);
+  const [collectorRunFailureTarget, setCollectorRunFailureTarget] = useState<CollectorRunRecord | null>(null);
   const [productContexts, setProductContexts] = useState<ProductContextOption[]>([]);
   const [repositoryState, setRepositoryState] = useState<{
     items: ProductGitRepositoryOption[];
@@ -266,6 +363,12 @@ export default function DevopsPage() {
     rows: dataSource,
     status,
   } = useRemoteRows(fetchDevopsMetrics);
+  const {
+    error: collectorRunError,
+    reload: reloadCollectorRuns,
+    rows: collectorRuns,
+    status: collectorRunRemoteStatus,
+  } = useRemoteRows(fetchCollectorRuns);
   const selectedProductId = Form.useWatch('productId', metricForm);
   const selectedJenkinsProductId = Form.useWatch('productId', jenkinsForm);
   const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
@@ -327,6 +430,17 @@ export default function DevopsPage() {
     }
     onlineLogForm.setFieldValue('productId', productOptions[0]?.value);
   }, [onlineLogForm, onlineLogOpen, productOptions]);
+
+  useEffect(() => {
+    if (
+      !collectorRunOpen ||
+      productOptions.length !== 1 ||
+      collectorRunForm.getFieldValue('productId')
+    ) {
+      return;
+    }
+    collectorRunForm.setFieldValue('productId', productOptions[0]?.value);
+  }, [collectorRunForm, collectorRunOpen, productOptions]);
 
   useEffect(() => {
     if (!jenkinsOpen || jenkinsVersionOptions.length !== 1 || jenkinsForm.getFieldValue('versionId')) {
@@ -395,6 +509,124 @@ export default function DevopsPage() {
     await reload();
   };
 
+  const submitCollectorRun = async () => {
+    if (!collectorRunForm.getFieldValue('productId') && productOptions.length === 1) {
+      collectorRunForm.setFieldValue('productId', productOptions[0]?.value);
+    }
+    const values = await collectorRunForm.validateFields();
+    await createCollectorRun(buildCollectorRunPayload(values));
+    setCollectorRunOpen(false);
+    collectorRunForm.resetFields();
+    await reloadCollectorRuns();
+  };
+
+  const updateCollectorRunStatus = useCallback(async (run: CollectorRunRecord, nextStatus: string) => {
+    await updateCollectorRun(run.id, { status: nextStatus });
+    await reloadCollectorRuns();
+  }, [reloadCollectorRuns]);
+
+  const submitCollectorRunFailure = async () => {
+    if (collectorRunFailureTarget === null) {
+      return;
+    }
+    const values = await collectorRunFailureForm.validateFields();
+    await updateCollectorRun(collectorRunFailureTarget.id, {
+      error_message: values.errorMessage.trim(),
+      status: 'failed',
+    });
+    collectorRunFailureForm.resetFields();
+    setCollectorRunFailureTarget(null);
+    await reloadCollectorRuns();
+  };
+
+  const collectorRunColumns = useMemo<ProColumns<CollectorRunRecord>[]>(
+    () => [
+      {
+        dataIndex: 'id',
+        search: false,
+        title: '运行 ID',
+      },
+      {
+        dataIndex: 'collectorType',
+        search: false,
+        title: '采集类型',
+        render: (_, row) => collectorTypeLabel(row.collectorType),
+      },
+      {
+        dataIndex: 'sourceSystem',
+        search: false,
+        title: '来源系统',
+      },
+      {
+        dataIndex: 'productId',
+        search: false,
+        title: '产品 ID',
+      },
+      {
+        dataIndex: 'status',
+        search: false,
+        title: '状态',
+        render: (_, row) => (
+          <StatusTag color={collectorRunStatusColor(row.status)} label={row.status} />
+        ),
+      },
+      {
+        dataIndex: 'recordsImported',
+        search: false,
+        title: '导入记录数',
+      },
+      {
+        dataIndex: 'startedAt',
+        search: false,
+        title: '开始时间',
+      },
+      {
+        dataIndex: 'finishedAt',
+        search: false,
+        title: '结束时间',
+      },
+      {
+        dataIndex: 'errorMessage',
+        search: false,
+        title: '错误说明',
+      },
+      {
+        key: 'actions',
+        search: false,
+        title: '操作',
+        render: (_, row) =>
+          row.status === 'running' ? (
+            <Space>
+              <Button
+                aria-label={`标记成功 ${row.id}`}
+                onClick={() => void updateCollectorRunStatus(row, 'succeeded')}
+                size="small"
+              >
+                标记成功
+              </Button>
+              <Button
+                aria-label={`标记失败 ${row.id}`}
+                onClick={() => setCollectorRunFailureTarget(row)}
+                size="small"
+              >
+                标记失败
+              </Button>
+              <Button
+                aria-label={`取消运行 ${row.id}`}
+                onClick={() => void updateCollectorRunStatus(row, 'cancelled')}
+                size="small"
+              >
+                取消运行
+              </Button>
+            </Space>
+          ) : (
+            '-'
+          ),
+      },
+    ],
+    [updateCollectorRunStatus],
+  );
+
   return (
     <>
       <ManagementListPage<OperationalMetricRecord>
@@ -433,6 +665,106 @@ export default function DevopsPage() {
           </Button>,
         ]}
       />
+      <div style={{ margin: '16px 24px 24px' }}>
+        {collectorRunError ? (
+          <Alert
+            className="management-list-alert"
+            showIcon
+            title={formatRemoteRowsError(collectorRunError)}
+            type="warning"
+          />
+        ) : null}
+        <ProTable<CollectorRunRecord>
+          cardBordered
+          columns={collectorRunColumns}
+          dataSource={collectorRuns}
+          dateFormatter="string"
+          headerTitle="采集运行记录"
+          loading={collectorRunRemoteStatus === 'loading'}
+          options={{
+            density: true,
+            reload: () => void reloadCollectorRuns(),
+            setting: true,
+          }}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条`,
+          }}
+          rowKey="id"
+          search={false}
+          toolBarRender={() => [
+            <Button
+              aria-label="登记采集运行"
+              key="collector-run"
+              onClick={() => setCollectorRunOpen(true)}
+              type="primary"
+            >
+              登记采集运行
+            </Button>,
+          ]}
+        />
+      </div>
+      <Modal
+        destroyOnHidden
+        okText="保存"
+        okButtonProps={{ 'aria-label': '保存' }}
+        onCancel={() => setCollectorRunOpen(false)}
+        onOk={() => void submitCollectorRun()}
+        open={collectorRunOpen}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        title="登记采集运行"
+      >
+        <Form<CollectorRunFormValues> form={collectorRunForm} layout="vertical">
+          <Form.Item
+            initialValue="gitlab_daily_code_metric"
+            label="采集类型"
+            name="collectorType"
+            rules={[{ required: true, message: '请选择采集类型' }]}
+          >
+            <Select options={collectorTypeOptions} />
+          </Form.Item>
+          <Form.Item label="所属产品" name="productId">
+            <Select allowClear options={productOptions} />
+          </Form.Item>
+          <Form.Item label="来源系统" name="sourceSystem" rules={[{ required: true, message: '请输入来源系统' }]}>
+            <Input placeholder="gitlab" />
+          </Form.Item>
+          <Form.Item label="采集状态" name="status" initialValue={collectorRunStatus}>
+            <Select options={collectorRunStatusOptions} />
+          </Form.Item>
+          <Form.Item label="开始时间" name="startedAt">
+            <Input placeholder="2026-06-01T08:00:00Z" />
+          </Form.Item>
+          <Form.Item label="导入记录数" name="recordsImported" rules={[optionalNonNegativeIntegerRule('导入记录数')]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="错误说明" name="errorMessage">
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item label="Payload 摘要 JSON" name="payloadSummary" rules={[payloadSummaryJsonRule()]}>
+            <Input.TextArea rows={3} placeholder='{"repository_path":"rd/platform-api"}' />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        okText="保存"
+        okButtonProps={{ 'aria-label': '保存' }}
+        onCancel={() => {
+          collectorRunFailureForm.resetFields();
+          setCollectorRunFailureTarget(null);
+        }}
+        onOk={() => void submitCollectorRunFailure()}
+        open={collectorRunFailureTarget !== null}
+        title="标记采集失败"
+      >
+        <Form<CollectorRunFailureFormValues> form={collectorRunFailureForm} layout="vertical">
+          <Form.Item label="错误说明" name="errorMessage" rules={[{ required: true, message: '请输入错误说明' }]}>
+            <Input.TextArea rows={3} />
+          </Form.Item>
+        </Form>
+      </Modal>
       <Modal
         destroyOnHidden
         okText="保存"

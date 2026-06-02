@@ -55,6 +55,9 @@ ITERATION_PLANNING_FIELDS = [
     "iteration_plan_suggestions",
     "iteration_plan_decisions",
 ]
+COLLECTOR_RUN_FIELDS = [
+    "collector_runs",
+]
 MODEL_GATEWAY_FIELDS = [
     "model_gateway_configs",
     "model_gateway_logs",
@@ -88,6 +91,7 @@ COLLECTION_FIELDS = [
     "user_feedback",
     "iteration_plan_suggestions",
     "iteration_plan_decisions",
+    "collector_runs",
     "requirements",
     "ai_tasks",
     "graph_runs",
@@ -182,6 +186,12 @@ class IterationPlanningRepository(Protocol):
     def save_iteration_planning(self, payload: dict[str, Any]) -> None: ...
 
 
+class CollectorRunRepository(Protocol):
+    def load_collector_runs(self) -> dict[str, Any] | None: ...
+
+    def save_collector_runs(self, payload: dict[str, Any]) -> None: ...
+
+
 class ModelGatewayRepository(Protocol):
     def load_model_gateway(self) -> dict[str, Any] | None: ...
 
@@ -272,6 +282,10 @@ def _user_feedback_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _iteration_planning_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: deepcopy(payload.get(field, {})) for field in ITERATION_PLANNING_FIELDS}
+
+
+def _collector_run_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(payload.get(field, {})) for field in COLLECTOR_RUN_FIELDS}
 
 
 def _model_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -469,6 +483,13 @@ def _repository_load_iteration_planning(
     return load_iteration_planning()
 
 
+def _repository_load_collector_runs(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_collector_runs = getattr(repository, "load_collector_runs", None)
+    if load_collector_runs is None:
+        return None
+    return load_collector_runs()
+
+
 def _repository_load_model_gateway(repository: SnapshotRepository) -> dict[str, Any] | None:
     load_model_gateway = getattr(repository, "load_model_gateway", None)
     if load_model_gateway is None:
@@ -600,6 +621,17 @@ def _repository_save_iteration_planning(
         save_iteration_planning(_iteration_planning_payload(clean_payload))
 
 
+def _repository_save_collector_runs(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_collector_runs = getattr(repository, "save_collector_runs", None)
+    if save_collector_runs is not None:
+        clean_payload = deepcopy(payload)
+        _drop_collector_runs_without_context(clean_payload)
+        save_collector_runs(_collector_run_payload(clean_payload))
+
+
 def _repository_save_model_gateway(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -681,6 +713,10 @@ def _has_user_feedback_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_iteration_planning_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in ITERATION_PLANNING_FIELDS)
+
+
+def _has_collector_run_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in COLLECTOR_RUN_FIELDS)
 
 
 def _has_model_gateway_items(payload: dict[str, Any] | None) -> bool:
@@ -862,6 +898,15 @@ def _sync_iteration_planning_counters(payload: dict[str, Any]) -> None:
             payload.get("iteration_plan_decisions", {}),
             "iteration_decision",
         ),
+    )
+    payload["counters"] = counters
+
+
+def _sync_collector_run_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["collector_run"] = max(
+        counters.get("collector_run", 0),
+        _max_numeric_suffix(payload.get("collector_runs", {}), "collector_run"),
     )
     payload["counters"] = counters
 
@@ -1169,6 +1214,18 @@ def _drop_iteration_planning_without_context(payload: dict[str, Any]) -> None:
     payload["iteration_plan_decisions"] = cleaned_decisions
 
 
+def _drop_collector_runs_without_context(payload: dict[str, Any]) -> None:
+    products = payload.get("products", {})
+    runs = payload.get("collector_runs", {})
+    cleaned_runs = {}
+    for run_id, run in runs.items():
+        product_id = run.get("product_id")
+        if product_id and products and product_id not in products:
+            continue
+        cleaned_runs[run_id] = deepcopy(run)
+    payload["collector_runs"] = cleaned_runs
+
+
 def _drop_gitlab_review_without_context(payload: dict[str, Any]) -> None:
     products = payload.get("products", {})
     repositories = payload.get("product_git_repositories", {})
@@ -1359,6 +1416,14 @@ class PersistentMemoryStore(MemoryStore):
                 ITERATION_PLANNING_FIELDS,
             )
             _sync_iteration_planning_counters(payload)
+        collector_run_payload = _repository_load_collector_runs(repository)
+        if _has_collector_run_items(collector_run_payload):
+            _replace_collection_payload(
+                payload,
+                _collector_run_payload(collector_run_payload),
+                COLLECTOR_RUN_FIELDS,
+            )
+            _sync_collector_run_counters(payload)
         model_gateway_payload = _repository_load_model_gateway(repository)
         if _has_model_gateway_items(model_gateway_payload):
             _replace_collection_payload(
@@ -1398,6 +1463,7 @@ class PersistentMemoryStore(MemoryStore):
             _drop_user_usage_metrics_without_context(payload)
             _drop_user_feedback_without_context(payload)
             _drop_iteration_planning_without_context(payload)
+            _drop_collector_runs_without_context(payload)
         _drop_gitlab_review_without_context(payload)
         _drop_mock_writebacks_without_tasks(payload)
         _ensure_ai_task_defaults(payload)
@@ -1432,6 +1498,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_user_usage_metrics(self.repository, payload)
         _repository_save_user_feedback(self.repository, payload)
         _repository_save_iteration_planning(self.repository, payload)
+        _repository_save_collector_runs(self.repository, payload)
         _repository_save_model_gateway(self.repository, payload)
         _repository_save_gitlab_review(self.repository, payload)
         _repository_save_mock_writebacks(self.repository, payload)
@@ -1582,6 +1649,12 @@ class PostgresSnapshotRepository:
             "iteration_plan_decisions": decisions,
             "iteration_plan_suggestions": suggestions,
         }
+
+    def load_collector_runs(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                runs = self._load_collector_runs(cursor)
+        return {"collector_runs": runs}
 
     def load_model_gateway(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -1737,6 +1810,13 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "iteration_plan_suggestions", suggestions)
                 self._upsert_iteration_plan_suggestions(cursor, suggestions)
                 self._upsert_iteration_plan_decisions(cursor, decisions)
+
+    def save_collector_runs(self, payload: dict[str, Any]) -> None:
+        runs = payload.get("collector_runs", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "collector_runs", runs)
+                self._upsert_collector_runs(cursor, runs)
 
     def save_model_gateway(self, payload: dict[str, Any]) -> None:
         configs = payload.get("model_gateway_configs", {})
@@ -2316,6 +2396,41 @@ class PostgresSnapshotRepository:
                     metric.pop(optional_key)
             metrics[row[0]] = metric
         return metrics
+
+    def _load_collector_runs(self, cursor) -> dict[str, dict[str, Any]]:
+        import json
+
+        cursor.execute(
+            """
+            SELECT id, collector_type, product_id, status, source_system,
+                   started_at, finished_at, records_imported, error_message,
+                   payload_summary, created_by, created_at, updated_at
+            FROM collector_runs
+            ORDER BY started_at, id
+            """
+        )
+        runs = {}
+        for row in cursor.fetchall():
+            payload_summary = row[9] or {}
+            if isinstance(payload_summary, str):
+                payload_summary = json.loads(payload_summary)
+            run = {
+                "collector_type": row[1],
+                "created_at": row[11].isoformat() if row[11] else None,
+                "created_by": row[10],
+                "error_message": row[8],
+                "finished_at": row[6].isoformat() if row[6] else None,
+                "id": row[0],
+                "payload_summary": payload_summary,
+                "product_id": row[2],
+                "records_imported": row[7],
+                "source_system": row[4],
+                "started_at": row[5].isoformat() if row[5] else None,
+                "status": row[3],
+                "updated_at": row[12].isoformat() if row[12] else None,
+            }
+            runs[row[0]] = run
+        return runs
 
     def _load_gitlab_daily_code_metrics(self, cursor) -> dict[str, dict[str, Any]]:
         import json
@@ -3813,6 +3928,60 @@ class PostgresSnapshotRepository:
                     metric.get("status", "collected"),
                     metric.get("source_channel"),
                     metric["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_collector_runs(
+        self,
+        cursor,
+        runs: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for run in runs.values():
+            created_at = run.get("created_at")
+            updated_at = run.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO collector_runs (
+                  id, collector_type, product_id, status, source_system,
+                  started_at, finished_at, records_imported, error_message,
+                  payload_summary, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), %s::timestamptz,
+                  %s, %s, %s::jsonb, %s,
+                  COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  collector_type = EXCLUDED.collector_type,
+                  product_id = EXCLUDED.product_id,
+                  status = EXCLUDED.status,
+                  source_system = EXCLUDED.source_system,
+                  started_at = EXCLUDED.started_at,
+                  finished_at = EXCLUDED.finished_at,
+                  records_imported = EXCLUDED.records_imported,
+                  error_message = EXCLUDED.error_message,
+                  payload_summary = EXCLUDED.payload_summary,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    run["id"],
+                    run["collector_type"],
+                    run.get("product_id"),
+                    run.get("status", "running"),
+                    run["source_system"],
+                    run.get("started_at"),
+                    run.get("finished_at"),
+                    run.get("records_imported", 0),
+                    run.get("error_message"),
+                    json.dumps(run.get("payload_summary", {}), ensure_ascii=False),
+                    run.get("created_by"),
                     created_at,
                     updated_at,
                 ),

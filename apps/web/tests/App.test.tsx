@@ -2129,6 +2129,192 @@ describe('AI Brain Ant Design Pro workbench', () => {
     );
   });
 
+  it('loads real collector runs without placeholder rows from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === '/api/devops/gitlab/daily-code-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/devops/jenkins/releases') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ops/online-log-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/collectors/runs') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    await screen.findByText('采集运行记录');
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(
+        expect.arrayContaining(['/api/collectors/runs']),
+      ),
+    );
+    expect(screen.queryByText('collector_run_demo')).not.toBeInTheDocument();
+    expect(screen.queryByText('示例采集运行')).not.toBeInTheDocument();
+  });
+
+  it('creates real collector runs from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/collectors/runs' && init?.method === 'POST') {
+        return jsonResponse({
+          data: {
+            collector_type: 'gitlab_daily_code_metric',
+            id: 'collector_run_created',
+            payload_summary: { repository_path: 'rd/platform-api' },
+            product_id: 'product_api',
+            records_imported: 3,
+            source_system: 'gitlab',
+            started_at: '2026-06-01T08:00:00Z',
+            status: 'running',
+          },
+        });
+      }
+      if (input === '/api/collectors/runs') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/devops/gitlab/daily-code-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/devops/jenkins/releases') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ops/online-log-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    await screen.findByRole('button', { name: '登记采集运行' });
+    fireEvent.click(screen.getByRole('button', { name: '登记采集运行' }));
+    fireEvent.mouseDown(screen.getByLabelText('采集类型'));
+    fireEvent.click(await screen.findByRole('option', { name: 'GitLab 日代码指标' }));
+    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
+    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
+    fireEvent.change(screen.getByLabelText('来源系统'), { target: { value: 'gitlab' } });
+    fireEvent.change(screen.getByLabelText('开始时间'), { target: { value: '2026-06-01T08:00:00Z' } });
+    fireEvent.change(screen.getByLabelText('导入记录数'), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText('Payload 摘要 JSON'), {
+      target: { value: '{"repository_path":"rd/platform-api"}' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/collectors/runs',
+        'POST',
+        JSON.stringify({
+          collector_type: 'gitlab_daily_code_metric',
+          payload_summary: { repository_path: 'rd/platform-api' },
+          product_id: 'product_api',
+          records_imported: 3,
+          source_system: 'gitlab',
+          started_at: '2026-06-01T08:00:00Z',
+          status: 'running',
+        }),
+      ]),
+    );
+  });
+
+  it('completes running collector runs from the DevOps page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/collectors/runs/collector_run_001' && init?.method === 'PATCH') {
+        return jsonResponse({
+          data: {
+            collector_type: 'user_feedback',
+            id: 'collector_run_001',
+            product_id: 'product_api',
+            records_imported: 2,
+            source_system: 'feedback-api',
+            status: 'succeeded',
+          },
+        });
+      }
+      if (input === '/api/collectors/runs') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                collector_type: 'user_feedback',
+                id: 'collector_run_001',
+                product_id: 'product_api',
+                records_imported: 2,
+                source_system: 'feedback-api',
+                started_at: '2026-06-01T08:00:00Z',
+                status: 'running',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/devops/gitlab/daily-code-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/devops/jenkins/releases') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ops/online-log-metrics') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      return jsonResponse({ data: { items: [], total: 0 } });
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<DevopsPage />);
+
+    await screen.findByText('collector_run_001');
+    fireEvent.click(screen.getByRole('button', { name: /标记成功/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/collectors/runs/collector_run_001',
+        'PATCH',
+        JSON.stringify({ status: 'succeeded' }),
+      ]),
+    );
+  });
+
   it('generates and decides real iteration suggestions from the insights page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

@@ -113,6 +113,16 @@ ITERATION_DECISIONS = {"accepted", "edited_accepted", "rejected"}
 ITERATION_PRIORITIES = {"P0", "P1", "P2", "P3"}
 ITERATION_CONFIDENCE_LEVELS = {"high", "low", "medium"}
 ITERATION_EFFORTS = {"high", "low", "medium"}
+COLLECTOR_TYPES = {
+    "gitlab_daily_code_metric",
+    "iteration_plan_suggestion",
+    "jenkins_release",
+    "online_log_metric",
+    "user_feedback",
+    "user_usage_metric",
+}
+COLLECTOR_RUN_STATUSES = {"cancelled", "failed", "running", "succeeded"}
+COLLECTOR_TERMINAL_STATUSES = {"cancelled", "failed", "succeeded"}
 USER_ROLES = ASSIGNABLE_ROLE_CODES
 USER_STATUSES = {"active", "inactive"}
 PRODUCT_STATUSES = {"active", "inactive"}
@@ -474,6 +484,25 @@ class UserUsageMetricRequest(BaseModel):
     bounce_rate: float | None = None
     error_count: int = 0
     source_channel: str | None = None
+
+
+class CollectorRunRequest(BaseModel):
+    collector_type: str
+    error_message: str | None = None
+    payload_summary: dict[str, Any] = Field(default_factory=dict)
+    product_id: str | None = None
+    records_imported: int = 0
+    source_system: str
+    started_at: str | None = None
+    status: str = "running"
+
+
+class CollectorRunPatchRequest(BaseModel):
+    error_message: str | None = None
+    finished_at: str | None = None
+    payload_summary: dict[str, Any] | None = None
+    records_imported: int | None = None
+    status: str | None = None
 
 
 class IterationSuggestionRequest(BaseModel):
@@ -954,6 +983,97 @@ def _validate_usage_metric_context(
         for module in current_store.product_modules.values()
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
+
+
+def _require_collector_run_write_role(user: dict[str, Any]) -> None:
+    _require_roles(user, {"product_owner", "rd_owner"})
+
+
+def _validate_collector_product_context(
+    current_store: MemoryStore,
+    *,
+    product_id: str | None,
+) -> None:
+    if product_id is None:
+        return
+    product = current_store.products.get(product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
+
+
+def _parse_optional_collector_time(value: str | None, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _parse_usage_window(value, field_name)
+
+
+def _validate_collector_run_request(
+    current_store: MemoryStore,
+    payload: CollectorRunRequest,
+) -> tuple[str, str | None]:
+    _ensure_enum(payload.collector_type, COLLECTOR_TYPES, "collector_type")
+    _ensure_enum(payload.status, COLLECTOR_RUN_STATUSES, "status")
+    source_system = _ensure_non_blank(payload.source_system, "source_system")
+    if payload.records_imported < 0:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "records_imported must be greater than or equal to 0",
+        )
+    _validate_collector_product_context(current_store, product_id=payload.product_id)
+    if payload.status == "failed":
+        _ensure_non_blank(payload.error_message, "error_message")
+    started_at = _parse_optional_collector_time(payload.started_at, "started_at")
+    return source_system, started_at
+
+
+def _collector_run_patch_updates(
+    run: dict[str, Any],
+    payload: CollectorRunPatchRequest,
+) -> dict[str, Any]:
+    requested = _payload_updates(payload)
+    if requested.get("status") is None:
+        requested.pop("status", None)
+    if "payload_summary" in requested and requested["payload_summary"] is None:
+        raise api_error(400, "VALIDATION_ERROR", "payload_summary must be an object")
+    if "records_imported" in requested and requested["records_imported"] is None:
+        raise api_error(400, "VALIDATION_ERROR", "records_imported is required")
+    status = requested.get("status", run["status"])
+    _ensure_enum(status, COLLECTOR_RUN_STATUSES, "status")
+    if run["status"] in COLLECTOR_TERMINAL_STATUSES and status != run["status"]:
+        raise api_error(
+            409,
+            "COLLECTOR_RUN_STATE_INVALID",
+            "Terminal collector run cannot change status",
+        )
+    if requested.get("records_imported") is not None and requested["records_imported"] < 0:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "records_imported must be greater than or equal to 0",
+        )
+
+    finished_at = _parse_optional_collector_time(requested.get("finished_at"), "finished_at")
+    if status == "running" and finished_at is not None:
+        raise api_error(400, "VALIDATION_ERROR", "running collector run cannot have finished_at")
+
+    error_message = requested.get("error_message", run.get("error_message"))
+    if status == "failed":
+        _ensure_non_blank(error_message, "error_message")
+
+    updates = {}
+    for key in ("error_message", "payload_summary", "records_imported", "status"):
+        if key in requested:
+            updates[key] = requested[key]
+    if finished_at is not None:
+        updates["finished_at"] = finished_at
+    elif status in COLLECTOR_TERMINAL_STATUSES and not run.get("finished_at"):
+        updates["finished_at"] = datetime.now(UTC).isoformat()
+    if status == "running":
+        updates["finished_at"] = None
+    return updates
 
 
 def _normalized_tags(tags: list[str]) -> list[str]:
@@ -6525,6 +6645,114 @@ def delete_bug(
         subject_id=bug_id,
     )
     return envelope({"deleted": True, "id": bug_id}, get_trace_id(request))
+
+
+@app.get("/api/collectors/runs")
+def collector_runs(
+    request: Request,
+    collector_type: str | None = None,
+    product_id: str | None = None,
+    status: str | None = None,
+    source_system: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _ensure_enum(collector_type, COLLECTOR_TYPES, "collector_type")
+    _ensure_enum(status, COLLECTOR_RUN_STATUSES, "status")
+    source_system = _ensure_non_blank(source_system, "source_system") if source_system else None
+    current_store = store(request)
+    items = []
+    for run in current_store.collector_runs.values():
+        if collector_type is not None and run.get("collector_type") != collector_type:
+            continue
+        if product_id is not None and run.get("product_id") != product_id:
+            continue
+        if status is not None and run.get("status") != status:
+            continue
+        if source_system is not None and run.get("source_system") != source_system:
+            continue
+        items.append(run)
+    items.sort(
+        key=lambda item: (
+            item.get("started_at") or "",
+            item.get("updated_at") or item.get("created_at") or "",
+            item["id"],
+        ),
+        reverse=True,
+    )
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/collectors/runs")
+def create_collector_run(
+    payload: CollectorRunRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_collector_run_write_role(user)
+    current_store = store(request)
+    source_system, started_at = _validate_collector_run_request(current_store, payload)
+    now = datetime.now(UTC).isoformat()
+    status = payload.status
+    run_id = current_store.new_id("collector_run")
+    run = {
+        "collector_type": payload.collector_type,
+        "created_at": now,
+        "created_by": user["id"],
+        "error_message": payload.error_message,
+        "finished_at": now if status in COLLECTOR_TERMINAL_STATUSES else None,
+        "id": run_id,
+        "payload_summary": payload.payload_summary,
+        "product_id": payload.product_id,
+        "records_imported": payload.records_imported,
+        "source_system": source_system,
+        "started_at": started_at or now,
+        "status": status,
+        "updated_at": now,
+    }
+    current_store.collector_runs[run_id] = run
+    current_store.audit(
+        event_type="collector_run.created",
+        actor_id=user["id"],
+        subject_type="collector_run",
+        subject_id=run_id,
+        payload={
+            "collector_type": run["collector_type"],
+            "product_id": run["product_id"],
+            "source_system": run["source_system"],
+            "status": run["status"],
+        },
+    )
+    return envelope(run, get_trace_id(request))
+
+
+@app.patch("/api/collectors/runs/{run_id}")
+def patch_collector_run(
+    run_id: str,
+    payload: CollectorRunPatchRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_collector_run_write_role(user)
+    current_store = store(request)
+    run = current_store.collector_runs.get(run_id)
+    if run is None:
+        raise api_error(404, "NOT_FOUND", "Collector run not found")
+    updates = _collector_run_patch_updates(run, payload)
+    if updates:
+        run.update(updates)
+        run["updated_at"] = datetime.now(UTC).isoformat()
+    current_store.audit(
+        event_type="collector_run.updated",
+        actor_id=user["id"],
+        subject_type="collector_run",
+        subject_id=run_id,
+        payload={
+            "collector_type": run["collector_type"],
+            "records_imported": run["records_imported"],
+            "status": run["status"],
+        },
+    )
+    return envelope(run, get_trace_id(request))
 
 
 @app.get("/api/devops/gitlab/daily-code-metrics")
