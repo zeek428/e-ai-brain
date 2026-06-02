@@ -2836,6 +2836,132 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
   });
 
+  it('edits bug lifecycle evidence and duplicate merge fields from backend data', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      if (path === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: '接口产品',
+                owner_team: 'API Team',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products/product_api/versions?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'v1',
+                id: 'version_api',
+                name: 'v1',
+                product_id: 'product_api',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/bugs' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                assignee: 'qa@example.com',
+                description: '支付链路失败',
+                duplicate_of_bug_id: 'bug_target',
+                evidence: { log_id: 'log-1' },
+                id: 'bug_main',
+                module_code: 'checkout',
+                product_id: 'product_api',
+                reproduce_steps: ['打开支付页', '点击支付'],
+                severity: 'major',
+                source: 'manual_test',
+                status: 'closed',
+                title: '支付失败',
+                version_id: 'version_api',
+              },
+              {
+                assignee: 'rd@example.com',
+                description: '同类支付问题',
+                id: 'bug_target',
+                module_code: 'checkout',
+                product_id: 'product_api',
+                reproduce_steps: [],
+                severity: 'minor',
+                source: 'ai_auto_test',
+                status: 'triaged',
+                title: '支付重复问题',
+                version_id: 'version_api',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
+      if (path === '/api/bugs/bug_main' && method === 'PATCH') {
+        return jsonResponse({ data: { id: 'bug_main' } });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<BugsPage />);
+
+    expect(await screen.findByText('支付失败')).toBeInTheDocument();
+    const bugRow = screen.getByText('支付失败').closest('tr');
+    expect(bugRow).not.toBeNull();
+    fireEvent.click(within(bugRow as HTMLElement).getByRole('button', { name: /编辑/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('复现步骤')).toHaveValue('打开支付页\n点击支付');
+    expect(within(dialog).getByLabelText('证据 JSON')).toHaveValue(
+      JSON.stringify({ log_id: 'log-1' }, null, 2),
+    );
+    expect(within(dialog).getByLabelText('重复归并')).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText('复现步骤'), {
+      target: { value: '打开支付页\n点击支付\n查看错误提示' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('证据 JSON'), {
+      target: { value: JSON.stringify({ log_id: 'log-2', screenshot: 'pay-fail.png' }, null, 2) },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /保\s*存/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
+        '/api/bugs/bug_main',
+        'PATCH',
+        JSON.stringify({
+          assignee: 'qa@example.com',
+          description: '支付链路失败',
+          duplicate_of_bug_id: 'bug_target',
+          evidence: { log_id: 'log-2', screenshot: 'pay-fail.png' },
+          reproduce_steps: ['打开支付页', '点击支付', '查看错误提示'],
+          severity: 'major',
+          status: 'closed',
+          title: '支付失败',
+        }),
+      ]),
+    );
+  });
+
   it('uses explicitly defined role options in the user management modal', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       if (String(input) === '/api/auth/roles') {

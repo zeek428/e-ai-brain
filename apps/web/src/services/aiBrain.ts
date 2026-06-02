@@ -499,7 +499,7 @@ export type ProductGitRepositoryMutationPayload = {
 export type BugMutationPayload = {
   assignee?: string;
   description?: string;
-  duplicate_of_bug_id?: string;
+  duplicate_of_bug_id?: string | null;
   evidence?: Record<string, unknown>;
   module_code?: string;
   product_id?: string;
@@ -613,9 +613,14 @@ type LifecycleContextResponse = {
 type BugListItem = {
   assignee?: string | null;
   description?: string;
+  duplicate_of_bug_id?: string | null;
+  evidence?: unknown;
   id: string;
   module_code?: string | null;
   product_id?: string;
+  related_task_id?: string | null;
+  reproduce_steps?: unknown;
+  requirement_id?: string | null;
   severity?: string;
   source?: string;
   status?: string;
@@ -1022,6 +1027,23 @@ function normalizeBugSource(source?: string): BugRecord['source'] {
     return source;
   }
   return 'manual_test';
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => (typeof item === 'string' ? item : JSON.stringify(item) ?? ''))
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeObjectRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
 }
 
 function normalizeModelGatewayStatus(status?: string): ModelGatewayConfigRecord['status'] {
@@ -1741,9 +1763,14 @@ export async function fetchManagementBugs(): Promise<BugRecord[]> {
   return bugs.items.map((bug) => ({
     assignee: bug.assignee ?? '-',
     description: bug.description,
+    duplicateOfBugId: bug.duplicate_of_bug_id ?? undefined,
+    evidence: normalizeObjectRecord(bug.evidence),
     id: bug.id,
     module: bug.module_code ?? '-',
     productId: bug.product_id,
+    relatedTaskId: bug.related_task_id ?? undefined,
+    reproduceSteps: normalizeStringList(bug.reproduce_steps),
+    requirementId: bug.requirement_id ?? undefined,
     severity: normalizeBugSeverity(bug.severity),
     source: normalizeBugSource(bug.source),
     status: normalizeBugStatus(bug.status),

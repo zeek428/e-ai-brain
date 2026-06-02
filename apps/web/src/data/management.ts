@@ -71,9 +71,14 @@ export type RequirementRecord = {
 export type BugRecord = {
   assignee: string;
   description?: string;
+  duplicateOfBugId?: string;
+  evidence?: Record<string, unknown>;
   id: string;
   module: string;
   productId?: string;
+  relatedTaskId?: string;
+  reproduceSteps?: string[];
+  requirementId?: string;
   severity: 'blocker' | 'critical' | 'major' | 'minor';
   source: 'ai_auto_test' | 'ai_post_release' | 'manual_test';
   status:

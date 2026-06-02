@@ -42,14 +42,71 @@ const sourceLabels: Record<BugRecord['source'], { color: string; label: string }
 type BugFormValues = {
   assignee?: string;
   description: string;
+  duplicate_of_bug_id?: string;
+  evidence_json?: string;
   module_code?: string;
   product_id?: string;
+  related_task_id?: string;
+  reproduce_steps_text?: string;
+  requirement_id?: string;
   severity: BugRecord['severity'];
   source: BugRecord['source'];
   status?: BugRecord['status'];
   title: string;
   version_id?: string;
 };
+
+function formatEvidenceJson(evidence?: Record<string, unknown>) {
+  if (!evidence || Object.keys(evidence).length === 0) {
+    return '';
+  }
+  return JSON.stringify(evidence, null, 2);
+}
+
+function parseEvidenceJson(value?: string): Record<string, unknown> {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return {};
+  }
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('证据 JSON 请输入对象 JSON');
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function evidenceJsonRule() {
+  return {
+    validator(_: unknown, value?: string) {
+      try {
+        parseEvidenceJson(value);
+        return Promise.resolve();
+      } catch {
+        return Promise.reject(new Error('证据 JSON 请输入合法对象 JSON'));
+      }
+    },
+  };
+}
+
+function formatReproduceSteps(steps?: string[]) {
+  return steps?.join('\n') ?? '';
+}
+
+function parseReproduceSteps(value?: string) {
+  return (value ?? '')
+    .split(/\r?\n/)
+    .map((step) => step.trim())
+    .filter(Boolean);
+}
+
+function isFormValidationError(error: unknown) {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'errorFields' in error &&
+      Array.isArray((error as { errorFields?: unknown }).errorFields),
+  );
+}
 
 export default function BugsPage() {
   const [form] = Form.useForm<BugFormValues>();
@@ -88,13 +145,32 @@ export default function BugsPage() {
       })) ?? [],
     [selectedProduct],
   );
+  const duplicateBugOptions = useMemo(
+    () => {
+      const duplicateProductId = editingBug?.productId ?? selectedProductId;
+      return dataSource
+        .filter(
+          (bug) =>
+            bug.id !== editingBug?.id &&
+            (!duplicateProductId || bug.productId === duplicateProductId),
+        )
+        .map((bug) => ({
+          label: `${bug.id} · ${bug.title}`,
+          value: bug.id,
+        }));
+    },
+    [dataSource, editingBug?.id, editingBug?.productId, selectedProductId],
+  );
 
   const openCreateModal = () => {
     setEditingBug(null);
     form.resetFields();
     const firstProduct = productContexts[0];
     form.setFieldsValue({
+      duplicate_of_bug_id: undefined,
+      evidence_json: '',
       product_id: firstProduct?.id,
+      reproduce_steps_text: '',
       severity: 'major',
       source: 'manual_test',
       version_id: firstProduct?.versions[0]?.id,
@@ -110,11 +186,21 @@ export default function BugsPage() {
     });
   }, [form, productContexts]);
 
+  const handleDuplicateChange = useCallback((bugId?: string) => {
+    if (bugId && editingBug) {
+      form.setFieldsValue({ status: 'closed' });
+    }
+  }, [editingBug, form]);
+
   const openEditModal = useCallback((row: BugRecord) => {
     setEditingBug(row);
+    form.resetFields();
     form.setFieldsValue({
       assignee: row.assignee === '-' ? undefined : row.assignee,
       description: row.description ?? '',
+      duplicate_of_bug_id: row.duplicateOfBugId,
+      evidence_json: formatEvidenceJson(row.evidence),
+      reproduce_steps_text: formatReproduceSteps(row.reproduceSteps),
       severity: row.severity,
       status: row.status,
       title: row.title,
@@ -123,13 +209,19 @@ export default function BugsPage() {
   }, [form]);
 
   const handleSave = async () => {
-    const values = await form.validateFields();
-    setIsSaving(true);
     try {
+      const values = await form.validateFields();
+      const duplicateOfBugId = trimText(values.duplicate_of_bug_id);
+      const evidence = parseEvidenceJson(values.evidence_json);
+      const reproduceSteps = parseReproduceSteps(values.reproduce_steps_text);
+      setIsSaving(true);
       if (editingBug) {
         await updateManagementBug(editingBug.id, {
           assignee: trimText(values.assignee),
           description: values.description.trim(),
+          duplicate_of_bug_id: duplicateOfBugId ?? null,
+          evidence,
+          reproduce_steps: reproduceSteps,
           severity: values.severity,
           status: values.status,
           title: values.title.trim(),
@@ -139,8 +231,13 @@ export default function BugsPage() {
         await createManagementBug({
           assignee: trimText(values.assignee),
           description: values.description.trim(),
+          duplicate_of_bug_id: duplicateOfBugId,
+          evidence,
           module_code: trimText(values.module_code),
           product_id: values.product_id?.trim(),
+          related_task_id: trimText(values.related_task_id),
+          reproduce_steps: reproduceSteps,
+          requirement_id: trimText(values.requirement_id),
           severity: values.severity,
           source: values.source,
           title: values.title.trim(),
@@ -151,6 +248,9 @@ export default function BugsPage() {
       setIsModalOpen(false);
       void reload();
     } catch (saveError) {
+      if (isFormValidationError(saveError)) {
+        return;
+      }
       message.error(formatMutationError(saveError));
     } finally {
       setIsSaving(false);
@@ -276,12 +376,15 @@ export default function BugsPage() {
         title="Bug 管理"
       />
       <Modal
+        cancelText="取消"
         confirmLoading={isSaving}
         destroyOnHidden
         onCancel={() => setIsModalOpen(false)}
-        onOk={() => void handleSave()}
+        okText="保存"
+        onOk={handleSave}
         open={isModalOpen}
         title={editingBug ? '编辑 Bug' : '登记 Bug'}
+        width={680}
       >
         <Form<BugFormValues> form={form} layout="vertical">
           <Form.Item label="Bug 标题" name="title" rules={[{ required: true, message: '请输入 Bug 标题' }]}>
@@ -320,8 +423,18 @@ export default function BugsPage() {
                   ]}
                 />
               </Form.Item>
+              <Form.Item label="关联需求 ID" name="requirement_id">
+                <Input />
+              </Form.Item>
+              <Form.Item label="关联任务 ID" name="related_task_id">
+                <Input />
+              </Form.Item>
             </>
-          ) : null}
+          ) : (
+            <Form.Item label="来源">
+              <Input aria-label="来源" disabled value={sourceLabels[editingBug.source].label} />
+            </Form.Item>
+          )}
           <Form.Item label="严重级别" name="severity" rules={[{ required: true, message: '请选择严重级别' }]}>
             <Select
               options={[
@@ -348,11 +461,28 @@ export default function BugsPage() {
               />
             </Form.Item>
           ) : null}
+          <Form.Item label="重复归并" name="duplicate_of_bug_id">
+            <Select
+              allowClear
+              disabled={duplicateBugOptions.length === 0}
+              onChange={handleDuplicateChange}
+              optionFilterProp="label"
+              options={duplicateBugOptions}
+              placeholder={duplicateBugOptions.length === 0 ? '暂无可归并 Bug' : '选择主 Bug，可留空'}
+              showSearch
+            />
+          </Form.Item>
           <Form.Item label="处理人" name="assignee">
             <Input />
           </Form.Item>
           <Form.Item label="描述" name="description" rules={[{ required: true, message: '请输入 Bug 描述' }]}>
             <Input.TextArea autoSize={{ minRows: 4 }} />
+          </Form.Item>
+          <Form.Item label="复现步骤" name="reproduce_steps_text">
+            <Input.TextArea autoSize={{ minRows: 3 }} />
+          </Form.Item>
+          <Form.Item label="证据 JSON" name="evidence_json" rules={[evidenceJsonRule()]}>
+            <Input.TextArea autoSize={{ minRows: 3 }} />
           </Form.Item>
         </Form>
       </Modal>
