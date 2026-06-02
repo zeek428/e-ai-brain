@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.43 |
+| 功能版本 | v1.1.44 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -65,6 +65,7 @@
 | v1.1.41 | 2026-06-01 | 补齐 release_readiness 和 post_release_analysis 低层任务创建、真实上下文快照、人工确认和上线后 Bug 建议入库契约 | Codex |
 | v1.1.42 | 2026-06-01 | 明确知识文档可绑定产品归属，首页 IT 团队看板按产品过滤知识文档和审计事件 | Codex |
 | v1.1.43 | 2026-06-02 | 对齐 Bug 管理工作台完整生命周期字段，前端登记和编辑复现步骤、证据 JSON、重复归并和只读来源展示 | Codex |
+| v1.1.44 | 2026-06-02 | 首页 IT 团队看板扩展 Bug、DevOps、线上日志、用户洞察和迭代规划真实聚合，并约定产品/时间范围下钻上下文 | Codex |
 
 ---
 
@@ -82,7 +83,7 @@ API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研
 
 模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`；code_review 报告生成阶段的 provider 调用、响应解析或结构化报告校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。
 
-任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务、基于已确认技术方案创建 `development_planning`、`automated_testing` 和 `release_readiness` 任务，基于已确认发布评估创建 `post_release_analysis` 任务，并对已完成技术方案导出 Markdown。`automated_testing` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_auto_test`；`post_release_analysis` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_post_release`，两者均关联产品、版本、需求和 AI 任务。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录，线上运行日志指标可通过 `/api/ops/online-log-metrics` 登记和筛选真实产品/模块/环境/时间窗口聚合指标；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计摘要；传入 `product_id` 时，知识文档和审计事件也必须按产品归属过滤，不展示其他产品的知识或审计计数。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志可手工登记或导入真实聚合指标，无记录时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
+任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务、基于已确认技术方案创建 `development_planning`、`automated_testing` 和 `release_readiness` 任务，基于已确认发布评估创建 `post_release_analysis` 任务，并对已完成技术方案导出 Markdown。`automated_testing` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_auto_test`；`post_release_analysis` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_post_release`，两者均关联产品、版本、需求和 AI 任务。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录，线上运行日志指标可通过 `/api/ops/online-log-metrics` 登记和筛选真实产品/模块/环境/时间窗口聚合指标；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计、Bug、GitLab 指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划摘要；传入 `product_id` 时，所有可归属主体必须按产品归属过滤，不展示其他产品的数据；传入 `time_range` 时，运营类指标按可解析的日期或时间窗口过滤。看板下钻到 Bug、研发运营、用户洞察和审计页面时保留产品和时间范围上下文。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志可手工登记或导入真实聚合指标，无记录时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
 
 当前补充实现：`POST /api/planning/iteration-suggestions` 已基于库内真实 `user_feedback` 与 `bugs` 证据生成迭代建议；无证据时返回真实空集合，不生成占位建议。`POST /api/planning/iteration-suggestions/{suggestion_id}/decide` 支持产品负责人、研发负责人或管理员确认采纳、修改后采纳或驳回；只有 `accepted` / `edited_accepted` 且 `convert_to_requirement=true` 时才创建真实 `requirements` 记录。建议与确认分别写入 `iteration_plan_suggestions` 和 `iteration_plan_decisions`，并记录 `iteration_suggestion.generated` / `iteration_suggestion.decided` 审计事件。
 
@@ -1612,7 +1613,7 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 GET /api/dashboard/it-team?product_id=product_001&time_range=7d
 ```
 
-当前实现返回 MVP 真实聚合指标，来源于产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀和审计事件；其中 AI 任务、待确认 Review 和知识沉淀计数、列表必须先按任务读权限过滤，`product_id` 存在时知识文档和审计事件也必须按产品归属过滤，未接入的 DevOps、用户洞察、发布和线上运行类指标不得伪造成看板数据：
+当前实现返回真实聚合指标，来源于产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计事件、Bug、GitLab 每日指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划建议；其中 AI 任务、待确认 Review 和知识沉淀计数、列表必须先按任务读权限过滤，`product_id` 存在时所有可归属主体必须按产品归属过滤，`time_range` 存在时运营类指标按可解析的日期或时间窗口过滤。无数据时返回真实 0 和空数组，不生成占位统计：
 
 ```json
 {
@@ -1624,8 +1625,53 @@ GET /api/dashboard/it-team?product_id=product_001&time_range=7d
       "pending_reviews": 1,
       "knowledge_documents": 1,
       "knowledge_deposits": 0,
-      "audit_events": 10
+      "audit_events": 10,
+      "bugs": 1,
+      "open_bugs": 1,
+      "high_severity_bugs": 1,
+      "gitlab_commits": 7,
+      "jenkins_releases": 1,
+      "online_errors": 12,
+      "usage_events": 120,
+      "user_feedback": 1,
+      "iteration_suggestions": 1
     },
+    "bug_status_counts": [
+      {"status": "open", "count": 1}
+    ],
+    "latest_high_severity_bugs": [],
+    "gitlab_daily_summary": {
+      "metric_count": 1,
+      "commit_count": 7,
+      "merge_request_count": 2,
+      "changed_files": 8,
+      "risk_count": 1,
+      "average_quality_score": 88.5
+    },
+    "jenkins_release_status_counts": [
+      {"status": "failed", "count": 1}
+    ],
+    "online_log_summary": {
+      "metric_count": 1,
+      "request_count": 2400,
+      "error_count": 12,
+      "error_rate": 0.005,
+      "max_p95_latency_ms": 318.5,
+      "max_p99_latency_ms": 640.25
+    },
+    "usage_metric_summary": {
+      "metric_count": 1,
+      "active_users": 42,
+      "event_count": 120,
+      "conversion_count": 15,
+      "error_count": 2
+    },
+    "user_feedback_status_counts": [
+      {"status": "open", "count": 1}
+    ],
+    "iteration_suggestion_status_counts": [
+      {"status": "suggested", "count": 1}
+    ],
     "requirement_status_counts": [
       {"status": "pending_approval", "count": 1},
       {"status": "task_created", "count": 1}

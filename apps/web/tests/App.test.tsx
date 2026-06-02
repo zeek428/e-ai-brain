@@ -1373,6 +1373,33 @@ describe('AI Brain Ant Design Pro workbench', () => {
               { event_type: 'ai_task.started', id: 'audit_dashboard' },
             ],
             recent_knowledge_documents: [{ id: 'knowledge_dashboard', title: '首页知识' }],
+            bug_status_counts: [{ count: 2, status: 'open' }],
+            gitlab_daily_summary: {
+              average_quality_score: 88.5,
+              changed_files: 12,
+              commit_count: 9,
+              merge_request_count: 2,
+              metric_count: 1,
+              risk_count: 1,
+            },
+            iteration_suggestion_status_counts: [{ count: 1, status: 'suggested' }],
+            jenkins_release_status_counts: [{ count: 1, status: 'failed' }],
+            latest_high_severity_bugs: [
+              {
+                id: 'bug_dashboard',
+                severity: 'critical',
+                status: 'open',
+                title: '首页严重 Bug',
+              },
+            ],
+            online_log_summary: {
+              error_count: 4,
+              error_rate: 0.02,
+              max_p95_latency_ms: 318.5,
+              max_p99_latency_ms: 640.25,
+              metric_count: 1,
+              request_count: 200,
+            },
             requirement_status_counts: [
               { count: 1, status: 'pending_approval' },
               { count: 1, status: 'task_created' },
@@ -1381,13 +1408,30 @@ describe('AI Brain Ant Design Pro workbench', () => {
               active_products: 1,
               ai_tasks: 3,
               audit_events: 8,
+              bugs: 2,
+              gitlab_commits: 9,
+              high_severity_bugs: 1,
+              iteration_suggestions: 1,
+              jenkins_releases: 1,
               knowledge_deposits: 2,
               knowledge_documents: 4,
+              online_errors: 4,
+              open_bugs: 2,
               pending_reviews: 1,
               requirements: 5,
+              usage_events: 120,
+              user_feedback: 3,
             },
             task_status_counts: [{ count: 1, status: 'waiting_review' }],
             time_range: '7d',
+            usage_metric_summary: {
+              active_users: 42,
+              conversion_count: 15,
+              error_count: 2,
+              event_count: 120,
+              metric_count: 1,
+            },
+            user_feedback_status_counts: [{ count: 3, status: 'open' }],
           },
         });
       }
@@ -1407,6 +1451,22 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('首页看板任务')).toBeInTheDocument();
     expect(screen.getByText('首页知识')).toBeInTheDocument();
     expect(screen.getByText('ai_task.started')).toBeInTheDocument();
+    expect(screen.getByText('开放 Bug')).toBeInTheDocument();
+    expect(screen.getByText('严重 Bug')).toBeInTheDocument();
+    expect(screen.getByText('GitLab 提交')).toBeInTheDocument();
+    expect(screen.getByText('发布记录')).toBeInTheDocument();
+    expect(screen.getByText('用户反馈')).toBeInTheDocument();
+    expect(screen.getByText('使用事件')).toBeInTheDocument();
+    expect(screen.getAllByText('迭代建议').length).toBeGreaterThan(0);
+    expect(screen.getByText('首页严重 Bug')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Bug 明细/ })).toHaveAttribute(
+      'href',
+      '/delivery/bugs',
+    );
+    expect(screen.getByRole('link', { name: /运营明细/ })).toHaveAttribute(
+      'href',
+      '/governance/devops',
+    );
 
     rerender(<DevopsPage />);
 
@@ -1494,6 +1554,44 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (input === '/api/dashboard/it-team?product_id=product_api&time_range=7d') {
+        return jsonResponse({
+          data: {
+            latest_tasks: [
+              {
+                id: 'task_product_dashboard',
+                status: 'waiting_review',
+                task_type: 'technical_solution',
+                title: '研发平台筛选任务',
+              },
+            ],
+            pending_reviews: [],
+            recent_audit_events: [],
+            recent_knowledge_documents: [],
+            requirement_status_counts: [{ count: 2, status: 'approved' }],
+            summary: {
+              active_products: 1,
+              ai_tasks: 1,
+              audit_events: 0,
+              bugs: 1,
+              gitlab_commits: 3,
+              high_severity_bugs: 1,
+              iteration_suggestions: 1,
+              jenkins_releases: 1,
+              knowledge_deposits: 0,
+              knowledge_documents: 0,
+              online_errors: 2,
+              open_bugs: 1,
+              pending_reviews: 0,
+              requirements: 2,
+              usage_events: 20,
+              user_feedback: 1,
+            },
+            task_status_counts: [{ count: 1, status: 'waiting_review' }],
+            time_range: '7d',
+          },
+        });
+      }
       if (input === '/api/dashboard/it-team') {
         return jsonResponse({
           data: {
@@ -1536,8 +1634,24 @@ describe('AI Brain Ant Design Pro workbench', () => {
         '/api/dashboard/it-team?product_id=product_api',
       ),
     );
+    fireEvent.change(screen.getByLabelText('时间范围'), {
+      target: { value: '7d' },
+    });
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
+        '/api/dashboard/it-team?product_id=product_api&time_range=7d',
+      ),
+    );
     expect(await screen.findByText('研发平台筛选任务')).toBeInTheDocument();
     expect(screen.getAllByText('2')).not.toHaveLength(0);
+    expect(screen.getByRole('link', { name: /运营明细/ })).toHaveAttribute(
+      'href',
+      '/governance/devops?product_id=product_api&time_range=7d',
+    );
+    expect(screen.getByRole('link', { name: /洞察明细/ })).toHaveAttribute(
+      'href',
+      '/governance/insights?product_id=product_api&time_range=7d',
+    );
     expect(
       fetchMock.mock.calls
         .map(([path]) => String(path))
@@ -3440,7 +3554,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     ]);
   });
 
-  it('fetches the dashboard with product query parameters', async () => {
+  it('fetches the dashboard with product and time range query parameters', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },
@@ -3448,10 +3562,37 @@ describe('AI Brain Ant Design Pro workbench', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      expect(input).toBe('/api/dashboard/it-team?product_id=product_api');
+      expect(input).toBe('/api/dashboard/it-team?product_id=product_api&time_range=7d');
       return jsonResponse({
         data: {
+          bug_status_counts: [{ count: 1, status: 'open' }],
+          gitlab_daily_summary: {
+            average_quality_score: 91,
+            changed_files: 5,
+            commit_count: 3,
+            merge_request_count: 1,
+            metric_count: 1,
+            risk_count: 0,
+          },
+          iteration_suggestion_status_counts: [{ count: 1, status: 'suggested' }],
+          jenkins_release_status_counts: [{ count: 1, status: 'success' }],
+          latest_high_severity_bugs: [
+            {
+              id: 'bug_api',
+              severity: 'critical',
+              status: 'open',
+              title: 'API Dashboard Bug',
+            },
+          ],
           latest_tasks: [],
+          online_log_summary: {
+            error_count: 2,
+            error_rate: 0.01,
+            max_p95_latency_ms: 128,
+            max_p99_latency_ms: 256,
+            metric_count: 1,
+            request_count: 200,
+          },
           pending_reviews: [],
           recent_audit_events: [],
           recent_knowledge_documents: [],
@@ -3460,22 +3601,44 @@ describe('AI Brain Ant Design Pro workbench', () => {
             active_products: 1,
             ai_tasks: 1,
             audit_events: 0,
+            bugs: 1,
+            gitlab_commits: 3,
+            high_severity_bugs: 1,
+            iteration_suggestions: 1,
+            jenkins_releases: 1,
             knowledge_deposits: 0,
             knowledge_documents: 0,
+            online_errors: 2,
+            open_bugs: 1,
             pending_reviews: 0,
             requirements: 2,
+            usage_events: 20,
+            user_feedback: 1,
           },
           task_status_counts: [],
-          time_range: 'all',
+          time_range: '7d',
+          usage_metric_summary: {
+            active_users: 4,
+            conversion_count: 2,
+            error_count: 1,
+            event_count: 20,
+            metric_count: 1,
+          },
+          user_feedback_status_counts: [{ count: 1, status: 'open' }],
         },
       });
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(fetchItTeamDashboard({ productId: 'product_api' })).resolves.toMatchObject({
+    await expect(fetchItTeamDashboard({ productId: 'product_api', timeRange: '7d' })).resolves.toMatchObject({
+      bugStatusCounts: [{ count: 1, status: 'open' }],
+      gitlabDailySummary: expect.objectContaining({ commitCount: 3, metricCount: 1 }),
+      latestHighSeverityBugs: [{ id: 'bug_api', severity: 'critical', status: 'open', title: 'API Dashboard Bug' }],
+      onlineLogSummary: expect.objectContaining({ errorCount: 2, errorRate: 0.01 }),
       requirementStatusCounts: [{ count: 2, status: 'approved' }],
-      summary: expect.objectContaining({ activeProducts: 1, requirements: 2 }),
+      summary: expect.objectContaining({ activeProducts: 1, openBugs: 1, requirements: 2 }),
+      timeRange: '7d',
     });
   });
 

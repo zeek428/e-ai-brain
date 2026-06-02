@@ -258,10 +258,19 @@ export type DashboardSummary = {
   activeProducts: number;
   aiTasks: number;
   auditEvents: number;
+  bugs: number;
+  gitlabCommits: number;
+  highSeverityBugs: number;
+  iterationSuggestions: number;
+  jenkinsReleases: number;
   knowledgeDeposits: number;
   knowledgeDocuments: number;
+  onlineErrors: number;
+  openBugs: number;
   pendingReviews: number;
   requirements: number;
+  usageEvents: number;
+  userFeedback: number;
 };
 
 export type DashboardStatusCount = {
@@ -289,6 +298,39 @@ export type DashboardKnowledgeSummary = {
 export type DashboardAuditSummary = {
   eventType: string;
   id: string;
+};
+
+export type DashboardBugSummary = {
+  id: string;
+  severity: string;
+  status: string;
+  title: string;
+};
+
+export type DashboardGitLabSummary = {
+  averageQualityScore: number;
+  changedFiles: number;
+  commitCount: number;
+  mergeRequestCount: number;
+  metricCount: number;
+  riskCount: number;
+};
+
+export type DashboardOnlineLogSummary = {
+  errorCount: number;
+  errorRate: number;
+  maxP95LatencyMs: number;
+  maxP99LatencyMs: number;
+  metricCount: number;
+  requestCount: number;
+};
+
+export type DashboardUsageMetricSummary = {
+  activeUsers: number;
+  conversionCount: number;
+  errorCount: number;
+  eventCount: number;
+  metricCount: number;
 };
 
 export type LifecycleRelationRecord = {
@@ -319,7 +361,13 @@ export type LifecycleContextRecord = {
 };
 
 export type ItTeamDashboard = {
+  bugStatusCounts: DashboardStatusCount[];
+  gitlabDailySummary: DashboardGitLabSummary;
+  iterationSuggestionStatusCounts: DashboardStatusCount[];
+  jenkinsReleaseStatusCounts: DashboardStatusCount[];
   latestTasks: DashboardTaskSummary[];
+  latestHighSeverityBugs: DashboardBugSummary[];
+  onlineLogSummary: DashboardOnlineLogSummary;
   pendingReviews: DashboardReviewSummary[];
   recentAuditEvents: DashboardAuditSummary[];
   recentKnowledgeDocuments: DashboardKnowledgeSummary[];
@@ -327,6 +375,8 @@ export type ItTeamDashboard = {
   summary: DashboardSummary;
   taskStatusCounts: DashboardStatusCount[];
   timeRange: string;
+  usageMetricSummary: DashboardUsageMetricSummary;
+  userFeedbackStatusCounts: DashboardStatusCount[];
 };
 
 export type ProductGitRepositoryOption = {
@@ -751,7 +801,27 @@ type FlexibleListItem = Record<string, unknown> & {
 };
 
 type DashboardResponse = {
+  bug_status_counts?: Array<{ count?: number; status?: string }>;
+  gitlab_daily_summary?: Partial<{
+    average_quality_score: number;
+    changed_files: number;
+    commit_count: number;
+    merge_request_count: number;
+    metric_count: number;
+    risk_count: number;
+  }>;
+  iteration_suggestion_status_counts?: Array<{ count?: number; status?: string }>;
+  jenkins_release_status_counts?: Array<{ count?: number; status?: string }>;
+  latest_high_severity_bugs?: FlexibleListItem[];
   latest_tasks?: FlexibleListItem[];
+  online_log_summary?: Partial<{
+    error_count: number;
+    error_rate: number;
+    max_p95_latency_ms: number;
+    max_p99_latency_ms: number;
+    metric_count: number;
+    request_count: number;
+  }>;
   pending_reviews?: FlexibleListItem[];
   recent_audit_events?: FlexibleListItem[];
   recent_knowledge_documents?: FlexibleListItem[];
@@ -760,13 +830,30 @@ type DashboardResponse = {
     active_products: number;
     ai_tasks: number;
     audit_events: number;
+    bugs: number;
+    gitlab_commits: number;
+    high_severity_bugs: number;
+    iteration_suggestions: number;
+    jenkins_releases: number;
     knowledge_deposits: number;
     knowledge_documents: number;
+    online_errors: number;
+    open_bugs: number;
     pending_reviews: number;
     requirements: number;
+    usage_events: number;
+    user_feedback: number;
   }>;
   task_status_counts?: Array<{ count?: number; status?: string }>;
   time_range?: string;
+  usage_metric_summary?: Partial<{
+    active_users: number;
+    conversion_count: number;
+    error_count: number;
+    event_count: number;
+    metric_count: number;
+  }>;
+  user_feedback_status_counts?: Array<{ count?: number; status?: string }>;
 };
 
 type UserListItem = {
@@ -1110,7 +1197,29 @@ export async function fetchItTeamDashboard(
     : '/api/dashboard/it-team';
   const dashboard = await apiRequest<DashboardResponse>(path, { token });
   const summary = dashboard.summary ?? {};
+  const gitlabDailySummary = dashboard.gitlab_daily_summary ?? {};
+  const onlineLogSummary = dashboard.online_log_summary ?? {};
+  const usageMetricSummary = dashboard.usage_metric_summary ?? {};
   return {
+    bugStatusCounts: mapDashboardStatusCounts(dashboard.bug_status_counts),
+    gitlabDailySummary: {
+      averageQualityScore: normalizeDashboardCount(gitlabDailySummary.average_quality_score),
+      changedFiles: normalizeDashboardCount(gitlabDailySummary.changed_files),
+      commitCount: normalizeDashboardCount(gitlabDailySummary.commit_count),
+      mergeRequestCount: normalizeDashboardCount(gitlabDailySummary.merge_request_count),
+      metricCount: normalizeDashboardCount(gitlabDailySummary.metric_count),
+      riskCount: normalizeDashboardCount(gitlabDailySummary.risk_count),
+    },
+    iterationSuggestionStatusCounts: mapDashboardStatusCounts(
+      dashboard.iteration_suggestion_status_counts,
+    ),
+    jenkinsReleaseStatusCounts: mapDashboardStatusCounts(dashboard.jenkins_release_status_counts),
+    latestHighSeverityBugs: (dashboard.latest_high_severity_bugs ?? []).map((bug, index) => ({
+      id: formatUnknownValue(bug.id ?? `bug-${index}`),
+      severity: formatUnknownValue(bug.severity),
+      status: formatUnknownValue(bug.status),
+      title: formatUnknownValue(firstKnownValue(bug, ['title', 'name'])),
+    })),
     latestTasks: (dashboard.latest_tasks ?? []).map((task, index) => ({
       id: formatUnknownValue(task.id ?? `task-${index}`),
       status: formatUnknownValue(task.status),
@@ -1131,18 +1240,43 @@ export async function fetchItTeamDashboard(
         title: formatUnknownValue(document.title),
       }),
     ),
+    onlineLogSummary: {
+      errorCount: normalizeDashboardCount(onlineLogSummary.error_count),
+      errorRate: normalizeDashboardCount(onlineLogSummary.error_rate),
+      maxP95LatencyMs: normalizeDashboardCount(onlineLogSummary.max_p95_latency_ms),
+      maxP99LatencyMs: normalizeDashboardCount(onlineLogSummary.max_p99_latency_ms),
+      metricCount: normalizeDashboardCount(onlineLogSummary.metric_count),
+      requestCount: normalizeDashboardCount(onlineLogSummary.request_count),
+    },
     requirementStatusCounts: mapDashboardStatusCounts(dashboard.requirement_status_counts),
     summary: {
       activeProducts: normalizeDashboardCount(summary.active_products),
       aiTasks: normalizeDashboardCount(summary.ai_tasks),
       auditEvents: normalizeDashboardCount(summary.audit_events),
+      bugs: normalizeDashboardCount(summary.bugs),
+      gitlabCommits: normalizeDashboardCount(summary.gitlab_commits),
+      highSeverityBugs: normalizeDashboardCount(summary.high_severity_bugs),
+      iterationSuggestions: normalizeDashboardCount(summary.iteration_suggestions),
+      jenkinsReleases: normalizeDashboardCount(summary.jenkins_releases),
       knowledgeDeposits: normalizeDashboardCount(summary.knowledge_deposits),
       knowledgeDocuments: normalizeDashboardCount(summary.knowledge_documents),
+      onlineErrors: normalizeDashboardCount(summary.online_errors),
+      openBugs: normalizeDashboardCount(summary.open_bugs),
       pendingReviews: normalizeDashboardCount(summary.pending_reviews),
       requirements: normalizeDashboardCount(summary.requirements),
+      usageEvents: normalizeDashboardCount(summary.usage_events),
+      userFeedback: normalizeDashboardCount(summary.user_feedback),
     },
     taskStatusCounts: mapDashboardStatusCounts(dashboard.task_status_counts),
     timeRange: formatUnknownValue(dashboard.time_range),
+    usageMetricSummary: {
+      activeUsers: normalizeDashboardCount(usageMetricSummary.active_users),
+      conversionCount: normalizeDashboardCount(usageMetricSummary.conversion_count),
+      errorCount: normalizeDashboardCount(usageMetricSummary.error_count),
+      eventCount: normalizeDashboardCount(usageMetricSummary.event_count),
+      metricCount: normalizeDashboardCount(usageMetricSummary.metric_count),
+    },
+    userFeedbackStatusCounts: mapDashboardStatusCounts(dashboard.user_feedback_status_counts),
   };
 }
 

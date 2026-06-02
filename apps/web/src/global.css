@@ -202,6 +202,14 @@ body {
   gap: 10px;
 }
 
+.dashboard-metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
 .dashboard-list-item {
   display: grid;
   gap: 6px;
@@ -212,6 +220,12 @@ body {
 .dashboard-list-item:last-child {
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+.dashboard-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 .audit-trace-item {

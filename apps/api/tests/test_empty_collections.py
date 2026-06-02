@@ -90,6 +90,111 @@ def test_dashboard_it_team_returns_real_mvp_aggregate_without_fake_rows():
         },
         headers=headers,
     ).json()["data"]
+    module = client.post(
+        f"/api/products/{product['id']}/modules",
+        json={"code": "knowledge", "name": "知识中心"},
+        headers=headers,
+    ).json()["data"]
+    repository = client.post(
+        f"/api/products/{product['id']}/git-repositories",
+        json={
+            "default_branch": "main",
+            "git_provider": "gitlab",
+            "name": "dashboard-api",
+            "project_path": "rd/dashboard-api",
+            "remote_url": "https://gitlab.internal/rd/dashboard-api.git",
+            "repo_type": "code",
+            "root_path": "/",
+        },
+        headers=headers,
+    ).json()["data"]
+    bug = client.post(
+        "/api/bugs",
+        json={
+            "description": "首页看板需要统计高严重级别 Bug。",
+            "module_code": module["code"],
+            "product_id": product["id"],
+            "severity": "critical",
+            "source": "manual_test",
+            "title": "首页看板严重 Bug",
+            "version_id": version["id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        "/api/devops/gitlab/daily-code-metrics",
+        json={
+            "changed_files": 8,
+            "commit_count": 7,
+            "merge_request_count": 2,
+            "metric_date": "2026-06-01",
+            "product_id": product["id"],
+            "quality_score": 88.5,
+            "repository_id": repository["id"],
+            "risk_count": 1,
+        },
+        headers=headers,
+    )
+    client.post(
+        "/api/devops/jenkins/releases",
+        json={
+            "build_id": "dashboard-build-1",
+            "job_name": "dashboard-deploy",
+            "product_id": product["id"],
+            "status": "failed",
+            "version_id": version["id"],
+        },
+        headers=headers,
+    )
+    client.post(
+        "/api/ops/online-log-metrics",
+        json={
+            "environment": "prod",
+            "error_count": 12,
+            "module_code": module["code"],
+            "p95_latency_ms": 318.5,
+            "p99_latency_ms": 640.25,
+            "product_id": product["id"],
+            "request_count": 2400,
+            "window_end": "2026-06-01T01:00:00Z",
+            "window_start": "2026-06-01T00:00:00Z",
+        },
+        headers=headers,
+    )
+    client.post(
+        "/api/insights/usage-metrics",
+        json={
+            "active_users": 42,
+            "event_count": 120,
+            "feature_code": "dashboard",
+            "module_code": module["code"],
+            "product_id": product["id"],
+            "window_end": "2026-06-01T01:00:00Z",
+            "window_start": "2026-06-01T00:00:00Z",
+        },
+        headers=headers,
+    )
+    feedback = client.post(
+        "/api/insights/user-feedback",
+        json={
+            "content": "首页看板需要看到真实运营数据。",
+            "feedback_type": "improvement",
+            "module_code": module["code"],
+            "product_id": product["id"],
+            "sentiment": "negative",
+        },
+        headers=headers,
+    ).json()["data"]
+    suggestions = client.post(
+        "/api/planning/iteration-suggestions",
+        json={
+            "module_codes": [module["code"]],
+            "planning_cycle": "2026Q3",
+            "product_id": product["id"],
+            "version_id": version["id"],
+        },
+        headers=headers,
+    ).json()["data"]["items"]
     other_product = client.post(
         "/api/products",
         json={"code": "unrelated", "name": "无关产品"},
@@ -118,6 +223,41 @@ def test_dashboard_it_team_returns_real_mvp_aggregate_without_fake_rows():
     assert dashboard["summary"]["knowledge_documents"] == 1
     assert dashboard["summary"]["pending_reviews"] == 1
     assert dashboard["summary"]["requirements"] == 2
+    assert dashboard["summary"]["bugs"] == 1
+    assert dashboard["summary"]["open_bugs"] == 1
+    assert dashboard["summary"]["high_severity_bugs"] == 1
+    assert dashboard["summary"]["gitlab_commits"] == 7
+    assert dashboard["summary"]["jenkins_releases"] == 1
+    assert dashboard["summary"]["online_errors"] == 12
+    assert dashboard["summary"]["usage_events"] == 120
+    assert dashboard["summary"]["user_feedback"] == 1
+    assert dashboard["summary"]["iteration_suggestions"] == 1
+    assert dashboard["bug_status_counts"] == [{"status": "open", "count": 1}]
+    assert dashboard["latest_high_severity_bugs"][0]["id"] == bug["id"]
+    assert dashboard["gitlab_daily_summary"] == {
+        "average_quality_score": 88.5,
+        "changed_files": 8,
+        "commit_count": 7,
+        "merge_request_count": 2,
+        "metric_count": 1,
+        "risk_count": 1,
+    }
+    assert dashboard["jenkins_release_status_counts"] == [{"status": "failed", "count": 1}]
+    assert dashboard["online_log_summary"] == {
+        "error_count": 12,
+        "error_rate": 0.005,
+        "max_p95_latency_ms": 318.5,
+        "max_p99_latency_ms": 640.25,
+        "metric_count": 1,
+        "request_count": 2400,
+    }
+    assert dashboard["usage_metric_summary"]["active_users"] == 42
+    assert dashboard["usage_metric_summary"]["event_count"] == 120
+    assert dashboard["user_feedback_status_counts"] == [{"status": "open", "count": 1}]
+    assert dashboard["iteration_suggestion_status_counts"] == [
+        {"status": "suggested", "count": 1}
+    ]
+    assert suggestions[0]["evidence"][0]["subject_id"] == feedback["id"]
     assert {"status": "pending_approval", "count": 1} in dashboard["requirement_status_counts"]
     assert {"status": "task_created", "count": 1} in dashboard["requirement_status_counts"]
     assert dashboard["task_status_counts"] == [{"status": "waiting_review", "count": 1}]

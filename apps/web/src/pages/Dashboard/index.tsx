@@ -1,11 +1,17 @@
 import {
   AuditOutlined,
+  BarChartOutlined,
   BookOutlined,
+  BugOutlined,
   CheckCircleOutlined,
+  CloudServerOutlined,
   FileDoneOutlined,
+  LineChartOutlined,
   ProjectOutlined,
   ReloadOutlined,
+  RobotOutlined,
   SafetyCertificateOutlined,
+  UserSwitchOutlined,
 } from '@ant-design/icons';
 import { PageContainer, StatisticCard } from '@ant-design/pro-components';
 import { Alert, Button, Empty, Space, Tag, Typography } from 'antd';
@@ -16,6 +22,7 @@ import {
   fetchActiveProductOptions,
   fetchItTeamDashboard,
   type DashboardAuditSummary,
+  type DashboardBugSummary,
   type DashboardKnowledgeSummary,
   type DashboardStatusCount,
   type DashboardTaskSummary,
@@ -25,18 +32,48 @@ import {
 
 const { Text, Title } = Typography;
 const allProductsValue = '__all_products__';
+const allTimeRangeValue = 'all';
+
+const timeRangeOptions = [
+  { label: '全部时间', value: allTimeRangeValue },
+  { label: '近 7 天', value: '7d' },
+  { label: '近 30 天', value: '30d' },
+];
 
 const statusLabels: Record<string, { color: string; label: string }> = {
+  accepted: { color: 'green', label: '已采纳' },
   approved: { color: 'green', label: '已审批' },
+  assigned: { color: 'blue', label: '已分派' },
+  archived: { color: 'default', label: '已归档' },
+  canceled: { color: 'default', label: '已取消' },
+  closed: { color: 'default', label: '已关闭' },
   completed: { color: 'green', label: '已完成' },
+  converted_to_requirement: { color: 'purple', label: '已转需求' },
   draft: { color: 'default', label: '草稿' },
   failed: { color: 'red', label: '失败' },
+  fixed: { color: 'cyan', label: '已修复' },
+  linked: { color: 'blue', label: '已关联' },
+  needs_info: { color: 'orange', label: '需补充' },
+  open: { color: 'red', label: '打开' },
   pending_approval: { color: 'gold', label: '待审批' },
   rejected: { color: 'red', label: '已拒绝' },
+  reopened: { color: 'volcano', label: '重新打开' },
+  resolved: { color: 'green', label: '已解决' },
   running: { color: 'blue', label: '运行中' },
+  success: { color: 'green', label: '成功' },
+  suggested: { color: 'gold', label: '建议中' },
   task_created: { color: 'blue', label: '已生成任务' },
+  triaged: { color: 'gold', label: '已分诊' },
+  verified: { color: 'green', label: '已验证' },
   waiting_more_info: { color: 'orange', label: '待补充' },
   waiting_review: { color: 'gold', label: '待确认' },
+};
+
+const severityLabels: Record<string, { color: string; label: string }> = {
+  blocker: { color: 'red', label: '阻断' },
+  critical: { color: 'volcano', label: '严重' },
+  major: { color: 'orange', label: '主要' },
+  minor: { color: 'blue', label: '次要' },
 };
 
 function normalizeError(error: unknown): RemoteRowsError {
@@ -73,6 +110,26 @@ function StatusCountList({ counts }: { counts: DashboardStatusCount[] }) {
   );
 }
 
+function MetricSummary({
+  items,
+}: {
+  items: Array<{ label: string; suffix?: string; value: number | string }>;
+}) {
+  return (
+    <div className="dashboard-list">
+      {items.map((item) => (
+        <div className="dashboard-metric-row" key={item.label}>
+          <Text type="secondary">{item.label}</Text>
+          <Text strong>
+            {item.value}
+            {item.suffix ? <Text type="secondary"> {item.suffix}</Text> : null}
+          </Text>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TaskList({ tasks }: { tasks: DashboardTaskSummary[] }) {
   if (tasks.length === 0) {
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />;
@@ -90,6 +147,32 @@ function TaskList({ tasks }: { tasks: DashboardTaskSummary[] }) {
           </Space>
         </div>
       ))}
+    </div>
+  );
+}
+
+function BugList({ bugs }: { bugs: DashboardBugSummary[] }) {
+  if (bugs.length === 0) {
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  }
+  return (
+    <div className="dashboard-list">
+      {bugs.map((bug) => {
+        const severityLabel = severityLabels[bug.severity] ?? {
+          color: 'default',
+          label: bug.severity,
+        };
+        const statusLabel = statusLabels[bug.status] ?? { color: 'default', label: bug.status };
+        return (
+          <div className="dashboard-list-item" key={bug.id}>
+            <Text strong>{bug.title}</Text>
+            <Space size={8} wrap>
+              <Tag color={severityLabel.color}>{severityLabel.label}</Tag>
+              <Tag color={statusLabel.color}>{statusLabel.label}</Tag>
+            </Space>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -132,6 +215,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [productOptionsSource, setProductOptionsSource] = useState<ProductFilterOption[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>();
+  const [selectedTimeRange, setSelectedTimeRange] = useState(allTimeRangeValue);
 
   const productOptions = useMemo(
     () => [
@@ -141,11 +225,33 @@ export default function DashboardPage() {
     [productOptionsSource],
   );
 
+  const selectedApiTimeRange =
+    selectedTimeRange === allTimeRangeValue ? undefined : selectedTimeRange;
+
+  const drilldownQuery = useMemo(() => {
+    const query = new URLSearchParams();
+    if (selectedProductId) {
+      query.set('product_id', selectedProductId);
+    }
+    if (selectedApiTimeRange) {
+      query.set('time_range', selectedApiTimeRange);
+    }
+    return query.toString();
+  }, [selectedApiTimeRange, selectedProductId]);
+
+  const drilldownUrl = useCallback(
+    (pathname: string) => (drilldownQuery ? `${pathname}?${drilldownQuery}` : pathname),
+    [drilldownQuery],
+  );
+
   const reload = useCallback(async () => {
     setLoading(true);
     setError(undefined);
     try {
-      const nextDashboard = await fetchItTeamDashboard({ productId: selectedProductId });
+      const nextDashboard = await fetchItTeamDashboard({
+        productId: selectedProductId,
+        timeRange: selectedApiTimeRange,
+      });
       setDashboard(nextDashboard);
     } catch (loadError) {
       setDashboard(undefined);
@@ -153,11 +259,11 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedProductId]);
+  }, [selectedApiTimeRange, selectedProductId]);
 
   useEffect(() => {
     let isCurrent = true;
-    fetchItTeamDashboard({ productId: selectedProductId })
+    fetchItTeamDashboard({ productId: selectedProductId, timeRange: selectedApiTimeRange })
       .then((nextDashboard) => {
         if (isCurrent) {
           setDashboard(nextDashboard);
@@ -178,7 +284,7 @@ export default function DashboardPage() {
     return () => {
       isCurrent = false;
     };
-  }, [selectedProductId]);
+  }, [selectedApiTimeRange, selectedProductId]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -216,6 +322,18 @@ export default function DashboardPage() {
             value={selectedProductId ?? allProductsValue}
           >
             {productOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="时间范围"
+            className="dashboard-product-select"
+            onChange={(event) => setSelectedTimeRange(event.currentTarget.value)}
+            value={selectedTimeRange}
+          >
+            {timeRangeOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -272,6 +390,55 @@ export default function DashboardPage() {
             value: dashboard?.summary.auditEvents ?? 0,
           }}
         />
+        <StatisticCard
+          statistic={{
+            prefix: <BugOutlined />,
+            title: '开放 Bug',
+            value: dashboard?.summary.openBugs ?? 0,
+          }}
+        />
+        <StatisticCard
+          statistic={{
+            prefix: <SafetyCertificateOutlined />,
+            title: '严重 Bug',
+            value: dashboard?.summary.highSeverityBugs ?? 0,
+          }}
+        />
+        <StatisticCard
+          statistic={{
+            prefix: <BarChartOutlined />,
+            title: 'GitLab 提交',
+            value: dashboard?.summary.gitlabCommits ?? 0,
+          }}
+        />
+        <StatisticCard
+          statistic={{
+            prefix: <CloudServerOutlined />,
+            title: '发布记录',
+            value: dashboard?.summary.jenkinsReleases ?? 0,
+          }}
+        />
+        <StatisticCard
+          statistic={{
+            prefix: <UserSwitchOutlined />,
+            title: '用户反馈',
+            value: dashboard?.summary.userFeedback ?? 0,
+          }}
+        />
+        <StatisticCard
+          statistic={{
+            prefix: <LineChartOutlined />,
+            title: '使用事件',
+            value: dashboard?.summary.usageEvents ?? 0,
+          }}
+        />
+        <StatisticCard
+          statistic={{
+            prefix: <RobotOutlined />,
+            title: '迭代建议',
+            value: dashboard?.summary.iterationSuggestions ?? 0,
+          }}
+        />
       </StatisticCard.Group>
       <div className="dashboard-grid">
         <section className="dashboard-panel">
@@ -290,9 +457,63 @@ export default function DashboardPage() {
           <Title level={4}>知识沉淀</Title>
           <KnowledgeList documents={dashboard?.recentKnowledgeDocuments ?? []} />
         </section>
+        <section className="dashboard-panel">
+          <Title level={4}>Bug 风险</Title>
+          <StatusCountList counts={dashboard?.bugStatusCounts ?? []} />
+          <Title level={5}>高严重级别</Title>
+          <BugList bugs={dashboard?.latestHighSeverityBugs ?? []} />
+          <div className="dashboard-panel-actions">
+            <Button href={drilldownUrl('/delivery/bugs')} icon={<BugOutlined />} size="small">
+              Bug 明细
+            </Button>
+          </div>
+        </section>
+        <section className="dashboard-panel">
+          <Title level={4}>研发运营</Title>
+          <MetricSummary
+            items={[
+              { label: 'GitLab 指标', value: dashboard?.gitlabDailySummary.metricCount ?? 0 },
+              { label: 'Merge Request', value: dashboard?.gitlabDailySummary.mergeRequestCount ?? 0 },
+              { label: '代码风险', value: dashboard?.gitlabDailySummary.riskCount ?? 0 },
+              { label: '线上错误', value: dashboard?.onlineLogSummary.errorCount ?? 0 },
+              { label: '错误率', suffix: '%', value: ((dashboard?.onlineLogSummary.errorRate ?? 0) * 100).toFixed(2) },
+              { label: 'P95 延迟', suffix: 'ms', value: dashboard?.onlineLogSummary.maxP95LatencyMs ?? 0 },
+            ]}
+          />
+          <StatusCountList counts={dashboard?.jenkinsReleaseStatusCounts ?? []} />
+          <div className="dashboard-panel-actions">
+            <Button href={drilldownUrl('/governance/devops')} icon={<BarChartOutlined />} size="small">
+              运营明细
+            </Button>
+          </div>
+        </section>
+        <section className="dashboard-panel">
+          <Title level={4}>用户洞察</Title>
+          <MetricSummary
+            items={[
+              { label: '指标记录', value: dashboard?.usageMetricSummary.metricCount ?? 0 },
+              { label: '活跃用户', value: dashboard?.usageMetricSummary.activeUsers ?? 0 },
+              { label: '转化次数', value: dashboard?.usageMetricSummary.conversionCount ?? 0 },
+              { label: '反馈总数', value: dashboard?.summary.userFeedback ?? 0 },
+              { label: '迭代建议', value: dashboard?.summary.iterationSuggestions ?? 0 },
+            ]}
+          />
+          <StatusCountList counts={dashboard?.userFeedbackStatusCounts ?? []} />
+          <StatusCountList counts={dashboard?.iterationSuggestionStatusCounts ?? []} />
+          <div className="dashboard-panel-actions">
+            <Button href={drilldownUrl('/governance/insights')} icon={<RobotOutlined />} size="small">
+              洞察明细
+            </Button>
+          </div>
+        </section>
         <section className="dashboard-panel dashboard-panel-wide">
           <Title level={4}>审计摘要</Title>
           <AuditList events={dashboard?.recentAuditEvents ?? []} />
+          <div className="dashboard-panel-actions">
+            <Button href={drilldownUrl('/governance/audit')} icon={<AuditOutlined />} size="small">
+              审计明细
+            </Button>
+          </div>
         </section>
       </div>
     </PageContainer>
