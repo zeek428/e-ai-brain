@@ -371,6 +371,8 @@ CREATE TABLE IF NOT EXISTS graph_runs (
   status text NOT NULL,
   current_step text,
   checkpoint_id text,
+  runtime text,
+  node_path jsonb NOT NULL DEFAULT '[]'::jsonb,
   state_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
   started_at timestamptz NOT NULL DEFAULT now(),
   completed_at timestamptz

@@ -26,6 +26,7 @@ from app.core.code_review_executor import (
     normalize_code_review_output,
 )
 from app.core.config import get_settings
+from app.core.graph_runtime import run_ai_task_graph
 from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
 from app.core.roles import ASSIGNABLE_ROLE_CODES, list_role_definitions
 from app.core.security import TokenError, create_access_token, parse_access_token, verify_password
@@ -4418,18 +4419,24 @@ def _write_graph_checkpoint(
     state_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     checkpoint_id = current_store.new_id("checkpoint")
+    snapshot = current_store.snapshot(state_snapshot)
+    if graph_run.get("runtime") and "graph_runtime" not in snapshot:
+        snapshot["graph_runtime"] = {
+            "package": graph_run["runtime"],
+            "node_path": current_store.snapshot(graph_run.get("node_path", [])),
+        }
     checkpoint = {
         "id": checkpoint_id,
         "graph_run_id": graph_run["id"],
         "ai_task_id": task["id"],
         "current_step": current_step,
-        "state_snapshot": current_store.snapshot(state_snapshot),
+        "state_snapshot": current_store.snapshot(snapshot),
         "created_at": datetime.now(UTC).isoformat(),
     }
     current_store.graph_checkpoints[checkpoint_id] = checkpoint
     graph_run["checkpoint_id"] = checkpoint_id
     graph_run["current_step"] = current_step
-    graph_run["state_snapshot"] = current_store.snapshot(state_snapshot)
+    graph_run["state_snapshot"] = current_store.snapshot(snapshot)
     task["current_step"] = current_step
     task["checkpoint_id"] = checkpoint_id
     return checkpoint
@@ -4442,12 +4449,15 @@ def _start_graph_run(
     review_id: str,
 ) -> dict[str, Any]:
     graph_run_id = current_store.new_id("graph_run")
+    graph_state = run_ai_task_graph(task, review_id=review_id)
     graph_run = {
         "id": graph_run_id,
         "ai_task_id": task["id"],
         "task_type": task["task_type"],
         "status": "interrupted",
-        "current_step": "interrupt_for_human_review",
+        "runtime": graph_state["runtime"],
+        "node_path": current_store.snapshot(graph_state.get("node_path", [])),
+        "current_step": graph_state["current_step"],
         "checkpoint_id": None,
         "state_snapshot": {},
         "started_at": datetime.now(UTC).isoformat(),
@@ -4459,12 +4469,13 @@ def _start_graph_run(
         current_store,
         graph_run=graph_run,
         task=task,
-        current_step="interrupt_for_human_review",
+        current_step=graph_state["current_step"],
         state_snapshot={
-            "task_status": task["status"],
+            "task_status": graph_state["task_status"],
             "task_type": task["task_type"],
             "review_id": review_id,
-            "output_kind": task["output_json"].get("kind"),
+            "output_kind": graph_state.get("output_kind"),
+            "graph_runtime": graph_state["runtime_metadata"],
         },
     )
     return graph_run

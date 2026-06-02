@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 任务启动接入真实 LangGraph `StateGraph` 运行内核，Graph Run 记录新增 `runtime=langgraph`、节点路径和 `graph_runtime` checkpoint 元数据；新增 `017_langgraph_runtime_metadata.sql` 以 SQL 脚本升级既有 PostgreSQL 环境。
 - 业务大脑配置收口为只读真实配置读取，`/api/brain-apps` 从运行时/`brain_apps` 加载默认 `rd_brain`；新增 `016_brain_app_task_attribution.sql`，补齐需求与 AI 任务的默认业务脑归属、`ai_tasks.brain_app_id` 和查询索引。
 - 生命周期上下文边、风险信号和首页 IT 团队看板快照开始细粒度 PostgreSQL 持久化，新增 `015_lifecycle_dashboard_persistence.sql`，`/api/lifecycle/context` 与 `/api/dashboard/it-team` 会同步真实计算结果到结构表。
 - 产品配置弹窗新增“相关系统”维护入口，相关系统支持绑定产品归属、按产品过滤，并进入生成任务时的产品上下文快照。
@@ -19,7 +20,7 @@
 - 产品与平台配置补齐查询、局部更新、active_only 过滤、相关系统、模型网关配置、默认模型网关唯一性和 API key 脱敏响应。
 - 需求管理补齐列表、详情、按产品/状态过滤、驳回、关闭、任务引用和 inactive 产品拦截。
 - 知识沉淀补齐驳回接口、驳回原因、状态过滤和审计事件。
-- AI 任务启动补齐 graph_run/checkpoint 记录、任务详情运行投影和 graph run 查询接口，为后续 LangGraph 持久化接入预留数据边界。
+- AI 任务启动补齐 graph_run/checkpoint 记录、任务详情运行投影和 graph run 查询接口，并由真实 LangGraph 运行内核驱动当前人工确认中断路径。
 - AI 任务启动改为经由模型网关边界生成任务输出，并记录不含完整 prompt/output 的模型调用元数据日志。
 - `/api/lifecycle/context` 从占位升级为 MVP 全流程感知视图，可从需求聚合下游任务、人工确认、GitLab MR 快照、Code Review 报告、模拟 Issue、知识沉淀、审计事件和 Review 风险信号。
 - `/api/bugs` 从占位升级为 v1.1 基础 Bug 管理接口，支持查询筛选、AI 自动测试和人工测试登记、状态流转、重复归并、权限校验和审计事件。

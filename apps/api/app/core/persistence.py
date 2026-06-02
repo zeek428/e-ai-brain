@@ -2458,7 +2458,7 @@ class PostgresSnapshotRepository:
         cursor.execute(
             """
             SELECT id, ai_task_id, task_type, status, current_step, checkpoint_id,
-                   state_snapshot, started_at, completed_at
+                   runtime, node_path, state_snapshot, started_at, completed_at
             FROM graph_runs
             ORDER BY started_at, id
             """
@@ -2467,11 +2467,13 @@ class PostgresSnapshotRepository:
             row[0]: {
                 "ai_task_id": row[1],
                 "checkpoint_id": row[5],
-                "completed_at": row[8].isoformat() if row[8] else None,
+                "completed_at": row[10].isoformat() if row[10] else None,
                 "current_step": row[4],
                 "id": row[0],
-                "started_at": row[7].isoformat() if row[7] else None,
-                "state_snapshot": dict(row[6] or {}),
+                "node_path": list(row[7] or []),
+                "runtime": row[6],
+                "started_at": row[9].isoformat() if row[9] else None,
+                "state_snapshot": dict(row[8] or {}),
                 "status": row[3],
                 "task_type": row[2],
             }
@@ -3762,10 +3764,10 @@ class PostgresSnapshotRepository:
                 """
                 INSERT INTO graph_runs (
                   id, ai_task_id, task_type, status, current_step, checkpoint_id,
-                  state_snapshot, started_at, completed_at
+                  runtime, node_path, state_snapshot, started_at, completed_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s, %s, %s::jsonb,
+                  %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
                   COALESCE(%s::timestamptz, now()), %s::timestamptz
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -3774,6 +3776,8 @@ class PostgresSnapshotRepository:
                   status = EXCLUDED.status,
                   current_step = EXCLUDED.current_step,
                   checkpoint_id = EXCLUDED.checkpoint_id,
+                  runtime = EXCLUDED.runtime,
+                  node_path = EXCLUDED.node_path,
                   state_snapshot = EXCLUDED.state_snapshot,
                   completed_at = EXCLUDED.completed_at
                 """,
@@ -3784,6 +3788,8 @@ class PostgresSnapshotRepository:
                     graph_run["status"],
                     graph_run.get("current_step"),
                     graph_run.get("checkpoint_id"),
+                    graph_run.get("runtime"),
+                    json.dumps(graph_run.get("node_path", []), ensure_ascii=False),
                     json.dumps(graph_run.get("state_snapshot", {}), ensure_ascii=False),
                     graph_run.get("started_at"),
                     graph_run.get("completed_at"),

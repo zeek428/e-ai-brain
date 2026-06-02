@@ -1,8 +1,41 @@
+from importlib import import_module
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 
 client = TestClient(app)
+
+EXPECTED_LANGGRAPH_NODE_PATH = [
+    "retrieve_context",
+    "generate_task_output",
+    "interrupt_for_human_review",
+]
+
+
+def test_ai_task_graph_is_compiled_by_langgraph():
+    try:
+        graph_runtime = import_module("app.core.graph_runtime")
+    except ModuleNotFoundError as exc:
+        pytest.fail(f"graph runtime module missing: {exc}")
+
+    compiled_graph = graph_runtime.build_ai_task_graph()
+
+    assert type(compiled_graph).__module__.startswith("langgraph.")
+    result = graph_runtime.run_ai_task_graph(
+        {
+            "id": "task_001",
+            "task_type": "product_detail_design",
+            "status": "running",
+            "output_json": {"kind": "product_detail_design"},
+        },
+        review_id="review_001",
+    )
+    assert result["runtime"] == "langgraph"
+    assert result["node_path"] == EXPECTED_LANGGRAPH_NODE_PATH
+    assert result["current_step"] == "interrupt_for_human_review"
+    assert result["task_status"] == "waiting_review"
 
 
 def auth_headers() -> dict[str, str]:
@@ -60,10 +93,14 @@ def test_starting_task_creates_graph_run_checkpoint_and_task_detail_projection()
     assert run["id"] == started["graph_run_id"]
     assert run["ai_task_id"] == task_id
     assert run["status"] == "interrupted"
+    assert run["runtime"] == "langgraph"
+    assert run["node_path"] == EXPECTED_LANGGRAPH_NODE_PATH
     assert run["current_step"] == "interrupt_for_human_review"
     assert run["checkpoint_id"] == started["checkpoint_id"]
     assert run["state_snapshot"]["task_status"] == "waiting_review"
     assert run["state_snapshot"]["review_id"] == started["review_id"]
+    assert run["state_snapshot"]["graph_runtime"]["package"] == "langgraph"
+    assert run["state_snapshot"]["graph_runtime"]["node_path"] == EXPECTED_LANGGRAPH_NODE_PATH
 
     task_detail = client.get(f"/api/ai-tasks/{task_id}", headers=headers).json()["data"]
     assert task_detail["current_step"] == "interrupt_for_human_review"
