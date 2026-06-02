@@ -1,6 +1,6 @@
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, message } from 'antd';
+import { Alert, Button, Form, Input, InputNumber, Modal, Popconfirm, Radio, Select, Space, Switch, message } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
@@ -10,7 +10,9 @@ import {
   createModelGatewayConfig,
   deleteModelGatewayConfig,
   fetchModelGatewayConfigs,
+  testModelGatewayConfig,
   updateModelGatewayConfig,
+  type ModelGatewayConfigTestResult,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
 
@@ -24,14 +26,40 @@ type ModelGatewayFormValues = {
   name: string;
   provider: string;
   status: ModelGatewayConfigRecord['status'];
+  test_target: 'chat' | 'chat_and_embedding' | 'embedding';
   timeout_seconds: number;
 };
+
+const TEST_TARGET_FIELDS: Record<ModelGatewayFormValues['test_target'], (keyof ModelGatewayFormValues)[]> = {
+  chat: ['name', 'provider', 'base_url', 'api_key', 'default_chat_model', 'timeout_seconds', 'status', 'test_target'],
+  chat_and_embedding: [
+    'name',
+    'provider',
+    'base_url',
+    'api_key',
+    'default_chat_model',
+    'default_embedding_model',
+    'timeout_seconds',
+    'status',
+    'test_target',
+  ],
+  embedding: ['name', 'provider', 'base_url', 'api_key', 'default_embedding_model', 'timeout_seconds', 'status', 'test_target'],
+};
+
+function formatTestStatus(result: ModelGatewayConfigTestResult['chat'] | ModelGatewayConfigTestResult['embedding']) {
+  if (result.status === 'skipped') {
+    return '跳过';
+  }
+  return result.ok ? '成功' : '失败';
+}
 
 export default function ModelGatewayPage() {
   const [form] = Form.useForm<ModelGatewayFormValues>();
   const [editingConfig, setEditingConfig] = useState<ModelGatewayConfigRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<ModelGatewayConfigTestResult | null>(null);
   const {
     error,
     reload,
@@ -41,12 +69,14 @@ export default function ModelGatewayPage() {
 
   const openCreateModal = () => {
     setEditingConfig(null);
+    setTestResult(null);
     form.resetFields();
     form.setFieldsValue({
       is_default: dataSource.length === 0,
       max_retries: 1,
       provider: 'openai_compatible',
       status: 'active',
+      test_target: 'chat_and_embedding',
       timeout_seconds: 60,
     });
     setIsModalOpen(true);
@@ -54,6 +84,7 @@ export default function ModelGatewayPage() {
 
   const openEditModal = useCallback((row: ModelGatewayConfigRecord) => {
     setEditingConfig(row);
+    setTestResult(null);
     form.setFieldsValue({
       base_url: row.baseUrl,
       default_chat_model: row.defaultChatModel,
@@ -63,26 +94,51 @@ export default function ModelGatewayPage() {
       name: row.name,
       provider: row.provider,
       status: row.status,
+      test_target: 'chat_and_embedding',
       timeout_seconds: row.timeoutSeconds,
     });
     setIsModalOpen(true);
   }, [form]);
 
-  const handleSave = async () => {
-    const values = await form.validateFields();
+  const buildPayload = (values: ModelGatewayFormValues, options?: { includeTestTarget?: boolean }) => {
     const apiKey = trimText(values.api_key);
-    const payload = {
+    return {
       base_url: values.base_url.trim(),
       default_chat_model: values.default_chat_model.trim(),
-      default_embedding_model: values.default_embedding_model.trim(),
+      default_embedding_model: values.default_embedding_model?.trim(),
+      ...(editingConfig ? { config_id: editingConfig.id } : {}),
       is_default: values.is_default,
       max_retries: Number(values.max_retries ?? 1),
       name: values.name.trim(),
       provider: values.provider.trim(),
       status: values.status,
+      ...(options?.includeTestTarget ? { test_target: values.test_target } : {}),
       timeout_seconds: Number(values.timeout_seconds ?? 60),
       ...(apiKey ? { api_key: apiKey } : {}),
     };
+  };
+
+  const handleTest = async () => {
+    const testTarget = form.getFieldValue('test_target') ?? 'chat_and_embedding';
+    await form.validateFields(TEST_TARGET_FIELDS[testTarget]);
+    const values = form.getFieldsValue();
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const result = await testModelGatewayConfig(buildPayload(values, { includeTestTarget: true }));
+      setTestResult(result);
+      message[result.ok ? 'success' : 'warning'](result.ok ? '模型网关测试通过' : '模型网关测试未通过');
+    } catch (testError) {
+      message.error(formatMutationError(testError));
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    const values = await form.validateFields();
+    const payload = buildPayload(values);
+    delete payload.config_id;
 
     setIsSaving(true);
     try {
@@ -276,6 +332,37 @@ export default function ModelGatewayPage() {
           </Form.Item>
           <Form.Item label="默认配置" name="is_default" valuePropName="checked">
             <Switch />
+          </Form.Item>
+          <Form.Item>
+            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+              <Form.Item label="测试范围" name="test_target" style={{ marginBottom: 0 }}>
+                <Radio.Group
+                  options={[
+                    { label: 'Chat + Embedding', value: 'chat_and_embedding' },
+                    { label: '仅 Chat', value: 'chat' },
+                  ]}
+                />
+              </Form.Item>
+              <Button loading={isTesting} onClick={() => void handleTest()}>
+                测试连接
+              </Button>
+              {testResult ? (
+                <Alert
+                  title={`Chat ${formatTestStatus(testResult.chat)} / Embedding ${formatTestStatus(
+                    testResult.embedding,
+                  )}`}
+                  description={`Chat: ${testResult.chat.model}，${testResult.chat.latency_ms ?? 0}ms；Embedding: ${
+                    testResult.embedding.model
+                  }${
+                    testResult.embedding.status === 'skipped' ? '' : `，${testResult.embedding.latency_ms ?? 0}ms`
+                  }${
+                    testResult.embedding.dimension ? `，维度 ${testResult.embedding.dimension}` : ''
+                  }`}
+                  showIcon
+                  type={testResult.ok ? 'success' : 'warning'}
+                />
+              ) : null}
+            </Space>
           </Form.Item>
         </Form>
       </Modal>

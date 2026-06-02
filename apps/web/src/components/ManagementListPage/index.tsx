@@ -9,7 +9,7 @@ type FilterField = {
   name: string;
   options?: Array<{ label: string; value: string }>;
   placeholder?: string;
-  type: 'select' | 'text';
+  type: 'dateRange' | 'select' | 'text';
 };
 
 type ManagementListPageProps<Row extends Record<string, unknown>> = {
@@ -32,6 +32,54 @@ type FilterValues = Record<string, unknown>;
 
 function normalizeFilterValue(value: unknown) {
   return String(value ?? '').trim();
+}
+
+function normalizeDateRangeValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return [normalizeFilterValue(value[0]), normalizeFilterValue(value[1])] as const;
+  }
+  const [start = '', end = ''] = normalizeFilterValue(value).split(',');
+  return [start.trim(), end.trim()] as const;
+}
+
+function parseDateBoundary(value: string, boundary: 'end' | 'start') {
+  if (!value) {
+    return undefined;
+  }
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+    const parsed = new Date(Number(year), Number(month) - 1, Number(day));
+    if (boundary === 'end') {
+      parsed.setHours(23, 59, 59, 999);
+    }
+    return parsed.getTime();
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+  return parsed.getTime();
+}
+
+function isWithinDateRange(rowValue: unknown, filterValue: unknown) {
+  const [startValue, endValue] = normalizeDateRangeValue(filterValue);
+  if (!startValue && !endValue) {
+    return true;
+  }
+  const rowTime = parseDateBoundary(normalizeFilterValue(rowValue), 'start');
+  if (rowTime === undefined) {
+    return false;
+  }
+  const startTime = parseDateBoundary(startValue, 'start');
+  const endTime = parseDateBoundary(endValue, 'end');
+  if (startTime !== undefined && rowTime < startTime) {
+    return false;
+  }
+  if (endTime !== undefined && rowTime > endTime) {
+    return false;
+  }
+  return true;
 }
 
 function toValueEnum(options?: Array<{ label: string; value: string }>) {
@@ -64,12 +112,18 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         dataIndex: field.name,
         fieldProps: {
           placeholder:
-            field.placeholder ?? (field.type === 'select' ? `请选择${field.label}` : `请输入${field.label}`),
+            field.placeholder ??
+            (field.type === 'dateRange'
+              ? ['开始时间', '结束时间']
+              : field.type === 'select'
+                ? `请选择${field.label}`
+                : `请输入${field.label}`),
         },
         hideInTable: true,
         title: field.label,
         valueEnum: field.type === 'select' ? toValueEnum(field.options) : undefined,
-        valueType: field.type === 'select' ? 'select' : 'text',
+        valueType:
+          field.type === 'dateRange' ? 'dateRange' : field.type === 'select' ? 'select' : 'text',
       })),
       ...columns.map<ProColumns<Row>>((column) => ({
         ...column,
@@ -90,6 +144,10 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
           }
 
           const rowValue = normalizeFilterValue(row[field.name as keyof Row]);
+
+          if (field.type === 'dateRange') {
+            return isWithinDateRange(row[field.name as keyof Row], filterValues[field.name]);
+          }
 
           if (field.type === 'select') {
             return rowValue === filterValue;

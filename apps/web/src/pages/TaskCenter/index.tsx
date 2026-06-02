@@ -710,6 +710,11 @@ export default function TaskCenterPage() {
         ),
       },
       {
+        title: '所属产品',
+        dataIndex: 'product',
+        key: 'product',
+      },
+      {
         title: '状态',
         dataIndex: 'status',
         key: 'status',
@@ -717,6 +722,11 @@ export default function TaskCenterPage() {
           const statusLabel = taskStatusLabels[row.status] ?? { color: 'blue', label: row.status };
           return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
         },
+      },
+      {
+        title: '创建时间',
+        dataIndex: 'createdAt',
+        key: 'createdAt',
       },
       {
         title: '负责人',
@@ -794,6 +804,7 @@ export default function TaskCenterPage() {
         dataSource={dataSource}
         filters={[
           { label: '任务', name: 'label', type: 'text' },
+          { label: '所属产品', name: 'product', type: 'text' },
           {
             label: '任务类型',
             name: 'type',
@@ -821,6 +832,7 @@ export default function TaskCenterPage() {
             ],
             type: 'select',
           },
+          { label: '时间段', name: 'createdAtValue', type: 'dateRange' },
           { label: '负责人', name: 'owner', type: 'text' },
         ]}
         loading={status === 'loading'}

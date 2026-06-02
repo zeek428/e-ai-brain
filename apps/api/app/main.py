@@ -122,6 +122,7 @@ GIT_REPO_STATUSES = {"active", "inactive"}
 RELATED_SYSTEM_STATUSES = {"active", "inactive"}
 MODEL_GATEWAY_PROVIDERS = {"openai_compatible"}
 MODEL_GATEWAY_STATUSES = {"active", "inactive"}
+MODEL_GATEWAY_TEST_TARGETS = {"chat", "chat_and_embedding", "embedding"}
 KNOWLEDGE_INDEX_STATUSES = {"archived", "importing", "indexed", "index_failed", "pending_index"}
 BUG_STATUS_TRANSITIONS = {
     "open": {"triaged", "assigned", "closed"},
@@ -279,6 +280,21 @@ class ModelGatewayConfigPatchRequest(BaseModel):
     max_retries: int | None = None
     status: str | None = None
     is_default: bool | None = None
+
+
+class ModelGatewayConfigTestRequest(BaseModel):
+    name: str
+    provider: str = "openai_compatible"
+    base_url: str
+    api_key: str | None = None
+    default_chat_model: str | None = None
+    default_embedding_model: str | None = None
+    timeout_seconds: int = 60
+    max_retries: int = 1
+    status: str = "active"
+    is_default: bool = False
+    config_id: str | None = None
+    test_target: str = "chat_and_embedding"
 
 
 class RequirementRequest(BaseModel):
@@ -1491,6 +1507,128 @@ def _public_model_gateway_config(config: dict[str, Any]) -> dict[str, Any]:
     api_key = config.get("api_key")
     public_config["api_key_configured"] = bool(api_key)
     return public_config
+
+
+def _model_gateway_test_failure(
+    *,
+    error_code: str,
+    model: str,
+    started: float,
+) -> dict[str, Any]:
+    return {
+        "error_code": error_code,
+        "latency_ms": int((perf_counter() - started) * 1000),
+        "model": model,
+        "ok": False,
+        "status": "failed",
+    }
+
+
+def _model_gateway_test_skipped(*, model: str = "") -> dict[str, Any]:
+    return {
+        "model": model,
+        "ok": True,
+        "status": "skipped",
+    }
+
+
+def _test_model_gateway_chat(config: dict[str, Any]) -> dict[str, Any]:
+    model = config["default_chat_model"]
+    body = {
+        "messages": [
+            {
+                "content": (
+                    "Return one compact JSON object with a string field named summary. "
+                    "This is an AI Brain model gateway connectivity test."
+                ),
+                "role": "user",
+            }
+        ],
+        "model": model,
+        "response_format": {"type": "json_object"},
+        "temperature": 0,
+    }
+    request = UrlRequest(
+        _model_gateway_chat_completions_url(config["base_url"]),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config['api_key']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    started = perf_counter()
+    try:
+        with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("Model gateway chat response is missing choices")
+        return {
+            "latency_ms": int((perf_counter() - started) * 1000),
+            "model": model,
+            "ok": True,
+            "status": "succeeded",
+        }
+    except (
+        AttributeError,
+        HTTPError,
+        URLError,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
+        return _model_gateway_test_failure(
+            error_code="MODEL_GATEWAY_CHAT_FAILED",
+            model=model,
+            started=started,
+        )
+
+
+def _test_model_gateway_embedding(config: dict[str, Any]) -> dict[str, Any]:
+    model = config["default_embedding_model"]
+    body = {
+        "input": ["AI Brain model gateway embedding connectivity test"],
+        "model": model,
+    }
+    request = UrlRequest(
+        _model_gateway_embeddings_url(config["base_url"]),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config['api_key']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    started = perf_counter()
+    try:
+        with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        embeddings = _parse_embedding_response(payload, expected_count=1)
+        return {
+            "dimension": len(embeddings[0]),
+            "latency_ms": int((perf_counter() - started) * 1000),
+            "model": model,
+            "ok": True,
+            "status": "succeeded",
+        }
+    except (
+        AttributeError,
+        HTTPError,
+        URLError,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
+        return _model_gateway_test_failure(
+            error_code="MODEL_GATEWAY_EMBEDDING_FAILED",
+            model=model,
+            started=started,
+        )
 
 
 def _public_git_repository(repository: dict[str, Any]) -> dict[str, Any]:
@@ -2889,6 +3027,92 @@ def list_model_gateway_configs(
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
 
+@app.post("/api/system/model-gateway-configs/test")
+def test_model_gateway_config(
+    request: Request,
+    payload: ModelGatewayConfigTestRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"admin"})
+    current_store = store(request)
+    name = _ensure_non_blank(payload.name, "name")
+    base_url = _ensure_non_blank(payload.base_url, "base_url")
+    _ensure_enum(
+        payload.test_target,
+        MODEL_GATEWAY_TEST_TARGETS,
+        "model gateway test target",
+    )
+    test_target = payload.test_target
+    should_test_chat = test_target in {"chat", "chat_and_embedding"}
+    should_test_embedding = test_target in {"chat_and_embedding", "embedding"}
+    default_chat_model = (
+        _ensure_non_blank(payload.default_chat_model, "default_chat_model")
+        if should_test_chat
+        else (payload.default_chat_model or "").strip()
+    )
+    default_embedding_model = (
+        _ensure_non_blank(payload.default_embedding_model, "default_embedding_model")
+        if should_test_embedding
+        else (payload.default_embedding_model or "").strip()
+    )
+    _ensure_enum(payload.provider, MODEL_GATEWAY_PROVIDERS, "model gateway provider")
+    _ensure_enum(payload.status, MODEL_GATEWAY_STATUSES, "model gateway status")
+    existing_config = None
+    if payload.config_id:
+        existing_config = current_store.model_gateway_configs.get(payload.config_id)
+        if existing_config is None:
+            raise api_error(404, "NOT_FOUND", "Model gateway config not found")
+    api_key = payload.api_key or (existing_config or {}).get("api_key")
+    if not api_key:
+        raise api_error(
+            400,
+            "MODEL_GATEWAY_CONFIG_INVALID",
+            "Model gateway test requires an API key",
+        )
+    test_config = {
+        "api_key": api_key,
+        "base_url": base_url,
+        "default_chat_model": default_chat_model,
+        "default_embedding_model": default_embedding_model,
+        "id": payload.config_id or "model_gateway_config_test",
+        "is_default": False,
+        "max_retries": payload.max_retries,
+        "name": name,
+        "provider": payload.provider,
+        "status": payload.status,
+        "timeout_seconds": payload.timeout_seconds,
+    }
+    chat_result = (
+        _test_model_gateway_chat(test_config)
+        if should_test_chat
+        else _model_gateway_test_skipped(model=default_chat_model)
+    )
+    embedding_result = (
+        _test_model_gateway_embedding(test_config)
+        if should_test_embedding
+        else _model_gateway_test_skipped(model=default_embedding_model)
+    )
+    result = {
+        "chat": chat_result,
+        "embedding": embedding_result,
+        "ok": bool(chat_result["ok"] and embedding_result["ok"]),
+        "test_target": test_target,
+    }
+    current_store.audit(
+        event_type="model_gateway_config.tested",
+        actor_id=user["id"],
+        subject_type="model_gateway_config",
+        subject_id=payload.config_id,
+        payload={
+            "chat_status": chat_result["status"],
+            "embedding_status": embedding_result["status"],
+            "provider": payload.provider,
+            "test_target": test_target,
+        },
+    )
+    return envelope(result, get_trace_id(request))
+
+
 @app.post("/api/system/model-gateway-configs")
 def create_model_gateway_config(
     request: Request,
@@ -3307,6 +3531,7 @@ def generate_task_from_requirement(
             "Only approved requirements can generate tasks",
         )
 
+    now = datetime.now(UTC).isoformat()
     task_id = current_store.new_id("task")
     task = {
         "id": task_id,
@@ -3326,6 +3551,8 @@ def generate_task_from_requirement(
         "graph_run_ids": [],
         "current_step": "draft",
         "created_by": user["id"],
+        "created_at": now,
+        "updated_at": now,
     }
     current_store.ai_tasks[task_id] = task
     requirement["status"] = "task_created"
@@ -3954,6 +4181,8 @@ def list_ai_tasks(
     task_type: str | None = None,
     product_id: str | None = None,
     requirement_id: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
@@ -3970,9 +4199,27 @@ def list_ai_tasks(
         items = [item for item in items if item["product_id"] == product_id]
     if requirement_id:
         items = [item for item in items if item["requirement_id"] == requirement_id]
+    if created_from or created_to:
+        from_at = _parse_iso_datetime(created_from, "created_from") if created_from else None
+        to_at = _parse_iso_datetime(created_to, "created_to") if created_to else None
+        filtered_items = []
+        for item in items:
+            created_at = item.get("created_at") or item.get("updated_at")
+            if not created_at:
+                continue
+            item_created_at = _parse_iso_datetime(str(created_at), "created_at")
+            if from_at and item_created_at < from_at:
+                continue
+            if to_at and item_created_at > to_at:
+                continue
+            filtered_items.append(item)
+        items = filtered_items
     items.sort(key=lambda item: item["id"])
     return envelope(
-        {"items": [_task_summary_projection(item) for item in items], "total": len(items)},
+        {
+            "items": [_task_summary_projection(item, current_store) for item in items],
+            "total": len(items),
+        },
         get_trace_id(request),
     )
 
@@ -4077,6 +4324,7 @@ def create_ai_task(
             "Requirement must be approved or task_created before creating AI tasks",
         )
 
+    now = datetime.now(UTC).isoformat()
     task_id = current_store.new_id("task")
     task = {
         "id": task_id,
@@ -4096,6 +4344,8 @@ def create_ai_task(
         "graph_run_ids": [],
         "current_step": "draft",
         "created_by": user["id"],
+        "created_at": now,
+        "updated_at": now,
     }
     current_store.ai_tasks[task_id] = task
     requirement["status"] = "task_created"
@@ -4572,7 +4822,20 @@ def _task_detail_projection(current_store: MemoryStore, task: dict[str, Any]) ->
     return detail
 
 
-def _task_summary_projection(task: dict[str, Any]) -> dict[str, Any]:
+def _task_product_name(current_store: MemoryStore, task: dict[str, Any]) -> str | None:
+    product_id = task.get("product_id")
+    product = current_store.products.get(str(product_id)) if product_id else None
+    if product:
+        return product.get("name")
+    product_context = task.get("product_context")
+    if isinstance(product_context, dict):
+        product_snapshot = product_context.get("product")
+        if isinstance(product_snapshot, dict):
+            return product_snapshot.get("name")
+    return None
+
+
+def _task_summary_projection(task: dict[str, Any], current_store: MemoryStore) -> dict[str, Any]:
     return {
         "id": task["id"],
         "brain_app_id": task.get("brain_app_id", DEFAULT_BRAIN_APP_ID),
@@ -4581,10 +4844,13 @@ def _task_summary_projection(task: dict[str, Any]) -> dict[str, Any]:
         "status": task["status"],
         "requirement_id": task["requirement_id"],
         "product_id": task["product_id"],
+        "product_name": _task_product_name(current_store, task),
         "version_id": task["version_id"],
         "module_code": task.get("module_code"),
         "current_step": task.get("current_step"),
         "created_by": task.get("created_by"),
+        "created_at": task.get("created_at"),
+        "updated_at": task.get("updated_at"),
     }
 
 

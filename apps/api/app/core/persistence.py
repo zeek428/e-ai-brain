@@ -2458,7 +2458,8 @@ class PostgresSnapshotRepository:
         cursor.execute(
             """
             SELECT id, ai_task_id, task_type, status, current_step, checkpoint_id,
-                   runtime, node_path, state_snapshot, started_at, completed_at
+                   runtime, node_path, state_snapshot, started_at, completed_at,
+                   created_at, updated_at
             FROM graph_runs
             ORDER BY started_at, id
             """
@@ -2468,6 +2469,7 @@ class PostgresSnapshotRepository:
                 "ai_task_id": row[1],
                 "checkpoint_id": row[5],
                 "completed_at": row[10].isoformat() if row[10] else None,
+                "created_at": row[11].isoformat() if row[11] else None,
                 "current_step": row[4],
                 "id": row[0],
                 "node_path": list(row[7] or []),
@@ -2476,6 +2478,7 @@ class PostgresSnapshotRepository:
                 "state_snapshot": dict(row[8] or {}),
                 "status": row[3],
                 "task_type": row[2],
+                "updated_at": row[12].isoformat() if row[12] else None,
             }
             for row in cursor.fetchall()
         }
@@ -2483,7 +2486,8 @@ class PostgresSnapshotRepository:
     def _load_graph_checkpoints(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
-            SELECT id, graph_run_id, ai_task_id, current_step, state_snapshot, created_at
+            SELECT id, graph_run_id, ai_task_id, current_step, state_snapshot,
+                   created_at, updated_at
             FROM graph_checkpoints
             ORDER BY created_at, id
             """
@@ -2496,6 +2500,7 @@ class PostgresSnapshotRepository:
                 "graph_run_id": row[1],
                 "id": row[0],
                 "state_snapshot": dict(row[4] or {}),
+                "updated_at": row[6].isoformat() if row[6] else None,
             }
             for row in cursor.fetchall()
         }
@@ -2588,7 +2593,7 @@ class PostgresSnapshotRepository:
         cursor.execute(
             """
             SELECT id, document_id, chunk_index, content, embedding::text, metadata,
-                   permission_scope, created_at
+                   permission_scope, created_at, updated_at
             FROM knowledge_chunks
             ORDER BY document_id, chunk_index, id
             """
@@ -2606,6 +2611,7 @@ class PostgresSnapshotRepository:
                 "metadata": dict(row[5] or {}),
                 "permission_roles": list(permission_scope.get("roles") or []),
                 "permission_scope": permission_scope,
+                "updated_at": row[8].isoformat() if row[8] else None,
             }
             if chunk["embedding"] is None:
                 chunk.pop("embedding")
@@ -2615,6 +2621,8 @@ class PostgresSnapshotRepository:
                 chunk.pop("permission_scope")
             if chunk["created_at"] is None:
                 chunk.pop("created_at")
+            if chunk["updated_at"] is None:
+                chunk.pop("updated_at")
             chunks[row[0]] = chunk
         return chunks
 
@@ -2659,7 +2667,7 @@ class PostgresSnapshotRepository:
         cursor.execute(
             """
             SELECT id::text, event_type, actor_id, ai_task_id, subject_type, subject_id,
-                   payload, sequence, created_at
+                   payload, sequence, created_at, updated_at
             FROM audit_events
             ORDER BY sequence, created_at, id
             """
@@ -2675,6 +2683,7 @@ class PostgresSnapshotRepository:
                 "sequence": row[7],
                 "subject_id": row[5],
                 "subject_type": row[4],
+                "updated_at": row[9].isoformat() if row[9] else None,
             }
             for row in cursor.fetchall()
         ]
@@ -3112,7 +3121,8 @@ class PostgresSnapshotRepository:
         cursor.execute(
             """
             SELECT id, suggestion_id, decision, comment, edited_title, edited_scope,
-                   convert_to_requirement, created_requirement_id, decided_by, decided_at
+                   convert_to_requirement, created_requirement_id, decided_by, decided_at,
+                   created_at, updated_at
             FROM iteration_plan_decisions
             ORDER BY decided_at, id
             """
@@ -3122,6 +3132,7 @@ class PostgresSnapshotRepository:
             decision = {
                 "comment": row[3],
                 "convert_to_requirement": row[6],
+                "created_at": row[10].isoformat() if row[10] else None,
                 "created_requirement_id": row[7],
                 "decided_at": row[9].isoformat() if row[9] else None,
                 "decided_by": row[8],
@@ -3130,13 +3141,16 @@ class PostgresSnapshotRepository:
                 "edited_title": row[4],
                 "id": row[0],
                 "suggestion_id": row[1],
+                "updated_at": row[11].isoformat() if row[11] else None,
             }
             for optional_key in (
                 "comment",
+                "created_at",
                 "created_requirement_id",
                 "decided_at",
                 "edited_scope",
                 "edited_title",
+                "updated_at",
             ):
                 if decision[optional_key] is None:
                     decision.pop(optional_key)
@@ -3149,7 +3163,7 @@ class PostgresSnapshotRepository:
             SELECT id, source_subject_type, source_subject_id, target_subject_type,
                    target_subject_id, relation_type, product_id, version_id,
                    module_code, confidence, source_module, observed_at, metadata,
-                   summary
+                   summary, created_at, updated_at
             FROM lifecycle_context_edges
             ORDER BY observed_at, id
             """
@@ -3158,6 +3172,7 @@ class PostgresSnapshotRepository:
         for row in cursor.fetchall():
             edge = {
                 "confidence": float(row[9]) if row[9] is not None else 1.0,
+                "created_at": row[14].isoformat() if row[14] else None,
                 "id": row[0],
                 "metadata": dict(row[12] or {}),
                 "module_code": row[8],
@@ -3170,13 +3185,16 @@ class PostgresSnapshotRepository:
                 "summary": row[13],
                 "target_subject_id": row[4],
                 "target_subject_type": row[3],
+                "updated_at": row[15].isoformat() if row[15] else None,
                 "version_id": row[7],
             }
             for optional_key in (
+                "created_at",
                 "module_code",
                 "observed_at",
                 "product_id",
                 "summary",
+                "updated_at",
                 "version_id",
             ):
                 if edge[optional_key] is None:
@@ -3189,7 +3207,7 @@ class PostgresSnapshotRepository:
             """
             SELECT id, product_id, version_id, module_code, requirement_id, task_id,
                    risk_type, severity, source_subject_type, source_subject_id,
-                   impact_summary, recommendation, observed_at
+                   impact_summary, recommendation, observed_at, created_at, updated_at
             FROM lifecycle_risk_signals
             ORDER BY observed_at, id
             """
@@ -3197,6 +3215,7 @@ class PostgresSnapshotRepository:
         risks = {}
         for row in cursor.fetchall():
             risk = {
+                "created_at": row[13].isoformat() if row[13] else None,
                 "id": row[0],
                 "impact_summary": row[10],
                 "module_code": row[3],
@@ -3209,14 +3228,17 @@ class PostgresSnapshotRepository:
                 "source_subject_id": row[9],
                 "source_subject_type": row[8],
                 "task_id": row[5],
+                "updated_at": row[14].isoformat() if row[14] else None,
                 "version_id": row[2],
             }
             for optional_key in (
+                "created_at",
                 "module_code",
                 "observed_at",
                 "product_id",
                 "requirement_id",
                 "task_id",
+                "updated_at",
                 "version_id",
             ):
                 if risk[optional_key] is None:
@@ -3294,7 +3316,7 @@ class PostgresSnapshotRepository:
         cursor.execute(
             """
             SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
-                   status, error, model_gateway_config_id, created_at
+                   status, error, model_gateway_config_id, created_at, updated_at
             FROM model_gateway_logs
             ORDER BY created_at, id
             """
@@ -3313,12 +3335,14 @@ class PostgresSnapshotRepository:
                 "purpose": row[4],
                 "status": row[7],
                 "tokens": dict(row[5] or {}),
+                "updated_at": row[11].isoformat() if row[11] else None,
             }
             for optional_key in (
                 "ai_task_id",
                 "created_at",
                 "error",
                 "model_gateway_config_id",
+                "updated_at",
             ):
                 if log[optional_key] is None:
                     log.pop(optional_key)
@@ -3332,7 +3356,8 @@ class PostgresSnapshotRepository:
                    mr_iid, title, author, source_branch, target_branch, base_sha,
                    head_sha, diff_refs, changed_files_summary, diff_storage_ref,
                    diff_size_bytes, diff_limit_bytes, snapshot_hash, requirement_id,
-                   technical_solution_task_id, created_by, created_at, writeback_allowed
+                   technical_solution_task_id, created_by, created_at, updated_at,
+                   writeback_allowed
             FROM gitlab_mr_snapshots
             ORDER BY created_at, id
             """
@@ -3362,14 +3387,16 @@ class PostgresSnapshotRepository:
                 "target_branch": row[10],
                 "technical_solution_task_id": row[20],
                 "title": row[7],
+                "updated_at": row[23].isoformat() if row[23] else None,
                 "version_id": row[3],
-                "writeback_allowed": row[23],
+                "writeback_allowed": row[24],
             }
             for optional_key in (
                 "base_sha",
                 "created_at",
                 "project_id",
                 "project_path",
+                "updated_at",
                 "version_id",
             ):
                 if snapshot[optional_key] is None:
@@ -3420,7 +3447,8 @@ class PostgresSnapshotRepository:
     def _load_mock_writebacks(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
-            SELECT id, source_task_id, title, status, idempotency_key, payload, created_at
+            SELECT id, source_task_id, title, status, idempotency_key, payload,
+                   created_at, updated_at
             FROM mock_issues
             ORDER BY created_at, id
             """
@@ -3437,6 +3465,8 @@ class PostgresSnapshotRepository:
             }
             if row[6] is not None:
                 issue["created_at"] = row[6].isoformat()
+            if row[7] is not None:
+                issue["updated_at"] = row[7].isoformat()
             idempotency_key = row[4]
             writeback = writebacks.setdefault(
                 idempotency_key,
@@ -3760,15 +3790,19 @@ class PostgresSnapshotRepository:
         import json
 
         for graph_run in graph_runs.values():
+            created_at = graph_run.get("created_at") or graph_run.get("started_at")
+            updated_at = graph_run.get("updated_at") or graph_run.get("completed_at") or created_at
             cursor.execute(
                 """
                 INSERT INTO graph_runs (
                   id, ai_task_id, task_type, status, current_step, checkpoint_id,
-                  runtime, node_path, state_snapshot, started_at, completed_at
+                  runtime, node_path, state_snapshot, started_at, completed_at,
+                  created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
-                  COALESCE(%s::timestamptz, now()), %s::timestamptz
+                  COALESCE(%s::timestamptz, now()), %s::timestamptz,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   ai_task_id = EXCLUDED.ai_task_id,
@@ -3779,7 +3813,8 @@ class PostgresSnapshotRepository:
                   runtime = EXCLUDED.runtime,
                   node_path = EXCLUDED.node_path,
                   state_snapshot = EXCLUDED.state_snapshot,
-                  completed_at = EXCLUDED.completed_at
+                  completed_at = EXCLUDED.completed_at,
+                  updated_at = EXCLUDED.updated_at
                 """,
                 (
                     graph_run["id"],
@@ -3793,6 +3828,8 @@ class PostgresSnapshotRepository:
                     json.dumps(graph_run.get("state_snapshot", {}), ensure_ascii=False),
                     graph_run.get("started_at"),
                     graph_run.get("completed_at"),
+                    created_at,
+                    updated_at,
                 ),
             )
 
@@ -3804,17 +3841,24 @@ class PostgresSnapshotRepository:
         import json
 
         for checkpoint in graph_checkpoints.values():
+            created_at = checkpoint.get("created_at")
+            updated_at = checkpoint.get("updated_at") or created_at
             cursor.execute(
                 """
                 INSERT INTO graph_checkpoints (
-                  id, graph_run_id, ai_task_id, current_step, state_snapshot, created_at
+                  id, graph_run_id, ai_task_id, current_step, state_snapshot, created_at,
+                  updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()))
+                VALUES (
+                  %s, %s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
                 ON CONFLICT (id) DO UPDATE SET
                   graph_run_id = EXCLUDED.graph_run_id,
                   ai_task_id = EXCLUDED.ai_task_id,
                   current_step = EXCLUDED.current_step,
-                  state_snapshot = EXCLUDED.state_snapshot
+                  state_snapshot = EXCLUDED.state_snapshot,
+                  updated_at = EXCLUDED.updated_at
                 """,
                 (
                     checkpoint["id"],
@@ -3822,7 +3866,8 @@ class PostgresSnapshotRepository:
                     checkpoint["ai_task_id"],
                     checkpoint["current_step"],
                     json.dumps(checkpoint.get("state_snapshot", {}), ensure_ascii=False),
-                    checkpoint.get("created_at"),
+                    created_at,
+                    updated_at,
                 ),
             )
 
@@ -3997,6 +4042,8 @@ class PostgresSnapshotRepository:
         import json
 
         for chunk in chunks.values():
+            created_at = chunk.get("created_at")
+            updated_at = chunk.get("updated_at") or created_at
             permission_scope = deepcopy(chunk.get("permission_scope", {}))
             if chunk.get("permission_roles"):
                 permission_scope["roles"] = list(chunk["permission_roles"])
@@ -4004,11 +4051,11 @@ class PostgresSnapshotRepository:
                 """
                 INSERT INTO knowledge_chunks (
                   id, document_id, chunk_index, content, embedding, metadata,
-                  permission_scope, created_at
+                  permission_scope, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s::vector, %s::jsonb, %s::jsonb,
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   document_id = EXCLUDED.document_id,
@@ -4016,7 +4063,8 @@ class PostgresSnapshotRepository:
                   content = EXCLUDED.content,
                   embedding = EXCLUDED.embedding,
                   metadata = EXCLUDED.metadata,
-                  permission_scope = EXCLUDED.permission_scope
+                  permission_scope = EXCLUDED.permission_scope,
+                  updated_at = EXCLUDED.updated_at
                 """,
                 (
                     chunk["id"],
@@ -4026,7 +4074,8 @@ class PostgresSnapshotRepository:
                     _vector_sql_literal(chunk.get("embedding")),
                     json.dumps(chunk.get("metadata", {}), ensure_ascii=False),
                     json.dumps(permission_scope, ensure_ascii=False),
-                    chunk.get("created_at"),
+                    created_at,
+                    updated_at,
                 ),
             )
 
@@ -4079,15 +4128,17 @@ class PostgresSnapshotRepository:
         import json
 
         for event in audit_events:
+            created_at = event.get("created_at")
+            updated_at = event.get("updated_at") or created_at
             cursor.execute(
                 """
                 INSERT INTO audit_events (
                   id, event_type, actor_id, ai_task_id, subject_type, subject_id, payload,
-                  sequence, created_at
+                  sequence, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   event_type = EXCLUDED.event_type,
@@ -4097,7 +4148,7 @@ class PostgresSnapshotRepository:
                   subject_id = EXCLUDED.subject_id,
                   payload = EXCLUDED.payload,
                   sequence = EXCLUDED.sequence,
-                  created_at = EXCLUDED.created_at
+                  updated_at = EXCLUDED.updated_at
                 """,
                 (
                     event["id"],
@@ -4108,7 +4159,8 @@ class PostgresSnapshotRepository:
                     event.get("subject_id"),
                     json.dumps(event.get("payload", {}), ensure_ascii=False),
                     event.get("sequence", 0),
-                    event.get("created_at"),
+                    created_at,
+                    updated_at,
                 ),
             )
 
@@ -4742,14 +4794,18 @@ class PostgresSnapshotRepository:
         decisions: dict[str, dict[str, Any]],
     ) -> None:
         for decision in decisions.values():
+            created_at = decision.get("created_at") or decision.get("decided_at")
+            updated_at = decision.get("updated_at") or created_at
             cursor.execute(
                 """
                 INSERT INTO iteration_plan_decisions (
                   id, suggestion_id, decision, comment, edited_title, edited_scope,
-                  convert_to_requirement, created_requirement_id, decided_by, decided_at
+                  convert_to_requirement, created_requirement_id, decided_by, decided_at,
+                  created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -4761,7 +4817,8 @@ class PostgresSnapshotRepository:
                   convert_to_requirement = EXCLUDED.convert_to_requirement,
                   created_requirement_id = EXCLUDED.created_requirement_id,
                   decided_by = EXCLUDED.decided_by,
-                  decided_at = EXCLUDED.decided_at
+                  decided_at = EXCLUDED.decided_at,
+                  updated_at = EXCLUDED.updated_at
                 """,
                 (
                     decision["id"],
@@ -4774,6 +4831,8 @@ class PostgresSnapshotRepository:
                     decision.get("created_requirement_id"),
                     decision["decided_by"],
                     decision.get("decided_at"),
+                    created_at,
+                    updated_at,
                 ),
             )
 
@@ -4785,17 +4844,20 @@ class PostgresSnapshotRepository:
         import json
 
         for edge in edges.values():
+            created_at = edge.get("created_at") or edge.get("observed_at")
+            updated_at = edge.get("updated_at") or created_at
             cursor.execute(
                 """
                 INSERT INTO lifecycle_context_edges (
                   id, source_subject_type, source_subject_id, target_subject_type,
                   target_subject_id, relation_type, product_id, version_id,
                   module_code, confidence, source_module, observed_at, metadata,
-                  summary
+                  summary, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                  COALESCE(%s::timestamptz, now()), %s::jsonb, %s
+                  COALESCE(%s::timestamptz, now()), %s::jsonb, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   source_subject_type = EXCLUDED.source_subject_type,
@@ -4810,7 +4872,8 @@ class PostgresSnapshotRepository:
                   source_module = EXCLUDED.source_module,
                   observed_at = EXCLUDED.observed_at,
                   metadata = EXCLUDED.metadata,
-                  summary = EXCLUDED.summary
+                  summary = EXCLUDED.summary,
+                  updated_at = EXCLUDED.updated_at
                 """,
                 (
                     edge["id"],
@@ -4827,6 +4890,8 @@ class PostgresSnapshotRepository:
                     edge.get("observed_at"),
                     json.dumps(edge.get("metadata", {}), ensure_ascii=False),
                     edge.get("summary"),
+                    created_at,
+                    updated_at,
                 ),
             )
 
@@ -4836,15 +4901,18 @@ class PostgresSnapshotRepository:
         risks: dict[str, dict[str, Any]],
     ) -> None:
         for risk in risks.values():
+            created_at = risk.get("created_at") or risk.get("observed_at")
+            updated_at = risk.get("updated_at") or created_at
             cursor.execute(
                 """
                 INSERT INTO lifecycle_risk_signals (
                   id, product_id, version_id, module_code, requirement_id, task_id,
                   risk_type, severity, source_subject_type, source_subject_id,
-                  impact_summary, recommendation, observed_at
+                  impact_summary, recommendation, observed_at, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -4859,7 +4927,8 @@ class PostgresSnapshotRepository:
                   source_subject_id = EXCLUDED.source_subject_id,
                   impact_summary = EXCLUDED.impact_summary,
                   recommendation = EXCLUDED.recommendation,
-                  observed_at = EXCLUDED.observed_at
+                  observed_at = EXCLUDED.observed_at,
+                  updated_at = EXCLUDED.updated_at
                 """,
                 (
                     risk["id"],
@@ -4875,6 +4944,8 @@ class PostgresSnapshotRepository:
                     risk["impact_summary"],
                     risk["recommendation"],
                     risk.get("observed_at"),
+                    created_at,
+                    updated_at,
                 ),
             )
 
@@ -4974,15 +5045,17 @@ class PostgresSnapshotRepository:
         import json
 
         for log in logs:
+            created_at = log.get("created_at")
+            updated_at = log.get("updated_at") or created_at
             cursor.execute(
                 """
                 INSERT INTO model_gateway_logs (
                   id, ai_task_id, provider, model, purpose, tokens, latency_ms,
-                  status, error, model_gateway_config_id, created_at
+                  status, error, model_gateway_config_id, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s,
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   ai_task_id = EXCLUDED.ai_task_id,
@@ -4994,7 +5067,7 @@ class PostgresSnapshotRepository:
                   status = EXCLUDED.status,
                   error = EXCLUDED.error,
                   model_gateway_config_id = EXCLUDED.model_gateway_config_id,
-                  created_at = EXCLUDED.created_at
+                  updated_at = EXCLUDED.updated_at
                 """,
                 (
                     log["id"],
@@ -5007,7 +5080,8 @@ class PostgresSnapshotRepository:
                     log["status"],
                     log.get("error"),
                     log.get("model_gateway_config_id"),
-                    log.get("created_at"),
+                    created_at,
+                    updated_at,
                 ),
             )
 
@@ -5045,16 +5119,20 @@ class PostgresSnapshotRepository:
             cursor.execute(
                 """
                 INSERT INTO mock_issues (
-                  id, source_task_id, title, status, idempotency_key, payload, created_at
+                  id, source_task_id, title, status, idempotency_key, payload,
+                  created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()))
+                VALUES (
+                  %s, %s, %s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
                 ON CONFLICT (id) DO UPDATE SET
                   source_task_id = EXCLUDED.source_task_id,
                   title = EXCLUDED.title,
                   status = EXCLUDED.status,
                   idempotency_key = EXCLUDED.idempotency_key,
                   payload = EXCLUDED.payload,
-                  created_at = EXCLUDED.created_at
+                  updated_at = EXCLUDED.updated_at
                 """,
                 (
                     issue["id"],
@@ -5064,6 +5142,8 @@ class PostgresSnapshotRepository:
                     issue["idempotency_key"],
                     json.dumps(issue.get("payload", {}), ensure_ascii=False),
                     issue.get("payload", {}).get("created_at"),
+                    issue.get("payload", {}).get("updated_at")
+                    or issue.get("payload", {}).get("created_at"),
                 ),
             )
 
@@ -5075,6 +5155,8 @@ class PostgresSnapshotRepository:
         import json
 
         for snapshot in snapshots.values():
+            created_at = snapshot.get("created_at")
+            updated_at = snapshot.get("updated_at") or created_at
             cursor.execute(
                 """
                 INSERT INTO gitlab_mr_snapshots (
@@ -5082,12 +5164,13 @@ class PostgresSnapshotRepository:
                   mr_iid, title, author, source_branch, target_branch, base_sha, head_sha,
                   diff_refs, changed_files_summary, diff_storage_ref, diff_size_bytes,
                   diff_limit_bytes, snapshot_hash, requirement_id, technical_solution_task_id,
-                  created_by, created_at, writeback_allowed
+                  created_by, created_at, updated_at, writeback_allowed
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s,
                   %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
-                  COALESCE(%s::timestamptz, now()), %s
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
+                  %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   repository_id = EXCLUDED.repository_id,
@@ -5111,7 +5194,7 @@ class PostgresSnapshotRepository:
                   requirement_id = EXCLUDED.requirement_id,
                   technical_solution_task_id = EXCLUDED.technical_solution_task_id,
                   created_by = EXCLUDED.created_by,
-                  created_at = EXCLUDED.created_at,
+                  updated_at = EXCLUDED.updated_at,
                   writeback_allowed = EXCLUDED.writeback_allowed
                 """,
                 (
@@ -5137,7 +5220,8 @@ class PostgresSnapshotRepository:
                     snapshot["requirement_id"],
                     snapshot["technical_solution_task_id"],
                     snapshot["created_by"],
-                    snapshot.get("created_at"),
+                    created_at,
+                    updated_at,
                     snapshot.get("writeback_allowed", False),
                 ),
             )

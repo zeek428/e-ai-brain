@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -209,6 +210,24 @@ def test_initial_migration_defines_core_mvp_tables():
         "bugs",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS {table_name}" in migration
+
+
+def test_all_structured_tables_define_created_and_updated_timestamps():
+    missing: list[str] = []
+    for migration_path in sorted(Path("app/db/migrations").glob("*.sql")):
+        migration = migration_path.read_text()
+        for match in re.finditer(
+            r"CREATE TABLE IF NOT EXISTS\s+([a-z_]+)\s*\((.*?)\n\);",
+            migration,
+            flags=re.DOTALL,
+        ):
+            table_name = match.group(1)
+            table_body = match.group(2)
+            for column_name in ("created_at", "updated_at"):
+                if not re.search(rf"\b{column_name}\s+timestamptz\b", table_body):
+                    missing.append(f"{migration_path.name}:{table_name}.{column_name}")
+
+    assert missing == []
 
 
 def test_initial_migration_matches_runtime_record_shapes():

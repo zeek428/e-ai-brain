@@ -8,6 +8,10 @@
 ## [Unreleased]
 
 ### Added
+- 所有 PostgreSQL 结构表统一补齐 `created_at` 和 `updated_at` 标准时间字段，新增 `018_standard_timestamps.sql` 迁移脚本和表定义门禁测试，防止后续新表漏字段。
+- 任务管理页面新增“所属产品”和“时间段”查询条件，AI 任务列表摘要同步返回产品名、创建时间和更新时间，并支持 `created_from`/`created_to` 后端过滤。
+- 模型网关配置页新增“测试连接”能力，后端新增 `/api/system/model-gateway-configs/test`，使用临时 OpenAI-compatible 参数检测 Chat 与 Embedding 连通性，返回脱敏状态且不保存密钥或模型调用日志。
+- 模型网关测试连接新增测试范围选择，支持仅测试 Chat，并在未测试 Embedding 时返回 `skipped`，便于接入 ChatGPT OAuth 类不提供 `/embeddings` 的 Sub2API 上游。
 - 将前端左侧一级入口从 `欢迎` 更名为 `团队看板`，保留 `/welcome` 兼容路径，并同步架构与编码规范文档中的菜单命名。
 - 新增 `/api/long-memory/status`，未配置 GBrain 时返回明确 `not_configured` 能力状态，配置后只暴露脱敏配置状态和能力列表，不泄露密钥。
 - AI 任务启动接入真实 LangGraph `StateGraph` 运行内核，Graph Run 记录新增 `runtime=langgraph`、节点路径和 `graph_runtime` checkpoint 元数据；新增 `017_langgraph_runtime_metadata.sql` 以 SQL 脚本升级既有 PostgreSQL 环境。

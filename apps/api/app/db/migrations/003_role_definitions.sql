@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS role_definitions (
   is_assignable boolean NOT NULL DEFAULT true,
   sort_order integer NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'active',
+  created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 

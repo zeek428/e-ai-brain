@@ -43,6 +43,7 @@ def create_draft_task(headers: dict[str, str]) -> dict[str, str]:
         headers=headers,
     ).json()["data"]
     return {
+        "product_id": product["id"],
         "requirement_id": requirement["id"],
         "task_id": generated["task_id"],
     }
@@ -61,6 +62,29 @@ def test_brain_apps_and_task_list_contracts_are_available():
         headers=headers,
     ).json()["data"]
     assert [item["id"] for item in tasks["items"]] == [context["task_id"]]
+
+
+def test_ai_task_list_supports_product_and_created_time_filters():
+    headers = auth_headers()
+    context = create_draft_task(headers)
+
+    tasks = client.get(
+        (
+            f"/api/ai-tasks?product_id={context['product_id']}"
+            "&created_from=2000-01-01T00:00:00Z"
+            "&created_to=2999-12-31T23:59:59Z"
+        ),
+        headers=headers,
+    ).json()["data"]
+    assert [item["id"] for item in tasks["items"]] == [context["task_id"]]
+    assert tasks["items"][0]["product_name"] == "研发大脑平台"
+    assert tasks["items"][0]["created_at"]
+
+    outside_range = client.get(
+        f"/api/ai-tasks?product_id={context['product_id']}&created_to=2000-01-01T00:00:00Z",
+        headers=headers,
+    ).json()["data"]
+    assert outside_range["items"] == []
 
 
 def test_brain_app_contract_reads_runtime_configuration():

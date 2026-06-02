@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS iteration_plan_decisions (
   created_requirement_id text REFERENCES requirements(id) ON DELETE SET NULL,
   decided_by text NOT NULL REFERENCES users(id),
   decided_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ck_iteration_decision
     CHECK (decision IN ('accepted', 'edited_accepted', 'rejected'))
 );

@@ -32,5 +32,6 @@ ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS app_state_snapshots (
   key text PRIMARY KEY,
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );

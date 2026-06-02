@@ -326,3 +326,170 @@ def test_model_gateway_config_patch_rejects_unsupported_provider():
         "items"
     ][0]
     assert unchanged["provider"] == "openai_compatible"
+
+
+def test_model_gateway_config_test_checks_chat_and_embedding_without_persisting_key(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload: dict):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        body = json.loads(request.data.decode("utf-8"))
+        calls.append(
+            {
+                "body": body,
+                "headers": dict(request.header_items()),
+                "timeout": timeout,
+                "url": request.full_url,
+            }
+        )
+        if request.full_url.endswith("/embeddings"):
+            return FakeResponse(
+                {
+                    "data": [{"embedding": [0.1] * 1536, "index": 0}],
+                    "usage": {"prompt_tokens": 2, "total_tokens": 2},
+                }
+            )
+        return FakeResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {"summary": "model gateway test ok"},
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ],
+                "usage": {"completion_tokens": 1, "prompt_tokens": 2, "total_tokens": 3},
+            }
+        )
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/system/model-gateway-configs/test",
+        json={
+            "api_key": "sk-test-secret",
+            "base_url": "http://127.0.0.1:8080/v1",
+            "default_chat_model": "test-chat",
+            "default_embedding_model": "test-embedding",
+            "name": "临时测试",
+            "provider": "openai_compatible",
+            "status": "active",
+            "timeout_seconds": 9,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data == {
+        "chat": {
+            "latency_ms": data["chat"]["latency_ms"],
+            "model": "test-chat",
+            "ok": True,
+            "status": "succeeded",
+        },
+        "embedding": {
+            "dimension": 1536,
+            "latency_ms": data["embedding"]["latency_ms"],
+            "model": "test-embedding",
+            "ok": True,
+            "status": "succeeded",
+        },
+        "ok": True,
+        "test_target": "chat_and_embedding",
+    }
+    assert calls[0]["url"] == "http://127.0.0.1:8080/v1/chat/completions"
+    assert calls[1]["url"] == "http://127.0.0.1:8080/v1/embeddings"
+    assert all(call["headers"]["Authorization"] == "Bearer sk-test-secret" for call in calls)
+    assert all(call["timeout"] == 9 for call in calls)
+    assert app.state.store.model_gateway_configs == {}
+    assert app.state.store.model_gateway_logs == []
+    assert "sk-test-secret" not in str(data)
+
+
+def test_model_gateway_config_test_allows_chat_only_without_embedding_model(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps({"ok": True}, ensure_ascii=False)
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 1, "prompt_tokens": 2, "total_tokens": 3},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        calls.append({"timeout": timeout, "url": request.full_url})
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/system/model-gateway-configs/test",
+        json={
+            "api_key": "sk-chat-only-secret",
+            "base_url": "http://127.0.0.1:8080/v1",
+            "default_chat_model": "codex-auto-review",
+            "name": "Sub2API Chat",
+            "provider": "openai_compatible",
+            "status": "active",
+            "test_target": "chat",
+            "timeout_seconds": 11,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data == {
+        "chat": {
+            "latency_ms": data["chat"]["latency_ms"],
+            "model": "codex-auto-review",
+            "ok": True,
+            "status": "succeeded",
+        },
+        "embedding": {
+            "model": "",
+            "ok": True,
+            "status": "skipped",
+        },
+        "ok": True,
+        "test_target": "chat",
+    }
+    assert calls == [{"timeout": 11, "url": "http://127.0.0.1:8080/v1/chat/completions"}]
+    assert app.state.store.model_gateway_configs == {}
+    assert app.state.store.model_gateway_logs == []
+    assert "sk-chat-only-secret" not in str(data)

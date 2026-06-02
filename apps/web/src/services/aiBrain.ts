@@ -100,9 +100,12 @@ export type RequirementResponse = {
 };
 
 export type TaskCenterTaskRecord = {
+  createdAt: string;
+  createdAtValue?: string;
   id: string;
   label: string;
   owner: string;
+  product: string;
   productId?: string;
   requirementId?: string;
   status: string;
@@ -709,6 +712,7 @@ export type UserMutationPayload = {
 export type ModelGatewayConfigMutationPayload = {
   api_key?: string;
   base_url?: string;
+  config_id?: string;
   default_chat_model?: string;
   default_embedding_model?: string;
   is_default?: boolean;
@@ -716,7 +720,28 @@ export type ModelGatewayConfigMutationPayload = {
   name?: string;
   provider?: string;
   status?: string;
+  test_target?: 'chat' | 'chat_and_embedding' | 'embedding';
   timeout_seconds?: number;
+};
+
+export type ModelGatewayConfigTestResult = {
+  chat: {
+    error_code?: string;
+    latency_ms?: number;
+    model: string;
+    ok: boolean;
+    status: string;
+  };
+  embedding: {
+    dimension?: number;
+    error_code?: string;
+    latency_ms?: number;
+    model: string;
+    ok: boolean;
+    status: string;
+  };
+  ok: boolean;
+  test_target?: string;
 };
 
 type RequirementListItem = {
@@ -806,13 +831,16 @@ type BugListItem = {
 };
 
 type TaskListItem = {
+  created_at?: string;
   created_by?: string;
   id: string;
   product_id?: string;
+  product_name?: string | null;
   requirement_id?: string;
   status?: string;
   task_type?: string;
   title?: string;
+  updated_at?: string;
 };
 
 type TaskDetailItem = TaskListItem & {
@@ -1871,6 +1899,17 @@ export async function updateModelGatewayConfig(
   });
 }
 
+export async function testModelGatewayConfig(
+  payload: ModelGatewayConfigMutationPayload,
+): Promise<ModelGatewayConfigTestResult> {
+  const token = requireAccessToken();
+  return apiRequest<ModelGatewayConfigTestResult>('/api/system/model-gateway-configs/test', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
 export async function deleteModelGatewayConfig(configId: string) {
   const token = requireAccessToken();
   return apiRequest<{ deleted: boolean; id: string }>(
@@ -2150,9 +2189,12 @@ export async function fetchTaskCenterTasks(): Promise<TaskCenterTaskRecord[]> {
   const tasks = await apiRequest<ListResponse<TaskListItem>>('/api/ai-tasks', { token });
 
   return tasks.items.map((task) => ({
+    createdAt: formatListDate(task.created_at ?? task.updated_at),
+    createdAtValue: task.created_at ?? task.updated_at,
     id: task.id,
     label: task.title ?? task.task_type ?? task.id,
     owner: task.created_by ?? '-',
+    product: task.product_name ?? task.product_id ?? '-',
     productId: task.product_id,
     requirementId: task.requirement_id,
     status: task.status ?? '-',

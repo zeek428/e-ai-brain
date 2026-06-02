@@ -82,7 +82,7 @@ vi.mock('@ant-design/pro-components', async () => {
     dataSource: Row[];
     headerTitle?: React.ReactNode;
     onReset?: () => void;
-    onSubmit?: (values: Record<string, FormDataEntryValue>) => void;
+    onSubmit?: (values: Record<string, unknown>) => void;
     rowKey: keyof Row;
     toolBarRender?: () => React.ReactNode[];
   }) {
@@ -100,7 +100,16 @@ vi.mock('@ant-design/pro-components', async () => {
           onReset: () => onReset?.(),
           onSubmit: (event: React.FormEvent<HTMLFormElement>) => {
             event.preventDefault();
-            onSubmit?.(Object.fromEntries(new FormData(event.currentTarget)));
+            const values: Record<string, unknown> = Object.fromEntries(new FormData(event.currentTarget));
+            Object.entries({ ...values }).forEach(([key, value]) => {
+              if (key.endsWith('__start')) {
+                const name = key.replace(/__start$/, '');
+                values[name] = [value, values[`${name}__end`] ?? ''];
+                delete values[key];
+                delete values[`${name}__end`];
+              }
+            });
+            onSubmit?.(values);
           },
         },
         searchColumns.map((column) =>
@@ -108,10 +117,33 @@ vi.mock('@ant-design/pro-components', async () => {
             'label',
             { key: String(column.dataIndex) },
             column.title,
-            column.valueType === 'select'
+            column.valueType === 'dateRange'
               ? React.createElement(
-                  'select',
-                  { name: String(column.dataIndex) },
+                  React.Fragment,
+                  null,
+                  React.createElement(
+                    'label',
+                    null,
+                    `${column.title} 开始`,
+                    React.createElement('input', {
+                      name: `${String(column.dataIndex)}__start`,
+                      type: 'date',
+                    }),
+                  ),
+                  React.createElement(
+                    'label',
+                    null,
+                    `${column.title} 结束`,
+                    React.createElement('input', {
+                      name: `${String(column.dataIndex)}__end`,
+                      type: 'date',
+                    }),
+                  ),
+                )
+              : column.valueType === 'select'
+                ? React.createElement(
+                    'select',
+                    { name: String(column.dataIndex) },
                   React.createElement('option', { value: '' }, '全部'),
                   Object.entries(column.valueEnum ?? {}).map(([value, option]) =>
                     React.createElement('option', { key: value, value }, option.text),
@@ -296,6 +328,7 @@ import {
   saveCurrentUser,
   startTaskCenterTask,
   submitTaskCenterMoreInfo,
+  testModelGatewayConfig,
   updateManagementBug,
   updateManagementKnowledgeDocument,
   updateManagementProduct,
@@ -693,6 +726,86 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getAllByText('确认编号')).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  });
+
+  it('filters task center tasks by product and time range', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/pending') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/ai-tasks') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_at: '2026-06-02T09:30:00+00:00',
+                created_by: 'user_admin',
+                id: 'task_target',
+                product_id: 'product_api',
+                product_name: 'AI Brain 产品',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'technical_solution',
+                title: '目标技术方案任务',
+              },
+              {
+                created_at: '2026-06-02T10:00:00+00:00',
+                created_by: 'user_admin',
+                id: 'task_other_product',
+                product_id: 'product_other',
+                product_name: '其他产品',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'technical_solution',
+                title: '其他产品任务',
+              },
+              {
+                created_at: '2026-05-20T10:00:00+00:00',
+                created_by: 'user_admin',
+                id: 'task_old',
+                product_id: 'product_api',
+                product_name: 'AI Brain 产品',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'technical_solution',
+                title: '过期技术方案任务',
+              },
+            ],
+            total: 3,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    expect(await screen.findByText('目标技术方案任务')).toBeInTheDocument();
+    expect(screen.getByText('其他产品任务')).toBeInTheDocument();
+    expect(screen.getByText('过期技术方案任务')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('所属产品'), {
+      target: { value: 'AI Brain 产品' },
+    });
+    fireEvent.change(screen.getByLabelText('时间段 开始'), {
+      target: { value: '2026-06-01' },
+    });
+    fireEvent.change(screen.getByLabelText('时间段 结束'), {
+      target: { value: '2026-06-03' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
+
+    expect(screen.getByText('目标技术方案任务')).toBeInTheDocument();
+    expect(screen.queryByText('其他产品任务')).not.toBeInTheDocument();
+    expect(screen.queryByText('过期技术方案任务')).not.toBeInTheDocument();
   });
 
   it('opens real task details from task row operations', async () => {
@@ -1304,6 +1417,31 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (input === '/api/system/model-gateway-configs/test') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          api_key: 'sk-live-secret',
+          base_url: 'https://api.example.com/v1',
+          default_chat_model: 'gpt-4.1',
+          default_embedding_model: 'text-embedding-3-large',
+          name: '新模型网关',
+          provider: 'openai_compatible',
+          status: 'active',
+          test_target: 'chat',
+          timeout_seconds: 90,
+        });
+        return jsonResponse({
+          data: {
+            chat: { latency_ms: 18, model: 'gpt-4.1', ok: true, status: 'succeeded' },
+            embedding: {
+              model: 'text-embedding-3-large',
+              ok: true,
+              status: 'skipped',
+            },
+            ok: true,
+            test_target: 'chat',
+          },
+        });
+      }
       if (input === '/api/system/model-gateway-configs/model_config_default') {
         if (init?.method === 'PATCH') {
           const body = JSON.parse(String(init.body));
@@ -1364,6 +1502,13 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.change(within(dialog).getByLabelText('超时秒数'), { target: { value: '90' } });
     fireEvent.change(within(dialog).getByLabelText('最大重试'), { target: { value: '2' } });
     fireEvent.click(within(dialog).getByLabelText('默认配置'));
+    fireEvent.click(within(dialog).getByLabelText('仅 Chat'));
+    fireEvent.click(within(dialog).getByRole('button', { name: /测试连接/ }));
+
+    expect(await within(dialog).findByText(/Chat 成功/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Embedding 跳过/)).toBeInTheDocument();
+    expect(screen.queryByText('sk-live-secret')).not.toBeInTheDocument();
+
     fireEvent.click(within(dialog).getByRole('button', { name: /保\s*存/ }));
 
     await waitFor(() =>
@@ -4355,6 +4500,35 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (input === '/api/system/model-gateway-configs/model_config_api' && init?.method === 'DELETE') {
         return jsonResponse({ data: { deleted: true, id: 'model_config_api' } });
       }
+      if (input === '/api/system/model-gateway-configs/test' && init?.method === 'POST') {
+        expect(init.body).toBe(
+          JSON.stringify({
+            api_key: 'sk-live-secret',
+            base_url: 'https://api.example.com/v1',
+            default_chat_model: 'gpt-4.1',
+            default_embedding_model: 'text-embedding-3-large',
+            is_default: true,
+            max_retries: 1,
+            name: '默认模型网关',
+            provider: 'openai_compatible',
+            status: 'active',
+            test_target: 'chat',
+            timeout_seconds: 60,
+          }),
+        );
+        return jsonResponse({
+          data: {
+            chat: { latency_ms: 8, model: 'gpt-4.1', ok: true, status: 'succeeded' },
+            embedding: {
+              model: 'text-embedding-3-large',
+              ok: true,
+              status: 'skipped',
+            },
+            ok: true,
+            test_target: 'chat',
+          },
+        });
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -4383,12 +4557,33 @@ describe('AI Brain Ant Design Pro workbench', () => {
       default_chat_model: 'gpt-4.1-mini',
       status: 'active',
     });
+    await expect(
+      testModelGatewayConfig({
+        api_key: 'sk-live-secret',
+        base_url: 'https://api.example.com/v1',
+        default_chat_model: 'gpt-4.1',
+        default_embedding_model: 'text-embedding-3-large',
+        is_default: true,
+        max_retries: 1,
+        name: '默认模型网关',
+        provider: 'openai_compatible',
+        status: 'active',
+        test_target: 'chat',
+        timeout_seconds: 60,
+      }),
+    ).resolves.toMatchObject({
+      chat: { ok: true },
+      embedding: { ok: true, status: 'skipped' },
+      ok: true,
+      test_target: 'chat',
+    });
     await deleteModelGatewayConfig('model_config_api');
 
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
       ['/api/system/model-gateway-configs', 'GET'],
       ['/api/system/model-gateway-configs', 'POST'],
       ['/api/system/model-gateway-configs/model_config_api', 'PATCH'],
+      ['/api/system/model-gateway-configs/test', 'POST'],
       ['/api/system/model-gateway-configs/model_config_api', 'DELETE'],
     ]);
   });

@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS role_definitions (
   is_assignable boolean NOT NULL DEFAULT true,
   sort_order integer NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'active',
+  created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -190,6 +191,7 @@ ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS app_state_snapshots (
   key text PRIMARY KEY,
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -321,7 +323,8 @@ CREATE TABLE IF NOT EXISTS model_gateway_logs (
   status text NOT NULL,
   error text,
   model_gateway_config_id text,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS requirements (
@@ -375,7 +378,9 @@ CREATE TABLE IF NOT EXISTS graph_runs (
   node_path jsonb NOT NULL DEFAULT '[]'::jsonb,
   state_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
   started_at timestamptz NOT NULL DEFAULT now(),
-  completed_at timestamptz
+  completed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS graph_checkpoints (
@@ -384,7 +389,8 @@ CREATE TABLE IF NOT EXISTS graph_checkpoints (
   ai_task_id text NOT NULL REFERENCES ai_tasks(id),
   current_step text NOT NULL,
   state_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS human_reviews (
@@ -427,6 +433,7 @@ CREATE TABLE IF NOT EXISTS gitlab_mr_snapshots (
   technical_solution_task_id text NOT NULL REFERENCES ai_tasks(id),
   created_by text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
   writeback_allowed boolean NOT NULL DEFAULT false,
   UNIQUE (repository_id, snapshot_hash)
 );
@@ -476,6 +483,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   permission_scope jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (document_id, chunk_index)
 );
 
@@ -501,7 +509,8 @@ CREATE TABLE IF NOT EXISTS mock_issues (
   status text NOT NULL DEFAULT 'open',
   idempotency_key text NOT NULL UNIQUE,
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS bugs (
@@ -538,7 +547,9 @@ CREATE TABLE IF NOT EXISTS lifecycle_context_edges (
   confidence numeric NOT NULL DEFAULT 1.0,
   source_module text NOT NULL,
   observed_at timestamptz NOT NULL DEFAULT now(),
-  metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS lifecycle_risk_signals (
@@ -550,7 +561,9 @@ CREATE TABLE IF NOT EXISTS lifecycle_risk_signals (
   source_subject_id text NOT NULL,
   impact_summary text NOT NULL,
   recommendation text NOT NULL,
-  observed_at timestamptz NOT NULL DEFAULT now()
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -562,7 +575,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
   actor_id text NOT NULL,
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   sequence integer NOT NULL DEFAULT 0,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 ALTER TABLE audit_events ALTER COLUMN id DROP DEFAULT;

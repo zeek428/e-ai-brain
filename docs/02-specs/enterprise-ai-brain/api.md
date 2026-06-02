@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.51 |
+| 功能版本 | v1.1.55 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -73,6 +73,10 @@
 | v1.1.49 | 2026-06-02 | 明确相关系统可绑定产品归属并进入任务产品上下文，补齐需求详情、关闭和 Graph Run 查询接口清单 | Codex |
 | v1.1.50 | 2026-06-02 | AI 任务启动接入真实 LangGraph StateGraph，Graph Run 返回 runtime、node_path 和 checkpoint runtime 元数据 | Codex |
 | v1.1.51 | 2026-06-02 | 新增长期记忆 GBrain 状态接口，未配置时返回 `not_configured`，配置后只返回脱敏能力状态 | Codex |
+| v1.1.52 | 2026-06-02 | 模型网关配置新增测试检测接口，使用临时 OpenAI-compatible 参数调用 chat/completions 与 embeddings 并返回脱敏结果，不保存密钥或模型日志 | Codex |
+| v1.1.53 | 2026-06-02 | 模型网关测试检测新增 `test_target`，支持仅测试 Chat 以兼容 ChatGPT OAuth 类上游，同时保留 Embedding 检测和跳过状态 | Codex |
+| v1.1.54 | 2026-06-02 | AI 任务列表新增创建时间范围过滤，并在摘要返回产品名、创建时间和更新时间，支撑任务管理页按所属产品和时间段查询 | Codex |
+| v1.1.55 | 2026-06-02 | 所有 PostgreSQL 结构表统一补齐 `created_at` 与 `updated_at` 标准时间字段，并通过 `018_standard_timestamps.sql` 升级既有环境 | Codex |
 
 ---
 
@@ -84,11 +88,11 @@ API 面向 React 工作台，覆盖认证、业务大脑、产品上下文、研
 
 当前源码实现说明：MVP 骨架已实现认证、产品/需求/任务/Review/知识/审计/导出/GitLab MR 只读预览与 diff 快照、code_review 报告闭环。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
 
-产品管理页面可维护产品版本、模块、Git 资源和产品相关系统；产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
+产品管理页面可维护产品版本、模块、Git 资源和产品相关系统；产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 
 知识文档创建、更新和知识沉淀采纳会同步重建 chunk，并通过 active/default OpenAI-compatible 模型网关或环境模型网关调用 `/embeddings` 生成 `knowledge_chunks.embedding`；知识文档可选绑定 `product_id` 作为产品归属上下文，首页 IT 团队看板按产品筛选时只统计该产品归属或该产品任务沉淀产生的知识文档；索引失败进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`score` 和来源引用，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，并通过 `env:GITLAB_READONLY_TOKEN` 等凭据引用解析只读 token；缺少 GitLab 地址或凭据时返回明确错误，不生成本地假 MR。
 
-模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；active/default 且已配置密钥的 OpenAI-compatible 配置会在非 code_review 任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`。code_review 任务必须通过可插拔 `code_review_executor` 边界生成报告，默认 `CODE_REVIEW_EXECUTOR_TYPE=claude_code_skill`、`CODE_REVIEW_EXECUTOR_NAME=code-review`，由 `CODE_REVIEW_EXECUTOR_COMMAND` 指定外部命令适配器，输入 JSON 走 stdin，输出 JSON 走 stdout；测试或兼容环境可显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 复用模型网关适配器。执行器调用成功写入 `code_review.executor_called`，执行器配置、调用、解析或结构化校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。
+模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；配置页支持“测试连接”，调用 `/api/system/model-gateway-configs/test` 使用当前表单参数临时检测 provider `/chat/completions` 与 `/embeddings`，并可通过 `test_target=chat` 仅检测 Chat，适配 ChatGPT OAuth 类不提供 Embedding 的上游；测试不保存配置或密钥，不写入 `model_gateway_logs`，响应仅包含脱敏状态、模型、延迟、embedding 维度、跳过状态和错误码。active/default 且已配置密钥的 OpenAI-compatible 配置会在非 code_review 任务启动时调用 provider `/chat/completions`，知识索引和检索会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`。code_review 任务必须通过可插拔 `code_review_executor` 边界生成报告，默认 `CODE_REVIEW_EXECUTOR_TYPE=claude_code_skill`、`CODE_REVIEW_EXECUTOR_NAME=code-review`，由 `CODE_REVIEW_EXECUTOR_COMMAND` 指定外部命令适配器，输入 JSON 走 stdin，输出 JSON 走 stdout；测试或兼容环境可显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 复用模型网关适配器。执行器调用成功写入 `code_review.executor_called`，执行器配置、调用、解析或结构化校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。
 
 任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务、基于已确认技术方案创建 `development_planning`、`automated_testing` 和 `release_readiness` 任务，基于已确认发布评估创建 `post_release_analysis` 任务，并对已完成技术方案导出 Markdown。AI 任务启动会通过真实 LangGraph `StateGraph` 运行当前 MVP 路径 `retrieve_context -> generate_task_output -> interrupt_for_human_review`，Graph Run 响应和结构表会保留 `runtime=langgraph`、`node_path` 以及 checkpoint `graph_runtime` 元数据。`automated_testing` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_auto_test`；`post_release_analysis` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_post_release`，两者均关联产品、版本、需求和 AI 任务。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录，线上运行日志指标可通过 `/api/ops/online-log-metrics` 登记和筛选真实产品/模块/环境/时间窗口聚合指标；采集运行记录可通过 `/api/collectors/runs` 登记、筛选和结束，不自动生成指标或反馈数据；无法映射产品、模块、需求或导入主体的真实数据可通过 `/api/attribution/pending-items` 进入待归属队列，并通过 `/api/attribution/pending-items/{item_id}/resolve` 人工归属或忽略，处理本身不自动生成指标、反馈、需求或迭代建议；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。生命周期上下文已支持从 `bug`、`gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback` 和 `iteration_plan_suggestion` 起点回溯同产品/版本/模块任务链路，并对未关闭严重 Bug、GitLab 风险、Jenkins 失败、线上高错误率、负面反馈和低置信度迭代建议返回来源明确的风险信号。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计、Bug、GitLab 指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划摘要；传入 `product_id` 时，所有可归属主体必须按产品归属过滤，不展示其他产品的数据；传入 `time_range` 时，运营类指标按可解析的日期或时间窗口过滤。看板下钻到 Bug、研发运营、用户洞察和审计页面时保留产品和时间范围上下文。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；上述结构化主体从结构表恢复，未完成细粒度迁移的其余业务运行状态仍以 `app_state_snapshots` JSONB 快照兜底持久化。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志可手工登记或导入真实聚合指标，无记录时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
 
@@ -241,6 +245,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | System | PATCH | `/api/system/related-systems/{system_id}` | 更新相关系统。 |
 | System | DELETE | `/api/system/related-systems/{system_id}` | 删除相关系统配置。 |
 | System | GET | `/api/system/model-gateway-configs` | 模型网关配置列表。 |
+| System | POST | `/api/system/model-gateway-configs/test` | 使用临时参数测试模型网关 Chat 与 Embedding 连通性，不保存配置或密钥。 |
 | System | POST | `/api/system/model-gateway-configs` | 创建模型网关配置。 |
 | System | PATCH | `/api/system/model-gateway-configs/{config_id}` | 更新模型网关配置。 |
 | System | DELETE | `/api/system/model-gateway-configs/{config_id}` | 删除模型网关配置。 |
@@ -609,6 +614,7 @@ PATCH /api/system/related-systems/{system_id}
 
 ```http
 GET /api/system/model-gateway-configs
+POST /api/system/model-gateway-configs/test
 POST /api/system/model-gateway-configs
 PATCH /api/system/model-gateway-configs/{config_id}
 DELETE /api/system/model-gateway-configs/{config_id}
@@ -633,6 +639,75 @@ DELETE /api/system/model-gateway-configs/{config_id}
 
 响应不会返回明文 `api_key`、密钥前缀或后缀，只返回 `api_key_configured`。
 `provider` 目前仅允许 `openai_compatible`；新增或编辑提交其他 provider 返回 `400 VALIDATION_ERROR`，不得保存为 active/default 配置。
+
+测试检测：
+
+```http
+POST /api/system/model-gateway-configs/test
+```
+
+请求体使用模型网关配置字段，可选传入 `config_id`。编辑已有配置时，如果请求体不含 `api_key` 且 `config_id` 对应配置已保存密钥，则使用服务端已有密钥完成本次测试；新增配置测试必须显式提交 `api_key`。`test_target` 默认为 `chat_and_embedding`，可取 `chat_and_embedding`、`chat` 或 `embedding`；当 `test_target=chat` 时不要求 `default_embedding_model`，Embedding 段返回 `status=skipped`。
+
+```json
+{
+  "config_id": "model_config_default",
+  "name": "默认模型网关",
+  "provider": "openai_compatible",
+  "base_url": "https://api.example.com/v1",
+  "api_key": "<redacted>",
+  "default_chat_model": "chat-model",
+  "default_embedding_model": "embedding-model",
+  "timeout_seconds": 60,
+  "max_retries": 1,
+  "status": "active",
+  "is_default": true,
+  "test_target": "chat_and_embedding"
+}
+```
+
+成功或 provider 调用失败都返回脱敏检测结果；整体 `ok=false` 时前端应展示失败段和 `error_code`，不把本次测试自动保存为配置。
+
+```json
+{
+  "ok": true,
+  "chat": {
+    "ok": true,
+    "status": "succeeded",
+    "model": "chat-model",
+    "latency_ms": 18
+  },
+  "embedding": {
+    "ok": true,
+    "status": "succeeded",
+    "model": "embedding-model",
+    "latency_ms": 12,
+    "dimension": 1536
+  },
+  "test_target": "chat_and_embedding"
+}
+```
+
+仅测试 Chat 的响应示例：
+
+```json
+{
+  "ok": true,
+  "chat": {
+    "ok": true,
+    "status": "succeeded",
+    "model": "codex-auto-review",
+    "latency_ms": 18
+  },
+  "embedding": {
+    "ok": true,
+    "status": "skipped",
+    "model": ""
+  },
+  "test_target": "chat"
+}
+```
+
+测试接口会按 `test_target` 临时调用 `{base_url}/chat/completions` 和/或 `{base_url}/embeddings`，但不得持久化配置、密钥或写入 `model_gateway_logs`；只写入 `model_gateway_config.tested` 审计事件，载荷包含 provider、测试范围和测试状态，不包含密钥、完整 prompt 或完整输出。`test_target=chat` 只证明 Chat 能力可用，不代表知识索引、知识检索或长期记忆 embedding 能力可用。
 
 模型调用日志：
 
@@ -821,11 +896,11 @@ POST /api/ai-tasks
 任务列表：
 
 ```http
-GET /api/ai-tasks?status=waiting_review&task_type=code_review&page=1&page_size=20
+GET /api/ai-tasks?status=waiting_review&task_type=code_review&product_id=product_001&created_from=2026-06-01T00:00:00Z&created_to=2026-06-02T23:59:59Z&page=1&page_size=20
 ```
 
-可按 `status`、`task_type`、`product_id`、`requirement_id` 查询。
-列表只返回当前用户有权读取的任务摘要，不返回 `requirement_snapshot`、`product_context`、`input_json` 或 `output_json` 等任务内部上下文。
+可按 `status`、`task_type`、`product_id`、`requirement_id`、`created_from` 和 `created_to` 查询；创建时间范围基于任务 `created_at`，缺少创建时间的历史任务不会命中时间段筛选。
+列表只返回当前用户有权读取的任务摘要，包括 `product_name`、`created_at` 和 `updated_at`，不返回 `requirement_snapshot`、`product_context`、`input_json` 或 `output_json` 等任务内部上下文。
 
 启动任务：
 
@@ -2052,6 +2127,8 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | POST `/api/ai-tasks/{task_id}/start` | 409 | TASK_STATE_INVALID | 否 | 记录启动失败和当前状态。 | 刷新任务详情并禁用不可用动作。 |
 | POST `/api/ai-tasks/{task_id}/start` | 400 | MODEL_GATEWAY_CONFIG_INVALID | 否 | 记录任务失败和配置缺陷，不记录密钥明文。 | 提示管理员补齐 active/default 模型网关密钥或配置。 |
 | POST `/api/ai-tasks/{task_id}/start` | 502/503 | MODEL_GATEWAY_FAILED | 是 | 记录模型网关失败、provider、model、purpose 和 trace_id。 | 展示可重试提示，不展示完整 prompt 或输出。 |
+| POST `/api/system/model-gateway-configs/test` | 400 | MODEL_GATEWAY_CONFIG_INVALID / VALIDATION_ERROR | 否 | 记录可选；不得记录密钥明文。 | 提示补齐 base_url、API Key、Chat 模型和 Embedding 模型。 |
+| POST `/api/system/model-gateway-configs/test` | 200 | `ok=false`，检测段返回 MODEL_GATEWAY_CHAT_FAILED / MODEL_GATEWAY_EMBEDDING_FAILED | 是 | 写入 `model_gateway_config.tested`，只记录 provider 和测试状态。 | 展示失败段、模型和错误码，不自动保存配置。 |
 | GET `/api/ai-tasks/{task_id}` | 403/404 | FORBIDDEN / NOT_FOUND | 否 | 无权限访问不写高频审计，安全审计可采样记录。 | 显示无权限或不存在，不泄露敏感主体。 |
 | POST `/api/reviews/{review_id}/approve` | 409 | REVIEW_VERSION_CONFLICT | 是，刷新后重试 | 记录冲突事件和提交 version。 | 提示确认内容已变化，刷新后重新决策。 |
 | POST `/api/reviews/{review_id}/edit-approve` | 400/409 | VALIDATION_ERROR / REVIEW_VERSION_CONFLICT | 视错误而定 | 成功和冲突均记录。 | 保留用户编辑内容，刷新后允许重新提交。 |
@@ -2114,6 +2191,8 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.55 | 2026-06-02 | 所有 PostgreSQL 结构表统一补齐 `created_at`/`updated_at`，并新增 `018_standard_timestamps.sql` 作为既有环境迁移脚本。 |
+| v1.1.54 | 2026-06-02 | AI 任务列表新增 `created_from`/`created_to` 查询和摘要时间字段，任务管理页可按所属产品与时间段筛选。 |
 | v1.1.50 | 2026-06-02 | AI 任务启动接入真实 LangGraph StateGraph，Graph Run 返回 runtime、node_path 和 checkpoint runtime 元数据。 |
 | v1.1.49 | 2026-06-02 | 相关系统支持绑定产品归属，产品配置页可维护相关系统，任务产品上下文只纳入同产品启用相关系统；接口清单补齐需求详情、关闭和 Graph Run 查询。 |
 | v1.1.47 | 2026-06-02 | 新增待归属数据队列 API、状态约束、审计事件和 `pending_attribution_items` 持久化契约。 |
