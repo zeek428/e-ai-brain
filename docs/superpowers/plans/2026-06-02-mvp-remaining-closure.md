@@ -10,16 +10,28 @@
 
 ---
 
+## Execution Status
+
+This plan is now a historical execution record. The five slices in this file were completed through follow-up commits:
+
+- Task 1 status reconciliation: `3bbdd26 docs: reconcile mvp test coverage status`
+- Task 2 Bug management full UI lifecycle: `5e2ac0e feat: complete bug lifecycle UI`
+- Task 3 Dashboard v1.2 drilldown: `8cbb818 feat: add dashboard operational drilldowns`
+- Task 4 Lifecycle v1.2 evidence expansion: `ff9f6a3 feat: expand lifecycle evidence graph`
+- Task 5 Collector run tracking: `fd9e7b1 feat: add collector run tracking`
+
+The next unimplemented MVP/v1-series gap is tracked separately in `docs/superpowers/plans/2026-06-02-pending-attribution-queue.md` and requires explicit user confirmation before implementation.
+
 ## Current Evidence Snapshot
 
-- Current pushed baseline: `17a76ba fix: scope dashboard aggregates by product`.
-- Backend verification after the latest fix: `cd apps/api && uv run pytest` passed with 134 tests.
-- Browser verification on `http://127.0.0.1:5173/welcome`: selecting `product_115` changed dashboard cards to `需求总数1 / AI 任务4 / 待确认0 / 知识文档0 / 知识沉淀3 / 审计事件22`.
-- Known implemented real-data areas: authentication, users, roles, product/version/module/Git CRUD, requirements, task workflow, reviews, GitLab MR preview/snapshot, code review reports, knowledge documents/chunks/deposits, mock issue writeback, model gateway config/logs, Bug API, DevOps manual metrics, user feedback, usage metrics, iteration suggestions, lifecycle MVP tracing, and dashboard MVP aggregation.
+- Current pushed baseline: `8ed0f3e docs: plan pending attribution queue`.
+- Latest full implementation verification for collector-run tracking: `cd apps/api && uv run pytest` -> `140 passed`; `cd apps/web && npm test` -> `50 passed`; `cd apps/web && npm run build` -> success; browser smoke on `/governance/devops` created and completed `collector_run_002`.
+- Current local source services were health checked after the plan update: API `/health` returned `ok`, and Web `http://127.0.0.1:5173/` returned HTTP 200.
+- Known implemented real-data areas: authentication, users, roles, product/version/module/Git CRUD, requirements, task workflow, reviews, GitLab MR preview/snapshot, code review reports, knowledge documents/chunks/deposits, mock issue writeback, model gateway config/logs, Bug API/UI lifecycle, DevOps manual metrics, collector run tracking, user feedback, usage metrics, iteration suggestions, lifecycle v1.2 evidence tracing, and dashboard operational drilldowns.
 
 ## Confirmation Options
 
-Use this as the next-stage confirmation menu. If no manual choice is provided and the project rule says to default to option 2, execute option 2.
+Historical menu. Do not execute these stale options again; they are completed or superseded.
 
 1. Documentation/status reconciliation only: update stale `待测试` statuses where current automated tests already prove completion.
 2. Bug management full UI lifecycle (Recommended): complete TC-AIBRAIN-BUG-FUNC-018 from the browser, including reproduce steps, evidence JSON, duplicate merge, and explicit status transitions.
@@ -34,7 +46,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 - Inspect: `apps/api/tests/*.py`
 - Inspect: `apps/web/tests/App.test.tsx`
 
-- [ ] **Step 1: Build an evidence table**
+- [x] **Step 1: Build an evidence table**
 
   Map each `**状态**: 待测试` case to exact automated tests. Examples already visible:
   - TC-AIBRAIN-TASK-FUNC-001: `apps/api/tests/test_mvp_a_flow.py::test_requirement_to_product_detail_design_human_review_flow`
@@ -43,7 +55,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
   - TC-AIBRAIN-REVIEW-FUNC-023B: `apps/api/tests/test_code_review_report.py`
   - TC-AIBRAIN-FLOW-FUNC-021: `apps/api/tests/test_lifecycle_context.py`
 
-- [ ] **Step 2: Run proving tests**
+- [x] **Step 2: Run proving tests**
 
   Run:
 
@@ -54,11 +66,11 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 
   Expected: all backend and frontend tests pass.
 
-- [ ] **Step 3: Update status wording**
+- [x] **Step 3: Update status wording**
 
   Replace stale `待测试` entries only when exact tests cover the stated behavior. Keep external collector, Docker release gate, full dashboard drilldown, and full lifecycle v1.2 items marked as later-stage or pending.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```bash
   git add docs/02-specs/enterprise-ai-brain/test-case.md
@@ -76,7 +88,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 - Modify: `docs/02-specs/enterprise-ai-brain/test-case.md`
 - Modify: `docs/changelog.md`
 
-- [ ] **Step 1: Add failing frontend tests**
+- [x] **Step 1: Add failing frontend tests**
 
   Add Vitest coverage proving the Bug page can:
   - create `manual_test` Bugs with reproduce steps and evidence JSON;
@@ -92,7 +104,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 
   Expected before implementation: the new tests fail because the page currently only edits title/severity/status/assignee/description and does not expose duplicate/evidence/reproduce fields.
 
-- [ ] **Step 2: Extend frontend data mapping**
+- [x] **Step 2: Extend frontend data mapping**
 
   Add these fields to `BugRecord` and service mapping:
   - `duplicateOfBugId?: string`
@@ -108,7 +120,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
   - `requirement_id`
   - `related_task_id`
 
-- [ ] **Step 3: Complete the Bug modal**
+- [x] **Step 3: Complete the Bug modal**
 
   In `apps/web/src/pages/Bugs/index.tsx`, add:
   - reproduce steps textarea, stored as one non-empty line per step;
@@ -117,7 +129,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
   - explicit status selector on edit, using the backend status values already supported;
   - source display for AI-created Bugs, while keeping source editable only on create.
 
-- [ ] **Step 4: Re-run frontend tests**
+- [x] **Step 4: Re-run frontend tests**
 
   Run:
 
@@ -129,7 +141,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 
   Expected: all frontend tests pass and production build succeeds.
 
-- [ ] **Step 5: Browser smoke**
+- [x] **Step 5: Browser smoke**
 
   Use the running source services:
   - API: `http://127.0.0.1:8000`
@@ -142,7 +154,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
   - mark another Bug as duplicate;
   - no demo/fallback rows appear after refresh.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add apps/web/src/data/management.ts apps/web/src/services/aiBrain.ts apps/web/src/pages/Bugs/index.tsx apps/web/tests/App.test.tsx docs/02-specs/enterprise-ai-brain/api.md docs/02-specs/enterprise-ai-brain/test-case.md docs/changelog.md
@@ -162,7 +174,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 - Modify: `docs/02-specs/enterprise-ai-brain/test-case.md`
 - Modify: `docs/changelog.md`
 
-- [ ] **Step 1: Add backend dashboard fields**
+- [x] **Step 1: Add backend dashboard fields**
 
   Extend `GET /api/dashboard/it-team` with product/time-range scoped summaries for:
   - Bug status counts and latest high severity Bugs;
@@ -173,7 +185,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
   - usage metric summary;
   - iteration suggestion status counts.
 
-- [ ] **Step 2: Add drilldown URL contract**
+- [x] **Step 2: Add drilldown URL contract**
 
   Preserve `product_id` and `time_range` when navigating to:
   - `/delivery/bugs`
@@ -181,11 +193,11 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
   - `/governance/insights`
   - `/governance/audit`
 
-- [ ] **Step 3: Add frontend cards**
+- [x] **Step 3: Add frontend cards**
 
   Add compact dashboard cards using existing dashboard layout, not nested cards. Cards should show real zeros when no records exist and should never create fake rows.
 
-- [ ] **Step 4: Test and commit**
+- [x] **Step 4: Test and commit**
 
   Run:
 
@@ -212,11 +224,11 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 - Modify: `docs/02-specs/enterprise-ai-brain/spec.md`
 - Modify: `docs/changelog.md`
 
-- [ ] **Step 1: Replace static missing context**
+- [x] **Step 1: Replace static missing context**
 
   In `/api/lifecycle/context`, compute `missing_context` dynamically from actual absence of matching Bugs, GitLab metrics, Jenkins releases, online logs, usage metrics, feedback, and iteration suggestions.
 
-- [ ] **Step 2: Add evidence relations**
+- [x] **Step 2: Add evidence relations**
 
   Add upstream/downstream relation builders for:
   - `gitlab_daily_code_metric`
@@ -226,11 +238,11 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
   - `user_feedback`
   - `iteration_plan_suggestion`
 
-- [ ] **Step 3: Add risk signals**
+- [x] **Step 3: Add risk signals**
 
   Produce source-specific risk signals for high risk counts, failed releases, high online error rates, unresolved severe Bugs, negative feedback, and low-confidence iteration suggestions.
 
-- [ ] **Step 4: Test and commit**
+- [x] **Step 4: Test and commit**
 
   Run:
 
@@ -256,7 +268,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 - Modify: `docs/02-specs/enterprise-ai-brain/spec.md`
 - Modify: `docs/changelog.md`
 
-- [ ] **Step 1: Add `collector_runs` table**
+- [x] **Step 1: Add `collector_runs` table**
 
   Store:
   - `id`
@@ -270,7 +282,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
   - `error_message`
   - `payload_summary`
 
-- [ ] **Step 2: Add APIs**
+- [x] **Step 2: Add APIs**
 
   Add:
   - `GET /api/collectors/runs`
@@ -279,7 +291,7 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 
   These APIs record real ingestion attempts and audit them. They do not invent metrics; imported metrics still go through the existing GitLab/Jenkins/log/usage endpoints.
 
-- [ ] **Step 3: Test and commit**
+- [x] **Step 3: Test and commit**
 
   Run:
 
@@ -296,4 +308,4 @@ Use this as the next-stage confirmation menu. If no manual choice is provided an
 
 ## Execution Gate
 
-Before implementing any new task above, confirm the option. Recommended next execution is option 2, because the backend Bug lifecycle exists but the browser UI still does not expose the full lifecycle expected by TC-AIBRAIN-BUG-FUNC-018.
+Do not implement any new task from this historical plan. The active next-step candidate is pending attribution queue, documented in `docs/superpowers/plans/2026-06-02-pending-attribution-queue.md`; implementation requires explicit user confirmation.
