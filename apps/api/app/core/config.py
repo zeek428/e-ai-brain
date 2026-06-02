@@ -30,6 +30,15 @@ class Settings:
             "MODEL_GATEWAY_DEFAULT_EMBEDDING_MODEL",
             "local-embedding",
         )
+        self.code_review_executor_type = os.getenv(
+            "CODE_REVIEW_EXECUTOR_TYPE",
+            "claude_code_skill",
+        ).lower()
+        self.code_review_executor_name = os.getenv("CODE_REVIEW_EXECUTOR_NAME", "code-review")
+        self.code_review_executor_command = os.getenv("CODE_REVIEW_EXECUTOR_COMMAND", "")
+        self.code_review_executor_timeout_seconds = int(
+            os.getenv("CODE_REVIEW_EXECUTOR_TIMEOUT_SECONDS", "180")
+        )
         self.vector_dimension = int(os.getenv("VECTOR_DIMENSION", "1536"))
         self.cors_origins = os.getenv(
             "CORS_ORIGINS",

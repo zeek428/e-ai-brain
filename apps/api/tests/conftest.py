@@ -13,10 +13,20 @@ def fake_openai_compatible_model_gateway(monkeypatch):
     original_api_key = main.settings.model_gateway_api_key
     original_chat_model = main.settings.model_gateway_default_chat_model
     original_embedding_model = main.settings.model_gateway_default_embedding_model
+    original_code_review_executor_type = main.settings.code_review_executor_type
+    original_code_review_executor_name = main.settings.code_review_executor_name
+    original_code_review_executor_command = main.settings.code_review_executor_command
+    original_code_review_executor_timeout = main.settings.code_review_executor_timeout_seconds
+    original_code_review_executor = main.app.state.code_review_executor
     main.settings.model_gateway_base_url = "https://llm.test/v1"
     main.settings.model_gateway_api_key = "sk-test-model"
     main.settings.model_gateway_default_chat_model = "test-chat-model"
     main.settings.model_gateway_default_embedding_model = "test-embedding-model"
+    main.settings.code_review_executor_type = "model_gateway"
+    main.settings.code_review_executor_name = "pytest-code-review"
+    main.settings.code_review_executor_command = ""
+    main.settings.code_review_executor_timeout_seconds = 180
+    main.app.state.code_review_executor = None
 
     class FakeResponse:
         def __init__(self, payload: dict):
@@ -211,3 +221,8 @@ def fake_openai_compatible_model_gateway(monkeypatch):
         main.settings.model_gateway_api_key = original_api_key
         main.settings.model_gateway_default_chat_model = original_chat_model
         main.settings.model_gateway_default_embedding_model = original_embedding_model
+        main.settings.code_review_executor_type = original_code_review_executor_type
+        main.settings.code_review_executor_name = original_code_review_executor_name
+        main.settings.code_review_executor_command = original_code_review_executor_command
+        main.settings.code_review_executor_timeout_seconds = original_code_review_executor_timeout
+        main.app.state.code_review_executor = original_code_review_executor

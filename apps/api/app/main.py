@@ -19,6 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from app.core.code_review_executor import (
+    CodeReviewExecutorError,
+    CodeReviewExecutorResult,
+    ExternalCommandCodeReviewExecutor,
+    normalize_code_review_output,
+)
 from app.core.config import get_settings
 from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
 from app.core.roles import ASSIGNABLE_ROLE_CODES, list_role_definitions
@@ -47,6 +53,7 @@ def build_user_repository() -> MemoryUserRepository | PostgresUserRepository:
 
 app.state.store = build_store()
 app.state.user_repository = build_user_repository()
+app.state.code_review_executor = None
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -1906,6 +1913,157 @@ def _call_model_gateway_for_task(
     raise ModelGatewayConfigError(
         "No active/default model gateway config is configured",
         current_step="model_gateway_config_invalid",
+    )
+
+
+def _code_review_executor_payload(
+    current_store: MemoryStore,
+    task: dict[str, Any],
+) -> dict[str, Any]:
+    snapshot_id = str(task.get("input_json", {}).get("gitlab_mr_snapshot_id") or "")
+    snapshot = current_store.gitlab_mr_snapshots.get(snapshot_id)
+    technical_solution = (
+        current_store.ai_tasks.get(snapshot["technical_solution_task_id"])
+        if snapshot is not None
+        else None
+    )
+    return {
+        "task": {
+            "id": task["id"],
+            "title": task["title"],
+            "task_type": task["task_type"],
+            "input_json": current_store.snapshot(task.get("input_json", {})),
+            "product_context": current_store.snapshot(task.get("product_context", {})),
+            "requirement_snapshot": current_store.snapshot(task.get("requirement_snapshot", {})),
+        },
+        "gitlab_mr_snapshot": current_store.snapshot(snapshot),
+        "technical_solution_task": current_store.snapshot(technical_solution),
+    }
+
+
+def _code_review_executor_metadata(executor: Any | None = None) -> tuple[str, str]:
+    executor_type = (
+        str(getattr(executor, "executor_type", "")).strip()
+        if executor is not None
+        else ""
+    ) or settings.code_review_executor_type
+    executor_name = (
+        str(getattr(executor, "executor_name", "")).strip()
+        if executor is not None
+        else ""
+    ) or settings.code_review_executor_name
+    return executor_type, executor_name
+
+
+def _coerce_code_review_executor_result(
+    raw_result: Any,
+    *,
+    executor_type: str,
+    executor_name: str,
+) -> CodeReviewExecutorResult:
+    if isinstance(raw_result, CodeReviewExecutorResult):
+        output = raw_result.output
+        model_log = raw_result.model_log
+    elif isinstance(raw_result, tuple):
+        output = raw_result[0]
+        model_log = raw_result[1] if len(raw_result) > 1 else None
+    else:
+        output = raw_result
+        model_log = None
+    try:
+        normalized = normalize_code_review_output(
+            output,
+            executor_type=executor_type,
+            executor_name=executor_name,
+        )
+    except (TypeError, ValueError) as exc:
+        raise CodeReviewExecutorError(
+            "Code review executor returned invalid output",
+            executor_type=executor_type,
+            executor_name=executor_name,
+            stage="parse_output",
+            retryable=True,
+        ) from exc
+    return CodeReviewExecutorResult(
+        output=normalized,
+        executor=normalized["executor"],
+        model_log=model_log,
+    )
+
+
+def _call_configured_code_review_executor(
+    current_store: MemoryStore,
+    *,
+    task: dict[str, Any],
+) -> CodeReviewExecutorResult:
+    injected_executor = getattr(app.state, "code_review_executor", None)
+    payload = _code_review_executor_payload(current_store, task)
+    if injected_executor is not None:
+        executor_type, executor_name = _code_review_executor_metadata(injected_executor)
+        try:
+            raw_result = injected_executor.execute(
+                current_store=current_store,
+                task=task,
+                payload=payload,
+            )
+        except CodeReviewExecutorError:
+            raise
+        except Exception as exc:
+            raise CodeReviewExecutorError(
+                "Code review executor failed",
+                executor_type=executor_type,
+                executor_name=executor_name,
+                stage="execute",
+                retryable=True,
+            ) from exc
+        return _coerce_code_review_executor_result(
+            raw_result,
+            executor_type=executor_type,
+            executor_name=executor_name,
+        )
+
+    executor_type, executor_name = _code_review_executor_metadata()
+    if executor_type == "model_gateway":
+        try:
+            output, model_log = _call_model_gateway_for_task(current_store, task=task)
+        except ModelGatewayConfigError as exc:
+            raise CodeReviewExecutorError(
+                str(exc),
+                executor_type=executor_type,
+                executor_name=executor_name,
+                stage=exc.current_step,
+                retryable=False,
+            ) from exc
+        except ModelGatewayCallError as exc:
+            raise CodeReviewExecutorError(
+                "Code review executor failed",
+                executor_type=executor_type,
+                executor_name=executor_name,
+                stage="execute",
+                retryable=True,
+                model_log=exc.log,
+            ) from exc
+        return _coerce_code_review_executor_result(
+            (output, model_log),
+            executor_type=executor_type,
+            executor_name=executor_name,
+        )
+
+    if executor_type == "claude_code_skill":
+        executor = ExternalCommandCodeReviewExecutor(
+            command=settings.code_review_executor_command,
+            executor_type=executor_type,
+            executor_name=executor_name,
+            timeout_seconds=settings.code_review_executor_timeout_seconds,
+        )
+        return executor.execute(current_store=current_store, task=task, payload=payload)
+
+    raise CodeReviewExecutorError(
+        "Unsupported code review executor type",
+        executor_type=executor_type,
+        executor_name=executor_name,
+        stage="configure",
+        retryable=False,
     )
 
 
@@ -4397,92 +4555,144 @@ def start_ai_task(
     if task["status"] != "draft":
         raise api_error(409, "TASK_STATE_INVALID", "Task cannot be started from current status")
 
-    try:
-        task["output_json"], model_log = _call_model_gateway_for_task(current_store, task=task)
-    except ModelGatewayConfigError as exc:
-        task["status"] = "failed"
-        task["current_step"] = exc.current_step
-        current_store.audit(
-            event_type="ai_task.failed",
-            actor_id="system",
-            ai_task_id=task_id,
-            subject_type="ai_task",
-            subject_id=task_id,
-            payload={
+    if task["task_type"] == "code_review":
+        try:
+            executor_result = _call_configured_code_review_executor(current_store, task=task)
+            task["output_json"] = executor_result.output
+            model_log = executor_result.model_log
+            executor_meta = executor_result.executor
+        except CodeReviewExecutorError as exc:
+            task["status"] = "failed"
+            task["current_step"] = "code_review_executor_failed"
+            if exc.model_log is not None:
+                current_store.audit(
+                    event_type="model_gateway.called",
+                    actor_id="system",
+                    ai_task_id=task_id,
+                    subject_type="model_gateway_log",
+                    subject_id=exc.model_log["id"],
+                    payload={
+                        "model_log_id": exc.model_log["id"],
+                        "provider": exc.model_log["provider"],
+                        "model": exc.model_log["model"],
+                        "purpose": exc.model_log["purpose"],
+                        "status": exc.model_log["status"],
+                    },
+                )
+            payload = {
                 "current_step": task["current_step"],
-                "reason": "model_gateway_config_invalid",
-            },
-        )
-        raise api_error(400, "MODEL_GATEWAY_CONFIG_INVALID", str(exc)) from exc
-    except ModelGatewayCallError as exc:
-        task["status"] = "failed"
-        is_code_review = task["task_type"] == "code_review"
-        task["current_step"] = (
-            "code_review_executor_failed" if is_code_review else "model_gateway_failed"
-        )
-        current_store.audit(
-            event_type="model_gateway.called",
-            actor_id="system",
-            ai_task_id=task_id,
-            subject_type="model_gateway_log",
-            subject_id=exc.log["id"],
-            payload={
-                "model_log_id": exc.log["id"],
-                "provider": exc.log["provider"],
-                "model": exc.log["model"],
-                "purpose": exc.log["purpose"],
-                "status": exc.log["status"],
-            },
-        )
-        if is_code_review:
+                "executor_name": exc.executor_name,
+                "executor_type": exc.executor_type,
+                "retryable": exc.retryable,
+                "stage": exc.stage,
+            }
+            if exc.model_log is not None:
+                payload["model_log_id"] = exc.model_log["id"]
             current_store.audit(
                 event_type="code_review.executor_failed",
                 actor_id="system",
                 ai_task_id=task_id,
                 subject_type="ai_task",
                 subject_id=task_id,
+                payload=payload,
+            )
+            current_store.audit(
+                event_type="ai_task.failed",
+                actor_id="system",
+                ai_task_id=task_id,
+                subject_type="ai_task",
+                subject_id=task_id,
                 payload={
                     "current_step": task["current_step"],
-                    "model_log_id": exc.log["id"],
-                    "retryable": True,
+                    "reason": "code_review_executor_failed",
                 },
             )
-        current_store.audit(
-            event_type="ai_task.failed",
-            actor_id="system",
-            ai_task_id=task_id,
-            subject_type="ai_task",
-            subject_id=task_id,
-            payload={
-                "current_step": task["current_step"],
-                "reason": (
-                    "code_review_executor_failed" if is_code_review else "model_gateway_failed"
-                ),
-            },
-        )
-        if is_code_review:
             raise api_error(
                 502,
                 "CODE_REVIEW_EXECUTOR_FAILED",
                 "Code review executor failed",
             ) from exc
-        raise api_error(502, "MODEL_GATEWAY_FAILED", "Model gateway request failed") from exc
+    else:
+        try:
+            task["output_json"], model_log = _call_model_gateway_for_task(
+                current_store,
+                task=task,
+            )
+        except ModelGatewayConfigError as exc:
+            task["status"] = "failed"
+            task["current_step"] = exc.current_step
+            current_store.audit(
+                event_type="ai_task.failed",
+                actor_id="system",
+                ai_task_id=task_id,
+                subject_type="ai_task",
+                subject_id=task_id,
+                payload={
+                    "current_step": task["current_step"],
+                    "reason": "model_gateway_config_invalid",
+                },
+            )
+            raise api_error(400, "MODEL_GATEWAY_CONFIG_INVALID", str(exc)) from exc
+        except ModelGatewayCallError as exc:
+            task["status"] = "failed"
+            task["current_step"] = "model_gateway_failed"
+            current_store.audit(
+                event_type="model_gateway.called",
+                actor_id="system",
+                ai_task_id=task_id,
+                subject_type="model_gateway_log",
+                subject_id=exc.log["id"],
+                payload={
+                    "model_log_id": exc.log["id"],
+                    "provider": exc.log["provider"],
+                    "model": exc.log["model"],
+                    "purpose": exc.log["purpose"],
+                    "status": exc.log["status"],
+                },
+            )
+            current_store.audit(
+                event_type="ai_task.failed",
+                actor_id="system",
+                ai_task_id=task_id,
+                subject_type="ai_task",
+                subject_id=task_id,
+                payload={
+                    "current_step": task["current_step"],
+                    "reason": "model_gateway_failed",
+                },
+            )
+            raise api_error(502, "MODEL_GATEWAY_FAILED", "Model gateway request failed") from exc
 
     task["status"] = "waiting_review"
-    current_store.audit(
-        event_type="model_gateway.called",
-        actor_id="system",
-        ai_task_id=task_id,
-        subject_type="model_gateway_log",
-        subject_id=model_log["id"],
-        payload={
-            "model_log_id": model_log["id"],
-            "provider": model_log["provider"],
-            "model": model_log["model"],
-            "purpose": model_log["purpose"],
-            "status": model_log["status"],
-        },
-    )
+    if model_log is not None:
+        current_store.audit(
+            event_type="model_gateway.called",
+            actor_id="system",
+            ai_task_id=task_id,
+            subject_type="model_gateway_log",
+            subject_id=model_log["id"],
+            payload={
+                "model_log_id": model_log["id"],
+                "provider": model_log["provider"],
+                "model": model_log["model"],
+                "purpose": model_log["purpose"],
+                "status": model_log["status"],
+            },
+        )
+    if task["task_type"] == "code_review":
+        current_store.audit(
+            event_type="code_review.executor_called",
+            actor_id="system",
+            ai_task_id=task_id,
+            subject_type="ai_task",
+            subject_id=task_id,
+            payload={
+                "executor_name": executor_meta["executor_name"],
+                "executor_type": executor_meta["executor_type"],
+                "retryable": executor_meta["retryable"],
+                "stage": "execute",
+            },
+        )
     current_store.audit(
         event_type="ai_task.started",
         actor_id=user["id"],

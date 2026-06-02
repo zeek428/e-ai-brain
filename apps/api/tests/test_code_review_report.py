@@ -148,9 +148,81 @@ def test_code_review_report_is_confirmed_and_archived_without_gitlab_writeback(m
         "human_review.created",
         "code_review.generated",
         "ai_task.started",
+        "code_review.executor_called",
         "model_gateway.called",
         "ai_task.created",
     ]
+
+
+def test_code_review_task_uses_configured_executor_boundary(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    requirement_id, snapshot_id = build_mr_snapshot(headers)
+
+    task = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "code_review",
+            "title": "Review MR !42 via executor",
+            "requirement_id": requirement_id,
+            "input": {"gitlab_mr_snapshot_id": snapshot_id},
+        },
+        headers=headers,
+    ).json()["data"]
+    calls = []
+
+    class FakeCodeReviewExecutor:
+        executor_name = "code-review"
+        executor_type = "claude_code_skill"
+
+        def execute(self, *, current_store, task, payload):
+            calls.append(
+                {
+                    "task_id": task["id"],
+                    "snapshot_id": payload["gitlab_mr_snapshot"]["id"],
+                }
+            )
+            return {
+                "summary": "执行器边界生成的 Review 报告。",
+                "risk_level": "low",
+                "findings": [],
+            }
+
+    def fail_if_model_gateway_is_called(*_args, **_kwargs):
+        raise AssertionError("code_review must use code_review_executor")
+
+    monkeypatch.setattr(app.state, "code_review_executor", FakeCodeReviewExecutor(), raising=False)
+    monkeypatch.setattr("app.main.urlopen", fail_if_model_gateway_is_called)
+
+    started = client.post(f"/api/ai-tasks/{task['id']}/start", headers=headers).json()["data"]
+
+    assert started["status"] == "waiting_review"
+    assert calls == [{"task_id": task["id"], "snapshot_id": snapshot_id}]
+    report = client.get(
+        f"/api/ai-tasks/{task['id']}/code-review-report",
+        headers=headers,
+    ).json()["data"]
+    assert report["summary"] == "执行器边界生成的 Review 报告。"
+    assert report["executor"] == {
+        "executor_name": "code-review",
+        "executor_type": "claude_code_skill",
+        "retryable": False,
+    }
+
+    audit_events = client.get(
+        f"/api/audit/events?ai_task_id={task['id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert "model_gateway.called" not in [event["event_type"] for event in audit_events]
+    executor_event = next(
+        event for event in audit_events if event["event_type"] == "code_review.executor_called"
+    )
+    assert executor_event["payload"] == {
+        "executor_name": "code-review",
+        "executor_type": "claude_code_skill",
+        "retryable": False,
+        "stage": "execute",
+    }
 
 
 def test_code_review_report_edit_approve_also_confirms_and_archives_report(monkeypatch):
