@@ -131,6 +131,7 @@ def build_mvp_lifecycle(headers: dict[str, str]) -> dict[str, str]:
     return {
         "requirement_id": requirement["id"],
         "product_id": product["id"],
+        "version_id": version["id"],
         "design_task_id": design_task["task_id"],
         "design_review_id": design_started["review_id"],
         "solution_task_id": solution_task["id"],
@@ -141,6 +142,133 @@ def build_mvp_lifecycle(headers: dict[str, str]) -> dict[str, str]:
         "mock_issue_id": writeback["issues"][0]["id"],
         "knowledge_deposit_id": design_deposit["id"],
         "audit_event_id": review_audit_event["id"],
+    }
+
+
+def add_v1_2_lifecycle_evidence(
+    headers: dict[str, str],
+    lifecycle: dict[str, str],
+) -> dict[str, str]:
+    module = client.post(
+        f"/api/products/{lifecycle['product_id']}/modules",
+        json={"code": "knowledge", "name": "知识中心"},
+        headers=headers,
+    ).json()["data"]
+    repository = client.post(
+        f"/api/products/{lifecycle['product_id']}/git-repositories",
+        json={
+            "default_branch": "main",
+            "git_provider": "gitlab",
+            "name": "Lifecycle API",
+            "project_path": "rd/lifecycle-api",
+            "remote_url": "https://gitlab.internal/rd/lifecycle-api.git",
+            "repo_type": "code",
+            "root_path": "/",
+        },
+        headers=headers,
+    ).json()["data"]
+    bug = client.post(
+        "/api/bugs",
+        json={
+            "description": "严重缺陷仍未关闭。",
+            "module_code": module["code"],
+            "product_id": lifecycle["product_id"],
+            "related_task_id": lifecycle["review_task_id"],
+            "requirement_id": lifecycle["requirement_id"],
+            "severity": "critical",
+            "source": "manual_test",
+            "title": "Lifecycle 严重 Bug",
+            "version_id": lifecycle["version_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    gitlab_metric = client.post(
+        "/api/devops/gitlab/daily-code-metrics",
+        json={
+            "changed_files": 18,
+            "commit_count": 7,
+            "merge_request_count": 2,
+            "metric_date": "2026-06-01",
+            "product_id": lifecycle["product_id"],
+            "quality_score": 72.5,
+            "repository_id": repository["id"],
+            "risk_count": 3,
+        },
+        headers=headers,
+    ).json()["data"]
+    jenkins_release = client.post(
+        "/api/devops/jenkins/releases",
+        json={
+            "build_id": "lifecycle-build-1",
+            "failure_reason": "smoke test failed",
+            "job_name": "lifecycle-deploy",
+            "product_id": lifecycle["product_id"],
+            "status": "failed",
+            "version_id": lifecycle["version_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    online_log_metric = client.post(
+        "/api/ops/online-log-metrics",
+        json={
+            "environment": "prod",
+            "error_count": 25,
+            "module_code": module["code"],
+            "p95_latency_ms": 480.0,
+            "product_id": lifecycle["product_id"],
+            "request_count": 1000,
+            "window_end": "2026-06-01T01:00:00Z",
+            "window_start": "2026-06-01T00:00:00Z",
+        },
+        headers=headers,
+    ).json()["data"]
+    usage_metric = client.post(
+        "/api/insights/usage-metrics",
+        json={
+            "active_users": 12,
+            "event_count": 40,
+            "feature_code": "knowledge-search",
+            "module_code": module["code"],
+            "product_id": lifecycle["product_id"],
+            "window_end": "2026-06-01T01:00:00Z",
+            "window_start": "2026-06-01T00:00:00Z",
+        },
+        headers=headers,
+    ).json()["data"]
+    feedback = client.post(
+        "/api/insights/user-feedback",
+        json={
+            "content": "知识检索上线后体验变差。",
+            "feedback_type": "complaint",
+            "module_code": module["code"],
+            "product_id": lifecycle["product_id"],
+            "satisfaction_score": 1,
+            "sentiment": "negative",
+        },
+        headers=headers,
+    ).json()["data"]
+    suggestion = client.post(
+        "/api/planning/iteration-suggestions",
+        json={
+            "module_codes": [module["code"]],
+            "planning_cycle": "2026Q3",
+            "product_id": lifecycle["product_id"],
+            "version_id": lifecycle["version_id"],
+        },
+        headers=headers,
+    ).json()["data"]["items"][0]
+    app.state.store.iteration_plan_suggestions[suggestion["id"]][
+        "confidence_level"
+    ] = "low"
+    return {
+        "bug_id": bug["id"],
+        "feedback_id": feedback["id"],
+        "gitlab_metric_id": gitlab_metric["id"],
+        "iteration_suggestion_id": suggestion["id"],
+        "jenkins_release_id": jenkins_release["id"],
+        "module_code": module["code"],
+        "online_log_metric_id": online_log_metric["id"],
+        "usage_metric_id": usage_metric["id"],
     }
 
 
@@ -334,3 +462,90 @@ def test_lifecycle_context_rejects_unknown_subject_type():
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
+def test_lifecycle_context_links_v1_2_evidence_and_dynamic_missing_context(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    lifecycle = build_mvp_lifecycle(headers)
+    evidence = add_v1_2_lifecycle_evidence(headers, lifecycle)
+
+    context = client.get(
+        "/api/lifecycle/context"
+        f"?subject_type=requirement&subject_id={lifecycle['requirement_id']}"
+        "&direction=both&include_risks=true",
+        headers=headers,
+    ).json()["data"]
+
+    downstream_subjects = {
+        (item["subject_type"], item["subject_id"])
+        for item in context["downstream"]
+    }
+    assert ("bug", evidence["bug_id"]) in downstream_subjects
+    assert ("gitlab_daily_code_metric", evidence["gitlab_metric_id"]) in downstream_subjects
+    assert ("jenkins_release", evidence["jenkins_release_id"]) in downstream_subjects
+    assert ("online_log_metric", evidence["online_log_metric_id"]) in downstream_subjects
+    assert ("user_usage_metric", evidence["usage_metric_id"]) in downstream_subjects
+    assert ("user_feedback", evidence["feedback_id"]) in downstream_subjects
+    assert ("iteration_plan_suggestion", evidence["iteration_suggestion_id"]) in downstream_subjects
+
+    risk_types = {signal["risk_type"] for signal in context["risk_signals"]}
+    assert {
+        "critical_bug_open",
+        "gitlab_code_risk",
+        "jenkins_release_failed",
+        "online_error_rate_high",
+        "negative_user_feedback",
+        "iteration_suggestion_low_confidence",
+    }.issubset(risk_types)
+    assert "bug" not in context["missing_context"]
+    assert "gitlab_daily_code_metric" not in context["missing_context"]
+    assert "jenkins_release" not in context["missing_context"]
+    assert "online_log_metric" not in context["missing_context"]
+    assert "user_usage_metric" not in context["missing_context"]
+    assert "user_feedback" not in context["missing_context"]
+    assert "iteration_plan_suggestion" not in context["missing_context"]
+
+    metric_context = client.get(
+        "/api/lifecycle/context"
+        f"?subject_type=gitlab_daily_code_metric&subject_id={evidence['gitlab_metric_id']}"
+        "&direction=both&include_risks=true",
+        headers=headers,
+    ).json()["data"]
+    assert metric_context["subject"] == {
+        "type": "gitlab_daily_code_metric",
+        "id": evidence["gitlab_metric_id"],
+        "product_id": lifecycle["product_id"],
+    }
+    assert {
+        item["subject_id"]
+        for item in metric_context["downstream"]
+        if item["subject_type"] == "ai_task"
+    } == {
+        lifecycle["design_task_id"],
+        lifecycle["solution_task_id"],
+        lifecycle["review_task_id"],
+    }
+
+
+def test_lifecycle_context_reports_missing_v1_2_context_dynamically(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    lifecycle = build_mvp_lifecycle(headers)
+
+    context = client.get(
+        "/api/lifecycle/context"
+        f"?subject_type=requirement&subject_id={lifecycle['requirement_id']}"
+        "&direction=both&include_risks=true",
+        headers=headers,
+    ).json()["data"]
+
+    assert {
+        "bug",
+        "gitlab_daily_code_metric",
+        "jenkins_release",
+        "online_log_metric",
+        "user_usage_metric",
+        "user_feedback",
+        "iteration_plan_suggestion",
+    }.issubset(set(context["missing_context"]))

@@ -5332,6 +5332,40 @@ def _lifecycle_subject_tasks(
             for task in current_store.ai_tasks.values()
             if task.get("product_id") == bug.get("product_id")
         ]
+    v1_2_collections = {
+        "gitlab_daily_code_metric": (
+            current_store.gitlab_daily_code_metrics,
+            "GitLab daily code metric",
+        ),
+        "jenkins_release": (current_store.jenkins_release_records, "Jenkins release"),
+        "online_log_metric": (current_store.online_log_metrics, "Online log metric"),
+        "user_usage_metric": (current_store.user_usage_metrics, "User usage metric"),
+        "user_feedback": (current_store.user_feedback, "User feedback"),
+        "iteration_plan_suggestion": (
+            current_store.iteration_plan_suggestions,
+            "Iteration plan suggestion",
+        ),
+    }
+    if subject_type in v1_2_collections:
+        collection, label = v1_2_collections[subject_type]
+        evidence = collection.get(subject_id)
+        if evidence is None:
+            raise api_error(404, "NOT_FOUND", f"{label} not found")
+        return [
+            task
+            for task in current_store.ai_tasks.values()
+            if task.get("product_id") == evidence.get("product_id")
+            and (
+                not evidence.get("version_id")
+                or not task.get("version_id")
+                or task.get("version_id") == evidence.get("version_id")
+            )
+            and (
+                not evidence.get("module_code")
+                or not task.get("module_code")
+                or task.get("module_code") == evidence.get("module_code")
+            )
+        ]
     raise api_error(400, "VALIDATION_ERROR", "Unsupported lifecycle subject_type")
 
 
@@ -5395,12 +5429,136 @@ def _lifecycle_subject(
         elif subject_type == "bug":
             bug = current_store.bugs[normalized_subject_id]
             resolved_product_id = bug["product_id"]
+        elif subject_type in {
+            "gitlab_daily_code_metric",
+            "jenkins_release",
+            "online_log_metric",
+            "user_usage_metric",
+            "user_feedback",
+            "iteration_plan_suggestion",
+        }:
+            resolved_product_id = _subject_product_id(
+                current_store,
+                subject_type,
+                normalized_subject_id,
+            )
         return {
             "type": subject_type,
             "id": normalized_subject_id,
             "product_id": resolved_product_id,
         }
     return {"type": "product", "id": product_id, "product_id": product_id}
+
+
+def _lifecycle_task_scope(tasks: list[dict[str, Any]]) -> dict[str, set[str]]:
+    return {
+        "module_codes": {
+            str(task["module_code"])
+            for task in tasks
+            if task.get("module_code")
+        },
+        "product_ids": {
+            str(task["product_id"])
+            for task in tasks
+            if task.get("product_id")
+        },
+        "requirement_ids": {
+            str(task["requirement_id"])
+            for task in tasks
+            if task.get("requirement_id")
+        },
+        "task_ids": {
+            str(task["id"])
+            for task in tasks
+            if task.get("id")
+        },
+        "version_ids": {
+            str(task["version_id"])
+            for task in tasks
+            if task.get("version_id")
+        },
+    }
+
+
+def _lifecycle_matches_scope(
+    item: dict[str, Any],
+    scope: dict[str, set[str]],
+) -> bool:
+    if item.get("related_task_id") and str(item["related_task_id"]) in scope["task_ids"]:
+        return True
+    if item.get("requirement_id") and str(item["requirement_id"]) in scope["requirement_ids"]:
+        return True
+    product_id = item.get("product_id")
+    if product_id and str(product_id) not in scope["product_ids"]:
+        return False
+    version_id = item.get("version_id")
+    if version_id and scope["version_ids"] and str(version_id) not in scope["version_ids"]:
+        return False
+    module_code = item.get("module_code")
+    if module_code and scope["module_codes"] and str(module_code) not in scope["module_codes"]:
+        return False
+    return bool(product_id and str(product_id) in scope["product_ids"])
+
+
+def _lifecycle_matching_v1_2_evidence(
+    current_store: MemoryStore,
+    tasks: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    scope = _lifecycle_task_scope(tasks)
+    return {
+        "bug": [
+            item
+            for item in current_store.bugs.values()
+            if _lifecycle_matches_scope(item, scope)
+        ],
+        "gitlab_daily_code_metric": [
+            item
+            for item in current_store.gitlab_daily_code_metrics.values()
+            if _lifecycle_matches_scope(item, scope)
+        ],
+        "jenkins_release": [
+            item
+            for item in current_store.jenkins_release_records.values()
+            if _lifecycle_matches_scope(item, scope)
+        ],
+        "online_log_metric": [
+            item
+            for item in current_store.online_log_metrics.values()
+            if _lifecycle_matches_scope(item, scope)
+        ],
+        "user_usage_metric": [
+            item
+            for item in current_store.user_usage_metrics.values()
+            if _lifecycle_matches_scope(item, scope)
+        ],
+        "user_feedback": [
+            item
+            for item in current_store.user_feedback.values()
+            if _lifecycle_matches_scope(item, scope)
+        ],
+        "iteration_plan_suggestion": [
+            item
+            for item in current_store.iteration_plan_suggestions.values()
+            if _lifecycle_matches_scope(item, scope)
+        ],
+    }
+
+
+def _lifecycle_missing_context(
+    current_store: MemoryStore,
+    *,
+    tasks: list[dict[str, Any]],
+) -> list[str]:
+    missing = []
+    if not any(task["task_type"] == "automated_testing" for task in tasks):
+        missing.append("automated_testing")
+    matching_evidence = _lifecycle_matching_v1_2_evidence(current_store, tasks)
+    missing.extend(
+        subject_type
+        for subject_type, items in matching_evidence.items()
+        if not items
+    )
+    return missing
 
 
 def _lifecycle_upstream(
@@ -5587,6 +5745,139 @@ def _lifecycle_downstream(
             )
         )
 
+    matching_evidence = _lifecycle_matching_v1_2_evidence(current_store, tasks)
+    for bug in matching_evidence["bug"]:
+        relations.append(
+            _lifecycle_relation(
+                subject_type="bug",
+                subject_id=bug["id"],
+                relation_type="observes_bug",
+                summary=bug["title"],
+                product_id=bug["product_id"],
+                version_id=bug.get("version_id"),
+                module_code=bug.get("module_code"),
+                source_module="bug",
+                observed_at=bug.get("updated_at") or bug.get("created_at"),
+                metadata={
+                    "severity": bug["severity"],
+                    "source": bug["source"],
+                    "status": bug["status"],
+                },
+            )
+        )
+    for metric in matching_evidence["gitlab_daily_code_metric"]:
+        relations.append(
+            _lifecycle_relation(
+                subject_type="gitlab_daily_code_metric",
+                subject_id=metric["id"],
+                relation_type="observes_gitlab_code_metric",
+                summary=f"{metric.get('metric_date')} commit_count={metric.get('commit_count', 0)}",
+                product_id=metric["product_id"],
+                source_module="devops_metrics",
+                observed_at=metric.get("metric_date") or metric.get("updated_at"),
+                metadata={
+                    "changed_files": metric.get("changed_files", 0),
+                    "commit_count": metric.get("commit_count", 0),
+                    "quality_score": metric.get("quality_score"),
+                    "risk_count": metric.get("risk_count", 0),
+                },
+            )
+        )
+    for release in matching_evidence["jenkins_release"]:
+        relations.append(
+            _lifecycle_relation(
+                subject_type="jenkins_release",
+                subject_id=release["id"],
+                relation_type="observes_jenkins_release",
+                summary=f"{release['job_name']} {release['status']}",
+                product_id=release["product_id"],
+                version_id=release.get("version_id"),
+                source_module="devops_metrics",
+                observed_at=release.get("deployed_at") or release.get("updated_at"),
+                metadata={
+                    "build_id": release["build_id"],
+                    "environment": release.get("environment"),
+                    "failure_reason": release.get("failure_reason"),
+                    "status": release["status"],
+                },
+            )
+        )
+    for metric in matching_evidence["online_log_metric"]:
+        relations.append(
+            _lifecycle_relation(
+                subject_type="online_log_metric",
+                subject_id=metric["id"],
+                relation_type="observes_online_log_metric",
+                summary=f"{metric['environment']} error_rate={metric.get('error_rate', 0)}",
+                product_id=metric["product_id"],
+                module_code=metric.get("module_code"),
+                source_module="devops_metrics",
+                observed_at=metric.get("window_end") or metric.get("updated_at"),
+                metadata={
+                    "environment": metric["environment"],
+                    "error_count": metric.get("error_count", 0),
+                    "error_rate": metric.get("error_rate", 0),
+                    "request_count": metric.get("request_count", 0),
+                },
+            )
+        )
+    for metric in matching_evidence["user_usage_metric"]:
+        relations.append(
+            _lifecycle_relation(
+                subject_type="user_usage_metric",
+                subject_id=metric["id"],
+                relation_type="observes_user_usage_metric",
+                summary=f"{metric['feature_code']} events={metric.get('event_count', 0)}",
+                product_id=metric["product_id"],
+                module_code=metric.get("module_code"),
+                source_module="user_insights",
+                observed_at=metric.get("window_end") or metric.get("updated_at"),
+                metadata={
+                    "active_users": metric.get("active_users", 0),
+                    "event_count": metric.get("event_count", 0),
+                    "feature_code": metric["feature_code"],
+                    "user_segment": metric.get("user_segment"),
+                },
+            )
+        )
+    for feedback in matching_evidence["user_feedback"]:
+        relations.append(
+            _lifecycle_relation(
+                subject_type="user_feedback",
+                subject_id=feedback["id"],
+                relation_type="observes_user_feedback",
+                summary=feedback["content"],
+                product_id=feedback["product_id"],
+                module_code=feedback.get("module_code"),
+                source_module="user_insights",
+                observed_at=feedback.get("updated_at") or feedback.get("created_at"),
+                metadata={
+                    "feedback_type": feedback["feedback_type"],
+                    "sentiment": feedback.get("sentiment"),
+                    "status": feedback["status"],
+                },
+            )
+        )
+    for suggestion in matching_evidence["iteration_plan_suggestion"]:
+        relations.append(
+            _lifecycle_relation(
+                subject_type="iteration_plan_suggestion",
+                subject_id=suggestion["id"],
+                relation_type="observes_iteration_suggestion",
+                summary=suggestion["title"],
+                product_id=suggestion["product_id"],
+                version_id=suggestion.get("version_id"),
+                module_code=",".join(suggestion.get("module_codes", [])) or None,
+                source_module="iteration_planning",
+                observed_at=suggestion.get("updated_at") or suggestion.get("created_at"),
+                metadata={
+                    "confidence_level": suggestion.get("confidence_level"),
+                    "priority": suggestion.get("priority"),
+                    "status": suggestion["status"],
+                },
+            )
+        )
+
     return relations
 
 
@@ -5608,6 +5899,105 @@ def _lifecycle_risk_signals(
                 "source_subject_id": report["id"],
                 "impact_summary": f"Review 报告提示：{report['summary']}",
                 "recommendation": "优先处理高置信度 Review findings，并在关闭前补充边界测试。",
+            }
+        )
+    matching_evidence = _lifecycle_matching_v1_2_evidence(current_store, tasks)
+    for bug in matching_evidence["bug"]:
+        if bug.get("status") == "closed" or bug.get("severity") not in {
+            "blocker",
+            "critical",
+            "major",
+        }:
+            continue
+        severity = "critical" if bug["severity"] in {"blocker", "critical"} else "high"
+        signals.append(
+            {
+                "risk_type": f"{bug['severity']}_bug_open"
+                if bug["severity"] != "critical"
+                else "critical_bug_open",
+                "severity": severity,
+                "source_subject_type": "bug",
+                "source_subject_id": bug["id"],
+                "impact_summary": f"未关闭 Bug：{bug['title']}",
+                "recommendation": "先完成修复、验证和关闭，再继续下游发布或迭代决策。",
+            }
+        )
+    for metric in matching_evidence["gitlab_daily_code_metric"]:
+        risk_count = metric.get("risk_count", 0) or 0
+        quality_score = metric.get("quality_score")
+        if risk_count <= 0 and (quality_score is None or quality_score >= 80):
+            continue
+        signals.append(
+            {
+                "risk_type": "gitlab_code_risk",
+                "severity": "high" if risk_count >= 3 or (quality_score or 100) < 75 else "medium",
+                "source_subject_type": "gitlab_daily_code_metric",
+                "source_subject_id": metric["id"],
+                "impact_summary": f"GitLab 代码指标存在 {risk_count} 个风险点。",
+                "recommendation": "结合 MR、变更文件数和质量评分复核代码风险来源。",
+            }
+        )
+    for release in matching_evidence["jenkins_release"]:
+        if release.get("status") != "failed":
+            continue
+        signals.append(
+            {
+                "risk_type": "jenkins_release_failed",
+                "severity": "high",
+                "source_subject_type": "jenkins_release",
+                "source_subject_id": release["id"],
+                "impact_summary": f"Jenkins 发布失败：{release['job_name']}",
+                "recommendation": "先定位失败原因并确认回滚或重试策略。",
+            }
+        )
+    for metric in matching_evidence["online_log_metric"]:
+        error_rate = metric.get("error_rate", 0) or 0
+        error_count = metric.get("error_count", 0) or 0
+        if error_rate < 0.01 and error_count < 10:
+            continue
+        signals.append(
+            {
+                "risk_type": "online_error_rate_high",
+                "severity": "high" if error_rate >= 0.02 else "medium",
+                "source_subject_type": "online_log_metric",
+                "source_subject_id": metric["id"],
+                "impact_summary": (
+                    f"{metric['environment']} 错误率 {error_rate:.4f}，"
+                    f"错误数 {error_count}。"
+                ),
+                "recommendation": "优先排查核心错误、回归范围和受影响模块。",
+            }
+        )
+    for feedback in matching_evidence["user_feedback"]:
+        satisfaction_score = feedback.get("satisfaction_score")
+        is_negative = feedback.get("sentiment") == "negative" or feedback.get(
+            "feedback_type"
+        ) == "complaint" or (
+            isinstance(satisfaction_score, int | float) and satisfaction_score <= 2
+        )
+        if not is_negative:
+            continue
+        signals.append(
+            {
+                "risk_type": "negative_user_feedback",
+                "severity": "medium",
+                "source_subject_type": "user_feedback",
+                "source_subject_id": feedback["id"],
+                "impact_summary": f"负向用户反馈：{feedback['content']}",
+                "recommendation": "将反馈归因到模块和需求，纳入迭代建议或 Bug 修复队列。",
+            }
+        )
+    for suggestion in matching_evidence["iteration_plan_suggestion"]:
+        if suggestion.get("confidence_level") != "low":
+            continue
+        signals.append(
+            {
+                "risk_type": "iteration_suggestion_low_confidence",
+                "severity": "medium",
+                "source_subject_type": "iteration_plan_suggestion",
+                "source_subject_id": suggestion["id"],
+                "impact_summary": f"低置信度迭代建议：{suggestion['title']}",
+                "recommendation": "补充更多 Bug、反馈、使用或线上证据后再采纳。",
             }
         )
     return signals
@@ -6839,15 +7229,7 @@ def lifecycle_context(
         if include_risks
         else []
     )
-    missing_context = [
-        "automated_testing",
-        "bug",
-        "release",
-        "online_log",
-        "usage_metric",
-        "user_feedback",
-        "iteration_planning",
-    ]
+    missing_context = _lifecycle_missing_context(current_store, tasks=tasks)
 
     return envelope(
         {

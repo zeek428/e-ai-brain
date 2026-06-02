@@ -15,7 +15,23 @@ import { formatMutationError } from '../../utils/managementCrud';
 const { Text } = Typography;
 
 function resolveTraceParams(row: AuditRecord) {
-  if (row.subjectType === 'requirement' || row.subjectType === 'ai_task') {
+  const traceableSubjectTypes = new Set([
+    'ai_task',
+    'bug',
+    'code_review_report',
+    'gitlab_daily_code_metric',
+    'gitlab_mr_snapshot',
+    'human_review',
+    'iteration_plan_suggestion',
+    'jenkins_release',
+    'knowledge_deposit',
+    'mock_issue',
+    'online_log_metric',
+    'requirement',
+    'user_feedback',
+    'user_usage_metric',
+  ]);
+  if (traceableSubjectTypes.has(row.subjectType)) {
     return { subjectId: row.subjectId, subjectType: row.subjectType };
   }
   if (row.subjectType === 'product') {
@@ -206,13 +222,19 @@ export default function AuditPage() {
               {traceDialog.context.riskSignals.length ? (
                 <Space orientation="vertical" size={8} style={{ width: '100%' }}>
                   {traceDialog.context.riskSignals.map((risk) => (
-                    <div className="audit-trace-item" key={risk.riskType}>
+                    <div
+                      className="audit-trace-item"
+                      key={`${risk.riskType}-${risk.sourceSubjectType}-${risk.sourceSubjectId}`}
+                    >
                       <Space size={8} wrap>
                         <Tag color={risk.severity === 'high' ? 'red' : 'orange'}>
                           {risk.riskType}
                         </Tag>
                         <Text type="secondary">{risk.severity}</Text>
                       </Space>
+                      <Text type="secondary">
+                        {risk.sourceSubjectType}: {risk.sourceSubjectId}
+                      </Text>
                       <Text>{risk.impactSummary}</Text>
                       <Text type="secondary">{risk.recommendation}</Text>
                     </div>

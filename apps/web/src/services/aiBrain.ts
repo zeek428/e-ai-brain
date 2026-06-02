@@ -345,6 +345,8 @@ export type LifecycleRiskSignalRecord = {
   recommendation: string;
   riskType: string;
   severity: string;
+  sourceSubjectId: string;
+  sourceSubjectType: string;
 };
 
 export type LifecycleContextRecord = {
@@ -645,6 +647,8 @@ type LifecycleRiskSignalItem = {
   recommendation?: string;
   risk_type?: string;
   severity?: string;
+  source_subject_id?: string;
+  source_subject_type?: string;
 };
 
 type LifecycleContextResponse = {
@@ -1879,6 +1883,8 @@ export async function fetchLifecycleContext(params: {
       recommendation: formatUnknownValue(item.recommendation),
       riskType: formatUnknownValue(item.risk_type),
       severity: formatUnknownValue(item.severity),
+      sourceSubjectId: formatUnknownValue(item.source_subject_id),
+      sourceSubjectType: formatUnknownValue(item.source_subject_type),
     })),
     status: formatUnknownValue(context.status),
     summary: {

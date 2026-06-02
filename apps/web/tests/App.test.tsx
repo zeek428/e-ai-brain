@@ -2337,8 +2337,17 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 subject_id: 'requirement_api',
                 subject_type: 'requirement',
               },
+              {
+                actor_id: 'user_admin',
+                created_at: '2026-06-01T08:00:00+00:00',
+                event_type: 'user_feedback.created',
+                id: 'audit_feedback',
+                payload: { sentiment: 'negative' },
+                subject_id: 'feedback_api',
+                subject_type: 'user_feedback',
+              },
             ],
-            total: 1,
+            total: 2,
           },
         });
       }
@@ -2360,10 +2369,46 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 recommendation: '补充边界测试',
                 risk_type: 'code_review_medium_risk',
                 severity: 'medium',
+                source_subject_id: 'report_api',
+                source_subject_type: 'code_review_report',
               },
             ],
             status: 'available',
             summary: { downstream_count: 1, risk_count: 1 },
+            upstream: [],
+          },
+        });
+      }
+      if (input === '/api/lifecycle/context?subject_type=user_feedback&subject_id=feedback_api') {
+        return jsonResponse({
+          data: {
+            downstream: [
+              {
+                relation_type: 'observes_user_feedback',
+                subject_id: 'feedback_api',
+                subject_type: 'user_feedback',
+                summary: '知识检索上线后体验变差。',
+              },
+              {
+                relation_type: 'observes_iteration_suggestion',
+                subject_id: 'suggestion_api',
+                subject_type: 'iteration_plan_suggestion',
+                summary: '优化知识检索体验',
+              },
+            ],
+            missing_context: [],
+            risk_signals: [
+              {
+                impact_summary: '负向用户反馈：知识检索上线后体验变差。',
+                recommendation: '纳入迭代建议或 Bug 修复队列。',
+                risk_type: 'negative_user_feedback',
+                severity: 'medium',
+                source_subject_id: 'feedback_api',
+                source_subject_type: 'user_feedback',
+              },
+            ],
+            status: 'available',
+            summary: { downstream_count: 2, risk_count: 1 },
             upstream: [],
           },
         });
@@ -2387,7 +2432,22 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.click(within(auditRow as HTMLElement).getByRole('button', { name: '链路追踪' }));
     expect(await screen.findByText('generates_product_detail_design')).toBeInTheDocument();
     expect(screen.getByText('code_review_medium_risk')).toBeInTheDocument();
+    expect(screen.getByText('code_review_report: report_api')).toBeInTheDocument();
     expect(screen.getByText('automated_testing')).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /close/i }));
+
+    expect(await screen.findByText('user_feedback.created')).toBeInTheDocument();
+    const feedbackRow = screen.getByText('user_feedback.created').closest('tr');
+    expect(feedbackRow).not.toBeNull();
+    fireEvent.click(within(feedbackRow as HTMLElement).getByRole('button', { name: '链路追踪' }));
+    expect(await screen.findByText('observes_user_feedback')).toBeInTheDocument();
+    expect(screen.getByText('negative_user_feedback')).toBeInTheDocument();
+    expect(screen.getAllByText('user_feedback: feedback_api').length).toBeGreaterThanOrEqual(1);
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
+        '/api/lifecycle/context?subject_type=user_feedback&subject_id=feedback_api',
+      ),
+    );
   });
 
   it('filters management table rows from query conditions', async () => {
