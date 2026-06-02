@@ -85,6 +85,34 @@ export type CurrentUserResponse = {
   username: string;
 };
 
+export type AssistantChatResponse = {
+  content: string;
+  conversationId: string;
+  latencyMs: number;
+  messageId: string;
+  model: string;
+  suggestions: string[];
+};
+
+type AssistantChatApiResponse = {
+  conversation_id: string;
+  latency_ms?: number;
+  message: {
+    content?: string;
+    id?: string;
+    role?: string;
+  };
+  model?: string;
+  suggestions?: string[];
+};
+
+export type AssistantChatPayload = {
+  context?: Record<string, unknown>;
+  conversationId?: string;
+  message: string;
+  productId?: string;
+};
+
 export type ProductResponse = {
   code?: string;
   description?: string | null;
@@ -1086,6 +1114,30 @@ export async function apiRequest<T>(
   }
   const payload = (await response.json()) as ApiEnvelope<T>;
   return payload.data;
+}
+
+export async function chatWithAssistant(
+  payload: AssistantChatPayload,
+): Promise<AssistantChatResponse> {
+  const token = requireAccessToken();
+  const response = await apiRequest<AssistantChatApiResponse>('/api/assistant/chat', {
+    body: {
+      context: payload.context,
+      conversation_id: payload.conversationId,
+      message: payload.message,
+      product_id: payload.productId,
+    },
+    method: 'POST',
+    token,
+  });
+  return {
+    content: response.message.content ?? '',
+    conversationId: response.conversation_id,
+    latencyMs: Number(response.latency_ms ?? 0),
+    messageId: response.message.id ?? response.conversation_id,
+    model: response.model ?? '',
+    suggestions: response.suggestions ?? [],
+  };
 }
 
 export function getAccessToken() {

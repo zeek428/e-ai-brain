@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 新增 AI 助手聊天工作台和 `/api/assistant/chat`，基于模型网关 Chat 能力与服务端脱敏系统上下文回答 AI Brain 产品配置、需求任务、Git 仓库、模型网关状态和项目开发进展问题；模型调用日志仅记录 `purpose=assistant_chat` 元数据。
 - 产品 Git 资源支持选择 GitHub provider，任务中心可基于 GitHub PR 预览和 diff 快照创建 `code_review` 任务；凭据解析支持环境变量、服务端密钥引用和本地联调直填只读 token，API 响应仍不回显凭据。
 - 所有 PostgreSQL 结构表统一补齐 `created_at` 和 `updated_at` 标准时间字段，新增 `018_standard_timestamps.sql` 迁移脚本和表定义门禁测试，防止后续新表漏字段。
 - 任务管理页面新增“所属产品”和“时间段”查询条件，AI 任务列表摘要同步返回产品名、创建时间和更新时间，并支持 `created_from`/`created_to` 后端过滤。

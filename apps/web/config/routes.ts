@@ -16,6 +16,12 @@ const routes = [
     component: './Dashboard',
   },
   {
+    path: '/assistant',
+    name: 'AI 助手',
+    icon: 'RobotOutlined',
+    component: './Assistant',
+  },
+  {
     path: '/tasks',
     name: '任务中心',
     icon: 'ProjectOutlined',
@@ -154,6 +160,11 @@ const routes = [
   {
     path: '/dashboard',
     redirect: '/welcome',
+    hideInMenu: true,
+  },
+  {
+    path: '/chatbot',
+    redirect: '/assistant',
     hideInMenu: true,
   },
   {

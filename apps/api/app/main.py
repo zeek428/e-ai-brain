@@ -328,6 +328,13 @@ class AiTaskRequest(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
 
 
+class AssistantChatRequest(BaseModel):
+    message: str
+    conversation_id: str | None = None
+    product_id: str | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
 class GitLabSnapshotRequest(BaseModel):
     requirement_id: str
     technical_solution_task_id: str
@@ -1810,6 +1817,239 @@ def _openai_usage_tokens(
     return {"prompt": prompt, "completion": completion, "total": total}
 
 
+def _assistant_model_gateway_config(current_store: MemoryStore) -> dict[str, Any]:
+    config = _default_model_gateway_config(current_store)
+    if config:
+        if config.get("provider") != "openai_compatible":
+            raise ModelGatewayConfigError("Active model gateway provider is not supported")
+        if not config.get("api_key"):
+            raise ModelGatewayConfigError("Active model gateway config is missing api_key")
+        return config
+    if settings.model_gateway_status == "configured":
+        return {
+            "api_key": settings.model_gateway_api_key,
+            "base_url": settings.model_gateway_base_url,
+            "default_chat_model": settings.model_gateway_default_chat_model,
+            "id": None,
+            "provider": "openai_compatible",
+            "timeout_seconds": 60,
+        }
+    raise ModelGatewayConfigError("No active/default model gateway config is configured")
+
+
+def _assistant_system_context(
+    current_store: MemoryStore,
+    *,
+    product_id: str | None,
+) -> dict[str, Any]:
+    products = list(current_store.products.values())
+    if product_id:
+        products = [product for product in products if product["id"] == product_id]
+    product_ids = {product["id"] for product in products}
+    requirements = [
+        requirement
+        for requirement in current_store.requirements.values()
+        if not product_ids or requirement.get("product_id") in product_ids
+    ]
+    tasks = [
+        task
+        for task in current_store.ai_tasks.values()
+        if not product_ids or task.get("product_id") in product_ids
+    ]
+    repositories = [
+        repository
+        for repository in current_store.product_git_repositories.values()
+        if not product_ids or repository.get("product_id") in product_ids
+    ]
+    default_gateway = _default_model_gateway_config(current_store)
+    return {
+        "ai_tasks_by_status": _count_by(tasks, "status"),
+        "ai_tasks_by_type": _count_by(tasks, "task_type"),
+        "ai_tasks_total": len(tasks),
+        "git_repositories": [
+            {
+                "default_branch": repository.get("default_branch"),
+                "id": repository["id"],
+                "name": repository["name"],
+                "provider": repository.get("git_provider", "gitlab"),
+                "status": repository.get("status"),
+            }
+            for repository in repositories[:8]
+        ],
+        "latest_requirements": [
+            {
+                "id": requirement["id"],
+                "priority": requirement.get("priority"),
+                "status": requirement["status"],
+                "title": requirement["title"],
+            }
+            for requirement in sorted(
+                requirements,
+                key=lambda item: item.get("created_at", ""),
+                reverse=True,
+            )[:6]
+        ],
+        "latest_tasks": [
+            {
+                "id": task["id"],
+                "status": task["status"],
+                "title": task["title"],
+                "type": task["task_type"],
+            }
+            for task in sorted(tasks, key=lambda item: item.get("created_at", ""), reverse=True)[:8]
+        ],
+        "model_gateway": {
+            "api_key_configured": bool(default_gateway and default_gateway.get("api_key")),
+            "chat_model": default_gateway.get("default_chat_model") if default_gateway else None,
+            "is_configured": bool(default_gateway) or settings.model_gateway_status == "configured",
+            "provider": default_gateway.get("provider") if default_gateway else "openai_compatible",
+        },
+        "products": [
+            {
+                "code": product.get("code"),
+                "id": product["id"],
+                "name": product["name"],
+                "status": product.get("status"),
+            }
+            for product in products[:8]
+        ],
+        "requirements_by_status": _count_by(requirements, "status"),
+        "requirements_total": len(requirements),
+    }
+
+
+def _assistant_chat_messages(
+    current_store: MemoryStore,
+    payload: AssistantChatRequest,
+) -> list[dict[str, str]]:
+    user_payload = {
+        "context": payload.context,
+        "conversation_id": payload.conversation_id,
+        "message": payload.message,
+        "product_id": payload.product_id,
+        "system_context": _assistant_system_context(
+            current_store,
+            product_id=payload.product_id,
+        ),
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are AI Brain's assistant for R&D delivery work. Answer in Chinese. "
+                "Use system_context to answer questions about AI Brain configuration, "
+                "development progress, requirements, tasks, repositories, "
+                "and model gateway status. "
+                "Return one compact JSON object with string field answer and optional "
+                "array field suggestions. Do not include markdown fences."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(user_payload, ensure_ascii=False, sort_keys=True),
+        },
+    ]
+
+
+def _assistant_response_content(content: Any) -> dict[str, Any]:
+    parsed: Any = content
+    if isinstance(content, str):
+        stripped = content.strip()
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            return {"answer": stripped, "suggestions": []}
+    if not isinstance(parsed, dict):
+        return {"answer": str(parsed), "suggestions": []}
+    answer = parsed.get("answer") or parsed.get("content") or parsed.get("message") or ""
+    suggestions = parsed.get("suggestions") or []
+    if not isinstance(suggestions, list):
+        suggestions = []
+    return {
+        "answer": str(answer).strip(),
+        "suggestions": [str(item).strip() for item in suggestions if str(item).strip()][:4],
+    }
+
+
+def _call_model_gateway_for_assistant_chat(
+    current_store: MemoryStore,
+    *,
+    payload: AssistantChatRequest,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    config = _assistant_model_gateway_config(current_store)
+    provider = config["provider"]
+    model = config["default_chat_model"]
+    messages = _assistant_chat_messages(current_store, payload)
+    body = {
+        "messages": messages,
+        "model": model,
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2,
+    }
+    request = UrlRequest(
+        _model_gateway_chat_completions_url(config["base_url"]),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config['api_key']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    started = perf_counter()
+    try:
+        with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+        choices = response_payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("Assistant response is missing choices")
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if not isinstance(message, dict):
+            raise ValueError("Assistant response is missing message")
+        assistant_output = _assistant_response_content(message.get("content"))
+        if not assistant_output["answer"]:
+            raise ValueError("Assistant response is missing answer")
+        latency_ms = int((perf_counter() - started) * 1000)
+        log = _model_gateway_log(
+            current_store,
+            purpose="assistant_chat",
+            provider=provider,
+            model=model,
+            config_id=config["id"],
+            tokens=_openai_usage_tokens(
+                response_payload.get("usage"),
+                messages=messages,
+                output=assistant_output,
+            ),
+            latency_ms=latency_ms,
+            status="succeeded",
+        )
+        return {**assistant_output, "latency_ms": latency_ms, "model": model}, log
+    except (
+        AttributeError,
+        HTTPError,
+        URLError,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        latency_ms = int((perf_counter() - started) * 1000)
+        prompt_tokens = _estimate_tokens(messages)
+        log = _model_gateway_log(
+            current_store,
+            purpose="assistant_chat",
+            provider=provider,
+            model=model,
+            config_id=config["id"],
+            tokens={"prompt": prompt_tokens, "completion": 0, "total": prompt_tokens},
+            latency_ms=latency_ms,
+            status="failed",
+            error="Assistant model gateway request failed",
+        )
+        raise ModelGatewayCallError(log) from exc
+
+
 def _openai_embedding_usage_tokens(
     usage: Any,
     *,
@@ -3249,6 +3489,7 @@ def delete_model_gateway_config(
 def list_model_gateway_logs(
     request: Request,
     ai_task_id: str | None = None,
+    purpose: str | None = None,
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
@@ -3257,10 +3498,104 @@ def list_model_gateway_logs(
     items = list(current_store.model_gateway_logs)
     if ai_task_id:
         items = [item for item in items if item["ai_task_id"] == ai_task_id]
+    if purpose:
+        items = [item for item in items if item["purpose"] == purpose]
     if status:
         items = [item for item in items if item["status"] == status]
     items.sort(key=lambda item: item["created_at"], reverse=True)
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.post("/api/assistant/chat")
+def chat_with_assistant(
+    request: Request,
+    payload: AssistantChatRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"admin", "product_owner", "rd_owner", "reviewer", "knowledge_owner"})
+    current_store = store(request)
+    message = _ensure_non_blank(payload.message, "message")
+    normalized_payload = AssistantChatRequest(
+        context=payload.context,
+        conversation_id=payload.conversation_id,
+        message=message,
+        product_id=payload.product_id,
+    )
+    if (
+        normalized_payload.product_id
+        and normalized_payload.product_id not in current_store.products
+    ):
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    try:
+        assistant_output, model_log = _call_model_gateway_for_assistant_chat(
+            current_store,
+            payload=normalized_payload,
+        )
+    except ModelGatewayConfigError as exc:
+        raise api_error(400, "MODEL_GATEWAY_CONFIG_INVALID", str(exc)) from exc
+    except ModelGatewayCallError as exc:
+        current_store.audit(
+            event_type="model_gateway.called",
+            actor_id="system",
+            subject_type="model_gateway_log",
+            subject_id=exc.log["id"],
+            payload={
+                "model_log_id": exc.log["id"],
+                "model": exc.log["model"],
+                "provider": exc.log["provider"],
+                "purpose": exc.log["purpose"],
+                "status": exc.log["status"],
+            },
+        )
+        raise api_error(
+            502,
+            "ASSISTANT_CHAT_FAILED",
+            "Assistant model gateway request failed",
+        ) from exc
+
+    current_store.audit(
+        event_type="model_gateway.called",
+        actor_id="system",
+        subject_type="model_gateway_log",
+        subject_id=model_log["id"],
+        payload={
+            "model_log_id": model_log["id"],
+            "model": model_log["model"],
+            "provider": model_log["provider"],
+            "purpose": model_log["purpose"],
+            "status": model_log["status"],
+        },
+    )
+    conversation_id = normalized_payload.conversation_id or current_store.new_id("conversation")
+    assistant_message = {
+        "content": assistant_output["answer"],
+        "created_at": datetime.now(UTC).isoformat(),
+        "id": current_store.new_id("assistant_message"),
+        "role": "assistant",
+    }
+    current_store.audit(
+        event_type="assistant.chat_completed",
+        actor_id=user["id"],
+        subject_type="assistant_conversation",
+        subject_id=conversation_id,
+        payload={
+            "latency_ms": assistant_output["latency_ms"],
+            "model": assistant_output["model"],
+            "model_log_id": model_log["id"],
+            "product_id": normalized_payload.product_id,
+            "suggestion_count": len(assistant_output["suggestions"]),
+        },
+    )
+    return envelope(
+        {
+            "conversation_id": conversation_id,
+            "latency_ms": assistant_output["latency_ms"],
+            "message": assistant_message,
+            "model": assistant_output["model"],
+            "suggestions": assistant_output["suggestions"],
+        },
+        get_trace_id(request),
+    )
 
 
 @app.post("/api/requirements")
@@ -7355,6 +7690,14 @@ def _status_counts(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {"status": status, "count": count}
         for status, count in sorted(counts.items(), key=lambda item: item[0])
     ]
+
+
+def _count_by(items: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = str(item.get(field) or "unknown")
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: item[0]))
 
 
 def _dashboard_time_cutoff(time_range: str | None) -> datetime | None:
