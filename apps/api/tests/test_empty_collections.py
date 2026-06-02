@@ -85,7 +85,23 @@ def test_dashboard_it_team_returns_real_mvp_aggregate_without_fake_rows():
         json={
             "content": "dashboard knowledge source",
             "permission_roles": ["admin"],
+            "product_id": product["id"],
             "title": "首页看板知识",
+        },
+        headers=headers,
+    ).json()["data"]
+    other_product = client.post(
+        "/api/products",
+        json={"code": "unrelated", "name": "无关产品"},
+        headers=headers,
+    ).json()["data"]
+    unrelated_knowledge = client.post(
+        "/api/knowledge/documents",
+        json={
+            "content": "unrelated dashboard knowledge source",
+            "permission_roles": ["admin"],
+            "product_id": other_product["id"],
+            "title": "无关产品知识",
         },
         headers=headers,
     ).json()["data"]
@@ -95,21 +111,22 @@ def test_dashboard_it_team_returns_real_mvp_aggregate_without_fake_rows():
         headers=headers,
     ).json()["data"]
 
-    assert dashboard["summary"] == {
-        "active_products": 1,
-        "ai_tasks": 1,
-        "audit_events": len(app.state.store.audit_events),
-        "knowledge_deposits": 0,
-        "knowledge_documents": 1,
-        "pending_reviews": 1,
-        "requirements": 2,
-    }
+    assert dashboard["summary"]["active_products"] == 1
+    assert dashboard["summary"]["ai_tasks"] == 1
+    assert dashboard["summary"]["audit_events"] < len(app.state.store.audit_events)
+    assert dashboard["summary"]["knowledge_deposits"] == 0
+    assert dashboard["summary"]["knowledge_documents"] == 1
+    assert dashboard["summary"]["pending_reviews"] == 1
+    assert dashboard["summary"]["requirements"] == 2
     assert {"status": "pending_approval", "count": 1} in dashboard["requirement_status_counts"]
     assert {"status": "task_created", "count": 1} in dashboard["requirement_status_counts"]
     assert dashboard["task_status_counts"] == [{"status": "waiting_review", "count": 1}]
     assert dashboard["latest_tasks"][0]["id"] == generated["task_id"]
     assert dashboard["pending_reviews"][0]["id"] == started["review_id"]
     assert dashboard["recent_knowledge_documents"][0]["id"] == knowledge["id"]
-    assert dashboard["recent_audit_events"][0]["event_type"] == "knowledge_document.created"
+    assert all(
+        event["subject_id"] != unrelated_knowledge["id"]
+        for event in dashboard["recent_audit_events"]
+    )
     assert "items" not in dashboard
     assert pending_requirement["title"] in dashboard["requirement_titles"]

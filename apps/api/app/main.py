@@ -318,6 +318,7 @@ class KnowledgeDocumentRequest(BaseModel):
     title: str
     content: str
     doc_type: str = "manual"
+    product_id: str | None = None
     permission_roles: list[str] = Field(default_factory=lambda: ["admin"])
     tags: list[str] = Field(default_factory=list)
 
@@ -326,6 +327,7 @@ class KnowledgeDocumentPatchRequest(BaseModel):
     title: str | None = None
     content: str | None = None
     doc_type: str | None = None
+    product_id: str | None = None
     permission_roles: list[str] | None = None
     tags: list[str] | None = None
     index_status: str | None = None
@@ -4688,6 +4690,7 @@ def _replace_knowledge_chunks(current_store: MemoryStore, document: dict[str, An
             "id": chunk_id,
             "metadata": {
                 "doc_type": document.get("doc_type", "manual"),
+                "product_id": document.get("product_id"),
                 "tags": list(document.get("tags", [])),
                 "title": document["title"],
             },
@@ -4728,6 +4731,8 @@ def create_knowledge_document(
     current_store = store(request)
     title = _ensure_non_blank(payload.title, "title")
     content = _ensure_non_blank(payload.content, "content")
+    if payload.product_id is not None and payload.product_id not in current_store.products:
+        raise api_error(404, "NOT_FOUND", "Product not found")
     _ensure_roles(payload.permission_roles)
     document_id = current_store.new_id("knowledge")
     document = {
@@ -4735,6 +4740,7 @@ def create_knowledge_document(
         "title": title,
         "content": content,
         "doc_type": payload.doc_type,
+        "product_id": payload.product_id,
         "permission_roles": payload.permission_roles,
         "tags": payload.tags,
         "index_status": "indexed",
@@ -4771,6 +4777,9 @@ def patch_knowledge_document(
         updates["content"] = _ensure_non_blank(updates["content"], "content")
     if "permission_roles" in updates:
         _ensure_roles(updates["permission_roles"])
+    if "product_id" in updates and updates["product_id"] is not None:
+        if updates["product_id"] not in current_store.products:
+            raise api_error(404, "NOT_FOUND", "Product not found")
     if "index_status" in updates:
         _ensure_enum(updates["index_status"], KNOWLEDGE_INDEX_STATUSES, "knowledge index status")
     if "index_error" in updates and updates["index_error"] is not None:
@@ -4791,6 +4800,7 @@ def patch_knowledge_document(
         "content",
         "title",
         "permission_roles",
+        "product_id",
         "doc_type",
         "tags",
     }.intersection(updates):
@@ -5614,6 +5624,103 @@ def _status_counts(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _task_product_id(current_store: MemoryStore, task_id: str | None) -> str | None:
+    if not task_id:
+        return None
+    task = current_store.ai_tasks.get(str(task_id))
+    return str(task["product_id"]) if task is not None and task.get("product_id") else None
+
+
+def _knowledge_document_product_id(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+) -> str | None:
+    if document.get("product_id"):
+        return str(document["product_id"])
+    document_id = document.get("id")
+    for deposit in current_store.knowledge_deposits.values():
+        if deposit.get("knowledge_document_id") == document_id:
+            return _task_product_id(current_store, deposit.get("ai_task_id"))
+    return None
+
+
+def _subject_product_id(
+    current_store: MemoryStore,
+    subject_type: str | None,
+    subject_id: str | None,
+) -> str | None:
+    if not subject_type or not subject_id:
+        return None
+    normalized_id = str(subject_id)
+    if subject_type == "product":
+        return normalized_id if normalized_id in current_store.products else None
+    if subject_type == "product_version":
+        version = current_store.product_versions.get(normalized_id)
+        return str(version["product_id"]) if version is not None else None
+    if subject_type == "product_module":
+        module = current_store.product_modules.get(normalized_id)
+        return str(module["product_id"]) if module is not None else None
+    if subject_type == "product_git_repository":
+        repository = current_store.product_git_repositories.get(normalized_id)
+        return str(repository["product_id"]) if repository is not None else None
+    if subject_type == "requirement":
+        requirement = current_store.requirements.get(normalized_id)
+        return str(requirement["product_id"]) if requirement is not None else None
+    if subject_type == "ai_task":
+        return _task_product_id(current_store, normalized_id)
+    if subject_type == "human_review":
+        review = current_store.human_reviews.get(normalized_id)
+        return _task_product_id(current_store, review.get("ai_task_id") if review else None)
+    if subject_type == "code_review_report":
+        report = current_store.code_review_reports.get(normalized_id)
+        return _task_product_id(current_store, report.get("task_id") if report else None)
+    if subject_type == "gitlab_mr_snapshot":
+        snapshot = current_store.gitlab_mr_snapshots.get(normalized_id)
+        return str(snapshot["product_id"]) if snapshot is not None else None
+    if subject_type == "mock_issue":
+        issue = _lifecycle_mock_issue(current_store, normalized_id)
+        return _task_product_id(current_store, issue.get("source_task_id") if issue else None)
+    if subject_type == "knowledge_document":
+        document = current_store.knowledge_documents.get(normalized_id)
+        return _knowledge_document_product_id(current_store, document) if document else None
+    if subject_type == "knowledge_deposit":
+        deposit = current_store.knowledge_deposits.get(normalized_id)
+        return _task_product_id(current_store, deposit.get("ai_task_id") if deposit else None)
+    product_scoped_collections = {
+        "bug": current_store.bugs,
+        "gitlab_daily_code_metric": current_store.gitlab_daily_code_metrics,
+        "jenkins_release": current_store.jenkins_release_records,
+        "online_log_metric": current_store.online_log_metrics,
+        "user_feedback": current_store.user_feedback,
+        "user_usage_metric": current_store.user_usage_metrics,
+        "iteration_plan_suggestion": current_store.iteration_plan_suggestions,
+    }
+    collection = product_scoped_collections.get(subject_type)
+    if collection is None:
+        return None
+    item = collection.get(normalized_id)
+    return str(item["product_id"]) if item is not None and item.get("product_id") else None
+
+
+def _audit_event_matches_product(
+    current_store: MemoryStore,
+    event: dict[str, Any],
+    product_id: str | None,
+) -> bool:
+    if product_id is None:
+        return True
+    if _task_product_id(current_store, event.get("ai_task_id")) == product_id:
+        return True
+    return (
+        _subject_product_id(
+            current_store,
+            event.get("subject_type"),
+            event.get("subject_id"),
+        )
+        == product_id
+    )
+
+
 @app.get("/api/dashboard/it-team")
 def dashboard_metrics(
     request: Request,
@@ -5650,13 +5757,21 @@ def dashboard_metrics(
         document
         for document in current_store.knowledge_documents.values()
         if _user_can_read_roles(user, document["permission_roles"])
+        and (
+            product_id is None
+            or _knowledge_document_product_id(current_store, document) == product_id
+        )
     ]
     knowledge_deposits = [
         deposit
         for deposit in current_store.knowledge_deposits.values()
         if deposit["ai_task_id"] in task_ids
     ]
-    audit_events = list(current_store.audit_events)
+    audit_events = [
+        event
+        for event in current_store.audit_events
+        if _audit_event_matches_product(current_store, event, product_id)
+    ]
     latest_tasks = sorted(tasks, key=lambda item: item["id"], reverse=True)[:5]
     recent_audit_events = sorted(
         audit_events,
