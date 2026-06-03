@@ -2023,10 +2023,16 @@ class PostgresSnapshotRepository:
                 ]
 
     def list_requirement_summaries(self, *, product_id: str | None = None) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("r.product_id = %s")
+            params.append(product_id)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT r.id, r.brain_app_id, r.title, r.product_id, r.version_id,
                            r.module_code, r.description, r.priority, r.status, r.created_by,
                            r.approval_comment, r.rejection_reason, r.task_ids,
@@ -2034,10 +2040,10 @@ class PostgresSnapshotRepository:
                     FROM requirements r
                     JOIN products p ON p.id = r.product_id
                     LEFT JOIN product_versions v ON v.id = r.version_id
-                    WHERE (%s IS NULL OR r.product_id = %s)
+                    {where_clause}
                     ORDER BY r.created_at DESC, r.id
                     """,
-                    (product_id, product_id),
+                    tuple(params),
                 )
                 requirements = []
                 for row in cursor.fetchall():
@@ -2077,38 +2083,41 @@ class PostgresSnapshotRepository:
         created_from: Any | None = None,
         created_to: Any | None = None,
     ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            where_clauses.append("t.status = %s")
+            params.append(status)
+        if task_type is not None:
+            where_clauses.append("t.task_type = %s")
+            params.append(task_type)
+        if product_id is not None:
+            where_clauses.append("t.product_id = %s")
+            params.append(product_id)
+        if requirement_id is not None:
+            where_clauses.append("t.requirement_id = %s")
+            params.append(requirement_id)
+        if created_from is not None:
+            where_clauses.append("COALESCE(t.created_at, t.updated_at) >= %s")
+            params.append(created_from)
+        if created_to is not None:
+            where_clauses.append("COALESCE(t.created_at, t.updated_at) <= %s")
+            params.append(created_to)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT t.id, t.brain_app_id, t.requirement_id, t.task_type, t.title,
                            t.status, t.product_id, t.version_id, t.module_code,
                            t.current_step, t.created_by, t.created_at, t.updated_at,
                            COALESCE(p.name, t.product_context->'product'->>'name')
                     FROM ai_tasks t
                     LEFT JOIN products p ON p.id = t.product_id
-                    WHERE (%s IS NULL OR t.status = %s)
-                      AND (%s IS NULL OR t.task_type = %s)
-                      AND (%s IS NULL OR t.product_id = %s)
-                      AND (%s IS NULL OR t.requirement_id = %s)
-                      AND (%s IS NULL OR COALESCE(t.created_at, t.updated_at) >= %s)
-                      AND (%s IS NULL OR COALESCE(t.created_at, t.updated_at) <= %s)
+                    {where_clause}
                     ORDER BY t.id
                     """,
-                    (
-                        status,
-                        status,
-                        task_type,
-                        task_type,
-                        product_id,
-                        product_id,
-                        requirement_id,
-                        requirement_id,
-                        created_from,
-                        created_from,
-                        created_to,
-                        created_to,
-                    ),
+                    tuple(params),
                 )
                 return [
                     {
