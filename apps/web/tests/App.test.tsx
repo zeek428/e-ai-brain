@@ -418,9 +418,11 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(routes).toContain("name: '系统管理'");
     expect(routes).toContain("name: '产品管理'");
     expect(routes).toContain("name: '需求管理'");
+    expect(routes).toContain("name: '迭代版本'");
     expect(routes).toContain("name: '知识中心'");
     expect(routes).toContain("name: '审计与运行'");
     expect(routes).toContain("path: '/delivery/requirements'");
+    expect(routes).toContain("path: '/delivery/versions'");
     expect(routes).toContain("path: '/assets/products'");
     expect(routes).toContain("path: '/governance/audit'");
     expect(routes).not.toContain("path: '/governance/users'");
@@ -1925,8 +1927,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
               request_count: 200,
             },
             requirement_status_counts: [
-              { count: 1, status: 'pending_approval' },
-              { count: 1, status: 'task_created' },
+              { count: 1, status: 'submitted' },
+              { count: 1, status: 'designing' },
             ],
             summary: {
               active_products: 1,
@@ -4028,7 +4030,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 id: 'requirement_api',
                 priority: 'P1',
                 product_id: 'product_api',
-                status: 'pending_approval',
+                status: 'submitted',
                 title: '接口需求',
               },
             ],

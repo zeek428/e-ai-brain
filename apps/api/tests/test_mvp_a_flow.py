@@ -64,14 +64,14 @@ def test_requirement_to_product_detail_design_human_review_flow():
         headers=headers,
     )
     requirement = requirement_response.json()["data"]
-    assert requirement["status"] == "pending_approval"
+    assert requirement["status"] == "submitted"
 
     approved = client.post(
         f"/api/requirements/{requirement['id']}/approve",
         json={"comment": "进入 MVP-A"},
         headers=headers,
     ).json()["data"]
-    assert approved["status"] == "approved"
+    assert approved["status"] == "planned"
 
     generated = client.post(
         f"/api/requirements/{requirement['id']}/generate-task",

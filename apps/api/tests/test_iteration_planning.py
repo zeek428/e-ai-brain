@@ -127,7 +127,7 @@ def test_iteration_suggestions_generate_from_real_evidence_and_convert_after_dec
     ).json()["data"]["items"][0]
     assert requirement["id"] == decided["converted_requirement_id"]
     assert requirement["title"] == "优化知识检索召回与排序"
-    assert requirement["status"] == "pending_approval"
+    assert requirement["status"] == "submitted"
 
     audit_events = client.get(
         f"/api/audit/events?subject_type=iteration_plan_suggestion&subject_id={suggestion['id']}",

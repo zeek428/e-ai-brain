@@ -117,7 +117,7 @@ def test_followup_task_creation_updates_requirement_task_references():
         f"/api/requirements/{requirement['id']}",
         headers=headers,
     ).json()["data"]
-    assert requirement_detail["status"] == "task_created"
+    assert requirement_detail["status"] == "ready_for_dev"
     assert requirement_detail["task_ids"] == [design_task_id, created["id"]]
 
 

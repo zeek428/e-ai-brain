@@ -54,6 +54,12 @@ const routes = [
         component: './Requirements',
       },
       {
+        path: '/delivery/versions',
+        name: '迭代版本',
+        icon: 'BranchesOutlined',
+        component: './IterationVersions',
+      },
+      {
         path: '/delivery/bugs',
         name: 'Bug 管理',
         icon: 'BugOutlined',
@@ -175,6 +181,11 @@ const routes = [
   {
     path: '/requirements',
     redirect: '/delivery/requirements',
+    hideInMenu: true,
+  },
+  {
+    path: '/versions',
+    redirect: '/delivery/versions',
     hideInMenu: true,
   },
   {

@@ -1371,13 +1371,29 @@ function normalizePriority(priority?: string): RequirementRecord['priority'] {
 }
 
 function normalizeRequirementStatus(status?: string): RequirementRecord['status'] {
+  if (status === 'pending_approval') {
+    return 'submitted';
+  }
+  if (status === 'task_created') {
+    return 'designing';
+  }
   if (
+    status === 'accepted' ||
     status === 'approved' ||
+    status === 'cancelled' ||
     status === 'closed' ||
+    status === 'code_reviewing' ||
+    status === 'deferred' ||
+    status === 'designing' ||
+    status === 'developing' ||
     status === 'draft' ||
-    status === 'pending_approval' ||
+    status === 'planned' ||
+    status === 'ready_for_dev' ||
+    status === 'ready_for_release' ||
     status === 'rejected' ||
-    status === 'task_created'
+    status === 'released' ||
+    status === 'submitted' ||
+    status === 'testing'
   ) {
     return status;
   }
@@ -1655,6 +1671,7 @@ export async function deleteManagementProduct(productId: string) {
 function mapProductVersionOption(version: ProductVersionListItem): ProductVersionOption {
   return {
     code: version.code ?? version.id,
+    description: version.description ?? undefined,
     id: version.id,
     name: version.name,
     status: version.status ?? '-',
@@ -1723,6 +1740,22 @@ export async function fetchProductVersions(productId: string): Promise<ProductVe
     { token },
   );
   return versions.items.map(mapProductVersionRecord);
+}
+
+export async function fetchDeliveryIterationVersions(): Promise<ProductVersionRecord[]> {
+  const products = await fetchProductContextOptions();
+  const rows = await Promise.all(
+    products.map(async (product) => {
+      const versions = await fetchProductVersions(product.id);
+      return versions.map((version) => ({
+        ...version,
+        productCode: product.code,
+        productId: product.id,
+        productName: product.name,
+      }));
+    }),
+  );
+  return rows.flat();
 }
 
 export async function createProductVersion(
@@ -2085,6 +2118,16 @@ export async function fetchManagementRequirements(): Promise<RequirementRecord[]
   const productCodeById = new Map(
     products.items.map((product) => [product.id, product.code ?? product.id]),
   );
+  const versionsById = new Map<string, ProductVersionListItem>();
+  await Promise.all(
+    products.items.map(async (product) => {
+      const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
+        `/api/products/${product.id}/versions`,
+        { token },
+      );
+      versions.items.forEach((version) => versionsById.set(version.id, version));
+    }),
+  );
 
   return requirements.items.map((requirement) => ({
     content: requirement.content,
@@ -2098,6 +2141,11 @@ export async function fetchManagementRequirements(): Promise<RequirementRecord[]
     title: requirement.title,
     updatedAt: formatListDate(requirement.updated_at ?? requirement.created_at),
     versionId: requirement.version_id,
+    versionName: requirement.version_id
+      ? (versionsById.get(requirement.version_id)?.name ??
+        versionsById.get(requirement.version_id)?.code ??
+        requirement.version_id)
+      : '未排期',
   }));
 }
 

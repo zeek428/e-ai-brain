@@ -1472,7 +1472,7 @@ def test_requirement_api_writes_fine_grained_repository_payload():
         assert persisted["title"] == "需求结构表 API 验证"
         assert persisted["product_id"] == product["id"]
         assert persisted["version_id"] == version["id"]
-        assert persisted["status"] == "pending_approval"
+        assert persisted["status"] == "submitted"
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users

@@ -70,6 +70,57 @@ TECHNICAL_SOLUTION_FOLLOWUP_TASK_TYPES = {
     "release_readiness",
 }
 RELEASE_READINESS_FOLLOWUP_TASK_TYPES = {"post_release_analysis"}
+REQUIREMENT_STATUSES = {
+    "accepted",
+    "approved",
+    "cancelled",
+    "closed",
+    "code_reviewing",
+    "deferred",
+    "designing",
+    "developing",
+    "draft",
+    "planned",
+    "ready_for_dev",
+    "ready_for_release",
+    "rejected",
+    "released",
+    "submitted",
+    "testing",
+}
+LEGACY_REQUIREMENT_STATUS_ALIASES = {
+    "pending_approval": "submitted",
+    "task_created": "designing",
+}
+REQUIREMENT_CLOSABLE_STATUSES = REQUIREMENT_STATUSES - {"draft", "submitted"}
+REQUIREMENT_TASK_CREATABLE_STATUSES = {
+    "code_reviewing",
+    "designing",
+    "developing",
+    "planned",
+    "ready_for_dev",
+    "ready_for_release",
+    "released",
+    "testing",
+}
+REQUIREMENT_STATUS_AFTER_TASK_CREATED = {
+    "automated_testing": "testing",
+    "code_review": "code_reviewing",
+    "development_planning": "developing",
+    "post_release_analysis": "released",
+    "product_detail_design": "designing",
+    "release_readiness": "ready_for_release",
+    "technical_solution": "ready_for_dev",
+}
+REQUIREMENT_STATUS_AFTER_TASK_COMPLETED = {
+    "automated_testing": "ready_for_release",
+    "code_review": "testing",
+    "development_planning": "developing",
+    "post_release_analysis": "accepted",
+    "product_detail_design": "ready_for_dev",
+    "release_readiness": "released",
+    "technical_solution": "ready_for_dev",
+}
 BUG_SOURCES = {"ai_auto_test", "ai_post_release", "manual_test"}
 BUG_SEVERITIES = {"blocker", "critical", "major", "minor"}
 BUG_STATUSES = {
@@ -324,7 +375,7 @@ class ModelGatewayConfigTestRequest(BaseModel):
 class RequirementRequest(BaseModel):
     title: str
     product_id: str
-    version_id: str
+    version_id: str | None = None
     module_code: str | None = None
     content: str
     priority: str = "P1"
@@ -743,6 +794,58 @@ def _raise_gitlab_context_mismatch(message: str) -> None:
 
 def _raise_task_context_mismatch(message: str) -> None:
     raise api_error(400, "TASK_CONTEXT_MISMATCH", message)
+
+
+def _canonical_requirement_status(status: str | None) -> str:
+    if status is None:
+        return "draft"
+    return LEGACY_REQUIREMENT_STATUS_ALIASES.get(status, status)
+
+
+def _set_requirement_status(requirement: dict[str, Any], status: str) -> None:
+    _ensure_enum(status, REQUIREMENT_STATUSES, "requirement status")
+    requirement["status"] = status
+    requirement["updated_at"] = datetime.now(UTC).isoformat()
+
+
+def _validate_requirement_version(
+    current_store: MemoryStore,
+    *,
+    product_id: str,
+    version_id: str | None,
+) -> dict[str, Any] | None:
+    if version_id is None:
+        return None
+    version = current_store.product_versions.get(version_id)
+    if version is None or version["product_id"] != product_id:
+        raise api_error(404, "NOT_FOUND", "Product version not found")
+    if version["status"] == "archived":
+        raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
+    return version
+
+
+def _advance_requirement_after_task_created(
+    current_store: MemoryStore,
+    task: dict[str, Any],
+) -> None:
+    requirement = current_store.requirements.get(task.get("requirement_id"))
+    if requirement is None:
+        return
+    next_status = REQUIREMENT_STATUS_AFTER_TASK_CREATED.get(task["task_type"])
+    if next_status:
+        _set_requirement_status(requirement, next_status)
+
+
+def _advance_requirement_after_task_completed(
+    current_store: MemoryStore,
+    task: dict[str, Any],
+) -> None:
+    requirement = current_store.requirements.get(task.get("requirement_id"))
+    if requirement is None:
+        return
+    next_status = REQUIREMENT_STATUS_AFTER_TASK_COMPLETED.get(task["task_type"])
+    if next_status and requirement.get("status") not in {"accepted", "closed", "cancelled"}:
+        _set_requirement_status(requirement, next_status)
 
 
 def _ensure_task_matches_requirement(
@@ -1501,7 +1604,7 @@ def _create_iteration_requirement(
         "module_code": suggestion["module_codes"][0] if suggestion["module_codes"] else None,
         "priority": suggestion["priority"],
         "product_id": suggestion["product_id"],
-        "status": "pending_approval",
+        "status": "submitted",
         "task_ids": [],
         "title": title,
         "version_id": version_id,
@@ -4274,11 +4377,11 @@ def create_requirement(
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
-    version = current_store.product_versions.get(payload.version_id)
-    if version is None or version["product_id"] != payload.product_id:
-        raise api_error(404, "NOT_FOUND", "Product version not found")
-    if version["status"] == "archived":
-        raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
+    _validate_requirement_version(
+        current_store,
+        product_id=payload.product_id,
+        version_id=payload.version_id,
+    )
     if payload.module_code is not None and not any(
         module["product_id"] == payload.product_id and module["code"] == payload.module_code
         for module in current_store.product_modules.values()
@@ -4295,7 +4398,7 @@ def create_requirement(
         "module_code": payload.module_code,
         "content": content,
         "priority": payload.priority,
-        "status": "pending_approval",
+        "status": "submitted",
         "created_by": user["id"],
         "task_ids": [],
         "created_at": datetime.now(UTC).isoformat(),
@@ -4322,7 +4425,12 @@ def list_requirements(
     if product_id:
         items = [item for item in items if item["product_id"] == product_id]
     if status:
-        items = [item for item in items if item["status"] == status]
+        expected_status = _canonical_requirement_status(status)
+        items = [
+            item
+            for item in items
+            if _canonical_requirement_status(item.get("status")) == expected_status
+        ]
     items.sort(key=lambda item: item["created_at"], reverse=True)
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
@@ -4352,7 +4460,8 @@ def patch_requirement(
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
-    if requirement["status"] not in {"pending_approval", "rejected"}:
+    current_status = _canonical_requirement_status(requirement.get("status"))
+    if current_status not in {"approved", "planned", "rejected", "submitted"}:
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement cannot be edited")
     updates = _payload_updates(payload)
     if "title" in updates:
@@ -4366,11 +4475,11 @@ def patch_requirement(
         raise api_error(404, "NOT_FOUND", "Product not found")
     if product["status"] != "active":
         raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
-    version = current_store.product_versions.get(next_version_id)
-    if version is None or version["product_id"] != next_product_id:
-        raise api_error(404, "NOT_FOUND", "Product version not found")
-    if version["status"] == "archived":
-        raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
+    _validate_requirement_version(
+        current_store,
+        product_id=next_product_id,
+        version_id=next_version_id,
+    )
     next_module_code = updates.get("module_code", requirement.get("module_code"))
     if next_module_code is not None and not any(
         module["product_id"] == next_product_id and module["code"] == next_module_code
@@ -4378,6 +4487,8 @@ def patch_requirement(
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
     requirement.update(updates)
+    if current_status in {"approved", "planned"} and "version_id" in updates:
+        requirement["status"] = "planned" if updates["version_id"] else "approved"
     requirement["updated_at"] = datetime.now(UTC).isoformat()
     current_store.audit(
         event_type="requirement.updated",
@@ -4423,10 +4534,11 @@ def approve_requirement(
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
-    if requirement["status"] != "pending_approval":
+    if _canonical_requirement_status(requirement.get("status")) != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not pending approval")
-    requirement["status"] = "approved"
+    requirement["status"] = "planned" if requirement.get("version_id") else "approved"
     requirement["approval_comment"] = payload.comment
+    requirement["updated_at"] = datetime.now(UTC).isoformat()
     current_store.audit(
         event_type="requirement.approved",
         actor_id=user["id"],
@@ -4448,13 +4560,14 @@ def reject_requirement(
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
-    if requirement["status"] != "pending_approval":
+    if _canonical_requirement_status(requirement.get("status")) != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not pending approval")
     rejection_reason = payload.rejection_reason or payload.comment
     if not rejection_reason:
         raise api_error(400, "VALIDATION_ERROR", "rejection_reason is required")
     requirement["status"] = "rejected"
     requirement["rejection_reason"] = rejection_reason
+    requirement["updated_at"] = datetime.now(UTC).isoformat()
     current_store.audit(
         event_type="requirement.rejected",
         actor_id=user["id"],
@@ -4475,7 +4588,10 @@ def close_requirement(
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
-    if requirement["status"] not in {"approved", "rejected", "task_created"}:
+    if (
+        _canonical_requirement_status(requirement.get("status"))
+        not in REQUIREMENT_CLOSABLE_STATUSES
+    ):
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement cannot be closed")
     active_tasks = [
         current_store.ai_tasks[task_id]
@@ -4486,6 +4602,7 @@ def close_requirement(
     if active_tasks:
         raise api_error(409, "REQUIREMENT_HAS_ACTIVE_TASKS", "Requirement has active tasks")
     requirement["status"] = "closed"
+    requirement["updated_at"] = datetime.now(UTC).isoformat()
     current_store.audit(
         event_type="requirement.closed",
         actor_id=user["id"],
@@ -4497,7 +4614,11 @@ def close_requirement(
 
 def _product_context(current_store: MemoryStore, requirement: dict[str, Any]) -> dict[str, Any]:
     product = current_store.products[requirement["product_id"]]
-    version = current_store.product_versions[requirement["version_id"]]
+    version = (
+        current_store.product_versions.get(requirement["version_id"])
+        if requirement.get("version_id")
+        else None
+    )
     module = next(
         (
             item
@@ -4520,7 +4641,7 @@ def _product_context(current_store: MemoryStore, requirement: dict[str, Any]) ->
     ]
     return {
         "product": current_store.snapshot(product),
-        "version": current_store.snapshot(version),
+        "version": current_store.snapshot(version) if version else None,
         "module": current_store.snapshot(module) if module else None,
         "repositories": current_store.snapshot({"items": repositories, "total": len(repositories)}),
         "related_systems": current_store.snapshot(
@@ -4540,11 +4661,11 @@ def generate_task_from_requirement(
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
-    if requirement["status"] != "approved":
+    if _canonical_requirement_status(requirement.get("status")) != "planned":
         raise api_error(
             409,
             "REQUIREMENT_STATE_INVALID",
-            "Only approved requirements can generate tasks",
+            "Only planned requirements can generate tasks",
         )
 
     now = datetime.now(UTC).isoformat()
@@ -4571,7 +4692,7 @@ def generate_task_from_requirement(
         "updated_at": now,
     }
     current_store.ai_tasks[task_id] = task
-    requirement["status"] = "task_created"
+    _advance_requirement_after_task_created(current_store, task)
     requirement.setdefault("task_ids", []).append(task_id)
     current_store.audit(
         event_type="ai_task.created",
@@ -5706,11 +5827,14 @@ def create_ai_task(
     else:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported task_type")
 
-    if requirement["status"] not in {"approved", "task_created"}:
+    if (
+        _canonical_requirement_status(requirement.get("status"))
+        not in REQUIREMENT_TASK_CREATABLE_STATUSES
+    ):
         raise api_error(
             409,
             "REQUIREMENT_STATE_INVALID",
-            "Requirement must be approved or task_created before creating AI tasks",
+            "Requirement must be in delivery before creating AI tasks",
         )
 
     now = datetime.now(UTC).isoformat()
@@ -5737,10 +5861,10 @@ def create_ai_task(
         "updated_at": now,
     }
     current_store.ai_tasks[task_id] = task
-    requirement["status"] = "task_created"
     task_ids = requirement.setdefault("task_ids", [])
     if task_id not in task_ids:
         task_ids.append(task_id)
+    _advance_requirement_after_task_created(current_store, task)
     current_store.audit(
         event_type="ai_task.created",
         actor_id=user["id"],
@@ -6022,6 +6146,7 @@ def _complete_review_with_edited_approval(
     _confirm_code_review_report(current_store, task)
     _create_automated_testing_bugs(current_store, actor_id=actor_id, task=task)
     _create_post_release_bugs(current_store, actor_id=actor_id, task=task)
+    _advance_requirement_after_task_completed(current_store, task)
     _create_knowledge_deposit(current_store, task)
     _transition_latest_graph_run(
         current_store,
@@ -6601,6 +6726,7 @@ def approve_review(
     _confirm_code_review_report(current_store, task)
     _create_automated_testing_bugs(current_store, actor_id=user["id"], task=task)
     _create_post_release_bugs(current_store, actor_id=user["id"], task=task)
+    _advance_requirement_after_task_completed(current_store, task)
     _create_knowledge_deposit(current_store, task)
     _transition_latest_graph_run(
         current_store,

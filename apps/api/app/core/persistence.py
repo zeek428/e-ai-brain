@@ -1185,8 +1185,14 @@ def _drop_requirements_without_product_context(payload: dict[str, Any]) -> None:
         requirement_id: requirement
         for requirement_id, requirement in requirements.items()
         if requirement.get("product_id") in products
-        and requirement.get("version_id") in versions
-        and versions[requirement["version_id"]].get("product_id") == requirement.get("product_id")
+        and (
+            requirement.get("version_id") is None
+            or (
+                requirement.get("version_id") in versions
+                and versions[requirement["version_id"]].get("product_id")
+                == requirement.get("product_id")
+            )
+        )
     }
 
 
@@ -1199,11 +1205,16 @@ def _drop_ai_tasks_without_context(payload: dict[str, Any]) -> None:
         task_id: task
         for task_id, task in ai_tasks.items()
         if task.get("product_id") in products
-        and task.get("version_id") in versions
         and task.get("requirement_id") in requirements
-        and versions[task["version_id"]].get("product_id") == task.get("product_id")
         and requirements[task["requirement_id"]].get("product_id") == task.get("product_id")
         and requirements[task["requirement_id"]].get("version_id") == task.get("version_id")
+        and (
+            task.get("version_id") is None
+            or (
+                task.get("version_id") in versions
+                and versions[task["version_id"]].get("product_id") == task.get("product_id")
+            )
+        )
     }
 
 
@@ -3876,7 +3887,7 @@ class PostgresSnapshotRepository:
                     requirement.get("module_code"),
                     requirement["content"],
                     requirement.get("priority", "P1"),
-                    requirement.get("status", "pending_approval"),
+                    requirement.get("status", "submitted"),
                     requirement["created_by"],
                     requirement.get("approval_comment"),
                     requirement.get("rejection_reason"),

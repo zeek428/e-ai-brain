@@ -105,6 +105,57 @@ def test_requirement_list_detail_reject_and_close_state_machine():
     ]
 
 
+def test_requirement_can_start_in_backlog_and_be_planned_into_iteration_version():
+    app.state.store.reset()
+    headers = auth_headers()
+    product, version = create_product_and_version(headers)
+
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "title": "未排期需求",
+            "product_id": product["id"],
+            "content": "新增需求时还不知道在哪个版本迭代。",
+        },
+        headers=headers,
+    ).json()["data"]
+    assert requirement["status"] == "submitted"
+    assert requirement["version_id"] is None
+
+    approved = client.post(
+        f"/api/requirements/{requirement['id']}/approve",
+        json={"comment": "进入需求池"},
+        headers=headers,
+    ).json()["data"]
+    assert approved["status"] == "approved"
+    assert approved["version_id"] is None
+
+    generate_before_planning = client.post(
+        f"/api/requirements/{requirement['id']}/generate-task",
+        headers=headers,
+    )
+    assert generate_before_planning.status_code == 409
+    assert generate_before_planning.json()["detail"]["code"] == "REQUIREMENT_STATE_INVALID"
+
+    planned = client.patch(
+        f"/api/requirements/{requirement['id']}",
+        json={"version_id": version["id"]},
+        headers=headers,
+    ).json()["data"]
+    assert planned["status"] == "planned"
+    assert planned["version_id"] == version["id"]
+
+    generated = client.post(
+        f"/api/requirements/{requirement['id']}/generate-task",
+        headers=headers,
+    ).json()["data"]
+    assert generated["task_status"] == "draft"
+
+    detail = client.get(f"/api/requirements/{requirement['id']}", headers=headers).json()["data"]
+    assert detail["status"] == "designing"
+    assert detail["task_ids"] == [generated["task_id"]]
+
+
 def test_requirement_cannot_be_created_for_inactive_product():
     app.state.store.reset()
     headers = auth_headers()

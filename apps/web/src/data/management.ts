@@ -10,6 +10,7 @@ export type ProductRecord = {
 
 export type ProductVersionOption = {
   code: string;
+  description?: string;
   id: string;
   name: string;
   status: string;
@@ -17,8 +18,12 @@ export type ProductVersionOption = {
 
 export type ProductVersionRecord = {
   code: string;
+  description?: string;
   id: string;
   name: string;
+  productCode?: string;
+  productId?: string;
+  productName?: string;
   releaseDate?: string;
   startDate?: string;
   status: 'active' | 'archived' | 'planning';
@@ -72,10 +77,27 @@ export type RequirementRecord = {
   priority: 'P0' | 'P1' | 'P2';
   product: string;
   productId?: string;
-  status: 'approved' | 'closed' | 'draft' | 'pending_approval' | 'rejected' | 'task_created';
+  status:
+    | 'accepted'
+    | 'approved'
+    | 'cancelled'
+    | 'closed'
+    | 'code_reviewing'
+    | 'deferred'
+    | 'designing'
+    | 'developing'
+    | 'draft'
+    | 'planned'
+    | 'ready_for_dev'
+    | 'ready_for_release'
+    | 'rejected'
+    | 'released'
+    | 'submitted'
+    | 'testing';
   title: string;
   updatedAt: string;
   versionId?: string;
+  versionName?: string;
 };
 
 export type BugRecord = {

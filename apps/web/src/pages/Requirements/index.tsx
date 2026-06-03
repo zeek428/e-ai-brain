@@ -7,7 +7,6 @@ import { ManagementListPage, StatusTag } from '../../components/ManagementListPa
 import type { RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
-  createProductVersion,
   approveManagementRequirement,
   createManagementRequirement,
   deleteManagementRequirement,
@@ -19,15 +18,23 @@ import {
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
 
-const AUTO_VERSION_ID = '__auto_default_version__';
-
 const statusLabels: Record<RequirementRecord['status'], { color: string; label: string }> = {
-  approved: { color: 'green', label: '已审批' },
+  accepted: { color: 'green', label: '已验收' },
+  approved: { color: 'green', label: '需求池' },
+  cancelled: { color: 'default', label: '已取消' },
   closed: { color: 'default', label: '已关闭' },
+  code_reviewing: { color: 'purple', label: '代码评审中' },
+  deferred: { color: 'default', label: '暂缓' },
+  designing: { color: 'blue', label: '设计中' },
+  developing: { color: 'geekblue', label: '开发中' },
   draft: { color: 'default', label: '草稿' },
-  pending_approval: { color: 'gold', label: '待审批' },
+  planned: { color: 'cyan', label: '已排期' },
+  ready_for_dev: { color: 'lime', label: '待开发' },
+  ready_for_release: { color: 'orange', label: '待发布' },
   rejected: { color: 'red', label: '已拒绝' },
-  task_created: { color: 'blue', label: '已生成任务' },
+  released: { color: 'green', label: '已发布' },
+  submitted: { color: 'gold', label: '待评审' },
+  testing: { color: 'volcano', label: '测试中' },
 };
 
 type RequirementFormValues = {
@@ -36,7 +43,7 @@ type RequirementFormValues = {
   priority: RequirementRecord['priority'];
   product_id: string;
   title: string;
-  version_id: string;
+  version_id?: string;
 };
 
 export default function RequirementsPage() {
@@ -71,19 +78,9 @@ export default function RequirementsPage() {
       })),
     [productContexts],
   );
-  const resolveDefaultVersionValue = useCallback(
-    (productId?: string) => {
-      const product = productContexts.find((item) => item.id === productId);
-      return product?.versions[0]?.id ?? AUTO_VERSION_ID;
-    },
-    [productContexts],
-  );
   const versionOptions = useMemo(() => {
     if (!selectedProduct) {
       return [];
-    }
-    if (selectedProduct.versions.length === 0) {
-      return [{ label: '自动创建默认版本 v1', value: AUTO_VERSION_ID }];
     }
     return selectedProduct.versions.map((version) => ({
       label: `${version.code} · ${version.name}`,
@@ -98,17 +95,17 @@ export default function RequirementsPage() {
     form.setFieldsValue({
       priority: 'P1',
       product_id: firstProduct?.id,
-      version_id: firstProduct ? resolveDefaultVersionValue(firstProduct.id) : undefined,
+      version_id: undefined,
     });
     setIsModalOpen(true);
   };
 
-  const handleProductChange = useCallback((productId: string) => {
+  const handleProductChange = useCallback(() => {
     form.setFieldsValue({
       module_code: undefined,
-      version_id: resolveDefaultVersionValue(productId),
+      version_id: undefined,
     });
-  }, [form, resolveDefaultVersionValue]);
+  }, [form]);
 
   const openEditModal = useCallback((row: RequirementRecord) => {
     setEditingRequirement(row);
@@ -125,27 +122,17 @@ export default function RequirementsPage() {
 
   const handleSave = async () => {
     const values = await form.validateFields();
-    let versionId = values.version_id;
     const payload = {
       content: values.content.trim(),
       module_code: trimText(values.module_code),
       priority: values.priority,
       product_id: values.product_id.trim(),
       title: values.title.trim(),
-      version_id: versionId.trim(),
+      ...(trimText(values.version_id) ? { version_id: trimText(values.version_id) } : {}),
     };
 
     setIsSaving(true);
     try {
-      if (versionId === AUTO_VERSION_ID) {
-        const version = await createProductVersion(values.product_id.trim(), {
-          code: 'v1',
-          name: 'v1',
-          status: 'active',
-        });
-        versionId = version.id;
-        payload.version_id = version.id;
-      }
       if (editingRequirement) {
         await updateManagementRequirement(editingRequirement.id, payload);
         message.success('需求已更新');
@@ -231,6 +218,10 @@ export default function RequirementsPage() {
         title: '所属产品',
       },
       {
+        dataIndex: 'versionName',
+        title: '迭代版本',
+      },
+      {
         dataIndex: 'priority',
         title: '优先级',
         render: (_, row) => (
@@ -262,7 +253,7 @@ export default function RequirementsPage() {
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
-            {row.status === 'pending_approval' ? (
+            {row.status === 'submitted' ? (
               <>
                 <Button onClick={() => handleApprove(row)} type="link">
                   审批通过
@@ -272,7 +263,7 @@ export default function RequirementsPage() {
                 </Button>
               </>
             ) : null}
-            {row.status === 'approved' ? (
+            {row.status === 'planned' ? (
               <Button onClick={() => handleGenerateTask(row)} type="link">
                 生成任务
               </Button>
@@ -303,10 +294,20 @@ export default function RequirementsPage() {
             name: 'status',
             options: [
               { label: '草稿', value: 'draft' },
-              { label: '待审批', value: 'pending_approval' },
-              { label: '已审批', value: 'approved' },
+              { label: '待评审', value: 'submitted' },
+              { label: '需求池', value: 'approved' },
+              { label: '已排期', value: 'planned' },
+              { label: '设计中', value: 'designing' },
+              { label: '待开发', value: 'ready_for_dev' },
+              { label: '开发中', value: 'developing' },
+              { label: '代码评审中', value: 'code_reviewing' },
+              { label: '测试中', value: 'testing' },
+              { label: '待发布', value: 'ready_for_release' },
+              { label: '已发布', value: 'released' },
+              { label: '已验收', value: 'accepted' },
               { label: '已拒绝', value: 'rejected' },
-              { label: '已生成任务', value: 'task_created' },
+              { label: '暂缓', value: 'deferred' },
+              { label: '已取消', value: 'cancelled' },
               { label: '已关闭', value: 'closed' },
             ],
             type: 'select',
@@ -354,16 +355,16 @@ export default function RequirementsPage() {
             />
           </Form.Item>
           <Form.Item
-            extra={selectedProduct?.versions.length === 0 ? '该产品暂无版本，保存时将创建真实默认版本 v1。' : undefined}
+            extra="可暂不选择；审批后进入需求池，后续在迭代版本中排期。"
             label="目标版本"
             name="version_id"
-            rules={[{ required: true, message: '请选择版本' }]}
           >
             <Select
+              allowClear
               disabled={!selectedProduct}
               loading={productContextStatus === 'loading'}
               options={versionOptions}
-              placeholder="请选择版本"
+              placeholder={selectedProduct ? '请选择版本，可留空' : '请先选择产品'}
             />
           </Form.Item>
           <Form.Item label="模块编码" name="module_code">

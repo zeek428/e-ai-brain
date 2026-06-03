@@ -258,8 +258,8 @@ def test_dashboard_it_team_returns_real_mvp_aggregate_without_fake_rows():
         {"status": "suggested", "count": 1}
     ]
     assert suggestions[0]["evidence"][0]["subject_id"] == feedback["id"]
-    assert {"status": "pending_approval", "count": 1} in dashboard["requirement_status_counts"]
-    assert {"status": "task_created", "count": 1} in dashboard["requirement_status_counts"]
+    assert {"status": "submitted", "count": 1} in dashboard["requirement_status_counts"]
+    assert {"status": "designing", "count": 1} in dashboard["requirement_status_counts"]
     assert dashboard["task_status_counts"] == [{"status": "waiting_review", "count": 1}]
     assert dashboard["latest_tasks"][0]["id"] == generated["task_id"]
     assert dashboard["pending_reviews"][0]["id"] == started["review_id"]
