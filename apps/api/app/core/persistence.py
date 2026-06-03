@@ -17,6 +17,13 @@ PRODUCT_CONFIG_FIELDS = [
     "product_git_repositories",
     "related_systems",
 ]
+PRODUCT_CONFIG_TABLES = {
+    "product_git_repositories": "product_git_repositories",
+    "product_modules": "product_modules",
+    "product_versions": "product_versions",
+    "products": "products",
+    "related_systems": "related_systems",
+}
 REQUIREMENT_FIELDS = [
     "requirements",
 ]
@@ -172,6 +179,54 @@ class ProductConfigRepository(Protocol):
 
     def save_product_config(self, payload: dict[str, Any]) -> None: ...
 
+    def list_products(self, *, active_only: bool = False) -> list[dict[str, Any]]: ...
+
+    def get_product(self, product_id: str) -> dict[str, Any] | None: ...
+
+    def list_product_versions(
+        self,
+        product_id: str,
+        *,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_product_modules(
+        self,
+        product_id: str,
+        *,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_product_git_repositories(
+        self,
+        product_id: str,
+        *,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_related_systems(
+        self,
+        *,
+        active_only: bool = False,
+        product_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def save_product_config_record(
+        self,
+        collection_name: str,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def delete_product_config_record(
+        self,
+        collection_name: str,
+        record_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
 
 class BrainAppRepository(Protocol):
     def load_brain_apps(self) -> dict[str, Any] | None: ...
@@ -182,15 +237,76 @@ class RequirementRepository(Protocol):
 
     def save_requirements(self, payload: dict[str, Any]) -> None: ...
 
+    def save_requirement_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def delete_requirement_record(
+        self,
+        record_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
 
 class AiTaskRepository(Protocol):
     def load_ai_tasks(self) -> dict[str, Any] | None: ...
 
     def save_ai_tasks(self, payload: dict[str, Any]) -> None: ...
 
+    def save_requirement_and_ai_task_records(
+        self,
+        *,
+        requirement: dict[str, Any],
+        task: dict[str, Any],
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def save_task_start_records(
+        self,
+        *,
+        task: dict[str, Any],
+        review: dict[str, Any],
+        graph_run: dict[str, Any],
+        checkpoint: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+        model_log: dict[str, Any] | None = None,
+        code_review_report: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def save_review_decision_records(
+        self,
+        *,
+        task: dict[str, Any],
+        review: dict[str, Any],
+        graph_run: dict[str, Any] | None,
+        checkpoint: dict[str, Any] | None,
+        audit_events: list[dict[str, Any]],
+        requirement: dict[str, Any] | None = None,
+        knowledge_deposits: list[dict[str, Any]] | None = None,
+        bugs: list[dict[str, Any]] | None = None,
+        code_review_report: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def save_task_state_records(
+        self,
+        *,
+        task: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+        reviews: list[dict[str, Any]] | None = None,
+        graph_run: dict[str, Any] | None = None,
+        checkpoint: dict[str, Any] | None = None,
+        model_log: dict[str, Any] | None = None,
+    ) -> None: ...
+
 
 class WorkflowRuntimeRepository(Protocol):
     def load_workflow_runtime(self) -> dict[str, Any] | None: ...
+
+    def get_task_workflow_source_rows(self) -> dict[str, Any]: ...
 
     def save_workflow_runtime(self, payload: dict[str, Any]) -> None: ...
 
@@ -198,11 +314,76 @@ class WorkflowRuntimeRepository(Protocol):
 class KnowledgeRepository(Protocol):
     def load_knowledge(self) -> dict[str, Any] | None: ...
 
+    def list_knowledge_documents(
+        self,
+        *,
+        user_roles: list[str],
+        keyword: str | None = None,
+        doc_type: str | None = None,
+        index_status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_knowledge_deposits(
+        self,
+        *,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def get_knowledge_deposit(self, deposit_id: str) -> dict[str, Any] | None: ...
+
+    def has_readable_vector_chunks(self, *, user_roles: list[str]) -> bool: ...
+
+    def search_knowledge_chunks(
+        self,
+        *,
+        user_roles: list[str],
+        query: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_knowledge(self, payload: dict[str, Any]) -> None: ...
+
+    def save_knowledge_document_records(
+        self,
+        *,
+        document: dict[str, Any],
+        chunks: list[dict[str, Any]],
+        audit_event: dict[str, Any] | None = None,
+        model_logs: list[dict[str, Any]] | None = None,
+    ) -> None: ...
+
+    def delete_knowledge_document_records(
+        self,
+        *,
+        document_id: str,
+        deposits: list[dict[str, Any]],
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def save_knowledge_deposit_records(
+        self,
+        *,
+        deposit: dict[str, Any],
+        audit_event: dict[str, Any] | None = None,
+        document: dict[str, Any] | None = None,
+        chunks: list[dict[str, Any]] | None = None,
+        model_logs: list[dict[str, Any]] | None = None,
+    ) -> None: ...
 
 
 class AuditRepository(Protocol):
     def load_audit_events(self) -> dict[str, Any] | None: ...
+
+    def list_audit_events(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        actor_id: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        event_type: str | None = None,
+        created_from: Any | None = None,
+        created_to: Any | None = None,
+    ) -> list[dict[str, Any]]: ...
 
     def save_audit_events(self, payload: dict[str, Any]) -> None: ...
 
@@ -210,47 +391,183 @@ class AuditRepository(Protocol):
 class BugRepository(Protocol):
     def load_bugs(self) -> dict[str, Any] | None: ...
 
+    def list_bugs(
+        self,
+        *,
+        product_id: str | None = None,
+        status: str | None = None,
+        severity: str | None = None,
+        source: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_bugs(self, payload: dict[str, Any]) -> None: ...
+
+    def save_bug_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def delete_bug_record(
+        self,
+        record_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class GitlabDailyCodeMetricRepository(Protocol):
     def load_gitlab_daily_code_metrics(self) -> dict[str, Any] | None: ...
 
+    def list_gitlab_daily_code_metrics(
+        self,
+        *,
+        product_id: str | None = None,
+        repository_id: str | None = None,
+        metric_date: Any | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_gitlab_daily_code_metrics(self, payload: dict[str, Any]) -> None: ...
+
+    def save_gitlab_daily_code_metric_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class JenkinsReleaseRecordRepository(Protocol):
     def load_jenkins_release_records(self) -> dict[str, Any] | None: ...
 
+    def list_jenkins_release_records(
+        self,
+        *,
+        product_id: str | None = None,
+        version_id: str | None = None,
+        status: str | None = None,
+        environment: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_jenkins_release_records(self, payload: dict[str, Any]) -> None: ...
+
+    def save_jenkins_release_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class OnlineLogMetricRepository(Protocol):
     def load_online_log_metrics(self) -> dict[str, Any] | None: ...
 
+    def list_online_log_metrics(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        environment: str | None = None,
+        from_value: Any | None = None,
+        to_value: Any | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_online_log_metrics(self, payload: dict[str, Any]) -> None: ...
+
+    def save_online_log_metric_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class UserUsageMetricRepository(Protocol):
     def load_user_usage_metrics(self) -> dict[str, Any] | None: ...
 
+    def list_user_usage_metrics(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        feature_code: str | None = None,
+        user_segment: str | None = None,
+        from_value: Any | None = None,
+        to_value: Any | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_user_usage_metrics(self, payload: dict[str, Any]) -> None: ...
+
+    def save_user_usage_metric_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class UserFeedbackRepository(Protocol):
     def load_user_feedback(self) -> dict[str, Any] | None: ...
 
+    def list_user_feedback(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        feature_code: str | None = None,
+        status: str | None = None,
+        created_by: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_user_feedback(self, payload: dict[str, Any]) -> None: ...
+
+    def save_user_feedback_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class IterationPlanningRepository(Protocol):
     def load_iteration_planning(self) -> dict[str, Any] | None: ...
 
+    def list_iteration_plan_suggestions(
+        self,
+        *,
+        product_id: str | None = None,
+        planning_cycle: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_iteration_planning(self, payload: dict[str, Any]) -> None: ...
+
+    def save_iteration_suggestion_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def save_iteration_decision_records(
+        self,
+        *,
+        suggestion: dict[str, Any],
+        decision: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+        requirement: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class LifecycleContextRepository(Protocol):
     def load_lifecycle_context(self) -> dict[str, Any] | None: ...
+
+    def get_lifecycle_context_source_rows(
+        self,
+        *,
+        product_id: str | None = None,
+    ) -> dict[str, Any]: ...
 
     def save_lifecycle_context(self, payload: dict[str, Any]) -> None: ...
 
@@ -258,31 +575,107 @@ class LifecycleContextRepository(Protocol):
 class DashboardRepository(Protocol):
     def load_dashboard_snapshots(self) -> dict[str, Any] | None: ...
 
+    def get_dashboard_it_team_source_rows(
+        self,
+        *,
+        user_roles: list[str],
+        product_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
     def save_dashboard_snapshots(self, payload: dict[str, Any]) -> None: ...
+
+    def save_dashboard_metric_snapshot_record(self, snapshot: dict[str, Any]) -> None: ...
 
 
 class CollectorRunRepository(Protocol):
     def load_collector_runs(self) -> dict[str, Any] | None: ...
 
+    def list_collector_runs(
+        self,
+        *,
+        collector_type: str | None = None,
+        product_id: str | None = None,
+        status: str | None = None,
+        source_system: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_collector_runs(self, payload: dict[str, Any]) -> None: ...
+
+    def save_collector_run_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class PendingAttributionRepository(Protocol):
     def load_pending_attribution(self) -> dict[str, Any] | None: ...
 
+    def list_pending_attribution_items(
+        self,
+        *,
+        source_type: str | None = None,
+        status: str | None = None,
+        resolved_product_id: str | None = None,
+        collector_run_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_pending_attribution(self, payload: dict[str, Any]) -> None: ...
+
+    def save_pending_attribution_item_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class ModelGatewayRepository(Protocol):
     def load_model_gateway(self) -> dict[str, Any] | None: ...
 
+    def list_model_gateway_configs(self) -> list[dict[str, Any]]: ...
+
+    def list_model_gateway_logs(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        purpose: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     def save_model_gateway(self, payload: dict[str, Any]) -> None: ...
+
+    def save_model_gateway_records(
+        self,
+        payload: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class AssistantChatRepository(Protocol):
     def load_assistant_chat(self) -> dict[str, Any] | None: ...
 
+    def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]: ...
+
+    def list_assistant_conversation_messages(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[dict[str, Any]] | None: ...
+
     def save_assistant_chat(self, payload: dict[str, Any]) -> None: ...
+
+    def save_assistant_chat_records(
+        self,
+        *,
+        conversation: dict[str, Any] | None,
+        messages: list[dict[str, Any]],
+        audit_events: list[dict[str, Any]],
+        model_log: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 class GitlabReviewRepository(Protocol):
@@ -290,11 +683,25 @@ class GitlabReviewRepository(Protocol):
 
     def save_gitlab_review(self, payload: dict[str, Any]) -> None: ...
 
+    def save_gitlab_review_snapshot_record(
+        self,
+        *,
+        snapshot: dict[str, Any] | None,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
 
 class MockWritebackRepository(Protocol):
     def load_mock_writebacks(self) -> dict[str, Any] | None: ...
 
     def save_mock_writebacks(self, payload: dict[str, Any]) -> None: ...
+
+    def save_mock_writeback_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
 
 
 def _product_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1718,7 +2125,7 @@ class PersistentMemoryStore(MemoryStore):
     @classmethod
     def from_repository(cls, repository: SnapshotRepository) -> PersistentMemoryStore:
         store = cls(repository)
-        payload = repository.load() or {}
+        payload: dict[str, Any] = {}
         brain_apps_payload = _repository_load_brain_apps(repository)
         if _has_brain_app_items(brain_apps_payload):
             _replace_collection_payload(
@@ -1943,7 +2350,6 @@ class PersistentMemoryStore(MemoryStore):
 
     def persist(self) -> None:
         payload = self.to_payload()
-        self.repository.save(payload)
         _repository_save_product_config(self.repository, payload)
         _repository_save_requirements(self.repository, payload)
         _repository_save_ai_tasks(self.repository, payload)
@@ -1965,6 +2371,33 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_assistant_chat(self.repository, payload)
         _repository_save_gitlab_review(self.repository, payload)
         _repository_save_mock_writebacks(self.repository, payload)
+
+
+class PostgresRuntimeStore(MemoryStore):
+    """Runtime dependency container for PostgreSQL mode.
+
+    This intentionally does not hydrate business collections from PostgreSQL.
+    Routes in postgres mode should read and write through repository/query
+    helpers; the inherited MemoryStore collections exist only as temporary
+    request-local scratch space while the DB-first migration is completed.
+    """
+
+    def __init__(self, repository: SnapshotRepository) -> None:
+        super().__init__()
+        self.repository = repository
+
+    def new_id(self, prefix: str) -> str:
+        next_id = getattr(self.repository, "next_id", None)
+        if not callable(next_id):
+            return super().new_id(prefix)
+        allocated_id = next_id(prefix)
+        suffix = allocated_id.removeprefix(f"{prefix}_")
+        if suffix.isdigit():
+            self.counters[prefix] = max(self.counters.get(prefix, 0), int(suffix))
+        return allocated_id
+
+    def persist(self) -> None:
+        return None
 
 
 class PostgresSnapshotRepository:
@@ -2075,6 +2508,206 @@ class PostgresSnapshotRepository:
             with connection.cursor() as cursor:
                 brain_apps = self._load_brain_apps(cursor)
         return {"brain_apps": brain_apps}
+
+    def list_products(self, *, active_only: bool = False) -> list[dict[str, Any]]:
+        where_clause = "WHERE status = 'active'" if active_only else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, code, name, description, owner_team, status, display_order
+                    FROM products
+                    {where_clause}
+                    ORDER BY display_order, code
+                    """
+                )
+                return [
+                    {
+                        "code": row[1],
+                        "description": row[3],
+                        "display_order": row[6],
+                        "id": row[0],
+                        "name": row[2],
+                        "owner_team": row[4],
+                        "status": row[5],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
+    def get_product(self, product_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, code, name, description, owner_team, status, display_order
+                    FROM products
+                    WHERE id = %s
+                    """,
+                    (product_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "code": row[1],
+            "description": row[3],
+            "display_order": row[6],
+            "id": row[0],
+            "name": row[2],
+            "owner_team": row[4],
+            "status": row[5],
+        }
+
+    def list_product_versions(
+        self,
+        product_id: str,
+        *,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        where_clauses = ["product_id = %s"]
+        params: list[Any] = [product_id]
+        if active_only:
+            where_clauses.append("status = 'active'")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, code, name, description, status, start_date, release_date
+                    FROM product_versions
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY code
+                    """,
+                    tuple(params),
+                )
+                return [
+                    {
+                        "code": row[2],
+                        "description": row[4],
+                        "id": row[0],
+                        "name": row[3],
+                        "product_id": row[1],
+                        "release_date": row[7].isoformat() if row[7] else None,
+                        "start_date": row[6].isoformat() if row[6] else None,
+                        "status": row[5],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
+    def list_product_modules(
+        self,
+        product_id: str,
+        *,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        where_clauses = ["product_id = %s"]
+        params: list[Any] = [product_id]
+        if active_only:
+            where_clauses.append("status = 'active'")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, code, name, description, owner_team,
+                           status, display_order
+                    FROM product_modules
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY display_order, code
+                    """,
+                    tuple(params),
+                )
+                return [
+                    {
+                        "code": row[2],
+                        "description": row[4],
+                        "display_order": row[7],
+                        "id": row[0],
+                        "name": row[3],
+                        "owner_team": row[5],
+                        "product_id": row[1],
+                        "status": row[6],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
+    def list_product_git_repositories(
+        self,
+        product_id: str,
+        *,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        where_clauses = ["product_id = %s"]
+        params: list[Any] = [product_id]
+        if active_only:
+            where_clauses.append("status = 'active'")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, repo_type, name, remote_url, git_provider, project_id,
+                           project_path, credential_ref, default_branch, root_path, status
+                    FROM product_git_repositories
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY name
+                    """,
+                    tuple(params),
+                )
+                return [
+                    {
+                        "credential_ref": row[8],
+                        "default_branch": row[9],
+                        "git_provider": row[5],
+                        "id": row[0],
+                        "name": row[3],
+                        "product_id": row[1],
+                        "project_id": row[6],
+                        "project_path": row[7],
+                        "remote_url": row[4],
+                        "repo_type": row[2],
+                        "root_path": row[10],
+                        "status": row[11],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
+    def list_related_systems(
+        self,
+        *,
+        active_only: bool = False,
+        product_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if active_only:
+            where_clauses.append("status = 'active'")
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, code, name, description, owner_team, status,
+                           display_order, product_id
+                    FROM related_systems
+                    {where_clause}
+                    ORDER BY display_order, code
+                    """,
+                    tuple(params),
+                )
+                return [
+                    {
+                        "code": row[1],
+                        "description": row[3],
+                        "display_order": row[6],
+                        "id": row[0],
+                        "name": row[2],
+                        "owner_team": row[4],
+                        "product_id": row[7],
+                        "status": row[5],
+                    }
+                    for row in cursor.fetchall()
+                ]
 
     def load_requirements(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -2247,6 +2880,68 @@ class PostgresSnapshotRepository:
             "human_reviews": human_reviews,
         }
 
+    def get_task_workflow_source_rows(self) -> dict[str, Any]:
+        audit_payload = self.load_audit_events() or {}
+        bugs_payload = self.load_bugs() or {}
+        gitlab_metrics_payload = self.load_gitlab_daily_code_metrics() or {}
+        jenkins_releases_payload = self.load_jenkins_release_records() or {}
+        model_gateway_payload = self.load_model_gateway() or {}
+        online_metrics_payload = self.load_online_log_metrics() or {}
+        requirements_payload = self.load_requirements() or {}
+        tasks_payload = self.load_ai_tasks() or {}
+        workflow_payload = self.load_workflow_runtime() or {}
+        product_config_payload = self.load_product_config() or {}
+        knowledge_payload = self.load_knowledge() or {}
+        review_payload = self.load_gitlab_review() or {}
+        mock_payload = self.load_mock_writebacks() or {}
+        return {
+            "audit_events": list(audit_payload.get("audit_events") or []),
+            "bugs": list((bugs_payload.get("bugs") or {}).values()),
+            "code_review_reports": list(
+                (review_payload.get("code_review_reports") or {}).values()
+            ),
+            "gitlab_daily_code_metrics": list(
+                (gitlab_metrics_payload.get("gitlab_daily_code_metrics") or {}).values()
+            ),
+            "gitlab_mr_snapshots": list(
+                (review_payload.get("gitlab_mr_snapshots") or {}).values()
+            ),
+            "graph_checkpoints": list(
+                (workflow_payload.get("graph_checkpoints") or {}).values()
+            ),
+            "graph_runs": list((workflow_payload.get("graph_runs") or {}).values()),
+            "human_reviews": list((workflow_payload.get("human_reviews") or {}).values()),
+            "jenkins_release_records": list(
+                (jenkins_releases_payload.get("jenkins_release_records") or {}).values()
+            ),
+            "knowledge_deposits": list(
+                (knowledge_payload.get("knowledge_deposits") or {}).values()
+            ),
+            "model_gateway_configs": list(
+                (model_gateway_payload.get("model_gateway_configs") or {}).values()
+            ),
+            "model_gateway_logs": list(model_gateway_payload.get("model_gateway_logs") or []),
+            "mock_writebacks": list((mock_payload.get("mock_writebacks") or {}).values()),
+            "online_log_metrics": list(
+                (online_metrics_payload.get("online_log_metrics") or {}).values()
+            ),
+            "product_git_repositories": list(
+                (product_config_payload.get("product_git_repositories") or {}).values()
+            ),
+            "product_modules": list(
+                (product_config_payload.get("product_modules") or {}).values()
+            ),
+            "product_versions": list(
+                (product_config_payload.get("product_versions") or {}).values()
+            ),
+            "products": list((product_config_payload.get("products") or {}).values()),
+            "related_systems": list(
+                (product_config_payload.get("related_systems") or {}).values()
+            ),
+            "requirements": list((requirements_payload.get("requirements") or {}).values()),
+            "tasks": list((tasks_payload.get("ai_tasks") or {}).values()),
+        }
+
     def load_knowledge(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -2259,11 +2954,306 @@ class PostgresSnapshotRepository:
             "knowledge_documents": knowledge_documents,
         }
 
+    def list_knowledge_documents(
+        self,
+        *,
+        user_roles: list[str],
+        keyword: str | None = None,
+        doc_type: str | None = None,
+        index_status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses = [
+            """
+            EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(d.permission_roles) AS role(value)
+              WHERE role.value = ANY(%s::text[])
+            )
+            """
+        ]
+        params: list[Any] = [user_roles]
+        if keyword is not None:
+            where_clauses.append("lower(d.title || ' ' || d.content) LIKE %s")
+            params.append(f"%{keyword.lower()}%")
+        if doc_type is not None:
+            where_clauses.append("d.doc_type = %s")
+            params.append(doc_type)
+        if index_status is not None:
+            where_clauses.append("d.index_status = %s")
+            params.append(index_status)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT d.id, d.brain_app_id, d.product_id, d.version_id, d.title,
+                           d.content, d.source_type, d.doc_type, d.permission_scope,
+                           d.permission_roles, d.index_status, d.index_error,
+                           d.vector_index_error, d.tags, d.created_by, d.created_at,
+                           d.updated_at, COUNT(c.id)
+                    FROM knowledge_documents d
+                    LEFT JOIN knowledge_chunks c ON c.document_id = d.id
+                    WHERE {' AND '.join(where_clauses)}
+                    GROUP BY d.id, d.brain_app_id, d.product_id, d.version_id, d.title,
+                             d.content, d.source_type, d.doc_type, d.permission_scope,
+                             d.permission_roles, d.index_status, d.index_error,
+                             d.vector_index_error, d.tags, d.created_by, d.created_at,
+                             d.updated_at
+                    ORDER BY d.id
+                    """,
+                    tuple(params),
+                )
+                documents = []
+                for row in cursor.fetchall():
+                    document = {
+                        "brain_app_id": row[1],
+                        "chunk_count": int(row[17] or 0),
+                        "content": row[5],
+                        "created_at": row[15].isoformat() if row[15] else None,
+                        "created_by": row[14],
+                        "doc_type": row[7],
+                        "id": row[0],
+                        "index_error": row[11],
+                        "index_status": row[10],
+                        "permission_roles": list(row[9] or []),
+                        "permission_scope": dict(row[8] or {}),
+                        "product_id": row[2],
+                        "source_type": row[6],
+                        "tags": list(row[13] or []),
+                        "title": row[4],
+                        "updated_at": row[16].isoformat() if row[16] else None,
+                        "vector_index_error": row[12],
+                        "version_id": row[3],
+                    }
+                    for optional_key in (
+                        "brain_app_id",
+                        "created_at",
+                        "product_id",
+                        "updated_at",
+                        "version_id",
+                    ):
+                        if document[optional_key] is None:
+                            document.pop(optional_key)
+                    if not document["permission_scope"]:
+                        document.pop("permission_scope")
+                    documents.append(document)
+                return documents
+
+    def list_knowledge_deposits(
+        self,
+        *,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause = "WHERE status = %s" if status is not None else ""
+        params: tuple[Any, ...] = (status,) if status is not None else ()
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, ai_task_id, deposit_type, title, content, content_hash, status,
+                           knowledge_document_id, rejection_reason, created_at, updated_at
+                    FROM knowledge_deposits
+                    {where_clause}
+                    ORDER BY created_at, id
+                    """,
+                    params,
+                )
+                return [self._knowledge_deposit_from_row(row) for row in cursor.fetchall()]
+
+    def get_knowledge_deposit(self, deposit_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, ai_task_id, deposit_type, title, content, content_hash, status,
+                           knowledge_document_id, rejection_reason, created_at, updated_at
+                    FROM knowledge_deposits
+                    WHERE id = %s
+                    """,
+                    (deposit_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return self._knowledge_deposit_from_row(row)
+
+    def has_readable_vector_chunks(self, *, user_roles: list[str]) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM knowledge_chunks c
+                    JOIN knowledge_documents d ON d.id = c.document_id
+                    WHERE d.index_status IN ('indexed', 'text_indexed', 'vector_indexed')
+                      AND c.embedding IS NOT NULL
+                      AND EXISTS (
+                        SELECT 1
+                        FROM jsonb_array_elements_text(d.permission_roles) AS role(value)
+                        WHERE role.value = ANY(%s::text[])
+                      )
+                      AND (
+                        jsonb_array_length(COALESCE(c.permission_scope->'roles', '[]'::jsonb)) = 0
+                        OR EXISTS (
+                          SELECT 1
+                          FROM jsonb_array_elements_text(
+                            COALESCE(c.permission_scope->'roles', '[]'::jsonb)
+                          ) AS role(value)
+                          WHERE role.value = ANY(%s::text[])
+                        )
+                      )
+                    LIMIT 1
+                    """,
+                    (user_roles, user_roles),
+                )
+                return cursor.fetchone() is not None
+
+    def search_knowledge_chunks(
+        self,
+        *,
+        user_roles: list[str],
+        query: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses = [
+            "d.index_status IN ('indexed', 'text_indexed', 'vector_indexed')",
+            """
+            EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(d.permission_roles) AS role(value)
+              WHERE role.value = ANY(%s::text[])
+            )
+            """,
+            """
+            (
+              jsonb_array_length(COALESCE(c.permission_scope->'roles', '[]'::jsonb)) = 0
+              OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(
+                  COALESCE(c.permission_scope->'roles', '[]'::jsonb)
+                ) AS role(value)
+                WHERE role.value = ANY(%s::text[])
+              )
+            )
+            """,
+        ]
+        params: list[Any] = [user_roles, user_roles]
+        if query is not None:
+            where_clauses.append("lower(d.title || ' ' || c.content) LIKE %s")
+            params.append(f"%{query.lower()}%")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT d.id, d.title, d.doc_type, d.permission_roles, d.index_status,
+                           c.id, c.chunk_index, c.content, c.embedding::text, c.metadata,
+                           c.permission_scope
+                    FROM knowledge_chunks c
+                    JOIN knowledge_documents d ON d.id = c.document_id
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY d.id, c.chunk_index, c.id
+                    """,
+                    tuple(params),
+                )
+                candidates = []
+                for row in cursor.fetchall():
+                    permission_scope = dict(row[10] or {})
+                    chunk = {
+                        "chunk_index": row[6],
+                        "content": row[7],
+                        "document_id": row[0],
+                        "embedding": _parse_vector_text(row[8]),
+                        "id": row[5],
+                        "metadata": dict(row[9] or {}),
+                        "permission_roles": list(permission_scope.get("roles") or []),
+                        "permission_scope": permission_scope,
+                    }
+                    if chunk["embedding"] is None:
+                        chunk.pop("embedding")
+                    if not chunk["permission_roles"]:
+                        chunk.pop("permission_roles")
+                    if not chunk["permission_scope"]:
+                        chunk.pop("permission_scope")
+                    candidates.append(
+                        {
+                            "chunk": chunk,
+                            "document": {
+                                "doc_type": row[2],
+                                "id": row[0],
+                                "index_status": row[4],
+                                "permission_roles": list(row[3] or []),
+                                "title": row[1],
+                            },
+                        }
+                    )
+                return candidates
+
     def load_audit_events(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 audit_events = self._load_audit_events(cursor)
         return {"audit_events": audit_events}
+
+    def list_audit_events(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        actor_id: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        event_type: str | None = None,
+        created_from: Any | None = None,
+        created_to: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if actor_id is not None:
+            where_clauses.append("actor_id = %s")
+            params.append(actor_id)
+        if event_type is not None:
+            where_clauses.append("event_type = %s")
+            params.append(event_type)
+        if ai_task_id is not None:
+            where_clauses.append("ai_task_id = %s")
+            params.append(ai_task_id)
+        if subject_type is not None:
+            where_clauses.append("subject_type = %s")
+            params.append(subject_type)
+        if subject_id is not None:
+            where_clauses.append("subject_id = %s")
+            params.append(subject_id)
+        if created_from is not None:
+            where_clauses.append("created_at >= %s")
+            params.append(created_from)
+        if created_to is not None:
+            where_clauses.append("created_at <= %s")
+            params.append(created_to)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id::text, event_type, actor_id, ai_task_id, subject_type,
+                           subject_id, payload, sequence, created_at, updated_at
+                    FROM audit_events
+                    {where_clause}
+                    ORDER BY sequence DESC, created_at DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                return [
+                    {
+                        "actor_id": row[2],
+                        "ai_task_id": row[3],
+                        "created_at": row[8].isoformat() if row[8] else None,
+                        "event_type": row[1],
+                        "id": row[0],
+                        "payload": dict(row[6] or {}),
+                        "sequence": row[7],
+                        "subject_id": row[5],
+                        "subject_type": row[4],
+                        "updated_at": row[9].isoformat() if row[9] else None,
+                    }
+                    for row in cursor.fetchall()
+                ]
 
     def load_bugs(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -2271,11 +3261,161 @@ class PostgresSnapshotRepository:
                 bugs = self._load_bugs(cursor)
         return {"bugs": bugs}
 
+    def list_bugs(
+        self,
+        *,
+        product_id: str | None = None,
+        status: str | None = None,
+        severity: str | None = None,
+        source: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if severity is not None:
+            where_clauses.append("severity = %s")
+            params.append(severity)
+        if source is not None:
+            where_clauses.append("source = %s")
+            params.append(source)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, version_id, module_code, source, title,
+                           severity, description, status, assignee, related_task_id,
+                           requirement_id, reproduce_steps, evidence, duplicate_of_bug_id,
+                           created_by, created_at, updated_at
+                    FROM bugs
+                    {where_clause}
+                    ORDER BY created_at DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                bugs = []
+                for row in cursor.fetchall():
+                    bug = {
+                        "assignee": row[9],
+                        "created_at": row[16].isoformat() if row[16] else None,
+                        "created_by": row[15],
+                        "description": row[7],
+                        "duplicate_of_bug_id": row[14],
+                        "evidence": dict(row[13] or {}),
+                        "id": row[0],
+                        "module_code": row[3],
+                        "product_id": row[1],
+                        "related_task_id": row[10],
+                        "reproduce_steps": list(row[12] or []),
+                        "requirement_id": row[11],
+                        "severity": row[6],
+                        "source": row[4],
+                        "status": row[8],
+                        "title": row[5],
+                        "updated_at": row[17].isoformat() if row[17] else None,
+                        "version_id": row[2],
+                    }
+                    for optional_key in (
+                        "assignee",
+                        "created_at",
+                        "duplicate_of_bug_id",
+                        "module_code",
+                        "related_task_id",
+                        "requirement_id",
+                        "updated_at",
+                        "version_id",
+                    ):
+                        if bug[optional_key] is None:
+                            bug.pop(optional_key)
+                    bugs.append(bug)
+                return bugs
+
     def load_gitlab_daily_code_metrics(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 metrics = self._load_gitlab_daily_code_metrics(cursor)
         return {"gitlab_daily_code_metrics": metrics}
+
+    def list_gitlab_daily_code_metrics(
+        self,
+        *,
+        product_id: str | None = None,
+        repository_id: str | None = None,
+        metric_date: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        import json
+
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if repository_id is not None:
+            where_clauses.append("repository_id = %s")
+            params.append(repository_id)
+        if metric_date is not None:
+            where_clauses.append("metric_date = %s")
+            params.append(metric_date)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, repository_id, metric_date, commit_count,
+                           active_author_count, merge_request_count, changed_files,
+                           additions, deletions, quality_score, risk_count,
+                           author_metrics, status, source_channel, collected_at,
+                           created_by, created_at, updated_at
+                    FROM gitlab_daily_code_metrics
+                    {where_clause}
+                    ORDER BY metric_date DESC,
+                             COALESCE(updated_at, created_at) DESC,
+                             id DESC
+                    """,
+                    tuple(params),
+                )
+                items = []
+                for row in cursor.fetchall():
+                    author_metrics = row[12] or []
+                    if isinstance(author_metrics, str):
+                        author_metrics = json.loads(author_metrics)
+                    metric = {
+                        "active_author_count": row[5],
+                        "additions": row[8],
+                        "author_metrics": author_metrics,
+                        "changed_files": row[7],
+                        "collected_at": row[15].isoformat() if row[15] else None,
+                        "commit_count": row[4],
+                        "created_at": row[17].isoformat() if row[17] else None,
+                        "created_by": row[16],
+                        "deletions": row[9],
+                        "id": row[0],
+                        "merge_request_count": row[6],
+                        "metric_date": row[3].isoformat() if row[3] else None,
+                        "product_id": row[1],
+                        "quality_score": float(row[10]) if row[10] is not None else None,
+                        "repository_id": row[2],
+                        "risk_count": row[11],
+                        "source_channel": row[14],
+                        "status": row[13],
+                        "updated_at": row[18].isoformat() if row[18] else None,
+                    }
+                    for optional_key in (
+                        "collected_at",
+                        "created_at",
+                        "quality_score",
+                        "source_channel",
+                        "updated_at",
+                    ):
+                        if metric[optional_key] is None:
+                            metric.pop(optional_key)
+                    items.append(metric)
+                return items
 
     def load_jenkins_release_records(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -2283,11 +3423,316 @@ class PostgresSnapshotRepository:
                 releases = self._load_jenkins_release_records(cursor)
         return {"jenkins_release_records": releases}
 
+    def list_jenkins_release_records(
+        self,
+        *,
+        product_id: str | None = None,
+        version_id: str | None = None,
+        status: str | None = None,
+        environment: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if version_id is not None:
+            where_clauses.append("version_id = %s")
+            params.append(version_id)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if environment is not None:
+            where_clauses.append("environment = %s")
+            params.append(environment)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, version_id, job_name, build_id, build_number,
+                           environment, status, trigger_actor, commit_sha, duration_seconds,
+                           started_at, deployed_at, failure_reason, source_channel,
+                           created_by, created_at, updated_at
+                    FROM jenkins_release_records
+                    {where_clause}
+                    ORDER BY COALESCE(deployed_at, created_at) DESC,
+                             COALESCE(updated_at, created_at) DESC,
+                             id DESC
+                    """,
+                    tuple(params),
+                )
+                items = []
+                for row in cursor.fetchall():
+                    release = {
+                        "build_id": row[4],
+                        "build_number": row[5],
+                        "commit_sha": row[9],
+                        "created_at": row[16].isoformat() if row[16] else None,
+                        "created_by": row[15],
+                        "deployed_at": row[12].isoformat() if row[12] else None,
+                        "duration_seconds": row[10],
+                        "environment": row[6],
+                        "failure_reason": row[13],
+                        "id": row[0],
+                        "job_name": row[3],
+                        "product_id": row[1],
+                        "source_channel": row[14],
+                        "started_at": row[11].isoformat() if row[11] else None,
+                        "status": row[7],
+                        "trigger_actor": row[8],
+                        "updated_at": row[17].isoformat() if row[17] else None,
+                        "version_id": row[2],
+                    }
+                    for optional_key in (
+                        "build_number",
+                        "commit_sha",
+                        "created_at",
+                        "deployed_at",
+                        "duration_seconds",
+                        "failure_reason",
+                        "source_channel",
+                        "started_at",
+                        "trigger_actor",
+                        "updated_at",
+                    ):
+                        if release[optional_key] is None:
+                            release.pop(optional_key)
+                    items.append(release)
+                return items
+
     def load_online_log_metrics(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 metrics = self._load_online_log_metrics(cursor)
         return {"online_log_metrics": metrics}
+
+    def list_online_log_metrics(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        environment: str | None = None,
+        from_value: Any | None = None,
+        to_value: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        import json
+
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if module_code is not None:
+            where_clauses.append("module_code = %s")
+            params.append(module_code)
+        if environment is not None:
+            where_clauses.append("environment = %s")
+            params.append(environment)
+        if from_value is not None:
+            where_clauses.append("window_end >= %s")
+            params.append(from_value)
+        if to_value is not None:
+            where_clauses.append("window_start <= %s")
+            params.append(to_value)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, module_code, environment, window_start, window_end,
+                           request_count, error_count, error_rate, p95_latency_ms,
+                           p99_latency_ms, core_event_count, top_errors, anomaly_summary,
+                           status, source_channel, created_by, created_at, updated_at
+                    FROM online_log_metrics
+                    {where_clause}
+                    ORDER BY window_start DESC,
+                             COALESCE(updated_at, created_at) DESC,
+                             id DESC
+                    """,
+                    tuple(params),
+                )
+                items = []
+                for row in cursor.fetchall():
+                    top_errors = row[12] or []
+                    if isinstance(top_errors, str):
+                        top_errors = json.loads(top_errors)
+                    metric = {
+                        "anomaly_summary": row[13],
+                        "core_event_count": row[11],
+                        "created_at": row[17].isoformat() if row[17] else None,
+                        "created_by": row[16],
+                        "environment": row[3],
+                        "error_count": row[7],
+                        "error_rate": float(row[8]) if row[8] is not None else None,
+                        "id": row[0],
+                        "module_code": row[2],
+                        "p95_latency_ms": float(row[9]) if row[9] is not None else None,
+                        "p99_latency_ms": float(row[10]) if row[10] is not None else None,
+                        "product_id": row[1],
+                        "request_count": row[6],
+                        "source_channel": row[15],
+                        "status": row[14],
+                        "top_errors": top_errors,
+                        "updated_at": row[18].isoformat() if row[18] else None,
+                        "window_end": row[5].isoformat() if row[5] else None,
+                        "window_start": row[4].isoformat() if row[4] else None,
+                    }
+                    for optional_key in (
+                        "anomaly_summary",
+                        "created_at",
+                        "error_rate",
+                        "module_code",
+                        "p95_latency_ms",
+                        "p99_latency_ms",
+                        "source_channel",
+                        "updated_at",
+                    ):
+                        if metric[optional_key] is None:
+                            metric.pop(optional_key)
+                    items.append(metric)
+                return items
+
+    def list_collector_runs(
+        self,
+        *,
+        collector_type: str | None = None,
+        product_id: str | None = None,
+        status: str | None = None,
+        source_system: str | None = None,
+    ) -> list[dict[str, Any]]:
+        import json
+
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if collector_type is not None:
+            where_clauses.append("collector_type = %s")
+            params.append(collector_type)
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if source_system is not None:
+            where_clauses.append("source_system = %s")
+            params.append(source_system)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, collector_type, product_id, status, source_system,
+                           started_at, finished_at, records_imported, error_message,
+                           payload_summary, created_by, created_at, updated_at
+                    FROM collector_runs
+                    {where_clause}
+                    ORDER BY started_at DESC,
+                             COALESCE(updated_at, created_at) DESC,
+                             id DESC
+                    """,
+                    tuple(params),
+                )
+                items = []
+                for row in cursor.fetchall():
+                    payload_summary = row[9] or {}
+                    if isinstance(payload_summary, str):
+                        payload_summary = json.loads(payload_summary)
+                    items.append(
+                        {
+                            "collector_type": row[1],
+                            "created_at": row[11].isoformat() if row[11] else None,
+                            "created_by": row[10],
+                            "error_message": row[8],
+                            "finished_at": row[6].isoformat() if row[6] else None,
+                            "id": row[0],
+                            "payload_summary": payload_summary,
+                            "product_id": row[2],
+                            "records_imported": row[7],
+                            "source_system": row[4],
+                            "started_at": row[5].isoformat() if row[5] else None,
+                            "status": row[3],
+                            "updated_at": row[12].isoformat() if row[12] else None,
+                        }
+                    )
+                return items
+
+    def list_pending_attribution_items(
+        self,
+        *,
+        source_type: str | None = None,
+        status: str | None = None,
+        resolved_product_id: str | None = None,
+        collector_run_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        import json
+
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if source_type is not None:
+            where_clauses.append("source_type = %s")
+            params.append(source_type)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if resolved_product_id is not None:
+            where_clauses.append("resolved_product_id = %s")
+            params.append(resolved_product_id)
+        if collector_run_id is not None:
+            where_clauses.append("collector_run_id = %s")
+            params.append(collector_run_id)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, source_type, source_system, collector_run_id, raw_subject_id,
+                           summary, raw_payload, suggested_product_id, suggested_module_code,
+                           confidence, status, resolution_action, resolution_note,
+                           resolved_product_id, resolved_module_code, resolved_requirement_id,
+                           resolved_subject_type, resolved_subject_id, resolved_by, resolved_at,
+                           created_by, created_at, updated_at
+                    FROM pending_attribution_items
+                    {where_clause}
+                    ORDER BY created_at DESC,
+                             COALESCE(updated_at, created_at) DESC,
+                             id DESC
+                    """,
+                    tuple(params),
+                )
+                items = []
+                for row in cursor.fetchall():
+                    raw_payload = row[6] or {}
+                    if isinstance(raw_payload, str):
+                        raw_payload = json.loads(raw_payload)
+                    items.append(
+                        {
+                            "collector_run_id": row[3],
+                            "confidence": float(row[9]) if row[9] is not None else None,
+                            "created_at": row[21].isoformat() if row[21] else None,
+                            "created_by": row[20],
+                            "id": row[0],
+                            "raw_payload": raw_payload,
+                            "raw_subject_id": row[4],
+                            "resolution_action": row[11],
+                            "resolution_note": row[12],
+                            "resolved_at": row[19].isoformat() if row[19] else None,
+                            "resolved_by": row[18],
+                            "resolved_module_code": row[14],
+                            "resolved_product_id": row[13],
+                            "resolved_requirement_id": row[15],
+                            "resolved_subject_id": row[17],
+                            "resolved_subject_type": row[16],
+                            "source_system": row[2],
+                            "source_type": row[1],
+                            "status": row[10],
+                            "suggested_module_code": row[8],
+                            "suggested_product_id": row[7],
+                            "summary": row[5],
+                            "updated_at": row[22].isoformat() if row[22] else None,
+                        }
+                    )
+                return items
 
     def load_user_feedback(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -2295,11 +3740,173 @@ class PostgresSnapshotRepository:
                 feedback = self._load_user_feedback(cursor)
         return {"user_feedback": feedback}
 
+    def list_user_feedback(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        feature_code: str | None = None,
+        status: str | None = None,
+        created_by: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if module_code is not None:
+            where_clauses.append("module_code = %s")
+            params.append(module_code)
+        if feature_code is not None:
+            where_clauses.append("feature_code = %s")
+            params.append(feature_code)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if created_by is not None:
+            where_clauses.append("created_by = %s")
+            params.append(created_by)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, module_code, feature_code, source_channel,
+                           feedback_type, sentiment, satisfaction_score, content, tags,
+                           related_requirement_id, status, triage_note, created_by,
+                           created_at, updated_at
+                    FROM user_feedback
+                    {where_clause}
+                    ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                items = []
+                for row in cursor.fetchall():
+                    feedback = {
+                        "content": row[8],
+                        "created_at": row[14].isoformat() if row[14] else None,
+                        "created_by": row[13],
+                        "feature_code": row[3],
+                        "feedback_type": row[5],
+                        "id": row[0],
+                        "module_code": row[2],
+                        "product_id": row[1],
+                        "related_requirement_id": row[10],
+                        "satisfaction_score": row[7],
+                        "sentiment": row[6],
+                        "source_channel": row[4],
+                        "status": row[11],
+                        "tags": list(row[9] or []),
+                        "triage_note": row[12],
+                        "updated_at": row[15].isoformat() if row[15] else None,
+                    }
+                    for optional_key in (
+                        "created_at",
+                        "feature_code",
+                        "module_code",
+                        "related_requirement_id",
+                        "satisfaction_score",
+                        "sentiment",
+                        "triage_note",
+                        "updated_at",
+                    ):
+                        if feedback[optional_key] is None:
+                            feedback.pop(optional_key)
+                    items.append(feedback)
+                return items
+
     def load_user_usage_metrics(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 metrics = self._load_user_usage_metrics(cursor)
         return {"user_usage_metrics": metrics}
+
+    def list_user_usage_metrics(
+        self,
+        *,
+        product_id: str | None = None,
+        module_code: str | None = None,
+        feature_code: str | None = None,
+        user_segment: str | None = None,
+        from_value: Any | None = None,
+        to_value: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if module_code is not None:
+            where_clauses.append("module_code = %s")
+            params.append(module_code)
+        if feature_code is not None:
+            where_clauses.append("feature_code = %s")
+            params.append(feature_code)
+        if user_segment is not None:
+            where_clauses.append("user_segment = %s")
+            params.append(user_segment)
+        if from_value is not None:
+            where_clauses.append("window_end >= %s")
+            params.append(from_value)
+        if to_value is not None:
+            where_clauses.append("window_start <= %s")
+            params.append(to_value)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, module_code, feature_code, user_segment,
+                           window_start, window_end, active_users, event_count,
+                           conversion_count, conversion_rate, avg_duration_seconds,
+                           bounce_rate, error_count, source_channel, created_by,
+                           created_at, updated_at
+                    FROM user_usage_metrics
+                    {where_clause}
+                    ORDER BY window_start DESC,
+                             COALESCE(updated_at, created_at) DESC,
+                             id DESC
+                    """,
+                    tuple(params),
+                )
+                items = []
+                for row in cursor.fetchall():
+                    metric = {
+                        "active_users": row[7],
+                        "avg_duration_seconds": float(row[11])
+                        if row[11] is not None
+                        else None,
+                        "bounce_rate": float(row[12]) if row[12] is not None else None,
+                        "conversion_count": row[9],
+                        "conversion_rate": float(row[10]) if row[10] is not None else None,
+                        "created_at": row[16].isoformat() if row[16] else None,
+                        "created_by": row[15],
+                        "error_count": row[13],
+                        "event_count": row[8],
+                        "feature_code": row[3],
+                        "id": row[0],
+                        "module_code": row[2],
+                        "product_id": row[1],
+                        "source_channel": row[14],
+                        "updated_at": row[17].isoformat() if row[17] else None,
+                        "user_segment": row[4],
+                        "window_end": row[6].isoformat() if row[6] else None,
+                        "window_start": row[5].isoformat() if row[5] else None,
+                    }
+                    for optional_key in (
+                        "avg_duration_seconds",
+                        "bounce_rate",
+                        "conversion_rate",
+                        "created_at",
+                        "module_code",
+                        "source_channel",
+                        "updated_at",
+                    ):
+                        if metric[optional_key] is None:
+                            metric.pop(optional_key)
+                    items.append(metric)
+                return items
 
     def load_iteration_planning(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -2311,6 +3918,78 @@ class PostgresSnapshotRepository:
             "iteration_plan_suggestions": suggestions,
         }
 
+    def list_iteration_plan_suggestions(
+        self,
+        *,
+        product_id: str | None = None,
+        planning_cycle: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            where_clauses.append("product_id = %s")
+            params.append(product_id)
+        if planning_cycle is not None:
+            where_clauses.append("planning_cycle = %s")
+            params.append(planning_cycle)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, product_id, planning_cycle, version_id, module_codes, title,
+                           status, priority, priority_score, confidence_level,
+                           recommendation_reason, business_value, risk_signals, dependencies,
+                           estimated_effort, evidence, evidence_insufficient, created_by,
+                           converted_requirement_id, created_at, updated_at
+                    FROM iteration_plan_suggestions
+                    {where_clause}
+                    ORDER BY priority_score DESC,
+                             COALESCE(updated_at, created_at) DESC,
+                             id DESC
+                    """,
+                    tuple(params),
+                )
+                items = []
+                for row in cursor.fetchall():
+                    suggestion = {
+                        "business_value": row[11],
+                        "confidence_level": row[9],
+                        "converted_requirement_id": row[18],
+                        "created_at": row[19].isoformat() if row[19] else None,
+                        "created_by": row[17],
+                        "dependencies": list(row[13] or []),
+                        "estimated_effort": row[14],
+                        "evidence": list(row[15] or []),
+                        "evidence_insufficient": row[16],
+                        "id": row[0],
+                        "module_codes": list(row[4] or []),
+                        "planning_cycle": row[2],
+                        "priority": row[7],
+                        "priority_score": row[8],
+                        "product_id": row[1],
+                        "recommendation_reason": row[10],
+                        "risk_signals": list(row[12] or []),
+                        "status": row[6],
+                        "title": row[5],
+                        "updated_at": row[20].isoformat() if row[20] else None,
+                        "version_id": row[3],
+                    }
+                    for optional_key in (
+                        "converted_requirement_id",
+                        "created_at",
+                        "updated_at",
+                        "version_id",
+                    ):
+                        if suggestion[optional_key] is None:
+                            suggestion.pop(optional_key)
+                    items.append(suggestion)
+                return items
+
     def load_lifecycle_context(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -2321,11 +4000,84 @@ class PostgresSnapshotRepository:
             "lifecycle_risk_signals": risks,
         }
 
+    def get_lifecycle_context_source_rows(
+        self,
+        *,
+        product_id: str | None = None,
+    ) -> dict[str, Any]:
+        rows = self.get_dashboard_it_team_source_rows(
+            user_roles=["admin"],
+            product_id=product_id,
+        )
+        lifecycle_payload = self.load_lifecycle_context() or {}
+        rows["lifecycle_context_edges"] = list(
+            (lifecycle_payload.get("lifecycle_context_edges") or {}).values()
+        )
+        rows["lifecycle_risk_signals"] = list(
+            (lifecycle_payload.get("lifecycle_risk_signals") or {}).values()
+        )
+        return rows
+
     def load_dashboard_snapshots(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 snapshots = self._load_dashboard_metric_snapshots(cursor)
         return {"dashboard_metric_snapshots": snapshots}
+
+    def get_dashboard_it_team_source_rows(
+        self,
+        *,
+        user_roles: list[str],
+        product_id: str | None = None,
+    ) -> dict[str, Any]:
+        workflow = self.load_workflow_runtime() or {}
+        knowledge = self.load_knowledge() or {}
+        product_config = self.load_product_config() or {}
+        review_payload = self.load_gitlab_review() or {}
+        mock_payload = self.load_mock_writebacks() or {}
+        user_role_set = set(user_roles)
+        knowledge_documents = [
+            dict(document)
+            for document in (knowledge.get("knowledge_documents") or {}).values()
+            if "admin" in user_role_set
+            or user_role_set.intersection(document.get("permission_roles", []))
+        ]
+        return {
+            "audit_events": self.list_audit_events(),
+            "bugs": self.list_bugs(product_id=product_id),
+            "code_review_reports": list(
+                (review_payload.get("code_review_reports") or {}).values()
+            ),
+            "gitlab_daily_code_metrics": self.list_gitlab_daily_code_metrics(
+                product_id=product_id
+            ),
+            "gitlab_mr_snapshots": list(
+                (review_payload.get("gitlab_mr_snapshots") or {}).values()
+            ),
+            "human_reviews": list((workflow.get("human_reviews") or {}).values()),
+            "iteration_plan_suggestions": self.list_iteration_plan_suggestions(
+                product_id=product_id
+            ),
+            "jenkins_release_records": self.list_jenkins_release_records(
+                product_id=product_id
+            ),
+            "knowledge_deposits": list(
+                (knowledge.get("knowledge_deposits") or {}).values()
+            ),
+            "knowledge_documents": knowledge_documents,
+            "mock_writebacks": list((mock_payload.get("mock_writebacks") or {}).values()),
+            "online_log_metrics": self.list_online_log_metrics(product_id=product_id),
+            "product_git_repositories": list(
+                (product_config.get("product_git_repositories") or {}).values()
+            ),
+            "product_modules": list((product_config.get("product_modules") or {}).values()),
+            "product_versions": list((product_config.get("product_versions") or {}).values()),
+            "products": self.list_products(active_only=True),
+            "requirements": self.list_requirement_summaries(product_id=product_id),
+            "tasks": self.list_ai_task_summaries(product_id=product_id),
+            "user_feedback": self.list_user_feedback(product_id=product_id),
+            "user_usage_metrics": self.list_user_usage_metrics(product_id=product_id),
+        }
 
     def load_collector_runs(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -2349,6 +4101,71 @@ class PostgresSnapshotRepository:
             "model_gateway_logs": logs,
         }
 
+    def list_model_gateway_configs(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                configs = self._load_model_gateway_configs(cursor)
+        return [configs[config_id] for config_id in sorted(configs)]
+
+    def list_model_gateway_logs(
+        self,
+        *,
+        ai_task_id: str | None = None,
+        purpose: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if ai_task_id is not None:
+            where_clauses.append("ai_task_id = %s")
+            params.append(ai_task_id)
+        if purpose is not None:
+            where_clauses.append("purpose = %s")
+            params.append(purpose)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, ai_task_id, provider, model, purpose, tokens, latency_ms,
+                           status, error, model_gateway_config_id, created_at, updated_at
+                    FROM model_gateway_logs
+                    {where_clause}
+                    ORDER BY created_at DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                logs = []
+                for row in cursor.fetchall():
+                    log = {
+                        "ai_task_id": row[1],
+                        "created_at": row[10].isoformat() if row[10] else None,
+                        "error": row[8],
+                        "id": row[0],
+                        "latency_ms": row[6],
+                        "model": row[3],
+                        "model_gateway_config_id": row[9],
+                        "provider": row[2],
+                        "purpose": row[4],
+                        "status": row[7],
+                        "tokens": dict(row[5] or {}),
+                        "updated_at": row[11].isoformat() if row[11] else None,
+                    }
+                    for optional_key in (
+                        "ai_task_id",
+                        "created_at",
+                        "error",
+                        "model_gateway_config_id",
+                        "updated_at",
+                    ):
+                        if log[optional_key] is None:
+                            log.pop(optional_key)
+                    logs.append(log)
+                return logs
+
     def load_assistant_chat(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -2358,6 +4175,90 @@ class PostgresSnapshotRepository:
             "assistant_conversations": conversations,
             "assistant_messages": messages,
         }
+
+    def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, user_id, product_id, title, message_count, last_message_at,
+                           created_at, updated_at
+                    FROM assistant_conversations
+                    WHERE user_id = %s
+                    ORDER BY COALESCE(last_message_at, updated_at) DESC, id
+                    """,
+                    (user_id,),
+                )
+                conversations = []
+                for row in cursor.fetchall():
+                    conversation = {
+                        "created_at": row[6].isoformat() if row[6] else None,
+                        "id": row[0],
+                        "last_message_at": row[5].isoformat() if row[5] else None,
+                        "message_count": row[4],
+                        "product_id": row[2],
+                        "title": row[3],
+                        "updated_at": row[7].isoformat() if row[7] else None,
+                        "user_id": row[1],
+                    }
+                    for optional_key in (
+                        "created_at",
+                        "last_message_at",
+                        "product_id",
+                        "updated_at",
+                    ):
+                        if conversation[optional_key] is None:
+                            conversation.pop(optional_key)
+                    conversations.append(conversation)
+                return conversations
+
+    def list_assistant_conversation_messages(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> list[dict[str, Any]] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM assistant_conversations
+                    WHERE id = %s AND user_id = %s
+                    """,
+                    (conversation_id, user_id),
+                )
+                if cursor.fetchone() is None:
+                    return None
+                cursor.execute(
+                    """
+                    SELECT id, conversation_id, user_id, role, content, product_id, model,
+                           suggestions, created_at, updated_at
+                    FROM assistant_messages
+                    WHERE conversation_id = %s AND user_id = %s
+                    ORDER BY created_at, id
+                    """,
+                    (conversation_id, user_id),
+                )
+                messages = []
+                for row in cursor.fetchall():
+                    message = {
+                        "content": row[4],
+                        "conversation_id": row[1],
+                        "created_at": row[8].isoformat() if row[8] else None,
+                        "id": row[0],
+                        "model": row[6],
+                        "product_id": row[5],
+                        "role": row[3],
+                        "suggestions": list(row[7] or []),
+                        "updated_at": row[9].isoformat() if row[9] else None,
+                        "user_id": row[2],
+                    }
+                    for optional_key in ("created_at", "model", "product_id", "updated_at"):
+                        if message[optional_key] is None:
+                            message.pop(optional_key)
+                    messages.append(message)
+                return messages
 
     def load_gitlab_review(self) -> dict[str, Any]:
         with self._connect() as connection:
@@ -2394,6 +4295,48 @@ class PostgresSnapshotRepository:
                 self._upsert_product_git_repositories(cursor, repositories)
                 self._upsert_related_systems(cursor, related_systems)
 
+    def save_product_config_record(
+        self,
+        collection_name: str,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        upsert_by_collection = {
+            "product_git_repositories": self._upsert_product_git_repositories,
+            "product_modules": self._upsert_product_modules,
+            "product_versions": self._upsert_product_versions,
+            "products": self._upsert_products,
+            "related_systems": self._upsert_related_systems,
+        }
+        upsert = upsert_by_collection.get(collection_name)
+        if upsert is None:
+            raise ValueError(f"Unsupported product config collection: {collection_name}")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                upsert(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def delete_product_config_record(
+        self,
+        collection_name: str,
+        record_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        table_name = PRODUCT_CONFIG_TABLES.get(collection_name)
+        if table_name is None:
+            raise ValueError(f"Unsupported product config collection: {collection_name}")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"DELETE FROM {table_name} WHERE id = %s",  # noqa: S608
+                    (record_id,),
+                )
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_requirements(self, payload: dict[str, Any]) -> None:
         requirements = payload.get("requirements", {})
         with self._connect() as connection:
@@ -2401,12 +4344,136 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "requirements", requirements)
                 self._upsert_requirements(cursor, requirements)
 
+    def save_requirement_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_requirements(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def delete_requirement_record(
+        self,
+        record_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM requirements WHERE id = %s", (record_id,))
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_ai_tasks(self, payload: dict[str, Any]) -> None:
         ai_tasks = payload.get("ai_tasks", {})
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "ai_tasks", ai_tasks)
                 self._upsert_ai_tasks(cursor, ai_tasks)
+
+    def save_requirement_and_ai_task_records(
+        self,
+        *,
+        requirement: dict[str, Any],
+        task: dict[str, Any],
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_requirements(cursor, {requirement["id"]: requirement})
+                self._upsert_ai_tasks(cursor, {task["id"]: task})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def save_task_start_records(
+        self,
+        *,
+        task: dict[str, Any],
+        review: dict[str, Any],
+        graph_run: dict[str, Any],
+        checkpoint: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+        model_log: dict[str, Any] | None = None,
+        code_review_report: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_ai_tasks(cursor, {task["id"]: task})
+                if model_log is not None:
+                    self._upsert_model_gateway_logs(cursor, [model_log])
+                self._upsert_human_reviews(cursor, {review["id"]: review})
+                self._upsert_graph_runs(cursor, {graph_run["id"]: graph_run})
+                self._upsert_graph_checkpoints(cursor, {checkpoint["id"]: checkpoint})
+                if code_review_report is not None:
+                    self._upsert_code_review_reports(
+                        cursor,
+                        {code_review_report["id"]: code_review_report},
+                    )
+                self._upsert_audit_events(cursor, audit_events)
+
+    def save_review_decision_records(
+        self,
+        *,
+        task: dict[str, Any],
+        review: dict[str, Any],
+        graph_run: dict[str, Any] | None,
+        checkpoint: dict[str, Any] | None,
+        audit_events: list[dict[str, Any]],
+        requirement: dict[str, Any] | None = None,
+        knowledge_deposits: list[dict[str, Any]] | None = None,
+        bugs: list[dict[str, Any]] | None = None,
+        code_review_report: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                if requirement is not None:
+                    self._upsert_requirements(cursor, {requirement["id"]: requirement})
+                self._upsert_ai_tasks(cursor, {task["id"]: task})
+                self._upsert_human_reviews(cursor, {review["id"]: review})
+                if graph_run is not None:
+                    self._upsert_graph_runs(cursor, {graph_run["id"]: graph_run})
+                if checkpoint is not None:
+                    self._upsert_graph_checkpoints(cursor, {checkpoint["id"]: checkpoint})
+                if code_review_report is not None:
+                    self._upsert_code_review_reports(
+                        cursor,
+                        {code_review_report["id"]: code_review_report},
+                    )
+                if bugs:
+                    self._upsert_bugs(cursor, {bug["id"]: bug for bug in bugs})
+                if knowledge_deposits:
+                    self._upsert_knowledge_deposits(
+                        cursor,
+                        {deposit["id"]: deposit for deposit in knowledge_deposits},
+                    )
+                self._upsert_audit_events(cursor, audit_events)
+
+    def save_task_state_records(
+        self,
+        *,
+        task: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+        reviews: list[dict[str, Any]] | None = None,
+        graph_run: dict[str, Any] | None = None,
+        checkpoint: dict[str, Any] | None = None,
+        model_log: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_ai_tasks(cursor, {task["id"]: task})
+                if model_log is not None:
+                    self._upsert_model_gateway_logs(cursor, [model_log])
+                if reviews:
+                    self._upsert_human_reviews(cursor, {review["id"]: review for review in reviews})
+                if graph_run is not None:
+                    self._upsert_graph_runs(cursor, {graph_run["id"]: graph_run})
+                if checkpoint is not None:
+                    self._upsert_graph_checkpoints(cursor, {checkpoint["id"]: checkpoint})
+                self._upsert_audit_events(cursor, audit_events)
 
     def save_workflow_runtime(self, payload: dict[str, Any]) -> None:
         graph_runs = payload.get("graph_runs", {})
@@ -2440,6 +4507,79 @@ class PostgresSnapshotRepository:
                 self._upsert_knowledge_chunks(cursor, chunks)
                 self._upsert_knowledge_deposits(cursor, deposits)
 
+    def save_knowledge_document_records(
+        self,
+        *,
+        document: dict[str, Any],
+        chunks: list[dict[str, Any]],
+        audit_event: dict[str, Any] | None = None,
+        model_logs: list[dict[str, Any]] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM knowledge_chunks WHERE document_id = %s",
+                    (document["id"],),
+                )
+                self._upsert_knowledge_documents(cursor, {document["id"]: document})
+                self._upsert_knowledge_chunks(
+                    cursor,
+                    {chunk["id"]: chunk for chunk in chunks},
+                )
+                if model_logs:
+                    self._upsert_model_gateway_logs(cursor, model_logs)
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def delete_knowledge_document_records(
+        self,
+        *,
+        document_id: str,
+        deposits: list[dict[str, Any]],
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM knowledge_chunks WHERE document_id = %s",
+                    (document_id,),
+                )
+                if deposits:
+                    self._upsert_knowledge_deposits(
+                        cursor,
+                        {deposit["id"]: deposit for deposit in deposits},
+                    )
+                cursor.execute("DELETE FROM knowledge_documents WHERE id = %s", (document_id,))
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def save_knowledge_deposit_records(
+        self,
+        *,
+        deposit: dict[str, Any],
+        audit_event: dict[str, Any] | None = None,
+        document: dict[str, Any] | None = None,
+        chunks: list[dict[str, Any]] | None = None,
+        model_logs: list[dict[str, Any]] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                if document is not None:
+                    cursor.execute(
+                        "DELETE FROM knowledge_chunks WHERE document_id = %s",
+                        (document["id"],),
+                    )
+                    self._upsert_knowledge_documents(cursor, {document["id"]: document})
+                    self._upsert_knowledge_chunks(
+                        cursor,
+                        {chunk["id"]: chunk for chunk in chunks or []},
+                    )
+                self._upsert_knowledge_deposits(cursor, {deposit["id"]: deposit})
+                if model_logs:
+                    self._upsert_model_gateway_logs(cursor, model_logs)
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_audit_events(self, payload: dict[str, Any]) -> None:
         audit_events = payload.get("audit_events", [])
         with self._connect() as connection:
@@ -2459,12 +4599,56 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "bugs", bugs)
                 self._upsert_bugs(cursor, bugs)
 
+    def save_bug_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_bugs(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def delete_bug_record(
+        self,
+        record_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE bugs
+                    SET duplicate_of_bug_id = NULL, updated_at = now()
+                    WHERE duplicate_of_bug_id = %s
+                    """,
+                    (record_id,),
+                )
+                cursor.execute("DELETE FROM bugs WHERE id = %s", (record_id,))
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_gitlab_daily_code_metrics(self, payload: dict[str, Any]) -> None:
         metrics = payload.get("gitlab_daily_code_metrics", {})
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "gitlab_daily_code_metrics", metrics)
                 self._upsert_gitlab_daily_code_metrics(cursor, metrics)
+
+    def save_gitlab_daily_code_metric_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_gitlab_daily_code_metrics(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
 
     def save_jenkins_release_records(self, payload: dict[str, Any]) -> None:
         releases = payload.get("jenkins_release_records", {})
@@ -2473,12 +4657,36 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "jenkins_release_records", releases)
                 self._upsert_jenkins_release_records(cursor, releases)
 
+    def save_jenkins_release_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_jenkins_release_records(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_online_log_metrics(self, payload: dict[str, Any]) -> None:
         metrics = payload.get("online_log_metrics", {})
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "online_log_metrics", metrics)
                 self._upsert_online_log_metrics(cursor, metrics)
+
+    def save_online_log_metric_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_online_log_metrics(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
 
     def save_user_feedback(self, payload: dict[str, Any]) -> None:
         feedback = payload.get("user_feedback", {})
@@ -2487,12 +4695,36 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "user_feedback", feedback)
                 self._upsert_user_feedback(cursor, feedback)
 
+    def save_user_feedback_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_user_feedback(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_user_usage_metrics(self, payload: dict[str, Any]) -> None:
         metrics = payload.get("user_usage_metrics", {})
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "user_usage_metrics", metrics)
                 self._upsert_user_usage_metrics(cursor, metrics)
+
+    def save_user_usage_metric_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_user_usage_metrics(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
 
     def save_iteration_planning(self, payload: dict[str, Any]) -> None:
         suggestions = payload.get("iteration_plan_suggestions", {})
@@ -2503,6 +4735,34 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "iteration_plan_suggestions", suggestions)
                 self._upsert_iteration_plan_suggestions(cursor, suggestions)
                 self._upsert_iteration_plan_decisions(cursor, decisions)
+
+    def save_iteration_suggestion_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_iteration_plan_suggestions(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def save_iteration_decision_records(
+        self,
+        *,
+        suggestion: dict[str, Any],
+        decision: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+        requirement: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                if requirement is not None:
+                    self._upsert_requirements(cursor, {requirement["id"]: requirement})
+                self._upsert_iteration_plan_suggestions(cursor, {suggestion["id"]: suggestion})
+                self._upsert_iteration_plan_decisions(cursor, {decision["id"]: decision})
+                self._upsert_audit_events(cursor, audit_events)
 
     def save_lifecycle_context(self, payload: dict[str, Any]) -> None:
         edges = payload.get("lifecycle_context_edges", {})
@@ -2521,6 +4781,11 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "dashboard_metric_snapshots", snapshots)
                 self._upsert_dashboard_metric_snapshots(cursor, snapshots)
 
+    def save_dashboard_metric_snapshot_record(self, snapshot: dict[str, Any]) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_dashboard_metric_snapshots(cursor, {snapshot["id"]: snapshot})
+
     def save_collector_runs(self, payload: dict[str, Any]) -> None:
         runs = payload.get("collector_runs", {})
         with self._connect() as connection:
@@ -2528,12 +4793,36 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "collector_runs", runs)
                 self._upsert_collector_runs(cursor, runs)
 
+    def save_collector_run_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_collector_runs(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_pending_attribution(self, payload: dict[str, Any]) -> None:
         items = payload.get("pending_attribution_items", {})
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "pending_attribution_items", items)
                 self._upsert_pending_attribution_items(cursor, items)
+
+    def save_pending_attribution_item_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_pending_attribution_items(cursor, {record["id"]: record})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
 
     def save_model_gateway(self, payload: dict[str, Any]) -> None:
         configs = payload.get("model_gateway_configs", {})
@@ -2549,6 +4838,27 @@ class PostgresSnapshotRepository:
                 self._upsert_model_gateway_configs(cursor, configs)
                 self._upsert_model_gateway_logs(cursor, logs)
 
+    def save_model_gateway_records(
+        self,
+        payload: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        configs = payload.get("model_gateway_configs", {})
+        logs = payload.get("model_gateway_logs", [])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing_ids(
+                    cursor,
+                    "model_gateway_logs",
+                    [str(log["id"]) for log in logs if log.get("id")],
+                )
+                self._delete_missing(cursor, "model_gateway_configs", configs)
+                self._upsert_model_gateway_configs(cursor, configs)
+                self._upsert_model_gateway_logs(cursor, logs)
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_assistant_chat(self, payload: dict[str, Any]) -> None:
         conversations = payload.get("assistant_conversations", {})
         messages = payload.get("assistant_messages", {})
@@ -2558,6 +4868,30 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "assistant_conversations", conversations)
                 self._upsert_assistant_conversations(cursor, conversations)
                 self._upsert_assistant_messages(cursor, messages)
+
+    def save_assistant_chat_records(
+        self,
+        *,
+        conversation: dict[str, Any] | None,
+        messages: list[dict[str, Any]],
+        audit_events: list[dict[str, Any]],
+        model_log: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                if conversation is not None:
+                    self._upsert_assistant_conversations(
+                        cursor,
+                        {conversation["id"]: conversation},
+                    )
+                if messages:
+                    self._upsert_assistant_messages(
+                        cursor,
+                        {message["id"]: message for message in messages},
+                    )
+                if model_log is not None:
+                    self._upsert_model_gateway_logs(cursor, [model_log])
+                self._upsert_audit_events(cursor, audit_events)
 
     def save_gitlab_review(self, payload: dict[str, Any]) -> None:
         snapshots = payload.get("gitlab_mr_snapshots", {})
@@ -2569,12 +4903,38 @@ class PostgresSnapshotRepository:
                 self._upsert_gitlab_mr_snapshots(cursor, snapshots)
                 self._upsert_code_review_reports(cursor, reports)
 
+    def save_gitlab_review_snapshot_record(
+        self,
+        *,
+        snapshot: dict[str, Any] | None,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                if snapshot is not None:
+                    self._upsert_gitlab_mr_snapshots(cursor, {snapshot["id"]: snapshot})
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_mock_writebacks(self, payload: dict[str, Any]) -> None:
         issues = self._mock_issue_rows(payload.get("mock_writebacks", {}))
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._delete_missing(cursor, "mock_issues", issues)
                 self._upsert_mock_issues(cursor, issues)
+
+    def save_mock_writeback_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        issues = self._mock_issue_rows({"current": record})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_mock_issues(cursor, issues)
+                if audit_event is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
 
     def _load_brain_apps(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -2996,6 +5356,33 @@ class PostgresSnapshotRepository:
                     deposit.pop(optional_key)
             deposits[row[0]] = deposit
         return deposits
+
+    @staticmethod
+    def _knowledge_deposit_from_row(row) -> dict[str, Any]:
+        deposit = {
+            "ai_task_id": row[1],
+            "content": row[4],
+            "content_hash": row[5],
+            "created_at": row[9].isoformat() if row[9] else None,
+            "deposit_type": row[2],
+            "id": row[0],
+            "knowledge_document_id": row[7],
+            "rejection_reason": row[8],
+            "status": row[6],
+            "title": row[3],
+            "updated_at": row[10].isoformat() if row[10] else None,
+        }
+        for optional_key in (
+            "content_hash",
+            "created_at",
+            "deposit_type",
+            "knowledge_document_id",
+            "rejection_reason",
+            "updated_at",
+        ):
+            if deposit[optional_key] is None:
+                deposit.pop(optional_key)
+        return deposit
 
     def _load_audit_events(self, cursor) -> list[dict[str, Any]]:
         cursor.execute(

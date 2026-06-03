@@ -5,6 +5,7 @@ import json
 import os
 import re
 import socket
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any
@@ -27,10 +28,13 @@ from app.core.code_review_executor import (
 )
 from app.core.config import get_settings
 from app.core.graph_runtime import run_ai_task_graph
-from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
+from app.core.persistence import (
+    PostgresRuntimeStore,
+    PostgresSnapshotRepository,
+)
 from app.core.roles import ASSIGNABLE_ROLE_CODES, list_role_definitions
 from app.core.security import TokenError, create_access_token, parse_access_token, verify_password
-from app.core.store import DEFAULT_BRAIN_APP_ID, MemoryStore
+from app.core.store import DEFAULT_BRAIN_APP_ID, MemoryStore, default_brain_apps
 from app.core.trace import envelope, get_trace_id, new_trace_id
 from app.core.users import SEEDED_USERS, MemoryUserRepository, PostgresUserRepository
 
@@ -57,7 +61,7 @@ def _runtime_data_access_mode() -> str:
 def build_store() -> MemoryStore:
     if settings.persistence_mode == "postgres":
         repository = PostgresSnapshotRepository(settings.database_url)
-        return PersistentMemoryStore.from_repository(repository)
+        return PostgresRuntimeStore(repository)
     _ensure_memory_mode_allowed()
     if settings.persistence_mode != "memory":
         raise RuntimeError(f"Unsupported PERSISTENCE_MODE={settings.persistence_mode}")
@@ -659,9 +663,6 @@ class IterationSuggestionDecisionRequest(BaseModel):
 async def trace_middleware(request: Request, call_next):
     request.state.trace_id = new_trace_id()
     response = await call_next(request)
-    current_store = getattr(request.app.state, "store", None)
-    if request.url.path.startswith("/api/") and hasattr(current_store, "persist"):
-        current_store.persist()
     response.headers["X-Trace-Id"] = request.state.trace_id
     return response
 
@@ -1596,7 +1597,7 @@ def _create_iteration_requirement(
     payload: IterationSuggestionDecisionRequest,
     suggestion: dict[str, Any],
     user: dict[str, Any],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     version_id = suggestion.get("version_id")
     if not version_id:
         raise api_error(
@@ -1631,15 +1632,17 @@ def _create_iteration_requirement(
         "title": title,
         "version_id": version_id,
     }
-    current_store.requirements[requirement_id] = requirement
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.requirements[requirement_id] = requirement
+    audit_event = _record_audit_event(
+        current_store,
         event_type="requirement.created",
         actor_id=user["id"],
         subject_type="requirement",
         subject_id=requirement_id,
         payload={"source": "iteration_plan_suggestion", "suggestion_id": suggestion["id"]},
     )
-    return requirement
+    return requirement, audit_event
 
 
 def _payload_updates(payload: BaseModel) -> dict[str, Any]:
@@ -1698,13 +1701,877 @@ def _list_payload(
     return envelope({"items": visible_items, "total": len(visible_items)}, trace_id)
 
 
+class _RepositoryRequestContext:
+    def __init__(self, repository: Any) -> None:
+        self.repository = repository
+        self.brain_apps: dict[str, dict[str, Any]] = default_brain_apps()
+        self.products: dict[str, dict[str, Any]] = {}
+        self.product_versions: dict[str, dict[str, Any]] = {}
+        self.product_modules: dict[str, dict[str, Any]] = {}
+        self.product_git_repositories: dict[str, dict[str, Any]] = {}
+        self.related_systems: dict[str, dict[str, Any]] = {}
+        self.model_gateway_configs: dict[str, dict[str, Any]] = {}
+        self.model_gateway_logs: list[dict[str, Any]] = []
+        self.assistant_conversations: dict[str, dict[str, Any]] = {}
+        self.assistant_messages: dict[str, dict[str, Any]] = {}
+        self.gitlab_mr_snapshots: dict[str, dict[str, Any]] = {}
+        self.code_review_reports: dict[str, dict[str, Any]] = {}
+        self.knowledge_documents: dict[str, dict[str, Any]] = {}
+        self.knowledge_chunks: dict[str, dict[str, Any]] = {}
+        self.knowledge_deposits: dict[str, dict[str, Any]] = {}
+        self.mock_writebacks: dict[str, dict[str, Any]] = {}
+        self.bugs: dict[str, dict[str, Any]] = {}
+        self.gitlab_daily_code_metrics: dict[str, dict[str, Any]] = {}
+        self.jenkins_release_records: dict[str, dict[str, Any]] = {}
+        self.online_log_metrics: dict[str, dict[str, Any]] = {}
+        self.user_usage_metrics: dict[str, dict[str, Any]] = {}
+        self.user_feedback: dict[str, dict[str, Any]] = {}
+        self.iteration_plan_suggestions: dict[str, dict[str, Any]] = {}
+        self.iteration_plan_decisions: dict[str, dict[str, Any]] = {}
+        self.lifecycle_context_edges: dict[str, dict[str, Any]] = {}
+        self.lifecycle_risk_signals: dict[str, dict[str, Any]] = {}
+        self.dashboard_metric_snapshots: dict[str, dict[str, Any]] = {}
+        self.collector_runs: dict[str, dict[str, Any]] = {}
+        self.pending_attribution_items: dict[str, dict[str, Any]] = {}
+        self.requirements: dict[str, dict[str, Any]] = {}
+        self.ai_tasks: dict[str, dict[str, Any]] = {}
+        self.graph_runs: dict[str, dict[str, Any]] = {}
+        self.graph_checkpoints: dict[str, dict[str, Any]] = {}
+        self.human_reviews: dict[str, dict[str, Any]] = {}
+        self.audit_events: list[dict[str, Any]] = []
+        self.counters: dict[str, int] = {}
+
+    def new_id(self, prefix: str) -> str:
+        next_id = getattr(self.repository, "next_id", None)
+        if not callable(next_id):
+            next_value = self.counters.get(prefix, 0) + 1
+            self.counters[prefix] = next_value
+            return f"{prefix}_{next_value:03d}"
+        allocated_id = next_id(prefix)
+        suffix = allocated_id.removeprefix(f"{prefix}_")
+        if suffix.isdigit():
+            self.counters[prefix] = max(self.counters.get(prefix, 0), int(suffix))
+        return allocated_id
+
+    def snapshot(self, value: Any) -> Any:
+        return deepcopy(value)
+
+    def audit(
+        self,
+        *,
+        event_type: str,
+        actor_id: str,
+        ai_task_id: str | None = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        event = {
+            "id": self.new_id("audit"),
+            "event_type": event_type,
+            "actor_id": actor_id,
+            "ai_task_id": ai_task_id,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "payload": payload or {},
+            "sequence": len(self.audit_events) + 1,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        self.audit_events.append(event)
+        return event
+
+
 def _postgres_snapshot_repository(current_store: MemoryStore) -> PostgresSnapshotRepository | None:
-    if not isinstance(current_store, PersistentMemoryStore):
-        return None
-    repository = current_store.repository
+    repository = getattr(current_store, "repository", None)
     if isinstance(repository, PostgresSnapshotRepository):
         return repository
     return None
+
+
+def _runtime_repository(current_store: MemoryStore) -> Any | None:
+    return getattr(current_store, "repository", None)
+
+
+def _uses_repository_context(current_store: Any) -> bool:
+    return _runtime_repository(current_store) is not None
+
+
+def _record_audit_event(
+    current_store: Any,
+    *,
+    event_type: str,
+    actor_id: str,
+    ai_task_id: str | None = None,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not _uses_repository_context(current_store):
+        return current_store.audit(
+            event_type=event_type,
+            actor_id=actor_id,
+            ai_task_id=ai_task_id,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            payload=payload,
+        )
+    return {
+        "id": current_store.new_id("audit"),
+        "event_type": event_type,
+        "actor_id": actor_id,
+        "ai_task_id": ai_task_id,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "payload": payload or {},
+        "sequence": len(getattr(current_store, "audit_events", [])) + 1,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def _brain_app_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    if getattr(repository, "load_brain_apps", None) is not None:
+        return repository
+    return None
+
+
+def _brain_app_rows_from_repository(repository: Any) -> dict[str, dict[str, Any]]:
+    payload = repository.load_brain_apps() or {}
+    return {
+        str(item_id): dict(item)
+        for item_id, item in payload.get("brain_apps", {}).items()
+    }
+
+
+def _product_config_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    required_methods = [
+        "get_product",
+        "list_product_git_repositories",
+        "list_product_modules",
+        "list_product_versions",
+        "list_products",
+        "list_related_systems",
+    ]
+    if all(getattr(repository, method_name, None) is not None for method_name in required_methods):
+        return repository
+    return None
+
+
+def _payload_collection(payload: dict[str, Any] | None, key: str) -> dict[str, dict[str, Any]]:
+    return {str(item_id): dict(item) for item_id, item in (payload or {}).get(key, {}).items()}
+
+
+def _product_config_source_store(repository: Any) -> Any:
+    source_store = _RepositoryRequestContext(repository)
+    products = repository.list_products(active_only=False)
+    source_store.products = {
+        str(product["id"]): dict(product)
+        for product in products
+        if product.get("id") is not None
+    }
+    for product in products:
+        product_id = str(product["id"])
+        for version in repository.list_product_versions(product_id, active_only=False):
+            source_store.product_versions[str(version["id"])] = dict(version)
+        for module in repository.list_product_modules(product_id, active_only=False):
+            source_store.product_modules[str(module["id"])] = dict(module)
+        for git_repository in repository.list_product_git_repositories(
+            product_id,
+            active_only=False,
+        ):
+            source_store.product_git_repositories[str(git_repository["id"])] = dict(
+                git_repository
+            )
+    source_store.related_systems = {
+        str(system["id"]): dict(system)
+        for system in repository.list_related_systems(active_only=False)
+        if system.get("id") is not None
+    }
+    load_requirements = getattr(repository, "load_requirements", None)
+    if callable(load_requirements):
+        source_store.requirements = _payload_collection(load_requirements(), "requirements")
+    load_ai_tasks = getattr(repository, "load_ai_tasks", None)
+    if callable(load_ai_tasks):
+        source_store.ai_tasks = _payload_collection(load_ai_tasks(), "ai_tasks")
+    load_bugs = getattr(repository, "load_bugs", None)
+    if callable(load_bugs):
+        source_store.bugs = _payload_collection(load_bugs(), "bugs")
+    return source_store
+
+
+def _product_config_write_store(current_store: MemoryStore) -> MemoryStore:
+    repository = _product_config_query_repository(current_store)
+    if repository is None:
+        return current_store
+    return _product_config_source_store(repository)
+
+
+def _model_gateway_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    required_methods = [
+        "list_model_gateway_configs",
+        "list_model_gateway_logs",
+    ]
+    if all(getattr(repository, method_name, None) is not None for method_name in required_methods):
+        return repository
+    return None
+
+
+def _model_gateway_source_store(repository: Any) -> Any:
+    source_store = _RepositoryRequestContext(repository)
+    source_store.model_gateway_configs = {
+        str(item["id"]): dict(item)
+        for item in repository.list_model_gateway_configs()
+        if item.get("id") is not None
+    }
+    source_store.model_gateway_logs = [
+        dict(item) for item in repository.list_model_gateway_logs()
+    ]
+    return source_store
+
+
+def _model_gateway_write_store(current_store: MemoryStore) -> MemoryStore:
+    repository = _model_gateway_query_repository(current_store)
+    if repository is None:
+        return current_store
+    return _model_gateway_source_store(repository)
+
+
+def _knowledge_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    if getattr(repository, "list_knowledge_documents", None) is not None:
+        return repository
+    return None
+
+
+def _knowledge_source_store(repository: Any) -> Any:
+    source_store = _product_config_source_store(repository)
+    load_knowledge = getattr(repository, "load_knowledge", None)
+    if callable(load_knowledge):
+        knowledge_payload = load_knowledge()
+        source_store.knowledge_documents = _payload_collection(
+            knowledge_payload,
+            "knowledge_documents",
+        )
+        source_store.knowledge_chunks = _payload_collection(
+            knowledge_payload,
+            "knowledge_chunks",
+        )
+        source_store.knowledge_deposits = _payload_collection(
+            knowledge_payload,
+            "knowledge_deposits",
+        )
+    load_model_gateway = getattr(repository, "load_model_gateway", None)
+    if callable(load_model_gateway):
+        model_gateway_payload = load_model_gateway() or {}
+        source_store.model_gateway_configs = _payload_collection(
+            model_gateway_payload,
+            "model_gateway_configs",
+        )
+        source_store.model_gateway_logs = [
+            dict(item) for item in model_gateway_payload.get("model_gateway_logs", [])
+        ]
+    return source_store
+
+
+def _knowledge_write_store(current_store: MemoryStore) -> MemoryStore:
+    repository = _knowledge_query_repository(current_store)
+    if repository is None:
+        return current_store
+    return _knowledge_source_store(repository)
+
+
+def _assistant_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    required_methods = [
+        "list_assistant_conversation_messages",
+        "list_assistant_conversations",
+    ]
+    if all(getattr(repository, method_name, None) is not None for method_name in required_methods):
+        return repository
+    return None
+
+
+def _assistant_source_store(repository: Any, *, user_id: str) -> Any:
+    load_task_rows = getattr(repository, "get_task_workflow_source_rows", None)
+    source_store = (
+        _task_workflow_source_store(load_task_rows(), repository=repository)
+        if callable(load_task_rows)
+        else _RepositoryRequestContext(repository)
+    )
+    conversations = repository.list_assistant_conversations(user_id=user_id)
+    source_store.assistant_conversations = {
+        str(conversation["id"]): dict(conversation)
+        for conversation in conversations
+        if conversation.get("id") is not None
+    }
+    messages: dict[str, dict[str, Any]] = {}
+    for conversation in conversations:
+        conversation_id = conversation.get("id")
+        if conversation_id is None:
+            continue
+        conversation_messages = repository.list_assistant_conversation_messages(
+            conversation_id=str(conversation_id),
+            user_id=user_id,
+        )
+        for message in conversation_messages or []:
+            if message.get("id") is not None:
+                messages[str(message["id"])] = dict(message)
+    source_store.assistant_messages = messages
+    return source_store
+
+
+def _assistant_write_store(current_store: MemoryStore, *, user_id: str) -> MemoryStore:
+    repository = _assistant_query_repository(current_store)
+    if repository is None:
+        return current_store
+    return _assistant_source_store(repository, user_id=user_id)
+
+
+def _audit_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    if getattr(repository, "list_audit_events", None) is not None:
+        return repository
+    return None
+
+
+def _bug_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    if getattr(repository, "list_bugs", None) is not None:
+        return repository
+    return None
+
+
+def _insight_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    required_methods = (
+        "list_user_usage_metrics",
+        "list_user_feedback",
+        "list_iteration_plan_suggestions",
+    )
+    if all(getattr(repository, method_name, None) is not None for method_name in required_methods):
+        return repository
+    return None
+
+
+def _insight_source_store(repository: Any) -> Any:
+    source_store = _product_config_source_store(repository)
+    source_store.user_usage_metrics = {
+        str(item["id"]): dict(item)
+        for item in repository.list_user_usage_metrics()
+        if item.get("id") is not None
+    }
+    source_store.user_feedback = {
+        str(item["id"]): dict(item)
+        for item in repository.list_user_feedback()
+        if item.get("id") is not None
+    }
+    source_store.iteration_plan_suggestions = {
+        str(item["id"]): dict(item)
+        for item in repository.list_iteration_plan_suggestions()
+        if item.get("id") is not None
+    }
+    load_iteration_planning = getattr(repository, "load_iteration_planning", None)
+    if callable(load_iteration_planning):
+        source_store.iteration_plan_decisions = _payload_collection(
+            load_iteration_planning(),
+            "iteration_plan_decisions",
+        )
+    return source_store
+
+
+def _insight_write_store(current_store: MemoryStore) -> MemoryStore:
+    repository = _insight_query_repository(current_store)
+    if repository is None:
+        return current_store
+    return _insight_source_store(repository)
+
+
+def _operational_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    required_methods = (
+        "list_collector_runs",
+        "list_pending_attribution_items",
+        "list_gitlab_daily_code_metrics",
+        "list_jenkins_release_records",
+        "list_online_log_metrics",
+    )
+    if all(getattr(repository, method_name, None) is not None for method_name in required_methods):
+        return repository
+    return None
+
+
+def _operational_source_store(repository: Any) -> Any:
+    source_store = _product_config_source_store(repository)
+    collection_loaders = {
+        "collector_runs": lambda: repository.list_collector_runs(),
+        "gitlab_daily_code_metrics": lambda: repository.list_gitlab_daily_code_metrics(),
+        "jenkins_release_records": lambda: repository.list_jenkins_release_records(),
+        "online_log_metrics": lambda: repository.list_online_log_metrics(),
+        "pending_attribution_items": lambda: repository.list_pending_attribution_items(),
+    }
+    for collection_name, loader in collection_loaders.items():
+        setattr(
+            source_store,
+            collection_name,
+            {
+                str(item["id"]): dict(item)
+                for item in loader()
+                if item.get("id") is not None
+            },
+        )
+    return source_store
+
+
+def _operational_write_store(current_store: MemoryStore) -> MemoryStore:
+    repository = _operational_query_repository(current_store)
+    if repository is None:
+        return current_store
+    return _operational_source_store(repository)
+
+
+def _dashboard_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    required_methods = (
+        "get_dashboard_it_team_source_rows",
+        "get_product",
+        "save_dashboard_metric_snapshot_record",
+    )
+    if all(getattr(repository, method_name, None) is not None for method_name in required_methods):
+        return repository
+    return None
+
+
+def _lifecycle_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    required_methods = (
+        "get_lifecycle_context_source_rows",
+        "save_lifecycle_context",
+    )
+    if all(getattr(repository, method_name, None) is not None for method_name in required_methods):
+        return repository
+    return None
+
+
+def _task_workflow_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    required_methods = ("get_task_workflow_source_rows",)
+    if all(getattr(repository, method_name, None) is not None for method_name in required_methods):
+        return repository
+    return None
+
+
+def _repository_read_model_store(current_store: MemoryStore) -> MemoryStore:
+    return current_store
+
+
+def _save_product_config_record(
+    current_store: MemoryStore,
+    collection_name: str,
+    record: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_record = getattr(repository, "save_product_config_record", None)
+    if save_record is not None:
+        save_record(collection_name, record, audit_event=audit_event)
+
+
+def _delete_product_config_record(
+    current_store: MemoryStore,
+    collection_name: str,
+    record_id: str,
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    delete_record = getattr(repository, "delete_product_config_record", None)
+    if delete_record is not None:
+        delete_record(collection_name, record_id, audit_event=audit_event)
+
+
+def _save_requirement_record(
+    current_store: MemoryStore,
+    record: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_record = getattr(repository, "save_requirement_record", None)
+    if save_record is not None:
+        save_record(record, audit_event=audit_event)
+
+
+def _delete_requirement_record(
+    current_store: MemoryStore,
+    record_id: str,
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    delete_record = getattr(repository, "delete_requirement_record", None)
+    if delete_record is not None:
+        delete_record(record_id, audit_event=audit_event)
+
+
+def _save_requirement_and_ai_task_records(
+    current_store: MemoryStore,
+    *,
+    requirement: dict[str, Any],
+    task: dict[str, Any],
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_requirement_and_ai_task_records", None)
+    if save_records is not None:
+        save_records(requirement=requirement, task=task, audit_event=audit_event)
+
+
+def _save_task_start_records(
+    current_store: MemoryStore,
+    *,
+    task: dict[str, Any],
+    review: dict[str, Any],
+    graph_run: dict[str, Any],
+    checkpoint: dict[str, Any],
+    audit_events: list[dict[str, Any]],
+    model_log: dict[str, Any] | None = None,
+    code_review_report: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_task_start_records", None)
+    if save_records is not None:
+        save_records(
+            task=task,
+            review=review,
+            graph_run=graph_run,
+            checkpoint=checkpoint,
+            audit_events=audit_events,
+            model_log=model_log,
+            code_review_report=code_review_report,
+        )
+
+
+def _save_review_decision_records(
+    current_store: MemoryStore,
+    *,
+    task: dict[str, Any],
+    review: dict[str, Any],
+    graph_run: dict[str, Any] | None,
+    checkpoint: dict[str, Any] | None,
+    audit_events: list[dict[str, Any]],
+    requirement: dict[str, Any] | None = None,
+    knowledge_deposits: list[dict[str, Any]] | None = None,
+    bugs: list[dict[str, Any]] | None = None,
+    code_review_report: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_review_decision_records", None)
+    if save_records is not None:
+        save_records(
+            task=task,
+            review=review,
+            graph_run=graph_run,
+            checkpoint=checkpoint,
+            audit_events=audit_events,
+            requirement=requirement,
+            knowledge_deposits=knowledge_deposits,
+            bugs=bugs,
+            code_review_report=code_review_report,
+        )
+
+
+def _save_task_state_records(
+    current_store: MemoryStore,
+    *,
+    task: dict[str, Any],
+    audit_events: list[dict[str, Any]],
+    reviews: list[dict[str, Any]] | None = None,
+    graph_run: dict[str, Any] | None = None,
+    checkpoint: dict[str, Any] | None = None,
+    model_log: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_task_state_records", None)
+    if save_records is not None:
+        save_records(
+            task=task,
+            audit_events=audit_events,
+            reviews=reviews,
+            graph_run=graph_run,
+            checkpoint=checkpoint,
+            model_log=model_log,
+        )
+
+
+def _knowledge_chunks_for_document(
+    current_store: MemoryStore,
+    document_id: str,
+) -> list[dict[str, Any]]:
+    return [
+        chunk
+        for chunk in current_store.knowledge_chunks.values()
+        if chunk.get("document_id") == document_id
+    ]
+
+
+def _save_mock_writeback_record(
+    current_store: MemoryStore,
+    record: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_record = getattr(repository, "save_mock_writeback_record", None)
+    if save_record is not None:
+        save_record(record, audit_event=audit_event)
+
+
+def _save_knowledge_document_records(
+    current_store: MemoryStore,
+    *,
+    document: dict[str, Any],
+    chunks: list[dict[str, Any]] | None = None,
+    audit_event: dict[str, Any] | None = None,
+    model_logs: list[dict[str, Any]] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_knowledge_document_records", None)
+    if save_records is not None:
+        save_records(
+            document=document,
+            chunks=chunks
+            if chunks is not None
+            else _knowledge_chunks_for_document(current_store, document["id"]),
+            audit_event=audit_event,
+            model_logs=model_logs,
+        )
+
+
+def _delete_knowledge_document_records(
+    current_store: MemoryStore,
+    *,
+    document_id: str,
+    deposits: list[dict[str, Any]],
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    delete_records = getattr(repository, "delete_knowledge_document_records", None)
+    if delete_records is not None:
+        delete_records(
+            document_id=document_id,
+            deposits=deposits,
+            audit_event=audit_event,
+        )
+
+
+def _save_knowledge_deposit_records(
+    current_store: MemoryStore,
+    *,
+    deposit: dict[str, Any],
+    audit_event: dict[str, Any] | None = None,
+    document: dict[str, Any] | None = None,
+    chunks: list[dict[str, Any]] | None = None,
+    model_logs: list[dict[str, Any]] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_knowledge_deposit_records", None)
+    if save_records is not None:
+        save_records(
+            deposit=deposit,
+            document=document,
+            chunks=chunks
+            if chunks is not None
+            else (
+                _knowledge_chunks_for_document(current_store, document["id"])
+                if document is not None
+                else None
+            ),
+            audit_event=audit_event,
+            model_logs=model_logs,
+        )
+
+
+def _get_knowledge_deposit(current_store: MemoryStore, deposit_id: str) -> dict[str, Any] | None:
+    repository = _runtime_repository(current_store)
+    get_deposit = getattr(repository, "get_knowledge_deposit", None)
+    if get_deposit is not None:
+        return get_deposit(deposit_id)
+    return current_store.knowledge_deposits.get(deposit_id)
+
+
+def _save_assistant_chat_records(
+    current_store: MemoryStore,
+    *,
+    conversation: dict[str, Any] | None,
+    messages: list[dict[str, Any]],
+    audit_events: list[dict[str, Any]],
+    model_log: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_assistant_chat_records", None)
+    if save_records is not None:
+        save_records(
+            conversation=conversation,
+            messages=messages,
+            model_log=model_log,
+            audit_events=audit_events,
+        )
+
+
+def _save_gitlab_review_snapshot_record(
+    current_store: MemoryStore,
+    *,
+    snapshot: dict[str, Any] | None,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_record = getattr(repository, "save_gitlab_review_snapshot_record", None)
+    if save_record is not None:
+        save_record(snapshot=snapshot, audit_event=audit_event)
+
+
+def _save_bug_record(
+    current_store: MemoryStore,
+    record: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_record = getattr(repository, "save_bug_record", None)
+    if save_record is not None:
+        save_record(record, audit_event=audit_event)
+
+
+def _delete_bug_record(
+    current_store: MemoryStore,
+    record_id: str,
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    delete_record = getattr(repository, "delete_bug_record", None)
+    if delete_record is not None:
+        delete_record(record_id, audit_event=audit_event)
+
+
+def _save_single_repository_record(
+    current_store: MemoryStore,
+    method_name: str,
+    record: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_record = getattr(repository, method_name, None)
+    if save_record is not None:
+        save_record(record, audit_event=audit_event)
+
+
+def _save_iteration_decision_records(
+    current_store: MemoryStore,
+    *,
+    suggestion: dict[str, Any],
+    decision: dict[str, Any],
+    audit_events: list[dict[str, Any]],
+    requirement: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_iteration_decision_records", None)
+    if save_records is not None:
+        save_records(
+            suggestion=suggestion,
+            decision=decision,
+            audit_events=audit_events,
+            requirement=requirement,
+        )
+
+
+def _save_lifecycle_context_records(current_store: MemoryStore) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_lifecycle_context", None)
+    if save_records is not None:
+        save_records(
+            {
+                "lifecycle_context_edges": current_store.lifecycle_context_edges,
+                "lifecycle_risk_signals": current_store.lifecycle_risk_signals,
+            }
+        )
+
+
+def _save_dashboard_snapshot_records(current_store: MemoryStore) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_dashboard_snapshots", None)
+    if save_records is not None:
+        save_records({"dashboard_metric_snapshots": current_store.dashboard_metric_snapshots})
+
+
+def _save_dashboard_metric_snapshot_record(
+    current_store: MemoryStore,
+    snapshot: dict[str, Any],
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_record = getattr(repository, "save_dashboard_metric_snapshot_record", None)
+    if save_record is not None:
+        save_record(snapshot)
+
+
+def _save_model_gateway_records(
+    current_store: MemoryStore,
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    _save_model_gateway_payload(
+        current_store,
+        configs=current_store.model_gateway_configs,
+        logs=current_store.model_gateway_logs,
+        audit_event=audit_event,
+    )
+
+
+def _save_model_gateway_payload(
+    current_store: Any,
+    *,
+    configs: dict[str, dict[str, Any]],
+    logs: list[dict[str, Any]],
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _runtime_repository(current_store)
+    save_records = getattr(repository, "save_model_gateway_records", None)
+    if save_records is not None:
+        save_records(
+            {
+                "model_gateway_configs": configs,
+                "model_gateway_logs": logs,
+            },
+            audit_event=audit_event,
+        )
 
 
 def _product_version_summary_projection(
@@ -2113,6 +2980,20 @@ def _set_default_model_gateway_config(
         return
     for item_id, item in current_store.model_gateway_configs.items():
         item["is_default"] = item_id == config_id
+
+
+def _model_gateway_configs_after_default(
+    configs: dict[str, dict[str, Any]],
+    *,
+    config_id: str,
+    is_default: bool,
+) -> dict[str, dict[str, Any]]:
+    if not is_default:
+        return configs
+    return {
+        item_id: {**item, "is_default": item_id == config_id}
+        for item_id, item in configs.items()
+    }
 
 
 def _default_model_gateway_config(current_store: MemoryStore) -> dict[str, Any] | None:
@@ -2563,10 +3444,13 @@ def _ensure_assistant_conversation(
                 and existing.get("product_id") != product_id
             ):
                 raise api_error(400, "VALIDATION_ERROR", "Conversation product_id does not match")
-            if product_id and not existing.get("product_id"):
-                existing["product_id"] = product_id
-            existing["updated_at"] = now
-            return existing
+            conversation = dict(existing)
+            if product_id and not conversation.get("product_id"):
+                conversation["product_id"] = product_id
+            conversation["updated_at"] = now
+            if not _uses_repository_context(current_store):
+                current_store.assistant_conversations[conversation_id] = conversation
+            return conversation
         resolved_id = conversation_id
     else:
         resolved_id = current_store.new_id("conversation")
@@ -2580,7 +3464,8 @@ def _ensure_assistant_conversation(
         "updated_at": now,
         "user_id": user_id,
     }
-    current_store.assistant_conversations[resolved_id] = conversation
+    if not _uses_repository_context(current_store):
+        current_store.assistant_conversations[resolved_id] = conversation
     return conversation
 
 
@@ -2606,7 +3491,8 @@ def _append_assistant_message(
         "suggestions": suggestions or [],
         "user_id": user_id,
     }
-    current_store.assistant_messages[message["id"]] = message
+    if not _uses_repository_context(current_store):
+        current_store.assistant_messages[message["id"]] = message
     conversation["last_message_at"] = now
     conversation["message_count"] = int(conversation.get("message_count") or 0) + 1
     conversation["updated_at"] = now
@@ -3292,7 +4178,13 @@ def delete_user(
 @app.get("/api/brain-apps")
 def list_brain_apps(request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
     current_store = store(request)
-    items = sorted(current_store.brain_apps.values(), key=lambda item: item["code"])
+    repository = _brain_app_query_repository(current_store)
+    brain_apps = (
+        _brain_app_rows_from_repository(repository)
+        if repository is not None
+        else current_store.brain_apps
+    )
+    items = sorted(brain_apps.values(), key=lambda item: item["code"])
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
 
@@ -3303,12 +4195,18 @@ def get_brain_app(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    brain_app = current_store.brain_apps.get(brain_app_id)
+    repository = _brain_app_query_repository(current_store)
+    brain_apps = (
+        _brain_app_rows_from_repository(repository)
+        if repository is not None
+        else current_store.brain_apps
+    )
+    brain_app = brain_apps.get(brain_app_id)
     if brain_app is None:
         brain_app = next(
             (
                 item
-                for item in current_store.brain_apps.values()
+                for item in brain_apps.values()
                 if item["id"] == brain_app_id or item["code"] == brain_app_id
             ),
             None,
@@ -3325,6 +4223,10 @@ def list_products(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
+    repository = _product_config_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_products(active_only=active_only)
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = sorted(
         current_store.products.values(),
         key=lambda item: (item.get("display_order", 0), item["code"]),
@@ -3339,7 +4241,7 @@ def create_product(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     name = _ensure_non_blank(payload.name, "name")
     _ensure_enum(payload.status, PRODUCT_STATUSES, "product status")
     product_id = current_store.new_id("product")
@@ -3360,12 +4262,20 @@ def create_product(
         "status": payload.status,
         "display_order": payload.display_order,
     }
-    current_store.products[product_id] = product
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.products[product_id] = product
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product.created",
         actor_id=user["id"],
         subject_type="product",
         subject_id=product_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "products",
+        product,
+        audit_event=audit_event,
     )
     return envelope(product, get_trace_id(request))
 
@@ -3377,6 +4287,12 @@ def get_product(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
+    repository = _product_config_query_repository(current_store)
+    if repository is not None:
+        product = repository.get_product(product_id)
+        if product is None:
+            raise api_error(404, "NOT_FOUND", "Product not found")
+        return envelope(product, get_trace_id(request))
     product = current_store.products.get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
@@ -3391,7 +4307,7 @@ def patch_product(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     product = current_store.products.get(product_id)
     if product is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
@@ -3410,12 +4326,21 @@ def patch_product(
         )
     if "status" in updates:
         _ensure_enum(updates["status"], PRODUCT_STATUSES, "product status")
-    product.update(updates)
-    current_store.audit(
+    product = {**product, **updates}
+    if not _uses_repository_context(current_store):
+        current_store.products[product_id] = product
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product.updated",
         actor_id=user["id"],
         subject_type="product",
         subject_id=product_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "products",
+        product,
+        audit_event=audit_event,
     )
     return envelope(product, get_trace_id(request))
 
@@ -3427,7 +4352,7 @@ def delete_product(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
     has_dependencies = any(
@@ -3441,20 +4366,31 @@ def delete_product(
     )
     if has_dependencies:
         raise api_error(409, "RESOURCE_IN_USE", "Product still has related records")
-    for collection in [
-        current_store.product_versions,
-        current_store.product_modules,
-        current_store.product_git_repositories,
+    for collection_name, collection in [
+        ("product_versions", current_store.product_versions),
+        ("product_modules", current_store.product_modules),
+        ("product_git_repositories", current_store.product_git_repositories),
+        ("related_systems", current_store.related_systems),
     ]:
         for item_id, item in list(collection.items()):
-            if item["product_id"] == product_id:
-                del collection[item_id]
-    del current_store.products[product_id]
-    current_store.audit(
+            if item.get("product_id") == product_id:
+                if not _uses_repository_context(current_store):
+                    del collection[item_id]
+                _delete_product_config_record(current_store, collection_name, item_id)
+    if not _uses_repository_context(current_store):
+        del current_store.products[product_id]
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product.deleted",
         actor_id=user["id"],
         subject_type="product",
         subject_id=product_id,
+    )
+    _delete_product_config_record(
+        current_store,
+        "products",
+        product_id,
+        audit_event=audit_event,
     )
     return envelope({"deleted": True, "id": product_id}, get_trace_id(request))
 
@@ -3486,6 +4422,12 @@ def list_product_versions(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
+    repository = _product_config_query_repository(current_store)
+    if repository is not None:
+        if repository.get_product(product_id) is None:
+            raise api_error(404, "NOT_FOUND", "Product not found")
+        items = repository.list_product_versions(product_id, active_only=active_only)
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
     items = [
@@ -3505,7 +4447,7 @@ def create_product_version(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
     name = _ensure_non_blank(payload.name, "name")
@@ -3530,12 +4472,20 @@ def create_product_version(
         "start_date": payload.start_date,
         "release_date": payload.release_date,
     }
-    current_store.product_versions[version_id] = version
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.product_versions[version_id] = version
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product_version.created",
         actor_id=user["id"],
         subject_type="product_version",
         subject_id=version_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "product_versions",
+        version,
+        audit_event=audit_event,
     )
     return envelope(version, get_trace_id(request))
 
@@ -3548,7 +4498,7 @@ def patch_product_version(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     version = current_store.product_versions.get(version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
@@ -3568,12 +4518,21 @@ def patch_product_version(
         )
     if "status" in updates:
         _ensure_enum(updates["status"], VERSION_STATUSES, "product version status")
-    version.update(updates)
-    current_store.audit(
+    version = {**version, **updates}
+    if not _uses_repository_context(current_store):
+        current_store.product_versions[version_id] = version
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product_version.updated",
         actor_id=user["id"],
         subject_type="product_version",
         subject_id=version_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "product_versions",
+        version,
+        audit_event=audit_event,
     )
     return envelope(version, get_trace_id(request))
 
@@ -3585,7 +4544,7 @@ def delete_product_version(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     version = current_store.product_versions.get(version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
@@ -3595,12 +4554,20 @@ def delete_product_version(
         or any(item.get("version_id") == version_id for item in current_store.bugs.values())
     ):
         raise api_error(409, "RESOURCE_IN_USE", "Product version still has related records")
-    del current_store.product_versions[version_id]
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        del current_store.product_versions[version_id]
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product_version.deleted",
         actor_id=user["id"],
         subject_type="product_version",
         subject_id=version_id,
+    )
+    _delete_product_config_record(
+        current_store,
+        "product_versions",
+        version_id,
+        audit_event=audit_event,
     )
     return envelope({"deleted": True, "id": version_id}, get_trace_id(request))
 
@@ -3613,6 +4580,12 @@ def list_product_modules(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
+    repository = _product_config_query_repository(current_store)
+    if repository is not None:
+        if repository.get_product(product_id) is None:
+            raise api_error(404, "NOT_FOUND", "Product not found")
+        items = repository.list_product_modules(product_id, active_only=active_only)
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
     items = [
@@ -3632,7 +4605,7 @@ def create_product_module(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
     name = _ensure_non_blank(payload.name, "name")
@@ -3657,12 +4630,20 @@ def create_product_module(
         "status": payload.status,
         "display_order": payload.display_order,
     }
-    current_store.product_modules[module_id] = module
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.product_modules[module_id] = module
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product_module.created",
         actor_id=user["id"],
         subject_type="product_module",
         subject_id=module_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "product_modules",
+        module,
+        audit_event=audit_event,
     )
     return envelope(module, get_trace_id(request))
 
@@ -3675,7 +4656,7 @@ def patch_product_module(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     module = current_store.product_modules.get(module_id)
     if module is None:
         raise api_error(404, "NOT_FOUND", "Product module not found")
@@ -3695,12 +4676,21 @@ def patch_product_module(
         )
     if "status" in updates:
         _ensure_enum(updates["status"], MODULE_STATUSES, "product module status")
-    module.update(updates)
-    current_store.audit(
+    module = {**module, **updates}
+    if not _uses_repository_context(current_store):
+        current_store.product_modules[module_id] = module
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product_module.updated",
         actor_id=user["id"],
         subject_type="product_module",
         subject_id=module_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "product_modules",
+        module,
+        audit_event=audit_event,
     )
     return envelope(module, get_trace_id(request))
 
@@ -3712,7 +4702,7 @@ def delete_product_module(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     module = current_store.product_modules.get(module_id)
     if module is None:
         raise api_error(404, "NOT_FOUND", "Product module not found")
@@ -3726,12 +4716,20 @@ def delete_product_module(
         ]
     ):
         raise api_error(409, "RESOURCE_IN_USE", "Product module still has related records")
-    del current_store.product_modules[module_id]
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        del current_store.product_modules[module_id]
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product_module.deleted",
         actor_id=user["id"],
         subject_type="product_module",
         subject_id=module_id,
+    )
+    _delete_product_config_record(
+        current_store,
+        "product_modules",
+        module_id,
+        audit_event=audit_event,
     )
     return envelope({"deleted": True, "id": module_id}, get_trace_id(request))
 
@@ -3745,6 +4743,13 @@ def list_product_git_repositories(
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
     current_store = store(request)
+    repository = _product_config_query_repository(current_store)
+    if repository is not None:
+        if repository.get_product(product_id) is None:
+            raise api_error(404, "NOT_FOUND", "Product not found")
+        items = repository.list_product_git_repositories(product_id, active_only=active_only)
+        public_items = [_public_git_repository(item) for item in items]
+        return envelope({"items": public_items, "total": len(public_items)}, get_trace_id(request))
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
     items = [
@@ -3765,7 +4770,7 @@ def create_product_git_repository(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     if product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
     name = _ensure_non_blank(payload.name, "name")
@@ -3792,12 +4797,20 @@ def create_product_git_repository(
         "root_path": payload.root_path,
         "status": payload.status,
     }
-    current_store.product_git_repositories[repository_id] = repository
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.product_git_repositories[repository_id] = repository
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product_git_repository.created",
         actor_id=user["id"],
         subject_type="product_git_repository",
         subject_id=repository_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "product_git_repositories",
+        repository,
+        audit_event=audit_event,
     )
     return envelope(_public_git_repository(repository), get_trace_id(request))
 
@@ -3810,7 +4823,7 @@ def patch_product_git_repository(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     repository = current_store.product_git_repositories.get(repo_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "Product Git repository not found")
@@ -3829,12 +4842,21 @@ def patch_product_git_repository(
         project_path=next_project_path,
         remote_url=next_remote_url,
     )
-    repository.update(updates)
-    current_store.audit(
+    repository = {**repository, **updates}
+    if not _uses_repository_context(current_store):
+        current_store.product_git_repositories[repo_id] = repository
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product_git_repository.updated",
         actor_id=user["id"],
         subject_type="product_git_repository",
         subject_id=repo_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "product_git_repositories",
+        repository,
+        audit_event=audit_event,
     )
     return envelope(_public_git_repository(repository), get_trace_id(request))
 
@@ -3846,15 +4868,23 @@ def delete_product_git_repository(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     if repo_id not in current_store.product_git_repositories:
         raise api_error(404, "NOT_FOUND", "Product Git repository not found")
-    del current_store.product_git_repositories[repo_id]
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        del current_store.product_git_repositories[repo_id]
+    audit_event = _record_audit_event(
+        current_store,
         event_type="product_git_repository.deleted",
         actor_id=user["id"],
         subject_type="product_git_repository",
         subject_id=repo_id,
+    )
+    _delete_product_config_record(
+        current_store,
+        "product_git_repositories",
+        repo_id,
+        audit_event=audit_event,
     )
     return envelope({"deleted": True, "id": repo_id}, get_trace_id(request))
 
@@ -3867,6 +4897,10 @@ def list_related_systems(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
+    repository = _product_config_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_related_systems(active_only=active_only, product_id=product_id)
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = sorted(
         (
             item
@@ -3885,7 +4919,7 @@ def create_related_system(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     name = _ensure_non_blank(payload.name, "name")
     _ensure_enum(payload.status, RELATED_SYSTEM_STATUSES, "related system status")
     if payload.product_id is not None and payload.product_id not in current_store.products:
@@ -3909,12 +4943,20 @@ def create_related_system(
         "status": payload.status,
         "display_order": payload.display_order,
     }
-    current_store.related_systems[system_id] = related_system
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.related_systems[system_id] = related_system
+    audit_event = _record_audit_event(
+        current_store,
         event_type="related_system.created",
         actor_id=user["id"],
         subject_type="related_system",
         subject_id=system_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "related_systems",
+        related_system,
+        audit_event=audit_event,
     )
     return envelope(related_system, get_trace_id(request))
 
@@ -3927,7 +4969,7 @@ def patch_related_system(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     related_system = current_store.related_systems.get(system_id)
     if related_system is None:
         raise api_error(404, "NOT_FOUND", "Related system not found")
@@ -3949,12 +4991,21 @@ def patch_related_system(
     if "product_id" in updates and updates["product_id"] is not None:
         if updates["product_id"] not in current_store.products:
             raise api_error(404, "NOT_FOUND", "Product not found")
-    related_system.update(updates)
-    current_store.audit(
+    related_system = {**related_system, **updates}
+    if not _uses_repository_context(current_store):
+        current_store.related_systems[system_id] = related_system
+    audit_event = _record_audit_event(
+        current_store,
         event_type="related_system.updated",
         actor_id=user["id"],
         subject_type="related_system",
         subject_id=system_id,
+    )
+    _save_product_config_record(
+        current_store,
+        "related_systems",
+        related_system,
+        audit_event=audit_event,
     )
     return envelope(related_system, get_trace_id(request))
 
@@ -3966,15 +5017,23 @@ def delete_related_system(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     if system_id not in current_store.related_systems:
         raise api_error(404, "NOT_FOUND", "Related system not found")
-    del current_store.related_systems[system_id]
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        del current_store.related_systems[system_id]
+    audit_event = _record_audit_event(
+        current_store,
         event_type="related_system.deleted",
         actor_id=user["id"],
         subject_type="related_system",
         subject_id=system_id,
+    )
+    _delete_product_config_record(
+        current_store,
+        "related_systems",
+        system_id,
+        audit_event=audit_event,
     )
     return envelope({"deleted": True, "id": system_id}, get_trace_id(request))
 
@@ -3985,11 +5044,15 @@ def list_model_gateway_configs(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
-    current_store = store(request)
-    configs = sorted(
-        current_store.model_gateway_configs.values(),
-        key=lambda item: item["id"],
-    )
+    current_store = _model_gateway_write_store(store(request))
+    repository = _model_gateway_query_repository(current_store)
+    if repository is not None:
+        configs = repository.list_model_gateway_configs()
+    else:
+        configs = sorted(
+            current_store.model_gateway_configs.values(),
+            key=lambda item: item["id"],
+        )
     items = [
         _public_model_gateway_config(item)
         for item in configs
@@ -4004,7 +5067,7 @@ def test_model_gateway_config(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
-    current_store = store(request)
+    current_store = _model_gateway_write_store(store(request))
     name = _ensure_non_blank(payload.name, "name")
     base_url = _ensure_non_blank(payload.base_url, "base_url")
     _ensure_enum(
@@ -4086,7 +5149,8 @@ def test_model_gateway_config(
         "ok": bool(chat_result["ok"] and embedding_result["ok"]),
         "test_target": test_target,
     }
-    current_store.audit(
+    audit_event = _record_audit_event(
+        current_store,
         event_type="model_gateway_config.tested",
         actor_id=user["id"],
         subject_type="model_gateway_config",
@@ -4098,6 +5162,12 @@ def test_model_gateway_config(
             "test_target": test_target,
         },
     )
+    _save_model_gateway_payload(
+        current_store,
+        configs=current_store.model_gateway_configs,
+        logs=current_store.model_gateway_logs,
+        audit_event=audit_event,
+    )
     return envelope(result, get_trace_id(request))
 
 
@@ -4108,7 +5178,7 @@ def create_model_gateway_config(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
-    current_store = store(request)
+    current_store = _model_gateway_write_store(store(request))
     name = _ensure_non_blank(payload.name, "name")
     base_url = _ensure_non_blank(payload.base_url, "base_url")
     default_chat_model = _ensure_non_blank(payload.default_chat_model, "default_chat_model")
@@ -4137,17 +5207,29 @@ def create_model_gateway_config(
         "is_default": payload.is_default,
         **embedding_fields,
     }
-    current_store.model_gateway_configs[config_id] = config
-    _set_default_model_gateway_config(
-        current_store,
+    next_configs = {
+        **current_store.model_gateway_configs,
+        config_id: config,
+    }
+    next_configs = _model_gateway_configs_after_default(
+        next_configs,
         config_id=config_id,
         is_default=payload.is_default,
     )
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.model_gateway_configs = next_configs
+    audit_event = _record_audit_event(
+        current_store,
         event_type="model_gateway_config.created",
         actor_id=user["id"],
         subject_type="model_gateway_config",
         subject_id=config_id,
+    )
+    _save_model_gateway_payload(
+        current_store,
+        configs=next_configs,
+        logs=current_store.model_gateway_logs,
+        audit_event=audit_event,
     )
     return envelope(_public_model_gateway_config(config), get_trace_id(request))
 
@@ -4160,7 +5242,7 @@ def patch_model_gateway_config(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
-    current_store = store(request)
+    current_store = _model_gateway_write_store(store(request))
     config = current_store.model_gateway_configs.get(config_id)
     if config is None:
         raise api_error(404, "NOT_FOUND", "Model gateway config not found")
@@ -4226,17 +5308,30 @@ def patch_model_gateway_config(
             existing_config=config,
         )
         updates.update(embedding_fields)
-    config.update(updates)
-    _set_default_model_gateway_config(
-        current_store,
+    config = {**config, **updates}
+    next_configs = {
+        **current_store.model_gateway_configs,
+        config_id: config,
+    }
+    next_configs = _model_gateway_configs_after_default(
+        next_configs,
         config_id=config_id,
         is_default=bool(config.get("is_default")),
     )
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.model_gateway_configs = next_configs
+    audit_event = _record_audit_event(
+        current_store,
         event_type="model_gateway_config.updated",
         actor_id=user["id"],
         subject_type="model_gateway_config",
         subject_id=config_id,
+    )
+    _save_model_gateway_payload(
+        current_store,
+        configs=next_configs,
+        logs=current_store.model_gateway_logs,
+        audit_event=audit_event,
     )
     return envelope(_public_model_gateway_config(config), get_trace_id(request))
 
@@ -4248,15 +5343,25 @@ def delete_model_gateway_config(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
-    current_store = store(request)
+    current_store = _model_gateway_write_store(store(request))
     if config_id not in current_store.model_gateway_configs:
         raise api_error(404, "NOT_FOUND", "Model gateway config not found")
-    del current_store.model_gateway_configs[config_id]
-    current_store.audit(
+    next_configs = dict(current_store.model_gateway_configs)
+    next_configs.pop(config_id, None)
+    if not _uses_repository_context(current_store):
+        current_store.model_gateway_configs = next_configs
+    audit_event = _record_audit_event(
+        current_store,
         event_type="model_gateway_config.deleted",
         actor_id=user["id"],
         subject_type="model_gateway_config",
         subject_id=config_id,
+    )
+    _save_model_gateway_payload(
+        current_store,
+        configs=next_configs,
+        logs=current_store.model_gateway_logs,
+        audit_event=audit_event,
     )
     return envelope({"deleted": True, "id": config_id}, get_trace_id(request))
 
@@ -4271,14 +5376,22 @@ def list_model_gateway_logs(
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
     current_store = store(request)
-    items = list(current_store.model_gateway_logs)
-    if ai_task_id:
-        items = [item for item in items if item.get("ai_task_id") == ai_task_id]
-    if purpose:
-        items = [item for item in items if item["purpose"] == purpose]
-    if status:
-        items = [item for item in items if item["status"] == status]
-    items.sort(key=lambda item: item["created_at"], reverse=True)
+    repository = _model_gateway_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_model_gateway_logs(
+            ai_task_id=ai_task_id,
+            purpose=purpose,
+            status=status,
+        )
+    else:
+        items = list(current_store.model_gateway_logs)
+        if ai_task_id:
+            items = [item for item in items if item.get("ai_task_id") == ai_task_id]
+        if purpose:
+            items = [item for item in items if item["purpose"] == purpose]
+        if status:
+            items = [item for item in items if item["status"] == status]
+        items.sort(key=lambda item: item["created_at"], reverse=True)
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
 
@@ -4289,11 +5402,16 @@ def list_assistant_conversations(
 ) -> dict[str, Any]:
     _require_roles(user, {"admin", "product_owner", "rd_owner", "reviewer", "knowledge_owner"})
     current_store = store(request)
-    items = [
-        _public_assistant_conversation(conversation)
-        for conversation in current_store.assistant_conversations.values()
-        if conversation.get("user_id") == user["id"]
-    ]
+    repository = _assistant_query_repository(current_store)
+    if repository is not None:
+        conversations = repository.list_assistant_conversations(user_id=user["id"])
+    else:
+        conversations = [
+            conversation
+            for conversation in current_store.assistant_conversations.values()
+            if conversation.get("user_id") == user["id"]
+        ]
+    items = [_public_assistant_conversation(conversation) for conversation in conversations]
     items.sort(key=lambda item: item.get("last_message_at") or item["updated_at"], reverse=True)
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
@@ -4306,18 +5424,25 @@ def list_assistant_conversation_messages(
 ) -> dict[str, Any]:
     _require_roles(user, {"admin", "product_owner", "rd_owner", "reviewer", "knowledge_owner"})
     current_store = store(request)
-    _assistant_conversation_for_user(
-        current_store,
-        conversation_id=conversation_id,
-        user_id=user["id"],
-    )
-    items = [
-        _public_assistant_message(message)
-        for message in _assistant_conversation_messages(
+    repository = _assistant_query_repository(current_store)
+    if repository is not None:
+        messages = repository.list_assistant_conversation_messages(
+            conversation_id=conversation_id,
+            user_id=user["id"],
+        )
+        if messages is None:
+            raise api_error(404, "NOT_FOUND", "Assistant conversation not found")
+    else:
+        _assistant_conversation_for_user(
+            current_store,
+            conversation_id=conversation_id,
+            user_id=user["id"],
+        )
+        messages = _assistant_conversation_messages(
             current_store,
             conversation_id=conversation_id,
         )
-    ]
+    items = [_public_assistant_message(message) for message in messages]
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
 
@@ -4328,7 +5453,7 @@ def chat_with_assistant(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin", "product_owner", "rd_owner", "reviewer", "knowledge_owner"})
-    current_store = store(request)
+    current_store = _assistant_write_store(store(request), user_id=user["id"])
     message = _ensure_non_blank(payload.message, "message")
     normalized_payload = AssistantChatRequest(
         context=payload.context,
@@ -4347,6 +5472,7 @@ def chat_with_assistant(
         )
         if existing_conversation is not None and existing_conversation.get("user_id") != user["id"]:
             raise api_error(404, "NOT_FOUND", "Assistant conversation not found")
+    audit_start_index = len(current_store.audit_events)
     try:
         assistant_output, model_log = _call_model_gateway_for_assistant_chat(
             current_store,
@@ -4367,6 +5493,13 @@ def chat_with_assistant(
                 "purpose": exc.log["purpose"],
                 "status": exc.log["status"],
             },
+        )
+        _save_assistant_chat_records(
+            current_store,
+            conversation=None,
+            messages=[],
+            model_log=exc.log,
+            audit_events=current_store.audit_events[audit_start_index:],
         )
         raise api_error(
             502,
@@ -4396,7 +5529,7 @@ def chat_with_assistant(
         product_id=normalized_payload.product_id,
         user=user,
     )
-    _append_assistant_message(
+    user_message = _append_assistant_message(
         current_store,
         content=message,
         conversation=conversation,
@@ -4427,6 +5560,13 @@ def chat_with_assistant(
             "suggestion_count": len(assistant_output["suggestions"]),
         },
     )
+    _save_assistant_chat_records(
+        current_store,
+        conversation=conversation,
+        messages=[user_message, assistant_message],
+        model_log=model_log,
+        audit_events=current_store.audit_events[audit_start_index:],
+    )
     return envelope(
         {
             "conversation_id": conversation["id"],
@@ -4446,7 +5586,7 @@ def create_requirement(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     title = _ensure_non_blank(payload.title, "title")
     content = _ensure_non_blank(payload.content, "content")
     product = current_store.products.get(payload.product_id)
@@ -4480,13 +5620,16 @@ def create_requirement(
         "task_ids": [],
         "created_at": datetime.now(UTC).isoformat(),
     }
-    current_store.requirements[requirement_id] = requirement
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.requirements[requirement_id] = requirement
+    audit_event = _record_audit_event(
+        current_store,
         event_type="requirement.created",
         actor_id=user["id"],
         subject_type="requirement",
         subject_id=requirement_id,
     )
+    _save_requirement_record(current_store, requirement, audit_event=audit_event)
     return envelope(requirement, get_trace_id(request))
 
 
@@ -4498,16 +5641,13 @@ def list_requirements(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    repository = _postgres_snapshot_repository(current_store)
-    if repository is not None:
-        items = repository.list_requirement_summaries(product_id=product_id)
-    else:
-        items = [
-            _requirement_summary_projection(requirement, current_store)
-            for requirement in current_store.requirements.values()
-        ]
-        if product_id:
-            items = [item for item in items if item["product_id"] == product_id]
+    read_store = _task_workflow_read_store(current_store)
+    items = [
+        _requirement_summary_projection(requirement, read_store)
+        for requirement in read_store.requirements.values()
+    ]
+    if product_id:
+        items = [item for item in items if item["product_id"] == product_id]
     if status:
         expected_status = _canonical_requirement_status(status)
         items = [
@@ -4526,7 +5666,8 @@ def get_requirement(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    requirement = current_store.requirements.get(requirement_id)
+    read_store = _task_workflow_read_store(current_store)
+    requirement = read_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     return envelope(requirement, get_trace_id(request))
@@ -4540,7 +5681,7 @@ def patch_requirement(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
@@ -4570,16 +5711,20 @@ def patch_requirement(
         for module in current_store.product_modules.values()
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
-    requirement.update(updates)
+    requirement = {**requirement, **updates}
     if current_status in {"approved", "planned"} and "version_id" in updates:
         requirement["status"] = "planned" if updates["version_id"] else "approved"
     requirement["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.requirements[requirement_id] = requirement
+    audit_event = _record_audit_event(
+        current_store,
         event_type="requirement.updated",
         actor_id=user["id"],
         subject_type="requirement",
         subject_id=requirement_id,
     )
+    _save_requirement_record(current_store, requirement, audit_event=audit_event)
     return envelope(requirement, get_trace_id(request))
 
 
@@ -4590,19 +5735,22 @@ def delete_requirement(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     if requirement.get("task_ids"):
         raise api_error(409, "RESOURCE_IN_USE", "Requirement already has tasks")
-    del current_store.requirements[requirement_id]
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        del current_store.requirements[requirement_id]
+    audit_event = _record_audit_event(
+        current_store,
         event_type="requirement.deleted",
         actor_id=user["id"],
         subject_type="requirement",
         subject_id=requirement_id,
     )
+    _delete_requirement_record(current_store, requirement_id, audit_event=audit_event)
     return envelope({"deleted": True, "id": requirement_id}, get_trace_id(request))
 
 
@@ -4614,21 +5762,28 @@ def approve_requirement(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     if _canonical_requirement_status(requirement.get("status")) != "submitted":
         raise api_error(409, "REQUIREMENT_STATE_INVALID", "Requirement is not pending approval")
-    requirement["status"] = "planned" if requirement.get("version_id") else "approved"
-    requirement["approval_comment"] = payload.comment
-    requirement["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.audit(
+    requirement = {
+        **requirement,
+        "approval_comment": payload.comment,
+        "status": "planned" if requirement.get("version_id") else "approved",
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    if not _uses_repository_context(current_store):
+        current_store.requirements[requirement_id] = requirement
+    audit_event = _record_audit_event(
+        current_store,
         event_type="requirement.approved",
         actor_id=user["id"],
         subject_type="requirement",
         subject_id=requirement_id,
     )
+    _save_requirement_record(current_store, requirement, audit_event=audit_event)
     return envelope(requirement, get_trace_id(request))
 
 
@@ -4640,7 +5795,7 @@ def reject_requirement(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
@@ -4649,15 +5804,22 @@ def reject_requirement(
     rejection_reason = payload.rejection_reason or payload.comment
     if not rejection_reason:
         raise api_error(400, "VALIDATION_ERROR", "rejection_reason is required")
-    requirement["status"] = "rejected"
-    requirement["rejection_reason"] = rejection_reason
-    requirement["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.audit(
+    requirement = {
+        **requirement,
+        "rejection_reason": rejection_reason,
+        "status": "rejected",
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    if not _uses_repository_context(current_store):
+        current_store.requirements[requirement_id] = requirement
+    audit_event = _record_audit_event(
+        current_store,
         event_type="requirement.rejected",
         actor_id=user["id"],
         subject_type="requirement",
         subject_id=requirement_id,
     )
+    _save_requirement_record(current_store, requirement, audit_event=audit_event)
     return envelope(requirement, get_trace_id(request))
 
 
@@ -4668,7 +5830,7 @@ def close_requirement(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
@@ -4685,14 +5847,21 @@ def close_requirement(
     ]
     if active_tasks:
         raise api_error(409, "REQUIREMENT_HAS_ACTIVE_TASKS", "Requirement has active tasks")
-    requirement["status"] = "closed"
-    requirement["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.audit(
+    requirement = {
+        **requirement,
+        "status": "closed",
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    if not _uses_repository_context(current_store):
+        current_store.requirements[requirement_id] = requirement
+    audit_event = _record_audit_event(
+        current_store,
         event_type="requirement.closed",
         actor_id=user["id"],
         subject_type="requirement",
         subject_id=requirement_id,
     )
+    _save_requirement_record(current_store, requirement, audit_event=audit_event)
     return envelope(requirement, get_trace_id(request))
 
 
@@ -4741,7 +5910,7 @@ def generate_task_from_requirement(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     requirement = current_store.requirements.get(requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
@@ -4775,10 +5944,18 @@ def generate_task_from_requirement(
         "created_at": now,
         "updated_at": now,
     }
-    current_store.ai_tasks[task_id] = task
-    _advance_requirement_after_task_created(current_store, task)
-    requirement.setdefault("task_ids", []).append(task_id)
-    current_store.audit(
+    updated_requirement = {
+        **requirement,
+        "task_ids": [*requirement.get("task_ids", []), task_id],
+    }
+    next_status = REQUIREMENT_STATUS_AFTER_TASK_CREATED.get(task["task_type"])
+    if next_status:
+        _set_requirement_status(updated_requirement, next_status)
+    if not _uses_repository_context(current_store):
+        current_store.ai_tasks[task_id] = task
+        current_store.requirements[requirement_id] = updated_requirement
+    audit_event = _record_audit_event(
+        current_store,
         event_type="ai_task.created",
         actor_id=user["id"],
         ai_task_id=task_id,
@@ -4788,6 +5965,12 @@ def generate_task_from_requirement(
             "brain_app_code": task["brain_app_id"],
             "task_type": "product_detail_design",
         },
+    )
+    _save_requirement_and_ai_task_records(
+        current_store,
+        requirement=updated_requirement,
+        task=task,
+        audit_event=audit_event,
     )
     return envelope(
         {"task_id": task_id, "task_type": task["task_type"], "task_status": task["status"]},
@@ -5271,7 +6454,7 @@ def _create_code_review_source_snapshot(
     changed_file_limit = 50
     file_diff_line_limit = 2_000
     if changed_file_count > changed_file_limit:
-        current_store.audit(
+        audit_event = current_store.audit(
             event_type=f"{event_prefix}.snapshot_failed",
             actor_id=user["id"],
             subject_type="product_git_repository",
@@ -5287,6 +6470,11 @@ def _create_code_review_source_snapshot(
                 "technical_solution_task_id": payload.technical_solution_task_id,
             },
         )
+        _save_gitlab_review_snapshot_record(
+            current_store,
+            snapshot=None,
+            audit_event=audit_event,
+        )
         raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
     oversized_file = next(
         (
@@ -5301,7 +6489,7 @@ def _create_code_review_source_snapshot(
         file_diff_line_count = int(oversized_file.get("additions") or 0) + int(
             oversized_file.get("deletions") or 0
         )
-        current_store.audit(
+        audit_event = current_store.audit(
             event_type=f"{event_prefix}.snapshot_failed",
             actor_id=user["id"],
             subject_type="product_git_repository",
@@ -5318,9 +6506,14 @@ def _create_code_review_source_snapshot(
                 "technical_solution_task_id": payload.technical_solution_task_id,
             },
         )
+        _save_gitlab_review_snapshot_record(
+            current_store,
+            snapshot=None,
+            audit_event=audit_event,
+        )
         raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
     if diff_size_bytes > diff_limit_bytes:
-        current_store.audit(
+        audit_event = current_store.audit(
             event_type=f"{event_prefix}.snapshot_failed",
             actor_id=user["id"],
             subject_type="product_git_repository",
@@ -5333,6 +6526,11 @@ def _create_code_review_source_snapshot(
                 "requirement_id": payload.requirement_id,
                 "technical_solution_task_id": payload.technical_solution_task_id,
             },
+        )
+        _save_gitlab_review_snapshot_record(
+            current_store,
+            snapshot=None,
+            audit_event=audit_event,
         )
         raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
 
@@ -5347,7 +6545,7 @@ def _create_code_review_source_snapshot(
         None,
     )
     if existing_snapshot is not None:
-        current_store.audit(
+        audit_event = current_store.audit(
             event_type=f"{event_prefix}.snapshot_reused",
             actor_id=user["id"],
             subject_type="gitlab_mr_snapshot",
@@ -5358,6 +6556,11 @@ def _create_code_review_source_snapshot(
                 "requirement_id": payload.requirement_id,
                 "technical_solution_task_id": payload.technical_solution_task_id,
             },
+        )
+        _save_gitlab_review_snapshot_record(
+            current_store,
+            snapshot=None,
+            audit_event=audit_event,
         )
         return existing_snapshot
 
@@ -5390,12 +6593,17 @@ def _create_code_review_source_snapshot(
         "writeback_allowed": False,
     }
     current_store.gitlab_mr_snapshots[snapshot_id] = snapshot
-    current_store.audit(
+    audit_event = current_store.audit(
         event_type=f"{event_prefix}.snapshotted",
         actor_id=user["id"],
         subject_type="gitlab_mr_snapshot",
         subject_id=snapshot_id,
         payload={"repository_id": repository["id"], "mr_iid": mr_iid},
+    )
+    _save_gitlab_review_snapshot_record(
+        current_store,
+        snapshot=snapshot,
+        audit_event=audit_event,
     )
     return snapshot
 
@@ -5603,19 +6811,24 @@ def preview_gitlab_mr(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"reviewer", "rd_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     repository = current_store.product_git_repositories.get(repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitLab repository binding not found")
     if repository["git_provider"] != "gitlab":
         raise api_error(400, "VALIDATION_ERROR", "Repository is not a GitLab binding")
     preview = _gitlab_preview(repository, mr_iid)
-    current_store.audit(
+    audit_event = current_store.audit(
         event_type="gitlab_mr.previewed",
         actor_id=user["id"],
         subject_type="product_git_repository",
         subject_id=repository_id,
         payload={"mr_iid": mr_iid},
+    )
+    _save_gitlab_review_snapshot_record(
+        current_store,
+        snapshot=None,
+        audit_event=audit_event,
     )
     return envelope(preview, get_trace_id(request))
 
@@ -5629,7 +6842,7 @@ def snapshot_gitlab_mr(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"reviewer", "rd_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     repository = current_store.product_git_repositories.get(repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitLab repository binding not found")
@@ -5677,19 +6890,24 @@ def list_github_pull_requests(
 ) -> dict[str, Any]:
     _require_roles(user, {"reviewer", "rd_owner"})
     _ensure_enum(state, {"open", "closed", "all"}, "GitHub pull request state")
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     repository = current_store.product_git_repositories.get(repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitHub repository binding not found")
     if repository["git_provider"] != "github":
         raise api_error(400, "VALIDATION_ERROR", "Repository is not a GitHub binding")
     items = _github_pull_requests(repository, state=state, limit=limit)
-    current_store.audit(
+    audit_event = current_store.audit(
         event_type="github_pr.listed",
         actor_id=user["id"],
         subject_type="product_git_repository",
         subject_id=repository_id,
         payload={"limit": limit, "state": state},
+    )
+    _save_gitlab_review_snapshot_record(
+        current_store,
+        snapshot=None,
+        audit_event=audit_event,
     )
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
@@ -5702,19 +6920,24 @@ def preview_github_pr(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"reviewer", "rd_owner"})
-    current_store = store(request)
+    current_store = _product_config_write_store(store(request))
     repository = current_store.product_git_repositories.get(repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitHub repository binding not found")
     if repository["git_provider"] != "github":
         raise api_error(400, "VALIDATION_ERROR", "Repository is not a GitHub binding")
     preview = _github_preview(repository, pr_number)
-    current_store.audit(
+    audit_event = current_store.audit(
         event_type="github_pr.previewed",
         actor_id=user["id"],
         subject_type="product_git_repository",
         subject_id=repository_id,
         payload={"pr_number": pr_number},
+    )
+    _save_gitlab_review_snapshot_record(
+        current_store,
+        snapshot=None,
+        audit_event=audit_event,
     )
     return envelope(preview, get_trace_id(request))
 
@@ -5728,7 +6951,7 @@ def snapshot_github_pr(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"reviewer", "rd_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     repository = current_store.product_git_repositories.get(repository_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "GitHub repository binding not found")
@@ -5836,7 +7059,7 @@ def create_ai_task(
     payload: AiTaskRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     requirement = current_store.requirements.get(payload.requirement_id)
     if requirement is None:
         raise api_error(404, "NOT_FOUND", "Requirement not found")
@@ -5956,12 +7179,21 @@ def create_ai_task(
         "created_at": now,
         "updated_at": now,
     }
-    current_store.ai_tasks[task_id] = task
-    task_ids = requirement.setdefault("task_ids", [])
-    if task_id not in task_ids:
-        task_ids.append(task_id)
-    _advance_requirement_after_task_created(current_store, task)
-    current_store.audit(
+    updated_task_ids = list(requirement.get("task_ids", []))
+    if task_id not in updated_task_ids:
+        updated_task_ids.append(task_id)
+    updated_requirement = {
+        **requirement,
+        "task_ids": updated_task_ids,
+    }
+    next_status = REQUIREMENT_STATUS_AFTER_TASK_CREATED.get(task["task_type"])
+    if next_status:
+        _set_requirement_status(updated_requirement, next_status)
+    if not _uses_repository_context(current_store):
+        current_store.ai_tasks[task_id] = task
+        current_store.requirements[requirement["id"]] = updated_requirement
+    audit_event = _record_audit_event(
+        current_store,
         event_type="ai_task.created",
         actor_id=user["id"],
         ai_task_id=task_id,
@@ -5971,6 +7203,12 @@ def create_ai_task(
             "brain_app_code": task["brain_app_id"],
             "task_type": payload.task_type,
         },
+    )
+    _save_requirement_and_ai_task_records(
+        current_store,
+        requirement=updated_requirement,
+        task=task,
+        audit_event=audit_event,
     )
     return envelope(task, get_trace_id(request))
 
@@ -5996,7 +7234,8 @@ def _create_code_review_report(
         "archived_at": None,
         "gitlab_writeback_performed": False,
     }
-    current_store.code_review_reports[report_id] = report
+    if not _uses_repository_context(current_store):
+        current_store.code_review_reports[report_id] = report
     task["code_review_report_id"] = report_id
     return report
 
@@ -6234,17 +7473,23 @@ def _complete_review_with_edited_approval(
     review_id: str,
     task: dict[str, Any],
 ) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
     task["output_json"] = {**task["output_json"], **edited_content}
     review["status"] = "edited_approved"
     review["edited_content"] = edited_content
     review["decided_by"] = actor_id
+    review["decided_at"] = now
+    review["updated_at"] = now
     task["status"] = "completed"
+    task["updated_at"] = now
     _confirm_code_review_report(current_store, task)
-    _create_automated_testing_bugs(current_store, actor_id=actor_id, task=task)
-    _create_post_release_bugs(current_store, actor_id=actor_id, task=task)
+    created_bug_ids = [
+        *_create_automated_testing_bugs(current_store, actor_id=actor_id, task=task),
+        *_create_post_release_bugs(current_store, actor_id=actor_id, task=task),
+    ]
     _advance_requirement_after_task_completed(current_store, task)
-    _create_knowledge_deposit(current_store, task)
-    _transition_latest_graph_run(
+    knowledge_deposit = _create_knowledge_deposit(current_store, task)
+    checkpoint = _transition_latest_graph_run(
         current_store,
         task=task,
         status="completed",
@@ -6259,19 +7504,31 @@ def _complete_review_with_edited_approval(
         subject_id=review_id,
         payload={"decision": "edited_approved"},
     )
-    return {"review_status": review["status"], "task_status": task["status"]}
+    return {
+        "review_status": review["status"],
+        "task_status": task["status"],
+        "bug_ids": created_bug_ids,
+        "knowledge_deposit": knowledge_deposit,
+        "checkpoint": checkpoint,
+    }
 
 
-def _create_knowledge_deposit(current_store: MemoryStore, task: dict[str, Any]) -> None:
+def _create_knowledge_deposit(current_store: MemoryStore, task: dict[str, Any]) -> dict[str, Any]:
     deposit_id = current_store.new_id("deposit")
-    current_store.knowledge_deposits[deposit_id] = {
+    now = datetime.now(UTC).isoformat()
+    deposit = {
         "id": deposit_id,
         "ai_task_id": task["id"],
         "title": f"{task['title']} 知识沉淀",
         "content": task["output_json"]["summary"],
         "status": "pending",
         "knowledge_document_id": None,
+        "created_at": now,
+        "updated_at": now,
     }
+    if not _uses_repository_context(current_store):
+        current_store.knowledge_deposits[deposit_id] = deposit
+    return deposit
 
 
 def _graph_runs_for_task(
@@ -6320,7 +7577,8 @@ def _write_graph_checkpoint(
         "state_snapshot": current_store.snapshot(snapshot),
         "created_at": datetime.now(UTC).isoformat(),
     }
-    current_store.graph_checkpoints[checkpoint_id] = checkpoint
+    if not _uses_repository_context(current_store):
+        current_store.graph_checkpoints[checkpoint_id] = checkpoint
     graph_run["checkpoint_id"] = checkpoint_id
     graph_run["current_step"] = current_step
     graph_run["state_snapshot"] = current_store.snapshot(snapshot)
@@ -6334,7 +7592,7 @@ def _start_graph_run(
     *,
     task: dict[str, Any],
     review_id: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     graph_run_id = current_store.new_id("graph_run")
     graph_state = run_ai_task_graph(task, review_id=review_id)
     graph_run = {
@@ -6350,9 +7608,10 @@ def _start_graph_run(
         "started_at": datetime.now(UTC).isoformat(),
         "completed_at": None,
     }
-    current_store.graph_runs[graph_run_id] = graph_run
+    if not _uses_repository_context(current_store):
+        current_store.graph_runs[graph_run_id] = graph_run
     task.setdefault("graph_run_ids", []).append(graph_run_id)
-    _write_graph_checkpoint(
+    checkpoint = _write_graph_checkpoint(
         current_store,
         graph_run=graph_run,
         task=task,
@@ -6365,7 +7624,7 @@ def _start_graph_run(
             "graph_runtime": graph_state["runtime_metadata"],
         },
     )
-    return graph_run
+    return graph_run, checkpoint
 
 
 def _transition_latest_graph_run(
@@ -6375,15 +7634,15 @@ def _transition_latest_graph_run(
     status: str,
     current_step: str,
     state_snapshot: dict[str, Any],
-) -> None:
+) -> dict[str, Any] | None:
     graph_run = _latest_graph_run(current_store, task)
     if graph_run is None:
         task["current_step"] = current_step
-        return
+        return None
     graph_run["status"] = status
     if status in {"completed", "failed", "cancelled"}:
         graph_run["completed_at"] = datetime.now(UTC).isoformat()
-    _write_graph_checkpoint(
+    return _write_graph_checkpoint(
         current_store,
         graph_run=graph_run,
         task=task,
@@ -6471,7 +7730,7 @@ def start_ai_task(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     task = current_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
@@ -6482,6 +7741,7 @@ def start_ai_task(
     )
     if task["status"] != "draft" and not is_retry_start:
         raise api_error(409, "TASK_STATE_INVALID", "Task cannot be started from current status")
+    audit_start_index = len(current_store.audit_events)
     if is_retry_start:
         current_store.audit(
             event_type="ai_task.retry_started",
@@ -6499,8 +7759,10 @@ def start_ai_task(
             model_log = executor_result.model_log
             executor_meta = executor_result.executor
         except CodeReviewExecutorError as exc:
+            now = datetime.now(UTC).isoformat()
             task["status"] = "failed"
             task["current_step"] = "code_review_executor_failed"
+            task["updated_at"] = now
             if exc.model_log is not None:
                 current_store.audit(
                     event_type="model_gateway.called",
@@ -6544,6 +7806,12 @@ def start_ai_task(
                     "reason": "code_review_executor_failed",
                 },
             )
+            _save_task_state_records(
+                current_store,
+                task=task,
+                model_log=exc.model_log,
+                audit_events=current_store.audit_events[audit_start_index:],
+            )
             raise api_error(
                 502,
                 "CODE_REVIEW_EXECUTOR_FAILED",
@@ -6556,8 +7824,10 @@ def start_ai_task(
                 task=task,
             )
         except ModelGatewayConfigError as exc:
+            now = datetime.now(UTC).isoformat()
             task["status"] = "failed"
             task["current_step"] = exc.current_step
+            task["updated_at"] = now
             current_store.audit(
                 event_type="ai_task.failed",
                 actor_id="system",
@@ -6569,10 +7839,17 @@ def start_ai_task(
                     "reason": "model_gateway_config_invalid",
                 },
             )
+            _save_task_state_records(
+                current_store,
+                task=task,
+                audit_events=current_store.audit_events[audit_start_index:],
+            )
             raise api_error(400, "MODEL_GATEWAY_CONFIG_INVALID", str(exc)) from exc
         except ModelGatewayCallError as exc:
+            now = datetime.now(UTC).isoformat()
             task["status"] = "failed"
             task["current_step"] = "model_gateway_failed"
+            task["updated_at"] = now
             current_store.audit(
                 event_type="model_gateway.called",
                 actor_id="system",
@@ -6598,9 +7875,17 @@ def start_ai_task(
                     "reason": "model_gateway_failed",
                 },
             )
+            _save_task_state_records(
+                current_store,
+                task=task,
+                model_log=exc.log,
+                audit_events=current_store.audit_events[audit_start_index:],
+            )
             raise api_error(502, "MODEL_GATEWAY_FAILED", "Model gateway request failed") from exc
 
+    now = datetime.now(UTC).isoformat()
     task["status"] = "waiting_review"
+    task["updated_at"] = now
     if model_log is not None:
         current_store.audit(
             event_type="model_gateway.called",
@@ -6637,12 +7922,14 @@ def start_ai_task(
         subject_type="ai_task",
         subject_id=task_id,
     )
+    code_review_report = None
     if task["task_type"] == "code_review":
         report = _create_code_review_report(
             current_store,
             task=task,
             output=task["output_json"],
         )
+        code_review_report = report
         current_store.audit(
             event_type="code_review.generated",
             actor_id="system",
@@ -6660,19 +7947,36 @@ def start_ai_task(
         "status": "pending",
         "version": 1,
         "content": current_store.snapshot(task["output_json"]),
+        "created_at": now,
+        "updated_at": now,
     }
-    current_store.human_reviews[review_id] = review
+    if not _uses_repository_context(current_store):
+        current_store.human_reviews[review_id] = review
     task["review_ids"].append(review_id)
     if task["task_type"] == "code_review":
         report_id = task.get("code_review_report_id")
-        current_store.code_review_reports[report_id]["review_id"] = review_id
-    graph_run = _start_graph_run(current_store, task=task, review_id=review_id)
+        if code_review_report is not None:
+            code_review_report = {**code_review_report, "review_id": review_id}
+        elif report_id is not None:
+            current_store.code_review_reports[report_id]["review_id"] = review_id
+            code_review_report = current_store.code_review_reports[report_id]
+    graph_run, checkpoint = _start_graph_run(current_store, task=task, review_id=review_id)
     current_store.audit(
         event_type="human_review.created",
         actor_id="system",
         ai_task_id=task_id,
         subject_type="human_review",
         subject_id=review_id,
+    )
+    _save_task_start_records(
+        current_store,
+        task=task,
+        review=review,
+        graph_run=graph_run,
+        checkpoint=checkpoint,
+        model_log=model_log,
+        code_review_report=code_review_report,
+        audit_events=current_store.audit_events[audit_start_index:],
     )
     return envelope(
         {
@@ -6694,11 +7998,12 @@ def get_ai_task(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    task = current_store.ai_tasks.get(task_id)
+    read_store = _task_workflow_read_store(current_store)
+    task = read_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
     _require_task_read_role(user, task)
-    return envelope(_task_detail_projection(current_store, task), get_trace_id(request))
+    return envelope(_task_detail_projection(read_store, task), get_trace_id(request))
 
 
 @app.post("/api/ai-tasks/{task_id}/cancel")
@@ -6707,21 +8012,28 @@ def cancel_ai_task(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     task = current_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
     if task["status"] in {"completed", "failed", "cancelled"}:
         raise api_error(409, "TASK_STATE_INVALID", "Task cannot be cancelled from current status")
     _require_review_decision_role(user, task)
+    audit_start_index = len(current_store.audit_events)
+    now = datetime.now(UTC).isoformat()
     task["status"] = "cancelled"
+    task["updated_at"] = now
+    cancelled_reviews = []
     for review_id in task.get("review_ids", []):
         review = current_store.human_reviews.get(review_id)
         if review and review["status"] == "pending":
             review["status"] = "cancelled"
             review["version"] += 1
             review["decided_by"] = user["id"]
-    _transition_latest_graph_run(
+            review["decided_at"] = now
+            review["updated_at"] = now
+            cancelled_reviews.append(review)
+    checkpoint = _transition_latest_graph_run(
         current_store,
         task=task,
         status="cancelled",
@@ -6735,6 +8047,15 @@ def cancel_ai_task(
         subject_type="ai_task",
         subject_id=task_id,
     )
+    graph_run = _latest_graph_run(current_store, task)
+    _save_task_state_records(
+        current_store,
+        task=task,
+        reviews=cancelled_reviews,
+        graph_run=graph_run,
+        checkpoint=checkpoint,
+        audit_events=current_store.audit_events[audit_start_index:],
+    )
     return envelope({"id": task_id, "status": task["status"]}, get_trace_id(request))
 
 
@@ -6745,9 +8066,10 @@ def list_graph_runs(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    items = list(current_store.graph_runs.values())
+    read_store = _task_workflow_read_store(current_store)
+    items = list(read_store.graph_runs.values())
     if ai_task_id:
-        task = current_store.ai_tasks.get(ai_task_id)
+        task = read_store.ai_tasks.get(ai_task_id)
         if task is None:
             raise api_error(404, "NOT_FOUND", "AI task not found")
         _require_task_read_role(user, task)
@@ -6756,7 +8078,7 @@ def list_graph_runs(
         items = [
             item
             for item in items
-            if (task := current_store.ai_tasks.get(item["ai_task_id"])) is not None
+            if (task := read_store.ai_tasks.get(item["ai_task_id"])) is not None
             and _can_read_task(user, task)
         ]
     items.sort(key=lambda item: item["started_at"], reverse=True)
@@ -6769,11 +8091,12 @@ def pending_reviews(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
+    read_store = _task_workflow_read_store(current_store)
     items = [
         review
-        for review in current_store.human_reviews.values()
+        for review in read_store.human_reviews.values()
         if review["status"] == "pending"
-        and (task := current_store.ai_tasks.get(review["ai_task_id"])) is not None
+        and (task := read_store.ai_tasks.get(review["ai_task_id"])) is not None
         and _can_read_task(user, task)
     ]
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
@@ -6786,17 +8109,18 @@ def get_review(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    review = current_store.human_reviews.get(review_id)
+    read_store = _task_workflow_read_store(current_store)
+    review = read_store.human_reviews.get(review_id)
     if review is None:
         raise api_error(404, "NOT_FOUND", "Review not found")
-    task = current_store.ai_tasks.get(review["ai_task_id"])
+    task = read_store.ai_tasks.get(review["ai_task_id"])
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
     _require_task_read_role(user, task)
     return envelope(
         {
-            **current_store.snapshot(review),
-            "task": current_store.snapshot(task),
+            **read_store.snapshot(review),
+            "task": read_store.snapshot(task),
         },
         get_trace_id(request),
     )
@@ -6809,22 +8133,29 @@ def approve_review(
     payload: ReviewDecisionRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     review, task = _ensure_review_decidable(
         current_store,
         review_id=review_id,
         version=payload.version,
     )
     _require_review_decision_role(user, task)
+    audit_start_index = len(current_store.audit_events)
+    now = datetime.now(UTC).isoformat()
     review["status"] = "approved"
     review["decided_by"] = user["id"]
+    review["decided_at"] = now
+    review["updated_at"] = now
     task["status"] = "completed"
+    task["updated_at"] = now
     _confirm_code_review_report(current_store, task)
-    _create_automated_testing_bugs(current_store, actor_id=user["id"], task=task)
-    _create_post_release_bugs(current_store, actor_id=user["id"], task=task)
+    created_bug_ids = [
+        *_create_automated_testing_bugs(current_store, actor_id=user["id"], task=task),
+        *_create_post_release_bugs(current_store, actor_id=user["id"], task=task),
+    ]
     _advance_requirement_after_task_completed(current_store, task)
-    _create_knowledge_deposit(current_store, task)
-    _transition_latest_graph_run(
+    knowledge_deposit = _create_knowledge_deposit(current_store, task)
+    checkpoint = _transition_latest_graph_run(
         current_store,
         task=task,
         status="completed",
@@ -6839,6 +8170,25 @@ def approve_review(
         subject_id=review_id,
         payload={"decision": "approved"},
     )
+    graph_run = _latest_graph_run(current_store, task)
+    requirement = current_store.requirements.get(task.get("requirement_id"))
+    code_review_report = (
+        current_store.code_review_reports.get(task.get("code_review_report_id"))
+        if task.get("code_review_report_id")
+        else None
+    )
+    _save_review_decision_records(
+        current_store,
+        task=task,
+        review=review,
+        graph_run=graph_run,
+        checkpoint=checkpoint,
+        requirement=requirement,
+        knowledge_deposits=[knowledge_deposit],
+        bugs=[current_store.bugs[bug_id] for bug_id in created_bug_ids],
+        code_review_report=code_review_report,
+        audit_events=current_store.audit_events[audit_start_index:],
+    )
     return envelope(
         {"review_status": review["status"], "task_status": task["status"]},
         get_trace_id(request),
@@ -6852,13 +8202,14 @@ def edit_approve_review(
     payload: ReviewDecisionRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     review, task = _ensure_review_decidable(
         current_store,
         review_id=review_id,
         version=payload.version,
     )
     _require_review_decision_role(user, task)
+    audit_start_index = len(current_store.audit_events)
     edited_content = payload.edited_content or {}
     result = _complete_review_with_edited_approval(
         current_store,
@@ -6868,7 +8219,33 @@ def edit_approve_review(
         review_id=review_id,
         task=task,
     )
-    return envelope(result, get_trace_id(request))
+    graph_run = _latest_graph_run(current_store, task)
+    checkpoint = result["checkpoint"]
+    requirement = current_store.requirements.get(task.get("requirement_id"))
+    code_review_report = (
+        current_store.code_review_reports.get(task.get("code_review_report_id"))
+        if task.get("code_review_report_id")
+        else None
+    )
+    _save_review_decision_records(
+        current_store,
+        task=task,
+        review=review,
+        graph_run=graph_run,
+        checkpoint=checkpoint,
+        requirement=requirement,
+        knowledge_deposits=[result["knowledge_deposit"]],
+        bugs=[current_store.bugs[bug_id] for bug_id in result["bug_ids"]],
+        code_review_report=code_review_report,
+        audit_events=current_store.audit_events[audit_start_index:],
+    )
+    return envelope(
+        {
+            "review_status": result["review_status"],
+            "task_status": result["task_status"],
+        },
+        get_trace_id(request),
+    )
 
 
 @app.post("/api/reviews/{review_id}/reject")
@@ -6878,18 +8255,23 @@ def reject_review(
     payload: ReviewDecisionRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     review, task = _ensure_review_decidable(
         current_store,
         review_id=review_id,
         version=payload.version,
     )
     _require_review_decision_role(user, task)
+    audit_start_index = len(current_store.audit_events)
+    now = datetime.now(UTC).isoformat()
     review["status"] = "rejected"
     review["decision_reason"] = payload.decision_reason
     review["decided_by"] = user["id"]
+    review["decided_at"] = now
+    review["updated_at"] = now
     task["status"] = "failed"
-    _transition_latest_graph_run(
+    task["updated_at"] = now
+    checkpoint = _transition_latest_graph_run(
         current_store,
         task=task,
         status="failed",
@@ -6908,6 +8290,15 @@ def reject_review(
         subject_id=review_id,
         payload={"decision_reason": payload.decision_reason},
     )
+    graph_run = _latest_graph_run(current_store, task)
+    _save_review_decision_records(
+        current_store,
+        task=task,
+        review=review,
+        graph_run=graph_run,
+        checkpoint=checkpoint,
+        audit_events=current_store.audit_events[audit_start_index:],
+    )
     return envelope(
         {"review_status": review["status"], "task_status": task["status"]},
         get_trace_id(request),
@@ -6921,18 +8312,23 @@ def request_more_info_review(
     payload: ReviewDecisionRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     review, task = _ensure_review_decidable(
         current_store,
         review_id=review_id,
         version=payload.version,
     )
     _require_review_decision_role(user, task)
+    audit_start_index = len(current_store.audit_events)
+    now = datetime.now(UTC).isoformat()
     review["status"] = "requested_more_info"
     review["questions"] = payload.questions
     review["decided_by"] = user["id"]
+    review["decided_at"] = now
+    review["updated_at"] = now
     task["status"] = "waiting_more_info"
-    _transition_latest_graph_run(
+    task["updated_at"] = now
+    checkpoint = _transition_latest_graph_run(
         current_store,
         task=task,
         status="interrupted",
@@ -6951,6 +8347,15 @@ def request_more_info_review(
         subject_id=review_id,
         payload={"questions": payload.questions},
     )
+    graph_run = _latest_graph_run(current_store, task)
+    _save_review_decision_records(
+        current_store,
+        task=task,
+        review=review,
+        graph_run=graph_run,
+        checkpoint=checkpoint,
+        audit_events=current_store.audit_events[audit_start_index:],
+    )
     return envelope(
         {"review_status": review["status"], "task_status": task["status"]},
         get_trace_id(request),
@@ -6964,22 +8369,30 @@ def submit_more_info(
     payload: MoreInfoRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     task = current_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
     if task["status"] != "waiting_more_info":
         raise api_error(409, "TASK_STATE_INVALID", "Task is not waiting for more info")
     _require_review_decision_role(user, task)
+    audit_start_index = len(current_store.audit_events)
+    now = datetime.now(UTC).isoformat()
     task["input_json"].setdefault("more_info_answers", []).extend(payload.answers)
     task["status"] = "draft"
     task["current_step"] = "draft"
+    task["updated_at"] = now
     current_store.audit(
         event_type="ai_task.more_info_submitted",
         actor_id=user["id"],
         ai_task_id=task_id,
         subject_type="ai_task",
         subject_id=task_id,
+    )
+    _save_task_state_records(
+        current_store,
+        task=task,
+        audit_events=current_store.audit_events[audit_start_index:],
     )
     return envelope({"id": task_id, "status": task["status"]}, get_trace_id(request))
 
@@ -6995,6 +8408,15 @@ def list_knowledge_documents(
     if index_status:
         _ensure_enum(index_status, KNOWLEDGE_INDEX_STATUSES, "knowledge index status")
     current_store = store(request)
+    repository = _knowledge_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_knowledge_documents(
+            user_roles=list(user.get("roles", [])),
+            keyword=keyword,
+            doc_type=doc_type,
+            index_status=index_status,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = [
         document
         for document in current_store.knowledge_documents.values()
@@ -7053,9 +8475,14 @@ def _knowledge_document_chunks(
 def _knowledge_document_response(
     current_store: MemoryStore,
     document: dict[str, Any],
+    chunks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     response = current_store.snapshot(document)
-    response["chunk_count"] = len(_knowledge_document_chunks(current_store, document["id"]))
+    response["chunk_count"] = (
+        len(chunks)
+        if chunks is not None
+        else len(_knowledge_document_chunks(current_store, document["id"]))
+    )
     response["index_error"] = document.get("index_error")
     response["vector_index_error"] = document.get("vector_index_error")
     return response
@@ -7081,15 +8508,16 @@ def _mark_knowledge_index_failed(
     document["vector_index_error"] = None
 
 
-def _store_knowledge_chunks(
-    current_store: MemoryStore,
+def _build_knowledge_chunks(
     document: dict[str, Any],
     chunks: list[str],
     *,
     embeddings: list[list[float]] | None = None,
     embedding_context: dict[str, Any] | None = None,
-) -> None:
+) -> list[dict[str, Any]]:
     permission_roles = list(document.get("permission_roles", ["admin"]))
+    now = datetime.now(UTC).isoformat()
+    records: list[dict[str, Any]] = []
     for chunk_index, content in enumerate(chunks, start=1):
         chunk_id = f"{document['id']}_chunk_{chunk_index:03d}"
         metadata = {
@@ -7109,17 +8537,41 @@ def _store_knowledge_chunks(
                     if value is not None
                 }
             )
-        current_store.knowledge_chunks[chunk_id] = {
-            "chunk_index": chunk_index,
-            "content": content,
-            "document_id": document["id"],
-            "embedding": embeddings[chunk_index - 1] if embeddings is not None else None,
-            "id": chunk_id,
-            "metadata": metadata,
-            "permission_roles": permission_roles,
-            "permission_scope": {"roles": permission_roles},
-        }
-    document["chunk_count"] = len(chunks)
+        records.append(
+            {
+                "chunk_index": chunk_index,
+                "content": content,
+                "document_id": document["id"],
+                "embedding": embeddings[chunk_index - 1] if embeddings is not None else None,
+                "id": chunk_id,
+                "metadata": metadata,
+                "permission_roles": permission_roles,
+                "permission_scope": {"roles": permission_roles},
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+    return records
+
+
+def _store_knowledge_chunks(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+    chunks: list[str],
+    *,
+    embeddings: list[list[float]] | None = None,
+    embedding_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    records = _build_knowledge_chunks(
+        document,
+        chunks,
+        embeddings=embeddings,
+        embedding_context=embedding_context,
+    )
+    for chunk in records:
+        current_store.knowledge_chunks[chunk["id"]] = chunk
+    document["chunk_count"] = len(records)
+    return records
 
 
 def _mark_knowledge_text_indexed(
@@ -7152,6 +8604,85 @@ def _mark_knowledge_vector_indexed(
     document["index_status"] = "vector_indexed"
     document["index_error"] = None
     document["vector_index_error"] = None
+
+
+def _knowledge_index_failed_result(
+    document: dict[str, Any],
+    error: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    updated_document = {**document}
+    updated_document["chunk_count"] = 0
+    updated_document["index_error"] = _ensure_non_blank(error, "index_error")
+    updated_document["index_status"] = "index_failed"
+    updated_document["vector_index_error"] = None
+    return updated_document, []
+
+
+def _knowledge_text_indexed_result(
+    document: dict[str, Any],
+    chunks: list[str],
+    *,
+    vector_error: str | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    updated_document = {**document}
+    chunk_records = _build_knowledge_chunks(updated_document, chunks)
+    updated_document["chunk_count"] = len(chunk_records)
+    updated_document["index_status"] = "text_indexed"
+    updated_document["index_error"] = vector_error
+    updated_document["vector_index_error"] = vector_error
+    return updated_document, chunk_records
+
+
+def _knowledge_vector_indexed_result(
+    document: dict[str, Any],
+    chunks: list[str],
+    embeddings: list[list[float]],
+    embedding_context: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    updated_document = {**document}
+    chunk_records = _build_knowledge_chunks(
+        updated_document,
+        chunks,
+        embeddings=embeddings,
+        embedding_context=embedding_context,
+    )
+    updated_document["chunk_count"] = len(chunk_records)
+    updated_document["index_status"] = "vector_indexed"
+    updated_document["index_error"] = None
+    updated_document["vector_index_error"] = None
+    return updated_document, chunk_records
+
+
+def _replace_knowledge_chunks_result(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+    *,
+    attempt_vector: bool = True,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    chunks = _split_knowledge_content(document["content"])
+    if not chunks:
+        return _knowledge_index_failed_result(document, "NO_INDEXABLE_CONTENT")
+    if not attempt_vector:
+        return _knowledge_text_indexed_result(document, chunks)
+    try:
+        embeddings, embedding_context = _call_model_gateway_embeddings_with_context(
+            current_store,
+            chunks,
+        )
+    except ModelGatewayConfigError as exc:
+        return _knowledge_text_indexed_result(document, chunks, vector_error=str(exc))
+    except ModelGatewayCallError as exc:
+        return _knowledge_text_indexed_result(
+            document,
+            chunks,
+            vector_error=exc.log.get("error") or "Model gateway embedding request failed",
+        )
+    return _knowledge_vector_indexed_result(
+        document,
+        chunks,
+        embeddings,
+        embedding_context,
+    )
 
 
 def _replace_knowledge_chunks(
@@ -7192,6 +8723,17 @@ def _replace_knowledge_chunks(
         embeddings,
         embedding_context,
     )
+
+
+def _apply_knowledge_document_to_memory(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+    chunks: list[dict[str, Any]],
+) -> None:
+    current_store.knowledge_documents[document["id"]] = document
+    _clear_knowledge_chunks(current_store, document["id"])
+    for chunk in chunks:
+        current_store.knowledge_chunks[chunk["id"]] = chunk
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -7273,13 +8815,14 @@ def create_knowledge_document(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"knowledge_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _knowledge_write_store(store(request))
     title = _ensure_non_blank(payload.title, "title")
     content = _ensure_non_blank(payload.content, "content")
     if payload.product_id is not None and payload.product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
     _ensure_roles(payload.permission_roles)
     document_id = current_store.new_id("knowledge")
+    now = datetime.now(UTC).isoformat()
     document = {
         "id": document_id,
         "title": title,
@@ -7292,16 +8835,31 @@ def create_knowledge_document(
         "index_error": None,
         "vector_index_error": None,
         "created_by": user["id"],
+        "created_at": now,
+        "updated_at": now,
     }
-    current_store.knowledge_documents[document_id] = document
-    _replace_knowledge_chunks(current_store, document)
-    current_store.audit(
+    model_log_start_index = len(current_store.model_gateway_logs)
+    document, chunks = _replace_knowledge_chunks_result(current_store, document)
+    if not _uses_repository_context(current_store):
+        _apply_knowledge_document_to_memory(current_store, document, chunks)
+    audit_event = _record_audit_event(
+        current_store,
         event_type="knowledge_document.created",
         actor_id=user["id"],
         subject_type="knowledge_document",
         subject_id=document_id,
     )
-    return envelope(_knowledge_document_response(current_store, document), get_trace_id(request))
+    _save_knowledge_document_records(
+        current_store,
+        document=document,
+        chunks=chunks,
+        audit_event=audit_event,
+        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+    )
+    return envelope(
+        _knowledge_document_response(current_store, document, chunks),
+        get_trace_id(request),
+    )
 
 
 @app.patch("/api/knowledge/documents/{document_id}")
@@ -7312,7 +8870,7 @@ def patch_knowledge_document(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"knowledge_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _knowledge_write_store(store(request))
     document = current_store.knowledge_documents.get(document_id)
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
@@ -7330,21 +8888,24 @@ def patch_knowledge_document(
         _ensure_enum(updates["index_status"], KNOWLEDGE_INDEX_STATUSES, "knowledge index status")
     if "index_error" in updates and updates["index_error"] is not None:
         updates["index_error"] = _ensure_non_blank(updates["index_error"], "index_error")
-    document.update(updates)
-    document["updated_at"] = datetime.now(UTC).isoformat()
+    document = {**document, **updates, "updated_at": datetime.now(UTC).isoformat()}
+    model_log_start_index = len(current_store.model_gateway_logs)
     if updates.get("index_status") == "index_failed":
-        _mark_knowledge_index_failed(
-            current_store,
+        document, chunks = _knowledge_index_failed_result(
             document,
             document.get("index_error") or "Knowledge indexing failed",
         )
     elif updates.get("index_status") in {"archived", "importing", "pending_index"}:
-        _clear_knowledge_chunks(current_store, document_id)
+        chunks = []
         document["chunk_count"] = 0
         document["index_error"] = None
         document["vector_index_error"] = None
     elif updates.get("index_status") == "text_indexed":
-        _replace_knowledge_chunks(current_store, document, attempt_vector=False)
+        document, chunks = _replace_knowledge_chunks_result(
+            current_store,
+            document,
+            attempt_vector=False,
+        )
     elif updates.get("index_status") in {"indexed", "vector_indexed"} or {
         "content",
         "title",
@@ -7353,14 +8914,29 @@ def patch_knowledge_document(
         "doc_type",
         "tags",
     }.intersection(updates):
-        _replace_knowledge_chunks(current_store, document)
-    current_store.audit(
+        document, chunks = _replace_knowledge_chunks_result(current_store, document)
+    else:
+        chunks = _knowledge_chunks_for_document(current_store, document_id)
+    if not _uses_repository_context(current_store):
+        _apply_knowledge_document_to_memory(current_store, document, chunks)
+    audit_event = _record_audit_event(
+        current_store,
         event_type="knowledge_document.updated",
         actor_id=user["id"],
         subject_type="knowledge_document",
         subject_id=document_id,
     )
-    return envelope(_knowledge_document_response(current_store, document), get_trace_id(request))
+    _save_knowledge_document_records(
+        current_store,
+        document=document,
+        chunks=chunks,
+        audit_event=audit_event,
+        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+    )
+    return envelope(
+        _knowledge_document_response(current_store, document, chunks),
+        get_trace_id(request),
+    )
 
 
 @app.post("/api/knowledge/documents/{document_id}/retry-index")
@@ -7370,7 +8946,7 @@ def retry_knowledge_document_index(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"knowledge_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _knowledge_write_store(store(request))
     document = current_store.knowledge_documents.get(document_id)
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
@@ -7380,15 +8956,29 @@ def retry_knowledge_document_index(
             "KNOWLEDGE_INDEX_STATE_INVALID",
             "Knowledge document is not eligible for index retry",
         )
-    _replace_knowledge_chunks(current_store, document)
-    document["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.audit(
+    document = {**document, "updated_at": datetime.now(UTC).isoformat()}
+    model_log_start_index = len(current_store.model_gateway_logs)
+    document, chunks = _replace_knowledge_chunks_result(current_store, document)
+    if not _uses_repository_context(current_store):
+        _apply_knowledge_document_to_memory(current_store, document, chunks)
+    audit_event = _record_audit_event(
+        current_store,
         event_type="knowledge_document.index_retried",
         actor_id=user["id"],
         subject_type="knowledge_document",
         subject_id=document_id,
     )
-    return envelope(_knowledge_document_response(current_store, document), get_trace_id(request))
+    _save_knowledge_document_records(
+        current_store,
+        document=document,
+        chunks=chunks,
+        audit_event=audit_event,
+        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+    )
+    return envelope(
+        _knowledge_document_response(current_store, document, chunks),
+        get_trace_id(request),
+    )
 
 
 @app.delete("/api/knowledge/documents/{document_id}")
@@ -7398,23 +8988,40 @@ def delete_knowledge_document(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"knowledge_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _knowledge_write_store(store(request))
     if document_id not in current_store.knowledge_documents:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
-    del current_store.knowledge_documents[document_id]
-    current_store.knowledge_chunks = {
-        chunk_id: chunk
-        for chunk_id, chunk in current_store.knowledge_chunks.items()
-        if chunk.get("document_id") != document_id
-    }
+    affected_deposits = []
+    now = datetime.now(UTC).isoformat()
     for deposit in current_store.knowledge_deposits.values():
         if deposit.get("knowledge_document_id") == document_id:
-            deposit["knowledge_document_id"] = None
-    current_store.audit(
+            affected_deposit = {
+                **deposit,
+                "knowledge_document_id": None,
+                "updated_at": now,
+            }
+            affected_deposits.append(affected_deposit)
+    if not _uses_repository_context(current_store):
+        del current_store.knowledge_documents[document_id]
+        current_store.knowledge_chunks = {
+            chunk_id: chunk
+            for chunk_id, chunk in current_store.knowledge_chunks.items()
+            if chunk.get("document_id") != document_id
+        }
+        for deposit in affected_deposits:
+            current_store.knowledge_deposits[deposit["id"]] = deposit
+    audit_event = _record_audit_event(
+        current_store,
         event_type="knowledge_document.deleted",
         actor_id=user["id"],
         subject_type="knowledge_document",
         subject_id=document_id,
+    )
+    _delete_knowledge_document_records(
+        current_store,
+        document_id=document_id,
+        deposits=affected_deposits,
+        audit_event=audit_event,
     )
     return envelope({"deleted": True, "id": document_id}, get_trace_id(request))
 
@@ -7427,57 +9034,77 @@ def search_knowledge(
 ) -> dict[str, Any]:
     current_store = store(request)
     query = _ensure_non_blank(payload.query, "query").lower()
-    query_embedding_result = (
-        _knowledge_query_embedding(current_store, query)
-        if _has_readable_vector_chunks(current_store, user)
-        else None
-    )
+    repository = _knowledge_query_repository(current_store)
+    has_vector_chunks = getattr(repository, "has_readable_vector_chunks", None)
+    search_chunks = getattr(repository, "search_knowledge_chunks", None)
+    if has_vector_chunks is not None and search_chunks is not None:
+        user_roles = list(user.get("roles", []))
+        query_embedding_result = (
+            _knowledge_query_embedding(current_store, query)
+            if has_vector_chunks(user_roles=user_roles)
+            else None
+        )
+        candidates = search_chunks(
+            user_roles=user_roles,
+            query=None if query_embedding_result is not None else query,
+        )
+    else:
+        query_embedding_result = (
+            _knowledge_query_embedding(current_store, query)
+            if _has_readable_vector_chunks(current_store, user)
+            else None
+        )
+        candidates = []
+        for document in current_store.knowledge_documents.values():
+            if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
+                continue
+            if not _user_can_read_roles(user, document["permission_roles"]):
+                continue
+            chunks = _knowledge_document_chunks(current_store, document["id"])
+            if not chunks:
+                continue
+            for chunk in chunks:
+                chunk_roles = chunk.get("permission_roles", document["permission_roles"])
+                if not _user_can_read_roles(user, chunk_roles):
+                    continue
+                candidates.append({"chunk": chunk, "document": document})
     query_embedding = query_embedding_result[0] if query_embedding_result else None
     query_embedding_context = query_embedding_result[1] if query_embedding_result else None
     items = []
-    for document in current_store.knowledge_documents.values():
-        if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
-            continue
-        if not _user_can_read_roles(user, document["permission_roles"]):
-            continue
-        chunks = _knowledge_document_chunks(current_store, document["id"])
-        if not chunks:
-            continue
-        for chunk in chunks:
-            chunk_roles = chunk.get("permission_roles", document["permission_roles"])
-            if not _user_can_read_roles(user, chunk_roles):
+    for candidate in candidates:
+        document = candidate["document"]
+        chunk = candidate["chunk"]
+        haystack = f"{document['title']} {chunk['content']}".lower()
+        embedding = chunk.get("embedding")
+        score = None
+        if (
+            query_embedding is not None
+            and query_embedding_context is not None
+            and isinstance(embedding, list)
+            and _chunk_embedding_is_compatible(chunk, query_embedding_context)
+        ):
+            score = _cosine_similarity(query_embedding, [float(value) for value in embedding])
+            if score <= 0 and query not in haystack:
                 continue
-            haystack = f"{document['title']} {chunk['content']}".lower()
-            embedding = chunk.get("embedding")
-            score = None
-            if (
-                query_embedding is not None
-                and query_embedding_context is not None
-                and isinstance(embedding, list)
-                and _chunk_embedding_is_compatible(chunk, query_embedding_context)
-            ):
-                score = _cosine_similarity(query_embedding, [float(value) for value in embedding])
-                if score <= 0 and query not in haystack:
-                    continue
-            elif query not in haystack:
-                continue
-            retrieval_mode = "vector" if score is not None else "keyword"
-            items.append(
-                {
+        elif query not in haystack:
+            continue
+        retrieval_mode = "vector" if score is not None else "keyword"
+        items.append(
+            {
+                "chunk_id": chunk["id"],
+                "chunk_index": chunk["chunk_index"],
+                "document_id": document["id"],
+                "title": document["title"],
+                "content": chunk["content"],
+                "retrieval_mode": retrieval_mode,
+                "score": round(score, 6) if score is not None else None,
+                "source": {
                     "chunk_id": chunk["id"],
-                    "chunk_index": chunk["chunk_index"],
-                    "document_id": document["id"],
+                    "doc_type": document["doc_type"],
                     "title": document["title"],
-                    "content": chunk["content"],
-                    "retrieval_mode": retrieval_mode,
-                    "score": round(score, 6) if score is not None else None,
-                    "source": {
-                        "chunk_id": chunk["id"],
-                        "doc_type": document["doc_type"],
-                        "title": document["title"],
-                    },
-                }
-            )
+                },
+            }
+        )
     items.sort(
         key=lambda item: (
             -(item["score"] if item["score"] is not None else -1.0),
@@ -7495,7 +9122,12 @@ def list_knowledge_deposits(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"knowledge_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _knowledge_write_store(store(request))
+    repository = _knowledge_query_repository(current_store)
+    list_deposits = getattr(repository, "list_knowledge_deposits", None)
+    if list_deposits is not None:
+        items = list_deposits(status=status)
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = list(current_store.knowledge_deposits.values())
     if status:
         items = [item for item in items if item["status"] == status]
@@ -7510,14 +9142,16 @@ def approve_knowledge_deposit(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"knowledge_owner", "rd_owner"})
-    current_store = store(request)
-    deposit = current_store.knowledge_deposits.get(deposit_id)
+    current_store = _knowledge_write_store(store(request))
+    deposit = _get_knowledge_deposit(current_store, deposit_id)
     if deposit is None:
         raise api_error(404, "NOT_FOUND", "Knowledge deposit not found")
     if deposit["status"] != "pending":
         raise api_error(409, "KNOWLEDGE_DEPOSIT_STATE_INVALID", "Deposit is not pending")
+    _ensure_roles(payload.permission_roles)
 
     document_id = current_store.new_id("knowledge")
+    now = datetime.now(UTC).isoformat()
     document = {
         "id": document_id,
         "title": payload.title or deposit["title"],
@@ -7529,16 +9163,34 @@ def approve_knowledge_deposit(
         "index_error": None,
         "vector_index_error": None,
         "created_by": user["id"],
+        "created_at": now,
+        "updated_at": now,
     }
-    current_store.knowledge_documents[document_id] = document
-    _replace_knowledge_chunks(current_store, document)
-    deposit["status"] = "approved"
-    deposit["knowledge_document_id"] = document_id
-    current_store.audit(
+    model_log_start_index = len(current_store.model_gateway_logs)
+    document, chunks = _replace_knowledge_chunks_result(current_store, document)
+    deposit = {
+        **deposit,
+        "status": "approved",
+        "knowledge_document_id": document_id,
+        "updated_at": now,
+    }
+    if not _uses_repository_context(current_store):
+        _apply_knowledge_document_to_memory(current_store, document, chunks)
+        current_store.knowledge_deposits[deposit_id] = deposit
+    audit_event = _record_audit_event(
+        current_store,
         event_type="knowledge_deposit.approved",
         actor_id=user["id"],
         subject_type="knowledge_deposit",
         subject_id=deposit_id,
+    )
+    _save_knowledge_deposit_records(
+        current_store,
+        deposit=deposit,
+        document=document,
+        chunks=chunks,
+        audit_event=audit_event,
+        model_logs=current_store.model_gateway_logs[model_log_start_index:],
     )
     return envelope(deposit, get_trace_id(request))
 
@@ -7551,20 +9203,32 @@ def reject_knowledge_deposit(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"knowledge_owner", "rd_owner"})
-    current_store = store(request)
-    deposit = current_store.knowledge_deposits.get(deposit_id)
+    current_store = _knowledge_write_store(store(request))
+    deposit = _get_knowledge_deposit(current_store, deposit_id)
     if deposit is None:
         raise api_error(404, "NOT_FOUND", "Knowledge deposit not found")
     if deposit["status"] != "pending":
         raise api_error(409, "KNOWLEDGE_DEPOSIT_STATE_INVALID", "Deposit is not pending")
 
-    deposit["status"] = "rejected"
-    deposit["rejection_reason"] = payload.reason
-    current_store.audit(
+    deposit = {
+        **deposit,
+        "status": "rejected",
+        "rejection_reason": payload.reason,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    if not _uses_repository_context(current_store):
+        current_store.knowledge_deposits[deposit_id] = deposit
+    audit_event = _record_audit_event(
+        current_store,
         event_type="knowledge_deposit.rejected",
         actor_id=user["id"],
         subject_type="knowledge_deposit",
         subject_id=deposit_id,
+    )
+    _save_knowledge_deposit_records(
+        current_store,
+        deposit=deposit,
+        audit_event=audit_event,
     )
     return envelope(deposit, get_trace_id(request))
 
@@ -7590,10 +9254,11 @@ def get_writeback_results(
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
     current_store = store(request)
-    _completed_task_for_writeback(current_store, task_id)
+    read_store = _task_workflow_read_store(current_store)
+    _completed_task_for_writeback(read_store, task_id)
 
     idempotency_key = _writeback_idempotency_key(task_id)
-    result = current_store.mock_writebacks.get(idempotency_key)
+    result = read_store.mock_writebacks.get(idempotency_key)
     if result is None:
         result = {
             "task_id": task_id,
@@ -7611,7 +9276,7 @@ def create_writeback_results(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     task = _completed_task_for_writeback(current_store, task_id)
     idempotency_key = _writeback_idempotency_key(task_id)
     result = current_store.mock_writebacks.get(idempotency_key)
@@ -7628,8 +9293,10 @@ def create_writeback_results(
             "idempotency_key": idempotency_key,
             "issues": [issue],
         }
-        current_store.mock_writebacks[idempotency_key] = result
-        current_store.audit(
+        if not _uses_repository_context(current_store):
+            current_store.mock_writebacks[idempotency_key] = result
+        audit_event = _record_audit_event(
+            current_store,
             event_type="mock_issue.written",
             actor_id=user["id"],
             ai_task_id=task_id,
@@ -7637,6 +9304,7 @@ def create_writeback_results(
             subject_id=task_id,
             payload={"idempotency_key": idempotency_key},
         )
+        _save_mock_writeback_record(current_store, result, audit_event=audit_event)
     return envelope(result, get_trace_id(request))
 
 
@@ -7648,14 +9316,18 @@ def get_code_review_report(
 ) -> dict[str, Any]:
     _require_roles(user, {"reviewer", "rd_owner"})
     current_store = store(request)
-    task = current_store.ai_tasks.get(task_id)
+    read_store = _task_workflow_read_store(current_store)
+    task = read_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
     _require_task_read_role(user, task)
     report_id = task.get("code_review_report_id")
     if not report_id:
         raise api_error(404, "NOT_FOUND", "Code review report not found")
-    return envelope(current_store.code_review_reports[report_id], get_trace_id(request))
+    report = read_store.code_review_reports.get(report_id)
+    if report is None:
+        raise api_error(404, "NOT_FOUND", "Code review report not found")
+    return envelope(report, get_trace_id(request))
 
 
 @app.get("/api/audit/events")
@@ -7672,6 +9344,20 @@ def audit_events(
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
     current_store = store(request)
+    from_at = _parse_iso_datetime(created_from, "created_from") if created_from else None
+    to_at = _parse_iso_datetime(created_to, "created_to") if created_to else None
+    repository = _audit_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_audit_events(
+            ai_task_id=ai_task_id,
+            actor_id=actor_id,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            event_type=event_type,
+            created_from=from_at,
+            created_to=to_at,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = list(current_store.audit_events)
     if actor_id:
         items = [item for item in items if item.get("actor_id") == actor_id]
@@ -7684,8 +9370,6 @@ def audit_events(
     if subject_id:
         items = [item for item in items if item.get("subject_id") == subject_id]
     if created_from or created_to:
-        from_at = _parse_iso_datetime(created_from, "created_from") if created_from else None
-        to_at = _parse_iso_datetime(created_to, "created_to") if created_to else None
         filtered_items = []
         for item in items:
             event_at = _parse_iso_datetime(str(item.get("created_at") or ""), "created_at")
@@ -8833,6 +10517,510 @@ def _sync_dashboard_metric_snapshot(
     }
 
 
+def _dashboard_metric_snapshot_record(
+    *,
+    product_id: str | None,
+    time_range: str | None,
+    cutoff: datetime | None,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    snapshot_id = _stable_record_id(
+        "dashboard_snapshot",
+        {
+            "product_id": product_id or "all",
+            "time_range": time_range or "all",
+        },
+    )
+    return {
+        "created_at": now,
+        "id": snapshot_id,
+        "metrics": json.loads(json.dumps(data, ensure_ascii=False)),
+        "product_id": product_id,
+        "time_range": time_range or "all",
+        "updated_at": now,
+        "window_end": now,
+        "window_start": cutoff.isoformat() if cutoff else None,
+    }
+
+
+def _dashboard_source_rows_from_store(
+    current_store: MemoryStore,
+    *,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "audit_events": list(current_store.audit_events),
+        "bugs": list(current_store.bugs.values()),
+        "code_review_reports": list(current_store.code_review_reports.values()),
+        "gitlab_daily_code_metrics": list(current_store.gitlab_daily_code_metrics.values()),
+        "gitlab_mr_snapshots": list(current_store.gitlab_mr_snapshots.values()),
+        "human_reviews": list(current_store.human_reviews.values()),
+        "iteration_plan_suggestions": list(current_store.iteration_plan_suggestions.values()),
+        "jenkins_release_records": list(current_store.jenkins_release_records.values()),
+        "knowledge_deposits": list(current_store.knowledge_deposits.values()),
+        "knowledge_documents": [
+            document
+            for document in current_store.knowledge_documents.values()
+            if _user_can_read_roles(user, document["permission_roles"])
+        ],
+        "mock_writebacks": list(current_store.mock_writebacks.values()),
+        "online_log_metrics": list(current_store.online_log_metrics.values()),
+        "product_git_repositories": list(current_store.product_git_repositories.values()),
+        "product_modules": list(current_store.product_modules.values()),
+        "product_versions": list(current_store.product_versions.values()),
+        "products": [
+            product
+            for product in current_store.products.values()
+            if product.get("status") == "active"
+        ],
+        "requirements": list(current_store.requirements.values()),
+        "tasks": list(current_store.ai_tasks.values()),
+        "user_feedback": list(current_store.user_feedback.values()),
+        "user_usage_metrics": list(current_store.user_usage_metrics.values()),
+    }
+
+
+class LifecycleContextReadModel:
+    def __init__(self) -> None:
+        self.ai_tasks: dict[str, dict[str, Any]] = {}
+        self.audit_events: list[dict[str, Any]] = []
+        self.bugs: dict[str, dict[str, Any]] = {}
+        self.code_review_reports: dict[str, dict[str, Any]] = {}
+        self.gitlab_daily_code_metrics: dict[str, dict[str, Any]] = {}
+        self.gitlab_mr_snapshots: dict[str, dict[str, Any]] = {}
+        self.human_reviews: dict[str, dict[str, Any]] = {}
+        self.iteration_plan_suggestions: dict[str, dict[str, Any]] = {}
+        self.jenkins_release_records: dict[str, dict[str, Any]] = {}
+        self.knowledge_deposits: dict[str, dict[str, Any]] = {}
+        self.lifecycle_context_edges: dict[str, dict[str, Any]] = {}
+        self.lifecycle_risk_signals: dict[str, dict[str, Any]] = {}
+        self.mock_writebacks: dict[str, dict[str, Any]] = {}
+        self.online_log_metrics: dict[str, dict[str, Any]] = {}
+        self.product_git_repositories: dict[str, dict[str, Any]] = {}
+        self.product_modules: dict[str, dict[str, Any]] = {}
+        self.product_versions: dict[str, dict[str, Any]] = {}
+        self.products: dict[str, dict[str, Any]] = {}
+        self.requirements: dict[str, dict[str, Any]] = {}
+        self.user_feedback: dict[str, dict[str, Any]] = {}
+        self.user_usage_metrics: dict[str, dict[str, Any]] = {}
+
+    def snapshot(self, value: Any) -> Any:
+        return deepcopy(value)
+
+
+def _lifecycle_source_store(rows: dict[str, Any]) -> LifecycleContextReadModel:
+    source_store = LifecycleContextReadModel()
+    source_store.audit_events = list(rows.get("audit_events", []))
+    collection_keys = {
+        "ai_tasks": "tasks",
+        "bugs": "bugs",
+        "code_review_reports": "code_review_reports",
+        "gitlab_daily_code_metrics": "gitlab_daily_code_metrics",
+        "gitlab_mr_snapshots": "gitlab_mr_snapshots",
+        "human_reviews": "human_reviews",
+        "iteration_plan_suggestions": "iteration_plan_suggestions",
+        "jenkins_release_records": "jenkins_release_records",
+        "knowledge_deposits": "knowledge_deposits",
+        "lifecycle_context_edges": "lifecycle_context_edges",
+        "lifecycle_risk_signals": "lifecycle_risk_signals",
+        "mock_writebacks": "mock_writebacks",
+        "online_log_metrics": "online_log_metrics",
+        "product_git_repositories": "product_git_repositories",
+        "product_modules": "product_modules",
+        "product_versions": "product_versions",
+        "products": "products",
+        "requirements": "requirements",
+        "user_feedback": "user_feedback",
+        "user_usage_metrics": "user_usage_metrics",
+    }
+    for store_key, row_key in collection_keys.items():
+        setattr(
+            source_store,
+            store_key,
+            {
+                str(item["id"]): dict(item)
+                for item in rows.get(row_key, [])
+                if item.get("id") is not None
+            },
+        )
+    for result in rows.get("mock_writebacks", []):
+        idempotency_key = result.get("idempotency_key") or result.get("task_id") or result.get("id")
+        if idempotency_key is not None:
+            source_store.mock_writebacks[str(idempotency_key)] = dict(result)
+    return source_store
+
+
+def _task_workflow_source_store(
+    rows: dict[str, Any],
+    *,
+    repository: Any | None = None,
+) -> Any:
+    source_store = (
+        _RepositoryRequestContext(repository)
+        if repository is not None
+        else MemoryStore()
+    )
+    source_store.audit_events = list(rows.get("audit_events", []))
+    source_store.model_gateway_logs = list(rows.get("model_gateway_logs", []))
+    collection_keys = {
+        "ai_tasks": "tasks",
+        "bugs": "bugs",
+        "code_review_reports": "code_review_reports",
+        "gitlab_daily_code_metrics": "gitlab_daily_code_metrics",
+        "gitlab_mr_snapshots": "gitlab_mr_snapshots",
+        "graph_checkpoints": "graph_checkpoints",
+        "graph_runs": "graph_runs",
+        "human_reviews": "human_reviews",
+        "jenkins_release_records": "jenkins_release_records",
+        "knowledge_deposits": "knowledge_deposits",
+        "model_gateway_configs": "model_gateway_configs",
+        "mock_writebacks": "mock_writebacks",
+        "online_log_metrics": "online_log_metrics",
+        "product_git_repositories": "product_git_repositories",
+        "product_modules": "product_modules",
+        "product_versions": "product_versions",
+        "products": "products",
+        "related_systems": "related_systems",
+        "requirements": "requirements",
+    }
+    for store_key, row_key in collection_keys.items():
+        setattr(
+            source_store,
+            store_key,
+            {
+                str(item["id"]): dict(item)
+                for item in rows.get(row_key, [])
+                if item.get("id") is not None
+            },
+        )
+    for result in rows.get("mock_writebacks", []):
+        idempotency_key = result.get("idempotency_key") or result.get("task_id") or result.get("id")
+        if idempotency_key is not None:
+            source_store.mock_writebacks[str(idempotency_key)] = dict(result)
+    return source_store
+
+
+def _task_workflow_read_store(current_store: MemoryStore) -> MemoryStore:
+    repository = _task_workflow_query_repository(current_store)
+    if repository is None:
+        return _repository_read_model_store(current_store)
+    return _task_workflow_source_store(
+        repository.get_task_workflow_source_rows(),
+        repository=repository,
+    )
+
+
+def _task_workflow_write_store(current_store: MemoryStore) -> MemoryStore:
+    repository = _task_workflow_query_repository(current_store)
+    if repository is None:
+        return current_store
+    return _task_workflow_source_store(
+        repository.get_task_workflow_source_rows(),
+        repository=repository,
+    )
+
+
+def _dashboard_items_by_id(rows: dict[str, Any], key: str) -> dict[str, dict[str, Any]]:
+    return {str(item["id"]): item for item in rows.get(key, []) if item.get("id") is not None}
+
+
+def _dashboard_task_product_id(rows: dict[str, Any], task_id: str | None) -> str | None:
+    if not task_id:
+        return None
+    task = _dashboard_items_by_id(rows, "tasks").get(str(task_id))
+    return str(task["product_id"]) if task is not None and task.get("product_id") else None
+
+
+def _dashboard_mock_issue(rows: dict[str, Any], subject_id: str) -> dict[str, Any] | None:
+    for result in rows.get("mock_writebacks", []):
+        for issue in result.get("issues", []):
+            if str(issue.get("id")) == subject_id:
+                return issue
+    return None
+
+
+def _dashboard_knowledge_document_product_id(
+    rows: dict[str, Any],
+    document: dict[str, Any],
+) -> str | None:
+    if document.get("product_id"):
+        return str(document["product_id"])
+    document_id = document.get("id")
+    for deposit in rows.get("knowledge_deposits", []):
+        if deposit.get("knowledge_document_id") == document_id:
+            return _dashboard_task_product_id(rows, deposit.get("ai_task_id"))
+    return None
+
+
+def _dashboard_subject_product_id(
+    rows: dict[str, Any],
+    subject_type: str | None,
+    subject_id: str | None,
+) -> str | None:
+    if not subject_type or not subject_id:
+        return None
+    normalized_id = str(subject_id)
+    if subject_type == "product":
+        return normalized_id
+    product_scoped_maps = {
+        "product_version": "product_versions",
+        "product_module": "product_modules",
+        "product_git_repository": "product_git_repositories",
+        "requirement": "requirements",
+        "bug": "bugs",
+        "gitlab_daily_code_metric": "gitlab_daily_code_metrics",
+        "jenkins_release": "jenkins_release_records",
+        "online_log_metric": "online_log_metrics",
+        "user_feedback": "user_feedback",
+        "user_usage_metric": "user_usage_metrics",
+        "iteration_plan_suggestion": "iteration_plan_suggestions",
+    }
+    collection_key = product_scoped_maps.get(subject_type)
+    if collection_key is not None:
+        item = _dashboard_items_by_id(rows, collection_key).get(normalized_id)
+        return str(item["product_id"]) if item is not None and item.get("product_id") else None
+    if subject_type == "ai_task":
+        return _dashboard_task_product_id(rows, normalized_id)
+    if subject_type == "human_review":
+        review = _dashboard_items_by_id(rows, "human_reviews").get(normalized_id)
+        return _dashboard_task_product_id(rows, review.get("ai_task_id") if review else None)
+    if subject_type == "code_review_report":
+        report = _dashboard_items_by_id(rows, "code_review_reports").get(normalized_id)
+        return _dashboard_task_product_id(rows, report.get("task_id") if report else None)
+    if subject_type == "gitlab_mr_snapshot":
+        snapshot = _dashboard_items_by_id(rows, "gitlab_mr_snapshots").get(normalized_id)
+        if snapshot is not None and snapshot.get("product_id"):
+            return str(snapshot["product_id"])
+        return None
+    if subject_type == "mock_issue":
+        issue = _dashboard_mock_issue(rows, normalized_id)
+        return _dashboard_task_product_id(rows, issue.get("source_task_id") if issue else None)
+    if subject_type == "knowledge_document":
+        document = _dashboard_items_by_id(rows, "knowledge_documents").get(normalized_id)
+        return _dashboard_knowledge_document_product_id(rows, document) if document else None
+    if subject_type == "knowledge_deposit":
+        deposit = _dashboard_items_by_id(rows, "knowledge_deposits").get(normalized_id)
+        return _dashboard_task_product_id(rows, deposit.get("ai_task_id") if deposit else None)
+    return None
+
+
+def _dashboard_audit_event_matches_product(
+    rows: dict[str, Any],
+    event: dict[str, Any],
+    product_id: str | None,
+) -> bool:
+    if product_id is None:
+        return True
+    if _dashboard_task_product_id(rows, event.get("ai_task_id")) == product_id:
+        return True
+    return (
+        _dashboard_subject_product_id(
+            rows,
+            event.get("subject_type"),
+            event.get("subject_id"),
+        )
+        == product_id
+    )
+
+
+def _build_dashboard_metrics_data(
+    rows: dict[str, Any],
+    *,
+    product_id: str | None,
+    time_range: str | None,
+    cutoff: datetime | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    products = [
+        product
+        for product in rows.get("products", [])
+        if product.get("status") == "active" and (product_id is None or product["id"] == product_id)
+    ]
+    requirements = [
+        requirement
+        for requirement in rows.get("requirements", [])
+        if product_id is None or requirement["product_id"] == product_id
+    ]
+    tasks = [
+        task
+        for task in rows.get("tasks", [])
+        if (product_id is None or task["product_id"] == product_id) and _can_read_task(user, task)
+    ]
+    task_ids = {task["id"] for task in tasks}
+    pending_reviews = [
+        review
+        for review in rows.get("human_reviews", [])
+        if review["status"] == "pending" and review["ai_task_id"] in task_ids
+    ]
+    knowledge_documents = [
+        document
+        for document in rows.get("knowledge_documents", [])
+        if product_id is None
+        or _dashboard_knowledge_document_product_id(rows, document) == product_id
+    ]
+    knowledge_deposits = [
+        deposit
+        for deposit in rows.get("knowledge_deposits", [])
+        if deposit["ai_task_id"] in task_ids
+    ]
+    audit_events = [
+        event
+        for event in rows.get("audit_events", [])
+        if _dashboard_audit_event_matches_product(rows, event, product_id)
+    ]
+    bugs = [
+        bug
+        for bug in rows.get("bugs", [])
+        if (product_id is None or bug.get("product_id") == product_id)
+        and _dashboard_matches_time_range(bug, cutoff, ("updated_at", "created_at"))
+    ]
+    gitlab_metrics = [
+        metric
+        for metric in rows.get("gitlab_daily_code_metrics", [])
+        if (product_id is None or metric.get("product_id") == product_id)
+        and _dashboard_matches_time_range(
+            metric,
+            cutoff,
+            ("metric_date", "updated_at", "created_at"),
+        )
+    ]
+    jenkins_releases = [
+        release
+        for release in rows.get("jenkins_release_records", [])
+        if (product_id is None or release.get("product_id") == product_id)
+        and _dashboard_matches_time_range(
+            release,
+            cutoff,
+            ("deployed_at", "started_at", "updated_at", "created_at"),
+        )
+    ]
+    online_log_metrics = [
+        metric
+        for metric in rows.get("online_log_metrics", [])
+        if (product_id is None or metric.get("product_id") == product_id)
+        and _dashboard_matches_time_range(
+            metric,
+            cutoff,
+            ("window_end", "window_start", "updated_at", "created_at"),
+        )
+    ]
+    usage_metrics = [
+        metric
+        for metric in rows.get("user_usage_metrics", [])
+        if (product_id is None or metric.get("product_id") == product_id)
+        and _dashboard_matches_time_range(
+            metric,
+            cutoff,
+            ("window_end", "window_start", "updated_at", "created_at"),
+        )
+    ]
+    feedback_items = [
+        feedback
+        for feedback in rows.get("user_feedback", [])
+        if (product_id is None or feedback.get("product_id") == product_id)
+        and _dashboard_matches_time_range(feedback, cutoff, ("updated_at", "created_at"))
+    ]
+    iteration_suggestions = [
+        suggestion
+        for suggestion in rows.get("iteration_plan_suggestions", [])
+        if (product_id is None or suggestion.get("product_id") == product_id)
+        and _dashboard_matches_time_range(suggestion, cutoff, ("updated_at", "created_at"))
+    ]
+    open_bugs = [bug for bug in bugs if bug.get("status") != "closed"]
+    high_severity_bugs = [
+        bug for bug in open_bugs if bug.get("severity") in {"blocker", "critical", "major"}
+    ]
+    latest_high_severity_bugs = sorted(
+        high_severity_bugs,
+        key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+        reverse=True,
+    )[:5]
+    online_request_count = int(_dashboard_number_total(online_log_metrics, "request_count"))
+    online_error_count = int(_dashboard_number_total(online_log_metrics, "error_count"))
+    online_error_rate = (
+        round(online_error_count / online_request_count, 6)
+        if online_request_count
+        else 0
+    )
+    latest_tasks = sorted(tasks, key=lambda item: item["id"], reverse=True)[:5]
+    recent_audit_events = sorted(
+        audit_events,
+        key=lambda item: item["sequence"],
+        reverse=True,
+    )[:8]
+    recent_knowledge_documents = sorted(
+        knowledge_documents,
+        key=lambda item: item["id"],
+        reverse=True,
+    )[:5]
+    return {
+        "summary": {
+            "active_products": len(products),
+            "ai_tasks": len(tasks),
+            "audit_events": len(audit_events),
+            "knowledge_deposits": len(knowledge_deposits),
+            "knowledge_documents": len(knowledge_documents),
+            "pending_reviews": len(pending_reviews),
+            "requirements": len(requirements),
+            "bugs": len(bugs),
+            "open_bugs": len(open_bugs),
+            "high_severity_bugs": len(high_severity_bugs),
+            "gitlab_commits": int(_dashboard_number_total(gitlab_metrics, "commit_count")),
+            "jenkins_releases": len(jenkins_releases),
+            "online_errors": online_error_count,
+            "user_feedback": len(feedback_items),
+            "usage_events": int(_dashboard_number_total(usage_metrics, "event_count")),
+            "iteration_suggestions": len(iteration_suggestions),
+        },
+        "bug_status_counts": _status_counts(bugs),
+        "latest_high_severity_bugs": json.loads(
+            json.dumps(latest_high_severity_bugs, ensure_ascii=False)
+        ),
+        "gitlab_daily_summary": {
+            "metric_count": len(gitlab_metrics),
+            "commit_count": int(_dashboard_number_total(gitlab_metrics, "commit_count")),
+            "merge_request_count": int(
+                _dashboard_number_total(gitlab_metrics, "merge_request_count")
+            ),
+            "changed_files": int(_dashboard_number_total(gitlab_metrics, "changed_files")),
+            "risk_count": int(_dashboard_number_total(gitlab_metrics, "risk_count")),
+            "average_quality_score": _dashboard_average_number(
+                gitlab_metrics,
+                "quality_score",
+            ),
+        },
+        "jenkins_release_status_counts": _status_counts(jenkins_releases),
+        "online_log_summary": {
+            "metric_count": len(online_log_metrics),
+            "request_count": online_request_count,
+            "error_count": online_error_count,
+            "error_rate": online_error_rate,
+            "max_p95_latency_ms": _dashboard_max_number(online_log_metrics, "p95_latency_ms"),
+            "max_p99_latency_ms": _dashboard_max_number(online_log_metrics, "p99_latency_ms"),
+        },
+        "usage_metric_summary": {
+            "metric_count": len(usage_metrics),
+            "active_users": int(_dashboard_number_total(usage_metrics, "active_users")),
+            "event_count": int(_dashboard_number_total(usage_metrics, "event_count")),
+            "conversion_count": int(_dashboard_number_total(usage_metrics, "conversion_count")),
+            "error_count": int(_dashboard_number_total(usage_metrics, "error_count")),
+        },
+        "user_feedback_status_counts": _status_counts(feedback_items),
+        "iteration_suggestion_status_counts": _status_counts(iteration_suggestions),
+        "requirement_status_counts": _status_counts(requirements),
+        "task_status_counts": _status_counts(tasks),
+        "latest_tasks": json.loads(json.dumps(latest_tasks, ensure_ascii=False)),
+        "pending_reviews": json.loads(json.dumps(pending_reviews, ensure_ascii=False)),
+        "recent_knowledge_documents": json.loads(
+            json.dumps(recent_knowledge_documents, ensure_ascii=False)
+        ),
+        "recent_audit_events": json.loads(json.dumps(recent_audit_events, ensure_ascii=False)),
+        "requirement_titles": [requirement["title"] for requirement in requirements[:10]],
+        "time_range": time_range or "all",
+    }
+
+
 def _status_counts(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     counts: dict[str, int] = {}
     for item in items:
@@ -9020,199 +11208,45 @@ def dashboard_metrics(
     time_range: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    runtime_store = store(request)
+    cutoff = _dashboard_time_cutoff(time_range)
+    repository = _dashboard_query_repository(runtime_store)
+    if repository is not None:
+        if product_id and repository.get_product(product_id) is None:
+            raise api_error(404, "NOT_FOUND", "Product not found")
+        rows = repository.get_dashboard_it_team_source_rows(
+            user_roles=list(user["roles"]),
+            product_id=product_id,
+        )
+        data = _build_dashboard_metrics_data(
+            rows,
+            product_id=product_id,
+            time_range=time_range,
+            cutoff=cutoff,
+            user=user,
+        )
+        repository.save_dashboard_metric_snapshot_record(
+            _dashboard_metric_snapshot_record(
+                product_id=product_id,
+                time_range=time_range,
+                cutoff=cutoff,
+                data=data,
+            )
+        )
+        return envelope(data, get_trace_id(request))
+
+    current_store = _repository_read_model_store(runtime_store)
     if product_id and product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
 
-    cutoff = _dashboard_time_cutoff(time_range)
-    products = [
-        product
-        for product in current_store.products.values()
-        if product.get("status") == "active" and (product_id is None or product["id"] == product_id)
-    ]
-    requirements = [
-        requirement
-        for requirement in current_store.requirements.values()
-        if product_id is None or requirement["product_id"] == product_id
-    ]
-    tasks = [
-        task
-        for task in current_store.ai_tasks.values()
-        if (product_id is None or task["product_id"] == product_id) and _can_read_task(user, task)
-    ]
-    task_ids = {task["id"] for task in tasks}
-    pending_reviews = [
-        review
-        for review in current_store.human_reviews.values()
-        if review["status"] == "pending" and review["ai_task_id"] in task_ids
-    ]
-    knowledge_documents = [
-        document
-        for document in current_store.knowledge_documents.values()
-        if _user_can_read_roles(user, document["permission_roles"])
-        and (
-            product_id is None
-            or _knowledge_document_product_id(current_store, document) == product_id
-        )
-    ]
-    knowledge_deposits = [
-        deposit
-        for deposit in current_store.knowledge_deposits.values()
-        if deposit["ai_task_id"] in task_ids
-    ]
-    audit_events = [
-        event
-        for event in current_store.audit_events
-        if _audit_event_matches_product(current_store, event, product_id)
-    ]
-    bugs = [
-        bug
-        for bug in current_store.bugs.values()
-        if (product_id is None or bug.get("product_id") == product_id)
-        and _dashboard_matches_time_range(bug, cutoff, ("updated_at", "created_at"))
-    ]
-    gitlab_metrics = [
-        metric
-        for metric in current_store.gitlab_daily_code_metrics.values()
-        if (product_id is None or metric.get("product_id") == product_id)
-        and _dashboard_matches_time_range(
-            metric,
-            cutoff,
-            ("metric_date", "updated_at", "created_at"),
-        )
-    ]
-    jenkins_releases = [
-        release
-        for release in current_store.jenkins_release_records.values()
-        if (product_id is None or release.get("product_id") == product_id)
-        and _dashboard_matches_time_range(
-            release,
-            cutoff,
-            ("deployed_at", "started_at", "updated_at", "created_at"),
-        )
-    ]
-    online_log_metrics = [
-        metric
-        for metric in current_store.online_log_metrics.values()
-        if (product_id is None or metric.get("product_id") == product_id)
-        and _dashboard_matches_time_range(
-            metric,
-            cutoff,
-            ("window_end", "window_start", "updated_at", "created_at"),
-        )
-    ]
-    usage_metrics = [
-        metric
-        for metric in current_store.user_usage_metrics.values()
-        if (product_id is None or metric.get("product_id") == product_id)
-        and _dashboard_matches_time_range(
-            metric,
-            cutoff,
-            ("window_end", "window_start", "updated_at", "created_at"),
-        )
-    ]
-    feedback_items = [
-        feedback
-        for feedback in current_store.user_feedback.values()
-        if (product_id is None or feedback.get("product_id") == product_id)
-        and _dashboard_matches_time_range(feedback, cutoff, ("updated_at", "created_at"))
-    ]
-    iteration_suggestions = [
-        suggestion
-        for suggestion in current_store.iteration_plan_suggestions.values()
-        if (product_id is None or suggestion.get("product_id") == product_id)
-        and _dashboard_matches_time_range(suggestion, cutoff, ("updated_at", "created_at"))
-    ]
-    open_bugs = [bug for bug in bugs if bug.get("status") != "closed"]
-    high_severity_bugs = [
-        bug
-        for bug in open_bugs
-        if bug.get("severity") in {"blocker", "critical", "major"}
-    ]
-    latest_high_severity_bugs = sorted(
-        high_severity_bugs,
-        key=lambda item: item.get("updated_at") or item.get("created_at") or "",
-        reverse=True,
-    )[:5]
-    online_request_count = int(_dashboard_number_total(online_log_metrics, "request_count"))
-    online_error_count = int(_dashboard_number_total(online_log_metrics, "error_count"))
-    online_error_rate = (
-        round(online_error_count / online_request_count, 6)
-        if online_request_count
-        else 0
+    rows = _dashboard_source_rows_from_store(current_store, user=user)
+    data = _build_dashboard_metrics_data(
+        rows,
+        product_id=product_id,
+        time_range=time_range,
+        cutoff=cutoff,
+        user=user,
     )
-    latest_tasks = sorted(tasks, key=lambda item: item["id"], reverse=True)[:5]
-    recent_audit_events = sorted(
-        audit_events,
-        key=lambda item: item["sequence"],
-        reverse=True,
-    )[:8]
-    recent_knowledge_documents = sorted(
-        knowledge_documents,
-        key=lambda item: item["id"],
-        reverse=True,
-    )[:5]
-    data = {
-        "summary": {
-            "active_products": len(products),
-            "ai_tasks": len(tasks),
-            "audit_events": len(audit_events),
-            "knowledge_deposits": len(knowledge_deposits),
-            "knowledge_documents": len(knowledge_documents),
-            "pending_reviews": len(pending_reviews),
-            "requirements": len(requirements),
-            "bugs": len(bugs),
-            "open_bugs": len(open_bugs),
-            "high_severity_bugs": len(high_severity_bugs),
-            "gitlab_commits": int(_dashboard_number_total(gitlab_metrics, "commit_count")),
-            "jenkins_releases": len(jenkins_releases),
-            "online_errors": online_error_count,
-            "user_feedback": len(feedback_items),
-            "usage_events": int(_dashboard_number_total(usage_metrics, "event_count")),
-            "iteration_suggestions": len(iteration_suggestions),
-        },
-        "bug_status_counts": _status_counts(bugs),
-        "latest_high_severity_bugs": current_store.snapshot(latest_high_severity_bugs),
-        "gitlab_daily_summary": {
-            "metric_count": len(gitlab_metrics),
-            "commit_count": int(_dashboard_number_total(gitlab_metrics, "commit_count")),
-            "merge_request_count": int(
-                _dashboard_number_total(gitlab_metrics, "merge_request_count")
-            ),
-            "changed_files": int(_dashboard_number_total(gitlab_metrics, "changed_files")),
-            "risk_count": int(_dashboard_number_total(gitlab_metrics, "risk_count")),
-            "average_quality_score": _dashboard_average_number(
-                gitlab_metrics,
-                "quality_score",
-            ),
-        },
-        "jenkins_release_status_counts": _status_counts(jenkins_releases),
-        "online_log_summary": {
-            "metric_count": len(online_log_metrics),
-            "request_count": online_request_count,
-            "error_count": online_error_count,
-            "error_rate": online_error_rate,
-            "max_p95_latency_ms": _dashboard_max_number(online_log_metrics, "p95_latency_ms"),
-            "max_p99_latency_ms": _dashboard_max_number(online_log_metrics, "p99_latency_ms"),
-        },
-        "usage_metric_summary": {
-            "metric_count": len(usage_metrics),
-            "active_users": int(_dashboard_number_total(usage_metrics, "active_users")),
-            "event_count": int(_dashboard_number_total(usage_metrics, "event_count")),
-            "conversion_count": int(_dashboard_number_total(usage_metrics, "conversion_count")),
-            "error_count": int(_dashboard_number_total(usage_metrics, "error_count")),
-        },
-        "user_feedback_status_counts": _status_counts(feedback_items),
-        "iteration_suggestion_status_counts": _status_counts(iteration_suggestions),
-        "requirement_status_counts": _status_counts(requirements),
-        "task_status_counts": _status_counts(tasks),
-        "latest_tasks": current_store.snapshot(latest_tasks),
-        "pending_reviews": current_store.snapshot(pending_reviews),
-        "recent_knowledge_documents": current_store.snapshot(recent_knowledge_documents),
-        "recent_audit_events": current_store.snapshot(recent_audit_events),
-        "requirement_titles": [requirement["title"] for requirement in requirements[:10]],
-        "time_range": time_range or "all",
-    }
     _sync_dashboard_metric_snapshot(
         current_store,
         product_id=product_id,
@@ -9220,6 +11254,7 @@ def dashboard_metrics(
         cutoff=cutoff,
         data=data,
     )
+    _save_dashboard_snapshot_records(current_store)
     return envelope(data, get_trace_id(request))
 
 
@@ -9234,16 +11269,25 @@ def list_bugs(
 ) -> dict[str, Any]:
     _validate_bug_enums(source=source, severity=severity, status=status)
     current_store = store(request)
-    items = list(current_store.bugs.values())
-    if product_id:
-        items = [item for item in items if item["product_id"] == product_id]
-    if status:
-        items = [item for item in items if item["status"] == status]
-    if severity:
-        items = [item for item in items if item["severity"] == severity]
-    if source:
-        items = [item for item in items if item["source"] == source]
-    items.sort(key=lambda item: item["created_at"], reverse=True)
+    repository = _bug_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_bugs(
+            product_id=product_id,
+            status=status,
+            severity=severity,
+            source=source,
+        )
+    else:
+        items = list(current_store.bugs.values())
+        if product_id:
+            items = [item for item in items if item["product_id"] == product_id]
+        if status:
+            items = [item for item in items if item["status"] == status]
+        if severity:
+            items = [item for item in items if item["severity"] == severity]
+        if source:
+            items = [item for item in items if item["source"] == source]
+        items.sort(key=lambda item: item["created_at"], reverse=True)
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
 
@@ -9255,7 +11299,7 @@ def create_bug(
 ) -> dict[str, Any]:
     _require_bug_write_role(user)
     _validate_bug_enums(source=payload.source, severity=payload.severity)
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     title = _ensure_non_blank(payload.title, "title")
     description = _ensure_non_blank(payload.description, "description")
     _validate_bug_context(
@@ -9289,8 +11333,10 @@ def create_bug(
         "created_at": now,
         "updated_at": now,
     }
-    current_store.bugs[bug_id] = bug
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.bugs[bug_id] = bug
+    audit_event = _record_audit_event(
+        current_store,
         event_type="bug.created",
         actor_id=user["id"],
         subject_type="bug",
@@ -9301,6 +11347,7 @@ def create_bug(
             "status": bug["status"],
         },
     )
+    _save_bug_record(current_store, bug, audit_event=audit_event)
     return envelope(bug, get_trace_id(request))
 
 
@@ -9312,7 +11359,7 @@ def patch_bug(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_bug_write_role(user)
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     bug = current_store.bugs.get(bug_id)
     if bug is None:
         raise api_error(404, "NOT_FOUND", "Bug not found")
@@ -9337,9 +11384,12 @@ def patch_bug(
     next_status = updates.get("status")
     if next_status is not None:
         _ensure_bug_status_transition(bug["status"], next_status)
-    bug.update(updates)
+    bug = {**bug, **updates}
     bug["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.bugs[bug_id] = bug
+    audit_event = _record_audit_event(
+        current_store,
         event_type="bug.updated",
         actor_id=user["id"],
         subject_type="bug",
@@ -9349,6 +11399,7 @@ def patch_bug(
             "updated_fields": sorted(updates.keys()),
         },
     )
+    _save_bug_record(current_store, bug, audit_event=audit_event)
     return envelope(bug, get_trace_id(request))
 
 
@@ -9359,16 +11410,25 @@ def delete_bug(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_bug_write_role(user)
-    current_store = store(request)
+    current_store = _task_workflow_write_store(store(request))
     if bug_id not in current_store.bugs:
         raise api_error(404, "NOT_FOUND", "Bug not found")
-    del current_store.bugs[bug_id]
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        del current_store.bugs[bug_id]
+    now = datetime.now(UTC).isoformat()
+    if not _uses_repository_context(current_store):
+        for bug in current_store.bugs.values():
+            if bug.get("duplicate_of_bug_id") == bug_id:
+                bug["duplicate_of_bug_id"] = None
+                bug["updated_at"] = now
+    audit_event = _record_audit_event(
+        current_store,
         event_type="bug.deleted",
         actor_id=user["id"],
         subject_type="bug",
         subject_id=bug_id,
     )
+    _delete_bug_record(current_store, bug_id, audit_event=audit_event)
     return envelope({"deleted": True, "id": bug_id}, get_trace_id(request))
 
 
@@ -9385,6 +11445,15 @@ def collector_runs(
     _ensure_enum(status, COLLECTOR_RUN_STATUSES, "status")
     source_system = _ensure_non_blank(source_system, "source_system") if source_system else None
     current_store = store(request)
+    repository = _operational_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_collector_runs(
+            collector_type=collector_type,
+            product_id=product_id,
+            status=status,
+            source_system=source_system,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = []
     for run in current_store.collector_runs.values():
         if collector_type is not None and run.get("collector_type") != collector_type:
@@ -9414,7 +11483,7 @@ def create_collector_run(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_collector_run_write_role(user)
-    current_store = store(request)
+    current_store = _operational_write_store(store(request))
     source_system, started_at = _validate_collector_run_request(current_store, payload)
     now = datetime.now(UTC).isoformat()
     status = payload.status
@@ -9434,8 +11503,10 @@ def create_collector_run(
         "status": status,
         "updated_at": now,
     }
-    current_store.collector_runs[run_id] = run
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.collector_runs[run_id] = run
+    audit_event = _record_audit_event(
+        current_store,
         event_type="collector_run.created",
         actor_id=user["id"],
         subject_type="collector_run",
@@ -9446,6 +11517,12 @@ def create_collector_run(
             "source_system": run["source_system"],
             "status": run["status"],
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_collector_run_record",
+        run,
+        audit_event=audit_event,
     )
     return envelope(run, get_trace_id(request))
 
@@ -9458,15 +11535,17 @@ def patch_collector_run(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_collector_run_write_role(user)
-    current_store = store(request)
+    current_store = _operational_write_store(store(request))
     run = current_store.collector_runs.get(run_id)
     if run is None:
         raise api_error(404, "NOT_FOUND", "Collector run not found")
     updates = _collector_run_patch_updates(run, payload)
     if updates:
-        run.update(updates)
-        run["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.audit(
+        run = {**run, **updates, "updated_at": datetime.now(UTC).isoformat()}
+        if not _uses_repository_context(current_store):
+            current_store.collector_runs[run_id] = run
+    audit_event = _record_audit_event(
+        current_store,
         event_type="collector_run.updated",
         actor_id=user["id"],
         subject_type="collector_run",
@@ -9476,6 +11555,12 @@ def patch_collector_run(
             "records_imported": run["records_imported"],
             "status": run["status"],
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_collector_run_record",
+        run,
+        audit_event=audit_event,
     )
     return envelope(run, get_trace_id(request))
 
@@ -9492,6 +11577,15 @@ def pending_attribution_items(
     _ensure_enum(source_type, PENDING_ATTRIBUTION_SOURCE_TYPES, "source_type")
     _ensure_enum(status, PENDING_ATTRIBUTION_STATUSES, "status")
     current_store = store(request)
+    repository = _operational_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_pending_attribution_items(
+            source_type=source_type,
+            status=status,
+            resolved_product_id=resolved_product_id,
+            collector_run_id=collector_run_id,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = []
     for item in current_store.pending_attribution_items.values():
         if source_type is not None and item.get("source_type") != source_type:
@@ -9524,7 +11618,7 @@ def create_pending_attribution_item(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_pending_attribution_write_role(user)
-    current_store = store(request)
+    current_store = _operational_write_store(store(request))
     source_system, summary, raw_subject_id, suggested_module_code = (
         _validate_pending_attribution_create_request(current_store, payload)
     )
@@ -9555,8 +11649,10 @@ def create_pending_attribution_item(
         "summary": summary,
         "updated_at": now,
     }
-    current_store.pending_attribution_items[item_id] = item
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.pending_attribution_items[item_id] = item
+    audit_event = _record_audit_event(
+        current_store,
         event_type="pending_attribution.created",
         actor_id=user["id"],
         subject_type="pending_attribution_item",
@@ -9566,6 +11662,12 @@ def create_pending_attribution_item(
             "source_type": item["source_type"],
             "status": item["status"],
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_pending_attribution_item_record",
+        item,
+        audit_event=audit_event,
     )
     return envelope(item, get_trace_id(request))
 
@@ -9578,7 +11680,7 @@ def resolve_pending_attribution_item(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_pending_attribution_write_role(user)
-    current_store = store(request)
+    current_store = _operational_write_store(store(request))
     item = current_store.pending_attribution_items.get(item_id)
     if item is None:
         raise api_error(404, "NOT_FOUND", "Pending attribution item not found")
@@ -9592,22 +11694,24 @@ def resolve_pending_attribution_item(
     ) = _validate_pending_attribution_resolve_request(current_store, item, payload)
     now = datetime.now(UTC).isoformat()
     status = "resolved" if payload.resolution_action == "link_existing_context" else "ignored"
-    item.update(
-        {
-            "resolution_action": payload.resolution_action,
-            "resolution_note": resolution_note,
-            "resolved_at": now,
-            "resolved_by": user["id"],
-            "resolved_module_code": resolved_module_code,
-            "resolved_product_id": resolved_product_id,
-            "resolved_requirement_id": resolved_requirement_id,
-            "resolved_subject_id": resolved_subject_id,
-            "resolved_subject_type": resolved_subject_type,
-            "status": status,
-            "updated_at": now,
-        }
-    )
-    current_store.audit(
+    item = {
+        **item,
+        "resolution_action": payload.resolution_action,
+        "resolution_note": resolution_note,
+        "resolved_at": now,
+        "resolved_by": user["id"],
+        "resolved_module_code": resolved_module_code,
+        "resolved_product_id": resolved_product_id,
+        "resolved_requirement_id": resolved_requirement_id,
+        "resolved_subject_id": resolved_subject_id,
+        "resolved_subject_type": resolved_subject_type,
+        "status": status,
+        "updated_at": now,
+    }
+    if not _uses_repository_context(current_store):
+        current_store.pending_attribution_items[item_id] = item
+    audit_event = _record_audit_event(
+        current_store,
         event_type=(
             "pending_attribution.resolved"
             if status == "resolved"
@@ -9622,6 +11726,12 @@ def resolve_pending_attribution_item(
             "status": item["status"],
         },
     )
+    _save_single_repository_record(
+        current_store,
+        "save_pending_attribution_item_record",
+        item,
+        audit_event=audit_event,
+    )
     return envelope(item, get_trace_id(request))
 
 
@@ -9635,6 +11745,14 @@ def gitlab_metrics(
 ) -> dict[str, Any]:
     metric_date = _parse_metric_date(date, "date") if date is not None else None
     current_store = store(request)
+    repository = _operational_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_gitlab_daily_code_metrics(
+            product_id=product_id,
+            repository_id=repository_id,
+            metric_date=metric_date,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = []
     for metric in current_store.gitlab_daily_code_metrics.values():
         if product_id is not None and metric.get("product_id") != product_id:
@@ -9661,7 +11779,7 @@ def create_gitlab_metric(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _operational_write_store(store(request))
     _validate_gitlab_metric_context(
         current_store,
         product_id=payload.product_id,
@@ -9694,8 +11812,10 @@ def create_gitlab_metric(
     for optional_key in ("quality_score", "source_channel"):
         if metric[optional_key] is None:
             metric.pop(optional_key)
-    current_store.gitlab_daily_code_metrics[metric_id] = metric
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.gitlab_daily_code_metrics[metric_id] = metric
+    audit_event = _record_audit_event(
+        current_store,
         event_type="gitlab_daily_code_metric.created",
         actor_id=user["id"],
         subject_type="gitlab_daily_code_metric",
@@ -9705,6 +11825,12 @@ def create_gitlab_metric(
             "product_id": metric["product_id"],
             "repository_id": metric["repository_id"],
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_gitlab_daily_code_metric_record",
+        metric,
+        audit_event=audit_event,
     )
     return envelope(metric, get_trace_id(request))
 
@@ -9720,6 +11846,15 @@ def jenkins_releases(
 ) -> dict[str, Any]:
     _ensure_enum(status, JENKINS_RELEASE_STATUSES, "status")
     current_store = store(request)
+    repository = _operational_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_jenkins_release_records(
+            product_id=product_id,
+            version_id=version_id,
+            status=status,
+            environment=environment,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = []
     for release in current_store.jenkins_release_records.values():
         if product_id is not None and release.get("product_id") != product_id:
@@ -9748,7 +11883,7 @@ def create_jenkins_release(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _operational_write_store(store(request))
     _validate_jenkins_release_context(
         current_store,
         product_id=payload.product_id,
@@ -9789,8 +11924,10 @@ def create_jenkins_release(
     ):
         if release[optional_key] is None:
             release.pop(optional_key)
-    current_store.jenkins_release_records[release_id] = release
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.jenkins_release_records[release_id] = release
+    audit_event = _record_audit_event(
+        current_store,
         event_type="jenkins_release.created",
         actor_id=user["id"],
         subject_type="jenkins_release",
@@ -9801,6 +11938,12 @@ def create_jenkins_release(
             "product_id": release["product_id"],
             "version_id": release["version_id"],
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_jenkins_release_record",
+        release,
+        audit_event=audit_event,
     )
     return envelope(release, get_trace_id(request))
 
@@ -9818,6 +11961,16 @@ def online_log_metrics(
     current_store = store(request)
     from_value = _parse_usage_window(from_, "from") if from_ is not None else None
     to_value = _parse_usage_window(to, "to") if to is not None else None
+    repository = _operational_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_online_log_metrics(
+            product_id=product_id,
+            module_code=module_code,
+            environment=environment,
+            from_value=from_value,
+            to_value=to_value,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = []
     for metric in current_store.online_log_metrics.values():
         if product_id is not None and metric.get("product_id") != product_id:
@@ -9848,7 +12001,7 @@ def create_online_log_metric(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _operational_write_store(store(request))
     _validate_online_log_metric_context(
         current_store,
         product_id=payload.product_id,
@@ -9887,8 +12040,10 @@ def create_online_log_metric(
     ):
         if metric[optional_key] is None:
             metric.pop(optional_key)
-    current_store.online_log_metrics[metric_id] = metric
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.online_log_metrics[metric_id] = metric
+    audit_event = _record_audit_event(
+        current_store,
         event_type="online_log_metric.created",
         actor_id=user["id"],
         subject_type="online_log_metric",
@@ -9900,6 +12055,12 @@ def create_online_log_metric(
             "window_end": metric["window_end"],
             "window_start": metric["window_start"],
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_online_log_metric_record",
+        metric,
+        audit_event=audit_event,
     )
     return envelope(metric, get_trace_id(request))
 
@@ -9918,6 +12079,17 @@ def usage_metrics(
     current_store = store(request)
     from_value = _parse_usage_window(from_, "from") if from_ is not None else None
     to_value = _parse_usage_window(to, "to") if to is not None else None
+    repository = _insight_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_user_usage_metrics(
+            product_id=product_id,
+            module_code=module_code,
+            feature_code=feature_code,
+            user_segment=user_segment,
+            from_value=from_value,
+            to_value=to_value,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = []
     for metric in current_store.user_usage_metrics.values():
         if product_id is not None and metric.get("product_id") != product_id:
@@ -9950,7 +12122,7 @@ def create_usage_metric(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = store(request)
+    current_store = _insight_write_store(store(request))
     _validate_usage_metric_context(
         current_store,
         product_id=payload.product_id,
@@ -9988,8 +12160,10 @@ def create_usage_metric(
     ):
         if metric[optional_key] is None:
             metric.pop(optional_key)
-    current_store.user_usage_metrics[metric_id] = metric
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.user_usage_metrics[metric_id] = metric
+    audit_event = _record_audit_event(
+        current_store,
         event_type="usage_metric.created",
         actor_id=user["id"],
         subject_type="usage_metric",
@@ -10000,6 +12174,12 @@ def create_usage_metric(
             "window_end": metric["window_end"],
             "window_start": metric["window_start"],
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_user_usage_metric_record",
+        metric,
+        audit_event=audit_event,
     )
     return envelope(metric, get_trace_id(request))
 
@@ -10016,6 +12196,16 @@ def user_feedback(
 ) -> dict[str, Any]:
     _validate_user_feedback_enums(status=status)
     current_store = store(request)
+    repository = _insight_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_user_feedback(
+            product_id=product_id,
+            module_code=module_code,
+            feature_code=feature_code,
+            status=status,
+            created_by=created_by,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = []
     for feedback in current_store.user_feedback.values():
         if product_id is not None and feedback.get("product_id") != product_id:
@@ -10042,7 +12232,7 @@ def create_user_feedback(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    current_store = _insight_write_store(store(request))
     _validate_user_feedback_enums(
         feedback_type=payload.feedback_type,
         sentiment=payload.sentiment,
@@ -10072,8 +12262,10 @@ def create_user_feedback(
         "tags": _normalized_tags(payload.tags),
         "updated_at": now,
     }
-    current_store.user_feedback[feedback["id"]] = feedback
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.user_feedback[feedback["id"]] = feedback
+    audit_event = _record_audit_event(
+        current_store,
         event_type="user_feedback.created",
         actor_id=user["id"],
         subject_type="user_feedback",
@@ -10083,6 +12275,12 @@ def create_user_feedback(
             "product_id": feedback["product_id"],
             "status": feedback["status"],
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_user_feedback_record",
+        feedback,
+        audit_event=audit_event,
     )
     return envelope(feedback, get_trace_id(request))
 
@@ -10095,7 +12293,7 @@ def patch_user_feedback(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_user_feedback_triage_role(user)
-    current_store = store(request)
+    current_store = _insight_write_store(store(request))
     feedback = current_store.user_feedback.get(feedback_id)
     if feedback is None:
         raise api_error(404, "NOT_FOUND", "User feedback not found")
@@ -10109,9 +12307,11 @@ def patch_user_feedback(
         updates["content"] = _ensure_non_blank(updates["content"], "content")
     if "tags" in updates:
         updates["tags"] = _normalized_tags(updates["tags"])
-    feedback.update(updates)
-    feedback["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.audit(
+    feedback = {**feedback, **updates, "updated_at": datetime.now(UTC).isoformat()}
+    if not _uses_repository_context(current_store):
+        current_store.user_feedback[feedback_id] = feedback
+    audit_event = _record_audit_event(
+        current_store,
         event_type="user_feedback.updated",
         actor_id=user["id"],
         subject_type="user_feedback",
@@ -10120,6 +12320,12 @@ def patch_user_feedback(
             "status": feedback["status"],
             "updated_fields": sorted(updates.keys()),
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_user_feedback_record",
+        feedback,
+        audit_event=audit_event,
     )
     return envelope(feedback, get_trace_id(request))
 
@@ -10134,6 +12340,14 @@ def iteration_suggestions(
 ) -> dict[str, Any]:
     _validate_iteration_enums(status=status)
     current_store = store(request)
+    repository = _insight_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_iteration_plan_suggestions(
+            product_id=product_id,
+            planning_cycle=planning_cycle,
+            status=status,
+        )
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = []
     for suggestion in current_store.iteration_plan_suggestions.values():
         if product_id is not None and suggestion.get("product_id") != product_id:
@@ -10160,7 +12374,7 @@ def create_iteration_suggestions(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_iteration_planning_role(user)
-    current_store = store(request)
+    current_store = _insight_write_store(store(request))
     module_codes = _normalized_module_codes(payload.module_codes)
     _validate_iteration_context(
         current_store,
@@ -10183,8 +12397,10 @@ def create_iteration_suggestions(
         payload=payload,
         user=user,
     )
-    current_store.iteration_plan_suggestions[suggestion["id"]] = suggestion
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.iteration_plan_suggestions[suggestion["id"]] = suggestion
+    audit_event = _record_audit_event(
+        current_store,
         event_type="iteration_suggestion.generated",
         actor_id=user["id"],
         subject_type="iteration_plan_suggestion",
@@ -10195,6 +12411,12 @@ def create_iteration_suggestions(
             "product_id": suggestion["product_id"],
             "status": suggestion["status"],
         },
+    )
+    _save_single_repository_record(
+        current_store,
+        "save_iteration_suggestion_record",
+        suggestion,
+        audit_event=audit_event,
     )
     return envelope({"items": [suggestion], "total": 1}, get_trace_id(request))
 
@@ -10208,7 +12430,7 @@ def decide_iteration_suggestion(
 ) -> dict[str, Any]:
     _require_iteration_planning_role(user)
     _validate_iteration_enums(decision=payload.decision)
-    current_store = store(request)
+    current_store = _insight_write_store(store(request))
     suggestion = current_store.iteration_plan_suggestions.get(suggestion_id)
     if suggestion is None:
         raise api_error(404, "NOT_FOUND", "Iteration suggestion not found")
@@ -10224,24 +12446,27 @@ def decide_iteration_suggestion(
             "ITERATION_PLAN_DECISION_INVALID",
             "Rejected suggestion cannot convert to requirement",
         )
+    audit_start_index = len(current_store.audit_events)
     requirement = None
+    requirement_audit_event = None
     if payload.convert_to_requirement:
-        requirement = _create_iteration_requirement(
+        requirement, requirement_audit_event = _create_iteration_requirement(
             current_store,
             payload=payload,
             suggestion=suggestion,
             user=user,
         )
     now = datetime.now(UTC).isoformat()
-    suggestion["status"] = (
-        "converted_to_requirement" if requirement is not None else payload.decision
-    )
-    suggestion["decision"] = payload.decision
+    suggestion = {
+        **suggestion,
+        "status": "converted_to_requirement" if requirement is not None else payload.decision,
+        "decision": payload.decision,
+        "updated_at": now,
+    }
     if payload.edited_title:
         suggestion["title"] = _ensure_non_blank(payload.edited_title, "edited_title")
     if requirement is not None:
         suggestion["converted_requirement_id"] = requirement["id"]
-    suggestion["updated_at"] = now
     decision = {
         "comment": payload.comment,
         "convert_to_requirement": payload.convert_to_requirement,
@@ -10254,8 +12479,11 @@ def decide_iteration_suggestion(
         "id": current_store.new_id("iteration_decision"),
         "suggestion_id": suggestion_id,
     }
-    current_store.iteration_plan_decisions[decision["id"]] = decision
-    current_store.audit(
+    if not _uses_repository_context(current_store):
+        current_store.iteration_plan_suggestions[suggestion_id] = suggestion
+        current_store.iteration_plan_decisions[decision["id"]] = decision
+    audit_event = _record_audit_event(
+        current_store,
         event_type="iteration_suggestion.decided",
         actor_id=user["id"],
         subject_type="iteration_plan_suggestion",
@@ -10265,6 +12493,22 @@ def decide_iteration_suggestion(
             "decision": payload.decision,
             "status": suggestion["status"],
         },
+    )
+    _save_iteration_decision_records(
+        current_store,
+        suggestion=suggestion,
+        decision=decision,
+        requirement=requirement,
+        audit_events=[
+            *current_store.audit_events[audit_start_index:],
+            *(
+                []
+                if requirement_audit_event is None
+                or requirement_audit_event in current_store.audit_events
+                else [requirement_audit_event]
+            ),
+            *([] if audit_event in current_store.audit_events else [audit_event]),
+        ],
     )
     return envelope(
         {
@@ -10288,7 +12532,18 @@ def lifecycle_context(
     include_risks: bool = True,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    current_store = store(request)
+    runtime_store = store(request)
+    repository = _lifecycle_query_repository(runtime_store)
+    if repository is not None:
+        source_product_id = (
+            product_id
+            or (str(subject_id) if subject_type == "product" and subject_id else None)
+        )
+        current_store = _lifecycle_source_store(
+            repository.get_lifecycle_context_source_rows(product_id=source_product_id)
+        )
+    else:
+        current_store = _repository_read_model_store(runtime_store)
     if not ((subject_type and subject_id) or product_id):
         raise api_error(
             400,
@@ -10342,6 +12597,15 @@ def lifecycle_context(
         risk_signals=risk_signals,
         tasks=tasks,
     )
+    if repository is not None:
+        repository.save_lifecycle_context(
+            {
+                "lifecycle_context_edges": current_store.lifecycle_context_edges,
+                "lifecycle_risk_signals": current_store.lifecycle_risk_signals,
+            }
+        )
+    else:
+        _save_lifecycle_context_records(current_store)
 
     return envelope(
         {
@@ -10369,7 +12633,8 @@ def export_task_markdown(
     user: dict[str, Any] = CurrentUser,
 ) -> PlainTextResponse:
     current_store = store(request)
-    task = current_store.ai_tasks.get(task_id)
+    read_store = _task_workflow_read_store(current_store)
+    task = read_store.ai_tasks.get(task_id)
     if task is None:
         raise api_error(404, "NOT_FOUND", "AI task not found")
     _require_task_read_role(user, task)
@@ -10378,7 +12643,7 @@ def export_task_markdown(
 
     trace_id = get_trace_id(request)
     return PlainTextResponse(
-        _render_markdown(current_store, task),
+        _render_markdown(read_store, task),
         media_type="text/markdown",
         headers={"X-Trace-Id": trace_id},
     )

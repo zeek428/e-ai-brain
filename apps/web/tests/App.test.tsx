@@ -1873,7 +1873,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
         'POST',
       ]),
     );
-    await waitFor(() => expect(screen.getByText('已索引')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('已索引').length).toBeGreaterThan(1));
   });
 
   it('renders dashboard and operation pages without placeholder data', async () => {

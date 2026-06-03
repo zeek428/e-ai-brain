@@ -8,7 +8,24 @@
 ## [Unreleased]
 
 ### Added
+- DB-first 迁移继续收敛知识、任务运行态、运营采集、用户洞察和迭代规划写接口：PostgreSQL 路径现在构造明确 records/payloads 直接调用 repository，新增记录不再依赖请求态集合充当写入事实源；MemoryStore 集合写入仅保留为测试 helper fallback。
+- DB-first 迁移补齐任务工作流写路径的请求级 repository source rows 上下文，任务启动、取消、补充信息和 Review approve/edit-approve/reject/request-more-info 在全局运行时 store 过期时仍可读取结构表源数据并在 handler 返回前写回 PostgreSQL。
+- DB-first 迁移补齐任务工作流 repository source rows 读取入口，PostgreSQL 运行时需求详情、AI 任务详情、Graph Run 列表、待确认 Review、Review 详情、模拟回写结果、Code Review 报告和 Markdown 导出不再通过 repository read snapshot 承载读取。
+- DB-first 迁移补齐生命周期上下文 repository source rows 聚合入口，PostgreSQL 运行时 `/api/lifecycle/context` 不再通过 repository read snapshot 承载聚合，并通过 repository 写回生成的 lifecycle edges/risks。
+- DB-first 迁移补齐首页 IT 团队看板 repository source rows 聚合入口，PostgreSQL 运行时 `/api/dashboard/it-team` 不再通过 repository read snapshot 承载聚合，并通过单条 repository 写入保存 dashboard snapshot。
+- DB-first 迁移将 PostgreSQL 启动运行层从 `PersistentMemoryStore.from_repository(...)` 替换为轻量 `PostgresRuntimeStore(repository)`，启动不再恢复业务集合；`MemoryStore` 仅保留为测试 helper，PostgreSQL source rows 使用非 `MemoryStore` 的 `_RepositoryRequestContext`。
+- DB-first 迁移补齐产品配置写接口、需求/任务创建写接口和 Bug 写接口在 `PostgresRuntimeStore` 空启动容器下的 repository source rows 上下文，避免产品、版本、模块、需求、任务和 Bug 校验依赖启动时内存集合。
+- DB-first 迁移补齐运营采集、待归属、DevOps 指标、线上日志、用户使用、用户反馈和迭代规划写接口在 `PostgresRuntimeStore` 空启动容器下的 repository source rows 上下文，并将需求列表切到 task workflow source rows 读取。
+- DB-first 迁移补齐模型网关配置写接口和 AI 助手聊天写接口在 `PostgresRuntimeStore` 空启动容器下的 repository source rows 上下文，配置修改/删除和继续用户会话不再依赖启动时内存集合。
+- DB-first 迁移补齐知识文档创建/修改/重试/删除和知识沉淀采纳/拒绝写接口在 `PostgresRuntimeStore` 空启动容器下的 repository source rows 上下文，索引重建和沉淀审核不再依赖启动时内存集合。
+- DB-first 迁移移除生产 read snapshot 恢复 fallback，`main.py` 不再通过 `PersistentMemoryStore.from_repository(...)` 反灌 repository payload；业务大脑只读接口改为 repository-first 读取 `brain_apps`，知识沉淀驳回和 Mock Writeback 生成改为 source rows 写上下文。
+- DB-first 迁移将生命周期上下文 source rows 从 `MemoryStore()` 投影替换为专用 `LifecycleContextReadModel`，保留现有链路/风险算法的同时去除该聚合路径的 MemoryStore 中间层语义。
+- DB-first 迁移进一步收敛写接口边界：产品配置、模型网关配置/测试和 AI 助手聊天在 PostgreSQL 路径构造明确 records/payloads 后直接调用 repository 写入；只读缓存/read model 可保留为 PostgreSQL 派生、可重建的性能优化，但不得作为写入事实源。
 - 新增 `/api/product-versions` 批量版本列表接口，返回版本及所属产品投影；需求列表同步返回产品/迭代版本展示字段，任务列表在 PostgreSQL 模式通过 SQL join 返回产品名并支持产品和创建时间段筛选。
+- DB-first 迁移补齐任务运行态、Review、模拟回写、Code Review 报告和 Markdown 导出读快照；Mock Writeback 生成在 handler 返回前写入 `mock_issues` 和 `mock_issue.written` 审计事件，不依赖请求结束全局 persist。
+- DB-first 迁移补齐知识沉淀候选列表 repository-first 读取，`status` 过滤进入查询层，运行态 store 过期时仍从结构表返回沉淀候选。
+- DB-first 迁移补齐知识检索 repository-first 候选查询，文档权限、chunk 权限、可检索状态和关键词过滤进入查询层，保留关键词兜底和兼容向量排序。
+- DB-first 迁移补齐知识沉淀 approve/reject 写接口的 repository 当前记录读取，运行态 store 过期时仍能完成审核并写回结构表与审计事件。
 - 需求创建支持不指定迭代版本，审批后先进入需求池，排期到未归档迭代版本后才能生成 AI 任务；需求交付新增“迭代版本”页面，需求状态按设计、开发、代码评审、测试、发布和验收流程推进。
 - 模型网关配置拆分 Chat 与 Embedding 能力：Embedding 可禁用、复用 Chat 连接或单独配置 baseURL/API Key，知识向量 chunk 记录 embedding_config_id/model/dimension，检索只比较兼容向量并保留关键词兜底。
 - 知识索引新增文本兜底模式：Embedding 不可用时仍保存文本 chunk 并进入 `text_indexed`，知识检索以关键词模式返回可访问结果；Embedding 恢复后可通过重试升级为 `vector_indexed`。
@@ -138,6 +155,35 @@
 - `/health` 的 `model_gateway` 状态改为优先读取持久化 active/default 模型网关配置，避免运行时模型网关可用但健康检查仍显示 `not_configured`。
 - `/health` 新增 `data_access_mode`，在 PostgreSQL 运行时返回 `db_first_migration`，明确当前仍处于移除生产 `MemoryStore` 中间层的迁移期。
 - 新增 `023_db_first_id_counters.sql` 和 PostgreSQL repository 发号能力，过渡期 `PersistentMemoryStore.new_id()` 在 repository 支持时优先委托数据库分配 ID，不再只依赖进程内 counter。
+- 产品配置写接口新增 handler 级 repository 单记录写入/删除，覆盖产品、迭代版本、模块、Git 资源和相关系统；产品删除同步清理归属该产品的相关系统，避免遗留孤儿配置；新增禁用请求结束 `persist()` 后重建 store 的回归测试，验证这些写入不依赖全局同步。
+- 产品配置核心 GET 接口改为 repository-first 读取，覆盖产品列表/详情、指定产品的版本、模块、Git 资源和关联系统；新增运行态 store 过期回归测试，验证页面查询不再依赖进程内产品配置集合。
+- 用户使用指标、用户反馈和迭代建议列表改为 repository-first 读取，在 PostgreSQL 运行时由 SQL/repository 执行筛选和排序；新增运行态 store 过期回归测试，验证用户洞察和迭代规划页面查询不依赖进程内集合。
+- 采集运行、待归属队列、GitLab 每日代码指标、Jenkins 发布记录和线上运行日志指标列表改为 repository-first 读取，在 PostgreSQL 运行时由 SQL/repository 执行筛选和排序；新增运行态 store 过期回归测试，验证研发运营页面查询不依赖进程内集合。
+- 需求台账新增 handler 级 repository 单记录写入/删除，覆盖需求创建、修改、审批、驳回、关闭和删除。
+- 从需求生成产品详细设计 AI 任务新增 repository 事务写入，需求 `task_ids`/状态、AI task 和 `ai_task.created` 审计事件在 handler 返回前一并持久化。
+- 后续 AI 任务创建新增 repository 事务写入，技术方案、开发计划、自动化测试、发布评估、上线后分析和 Code Review 任务创建会同步需求 `task_ids`/状态、AI task 和 `ai_task.created` 审计事件。
+- 需求详情和 AI 任务详情改为在 PostgreSQL 运行时优先读取 task workflow repository source rows，运行态 store 过期时仍能返回结构表详情数据。
+- 任务启动成功路径新增 repository 事务写入，AI task、模型调用日志、Human Review、Graph Run、Checkpoint 和启动审计事件在 handler 返回前一并持久化，并推进任务和 Review 的标准时间字段。
+- 任务启动失败路径新增 repository 事务写入，模型配置失败、模型调用失败和 Code Review executor 失败会在返回错误前持久化 failed task、可选模型失败日志、`ai_task.retry_started` 和失败审计事件。
+- Review approve/edit-approve 主路径新增 repository 事务写入，完成态 task/review/graph/checkpoint、需求状态、知识沉淀候选、可选 Bug/Code Review 报告和审计事件在 handler 返回前一并持久化，并记录 Review 决策时间与任务修改时间。
+- Review reject 与 request-more-info 主路径新增 repository 事务写入，失败或等待补充状态、Review 决策字段、Graph Run/Checkpoint 和审计事件在 handler 返回前一并持久化。
+- AI 任务 cancel 与 submit-more-info 新增 repository 状态写入，取消任务、取消待确认 Review、Graph Run/Checkpoint 状态和补充信息回到 draft 的任务输入在 handler 返回前一并持久化。
+- 知识文档和知识沉淀审核新增 repository 事务写入，文档创建/更新/索引重试/删除、chunk 重建、沉淀采纳/拒绝、索引模型日志和审计事件在 handler 返回前一并持久化。
+- 知识文档列表改为 repository-first 读取，权限角色、关键字、文档类型和索引状态过滤进入 SQL/repository 查询层，`chunk_count` 从结构表聚合返回。
+- AI 助手聊天新增 repository 事务写入，成功路径会同步会话、用户消息、助手消息、模型日志和审计事件，模型调用失败会同步 failed 模型日志和审计事件。
+- AI 助手会话列表和消息列表改为 repository-first 读取，按当前用户 `user_id` 在查询层隔离历史记录，运行态 store 过期时仍能返回本人会话和消息。
+- GitLab MR / GitHub PR 快照新增 repository 单记录写入，快照成功、同 diff 复用和 diff 超限失败审计在 handler 返回前持久化；Code Review 报告生成/确认继续随任务启动和 Review 决策事务写入。
+- GitHub PR 列表、GitLab MR 预览和 GitHub PR 预览的审计事件新增 handler 级 repository 写入，避免移除请求结束全局 `persist()` 后这些 GET 审计只停留在进程内 store。
+- Bug 管理新增 repository 单记录写入/删除，Bug 创建、修改、删除和对应审计事件在 handler 返回前持久化，删除前清空指向被删 Bug 的重复归并引用。
+- Bug 列表改为 repository-first 读取，产品、状态、严重级别和来源过滤进入 SQL/repository 查询层，运行态 store 过期时仍从结构表返回 Bug 数据。
+- 采集运行、待归属队列、GitLab 每日代码指标、Jenkins 发布记录和线上运行日志指标新增 repository 单记录写入，创建/更新/处理记录及审计事件在 handler 返回前持久化。
+- 用户使用指标、用户反馈和迭代规划新增 repository 写入，反馈处理、建议生成、决策和转需求会在 handler 返回前持久化；转需求时同步写入新需求、建议、决策和完整审计事件。
+- 生命周期上下文查询和首页 IT 团队看板新增 handler 级物化记录写入，查询生成的 lifecycle edges/risks 与 dashboard snapshot 在返回前写入 PostgreSQL 结构表；聚合读取全面 SQL/read model 化仍在迁移计划中。
+- 生命周期上下文和首页 IT 团队看板读接口在 PostgreSQL 运行时改为读取 repository source rows，避免依赖全局运行时 store 的已缓存集合；新增运行时 store 过期场景的 source-row 回归测试。
+- 请求结束全局 `persist()` 已从 API middleware 移除，所有 API 请求都不再通过请求结束同步进程内 store；模型网关配置创建、修改、删除和连接测试审计新增 handler 级 repository 写入，防止移除全局同步后丢失配置或审计。
+- 模型网关配置列表和模型调用日志列表改为 repository-first 读取，运行态 store 过期时仍从结构表返回配置、脱敏状态和按 purpose/status/task 过滤后的模型日志。
+- 审计列表改为 repository-first 读取，actor、event_type、ai_task、subject 和时间范围过滤进入 SQL/repository 查询层，运行态 store 过期时仍从结构表返回审计数据。
+- PostgreSQL 运行时不再从 `app_state_snapshots` 恢复业务集合，手动 `PersistentMemoryStore.persist()` 也不再写入 app_state JSONB 快照；历史表保留用于非破坏性迁移兼容。
 - 测试用例清单增加适用阶段口径，区分 MVP 必交、MVP 空状态、v1.1、v1.2 和生产就绪验证。
 - 文档入口增加实现者最短路径，明确 P0 表、API、页面、测试和 runbook 的推荐落地顺序。
 - 前端提交需求入口调整为需求管理查询表格，新增需求和配置类表单统一使用弹窗。
@@ -156,7 +202,7 @@
 - 部署 runbook 补充模型网关、内部 GitLab MR 预览、diff 快照和 code-review 执行器的 MVP 验证步骤。
 - 前端框架约束升级为严格 Ant Design Pro：新增页面、导航、表格、卡片和工作台布局必须优先使用 Umi Max、ProLayout、ProComponents 与 antd，禁止回退到 Vite 自建壳子或手写全局导航。
 - 模拟 Issue 写回从 GET 隐式写副作用改为 POST 显式生成；GET 只查询现有结果，未写回时返回 `not_written`。
-- 文档补充当前源码状态：Docker 本地栈默认使用 PostgreSQL 用户表和运行状态快照持久化，`MemoryStore` 保留为测试/fallback；真实 GitLab 和模型调用仍需后续接入。
+- 早期文档补充源码状态：Docker 本地栈默认使用 PostgreSQL 用户表和运行状态快照持久化，`MemoryStore` 保留为测试/fallback；后续 GitLab/GitHub、模型网关和 DB-first 迁移记录已替代该阶段口径。
 - 前端管理列表改为使用显式 `ai_brain_access_token` 登录态，不再在浏览器代码中内置 admin 登录凭据；API 失败时展示错误提示和 trace_id，不再回退到示例数据。
 - 所有管理列表和任务中心移除前端本地兜底行，加载中不闪现样例数据，错误或无数据时保持空表。
 - API 和技术规格对齐当前 CRUD 完成状态，补充删除接口、依赖占用错误语义和系统管理菜单位置。

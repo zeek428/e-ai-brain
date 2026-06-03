@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 import app.main as main
 from app.core.config import Settings
+from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
+from app.core.store import MemoryStore
 from app.main import _tcp_endpoint_from_url, app
 
 client = TestClient(app)
@@ -30,6 +32,52 @@ def test_build_store_rejects_memory_mode_outside_tests(monkeypatch):
     finally:
         monkeypatch.setattr(main.settings, "app_env", "test")
         monkeypatch.setattr(main.settings, "persistence_mode", "memory")
+
+
+def test_build_store_uses_postgres_runtime_container(monkeypatch):
+    monkeypatch.setattr(main.settings, "persistence_mode", "postgres")
+
+    runtime_store = main.build_store()
+
+    assert isinstance(runtime_store, PostgresRuntimeStore)
+    assert not isinstance(runtime_store, PersistentMemoryStore)
+    assert hasattr(runtime_store, "repository")
+    assert runtime_store.products == {}
+    assert runtime_store.requirements == {}
+    assert runtime_store.ai_tasks == {}
+
+
+def test_repository_read_model_store_does_not_restore_snapshot_payload():
+    class SnapshotRestoreForbiddenRepository:
+        def load(self) -> dict:
+            raise AssertionError("repository read snapshot should not be restored")
+
+    runtime_store = PostgresRuntimeStore(SnapshotRestoreForbiddenRepository())
+
+    assert main._repository_read_model_store(runtime_store) is runtime_store
+
+
+def test_repository_source_context_is_not_memory_store():
+    class SourceRowsRepository:
+        def __init__(self) -> None:
+            self.counter = 0
+
+        def next_id(self, prefix: str) -> str:
+            self.counter += 1
+            return f"{prefix}_{self.counter:03d}"
+
+    context = main._task_workflow_source_store({}, repository=SourceRowsRepository())
+
+    assert not isinstance(context, MemoryStore)
+    assert context.new_id("task") == "task_001"
+    event = context.audit(
+        event_type="db_first.context_checked",
+        actor_id="user_admin",
+        subject_type="runtime_context",
+        subject_id="postgres_source_rows",
+    )
+    assert event["id"] == "audit_002"
+    assert context.audit_events == [event]
 
 
 def test_postgres_runtime_reports_db_first_migration_mode(monkeypatch):
@@ -99,6 +147,68 @@ def auth_headers() -> dict[str, str]:
     )
     token = login_response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_api_requests_do_not_call_global_request_end_persist():
+    original_store = app.state.store
+
+    class PersistTrackingStore:
+        def __init__(self) -> None:
+            self.persist_calls = 0
+
+        def persist(self) -> None:
+            self.persist_calls += 1
+
+    tracking_store = PersistTrackingStore()
+    app.state.store = tracking_store
+    try:
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "admin@example.com", "password": "admin123"},
+        )
+
+        assert response.status_code == 200
+        assert tracking_store.persist_calls == 0
+    finally:
+        app.state.store = original_store
+
+
+def test_brain_apps_read_from_repository_under_postgres_runtime():
+    original_store = app.state.store
+
+    class BrainAppsRepository:
+        def load_brain_apps(self) -> dict:
+            return {
+                "brain_apps": {
+                    "rd_brain": {
+                        "id": "rd_brain",
+                        "code": "rd_brain",
+                        "name": "研发大脑",
+                        "description": "Repository backed brain app",
+                        "status": "active",
+                    }
+                }
+            }
+
+    app.state.store = PostgresRuntimeStore(BrainAppsRepository())
+    try:
+        response = client.get("/api/brain-apps", headers=auth_headers())
+        detail_response = client.get("/api/brain-apps/rd_brain", headers=auth_headers())
+
+        assert response.status_code == 200
+        assert response.json()["data"]["items"] == [
+            {
+                "id": "rd_brain",
+                "code": "rd_brain",
+                "name": "研发大脑",
+                "description": "Repository backed brain app",
+                "status": "active",
+            }
+        ]
+        assert detail_response.status_code == 200
+        assert detail_response.json()["data"]["code"] == "rd_brain"
+    finally:
+        app.state.store = original_store
 
 
 def test_long_memory_status_reports_not_configured_without_gbrain(monkeypatch):

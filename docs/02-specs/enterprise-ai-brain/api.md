@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.63 |
+| 功能版本 | v1.1.79 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -85,6 +85,23 @@
 | v1.1.61 | 2026-06-03 | 知识索引支持 `text_indexed` 关键词兜底和 `vector_indexed` 向量增强，检索结果返回 `retrieval_mode` | Codex |
 | v1.1.62 | 2026-06-03 | 模型网关拆分 Chat 与 Embedding 能力配置，Embedding 支持禁用、复用 Chat 或单独连接，并按向量来源元数据过滤语义检索 | Codex |
 | v1.1.63 | 2026-06-03 | 需求创建允许不指定迭代版本，新增需求交付/迭代版本管理口径，并将需求接口状态更新为需求池、排期和研发交付流程 | Codex |
+| v1.1.64 | 2026-06-03 | DB-first 迁移补齐任务运行态/Review/回写/导出 repository 读路径和 Mock Writeback handler 级写入契约 | Codex |
+| v1.1.65 | 2026-06-03 | DB-first 迁移补齐知识沉淀候选列表 repository-first 读取和状态过滤契约 | Codex |
+| v1.1.66 | 2026-06-03 | DB-first 迁移补齐知识检索 repository-first 候选查询、权限过滤和关键词下推契约 | Codex |
+| v1.1.67 | 2026-06-03 | DB-first 迁移补齐知识沉淀审核写接口 repository 当前记录读取契约 | Codex |
+| v1.1.68 | 2026-06-03 | DB-first 迁移补齐生命周期上下文 repository source rows 聚合和 handler 级写回契约 | Codex |
+| v1.1.69 | 2026-06-03 | DB-first 迁移补齐首页 IT 团队看板 repository source rows 聚合和单条 snapshot 写入契约 | Codex |
+| v1.1.70 | 2026-06-03 | DB-first 迁移补齐需求/任务详情、Graph Run、Review、回写、Code Review 报告和 Markdown 导出的 task workflow source rows 读取契约 | Codex |
+| v1.1.71 | 2026-06-03 | DB-first 迁移补齐任务启动、取消、补充信息和 Review 决策写路径的 task workflow source rows 请求上下文契约 | Codex |
+| v1.1.72 | 2026-06-03 | DB-first 迁移将 PostgreSQL 启动运行层切换为轻量 PostgresRuntimeStore repository 容器 | Codex |
+| v1.1.73 | 2026-06-03 | DB-first 迁移补齐产品配置、需求/任务创建和 Bug 写路径在 PostgresRuntimeStore 空启动容器下的 source rows 上下文契约 | Codex |
+| v1.1.74 | 2026-06-03 | DB-first 迁移补齐运营采集、用户洞察和迭代规划写路径在 PostgresRuntimeStore 空启动容器下的 source rows 上下文契约 | Codex |
+| v1.1.75 | 2026-06-03 | DB-first 迁移补齐模型网关配置和 AI 助手聊天写路径在 PostgresRuntimeStore 空启动容器下的 repository 上下文契约 | Codex |
+| v1.1.76 | 2026-06-03 | DB-first 迁移补齐知识文档和知识沉淀写路径在 PostgresRuntimeStore 空启动容器下的 repository 上下文契约 | Codex |
+| v1.1.77 | 2026-06-03 | DB-first 迁移补齐 GitLab/GitHub PR/MR 预览、列表和快照写路径在 PostgresRuntimeStore 空启动容器下的 repository 上下文契约 | Codex |
+| v1.1.78 | 2026-06-03 | DB-first 迁移移除生产 read snapshot 恢复 fallback，补齐业务大脑只读、知识沉淀驳回和 Mock Writeback 生成的 repository/source rows 契约 | Codex |
+| v1.1.79 | 2026-06-03 | DB-first 迁移将生命周期上下文 source rows 从 MemoryStore 投影替换为专用 LifecycleContextReadModel | Codex |
+| v1.1.80 | 2026-06-03 | DB-first 迁移明确只读缓存允许边界，并将产品配置、模型网关、助手、需求、任务创建和 Bug 写接口进一步收敛为直接 repository records/payloads | Codex |
 
 ---
 
@@ -98,13 +115,15 @@ API 面向 React 工作台，覆盖认证、业务大脑、AI 助手、产品上
 
 产品管理页面可维护产品、模块、Git 资源和产品相关系统；需求交付下的迭代版本页面维护 `product_versions`，用于需求排期和任务版本上下文。`GET /api/product-versions` 支持批量查询版本并返回 `product_code`、`product_name` 投影，`active_only=true` 只返回 active 版本；`GET /api/requirements` 返回需求主体同时带 `product_code`、`product_name`、`version_code`、`version_name`；`GET /api/ai-tasks` 在 PostgreSQL 模式按产品表 SQL join 返回 `product_name`，并支持 `product_id`、`created_from`、`created_to` 等筛选。产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置、模型调用元数据、AI 助手会话和助手消息会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`、`assistant_conversations`、`assistant_messages`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 
-知识文档创建、更新和知识沉淀采纳会同步重建文本 chunk，并在 active/default OpenAI-compatible 模型网关或环境模型网关支持 `/embeddings` 时生成 `knowledge_chunks.embedding`；Embedding 不可用时文档进入 `text_indexed`，保留 `vector_index_error`/兼容 `index_error`，关键词检索继续可用；Embedding 成功时进入 `vector_indexed`，历史 `indexed` 仅作为兼容状态读取；知识文档可选绑定 `product_id` 作为产品归属上下文，首页 IT 团队看板按产品筛选时只统计该产品归属或该产品任务沉淀产生的知识文档；基础文本索引失败才进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建失败索引或将 `text_indexed` 补建为向量索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`retrieval_mode`、`score` 和来源引用，没有可读向量 chunk 时不调用 query embedding 并直接走关键词检索，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，GitHub PR 预览和快照读取 `project_path=owner/repo` 或可解析 owner/repo 的 `remote_url`，并通过环境变量、服务端密钥引用或本地直填只读 token 解析凭据；缺少 provider 地址、仓库路径或凭据时返回明确错误，不生成本地假 MR/PR。
+知识文档创建、更新和知识沉淀采纳会同步重建文本 chunk，并在 active/default OpenAI-compatible 模型网关或环境模型网关支持 `/embeddings` 时生成 `knowledge_chunks.embedding`；Embedding 不可用时文档进入 `text_indexed`，保留 `vector_index_error`/兼容 `index_error`，关键词检索继续可用；Embedding 成功时进入 `vector_indexed`，历史 `indexed` 仅作为兼容状态读取；知识文档可选绑定 `product_id` 作为产品归属上下文，首页 IT 团队看板按产品筛选时只统计该产品归属或该产品任务沉淀产生的知识文档；基础文本索引失败才进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建失败索引或将 `text_indexed` 补建为向量索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`retrieval_mode`、`score` 和来源引用，没有可读向量 chunk 时不调用 query embedding 并直接走关键词检索，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，GitHub PR 列表、预览和快照读取 `project_path=owner/repo` 或可解析 owner/repo 的 `remote_url`，并通过环境变量、服务端密钥引用或本地直填只读 token 解析凭据；缺少 provider 地址、仓库路径或凭据时返回明确错误，不生成本地假 MR/PR。
 
 模型网关配置可在系统管理页面维护，列表和响应只返回 `api_key_configured`，不返回明文密钥、前缀或后缀；配置页支持“测试连接”，调用 `/api/system/model-gateway-configs/test` 使用当前表单参数临时检测 provider `/chat/completions` 与 `/embeddings`，并可通过 `test_target=chat` 仅检测 Chat，适配 ChatGPT OAuth 类不提供 Embedding 的上游；测试不保存配置或密钥，不写入 `model_gateway_logs`，响应仅包含脱敏状态、模型、延迟、embedding 维度、跳过状态和错误码。active/default 且已配置密钥的 OpenAI-compatible 配置会在非 code_review 任务启动时调用 provider `/chat/completions`；知识索引先构建文本 chunk，只有补建向量索引和存在可读向量 chunk 的查询排序会调用 provider `/embeddings`，未配置结构化默认模型网关时可使用 `MODEL_GATEWAY_BASE_URL` 与 `MODEL_GATEWAY_API_KEY` 指向的环境模型网关；调用日志只保存脱敏元数据。缺少可用模型网关、配置缺失密钥或 provider 调用失败时，非 code_review 任务进入 `failed` 并返回 `MODEL_GATEWAY_CONFIG_INVALID` 或 `MODEL_GATEWAY_FAILED`。code_review 任务必须通过可插拔 `code_review_executor` 边界生成报告，默认 `CODE_REVIEW_EXECUTOR_TYPE=claude_code_skill`、`CODE_REVIEW_EXECUTOR_NAME=code-review`，由 `CODE_REVIEW_EXECUTOR_COMMAND` 指定外部命令适配器，输入 JSON 走 stdin，输出 JSON 走 stdout；测试或兼容环境可显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 复用模型网关适配器；默认外部命令为空且存在 active/default 或环境模型网关时，启动会自动通过 `model_gateway` 适配器生成报告，prompt 携带 MR/PR 快照、技术方案、需求和产品上下文，并将常见 Review 输出字段规范化为 AI Brain 报告 schema。执行器调用成功写入 `code_review.executor_called`，执行器配置、调用、解析或结构化校验失败进入 `failed`，返回 `CODE_REVIEW_EXECUTOR_FAILED` 并写入 `code_review.executor_failed` 审计事件。任务启动不会静默生成本地输出。
 
-任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务、基于已确认技术方案创建 `development_planning`、`automated_testing` 和 `release_readiness` 任务，基于已确认发布评估创建 `post_release_analysis` 任务，并对已完成技术方案导出 Markdown。需求创建允许 `version_id` 为空，审批后进入 `approved` 需求池；排入未归档迭代版本后进入 `planned`，才能生成产品详细设计任务。AI 任务启动会通过真实 LangGraph `StateGraph` 运行当前 MVP 路径 `retrieve_context -> generate_task_output -> interrupt_for_human_review`，Graph Run 响应和结构表会保留 `runtime=langgraph`、`node_path` 以及 checkpoint `graph_runtime` 元数据。`automated_testing` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_auto_test`；`post_release_analysis` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_post_release`，两者均关联产品、版本、需求和 AI 任务。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录，线上运行日志指标可通过 `/api/ops/online-log-metrics` 登记和筛选真实产品/模块/环境/时间窗口聚合指标；采集运行记录可通过 `/api/collectors/runs` 登记、筛选和结束，不自动生成指标或反馈数据；无法映射产品、模块、需求或导入主体的真实数据可通过 `/api/attribution/pending-items` 进入待归属队列，并通过 `/api/attribution/pending-items/{item_id}/resolve` 人工归属或忽略，处理本身不自动生成指标、反馈、需求或迭代建议；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪。生命周期上下文已支持从 `bug`、`gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback` 和 `iteration_plan_suggestion` 起点回溯同产品/版本/模块任务链路，并对未关闭严重 Bug、GitLab 风险、Jenkins 失败、线上高错误率、负面反馈和低置信度迭代建议返回来源明确的风险信号。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计、Bug、GitLab 指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划摘要；传入 `product_id` 时，所有可归属主体必须按产品归属过滤，不展示其他产品的数据；传入 `time_range` 时，运营类指标按可解析的日期或时间窗口过滤。看板下钻到 Bug、研发运营、用户洞察和审计页面时保留产品和时间范围上下文。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；`PERSISTENCE_MODE` 未设置时默认 `postgres`，非测试环境显式配置 `memory` 会启动失败；测试环境可继续用 MemoryStore helper 运行纯业务/接口单测。当前生产数据访问仍处于 DB-first 迁移期，`/health` 返回 `data_access_mode=db_first_migration`；已迁移接口应直接走 SQL/repository，未迁移主体仍可能通过 `PersistentMemoryStore.persist()` 同步到结构表或 `app_state_snapshots`，这是待清除的迁移债务，不允许作为新增生产 API 的实现模式。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志可手工登记或导入真实聚合指标，无记录时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
+任务中心已通过真实接口支持启动产品详细设计、确认 Review、基于已确认产品详细设计创建技术方案任务、基于已确认技术方案创建 `development_planning`、`automated_testing` 和 `release_readiness` 任务，基于已确认发布评估创建 `post_release_analysis` 任务，并对已完成技术方案导出 Markdown。需求创建允许 `version_id` 为空，审批后进入 `approved` 需求池；排入未归档迭代版本后进入 `planned`，才能生成产品详细设计任务。AI 任务启动会通过真实 LangGraph `StateGraph` 运行当前 MVP 路径 `retrieve_context -> generate_task_output -> interrupt_for_human_review`，Graph Run 响应和结构表会保留 `runtime=langgraph`、`node_path` 以及 checkpoint `graph_runtime` 元数据。`automated_testing` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_auto_test`；`post_release_analysis` 输出经人工确认后，可将 `bug_suggestions` 写入 `bugs`，来源为 `ai_post_release`，两者均关联产品、版本、需求和 AI 任务。GitLab 每日代码指标可通过 `/api/devops/gitlab/daily-code-metrics` 登记和筛选真实产品仓库维度指标，Jenkins 发布记录可通过 `/api/devops/jenkins/releases` 登记和筛选真实产品版本维度发布记录，线上运行日志指标可通过 `/api/ops/online-log-metrics` 登记和筛选真实产品/模块/环境/时间窗口聚合指标；采集运行记录可通过 `/api/collectors/runs` 登记、筛选和结束，不自动生成指标或反馈数据；无法映射产品、模块、需求或导入主体的真实数据可通过 `/api/attribution/pending-items` 进入待归属队列，并通过 `/api/attribution/pending-items/{item_id}/resolve` 人工归属或忽略，处理本身不自动生成指标、反馈、需求或迭代建议；用户反馈可通过 `/api/insights/user-feedback` 登记、筛选和更新状态，用户使用指标可通过 `/api/insights/usage-metrics` 登记和筛选真实聚合指标；写操作均记录审计。审计与运行页面从真实 `/api/audit/events` 加载列表，行操作提供事件详情和基于审计主体优先的生命周期链路追踪；审计列表在 repository 可用时优先读取 SQL/repository，actor、event_type、ai_task、subject 和时间范围过滤在查询层执行。生命周期上下文已支持从 `bug`、`gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback` 和 `iteration_plan_suggestion` 起点回溯同产品/版本/模块任务链路，并对未关闭严重 Bug、GitLab 风险、Jenkins 失败、线上高错误率、负面反馈和低置信度迭代建议返回来源明确的风险信号。首页 IT 团队看板已聚合真实产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计、Bug、GitLab 指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划摘要；传入 `product_id` 时，所有可归属主体必须按产品归属过滤，不展示其他产品的数据；传入 `time_range` 时，运营类指标按可解析的日期或时间窗口过滤。看板下钻到 Bug、研发运营、用户洞察和审计页面时保留产品和时间范围上下文。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 运行，登录账号读取 PostgreSQL `users` 表，管理员可通过系统管理下的用户管理维护用户，并通过角色管理查看固定角色定义；`PERSISTENCE_MODE` 未设置时默认 `postgres`，非测试环境显式配置 `memory` 会启动失败；测试环境可继续用 MemoryStore helper 运行纯业务/接口单测。当前生产数据访问仍处于 DB-first 迁移期，`/health` 返回 `data_access_mode=db_first_migration`；PostgreSQL 启动使用轻量 `PostgresRuntimeStore` repository 容器，不再通过 `PersistentMemoryStore.from_repository(...)` 启动恢复业务集合；生产读路径不再通过 repository read snapshot 反灌 `PersistentMemoryStore`，缺少已声明的 repository/source rows 能力时只能使用测试 helper 或显式迁移后的查询路径；业务大脑列表和详情已在 PostgreSQL 运行时读取 `brain_apps` repository payload。产品配置写接口已在 handler 返回前把产品、版本、模块、Git 资源、相关系统和对应审计事件写入 repository，不依赖请求结束 `PersistentMemoryStore.persist()`；产品配置核心 GET 接口已在 repository 可用时优先读取 SQL/repository，包括产品列表/详情、指定产品的版本、模块、Git 资源和关联系统，并通过运行态 store 过期测试验证不依赖进程内集合；需求创建、修改、审批、驳回、关闭和删除也已在 handler 返回前写入需求记录及审计事件；从需求生成产品详细设计 AI 任务和后续任务创建已在同一 repository 事务中写入需求 `task_ids`/状态、AI task 和 `ai_task.created` 审计事件；需求列表、需求详情、AI 任务详情、Graph Run 列表、待确认 Review、Review 详情、模拟回写结果、Code Review 报告和 Markdown 导出在 PostgreSQL 运行时会优先读取 task workflow repository source rows；任务启动成功路径已写入 AI task、模型调用日志、Human Review、Graph Run、Checkpoint 和启动审计事件；任务启动失败路径已写入 failed task、可选模型失败日志、`ai_task.retry_started` 和失败审计事件；Review approve/edit-approve/reject/request-more-info 主路径已写入完成态或中断态 task/review/graph/checkpoint、需求状态、知识沉淀候选、可选 Bug/Code Review 报告和审计事件；cancel/submit-more-info 已写入 AI task、待确认 Review、Graph Run/Checkpoint 和审计事件；Mock Writeback 生成接口已在 handler 返回前写入 `mock_issues` 与 `mock_issue.written` 审计事件，并在 `PostgresRuntimeStore` 空启动容器下通过 task workflow source rows 恢复已完成任务和已有幂等回写结果；知识文档创建/更新/索引重试/删除、知识 chunk 重建、知识沉淀采纳/拒绝和对应审计事件已在 handler 返回前写入 repository，并在 `PostgresRuntimeStore` 空启动容器下通过 knowledge source rows 恢复产品、知识文档、chunk、沉淀和模型网关上下文，同步索引期间可选模型日志；AI 助手聊天成功路径已在 handler 返回前写入会话、用户消息、助手消息、模型日志和审计事件，并在 `PostgresRuntimeStore` 空启动容器下通过 assistant source rows 恢复当前用户会话、消息、产品任务摘要和模型网关上下文；模型调用失败路径写入失败模型日志和审计事件；GitHub PR 列表、GitLab MR / GitHub PR 预览审计以及快照成功、复用和失败审计已在 handler 返回前写入 repository，Code Review 报告生成/确认已随任务启动和 Review 决策事务写入；Bug 创建、修改和删除已在 handler 返回前写入 `bugs` 与对应审计事件，删除前会清空指向被删 Bug 的重复归并引用；采集运行创建/更新、待归属队列创建/处理、GitLab 每日代码指标、Jenkins 发布记录和线上运行日志指标创建已在 handler 返回前写入对应结构表与审计事件，并在 `PostgresRuntimeStore` 空启动容器下通过 operational source rows 校验产品、仓库、版本、模块、采集运行和待归属当前记录；用户使用指标创建、用户反馈创建/处理、迭代建议生成和迭代建议决策已在 handler 返回前写入对应结构表与审计事件，并在 `PostgresRuntimeStore` 空启动容器下通过 insight source rows 校验产品、版本、模块、反馈、Bug 和迭代建议当前记录；用户使用指标、用户反馈和迭代建议列表已在 repository 可用时优先读取 SQL/repository，产品、模块、功能、用户群体、时间范围、状态、创建人和规划周期等过滤在查询层执行；迭代建议转需求时会在同一 repository 调用内写入新需求、建议、决策和完整审计事件；模型网关配置创建、修改、删除和连接测试审计已在 handler 返回前写入 repository，并在 `PostgresRuntimeStore` 空启动容器下通过 model gateway source rows 恢复当前配置和调用日志上下文；生命周期上下文查询生成的 edges/risks 和首页看板生成的 dashboard snapshot 已在 handler 返回前写入 repository，且这两个读接口在 PostgreSQL 运行时会读取 repository source rows；生命周期上下文 source rows 使用专用 `LifecycleContextReadModel` 承载，不再实例化 `MemoryStore` 作为聚合中间层；请求结束全局 `persist()` 已从 API middleware 移除，任何 API 请求都不再通过请求结束同步进程内 store；`app_state_snapshots` 仅作为历史迁移表保留，不再作为生产恢复源或写入目标；纯 SQL/物化 read model 聚合仍待迁移，新增生产 API 不得把进程内 store 作为数据源或写入目标。外部 DevOps 自动采集器和用户行为自动采集器尚未接入；线上日志可手工登记或导入真实聚合指标，无记录时返回真实空集合，不提供占位状态或伪造统计数据；迭代规划建议已支持基于真实反馈与 Bug 证据的生成、确认和可选转需求。
 
 当前补充实现：`POST /api/planning/iteration-suggestions` 已基于库内真实 `user_feedback` 与 `bugs` 证据生成迭代建议；无证据时返回真实空集合，不生成占位建议。`POST /api/planning/iteration-suggestions/{suggestion_id}/decide` 支持产品负责人、研发负责人或管理员确认采纳、修改后采纳或驳回；只有 `accepted` / `edited_accepted` 且 `convert_to_requirement=true` 时才创建真实 `requirements` 记录。建议与确认分别写入 `iteration_plan_suggestions` 和 `iteration_plan_decisions`，并记录 `iteration_suggestion.generated` / `iteration_suggestion.decided` 审计事件。
+
+DB-first 迁移补充：`app_state_snapshots` 仅作为历史迁移表保留，当前 PostgreSQL 运行时启动恢复只读取结构表，不再从 app_state JSONB 快照恢复业务集合；手动 `PersistentMemoryStore.persist()` 也不再写入 app_state JSONB 快照。
 
 用户使用指标当前支持通过 `POST /api/insights/usage-metrics` 手工登记或导入真实聚合指标，通过 `GET /api/insights/usage-metrics` 按产品、模块、功能、用户群体和时间范围筛选；记录写入 `user_usage_metrics`，并记录 `usage_metric.created` 审计事件。无指标时返回真实空集合，不生成兜底数据。
 
@@ -1115,6 +1134,46 @@ MR 预览：
 GET /api/devops/gitlab/merge-requests/{repository_id}/{mr_iid}/preview
 ```
 
+GitHub PR 列表：
+
+```http
+GET /api/devops/github/pull-requests/{repository_id}?state=open&limit=20
+```
+
+响应：
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "repository_id": "repo_001",
+        "project_path": "owner/repo",
+        "number": 3,
+        "title": "feat: add assistant chat",
+        "author": {
+          "username": "alice",
+          "name": "alice"
+        },
+        "state": "open",
+        "source_branch": "feature/assistant-chat",
+        "target_branch": "main",
+        "base_sha": "abc123",
+        "head_sha": "def456",
+        "created_at": "2026-06-03T08:00:00Z",
+        "updated_at": "2026-06-03T09:00:00Z",
+        "web_url": "https://github.com/owner/repo/pull/3",
+        "writeback_allowed": false
+      }
+    ],
+    "total": 1
+  },
+  "trace_id": "trace_github_list_001"
+}
+```
+
+`state` 可取 `open`、`closed` 或 `all`，`limit` 范围为 1-100；接口使用产品 GitHub 代码库配置中的 `project_path` 或 `remote_url` 解析 `owner/repo`，并通过只读凭据调用 GitHub API。无可访问 PR 时返回真实空集合；该接口只用于选择 Review 输入，不回写 GitHub。
+
 GitHub PR 预览：
 
 ```http
@@ -2002,7 +2061,7 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 
 权限规则：当起点是 `ai_task` 时，读取权限与 AI 任务详情一致；当起点是需求、产品或可解析到任务的审计/证据主体时，返回的下游任务、人工确认、报告、知识沉淀、模拟 Issue、真实运营证据和风险信号必须先过滤掉当前用户无权读取的任务链路。
 
-持久化规则：接口会把当前查询范围内计算出的上下游关系边同步到 `lifecycle_context_edges`，把风险信号同步到 `lifecycle_risk_signals`；无关系或无风险时保持真实空集合，不生成兜底记录。
+持久化规则：PostgreSQL 运行时聚合前直接读取 repository source rows；接口会把当前查询范围内计算出的上下游关系边同步到 `lifecycle_context_edges`，把风险信号同步到 `lifecycle_risk_signals`；无关系或无风险时保持真实空集合，不生成兜底记录。
 
 响应摘要：
 
@@ -2059,7 +2118,7 @@ GET /api/lifecycle/context?subject_type=requirement&subject_id=requirement_001&d
 GET /api/dashboard/it-team?product_id=product_001&time_range=7d
 ```
 
-当前实现返回真实聚合指标，来源于产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计事件、Bug、GitLab 每日指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划建议；其中 AI 任务、待确认 Review 和知识沉淀计数、列表必须先按任务读权限过滤，`product_id` 存在时所有可归属主体必须按产品归属过滤，`time_range` 存在时运营类指标按可解析的日期或时间窗口过滤，并把当前产品/时间窗口聚合结果同步到 `dashboard_metric_snapshots`。无数据时返回真实 0 和空数组，不生成占位统计：
+当前实现返回真实聚合指标，来源于产品、需求、AI 任务、待确认 Review、知识文档、知识沉淀、审计事件、Bug、GitLab 每日指标、Jenkins 发布、线上日志、用户使用、用户反馈和迭代规划建议；PostgreSQL 运行时聚合前直接读取 repository source rows，不再通过 repository read snapshot 承载看板聚合；其中 AI 任务、待确认 Review 和知识沉淀计数、列表必须先按任务读权限过滤，`product_id` 存在时所有可归属主体必须按产品归属过滤，`time_range` 存在时运营类指标按可解析的日期或时间窗口过滤，并把当前产品/时间窗口聚合结果通过单条 repository 写入同步到 `dashboard_metric_snapshots`。无数据时返回真实 0 和空数组，不生成占位统计：
 
 ```json
 {
@@ -2265,11 +2324,11 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | POST `/api/reviews/{review_id}/edit-approve` | 400/409 | VALIDATION_ERROR / REVIEW_VERSION_CONFLICT | 视错误而定 | 成功和冲突均记录。 | 保留用户编辑内容，刷新后允许重新提交。 |
 | POST `/api/reviews/{review_id}/reject` | 400 | VALIDATION_ERROR | 否 | 成功必须记录 rejection reason。 | 要求填写驳回原因。 |
 | POST `/api/reviews/{review_id}/request-more-info` | 400 | VALIDATION_ERROR | 否 | 成功必须记录补充问题。 | 要求填写明确问题。 |
-| GET GitLab MR preview | 404/403 | GITLAB_MR_NOT_FOUND / FORBIDDEN | 否 | 记录只读预览失败原因。 | 提示检查项目绑定、MR IID 和权限。 |
-| GET GitHub PR preview | 404/403 | GITHUB_PR_NOT_FOUND / FORBIDDEN | 否 | 记录只读预览失败原因。 | 提示检查仓库绑定、PR number 和权限。 |
+| GET GitLab MR preview | 400/404/502/503 | VALIDATION_ERROR / NOT_FOUND / DEVOPS_SOURCE_UNAVAILABLE | 视上游错误而定 | 成功预览记录 `gitlab_mr.previewed`；失败不要求审计，可按安全策略采样记录。 | 提示检查项目绑定、MR IID、只读凭据和上游可用性。 |
+| GET GitHub PR preview | 400/404/502/503 | VALIDATION_ERROR / NOT_FOUND / DEVOPS_SOURCE_UNAVAILABLE | 视上游错误而定 | 成功预览记录 `github_pr.previewed`；失败不要求审计，可按安全策略采样记录。 | 提示检查仓库绑定、PR number、只读凭据和上游可用性。 |
 | POST GitLab MR snapshot | 413 | GITLAB_MR_DIFF_TOO_LARGE | 否 | 记录 `gitlab_mr.snapshot_failed`，包含 diff_size_bytes、changed_file_count、file_diff_line_count 和限制。 | 提示拆分 MR 或缩小范围。 |
 | POST GitHub PR snapshot | 413 | GITLAB_MR_DIFF_TOO_LARGE | 否 | 记录 `github_pr.snapshot_failed`，包含 diff_size_bytes、changed_file_count、file_diff_line_count 和限制。 | 提示拆分 PR 或缩小范围。 |
-| POST GitLab MR / GitHub PR snapshot | 502/503 | DEVOPS_SOURCE_UNAVAILABLE | 是 | 记录 GitLab/GitHub API 超时、限流或不可用。 | 提示稍后重试，保留 MR/PR 输入。 |
+| POST GitLab MR / GitHub PR snapshot | 502/503 | DEVOPS_SOURCE_UNAVAILABLE | 是 | 上游不可用不保证审计；diff 超限类失败必须记录 `*.snapshot_failed`。 | 提示稍后重试，保留 MR/PR 输入。 |
 | GET `/api/ai-tasks/{task_id}/code-review-report` | 404 | NOT_FOUND | 否 | 不要求审计。 | 显示报告尚未生成或不存在。 |
 | code-review 执行器生成报告 | 502/503 | CODE_REVIEW_EXECUTOR_FAILED | 是 | 记录 executor_type、executor_name、阶段和 retryable。 | 显示执行器失败，可重跑或联系管理员。 |
 | POST `/api/knowledge/documents` | 400 | VALIDATION_ERROR | 否 | 成功和失败均记录文档来源。 | 标出文件类型、大小或权限错误。 |
