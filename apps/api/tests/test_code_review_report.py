@@ -3,7 +3,7 @@ import json
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
-from app.main import app
+from app.main import app, settings
 
 client = TestClient(app)
 
@@ -223,6 +223,112 @@ def test_code_review_task_uses_configured_executor_boundary(monkeypatch):
         "retryable": False,
         "stage": "execute",
     }
+
+
+def test_code_review_uses_model_gateway_when_external_executor_command_missing(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    requirement_id, snapshot_id = build_mr_snapshot(headers)
+    settings.code_review_executor_type = "claude_code_skill"
+    settings.code_review_executor_name = "code-review"
+    settings.code_review_executor_command = ""
+
+    task = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "code_review",
+            "title": "Review MR !42 without external command",
+            "requirement_id": requirement_id,
+            "input": {"gitlab_mr_snapshot_id": snapshot_id},
+        },
+        headers=headers,
+    ).json()["data"]
+
+    started = client.post(f"/api/ai-tasks/{task['id']}/start", headers=headers).json()["data"]
+
+    assert started["status"] == "waiting_review"
+    report = client.get(
+        f"/api/ai-tasks/{task['id']}/code-review-report",
+        headers=headers,
+    ).json()["data"]
+    assert report["executor"] == {
+        "executor_name": "code-review",
+        "executor_type": "model_gateway",
+        "retryable": False,
+    }
+
+
+def test_model_gateway_code_review_normalizes_common_review_shape(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    requirement_id, snapshot_id = build_mr_snapshot(headers)
+    settings.code_review_executor_type = "claude_code_skill"
+    settings.code_review_executor_name = "code-review"
+    settings.code_review_executor_command = ""
+    captured_payload = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "findings": [],
+                                        "overall": "request_changes",
+                                        "score": 64,
+                                        "summary": "模型返回了常见 Review 结构。",
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 9, "prompt_tokens": 20, "total_tokens": 29},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        del timeout
+        request_body = json.loads(request.data.decode("utf-8"))
+        captured_payload.update(json.loads(request_body["messages"][1]["content"]))
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    task = client.post(
+        "/api/ai-tasks",
+        json={
+            "task_type": "code_review",
+            "title": "Review MR !42 common model shape",
+            "requirement_id": requirement_id,
+            "input": {"gitlab_mr_snapshot_id": snapshot_id},
+        },
+        headers=headers,
+    ).json()["data"]
+
+    client.post(f"/api/ai-tasks/{task['id']}/start", headers=headers)
+
+    report = client.get(
+        f"/api/ai-tasks/{task['id']}/code-review-report",
+        headers=headers,
+    ).json()["data"]
+    assert report["risk_level"] == "high"
+    assert report["executor"] == {
+        "executor_name": "code-review",
+        "executor_type": "model_gateway",
+        "retryable": False,
+    }
+    assert captured_payload["gitlab_mr_snapshot"]["id"] == snapshot_id
+    assert captured_payload["technical_solution_task"]["task_type"] == "technical_solution"
 
 
 def test_code_review_report_edit_approve_also_confirms_and_archives_report(monkeypatch):

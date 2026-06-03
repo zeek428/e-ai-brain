@@ -82,7 +82,8 @@ def fake_openai_compatible_model_gateway(monkeypatch):
             "{}",
         )
         task_payload = json.loads(user_content)
-        task_type = task_payload.get("task_type")
+        task = task_payload.get("task") if isinstance(task_payload.get("task"), dict) else {}
+        task_type = task_payload.get("task_type") or task.get("task_type")
         if task_type == "code_review":
             content = {
                 "executor": {

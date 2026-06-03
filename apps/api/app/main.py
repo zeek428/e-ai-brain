@@ -1743,21 +1743,50 @@ def _model_gateway_embeddings_url(base_url: str) -> str:
     return f"{normalized}/embeddings"
 
 
-def _model_gateway_messages(task: dict[str, Any]) -> list[dict[str, str]]:
-    payload = {
-        "input_json": task.get("input_json", {}),
-        "product_context": _public_product_context(task.get("product_context")),
-        "requirement_snapshot": task.get("requirement_snapshot", {}),
-        "task_type": task["task_type"],
-        "title": task["title"],
-    }
+def _model_gateway_messages(
+    current_store: MemoryStore,
+    task: dict[str, Any],
+) -> list[dict[str, str]]:
+    if task["task_type"] == "code_review":
+        payload = _code_review_executor_payload(current_store, task)
+        payload["expected_output_schema"] = {
+            "summary": "string",
+            "risk_level": "low | medium | high",
+            "findings": [
+                {
+                    "severity": "low | medium | high",
+                    "file_path": "string",
+                    "line_start": "integer or null",
+                    "line_end": "integer or null",
+                    "category": "string",
+                    "message": "string",
+                    "suggestion": "string",
+                    "confidence": "number from 0 to 1",
+                }
+            ],
+        }
+        system_content = (
+            "You are the AI Brain code-review executor. Review only the provided MR/PR "
+            "snapshot, requirement, technical solution, and product context. Return one "
+            "JSON object only with summary, risk_level, and findings. Do not invent file "
+            "paths that are absent from changed_files_summary."
+        )
+    else:
+        payload = {
+            "input_json": task.get("input_json", {}),
+            "product_context": _public_product_context(task.get("product_context")),
+            "requirement_snapshot": task.get("requirement_snapshot", {}),
+            "task_type": task["task_type"],
+            "title": task["title"],
+        }
+        system_content = (
+            "You are the AI Brain model gateway. Return one JSON object only, "
+            "without markdown, comments, or explanatory text."
+        )
     return [
         {
             "role": "system",
-            "content": (
-                "You are the AI Brain model gateway. Return one JSON object only, "
-                "without markdown, comments, or explanatory text."
-            ),
+            "content": system_content,
         },
         {
             "role": "user",
@@ -1798,6 +1827,47 @@ def _model_gateway_log(
     return log
 
 
+def _derive_code_review_risk_level(output: dict[str, Any]) -> str:
+    risk_level = output.get("risk_level")
+    if isinstance(risk_level, str) and risk_level.strip():
+        return risk_level.strip()
+    overall = str(output.get("overall") or output.get("decision") or "").lower()
+    if any(marker in overall for marker in ("block", "request_changes", "high", "reject")):
+        return "high"
+    if any(marker in overall for marker in ("warn", "medium", "conditional", "review")):
+        return "medium"
+    if any(marker in overall for marker in ("approve", "low", "pass")):
+        return "low"
+    score = output.get("score")
+    if isinstance(score, int | float):
+        if score < 60:
+            return "high"
+        if score < 80:
+            return "medium"
+        return "low"
+    findings = output.get("findings")
+    if isinstance(findings, list):
+        severities = {
+            str(item.get("severity") or "").lower()
+            for item in findings
+            if isinstance(item, dict)
+        }
+        if severities & {"critical", "blocker", "high"}:
+            return "high"
+        if severities & {"major", "medium"}:
+            return "medium"
+        return "low"
+    return "medium"
+
+
+def _normalize_model_gateway_code_review_output(output: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(output)
+    normalized["risk_level"] = _derive_code_review_risk_level(normalized)
+    if not isinstance(normalized.get("executor"), dict):
+        normalized["executor"] = {}
+    return normalized
+
+
 def _parse_model_gateway_output(
     response_payload: dict[str, Any],
     task: dict[str, Any],
@@ -1819,6 +1889,8 @@ def _parse_model_gateway_output(
         raise ValueError("Model gateway response content must be a JSON object")
 
     output = parsed
+    if task["task_type"] == "code_review":
+        output = _normalize_model_gateway_code_review_output(output)
     if not isinstance(output.get("summary"), str) or not output["summary"].strip():
         raise ValueError("Model gateway response content is missing summary")
     if task["task_type"] == "code_review":
@@ -2226,7 +2298,7 @@ def _call_openai_compatible_model_gateway(
     provider = config["provider"]
     model = config["default_chat_model"]
     config_id = config["id"]
-    messages = _model_gateway_messages(task)
+    messages = _model_gateway_messages(current_store, task)
     body = {
         "model": model,
         "messages": messages,
@@ -2361,6 +2433,18 @@ def _code_review_executor_metadata(executor: Any | None = None) -> tuple[str, st
     return executor_type, executor_name
 
 
+def _should_use_model_gateway_code_review_executor(
+    current_store: MemoryStore,
+    *,
+    executor_type: str,
+) -> bool:
+    if executor_type != "claude_code_skill" or settings.code_review_executor_command.strip():
+        return False
+    if _default_model_gateway_config(current_store) is not None:
+        return True
+    return settings.model_gateway_status == "configured"
+
+
 def _coerce_code_review_executor_result(
     raw_result: Any,
     *,
@@ -2429,7 +2513,11 @@ def _call_configured_code_review_executor(
         )
 
     executor_type, executor_name = _code_review_executor_metadata()
-    if executor_type == "model_gateway":
+    if executor_type == "model_gateway" or _should_use_model_gateway_code_review_executor(
+        current_store,
+        executor_type=executor_type,
+    ):
+        executor_type = "model_gateway"
         try:
             output, model_log = _call_model_gateway_for_task(current_store, task=task)
         except ModelGatewayConfigError as exc:
