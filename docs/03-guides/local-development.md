@@ -106,7 +106,7 @@ docker compose ps
 | postgres | 业务数据、知识文档、pgvector 向量。 |
 | redis | 队列、临时状态、限流和短期缓存。 |
 
-当前 API 运行时仍以进程内 `MemoryStore` 承载本地测试和演示数据；PostgreSQL 初始化脚本已经定义目标持久化表结构，用于后续数据库仓储接入和 Compose 依赖验证。不要把当前内存存储误判为生产持久化能力。
+当前 API 本地开发运行时默认使用 PostgreSQL（`PERSISTENCE_MODE=postgres`）。`PERSISTENCE_MODE` 未设置时也按 postgres 处理；除 `APP_ENV=test/testing/pytest` 外，显式配置 `PERSISTENCE_MODE=memory` 会在后端启动时 fail fast。进程内 `MemoryStore` 仅作为自动化测试 helper 使用，不作为 FastAPI 本地开发模式。
 
 ## 开发工作流
 

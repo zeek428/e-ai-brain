@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 新增 `/api/product-versions` 批量版本列表接口，返回版本及所属产品投影；需求列表同步返回产品/迭代版本展示字段，任务列表在 PostgreSQL 模式通过 SQL join 返回产品名并支持产品和创建时间段筛选。
 - 需求创建支持不指定迭代版本，审批后先进入需求池，排期到未归档迭代版本后才能生成 AI 任务；需求交付新增“迭代版本”页面，需求状态按设计、开发、代码评审、测试、发布和验收流程推进。
 - 模型网关配置拆分 Chat 与 Embedding 能力：Embedding 可禁用、复用 Chat 连接或单独配置 baseURL/API Key，知识向量 chunk 记录 embedding_config_id/model/dimension，检索只比较兼容向量并保留关键词兜底。
 - 知识索引新增文本兜底模式：Embedding 不可用时仍保存文本 chunk 并进入 `text_indexed`，知识检索以关键词模式返回可访问结果；Embedding 恢复后可通过重试升级为 `vector_indexed`。
@@ -132,6 +133,8 @@
 - 审计与运行列表新增真实详情弹窗和生命周期链路追踪操作，可从审计主体查看上下游、风险信号和缺失上下文。
 
 ### Changed
+- `PERSISTENCE_MODE` 默认值改为 `postgres`；非测试环境配置 `memory` 会 fail fast，`MemoryStore` 降级为 `APP_ENV=test/testing/pytest` 下的测试 helper。
+- 前端产品管理、需求列表、迭代版本和产品上下文下拉改用批量版本接口与后端聚合字段，移除逐产品拉取版本导致的 N+1 页面查询。
 - `/health` 的 `model_gateway` 状态改为优先读取持久化 active/default 模型网关配置，避免运行时模型网关可用但健康检查仍显示 `not_configured`。
 - 测试用例清单增加适用阶段口径，区分 MVP 必交、MVP 空状态、v1.1、v1.2 和生产就绪验证。
 - 文档入口增加实现者最短路径，明确 P0 表、API、页面、测试和 runbook 的推荐落地顺序。

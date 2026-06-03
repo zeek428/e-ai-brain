@@ -417,7 +417,7 @@ export type IterationSuggestionCreatePayload = {
   module_codes?: string[];
   planning_cycle: string;
   product_id: string;
-  version_id?: string;
+  version_id?: string | null;
 };
 
 export type IterationSuggestionDecisionPayload = {
@@ -658,7 +658,9 @@ type ProductVersionListItem = {
   description?: string | null;
   id: string;
   name: string;
+  product_code?: string;
   product_id: string;
+  product_name?: string;
   release_date?: string | null;
   start_date?: string | null;
   status?: string;
@@ -699,7 +701,7 @@ export type RequirementMutationPayload = {
   priority?: string;
   product_id?: string;
   title?: string;
-  version_id?: string;
+  version_id?: string | null;
 };
 
 export type ProductVersionMutationPayload = {
@@ -824,11 +826,15 @@ type RequirementListItem = {
   id: string;
   module_code?: string | null;
   priority?: string;
+  product_code?: string;
   product_id: string;
+  product_name?: string;
   status?: string;
   title: string;
   updated_at?: string;
+  version_code?: string | null;
   version_id?: string;
+  version_name?: string | null;
 };
 
 type KnowledgeDocumentListItem = {
@@ -1614,17 +1620,18 @@ export async function fetchItTeamDashboard(
 
 export async function fetchManagementProducts(): Promise<ProductRecord[]> {
   const token = requireAccessToken();
-  const products = await apiRequest<ListResponse<ProductListItem>>('/api/products', { token });
-  const versionsByProductId = new Map(
-    await Promise.all(
-      products.items.map(async (product) => {
-        const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
-          `/api/products/${product.id}/versions`,
-          { token },
-        );
-        return [product.id, versions.items] as const;
-      }),
-    ),
+  const [products, versions] = await Promise.all([
+    apiRequest<ListResponse<ProductListItem>>('/api/products', { token }),
+    apiRequest<ListResponse<ProductVersionListItem>>('/api/product-versions', { token }),
+  ]);
+  const versionsByProductId = versions.items.reduce(
+    (groupedVersions, version) => {
+      const rows = groupedVersions.get(version.product_id) ?? [];
+      rows.push(version);
+      groupedVersions.set(version.product_id, rows);
+      return groupedVersions;
+    },
+    new Map<string, ProductVersionListItem[]>(),
   );
 
   return products.items.map((product) => ({
@@ -1681,8 +1688,12 @@ function mapProductVersionOption(version: ProductVersionListItem): ProductVersio
 function mapProductVersionRecord(version: ProductVersionListItem): ProductVersionRecord {
   return {
     code: version.code ?? version.id,
+    description: version.description ?? undefined,
     id: version.id,
     name: version.name,
+    productCode: version.product_code,
+    productId: version.product_id,
+    productName: version.product_name,
     releaseDate: version.release_date ?? undefined,
     startDate: version.start_date ?? undefined,
     status: normalizeProductVersionStatus(version.status),
@@ -1743,19 +1754,12 @@ export async function fetchProductVersions(productId: string): Promise<ProductVe
 }
 
 export async function fetchDeliveryIterationVersions(): Promise<ProductVersionRecord[]> {
-  const products = await fetchProductContextOptions();
-  const rows = await Promise.all(
-    products.map(async (product) => {
-      const versions = await fetchProductVersions(product.id);
-      return versions.map((version) => ({
-        ...version,
-        productCode: product.code,
-        productId: product.id,
-        productName: product.name,
-      }));
-    }),
+  const token = requireAccessToken();
+  const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
+    '/api/product-versions',
+    { token },
   );
-  return rows.flat();
+  return versions.items.map(mapProductVersionRecord);
 }
 
 export async function createProductVersion(
@@ -1928,25 +1932,28 @@ export async function deleteProductGitRepository(repositoryId: string) {
 
 export async function fetchProductContextOptions(): Promise<ProductContextOption[]> {
   const token = requireAccessToken();
-  const products = await apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', {
-    token,
-  });
-
-  return Promise.all(
-    products.items.map(async (product) => {
-      const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
-        `/api/products/${product.id}/versions?active_only=true`,
-        { token },
-      );
-
-      return {
-        code: product.code ?? product.id,
-        id: product.id,
-        name: product.name,
-        versions: versions.items.map(mapProductVersionOption),
-      };
+  const [products, versions] = await Promise.all([
+    apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', { token }),
+    apiRequest<ListResponse<ProductVersionListItem>>('/api/product-versions?active_only=true', {
+      token,
     }),
+  ]);
+  const versionsByProductId = versions.items.reduce(
+    (groupedVersions, version) => {
+      const rows = groupedVersions.get(version.product_id) ?? [];
+      rows.push(version);
+      groupedVersions.set(version.product_id, rows);
+      return groupedVersions;
+    },
+    new Map<string, ProductVersionListItem[]>(),
   );
+
+  return products.items.map((product) => ({
+    code: product.code ?? product.id,
+    id: product.id,
+    name: product.name,
+    versions: (versionsByProductId.get(product.id) ?? []).map(mapProductVersionOption),
+  }));
 }
 
 export async function fetchActiveProductOptions(): Promise<ProductFilterOption[]> {
@@ -2111,23 +2118,9 @@ export async function deleteModelGatewayConfig(configId: string) {
 
 export async function fetchManagementRequirements(): Promise<RequirementRecord[]> {
   const token = requireAccessToken();
-  const [products, requirements] = await Promise.all([
-    apiRequest<ListResponse<ProductListItem>>('/api/products', { token }),
-    apiRequest<ListResponse<RequirementListItem>>('/api/requirements', { token }),
-  ]);
-  const productCodeById = new Map(
-    products.items.map((product) => [product.id, product.code ?? product.id]),
-  );
-  const versionsById = new Map<string, ProductVersionListItem>();
-  await Promise.all(
-    products.items.map(async (product) => {
-      const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
-        `/api/products/${product.id}/versions`,
-        { token },
-      );
-      versions.items.forEach((version) => versionsById.set(version.id, version));
-    }),
-  );
+  const requirements = await apiRequest<ListResponse<RequirementListItem>>('/api/requirements', {
+    token,
+  });
 
   return requirements.items.map((requirement) => ({
     content: requirement.content,
@@ -2135,16 +2128,14 @@ export async function fetchManagementRequirements(): Promise<RequirementRecord[]
     moduleCode: requirement.module_code ?? undefined,
     owner: requirement.created_by ?? '-',
     priority: normalizePriority(requirement.priority),
-    product: productCodeById.get(requirement.product_id) ?? requirement.product_id,
+    product: requirement.product_code ?? requirement.product_name ?? requirement.product_id,
     productId: requirement.product_id,
     status: normalizeRequirementStatus(requirement.status),
     title: requirement.title,
     updatedAt: formatListDate(requirement.updated_at ?? requirement.created_at),
     versionId: requirement.version_id,
     versionName: requirement.version_id
-      ? (versionsById.get(requirement.version_id)?.name ??
-        versionsById.get(requirement.version_id)?.code ??
-        requirement.version_id)
+      ? (requirement.version_name ?? requirement.version_code ?? requirement.version_id)
       : '未排期',
   }));
 }

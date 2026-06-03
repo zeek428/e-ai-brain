@@ -12,7 +12,7 @@
 
 ## 当前源码状态提示
 
-当前仓库已包含 `apps/api` FastAPI 后端、`apps/web` Ant Design Pro 工作台、`.env.example`、`docker-compose.yml` 和 PostgreSQL 初始化迁移脚本。当前后端请求处理仍使用进程内 `MemoryStore` 支撑本地测试和演示；迁移脚本定义的是目标持久化 schema，后续接入数据库仓储时应继续以项目级 PRD/spec/API/test-case 为准。
+当前仓库已包含 `apps/api` FastAPI 后端、`apps/web` Ant Design Pro 工作台、`.env.example`、`docker-compose.yml` 和 PostgreSQL 初始化迁移脚本。本地开发和 Docker 栈默认使用 PostgreSQL（`PERSISTENCE_MODE=postgres`），未设置该变量时同样按 postgres 启动；进程内 `MemoryStore` 仅允许在 `APP_ENV=test/testing/pytest` 下作为自动化测试 helper 使用。
 
 ## 环境准备
 

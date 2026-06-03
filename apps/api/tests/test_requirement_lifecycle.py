@@ -156,6 +156,49 @@ def test_requirement_can_start_in_backlog_and_be_planned_into_iteration_version(
     assert detail["task_ids"] == [generated["task_id"]]
 
 
+def test_requirement_list_returns_product_and_iteration_version_projection():
+    app.state.store.reset()
+    headers = auth_headers()
+    product, version = create_product_and_version(headers)
+
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "title": "聚合查询需求",
+            "product_id": product["id"],
+            "version_id": version["id"],
+            "content": "列表接口需要直接返回产品和迭代版本展示字段。",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    listed = client.get("/api/requirements", headers=headers).json()["data"]["items"][0]
+
+    assert listed["id"] == requirement["id"]
+    assert listed["product_code"] == product["code"]
+    assert listed["product_name"] == product["name"]
+    assert listed["version_code"] == version["code"]
+    assert listed["version_name"] == version["name"]
+
+
+def test_product_versions_batch_list_returns_product_projection():
+    app.state.store.reset()
+    headers = auth_headers()
+    product, version = create_product_and_version(headers)
+
+    response = client.get("/api/product-versions?active_only=true", headers=headers)
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    assert items == [
+        {
+            **version,
+            "product_code": product["code"],
+            "product_name": product["name"],
+        }
+    ]
+
+
 def test_requirement_cannot_be_created_for_inactive_product():
     app.state.store.reset()
     headers = auth_headers()

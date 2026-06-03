@@ -1992,6 +1992,144 @@ class PostgresSnapshotRepository:
                 requirements = self._load_requirements(cursor)
         return {"requirements": requirements}
 
+    def list_product_version_summaries(self, *, active_only: bool = False) -> list[dict[str, Any]]:
+        where_clause = "WHERE v.status = 'active'" if active_only else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT v.id, v.product_id, v.code, v.name, v.description, v.status,
+                           v.start_date, v.release_date, p.code, p.name
+                    FROM product_versions v
+                    JOIN products p ON p.id = v.product_id
+                    {where_clause}
+                    ORDER BY p.code, v.code
+                    """
+                )
+                return [
+                    {
+                        "code": row[2],
+                        "description": row[4],
+                        "id": row[0],
+                        "name": row[3],
+                        "product_code": row[8],
+                        "product_id": row[1],
+                        "product_name": row[9],
+                        "release_date": row[7].isoformat() if row[7] else None,
+                        "start_date": row[6].isoformat() if row[6] else None,
+                        "status": row[5],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
+    def list_requirement_summaries(self, *, product_id: str | None = None) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT r.id, r.brain_app_id, r.title, r.product_id, r.version_id,
+                           r.module_code, r.description, r.priority, r.status, r.created_by,
+                           r.approval_comment, r.rejection_reason, r.task_ids,
+                           r.created_at, r.updated_at, p.code, p.name, v.code, v.name
+                    FROM requirements r
+                    JOIN products p ON p.id = r.product_id
+                    LEFT JOIN product_versions v ON v.id = r.version_id
+                    WHERE (%s IS NULL OR r.product_id = %s)
+                    ORDER BY r.created_at DESC, r.id
+                    """,
+                    (product_id, product_id),
+                )
+                requirements = []
+                for row in cursor.fetchall():
+                    requirement = {
+                        "brain_app_id": row[1] or DEFAULT_BRAIN_APP_ID,
+                        "content": row[6],
+                        "created_at": row[13].isoformat() if row[13] else None,
+                        "created_by": row[9],
+                        "id": row[0],
+                        "module_code": row[5],
+                        "priority": row[7],
+                        "product_code": row[15],
+                        "product_id": row[3],
+                        "product_name": row[16],
+                        "status": row[8],
+                        "task_ids": list(row[12] or []),
+                        "title": row[2],
+                        "updated_at": row[14].isoformat() if row[14] else None,
+                        "version_code": row[17],
+                        "version_id": row[4],
+                        "version_name": row[18],
+                    }
+                    if row[10] is not None:
+                        requirement["approval_comment"] = row[10]
+                    if row[11] is not None:
+                        requirement["rejection_reason"] = row[11]
+                    requirements.append(requirement)
+                return requirements
+
+    def list_ai_task_summaries(
+        self,
+        *,
+        status: str | None = None,
+        task_type: str | None = None,
+        product_id: str | None = None,
+        requirement_id: str | None = None,
+        created_from: Any | None = None,
+        created_to: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT t.id, t.brain_app_id, t.requirement_id, t.task_type, t.title,
+                           t.status, t.product_id, t.version_id, t.module_code,
+                           t.current_step, t.created_by, t.created_at, t.updated_at,
+                           COALESCE(p.name, t.product_context->'product'->>'name')
+                    FROM ai_tasks t
+                    LEFT JOIN products p ON p.id = t.product_id
+                    WHERE (%s IS NULL OR t.status = %s)
+                      AND (%s IS NULL OR t.task_type = %s)
+                      AND (%s IS NULL OR t.product_id = %s)
+                      AND (%s IS NULL OR t.requirement_id = %s)
+                      AND (%s IS NULL OR COALESCE(t.created_at, t.updated_at) >= %s)
+                      AND (%s IS NULL OR COALESCE(t.created_at, t.updated_at) <= %s)
+                    ORDER BY t.id
+                    """,
+                    (
+                        status,
+                        status,
+                        task_type,
+                        task_type,
+                        product_id,
+                        product_id,
+                        requirement_id,
+                        requirement_id,
+                        created_from,
+                        created_from,
+                        created_to,
+                        created_to,
+                    ),
+                )
+                return [
+                    {
+                        "brain_app_id": row[1] or DEFAULT_BRAIN_APP_ID,
+                        "created_at": row[11].isoformat() if row[11] else None,
+                        "created_by": row[10],
+                        "current_step": row[9],
+                        "id": row[0],
+                        "module_code": row[8],
+                        "product_id": row[6],
+                        "product_name": row[13],
+                        "requirement_id": row[2],
+                        "status": row[5],
+                        "task_type": row[3],
+                        "title": row[4],
+                        "updated_at": row[12].isoformat() if row[12] else None,
+                        "version_id": row[7],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
     def load_ai_tasks(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:

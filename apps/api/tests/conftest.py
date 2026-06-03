@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
+
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("PERSISTENCE_MODE", "memory")
 
 import app.main as main
 

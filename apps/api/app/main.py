@@ -39,16 +39,31 @@ settings = get_settings()
 app = FastAPI(title="Enterprise AI Brain API", version="0.1.0")
 
 
+def _is_test_env() -> bool:
+    return settings.app_env.lower() in {"test", "testing", "pytest"}
+
+
+def _ensure_memory_mode_allowed() -> None:
+    if settings.persistence_mode == "memory" and not _is_test_env():
+        raise RuntimeError("PERSISTENCE_MODE=memory is only allowed when APP_ENV=test")
+
+
 def build_store() -> MemoryStore:
     if settings.persistence_mode == "postgres":
         repository = PostgresSnapshotRepository(settings.database_url)
         return PersistentMemoryStore.from_repository(repository)
+    _ensure_memory_mode_allowed()
+    if settings.persistence_mode != "memory":
+        raise RuntimeError(f"Unsupported PERSISTENCE_MODE={settings.persistence_mode}")
     return MemoryStore()
 
 
 def build_user_repository() -> MemoryUserRepository | PostgresUserRepository:
     if settings.persistence_mode == "postgres":
         return PostgresUserRepository(settings.database_url)
+    _ensure_memory_mode_allowed()
+    if settings.persistence_mode != "memory":
+        raise RuntimeError(f"Unsupported PERSISTENCE_MODE={settings.persistence_mode}")
     return MemoryUserRepository.seeded()
 
 
@@ -1674,6 +1689,42 @@ def _list_payload(
 ) -> dict[str, Any]:
     visible_items = [item for item in items if not active_only or item.get("status") == "active"]
     return envelope({"items": visible_items, "total": len(visible_items)}, trace_id)
+
+
+def _postgres_snapshot_repository(current_store: MemoryStore) -> PostgresSnapshotRepository | None:
+    if not isinstance(current_store, PersistentMemoryStore):
+        return None
+    repository = current_store.repository
+    if isinstance(repository, PostgresSnapshotRepository):
+        return repository
+    return None
+
+
+def _product_version_summary_projection(
+    version: dict[str, Any],
+    current_store: MemoryStore,
+) -> dict[str, Any]:
+    product = current_store.products.get(version.get("product_id"), {})
+    return {
+        **version,
+        "product_code": product.get("code"),
+        "product_name": product.get("name"),
+    }
+
+
+def _requirement_summary_projection(
+    requirement: dict[str, Any],
+    current_store: MemoryStore,
+) -> dict[str, Any]:
+    product = current_store.products.get(requirement.get("product_id"), {})
+    version = current_store.product_versions.get(requirement.get("version_id"), {})
+    return {
+        **requirement,
+        "product_code": product.get("code"),
+        "product_name": product.get("name"),
+        "version_code": version.get("code"),
+        "version_name": version.get("name"),
+    }
 
 
 def _public_model_gateway_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -3401,6 +3452,25 @@ def delete_product(
     return envelope({"deleted": True, "id": product_id}, get_trace_id(request))
 
 
+@app.get("/api/product-versions")
+def list_all_product_versions(
+    request: Request,
+    active_only: bool = False,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    current_store = store(request)
+    repository = _postgres_snapshot_repository(current_store)
+    if repository is not None:
+        items = repository.list_product_version_summaries(active_only=active_only)
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+    items = [
+        _product_version_summary_projection(version, current_store)
+        for version in current_store.product_versions.values()
+    ]
+    items.sort(key=lambda item: (item.get("product_code") or "", item.get("code") or ""))
+    return _list_payload(items, trace_id=get_trace_id(request), active_only=active_only)
+
+
 @app.get("/api/products/{product_id}/versions")
 def list_product_versions(
     product_id: str,
@@ -4421,9 +4491,16 @@ def list_requirements(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
-    items = list(current_store.requirements.values())
-    if product_id:
-        items = [item for item in items if item["product_id"] == product_id]
+    repository = _postgres_snapshot_repository(current_store)
+    if repository is not None:
+        items = repository.list_requirement_summaries(product_id=product_id)
+    else:
+        items = [
+            _requirement_summary_projection(requirement, current_store)
+            for requirement in current_store.requirements.values()
+        ]
+        if product_id:
+            items = [item for item in items if item["product_id"] == product_id]
     if status:
         expected_status = _canonical_requirement_status(status)
         items = [
@@ -5696,6 +5773,20 @@ def list_ai_tasks(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
+    from_at = _parse_iso_datetime(created_from, "created_from") if created_from else None
+    to_at = _parse_iso_datetime(created_to, "created_to") if created_to else None
+    repository = _postgres_snapshot_repository(current_store)
+    if repository is not None:
+        items = repository.list_ai_task_summaries(
+            status=status,
+            task_type=task_type,
+            product_id=product_id,
+            requirement_id=requirement_id,
+            created_from=from_at,
+            created_to=to_at,
+        )
+        items = [item for item in items if _can_read_task(user, item)]
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     items = [
         item
         for item in current_store.ai_tasks.values()
@@ -5709,9 +5800,7 @@ def list_ai_tasks(
         items = [item for item in items if item["product_id"] == product_id]
     if requirement_id:
         items = [item for item in items if item["requirement_id"] == requirement_id]
-    if created_from or created_to:
-        from_at = _parse_iso_datetime(created_from, "created_from") if created_from else None
-        to_at = _parse_iso_datetime(created_to, "created_to") if created_to else None
+    if from_at or to_at:
         filtered_items = []
         for item in items:
             created_at = item.get("created_at") or item.get("updated_at")

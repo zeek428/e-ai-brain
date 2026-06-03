@@ -4,9 +4,32 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app.core.config import Settings
 from app.main import _tcp_endpoint_from_url, app
 
 client = TestClient(app)
+
+
+def test_settings_default_to_postgres_outside_tests(monkeypatch):
+    monkeypatch.delenv("PERSISTENCE_MODE", raising=False)
+
+    assert Settings().persistence_mode == "postgres"
+
+
+def test_build_store_rejects_memory_mode_outside_tests(monkeypatch):
+    monkeypatch.setattr(main.settings, "app_env", "local")
+    monkeypatch.setattr(main.settings, "persistence_mode", "memory")
+
+    try:
+        try:
+            main.build_store()
+        except RuntimeError as exc:
+            assert "PERSISTENCE_MODE=memory" in str(exc)
+        else:
+            raise AssertionError("build_store should reject memory mode outside tests")
+    finally:
+        monkeypatch.setattr(main.settings, "app_env", "test")
+        monkeypatch.setattr(main.settings, "persistence_mode", "memory")
 
 
 def test_health_includes_dependencies_and_trace_id(monkeypatch):

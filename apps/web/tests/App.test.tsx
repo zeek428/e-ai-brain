@@ -2200,7 +2200,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/products/product_api/versions?active_only=true') {
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/insights/user-feedback' && init?.method === 'POST') {
@@ -2302,7 +2302,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/products/product_api/versions?active_only=true') {
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/insights/usage-metrics' && init?.method === 'POST') {
@@ -2405,7 +2405,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/products/product_api/versions?active_only=true') {
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/products/product_api/git-repositories?active_only=true') {
@@ -2508,10 +2508,18 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/products/product_release/versions?active_only=true') {
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({
           data: {
-            items: [{ code: 'v1.2.0', id: 'version_release', name: 'v1.2.0', status: 'active' }],
+            items: [
+              {
+                code: 'v1.2.0',
+                id: 'version_release',
+                name: 'v1.2.0',
+                product_id: 'product_release',
+                status: 'active',
+              },
+            ],
             total: 1,
           },
         });
@@ -2602,7 +2610,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/products/product_ops/versions?active_only=true') {
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       return jsonResponse({ data: { items: [], total: 0 } });
@@ -2775,7 +2783,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/products/product_api/versions?active_only=true') {
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/products/product_api/modules') {
@@ -3052,10 +3060,18 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/products/product_api/versions?active_only=true') {
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({
           data: {
-            items: [{ code: '2026Q3', id: 'version_api', name: '2026 Q3', status: 'planning' }],
+            items: [
+              {
+                code: '2026Q3',
+                id: 'version_api',
+                name: '2026 Q3',
+                product_id: 'product_api',
+                status: 'planning',
+              },
+            ],
             total: 1,
           },
         });
@@ -3457,6 +3473,22 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path === '/api/product-versions' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'v1',
+                id: 'version_api',
+                name: 'v1 MVP',
+                product_id: 'product_api',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
       if (path === '/api/products/product_api/versions' && method === 'POST') {
         expect(JSON.parse(String(init?.body))).toMatchObject({
           code: 'v2',
@@ -3698,6 +3730,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (path === '/api/products/product_api/versions' && method === 'GET') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
+      if (path === '/api/product-versions' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
       if (path === '/api/products/product_api/modules' && method === 'GET') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
@@ -3925,25 +3960,25 @@ describe('AI Brain Ant Design Pro workbench', () => {
         headers: { 'Content-Type': 'application/json' },
         status: 200,
       });
-    let resolveProducts: (response: Response) => void = () => {};
     let resolveActiveProducts: (response: Response) => void = () => {};
     let resolveRequirements: (response: Response) => void = () => {};
-    const productsPromise = new Promise<Response>((resolve) => {
-      resolveProducts = resolve;
-    });
+    let resolveActiveVersions: (response: Response) => void = () => {};
     const activeProductsPromise = new Promise<Response>((resolve) => {
       resolveActiveProducts = resolve;
+    });
+    const activeVersionsPromise = new Promise<Response>((resolve) => {
+      resolveActiveVersions = resolve;
     });
     const requirementsPromise = new Promise<Response>((resolve) => {
       resolveRequirements = resolve;
     });
     const fetchMock = vi.fn<typeof fetch>((input) => {
       const path = String(input);
-      if (path === '/api/products') {
-        return productsPromise;
-      }
       if (path === '/api/products?active_only=true') {
         return activeProductsPromise;
+      }
+      if (path === '/api/product-versions?active_only=true') {
+        return activeVersionsPromise;
       }
       if (path === '/api/requirements') {
         return requirementsPromise;
@@ -3957,8 +3992,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     expect(screen.queryByText('产品详细设计辅助')).not.toBeInTheDocument();
 
-    resolveProducts(jsonResponse({ data: { items: [], total: 0 } }));
     resolveActiveProducts(jsonResponse({ data: { items: [], total: 0 } }));
+    resolveActiveVersions(jsonResponse({ data: { items: [], total: 0 } }));
     resolveRequirements(jsonResponse({ data: { items: [], total: 0 } }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
@@ -4006,7 +4041,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/products/product_api/versions' || path === '/api/products/product_api/versions?active_only=true') {
+      if (path === '/api/product-versions' || path === '/api/product-versions?active_only=true') {
         return jsonResponse({
           data: {
             items: [
@@ -4014,7 +4049,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 code: 'v1',
                 id: 'version_api',
                 name: 'v1',
+                product_code: 'API-PRODUCT',
                 product_id: 'product_api',
+                product_name: '接口产品',
                 status: 'active',
               },
             ],
@@ -4029,9 +4066,13 @@ describe('AI Brain Ant Design Pro workbench', () => {
               {
                 id: 'requirement_api',
                 priority: 'P1',
+                product_code: 'API-PRODUCT',
                 product_id: 'product_api',
+                product_name: '接口产品',
                 status: 'submitted',
                 title: '接口需求',
+                version_id: 'version_api',
+                version_name: 'v1',
               },
             ],
             total: 1,
@@ -4146,7 +4187,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/products/product_api/versions?active_only=true') {
+      if (path === '/api/product-versions?active_only=true') {
         return jsonResponse({
           data: {
             items: [
@@ -4354,7 +4395,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/products/product_api/versions' || path === '/api/products/product_api/versions?active_only=true') {
+      if (path === '/api/product-versions' || path === '/api/product-versions?active_only=true') {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse({
           data: {
@@ -4363,7 +4404,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 code: 'v1',
                 id: 'version_api',
                 name: 'v1',
+                product_code: 'API-PRODUCT',
                 product_id: 'product_api',
+                product_name: '接口产品',
                 status: 'active',
               },
             ],
@@ -4380,9 +4423,13 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 created_at: '2026-05-30T08:30:00+00:00',
                 id: 'requirement_api',
                 priority: 'P0',
+                product_code: 'API-PRODUCT',
                 product_id: 'product_api',
+                product_name: '接口产品',
                 status: 'approved',
                 title: '接口需求',
+                version_id: 'version_api',
+                version_name: 'v1',
               },
             ],
             total: 1,
