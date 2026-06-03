@@ -32,6 +32,12 @@ def test_build_store_rejects_memory_mode_outside_tests(monkeypatch):
         monkeypatch.setattr(main.settings, "persistence_mode", "memory")
 
 
+def test_postgres_runtime_reports_db_first_migration_mode(monkeypatch):
+    monkeypatch.setattr(main.settings, "persistence_mode", "postgres")
+
+    assert main._runtime_data_access_mode() == "db_first_migration"
+
+
 def test_health_includes_dependencies_and_trace_id(monkeypatch):
     app.state.store.reset()
     monkeypatch.setattr(main.settings, "model_gateway_base_url", "")
@@ -45,6 +51,7 @@ def test_health_includes_dependencies_and_trace_id(monkeypatch):
     assert body["postgres"] in {"ok", "error"}
     assert body["redis"] in {"ok", "error"}
     assert body["model_gateway"] == "not_configured"
+    assert body["data_access_mode"] in {"db_first_migration", "memory_test_helper"}
     assert body["long_memory"] == "not_configured"
     assert body["trace_id"].startswith("trace_")
 
@@ -258,6 +265,17 @@ def test_initial_migration_defines_core_mvp_tables():
         "bugs",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS {table_name}" in migration
+
+
+def test_migrations_define_db_first_id_counters():
+    migrations = "\n".join(
+        path.read_text()
+        for path in sorted(Path("app/db/migrations").glob("*.sql"))
+    )
+
+    assert "CREATE TABLE IF NOT EXISTS id_counters" in migrations
+    assert "prefix text PRIMARY KEY" in migrations
+    assert "next_value integer NOT NULL DEFAULT 1" in migrations
 
 
 def test_all_structured_tables_define_created_and_updated_timestamps():

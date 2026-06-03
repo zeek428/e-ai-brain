@@ -86,6 +86,41 @@ GITLAB_REVIEW_FIELDS = [
 MOCK_WRITEBACK_FIELDS = [
     "mock_writebacks",
 ]
+ID_COUNTER_SOURCE_TABLES = [
+    "products",
+    "product_versions",
+    "product_modules",
+    "product_git_repositories",
+    "related_systems",
+    "model_gateway_configs",
+    "model_gateway_logs",
+    "assistant_conversations",
+    "assistant_messages",
+    "gitlab_mr_snapshots",
+    "code_review_reports",
+    "knowledge_documents",
+    "knowledge_deposits",
+    "mock_issues",
+    "bugs",
+    "gitlab_daily_code_metrics",
+    "jenkins_release_records",
+    "online_log_metrics",
+    "user_usage_metrics",
+    "user_feedback",
+    "iteration_plan_suggestions",
+    "iteration_plan_decisions",
+    "lifecycle_context_edges",
+    "lifecycle_risk_signals",
+    "dashboard_metric_snapshots",
+    "collector_runs",
+    "pending_attribution_items",
+    "requirements",
+    "ai_tasks",
+    "graph_runs",
+    "graph_checkpoints",
+    "human_reviews",
+    "audit_events",
+]
 COLLECTION_FIELDS = [
     "brain_apps",
     "products",
@@ -1896,6 +1931,16 @@ class PersistentMemoryStore(MemoryStore):
             if field in payload:
                 setattr(self, field, deepcopy(payload[field]))
 
+    def new_id(self, prefix: str) -> str:
+        next_id = getattr(self.repository, "next_id", None)
+        if not callable(next_id):
+            return super().new_id(prefix)
+        allocated_id = next_id(prefix)
+        suffix = allocated_id.removeprefix(f"{prefix}_")
+        if suffix.isdigit():
+            self.counters[prefix] = max(self.counters.get(prefix, 0), int(suffix))
+        return allocated_id
+
     def persist(self) -> None:
         payload = self.to_payload()
         self.repository.save(payload)
@@ -1926,17 +1971,62 @@ class PostgresSnapshotRepository:
     def __init__(self, database_url: str) -> None:
         self.database_url = database_url
 
-    def _connect(self):
+    def _connect(self, *, autocommit: bool = True):
         import psycopg
 
         last_error: Exception | None = None
         for _ in range(20):
             try:
-                return psycopg.connect(self.database_url, autocommit=True)
+                return psycopg.connect(self.database_url, autocommit=autocommit)
             except psycopg.OperationalError as exc:
                 last_error = exc
                 sleep(0.5)
         raise last_error or RuntimeError("PostgreSQL connection failed")
+
+    def next_id(self, prefix: str) -> str:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("LOCK TABLE id_counters IN EXCLUSIVE MODE")
+                cursor.execute(
+                    "SELECT next_value FROM id_counters WHERE prefix = %s",
+                    (prefix,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    used_value = self._max_existing_id_suffix(cursor, prefix) + 1
+                    cursor.execute(
+                        """
+                        INSERT INTO id_counters (prefix, next_value)
+                        VALUES (%s, %s)
+                        """,
+                        (prefix, used_value + 1),
+                    )
+                else:
+                    used_value = int(row[0])
+                    cursor.execute(
+                        """
+                        UPDATE id_counters
+                        SET next_value = %s, updated_at = now()
+                        WHERE prefix = %s
+                        """,
+                        (used_value + 1, prefix),
+                    )
+        return f"{prefix}_{used_value:03d}"
+
+    def _max_existing_id_suffix(self, cursor, prefix: str) -> int:
+        marker = f"{prefix}_"
+        max_value = 0
+        for table_name in ID_COUNTER_SOURCE_TABLES:
+            cursor.execute(
+                f"SELECT id FROM {table_name} WHERE id LIKE %s",
+                (f"{marker}%",),
+            )
+            for row in cursor.fetchall():
+                item_id = str(row[0])
+                suffix = item_id.removeprefix(marker)
+                if suffix.isdigit():
+                    max_value = max(max_value, int(suffix))
+        return max_value
 
     def load(self) -> dict[str, Any] | None:
         with self._connect() as connection:

@@ -136,6 +136,8 @@
 - `PERSISTENCE_MODE` 默认值改为 `postgres`；非测试环境配置 `memory` 会 fail fast，`MemoryStore` 降级为 `APP_ENV=test/testing/pytest` 下的测试 helper。
 - 前端产品管理、需求列表、迭代版本和产品上下文下拉改用批量版本接口与后端聚合字段，移除逐产品拉取版本导致的 N+1 页面查询。
 - `/health` 的 `model_gateway` 状态改为优先读取持久化 active/default 模型网关配置，避免运行时模型网关可用但健康检查仍显示 `not_configured`。
+- `/health` 新增 `data_access_mode`，在 PostgreSQL 运行时返回 `db_first_migration`，明确当前仍处于移除生产 `MemoryStore` 中间层的迁移期。
+- 新增 `023_db_first_id_counters.sql` 和 PostgreSQL repository 发号能力，过渡期 `PersistentMemoryStore.new_id()` 在 repository 支持时优先委托数据库分配 ID，不再只依赖进程内 counter。
 - 测试用例清单增加适用阶段口径，区分 MVP 必交、MVP 空状态、v1.1、v1.2 和生产就绪验证。
 - 文档入口增加实现者最短路径，明确 P0 表、API、页面、测试和 runbook 的推荐落地顺序。
 - 前端提交需求入口调整为需求管理查询表格，新增需求和配置类表单统一使用弹窗。

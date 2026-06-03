@@ -167,10 +167,29 @@ class FakeSnapshotRepository:
         self.dashboard_payload = payload
 
 
+class FakeDbFirstIdRepository(FakeSnapshotRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.allocated_prefixes: list[str] = []
+
+    def next_id(self, prefix: str) -> str:
+        self.allocated_prefixes.append(prefix)
+        return f"{prefix}_101"
+
+
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_persistent_store_delegates_new_ids_to_repository_when_available():
+    repository = FakeDbFirstIdRepository()
+    store = PersistentMemoryStore.from_repository(repository)
+
+    assert store.new_id("requirement") == "requirement_101"
+    assert repository.allocated_prefixes == ["requirement"]
+    assert store.counters["requirement"] == 101
 
 
 def gitlab_review_context_payload() -> dict:

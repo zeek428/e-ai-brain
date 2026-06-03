@@ -48,6 +48,12 @@ def _ensure_memory_mode_allowed() -> None:
         raise RuntimeError("PERSISTENCE_MODE=memory is only allowed when APP_ENV=test")
 
 
+def _runtime_data_access_mode() -> str:
+    if settings.persistence_mode == "memory":
+        return "memory_test_helper"
+    return "db_first_migration"
+
+
 def build_store() -> MemoryStore:
     if settings.persistence_mode == "postgres":
         repository = PostgresSnapshotRepository(settings.database_url)
@@ -756,6 +762,7 @@ def health(request: Request) -> dict[str, str]:
         "model_gateway": _model_gateway_health_status(store(request)),
         "chat_gateway": _chat_gateway_health_status(store(request)),
         "embedding_gateway": _embedding_gateway_health_status(store(request)),
+        "data_access_mode": _runtime_data_access_mode(),
         "long_memory": settings.long_memory_status,
         "trace_id": get_trace_id(request),
     }
