@@ -1,6 +1,21 @@
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Form, Input, InputNumber, Modal, Popconfirm, Radio, Select, Space, Switch, message } from 'antd';
+import {
+  Alert,
+  AutoComplete,
+  Button,
+  Divider,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Radio,
+  Select,
+  Space,
+  Switch,
+  message,
+} from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
@@ -20,7 +35,11 @@ type ModelGatewayFormValues = {
   api_key?: string;
   base_url: string;
   default_chat_model: string;
-  default_embedding_model: string;
+  default_embedding_model?: string;
+  embedding_api_key?: string;
+  embedding_base_url?: string;
+  embedding_connection_mode: 'custom' | 'disabled' | 'reuse_chat';
+  embedding_dimension?: number;
   is_default: boolean;
   max_retries: number;
   name: string;
@@ -43,7 +62,21 @@ const TEST_TARGET_FIELDS: Record<ModelGatewayFormValues['test_target'], (keyof M
     'status',
     'test_target',
   ],
-  embedding: ['name', 'provider', 'base_url', 'api_key', 'default_embedding_model', 'timeout_seconds', 'status', 'test_target'],
+  embedding: ['name', 'provider', 'default_embedding_model', 'timeout_seconds', 'status', 'test_target'],
+};
+
+const chatModelOptions = ['gpt-4.1', 'gpt-4.1-mini', 'gpt-5', 'gpt-5.5', 'codex-auto-review'].map((value) => ({
+  value,
+}));
+
+const embeddingModelOptions = ['text-embedding-3-small', 'text-embedding-3-large', 'bge-m3'].map((value) => ({
+  value,
+}));
+
+const embeddingModeLabels: Record<ModelGatewayFormValues['embedding_connection_mode'], string> = {
+  custom: '单独配置',
+  disabled: '禁用',
+  reuse_chat: '复用 Chat',
 };
 
 function formatTestStatus(result: ModelGatewayConfigTestResult['chat'] | ModelGatewayConfigTestResult['embedding']) {
@@ -55,6 +88,7 @@ function formatTestStatus(result: ModelGatewayConfigTestResult['chat'] | ModelGa
 
 export default function ModelGatewayPage() {
   const [form] = Form.useForm<ModelGatewayFormValues>();
+  const embeddingMode = Form.useWatch('embedding_connection_mode', form) ?? 'disabled';
   const [editingConfig, setEditingConfig] = useState<ModelGatewayConfigRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -73,10 +107,12 @@ export default function ModelGatewayPage() {
     form.resetFields();
     form.setFieldsValue({
       is_default: dataSource.length === 0,
+      embedding_connection_mode: 'disabled',
+      embedding_dimension: 1536,
       max_retries: 1,
       provider: 'openai_compatible',
       status: 'active',
-      test_target: 'chat_and_embedding',
+      test_target: 'chat',
       timeout_seconds: 60,
     });
     setIsModalOpen(true);
@@ -88,13 +124,16 @@ export default function ModelGatewayPage() {
     form.setFieldsValue({
       base_url: row.baseUrl,
       default_chat_model: row.defaultChatModel,
-      default_embedding_model: row.defaultEmbeddingModel,
+      default_embedding_model: row.defaultEmbeddingModel ?? undefined,
+      embedding_base_url: row.embeddingBaseUrl ?? undefined,
+      embedding_connection_mode: row.embeddingConnectionMode,
+      embedding_dimension: row.embeddingDimension ?? 1536,
       is_default: row.isDefault,
       max_retries: row.maxRetries,
       name: row.name,
       provider: row.provider,
       status: row.status,
-      test_target: 'chat_and_embedding',
+      test_target: row.embeddingConnectionMode === 'disabled' ? 'chat' : 'chat_and_embedding',
       timeout_seconds: row.timeoutSeconds,
     });
     setIsModalOpen(true);
@@ -102,10 +141,15 @@ export default function ModelGatewayPage() {
 
   const buildPayload = (values: ModelGatewayFormValues, options?: { includeTestTarget?: boolean }) => {
     const apiKey = trimText(values.api_key);
+    const embeddingApiKey = trimText(values.embedding_api_key);
+    const mode = values.embedding_connection_mode ?? 'disabled';
     return {
       base_url: values.base_url.trim(),
       default_chat_model: values.default_chat_model.trim(),
-      default_embedding_model: values.default_embedding_model?.trim(),
+      default_embedding_model: mode === 'disabled' ? null : values.default_embedding_model?.trim(),
+      embedding_base_url: mode === 'custom' ? values.embedding_base_url?.trim() : null,
+      embedding_connection_mode: mode,
+      embedding_dimension: mode === 'disabled' ? null : Number(values.embedding_dimension ?? 1536),
       ...(editingConfig ? { config_id: editingConfig.id } : {}),
       is_default: values.is_default,
       max_retries: Number(values.max_retries ?? 1),
@@ -115,18 +159,33 @@ export default function ModelGatewayPage() {
       ...(options?.includeTestTarget ? { test_target: values.test_target } : {}),
       timeout_seconds: Number(values.timeout_seconds ?? 60),
       ...(apiKey ? { api_key: apiKey } : {}),
+      ...(embeddingApiKey ? { embedding_api_key: embeddingApiKey } : {}),
     };
   };
 
   const handleTest = async () => {
     const testTarget = (form.getFieldValue('test_target') ??
       'chat_and_embedding') as ModelGatewayFormValues['test_target'];
-    await form.validateFields(TEST_TARGET_FIELDS[testTarget]);
+    const effectiveTestTarget = embeddingMode === 'disabled' ? 'chat' : testTarget;
+    const fieldsToValidate = [...TEST_TARGET_FIELDS[effectiveTestTarget], 'embedding_connection_mode'];
+    if (effectiveTestTarget !== 'chat') {
+      fieldsToValidate.push('embedding_dimension');
+      if (embeddingMode === 'custom') {
+        fieldsToValidate.push('embedding_base_url');
+        if (!editingConfig?.embeddingApiKeyConfigured) {
+          fieldsToValidate.push('embedding_api_key');
+        }
+      }
+    }
+    await form.validateFields(fieldsToValidate);
     const values = form.getFieldsValue();
     setIsTesting(true);
     setTestResult(null);
     try {
-      const result = await testModelGatewayConfig(buildPayload(values, { includeTestTarget: true }));
+      const result = await testModelGatewayConfig({
+        ...buildPayload({ ...values, test_target: effectiveTestTarget }, { includeTestTarget: true }),
+        test_target: effectiveTestTarget,
+      });
       setTestResult(result);
       message[result.ok ? 'success' : 'warning'](result.ok ? '模型网关测试通过' : '模型网关测试未通过');
     } catch (testError) {
@@ -190,6 +249,12 @@ export default function ModelGatewayPage() {
       {
         dataIndex: 'defaultEmbeddingModel',
         title: 'Embedding 模型',
+        render: (_, row) => row.defaultEmbeddingModel || '-',
+      },
+      {
+        dataIndex: 'embeddingConnectionMode',
+        title: 'Embedding 连接',
+        render: (_, row) => embeddingModeLabels[row.embeddingConnectionMode],
       },
       {
         dataIndex: 'keyStatus',
@@ -308,15 +373,69 @@ export default function ModelGatewayPage() {
             name="default_chat_model"
             rules={[{ required: true, message: '请输入默认 Chat 模型' }]}
           >
-            <Input />
+            <AutoComplete options={chatModelOptions} />
           </Form.Item>
+          <Divider>Embedding 网关</Divider>
           <Form.Item
-            label="默认 Embedding 模型"
-            name="default_embedding_model"
-            rules={[{ required: true, message: '请输入默认 Embedding 模型' }]}
+            label="连接模式"
+            name="embedding_connection_mode"
+            rules={[{ required: true, message: '请选择 Embedding 连接模式' }]}
           >
-            <Input />
+            <Radio.Group
+              options={[
+                { label: '禁用', value: 'disabled' },
+                { label: '复用 Chat', value: 'reuse_chat' },
+                { label: '单独配置', value: 'custom' },
+              ]}
+              onChange={(event) => {
+                if (event.target.value === 'disabled') {
+                  form.setFieldsValue({ test_target: 'chat' });
+                }
+              }}
+            />
           </Form.Item>
+          {embeddingMode !== 'disabled' ? (
+            <>
+              <Form.Item
+                label="默认 Embedding 模型"
+                name="default_embedding_model"
+                rules={[{ required: true, message: '请输入默认 Embedding 模型' }]}
+              >
+                <AutoComplete options={embeddingModelOptions} />
+              </Form.Item>
+              <Form.Item
+                label="Embedding 维度"
+                name="embedding_dimension"
+                rules={[{ required: true, message: '请输入 Embedding 维度' }]}
+              >
+                <InputNumber min={1} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </>
+          ) : null}
+          {embeddingMode === 'custom' ? (
+            <>
+              <Form.Item
+                label="Embedding Base URL"
+                name="embedding_base_url"
+                rules={[{ required: true, message: '请输入 Embedding Base URL' }]}
+              >
+                <Input placeholder="https://embedding.example.com/v1" />
+              </Form.Item>
+              <Form.Item
+                extra={editingConfig?.embeddingApiKeyConfigured ? '留空表示保留当前 Embedding 密钥。' : undefined}
+                label="Embedding API Key"
+                name="embedding_api_key"
+                rules={[
+                  {
+                    required: !editingConfig?.embeddingApiKeyConfigured,
+                    message: '请输入 Embedding API Key',
+                  },
+                ]}
+              >
+                <Input.Password autoComplete="new-password" />
+              </Form.Item>
+            </>
+          ) : null}
           <Form.Item label="超时秒数" name="timeout_seconds" rules={[{ required: true, message: '请输入超时秒数' }]}>
             <InputNumber min={1} precision={0} style={{ width: '100%' }} />
           </Form.Item>
@@ -341,6 +460,7 @@ export default function ModelGatewayPage() {
                   options={[
                     { label: 'Chat + Embedding', value: 'chat_and_embedding' },
                     { label: '仅 Chat', value: 'chat' },
+                    { label: '仅 Embedding', value: 'embedding', disabled: embeddingMode === 'disabled' },
                   ]}
                 />
               </Form.Item>

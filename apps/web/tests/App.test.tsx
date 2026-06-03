@@ -1505,6 +1505,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://api.example.com/v1' } });
     fireEvent.change(within(dialog).getByLabelText('API Key'), { target: { value: 'sk-live-secret' } });
     fireEvent.change(within(dialog).getByLabelText('默认 Chat 模型'), { target: { value: 'gpt-4.1' } });
+    fireEvent.click(within(dialog).getByLabelText('复用 Chat'));
+    await waitFor(() => expect(within(dialog).getByLabelText('默认 Embedding 模型')).toBeInTheDocument());
     fireEvent.change(within(dialog).getByLabelText('默认 Embedding 模型'), {
       target: { value: 'text-embedding-3-large' },
     });

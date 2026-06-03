@@ -783,7 +783,11 @@ export type ModelGatewayConfigMutationPayload = {
   base_url?: string;
   config_id?: string;
   default_chat_model?: string;
-  default_embedding_model?: string;
+  default_embedding_model?: string | null;
+  embedding_api_key?: string;
+  embedding_base_url?: string | null;
+  embedding_connection_mode?: 'custom' | 'disabled' | 'reuse_chat';
+  embedding_dimension?: number | null;
   is_default?: boolean;
   max_retries?: number;
   name?: string;
@@ -945,7 +949,11 @@ type ModelGatewayConfigListItem = {
   api_key_configured?: boolean;
   base_url?: string;
   default_chat_model?: string;
-  default_embedding_model?: string;
+  default_embedding_model?: string | null;
+  embedding_api_key_configured?: boolean;
+  embedding_base_url?: string | null;
+  embedding_connection_mode?: string;
+  embedding_dimension?: number | null;
   id: string;
   is_default?: boolean;
   max_retries?: number;
@@ -1992,11 +2000,19 @@ export async function deleteManagementUser(userId: string) {
 
 function mapModelGatewayConfig(config: ModelGatewayConfigListItem): ModelGatewayConfigRecord {
   const apiKeyConfigured = Boolean(config.api_key_configured);
+  const embeddingConnectionMode =
+    config.embedding_connection_mode === 'custom' || config.embedding_connection_mode === 'disabled'
+      ? config.embedding_connection_mode
+      : 'reuse_chat';
   return {
     apiKeyConfigured,
     baseUrl: config.base_url ?? '-',
     defaultChatModel: config.default_chat_model ?? '-',
-    defaultEmbeddingModel: config.default_embedding_model ?? '-',
+    defaultEmbeddingModel: config.default_embedding_model ?? null,
+    embeddingApiKeyConfigured: Boolean(config.embedding_api_key_configured),
+    embeddingBaseUrl: config.embedding_base_url ?? null,
+    embeddingConnectionMode,
+    embeddingDimension: config.embedding_dimension ?? null,
     id: config.id,
     isDefault: Boolean(config.is_default),
     keyStatus: apiKeyConfigured ? '已配置' : '未配置',

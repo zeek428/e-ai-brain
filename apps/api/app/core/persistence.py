@@ -3370,7 +3370,8 @@ class PostgresSnapshotRepository:
             """
             SELECT id, name, provider, base_url, api_key_ref, default_chat_model,
                    default_embedding_model, timeout_seconds, max_retries, status,
-                   is_default, created_at, updated_at
+                   is_default, created_at, updated_at, embedding_connection_mode,
+                   embedding_base_url, embedding_api_key_ref, embedding_dimension
             FROM model_gateway_configs
             ORDER BY id
             """
@@ -3383,6 +3384,10 @@ class PostgresSnapshotRepository:
                 "created_at": row[11].isoformat() if row[11] else None,
                 "default_chat_model": row[5],
                 "default_embedding_model": row[6],
+                "embedding_api_key": row[15],
+                "embedding_base_url": row[14],
+                "embedding_connection_mode": row[13],
+                "embedding_dimension": row[16],
                 "id": row[0],
                 "is_default": row[10],
                 "max_retries": row[8],
@@ -3392,7 +3397,16 @@ class PostgresSnapshotRepository:
                 "timeout_seconds": row[7],
                 "updated_at": row[12].isoformat() if row[12] else None,
             }
-            for optional_key in ("api_key", "created_at", "updated_at"):
+            for optional_key in (
+                "api_key",
+                "created_at",
+                "default_embedding_model",
+                "embedding_api_key",
+                "embedding_base_url",
+                "embedding_connection_mode",
+                "embedding_dimension",
+                "updated_at",
+            ):
                 if config[optional_key] is None:
                     config.pop(optional_key)
             configs[row[0]] = config
@@ -5152,11 +5166,12 @@ class PostgresSnapshotRepository:
                 """
                 INSERT INTO model_gateway_configs (
                   id, name, provider, base_url, api_key_ref, default_chat_model,
-                  default_embedding_model, timeout_seconds, max_retries, status,
+                  default_embedding_model, embedding_connection_mode, embedding_base_url,
+                  embedding_api_key_ref, embedding_dimension, timeout_seconds, max_retries, status,
                   is_default, created_at, updated_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                   COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
@@ -5167,6 +5182,10 @@ class PostgresSnapshotRepository:
                   api_key_ref = EXCLUDED.api_key_ref,
                   default_chat_model = EXCLUDED.default_chat_model,
                   default_embedding_model = EXCLUDED.default_embedding_model,
+                  embedding_connection_mode = EXCLUDED.embedding_connection_mode,
+                  embedding_base_url = EXCLUDED.embedding_base_url,
+                  embedding_api_key_ref = EXCLUDED.embedding_api_key_ref,
+                  embedding_dimension = EXCLUDED.embedding_dimension,
                   timeout_seconds = EXCLUDED.timeout_seconds,
                   max_retries = EXCLUDED.max_retries,
                   status = EXCLUDED.status,
@@ -5180,7 +5199,11 @@ class PostgresSnapshotRepository:
                     config["base_url"],
                     config.get("api_key"),
                     config["default_chat_model"],
-                    config["default_embedding_model"],
+                    config.get("default_embedding_model"),
+                    config.get("embedding_connection_mode", "reuse_chat"),
+                    config.get("embedding_base_url"),
+                    config.get("embedding_api_key"),
+                    config.get("embedding_dimension"),
                     config.get("timeout_seconds", 60),
                     config.get("max_retries", 1),
                     config.get("status", "active"),

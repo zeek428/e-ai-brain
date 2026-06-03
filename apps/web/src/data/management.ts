@@ -151,7 +151,11 @@ export type ModelGatewayConfigRecord = {
   apiKeyConfigured: boolean;
   baseUrl: string;
   defaultChatModel: string;
-  defaultEmbeddingModel: string;
+  defaultEmbeddingModel?: string | null;
+  embeddingApiKeyConfigured: boolean;
+  embeddingBaseUrl?: string | null;
+  embeddingConnectionMode: 'custom' | 'disabled' | 'reuse_chat';
+  embeddingDimension?: number | null;
   id: string;
   isDefault: boolean;
   keyStatus: string;

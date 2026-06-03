@@ -83,6 +83,7 @@
 | v1.1.59 | 2026-06-03 | 全链路 GitHub PR 复跑后补齐 code-review 外部命令缺失时自动使用模型网关适配器、Review payload 和输出规范化的启动契约 | Codex |
 | v1.1.60 | 2026-06-03 | AI 助手聊天记录按用户级保存，新增会话列表、会话消息查询 API 与 `assistant_conversations` / `assistant_messages` 结构表 | Codex |
 | v1.1.61 | 2026-06-03 | 知识索引支持 `text_indexed` 关键词兜底和 `vector_indexed` 向量增强，检索结果返回 `retrieval_mode` | Codex |
+| v1.1.62 | 2026-06-03 | 模型网关拆分 Chat 与 Embedding 能力配置，Embedding 支持禁用、复用 Chat 或单独连接，并按向量来源元数据过滤语义检索 | Codex |
 
 ---
 
@@ -644,6 +645,10 @@ DELETE /api/system/model-gateway-configs/{config_id}
   "api_key": "<redacted>",
   "default_chat_model": "chat-model",
   "default_embedding_model": "embedding-model",
+  "embedding_connection_mode": "reuse_chat",
+  "embedding_base_url": null,
+  "embedding_api_key": null,
+  "embedding_dimension": 1536,
   "timeout_seconds": 60,
   "max_retries": 1,
   "status": "active",
@@ -651,7 +656,7 @@ DELETE /api/system/model-gateway-configs/{config_id}
 }
 ```
 
-响应不会返回明文 `api_key`、密钥前缀或后缀，只返回 `api_key_configured`。
+响应不会返回明文 `api_key`、`embedding_api_key`、密钥前缀或后缀，只返回 `api_key_configured` 和 `embedding_api_key_configured`。`embedding_connection_mode` 可取 `disabled`、`reuse_chat` 或 `custom`：`disabled` 表示仅启用 Chat 能力，`reuse_chat` 使用 Chat 的 `base_url/api_key` 调用 `/embeddings`，`custom` 使用 `embedding_base_url/embedding_api_key` 调用 `/embeddings`。`default_embedding_model` 在 `disabled` 模式可为空；`embedding_dimension` 当前必须等于系统 `VECTOR_DIMENSION`。
 `provider` 目前仅允许 `openai_compatible`；新增或编辑提交其他 provider 返回 `400 VALIDATION_ERROR`，不得保存为 active/default 配置。
 
 测试检测：
@@ -660,7 +665,7 @@ DELETE /api/system/model-gateway-configs/{config_id}
 POST /api/system/model-gateway-configs/test
 ```
 
-请求体使用模型网关配置字段，可选传入 `config_id`。编辑已有配置时，如果请求体不含 `api_key` 且 `config_id` 对应配置已保存密钥，则使用服务端已有密钥完成本次测试；新增配置测试必须显式提交 `api_key`。`test_target` 默认为 `chat_and_embedding`，可取 `chat_and_embedding`、`chat` 或 `embedding`；当 `test_target=chat` 时不要求 `default_embedding_model`，Embedding 段返回 `status=skipped`。
+请求体使用模型网关配置字段，可选传入 `config_id`。编辑已有配置时，如果请求体不含 `api_key` 且 `config_id` 对应配置已保存密钥，则使用服务端已有密钥完成本次 Chat 测试；`embedding_connection_mode=custom` 且请求体不含 `embedding_api_key` 时，可复用已有配置中的服务端 Embedding 密钥。新增配置测试必须显式提交所需密钥。`test_target` 默认为 `chat_and_embedding`，可取 `chat_and_embedding`、`chat` 或 `embedding`；当 `test_target=chat` 或 `embedding_connection_mode=disabled` 时不要求 `default_embedding_model`，Embedding 段返回 `status=skipped`。
 
 ```json
 {
@@ -671,6 +676,10 @@ POST /api/system/model-gateway-configs/test
   "api_key": "<redacted>",
   "default_chat_model": "chat-model",
   "default_embedding_model": "embedding-model",
+  "embedding_connection_mode": "custom",
+  "embedding_base_url": "https://embedding.example.com/v1",
+  "embedding_api_key": "<redacted>",
+  "embedding_dimension": 1536,
   "timeout_seconds": 60,
   "max_retries": 1,
   "status": "active",
@@ -721,7 +730,7 @@ POST /api/system/model-gateway-configs/test
 }
 ```
 
-测试接口会按 `test_target` 临时调用 `{base_url}/chat/completions` 和/或 `{base_url}/embeddings`，但不得持久化配置、密钥或写入 `model_gateway_logs`；只写入 `model_gateway_config.tested` 审计事件，载荷包含 provider、测试范围和测试状态，不包含密钥、完整 prompt 或完整输出。`test_target=chat` 只证明 Chat 能力可用，不代表知识索引、知识检索或长期记忆 embedding 能力可用。
+测试接口会按 `test_target` 临时调用 `{base_url}/chat/completions` 和/或 Embedding 连接对应的 `/embeddings`，但不得持久化配置、密钥或写入 `model_gateway_logs`；只写入 `model_gateway_config.tested` 审计事件，载荷包含 provider、测试范围和测试状态，不包含密钥、完整 prompt 或完整输出。`test_target=chat` 只证明 Chat 能力可用，不代表知识索引、知识检索或长期记忆 embedding 能力可用。健康检查继续返回兼容字段 `model_gateway`，并额外返回 `chat_gateway` 与 `embedding_gateway`，Embedding 可为 `configured`、`disabled`、`failed` 或 `not_configured`。
 
 模型调用日志：
 
@@ -1360,7 +1369,7 @@ POST /api/knowledge/search
 }
 ```
 
-前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且模型网关可用时查询文本会生成 embedding，并按 cosine 相似度返回 `score` 与 `retrieval_mode=vector`；仅文本索引可用时返回 `retrieval_mode=keyword` 且 `score=null`。无结果时展示真实空状态，不回退到示例数据。
+前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且 Embedding 网关可用时查询文本会生成 embedding，并只和 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 计算 cosine 相似度，返回 `score` 与 `retrieval_mode=vector`；不兼容、缺失或仅文本索引可用时按关键词检索返回 `retrieval_mode=keyword` 且 `score=null`。无结果时展示真实空状态，不回退到示例数据。
 
 知识沉淀：
 

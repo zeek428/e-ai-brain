@@ -124,6 +124,7 @@ RELATED_SYSTEM_STATUSES = {"active", "inactive"}
 MODEL_GATEWAY_PROVIDERS = {"openai_compatible"}
 MODEL_GATEWAY_STATUSES = {"active", "inactive"}
 MODEL_GATEWAY_TEST_TARGETS = {"chat", "chat_and_embedding", "embedding"}
+MODEL_GATEWAY_EMBEDDING_CONNECTION_MODES = {"custom", "disabled", "reuse_chat"}
 RETRYABLE_TASK_FAILURE_STEPS = {"code_review_executor_failed", "model_gateway_failed"}
 KNOWLEDGE_INDEX_STATUSES = {
     "archived",
@@ -273,7 +274,11 @@ class ModelGatewayConfigRequest(BaseModel):
     base_url: str
     api_key: str | None = None
     default_chat_model: str
-    default_embedding_model: str
+    default_embedding_model: str | None = None
+    embedding_api_key: str | None = None
+    embedding_base_url: str | None = None
+    embedding_connection_mode: str | None = None
+    embedding_dimension: int | None = None
     timeout_seconds: int = 60
     max_retries: int = 1
     status: str = "active"
@@ -287,6 +292,10 @@ class ModelGatewayConfigPatchRequest(BaseModel):
     api_key: str | None = None
     default_chat_model: str | None = None
     default_embedding_model: str | None = None
+    embedding_api_key: str | None = None
+    embedding_base_url: str | None = None
+    embedding_connection_mode: str | None = None
+    embedding_dimension: int | None = None
     timeout_seconds: int | None = None
     max_retries: int | None = None
     status: str | None = None
@@ -300,6 +309,10 @@ class ModelGatewayConfigTestRequest(BaseModel):
     api_key: str | None = None
     default_chat_model: str | None = None
     default_embedding_model: str | None = None
+    embedding_api_key: str | None = None
+    embedding_base_url: str | None = None
+    embedding_connection_mode: str | None = None
+    embedding_dimension: int | None = None
     timeout_seconds: int = 60
     max_retries: int = 1
     status: str = "active"
@@ -642,6 +655,23 @@ def _model_gateway_health_status(current_store: MemoryStore) -> str:
     return settings.model_gateway_status
 
 
+def _chat_gateway_health_status(current_store: MemoryStore) -> str:
+    return _model_gateway_health_status(current_store)
+
+
+def _embedding_gateway_health_status(current_store: MemoryStore) -> str:
+    default_gateway = _default_model_gateway_config(current_store)
+    if default_gateway:
+        if _embedding_connection_mode(default_gateway) == "disabled":
+            return "disabled"
+        try:
+            _model_gateway_embedding_runtime_config(default_gateway)
+        except ModelGatewayConfigError:
+            return "failed"
+        return "configured"
+    return settings.model_gateway_status
+
+
 @app.get("/health")
 def health(request: Request) -> dict[str, str]:
     postgres_host, postgres_port = _tcp_endpoint_from_url(
@@ -658,6 +688,8 @@ def health(request: Request) -> dict[str, str]:
         "postgres": postgres,
         "redis": redis,
         "model_gateway": _model_gateway_health_status(store(request)),
+        "chat_gateway": _chat_gateway_health_status(store(request)),
+        "embedding_gateway": _embedding_gateway_health_status(store(request)),
         "long_memory": settings.long_memory_status,
         "trace_id": get_trace_id(request),
     }
@@ -1545,11 +1577,164 @@ def _public_model_gateway_config(config: dict[str, Any]) -> dict[str, Any]:
     public_config = {
         key: value
         for key, value in config.items()
-        if key not in {"api_key"}
+        if key not in {"api_key", "embedding_api_key"}
     }
     api_key = config.get("api_key")
+    embedding_api_key = config.get("embedding_api_key")
     public_config["api_key_configured"] = bool(api_key)
+    public_config["embedding_api_key_configured"] = bool(embedding_api_key)
+    public_config["embedding_connection_mode"] = _embedding_connection_mode(config)
+    public_config.setdefault("default_embedding_model", None)
     return public_config
+
+
+def _optional_non_blank(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _embedding_connection_mode(config: dict[str, Any]) -> str:
+    mode = config.get("embedding_connection_mode")
+    if mode:
+        return str(mode)
+    if _optional_non_blank(config.get("default_embedding_model")):
+        return "reuse_chat"
+    return "disabled"
+
+
+def _normalize_embedding_connection_mode(
+    mode: str | None,
+    *,
+    default_embedding_model: str | None,
+) -> str:
+    normalized_mode = _optional_non_blank(mode)
+    if normalized_mode is None:
+        return "reuse_chat" if _optional_non_blank(default_embedding_model) else "disabled"
+    _ensure_enum(
+        normalized_mode,
+        MODEL_GATEWAY_EMBEDDING_CONNECTION_MODES,
+        "embedding connection mode",
+    )
+    return normalized_mode
+
+
+def _normalize_embedding_dimension(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if value <= 0:
+        raise api_error(400, "VALIDATION_ERROR", "embedding_dimension must be positive")
+    if value != settings.vector_dimension:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            (
+                "embedding_dimension must equal configured vector dimension "
+                f"{settings.vector_dimension}"
+            ),
+        )
+    return value
+
+
+def _normalized_model_gateway_embedding_fields(
+    *,
+    api_key: str | None,
+    base_url: str,
+    default_embedding_model: str | None,
+    embedding_api_key: str | None,
+    embedding_base_url: str | None,
+    embedding_connection_mode: str | None,
+    embedding_dimension: int | None,
+    existing_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    model = _optional_non_blank(default_embedding_model)
+    mode = _normalize_embedding_connection_mode(
+        embedding_connection_mode,
+        default_embedding_model=model,
+    )
+    dimension = _normalize_embedding_dimension(embedding_dimension)
+    if mode == "disabled":
+        return {
+            "default_embedding_model": None,
+            "embedding_api_key": None,
+            "embedding_base_url": None,
+            "embedding_connection_mode": mode,
+            "embedding_dimension": None,
+        }
+    if model is None:
+        raise api_error(400, "VALIDATION_ERROR", "default_embedding_model is required")
+    if mode == "reuse_chat":
+        return {
+            "default_embedding_model": model,
+            "embedding_api_key": None,
+            "embedding_base_url": None,
+            "embedding_connection_mode": mode,
+            "embedding_dimension": dimension or settings.vector_dimension,
+        }
+
+    custom_base_url = _optional_non_blank(embedding_base_url)
+    if custom_base_url is None:
+        raise api_error(400, "VALIDATION_ERROR", "embedding_base_url is required")
+    custom_api_key = (
+        _optional_non_blank(embedding_api_key)
+        or (existing_config or {}).get("embedding_api_key")
+    )
+    if custom_api_key is None:
+        raise api_error(400, "VALIDATION_ERROR", "embedding_api_key is required")
+    return {
+        "default_embedding_model": model,
+        "embedding_api_key": custom_api_key,
+        "embedding_base_url": custom_base_url,
+        "embedding_connection_mode": mode,
+        "embedding_dimension": dimension or settings.vector_dimension,
+    }
+
+
+def _model_gateway_embedding_test_fields(
+    *,
+    default_embedding_model: str | None,
+    embedding_api_key: str | None,
+    embedding_base_url: str | None,
+    embedding_connection_mode: str | None,
+    embedding_dimension: int | None,
+    existing_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    model = _optional_non_blank(default_embedding_model)
+    mode = _normalize_embedding_connection_mode(
+        embedding_connection_mode,
+        default_embedding_model=model,
+    )
+    dimension = (
+        embedding_dimension
+        if embedding_dimension is not None and embedding_dimension > 0
+        else None
+    )
+    if mode == "disabled":
+        return {
+            "default_embedding_model": None,
+            "embedding_api_key": None,
+            "embedding_base_url": None,
+            "embedding_connection_mode": mode,
+            "embedding_dimension": None,
+        }
+    return {
+        "default_embedding_model": model,
+        "embedding_api_key": (
+            _optional_non_blank(embedding_api_key)
+            or (existing_config or {}).get("embedding_api_key")
+        ),
+        "embedding_base_url": (
+            _optional_non_blank(embedding_base_url)
+            or (existing_config or {}).get("embedding_base_url")
+        ),
+        "embedding_connection_mode": mode,
+        "embedding_dimension": (
+            dimension
+            or (existing_config or {}).get("embedding_dimension")
+            or (settings.vector_dimension if model else None)
+        ),
+    }
 
 
 def _model_gateway_test_failure(
@@ -1630,17 +1815,72 @@ def _test_model_gateway_chat(config: dict[str, Any]) -> dict[str, Any]:
         )
 
 
+def _runtime_required_text(value: Any, message: str) -> str:
+    if value is None:
+        raise ModelGatewayConfigError(message)
+    text = str(value).strip()
+    if not text:
+        raise ModelGatewayConfigError(message)
+    return text
+
+
+def _model_gateway_embedding_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
+    if config.get("provider") != "openai_compatible":
+        raise ModelGatewayConfigError("Active model gateway provider is not supported")
+    mode = _embedding_connection_mode(config)
+    if mode == "disabled":
+        raise ModelGatewayConfigError("Embedding gateway is disabled")
+    model = _runtime_required_text(
+        config.get("default_embedding_model"),
+        "Active model gateway config is missing default_embedding_model",
+    )
+    if mode == "custom":
+        base_url = _runtime_required_text(
+            config.get("embedding_base_url"),
+            "Active model gateway config is missing embedding_base_url",
+        )
+        api_key = _runtime_required_text(
+            config.get("embedding_api_key"),
+            "Active model gateway config is missing embedding_api_key",
+        )
+    else:
+        base_url = _runtime_required_text(
+            config.get("base_url"),
+            "Active model gateway config is missing base_url",
+        )
+        api_key = _runtime_required_text(
+            config.get("api_key"),
+            "Active model gateway config is missing api_key",
+        )
+    return {
+        **config,
+        "api_key": api_key,
+        "base_url": base_url,
+        "default_embedding_model": model,
+        "embedding_connection_mode": mode,
+    }
+
+
 def _test_model_gateway_embedding(config: dict[str, Any]) -> dict[str, Any]:
-    model = config["default_embedding_model"]
+    try:
+        embedding_config = _model_gateway_embedding_runtime_config(config)
+    except ModelGatewayConfigError:
+        started = perf_counter()
+        return _model_gateway_test_failure(
+            error_code="MODEL_GATEWAY_EMBEDDING_CONFIG_INVALID",
+            model=str(config.get("default_embedding_model") or ""),
+            started=started,
+        )
+    model = embedding_config["default_embedding_model"]
     body = {
         "input": ["AI Brain model gateway embedding connectivity test"],
         "model": model,
     }
     request = UrlRequest(
-        _model_gateway_embeddings_url(config["base_url"]),
+        _model_gateway_embeddings_url(embedding_config["base_url"]),
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         headers={
-            "Authorization": f"Bearer {config['api_key']}",
+            "Authorization": f"Bearer {embedding_config['api_key']}",
             "Content-Type": "application/json",
         },
         method="POST",
@@ -2330,16 +2570,14 @@ def _parse_embedding_response(
 def _model_gateway_embedding_config(current_store: MemoryStore) -> dict[str, Any]:
     config = _default_model_gateway_config(current_store)
     if config:
-        if config.get("provider") != "openai_compatible":
-            raise ModelGatewayConfigError("Active model gateway provider is not supported")
-        if not config.get("api_key"):
-            raise ModelGatewayConfigError("Active model gateway config is missing api_key")
-        return config
+        return _model_gateway_embedding_runtime_config(config)
     if settings.model_gateway_status == "configured":
         return {
             "api_key": settings.model_gateway_api_key,
             "base_url": settings.model_gateway_base_url,
             "default_embedding_model": settings.model_gateway_default_embedding_model,
+            "embedding_connection_mode": "reuse_chat",
+            "embedding_dimension": settings.vector_dimension,
             "id": None,
             "provider": "openai_compatible",
             "timeout_seconds": 60,
@@ -2419,13 +2657,35 @@ def _call_model_gateway_embeddings(
     current_store: MemoryStore,
     inputs: list[str],
 ) -> list[list[float]]:
+    embeddings, _context = _call_model_gateway_embeddings_with_context(current_store, inputs)
+    return embeddings
+
+
+def _embedding_context_from_config(
+    config: dict[str, Any],
+    embeddings: list[list[float]],
+) -> dict[str, Any]:
+    dimension = len(embeddings[0]) if embeddings else config.get("embedding_dimension")
+    context = {
+        "embedding_dimension": dimension,
+        "embedding_model": config["default_embedding_model"],
+    }
+    if config.get("id"):
+        context["embedding_config_id"] = config["id"]
+    return context
+
+
+def _call_model_gateway_embeddings_with_context(
+    current_store: MemoryStore,
+    inputs: list[str],
+) -> tuple[list[list[float]], dict[str, Any]]:
     config = _model_gateway_embedding_config(current_store)
     embeddings, _log = _call_openai_compatible_embeddings(
         current_store,
         config=config,
         inputs=inputs,
     )
-    return embeddings
+    return embeddings, _embedding_context_from_config(config, embeddings)
 
 
 def _call_openai_compatible_model_gateway(
@@ -3574,16 +3834,10 @@ def test_model_gateway_config(
     )
     test_target = payload.test_target
     should_test_chat = test_target in {"chat", "chat_and_embedding"}
-    should_test_embedding = test_target in {"chat_and_embedding", "embedding"}
     default_chat_model = (
         _ensure_non_blank(payload.default_chat_model, "default_chat_model")
         if should_test_chat
         else (payload.default_chat_model or "").strip()
-    )
-    default_embedding_model = (
-        _ensure_non_blank(payload.default_embedding_model, "default_embedding_model")
-        if should_test_embedding
-        else (payload.default_embedding_model or "").strip()
     )
     _ensure_enum(payload.provider, MODEL_GATEWAY_PROVIDERS, "model gateway provider")
     _ensure_enum(payload.status, MODEL_GATEWAY_STATUSES, "model gateway status")
@@ -3593,17 +3847,40 @@ def test_model_gateway_config(
         if existing_config is None:
             raise api_error(404, "NOT_FOUND", "Model gateway config not found")
     api_key = payload.api_key or (existing_config or {}).get("api_key")
-    if not api_key:
+    if should_test_chat and not api_key:
         raise api_error(
             400,
             "MODEL_GATEWAY_CONFIG_INVALID",
             "Model gateway test requires an API key",
         )
+    should_test_embedding = test_target in {"chat_and_embedding", "embedding"}
+    if should_test_embedding:
+        embedding_fields = _normalized_model_gateway_embedding_fields(
+            api_key=api_key,
+            base_url=base_url,
+            default_embedding_model=payload.default_embedding_model,
+            embedding_api_key=payload.embedding_api_key,
+            embedding_base_url=payload.embedding_base_url,
+            embedding_connection_mode=payload.embedding_connection_mode,
+            embedding_dimension=payload.embedding_dimension,
+            existing_config=existing_config,
+        )
+    else:
+        embedding_fields = _model_gateway_embedding_test_fields(
+            default_embedding_model=payload.default_embedding_model,
+            embedding_api_key=payload.embedding_api_key,
+            embedding_base_url=payload.embedding_base_url,
+            embedding_connection_mode=payload.embedding_connection_mode,
+            embedding_dimension=payload.embedding_dimension,
+            existing_config=existing_config,
+        )
+    should_test_embedding = (
+        should_test_embedding and embedding_fields["embedding_connection_mode"] != "disabled"
+    )
     test_config = {
         "api_key": api_key,
         "base_url": base_url,
         "default_chat_model": default_chat_model,
-        "default_embedding_model": default_embedding_model,
         "id": payload.config_id or "model_gateway_config_test",
         "is_default": False,
         "max_retries": payload.max_retries,
@@ -3611,6 +3888,7 @@ def test_model_gateway_config(
         "provider": payload.provider,
         "status": payload.status,
         "timeout_seconds": payload.timeout_seconds,
+        **embedding_fields,
     }
     chat_result = (
         _test_model_gateway_chat(test_config)
@@ -3620,7 +3898,7 @@ def test_model_gateway_config(
     embedding_result = (
         _test_model_gateway_embedding(test_config)
         if should_test_embedding
-        else _model_gateway_test_skipped(model=default_embedding_model)
+        else _model_gateway_test_skipped(model=embedding_fields["default_embedding_model"] or "")
     )
     result = {
         "chat": chat_result,
@@ -3654,12 +3932,17 @@ def create_model_gateway_config(
     name = _ensure_non_blank(payload.name, "name")
     base_url = _ensure_non_blank(payload.base_url, "base_url")
     default_chat_model = _ensure_non_blank(payload.default_chat_model, "default_chat_model")
-    default_embedding_model = _ensure_non_blank(
-        payload.default_embedding_model,
-        "default_embedding_model",
-    )
     _ensure_enum(payload.provider, MODEL_GATEWAY_PROVIDERS, "model gateway provider")
     _ensure_enum(payload.status, MODEL_GATEWAY_STATUSES, "model gateway status")
+    embedding_fields = _normalized_model_gateway_embedding_fields(
+        api_key=payload.api_key,
+        base_url=base_url,
+        default_embedding_model=payload.default_embedding_model,
+        embedding_api_key=payload.embedding_api_key,
+        embedding_base_url=payload.embedding_base_url,
+        embedding_connection_mode=payload.embedding_connection_mode,
+        embedding_dimension=payload.embedding_dimension,
+    )
     config_id = current_store.new_id("model_gateway_config")
     config = {
         "id": config_id,
@@ -3668,11 +3951,11 @@ def create_model_gateway_config(
         "base_url": base_url,
         "api_key": payload.api_key,
         "default_chat_model": default_chat_model,
-        "default_embedding_model": default_embedding_model,
         "timeout_seconds": payload.timeout_seconds,
         "max_retries": payload.max_retries,
         "status": payload.status,
         "is_default": payload.is_default,
+        **embedding_fields,
     }
     current_store.model_gateway_configs[config_id] = config
     _set_default_model_gateway_config(
@@ -3712,14 +3995,57 @@ def patch_model_gateway_config(
             "default_chat_model",
         )
     if "default_embedding_model" in updates:
-        updates["default_embedding_model"] = _ensure_non_blank(
-            updates["default_embedding_model"],
-            "default_embedding_model",
+        updates["default_embedding_model"] = _optional_non_blank(
+            updates["default_embedding_model"]
+        )
+    if "embedding_base_url" in updates:
+        updates["embedding_base_url"] = _optional_non_blank(updates["embedding_base_url"])
+    if "embedding_api_key" in updates:
+        updates["embedding_api_key"] = _optional_non_blank(updates["embedding_api_key"])
+    if "embedding_connection_mode" in updates:
+        _ensure_enum(
+            updates["embedding_connection_mode"],
+            MODEL_GATEWAY_EMBEDDING_CONNECTION_MODES,
+            "embedding connection mode",
+        )
+    if "embedding_dimension" in updates:
+        updates["embedding_dimension"] = _normalize_embedding_dimension(
+            updates["embedding_dimension"]
         )
     if "status" in updates:
         _ensure_enum(updates["status"], MODEL_GATEWAY_STATUSES, "model gateway status")
     if "provider" in updates:
         _ensure_enum(updates["provider"], MODEL_GATEWAY_PROVIDERS, "model gateway provider")
+    if {
+        "default_embedding_model",
+        "embedding_api_key",
+        "embedding_base_url",
+        "embedding_connection_mode",
+        "embedding_dimension",
+    } & updates.keys():
+        embedding_fields = _normalized_model_gateway_embedding_fields(
+            api_key=updates.get("api_key", config.get("api_key")),
+            base_url=updates.get("base_url", config["base_url"]),
+            default_embedding_model=updates.get(
+                "default_embedding_model",
+                config.get("default_embedding_model"),
+            ),
+            embedding_api_key=updates.get("embedding_api_key"),
+            embedding_base_url=updates.get(
+                "embedding_base_url",
+                config.get("embedding_base_url"),
+            ),
+            embedding_connection_mode=updates.get(
+                "embedding_connection_mode",
+                _embedding_connection_mode(config),
+            ),
+            embedding_dimension=updates.get(
+                "embedding_dimension",
+                config.get("embedding_dimension"),
+            ),
+            existing_config=config,
+        )
+        updates.update(embedding_fields)
     config.update(updates)
     _set_default_model_gateway_config(
         current_store,
@@ -6539,22 +6865,35 @@ def _store_knowledge_chunks(
     chunks: list[str],
     *,
     embeddings: list[list[float]] | None = None,
+    embedding_context: dict[str, Any] | None = None,
 ) -> None:
     permission_roles = list(document.get("permission_roles", ["admin"]))
     for chunk_index, content in enumerate(chunks, start=1):
         chunk_id = f"{document['id']}_chunk_{chunk_index:03d}"
+        metadata = {
+            "doc_type": document.get("doc_type", "manual"),
+            "product_id": document.get("product_id"),
+            "tags": list(document.get("tags", [])),
+            "title": document["title"],
+        }
+        if embeddings is not None and embedding_context is not None:
+            metadata.update(
+                {
+                    key: value
+                    for key, value in {
+                        **embedding_context,
+                        "embedding_created_at": datetime.now(UTC).isoformat(),
+                    }.items()
+                    if value is not None
+                }
+            )
         current_store.knowledge_chunks[chunk_id] = {
             "chunk_index": chunk_index,
             "content": content,
             "document_id": document["id"],
             "embedding": embeddings[chunk_index - 1] if embeddings is not None else None,
             "id": chunk_id,
-            "metadata": {
-                "doc_type": document.get("doc_type", "manual"),
-                "product_id": document.get("product_id"),
-                "tags": list(document.get("tags", [])),
-                "title": document["title"],
-            },
+            "metadata": metadata,
             "permission_roles": permission_roles,
             "permission_scope": {"roles": permission_roles},
         }
@@ -6579,8 +6918,15 @@ def _mark_knowledge_vector_indexed(
     document: dict[str, Any],
     chunks: list[str],
     embeddings: list[list[float]],
+    embedding_context: dict[str, Any],
 ) -> None:
-    _store_knowledge_chunks(current_store, document, chunks, embeddings=embeddings)
+    _store_knowledge_chunks(
+        current_store,
+        document,
+        chunks,
+        embeddings=embeddings,
+        embedding_context=embedding_context,
+    )
     document["index_status"] = "vector_indexed"
     document["index_error"] = None
     document["vector_index_error"] = None
@@ -6602,7 +6948,10 @@ def _replace_knowledge_chunks(
         _mark_knowledge_text_indexed(current_store, document, chunks)
         return
     try:
-        embeddings = _call_model_gateway_embeddings(current_store, chunks)
+        embeddings, embedding_context = _call_model_gateway_embeddings_with_context(
+            current_store,
+            chunks,
+        )
     except ModelGatewayConfigError as exc:
         _mark_knowledge_text_indexed(current_store, document, chunks, vector_error=str(exc))
         return
@@ -6614,7 +6963,13 @@ def _replace_knowledge_chunks(
             vector_error=exc.log.get("error") or "Model gateway embedding request failed",
         )
         return
-    _mark_knowledge_vector_indexed(current_store, document, chunks, embeddings)
+    _mark_knowledge_vector_indexed(
+        current_store,
+        document,
+        chunks,
+        embeddings,
+        embedding_context,
+    )
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -6629,11 +6984,51 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 def _knowledge_query_embedding(
     current_store: MemoryStore,
     query: str,
-) -> list[float] | None:
+) -> tuple[list[float], dict[str, Any]] | None:
     try:
-        return _call_model_gateway_embeddings(current_store, [query])[0]
+        embeddings, embedding_context = _call_model_gateway_embeddings_with_context(
+            current_store,
+            [query],
+        )
+        return embeddings[0], embedding_context
     except (ModelGatewayConfigError, ModelGatewayCallError):
         return None
+
+
+def _chunk_embedding_is_compatible(
+    chunk: dict[str, Any],
+    query_embedding_context: dict[str, Any],
+) -> bool:
+    embedding = chunk.get("embedding")
+    if not isinstance(embedding, list):
+        return False
+    metadata = chunk.get("metadata") or {}
+    query_dimension = query_embedding_context.get("embedding_dimension")
+    chunk_dimension = metadata.get("embedding_dimension")
+    if query_dimension is not None:
+        try:
+            normalized_query_dimension = int(query_dimension)
+            normalized_chunk_dimension = (
+                int(chunk_dimension) if chunk_dimension is not None else None
+            )
+        except (TypeError, ValueError):
+            return False
+        if (
+            normalized_chunk_dimension is not None
+            and normalized_chunk_dimension != normalized_query_dimension
+        ):
+            return False
+        if len(embedding) != normalized_query_dimension:
+            return False
+    query_model = query_embedding_context.get("embedding_model")
+    chunk_model = metadata.get("embedding_model")
+    if query_model and chunk_model and chunk_model != query_model:
+        return False
+    query_config_id = query_embedding_context.get("embedding_config_id")
+    chunk_config_id = metadata.get("embedding_config_id")
+    if query_config_id and chunk_config_id and chunk_config_id != query_config_id:
+        return False
+    return True
 
 
 def _has_readable_vector_chunks(current_store: MemoryStore, user: dict[str, Any]) -> bool:
@@ -6810,11 +7205,13 @@ def search_knowledge(
 ) -> dict[str, Any]:
     current_store = store(request)
     query = _ensure_non_blank(payload.query, "query").lower()
-    query_embedding = (
+    query_embedding_result = (
         _knowledge_query_embedding(current_store, query)
         if _has_readable_vector_chunks(current_store, user)
         else None
     )
+    query_embedding = query_embedding_result[0] if query_embedding_result else None
+    query_embedding_context = query_embedding_result[1] if query_embedding_result else None
     items = []
     for document in current_store.knowledge_documents.values():
         if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
@@ -6831,7 +7228,12 @@ def search_knowledge(
             haystack = f"{document['title']} {chunk['content']}".lower()
             embedding = chunk.get("embedding")
             score = None
-            if query_embedding is not None and isinstance(embedding, list):
+            if (
+                query_embedding is not None
+                and query_embedding_context is not None
+                and isinstance(embedding, list)
+                and _chunk_embedding_is_compatible(chunk, query_embedding_context)
+            ):
                 score = _cosine_similarity(query_embedding, [float(value) for value in embedding])
                 if score <= 0 and query not in haystack:
                     continue

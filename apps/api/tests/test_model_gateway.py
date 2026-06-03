@@ -603,3 +603,313 @@ def test_model_gateway_config_test_allows_chat_only_without_embedding_model(monk
     assert app.state.store.model_gateway_configs == {}
     assert app.state.store.model_gateway_logs == []
     assert "sk-chat-only-secret" not in str(data)
+
+
+def test_model_gateway_config_test_allows_chat_only_with_partial_embedding_config(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps({"ok": True}, ensure_ascii=False)
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 1, "prompt_tokens": 2, "total_tokens": 3},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        calls.append({"timeout": timeout, "url": request.full_url})
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/system/model-gateway-configs/test",
+        json={
+            "api_key": "sk-chat-only-secret",
+            "base_url": "http://127.0.0.1:8080/v1",
+            "default_chat_model": "codex-auto-review",
+            "embedding_connection_mode": "custom",
+            "embedding_dimension": 768,
+            "name": "Sub2API Chat",
+            "provider": "openai_compatible",
+            "status": "active",
+            "test_target": "chat",
+            "timeout_seconds": 11,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["chat"]["status"] == "succeeded"
+    assert data["embedding"] == {"model": "", "ok": True, "status": "skipped"}
+    assert data["ok"] is True
+    assert data["test_target"] == "chat"
+    assert calls == [{"timeout": 11, "url": "http://127.0.0.1:8080/v1/chat/completions"}]
+    assert app.state.store.model_gateway_configs == {}
+    assert app.state.store.model_gateway_logs == []
+    assert "sk-chat-only-secret" not in str(data)
+
+
+def test_model_gateway_config_test_allows_custom_embedding_only_without_chat_key(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "data": [{"embedding": [0.2] * 1536, "index": 0}],
+                    "usage": {"prompt_tokens": 2, "total_tokens": 2},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        calls.append(
+            {
+                "headers": dict(request.header_items()),
+                "timeout": timeout,
+                "url": request.full_url,
+            }
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/system/model-gateway-configs/test",
+        json={
+            "base_url": "https://chat.example.com/v1",
+            "default_chat_model": "gpt-unused",
+            "default_embedding_model": "embedding-only",
+            "embedding_api_key": "sk-embedding-only",
+            "embedding_base_url": "https://embedding.example.com/v1",
+            "embedding_connection_mode": "custom",
+            "embedding_dimension": 1536,
+            "name": "独立 Embedding 测试",
+            "provider": "openai_compatible",
+            "status": "active",
+            "test_target": "embedding",
+            "timeout_seconds": 13,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["chat"] == {"model": "gpt-unused", "ok": True, "status": "skipped"}
+    assert data["embedding"]["status"] == "succeeded"
+    assert data["embedding"]["dimension"] == 1536
+    assert data["ok"] is True
+    assert data["test_target"] == "embedding"
+    assert calls == [
+        {
+            "headers": {
+                "Authorization": "Bearer sk-embedding-only",
+                "Content-type": "application/json",
+            },
+            "timeout": 13,
+            "url": "https://embedding.example.com/v1/embeddings",
+        }
+    ]
+    assert app.state.store.model_gateway_configs == {}
+    assert app.state.store.model_gateway_logs == []
+    assert "sk-embedding-only" not in str(data)
+
+
+def test_model_gateway_config_allows_embedding_disabled_for_chat_only_runtime(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "acceptance_points": ["Chat-only"],
+                                        "kind": "product_detail_design",
+                                        "summary": "Chat-only 模型网关生成结果。",
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 3, "prompt_tokens": 2, "total_tokens": 5},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        calls.append(
+            {
+                "body": json.loads(request.data.decode("utf-8")),
+                "timeout": timeout,
+                "url": request.full_url,
+            }
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+
+    config = client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "api_key": "sk-chat-only",
+            "base_url": "https://chat.example.com/v1",
+            "default_chat_model": "gpt-chat-only",
+            "embedding_connection_mode": "disabled",
+            "is_default": True,
+            "name": "仅 Chat 模型网关",
+            "provider": "openai_compatible",
+            "status": "active",
+        },
+        headers=headers,
+    )
+
+    assert config.status_code == 200
+    config_data = config.json()["data"]
+    assert config_data["default_embedding_model"] is None
+    assert config_data["embedding_connection_mode"] == "disabled"
+    assert config_data["embedding_api_key_configured"] is False
+
+    task = create_draft_design_task(headers)
+    started = client.post(f"/api/ai-tasks/{task['task_id']}/start", headers=headers)
+
+    assert started.status_code == 200
+    assert calls == [
+        {
+            "body": {
+                "messages": calls[0]["body"]["messages"],
+                "model": "gpt-chat-only",
+                "response_format": {"type": "json_object"},
+                "temperature": 0.2,
+            },
+            "timeout": 60,
+            "url": "https://chat.example.com/v1/chat/completions",
+        }
+    ]
+
+
+def test_custom_embedding_connection_indexes_knowledge_and_records_vector_metadata(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "data": [{"embedding": [1.0, *([0.0] * 1535)], "index": 0}],
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        calls.append(
+            {
+                "body": json.loads(request.data.decode("utf-8")),
+                "headers": dict(request.header_items()),
+                "timeout": timeout,
+                "url": request.full_url,
+            }
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+
+    config = client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "api_key": "sk-chat",
+            "base_url": "https://chat.example.com/v1",
+            "default_chat_model": "gpt-chat",
+            "default_embedding_model": "embedding-current",
+            "embedding_api_key": "sk-embedding",
+            "embedding_base_url": "https://embedding.example.com/v1",
+            "embedding_connection_mode": "custom",
+            "embedding_dimension": 1536,
+            "is_default": True,
+            "name": "Chat 与 Embedding 分离网关",
+            "provider": "openai_compatible",
+            "status": "active",
+            "timeout_seconds": 7,
+        },
+        headers=headers,
+    ).json()["data"]
+
+    document = client.post(
+        "/api/knowledge/documents",
+        json={
+            "content": "custom-embedding-token should be vector indexed.",
+            "permission_roles": ["admin"],
+            "title": "自定义 Embedding 知识",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    assert document["index_status"] == "vector_indexed"
+    assert calls == [
+        {
+            "body": {
+                "input": ["custom-embedding-token should be vector indexed."],
+                "model": "embedding-current",
+            },
+            "headers": {
+                "Authorization": "Bearer sk-embedding",
+                "Content-type": "application/json",
+            },
+            "timeout": 7,
+            "url": "https://embedding.example.com/v1/embeddings",
+        }
+    ]
+    stored_chunk = next(
+        chunk
+        for chunk in app.state.store.knowledge_chunks.values()
+        if chunk["document_id"] == document["id"]
+    )
+    assert stored_chunk["metadata"]["embedding_config_id"] == config["id"]
+    assert stored_chunk["metadata"]["embedding_dimension"] == 1536
+    assert stored_chunk["metadata"]["embedding_model"] == "embedding-current"

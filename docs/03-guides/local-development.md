@@ -237,7 +237,7 @@ v1 建议初始化：
 | `/health` 失败 | 查看 `docker compose ps` 和 `docker compose logs api`。 |
 | 数据库连接失败 | 检查 `DATABASE_URL`、postgres 服务名和容器状态。 |
 | Redis 连接失败 | 检查 `REDIS_URL` 和 redis 容器状态。 |
-| 模型调用失败 | 检查模型网关环境变量和供应商响应。 |
+| 模型调用失败 | 检查模型网关 Chat 配置、Embedding 连接模式、供应商响应和 `/health` 中的 `chat_gateway` / `embedding_gateway`。 |
 | 知识检索无结果 | 检查文档是否导入、是否已生成文本 chunk、权限过滤是否命中；Embedding 不可用时应进入 `text_indexed` 并通过关键词检索返回结果。 |
 
 ## 性能调优

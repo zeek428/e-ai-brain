@@ -315,6 +315,83 @@ def test_knowledge_document_falls_back_to_text_index_when_embeddings_fail(monkey
     assert embedding_attempts == 1
 
 
+def test_knowledge_search_does_not_vector_compare_incompatible_embedding_metadata(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    app.state.store.model_gateway_configs["model_gateway_config_current"] = {
+        "api_key": "sk-current-embedding",
+        "base_url": "https://embedding.example.com/v1",
+        "default_chat_model": "gpt-current",
+        "default_embedding_model": "current-embedding-model",
+        "embedding_connection_mode": "reuse_chat",
+        "id": "model_gateway_config_current",
+        "is_default": True,
+        "max_retries": 1,
+        "name": "当前向量模型",
+        "provider": "openai_compatible",
+        "status": "active",
+        "timeout_seconds": 60,
+    }
+    app.state.store.knowledge_documents["knowledge_incompatible"] = {
+        "content": "legacy vector only content",
+        "created_by": "user_admin",
+        "doc_type": "manual",
+        "id": "knowledge_incompatible",
+        "index_error": None,
+        "index_status": "vector_indexed",
+        "permission_roles": ["admin"],
+        "tags": [],
+        "title": "旧向量文档",
+        "vector_index_error": None,
+    }
+    app.state.store.knowledge_chunks["knowledge_incompatible_chunk_001"] = {
+        "chunk_index": 1,
+        "content": "legacy vector only content",
+        "document_id": "knowledge_incompatible",
+        "embedding": [1.0, *([0.0] * 1535)],
+        "id": "knowledge_incompatible_chunk_001",
+        "metadata": {
+            "doc_type": "manual",
+            "embedding_config_id": "model_gateway_config_legacy",
+            "embedding_dimension": 1536,
+            "embedding_model": "legacy-embedding-model",
+            "title": "旧向量文档",
+        },
+        "permission_roles": ["admin"],
+        "permission_scope": {"roles": ["admin"]},
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "data": [{"embedding": [1.0, *([0.0] * 1535)], "index": 0}],
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        _ = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(main, "urlopen", fake_urlopen)
+
+    results = client.post(
+        "/api/knowledge/search",
+        json={"query": "query-without-keyword-hit", "top_k": 5},
+        headers=admin_headers,
+    ).json()["data"]["items"]
+
+    assert results == []
+
+
 def test_knowledge_search_does_not_synthesize_chunks_when_index_rows_are_missing():
     app.state.store.reset()
     admin_headers = auth_headers()

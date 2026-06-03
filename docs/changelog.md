@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 模型网关配置拆分 Chat 与 Embedding 能力：Embedding 可禁用、复用 Chat 连接或单独配置 baseURL/API Key，知识向量 chunk 记录 embedding_config_id/model/dimension，检索只比较兼容向量并保留关键词兜底。
 - 知识索引新增文本兜底模式：Embedding 不可用时仍保存文本 chunk 并进入 `text_indexed`，知识检索以关键词模式返回可访问结果；Embedding 恢复后可通过重试升级为 `vector_indexed`。
 - AI 助手聊天记录按登录用户保存，新增 `/api/assistant/conversations` 与 `/api/assistant/conversations/{conversation_id}/messages`，前端侧栏展示最近对话并可打开历史消息；新增 `019_assistant_chat_history.sql` 和 `assistant_conversations` / `assistant_messages` 结构表。
 - AI Brain GitHub PR 真实复跑后补齐 code_review 本地联调策略：默认外部执行器命令为空且模型网关可用时，代码 Review 任务自动通过 `model_gateway` 适配器生成结构化报告，Review prompt 携带 MR/PR 快照和技术方案，并保留模型调用审计。
