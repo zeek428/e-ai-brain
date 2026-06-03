@@ -32,6 +32,8 @@ const statusLabels: Record<KnowledgeRecord['status'], { color: string; label: st
   indexed: { color: 'green', label: '已索引' },
   index_failed: { color: 'red', label: '索引失败' },
   pending_index: { color: 'gold', label: '待索引' },
+  text_indexed: { color: 'cyan', label: '文本索引' },
+  vector_indexed: { color: 'green', label: '向量索引' },
 };
 
 const depositStatusLabels: Record<string, { color: string; label: string }> = {
@@ -279,7 +281,7 @@ export default function KnowledgePage() {
       {
         dataIndex: 'indexError',
         title: '索引错误',
-        render: (_, row) => row.indexError || '-',
+        render: (_, row) => row.indexError || row.vectorIndexError || '-',
       },
       {
         dataIndex: 'updatedAt',
@@ -294,9 +296,9 @@ export default function KnowledgePage() {
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
-            {row.status === 'index_failed' ? (
+            {row.status === 'index_failed' || row.status === 'text_indexed' ? (
               <Button icon={<ReloadOutlined />} onClick={() => handleRetryIndex(row)} type="link">
-                重试索引
+                {row.status === 'text_indexed' ? '补向量索引' : '重试索引'}
               </Button>
             ) : null}
             <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除知识 ${row.id}？`}>
@@ -368,6 +370,11 @@ export default function KnowledgePage() {
         title: '来源',
       },
       {
+        dataIndex: 'retrievalMode',
+        title: '召回模式',
+        render: (_, row) => (row.retrievalMode === 'vector' ? '向量' : '关键词'),
+      },
+      {
         dataIndex: 'content',
         title: '内容摘要',
       },
@@ -400,6 +407,8 @@ export default function KnowledgePage() {
             name: 'status',
             options: [
               { label: '已索引', value: 'indexed' },
+              { label: '文本索引', value: 'text_indexed' },
+              { label: '向量索引', value: 'vector_indexed' },
               { label: '待索引', value: 'pending_index' },
               { label: '索引中', value: 'importing' },
               { label: '索引失败', value: 'index_failed' },
@@ -521,6 +530,8 @@ export default function KnowledgePage() {
               <Select
                 options={[
                   { label: '已索引', value: 'indexed' },
+                  { label: '文本索引', value: 'text_indexed' },
+                  { label: '向量索引', value: 'vector_indexed' },
                   { label: '待索引', value: 'pending_index' },
                   { label: '索引中', value: 'importing' },
                   { label: '索引失败', value: 'index_failed' },

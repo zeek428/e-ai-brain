@@ -492,6 +492,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   permission_roles jsonb NOT NULL DEFAULT '["admin"]'::jsonb,
   index_status text NOT NULL DEFAULT 'pending_index',
   index_error text,
+  vector_index_error text,
   tags jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_by text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),

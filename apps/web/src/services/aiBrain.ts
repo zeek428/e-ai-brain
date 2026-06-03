@@ -632,6 +632,7 @@ export type KnowledgeSearchResultRecord = {
   content: string;
   documentId: string;
   id: string;
+  retrievalMode?: 'keyword' | 'vector';
   sourceLabel: string;
   title: string;
 };
@@ -837,6 +838,7 @@ type KnowledgeDocumentListItem = {
   tags?: string[];
   title: string;
   updated_at?: string;
+  vector_index_error?: string | null;
 };
 
 type AuditEventListItem = {
@@ -1013,6 +1015,7 @@ type KnowledgeSearchResultItem = {
   chunk_index?: number;
   content?: string;
   document_id: string;
+  retrieval_mode?: string;
   source?: {
     chunk_id?: string;
     doc_type?: string;
@@ -1379,7 +1382,9 @@ function normalizeKnowledgeStatus(status?: string): KnowledgeRecord['status'] {
     status === 'importing' ||
     status === 'indexed' ||
     status === 'index_failed' ||
-    status === 'pending_index'
+    status === 'pending_index' ||
+    status === 'text_indexed' ||
+    status === 'vector_indexed'
   ) {
     return status;
   }
@@ -2156,6 +2161,7 @@ export async function fetchManagementKnowledge(): Promise<KnowledgeRecord[]> {
     tags: document.tags,
     title: document.title,
     updatedAt: formatListDate(document.updated_at ?? document.created_at),
+    vectorIndexError: document.vector_index_error,
   }));
 }
 
@@ -2889,6 +2895,7 @@ function mapKnowledgeSearchResult(item: KnowledgeSearchResultItem, index: number
     content: item.content ?? '-',
     documentId: item.document_id,
     id: item.chunk_id ?? `${item.document_id}:${index}`,
+    retrievalMode: item.retrieval_mode === 'vector' ? 'vector' : 'keyword',
     sourceLabel: sourceParts.length ? sourceParts.join(' · ') : '-',
     title: item.title ?? item.document_id,
   };

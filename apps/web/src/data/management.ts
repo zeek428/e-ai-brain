@@ -111,10 +111,18 @@ export type KnowledgeRecord = {
   indexError?: string | null;
   ownerRole: string;
   permissionRoles?: string[];
-  status: 'archived' | 'importing' | 'indexed' | 'index_failed' | 'pending_index';
+  status:
+    | 'archived'
+    | 'importing'
+    | 'indexed'
+    | 'index_failed'
+    | 'pending_index'
+    | 'text_indexed'
+    | 'vector_indexed';
   tags?: string[];
   title: string;
   updatedAt: string;
+  vectorIndexError?: string | null;
 };
 
 export type AuditRecord = {

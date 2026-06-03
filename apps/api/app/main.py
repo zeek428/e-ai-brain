@@ -125,7 +125,16 @@ MODEL_GATEWAY_PROVIDERS = {"openai_compatible"}
 MODEL_GATEWAY_STATUSES = {"active", "inactive"}
 MODEL_GATEWAY_TEST_TARGETS = {"chat", "chat_and_embedding", "embedding"}
 RETRYABLE_TASK_FAILURE_STEPS = {"code_review_executor_failed", "model_gateway_failed"}
-KNOWLEDGE_INDEX_STATUSES = {"archived", "importing", "indexed", "index_failed", "pending_index"}
+KNOWLEDGE_INDEX_STATUSES = {
+    "archived",
+    "importing",
+    "indexed",
+    "index_failed",
+    "pending_index",
+    "text_indexed",
+    "vector_indexed",
+}
+KNOWLEDGE_SEARCHABLE_STATUSES = {"indexed", "text_indexed", "vector_indexed"}
 BUG_STATUS_TRANSITIONS = {
     "open": {"triaged", "assigned", "closed"},
     "needs_info": {"open", "triaged", "closed"},
@@ -6500,6 +6509,7 @@ def _knowledge_document_response(
     response = current_store.snapshot(document)
     response["chunk_count"] = len(_knowledge_document_chunks(current_store, document["id"]))
     response["index_error"] = document.get("index_error")
+    response["vector_index_error"] = document.get("vector_index_error")
     return response
 
 
@@ -6520,35 +6530,24 @@ def _mark_knowledge_index_failed(
     document["chunk_count"] = 0
     document["index_error"] = _ensure_non_blank(error, "index_error")
     document["index_status"] = "index_failed"
+    document["vector_index_error"] = None
 
 
-def _replace_knowledge_chunks(current_store: MemoryStore, document: dict[str, Any]) -> None:
-    document_id = document["id"]
-    _clear_knowledge_chunks(current_store, document_id)
-    chunks = _split_knowledge_content(document["content"])
-    if not chunks:
-        _mark_knowledge_index_failed(current_store, document, "NO_INDEXABLE_CONTENT")
-        return
-    try:
-        embeddings = _call_model_gateway_embeddings(current_store, chunks)
-    except ModelGatewayConfigError as exc:
-        _mark_knowledge_index_failed(current_store, document, str(exc))
-        return
-    except ModelGatewayCallError as exc:
-        _mark_knowledge_index_failed(
-            current_store,
-            document,
-            exc.log.get("error") or "Model gateway embedding request failed",
-        )
-        return
+def _store_knowledge_chunks(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+    chunks: list[str],
+    *,
+    embeddings: list[list[float]] | None = None,
+) -> None:
     permission_roles = list(document.get("permission_roles", ["admin"]))
     for chunk_index, content in enumerate(chunks, start=1):
-        chunk_id = f"{document_id}_chunk_{chunk_index:03d}"
+        chunk_id = f"{document['id']}_chunk_{chunk_index:03d}"
         current_store.knowledge_chunks[chunk_id] = {
             "chunk_index": chunk_index,
             "content": content,
-            "document_id": document_id,
-            "embedding": embeddings[chunk_index - 1],
+            "document_id": document["id"],
+            "embedding": embeddings[chunk_index - 1] if embeddings is not None else None,
             "id": chunk_id,
             "metadata": {
                 "doc_type": document.get("doc_type", "manual"),
@@ -6560,8 +6559,62 @@ def _replace_knowledge_chunks(current_store: MemoryStore, document: dict[str, An
             "permission_scope": {"roles": permission_roles},
         }
     document["chunk_count"] = len(chunks)
-    document["index_status"] = "indexed"
-    document.pop("index_error", None)
+
+
+def _mark_knowledge_text_indexed(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+    chunks: list[str],
+    *,
+    vector_error: str | None = None,
+) -> None:
+    _store_knowledge_chunks(current_store, document, chunks)
+    document["index_status"] = "text_indexed"
+    document["index_error"] = vector_error
+    document["vector_index_error"] = vector_error
+
+
+def _mark_knowledge_vector_indexed(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+    chunks: list[str],
+    embeddings: list[list[float]],
+) -> None:
+    _store_knowledge_chunks(current_store, document, chunks, embeddings=embeddings)
+    document["index_status"] = "vector_indexed"
+    document["index_error"] = None
+    document["vector_index_error"] = None
+
+
+def _replace_knowledge_chunks(
+    current_store: MemoryStore,
+    document: dict[str, Any],
+    *,
+    attempt_vector: bool = True,
+) -> None:
+    document_id = document["id"]
+    _clear_knowledge_chunks(current_store, document_id)
+    chunks = _split_knowledge_content(document["content"])
+    if not chunks:
+        _mark_knowledge_index_failed(current_store, document, "NO_INDEXABLE_CONTENT")
+        return
+    if not attempt_vector:
+        _mark_knowledge_text_indexed(current_store, document, chunks)
+        return
+    try:
+        embeddings = _call_model_gateway_embeddings(current_store, chunks)
+    except ModelGatewayConfigError as exc:
+        _mark_knowledge_text_indexed(current_store, document, chunks, vector_error=str(exc))
+        return
+    except ModelGatewayCallError as exc:
+        _mark_knowledge_text_indexed(
+            current_store,
+            document,
+            chunks,
+            vector_error=exc.log.get("error") or "Model gateway embedding request failed",
+        )
+        return
+    _mark_knowledge_vector_indexed(current_store, document, chunks, embeddings)
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -6581,6 +6634,19 @@ def _knowledge_query_embedding(
         return _call_model_gateway_embeddings(current_store, [query])[0]
     except (ModelGatewayConfigError, ModelGatewayCallError):
         return None
+
+
+def _has_readable_vector_chunks(current_store: MemoryStore, user: dict[str, Any]) -> bool:
+    for document in current_store.knowledge_documents.values():
+        if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
+            continue
+        if not _user_can_read_roles(user, document["permission_roles"]):
+            continue
+        for chunk in _knowledge_document_chunks(current_store, document["id"]):
+            chunk_roles = chunk.get("permission_roles", document["permission_roles"])
+            if _user_can_read_roles(user, chunk_roles) and isinstance(chunk.get("embedding"), list):
+                return True
+    return False
 
 
 @app.post("/api/knowledge/documents")
@@ -6605,8 +6671,9 @@ def create_knowledge_document(
         "product_id": payload.product_id,
         "permission_roles": payload.permission_roles,
         "tags": payload.tags,
-        "index_status": "indexed",
+        "index_status": "pending_index",
         "index_error": None,
+        "vector_index_error": None,
         "created_by": user["id"],
     }
     current_store.knowledge_documents[document_id] = document
@@ -6658,7 +6725,10 @@ def patch_knowledge_document(
         _clear_knowledge_chunks(current_store, document_id)
         document["chunk_count"] = 0
         document["index_error"] = None
-    elif updates.get("index_status") == "indexed" or {
+        document["vector_index_error"] = None
+    elif updates.get("index_status") == "text_indexed":
+        _replace_knowledge_chunks(current_store, document, attempt_vector=False)
+    elif updates.get("index_status") in {"indexed", "vector_indexed"} or {
         "content",
         "title",
         "permission_roles",
@@ -6687,8 +6757,12 @@ def retry_knowledge_document_index(
     document = current_store.knowledge_documents.get(document_id)
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
-    if document.get("index_status") != "index_failed":
-        raise api_error(409, "KNOWLEDGE_INDEX_STATE_INVALID", "Knowledge document is not failed")
+    if document.get("index_status") not in {"index_failed", "text_indexed"}:
+        raise api_error(
+            409,
+            "KNOWLEDGE_INDEX_STATE_INVALID",
+            "Knowledge document is not eligible for index retry",
+        )
     _replace_knowledge_chunks(current_store, document)
     document["updated_at"] = datetime.now(UTC).isoformat()
     current_store.audit(
@@ -6736,10 +6810,14 @@ def search_knowledge(
 ) -> dict[str, Any]:
     current_store = store(request)
     query = _ensure_non_blank(payload.query, "query").lower()
-    query_embedding = _knowledge_query_embedding(current_store, query)
+    query_embedding = (
+        _knowledge_query_embedding(current_store, query)
+        if _has_readable_vector_chunks(current_store, user)
+        else None
+    )
     items = []
     for document in current_store.knowledge_documents.values():
-        if document.get("index_status") != "indexed":
+        if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
             continue
         if not _user_can_read_roles(user, document["permission_roles"]):
             continue
@@ -6759,6 +6837,7 @@ def search_knowledge(
                     continue
             elif query not in haystack:
                 continue
+            retrieval_mode = "vector" if score is not None else "keyword"
             items.append(
                 {
                     "chunk_id": chunk["id"],
@@ -6766,6 +6845,7 @@ def search_knowledge(
                     "document_id": document["id"],
                     "title": document["title"],
                     "content": chunk["content"],
+                    "retrieval_mode": retrieval_mode,
                     "score": round(score, 6) if score is not None else None,
                     "source": {
                         "chunk_id": chunk["id"],
@@ -6821,7 +6901,9 @@ def approve_knowledge_deposit(
         "doc_type": "task_deposit",
         "permission_roles": payload.permission_roles,
         "tags": ["task_deposit"],
-        "index_status": "indexed",
+        "index_status": "pending_index",
+        "index_error": None,
+        "vector_index_error": None,
         "created_by": user["id"],
     }
     current_store.knowledge_documents[document_id] = document

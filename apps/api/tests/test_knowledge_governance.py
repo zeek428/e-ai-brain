@@ -269,6 +269,52 @@ def test_knowledge_search_uses_model_gateway_embeddings_for_semantic_rank(monkey
     assert "semantic-target" not in str(embedding_logs)
 
 
+def test_knowledge_document_falls_back_to_text_index_when_embeddings_fail(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    embedding_attempts = 0
+
+    def failing_urlopen(_request, timeout):
+        nonlocal embedding_attempts
+        _ = timeout
+        embedding_attempts += 1
+        raise OSError("embedding upstream unavailable")
+
+    monkeypatch.setattr(main, "urlopen", failing_urlopen)
+
+    document = client.post(
+        "/api/knowledge/documents",
+        json={
+            "title": "Embedding 不可用兜底",
+            "content": "keyword-only-token should still be searchable without embeddings.",
+            "permission_roles": ["admin"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    assert document["index_status"] == "text_indexed"
+    assert document["index_error"] == "Model gateway embedding request failed"
+    assert document["chunk_count"] == 1
+
+    results = client.post(
+        "/api/knowledge/search",
+        json={"query": "keyword-only-token", "top_k": 5},
+        headers=admin_headers,
+    ).json()["data"]["items"]
+
+    assert [item["document_id"] for item in results] == [document["id"]]
+    assert results[0]["score"] is None
+    assert results[0]["retrieval_mode"] == "keyword"
+    stored_chunks = [
+        chunk
+        for chunk in app.state.store.knowledge_chunks.values()
+        if chunk["document_id"] == document["id"]
+    ]
+    assert len(stored_chunks) == 1
+    assert stored_chunks[0].get("embedding") is None
+    assert embedding_attempts == 1
+
+
 def test_knowledge_search_does_not_synthesize_chunks_when_index_rows_are_missing():
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -340,8 +386,9 @@ def test_knowledge_index_failure_keeps_error_and_retry_rebuilds_chunks():
         f"/api/knowledge/documents/{document['id']}/retry-index",
         headers=admin_headers,
     ).json()["data"]
-    assert retried["index_status"] == "indexed"
+    assert retried["index_status"] == "vector_indexed"
     assert retried["index_error"] is None
+    assert retried["vector_index_error"] is None
     assert retried["chunk_count"] == 1
 
     retried_search = client.post(
@@ -350,6 +397,67 @@ def test_knowledge_index_failure_keeps_error_and_retry_rebuilds_chunks():
         headers=admin_headers,
     ).json()["data"]["items"]
     assert [item["chunk_id"] for item in retried_search] == [f"{document['id']}_chunk_001"]
+    assert retried_search[0]["retrieval_mode"] == "vector"
+
+
+def test_knowledge_retry_upgrades_text_index_to_vector_index(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    def failing_urlopen(_request, timeout):
+        _ = timeout
+        raise OSError("embedding upstream unavailable")
+
+    monkeypatch.setattr(main, "urlopen", failing_urlopen)
+    document = client.post(
+        "/api/knowledge/documents",
+        json={
+            "title": "文本索引补向量",
+            "content": "retry-upgrade-token can start as keyword-only.",
+            "permission_roles": ["admin"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    assert document["index_status"] == "text_indexed"
+
+    class FakeResponse:
+        def __init__(self, payload: dict):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+    def successful_urlopen(request, timeout):
+        _ = timeout
+        payload = json.loads(request.data.decode("utf-8"))
+        inputs = payload.get("input", [])
+        if isinstance(inputs, str):
+            inputs = [inputs]
+        return FakeResponse(
+            {
+                "data": [
+                    {"embedding": [1.0, *([0.0] * 1535)], "index": index}
+                    for index, _text in enumerate(inputs)
+                ],
+                "usage": {"prompt_tokens": len(inputs), "total_tokens": len(inputs)},
+            }
+        )
+
+    monkeypatch.setattr(main, "urlopen", successful_urlopen)
+    retried = client.post(
+        f"/api/knowledge/documents/{document['id']}/retry-index",
+        headers=admin_headers,
+    ).json()["data"]
+
+    assert retried["index_status"] == "vector_indexed"
+    assert retried["index_error"] is None
+    assert retried["vector_index_error"] is None
 
 
 def test_knowledge_index_status_must_use_supported_values():

@@ -2633,7 +2633,7 @@ class PostgresSnapshotRepository:
             """
             SELECT id, brain_app_id, product_id, version_id, title, content, source_type,
                    doc_type, permission_scope, permission_roles, index_status, index_error,
-                   tags, created_by, created_at, updated_at
+                   vector_index_error, tags, created_by, created_at, updated_at
             FROM knowledge_documents
             ORDER BY id
             """
@@ -2643,8 +2643,8 @@ class PostgresSnapshotRepository:
             document = {
                 "brain_app_id": row[1],
                 "content": row[5],
-                "created_at": row[14].isoformat() if row[14] else None,
-                "created_by": row[13],
+                "created_at": row[15].isoformat() if row[15] else None,
+                "created_by": row[14],
                 "doc_type": row[7],
                 "id": row[0],
                 "index_error": row[11],
@@ -2653,10 +2653,11 @@ class PostgresSnapshotRepository:
                 "permission_scope": dict(row[8] or {}),
                 "product_id": row[2],
                 "source_type": row[6],
-                "tags": list(row[12] or []),
+                "tags": list(row[13] or []),
                 "title": row[4],
-                "updated_at": row[15].isoformat() if row[15] else None,
+                "updated_at": row[16].isoformat() if row[16] else None,
                 "version_id": row[3],
+                "vector_index_error": row[12],
             }
             for optional_key in (
                 "brain_app_id",
@@ -2664,6 +2665,7 @@ class PostgresSnapshotRepository:
                 "index_error",
                 "product_id",
                 "updated_at",
+                "vector_index_error",
                 "version_id",
             ):
                 if document[optional_key] is None:
@@ -4136,11 +4138,11 @@ class PostgresSnapshotRepository:
                 INSERT INTO knowledge_documents (
                   id, brain_app_id, product_id, version_id, title, content, source_type,
                   doc_type, permission_scope, permission_roles, index_status, index_error,
-                  tags, created_by, created_at, updated_at
+                  vector_index_error, tags, created_by, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s,
-                  %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
+                  %s, %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -4155,6 +4157,7 @@ class PostgresSnapshotRepository:
                   permission_roles = EXCLUDED.permission_roles,
                   index_status = EXCLUDED.index_status,
                   index_error = EXCLUDED.index_error,
+                  vector_index_error = EXCLUDED.vector_index_error,
                   tags = EXCLUDED.tags,
                   created_by = EXCLUDED.created_by,
                   updated_at = EXCLUDED.updated_at
@@ -4172,6 +4175,7 @@ class PostgresSnapshotRepository:
                     json.dumps(document.get("permission_roles", ["admin"]), ensure_ascii=False),
                     document.get("index_status", "pending_index"),
                     document.get("index_error"),
+                    document.get("vector_index_error"),
                     json.dumps(document.get("tags", []), ensure_ascii=False),
                     document["created_by"],
                     created_at,
