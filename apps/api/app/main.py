@@ -2073,6 +2073,136 @@ def _assistant_response_content(content: Any) -> dict[str, Any]:
     }
 
 
+def _assistant_conversation_title(message: str) -> str:
+    normalized = " ".join(message.strip().split())
+    if len(normalized) <= 60:
+        return normalized
+    return f"{normalized[:57]}..."
+
+
+def _assistant_conversation_messages(
+    current_store: MemoryStore,
+    *,
+    conversation_id: str,
+) -> list[dict[str, Any]]:
+    messages = [
+        message
+        for message in current_store.assistant_messages.values()
+        if message.get("conversation_id") == conversation_id
+    ]
+    return sorted(messages, key=lambda item: item.get("created_at", ""))
+
+
+def _public_assistant_conversation(conversation: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "created_at": conversation["created_at"],
+        "id": conversation["id"],
+        "last_message_at": conversation.get("last_message_at") or conversation["updated_at"],
+        "message_count": int(conversation.get("message_count") or 0),
+        "product_id": conversation.get("product_id"),
+        "title": conversation["title"],
+        "updated_at": conversation["updated_at"],
+    }
+
+
+def _public_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
+    public_message = {
+        "content": message["content"],
+        "conversation_id": message["conversation_id"],
+        "created_at": message["created_at"],
+        "id": message["id"],
+        "role": message["role"],
+    }
+    if message.get("model"):
+        public_message["model"] = message["model"]
+    if message.get("suggestions"):
+        public_message["suggestions"] = message["suggestions"]
+    return public_message
+
+
+def _assistant_conversation_for_user(
+    current_store: MemoryStore,
+    *,
+    conversation_id: str,
+    user_id: str,
+) -> dict[str, Any]:
+    conversation = current_store.assistant_conversations.get(conversation_id)
+    if conversation is None or conversation.get("user_id") != user_id:
+        raise api_error(404, "NOT_FOUND", "Assistant conversation not found")
+    return conversation
+
+
+def _ensure_assistant_conversation(
+    current_store: MemoryStore,
+    *,
+    conversation_id: str | None,
+    message: str,
+    product_id: str | None,
+    user: dict[str, Any],
+    now: str,
+) -> dict[str, Any]:
+    user_id = user["id"]
+    if conversation_id:
+        existing = current_store.assistant_conversations.get(conversation_id)
+        if existing is not None:
+            if existing.get("user_id") != user_id:
+                raise api_error(404, "NOT_FOUND", "Assistant conversation not found")
+            if (
+                product_id
+                and existing.get("product_id")
+                and existing.get("product_id") != product_id
+            ):
+                raise api_error(400, "VALIDATION_ERROR", "Conversation product_id does not match")
+            if product_id and not existing.get("product_id"):
+                existing["product_id"] = product_id
+            existing["updated_at"] = now
+            return existing
+        resolved_id = conversation_id
+    else:
+        resolved_id = current_store.new_id("conversation")
+    conversation = {
+        "created_at": now,
+        "id": resolved_id,
+        "last_message_at": now,
+        "message_count": 0,
+        "product_id": product_id,
+        "title": _assistant_conversation_title(message),
+        "updated_at": now,
+        "user_id": user_id,
+    }
+    current_store.assistant_conversations[resolved_id] = conversation
+    return conversation
+
+
+def _append_assistant_message(
+    current_store: MemoryStore,
+    *,
+    content: str,
+    conversation: dict[str, Any],
+    now: str,
+    role: str,
+    user_id: str,
+    model: str | None = None,
+    suggestions: list[str] | None = None,
+) -> dict[str, Any]:
+    message = {
+        "content": content,
+        "conversation_id": conversation["id"],
+        "created_at": now,
+        "id": current_store.new_id("assistant_message"),
+        "model": model,
+        "product_id": conversation.get("product_id"),
+        "role": role,
+        "suggestions": suggestions or [],
+        "user_id": user_id,
+    }
+    current_store.assistant_messages[message["id"]] = message
+    conversation["last_message_at"] = now
+    conversation["message_count"] = int(conversation.get("message_count") or 0) + 1
+    conversation["updated_at"] = now
+    return message
+
+
 def _call_model_gateway_for_assistant_chat(
     current_store: MemoryStore,
     *,
@@ -3637,6 +3767,45 @@ def list_model_gateway_logs(
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
 
+@app.get("/api/assistant/conversations")
+def list_assistant_conversations(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"admin", "product_owner", "rd_owner", "reviewer", "knowledge_owner"})
+    current_store = store(request)
+    items = [
+        _public_assistant_conversation(conversation)
+        for conversation in current_store.assistant_conversations.values()
+        if conversation.get("user_id") == user["id"]
+    ]
+    items.sort(key=lambda item: item.get("last_message_at") or item["updated_at"], reverse=True)
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@app.get("/api/assistant/conversations/{conversation_id}/messages")
+def list_assistant_conversation_messages(
+    conversation_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"admin", "product_owner", "rd_owner", "reviewer", "knowledge_owner"})
+    current_store = store(request)
+    _assistant_conversation_for_user(
+        current_store,
+        conversation_id=conversation_id,
+        user_id=user["id"],
+    )
+    items = [
+        _public_assistant_message(message)
+        for message in _assistant_conversation_messages(
+            current_store,
+            conversation_id=conversation_id,
+        )
+    ]
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
 @app.post("/api/assistant/chat")
 def chat_with_assistant(
     request: Request,
@@ -3657,6 +3826,12 @@ def chat_with_assistant(
         and normalized_payload.product_id not in current_store.products
     ):
         raise api_error(404, "NOT_FOUND", "Product not found")
+    if normalized_payload.conversation_id:
+        existing_conversation = current_store.assistant_conversations.get(
+            normalized_payload.conversation_id,
+        )
+        if existing_conversation is not None and existing_conversation.get("user_id") != user["id"]:
+            raise api_error(404, "NOT_FOUND", "Assistant conversation not found")
     try:
         assistant_output, model_log = _call_model_gateway_for_assistant_chat(
             current_store,
@@ -3697,18 +3872,38 @@ def chat_with_assistant(
             "status": model_log["status"],
         },
     )
-    conversation_id = normalized_payload.conversation_id or current_store.new_id("conversation")
-    assistant_message = {
-        "content": assistant_output["answer"],
-        "created_at": datetime.now(UTC).isoformat(),
-        "id": current_store.new_id("assistant_message"),
-        "role": "assistant",
-    }
+    now = datetime.now(UTC).isoformat()
+    conversation = _ensure_assistant_conversation(
+        current_store,
+        conversation_id=normalized_payload.conversation_id,
+        message=message,
+        now=now,
+        product_id=normalized_payload.product_id,
+        user=user,
+    )
+    _append_assistant_message(
+        current_store,
+        content=message,
+        conversation=conversation,
+        now=now,
+        role="user",
+        user_id=user["id"],
+    )
+    assistant_message = _append_assistant_message(
+        current_store,
+        content=assistant_output["answer"],
+        conversation=conversation,
+        model=assistant_output["model"],
+        now=now,
+        role="assistant",
+        suggestions=assistant_output["suggestions"],
+        user_id=user["id"],
+    )
     current_store.audit(
         event_type="assistant.chat_completed",
         actor_id=user["id"],
         subject_type="assistant_conversation",
-        subject_id=conversation_id,
+        subject_id=conversation["id"],
         payload={
             "latency_ms": assistant_output["latency_ms"],
             "model": assistant_output["model"],
@@ -3719,9 +3914,9 @@ def chat_with_assistant(
     )
     return envelope(
         {
-            "conversation_id": conversation_id,
+            "conversation_id": conversation["id"],
             "latency_ms": assistant_output["latency_ms"],
-            "message": assistant_message,
+            "message": _public_assistant_message(assistant_message),
             "model": assistant_output["model"],
             "suggestions": assistant_output["suggestions"],
         },

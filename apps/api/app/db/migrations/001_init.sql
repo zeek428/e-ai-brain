@@ -327,6 +327,30 @@ CREATE TABLE IF NOT EXISTS model_gateway_logs (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS assistant_conversations (
+  id text PRIMARY KEY,
+  user_id text NOT NULL,
+  product_id text,
+  title text NOT NULL,
+  message_count integer NOT NULL DEFAULT 0,
+  last_message_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS assistant_messages (
+  id text PRIMARY KEY,
+  conversation_id text NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  role text NOT NULL,
+  content text NOT NULL,
+  product_id text,
+  model text,
+  suggestions jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS requirements (
   id text PRIMARY KEY,
   brain_app_id text NOT NULL DEFAULT 'rd_brain',
@@ -590,6 +614,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_model_gateway_default_active
 CREATE INDEX IF NOT EXISTS idx_model_gateway_logs_task ON model_gateway_logs (ai_task_id);
 CREATE INDEX IF NOT EXISTS idx_model_gateway_logs_created_at
   ON model_gateway_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_assistant_conversations_user_updated
+  ON assistant_conversations (user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_assistant_messages_conversation_created
+  ON assistant_messages (conversation_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_products_status ON products (status);
 CREATE INDEX IF NOT EXISTS idx_product_versions_product_status
   ON product_versions (product_id, status);

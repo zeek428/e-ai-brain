@@ -312,6 +312,8 @@ import {
   editApproveTaskCenterReview,
   fetchActiveProductOptions,
   chatWithAssistant,
+  fetchAssistantConversationMessages,
+  fetchAssistantConversations,
   fetchItTeamDashboard,
   fetchModelGatewayConfigs,
   fetchTaskMarkdown,
@@ -1541,9 +1543,16 @@ describe('AI Brain Ant Design Pro workbench', () => {
   it('renders an AI assistant chat surface that can answer AI Brain progress questions', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        expect(init?.method ?? 'GET').toBe('GET');
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
       if (input === '/api/assistant/chat') {
         expect(init?.method).toBe('POST');
-        expect(JSON.parse(String(init.body))).toMatchObject({
+        expect(JSON.parse(String(init?.body))).toMatchObject({
           message: 'AI Brain 项目现在开发到哪里了？',
         });
         return new Response(
@@ -1583,7 +1592,74 @@ describe('AI Brain Ant Design Pro workbench', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('查看任务中心')).toBeInTheDocument();
     expect(screen.getByText('codex-auto-review')).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+      ['/api/assistant/conversations', 'GET'],
+      ['/api/assistant/chat', 'POST'],
+      ['/api/assistant/conversations', 'GET'],
+    ]);
+  });
+
+  it('loads current-user AI assistant conversations and opens historical messages', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'conversation_api',
+                  last_message_at: '2026-06-03T09:00:00+00:00',
+                  message_count: 2,
+                  title: 'AI Brain 现在开发到哪里了？',
+                  updated_at: '2026-06-03T09:00:00+00:00',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/conversations/conversation_api/messages') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  content: 'AI Brain 现在开发到哪里了？',
+                  id: 'assistant_message_user',
+                  role: 'user',
+                },
+                {
+                  content: '当前已经支持按用户保存聊天历史。',
+                  id: 'assistant_message_reply',
+                  model: 'codex-auto-review',
+                  role: 'assistant',
+                  suggestions: ['查看任务中心'],
+                },
+              ],
+              total: 2,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /AI Brain 现在开发到哪里了？/ }));
+
+    expect(await screen.findByText('当前已经支持按用户保存聊天历史。')).toBeInTheDocument();
+    expect(screen.getAllByText('AI Brain 现在开发到哪里了？').length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+      ['/api/assistant/conversations', 'GET'],
+      ['/api/assistant/conversations/conversation_api/messages', 'GET'],
+    ]);
   });
 
   it('opens knowledge deposit review and approves a pending deposit', async () => {
@@ -4985,6 +5061,97 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
   });
 
+  it('fetches current-user AI assistant conversation history', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        expect(init?.method ?? 'GET').toBe('GET');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  created_at: '2026-06-03T09:00:00+00:00',
+                  id: 'conversation_api',
+                  last_message_at: '2026-06-03T09:01:00+00:00',
+                  message_count: 2,
+                  product_id: 'product_118',
+                  title: '系统进展如何？',
+                  updated_at: '2026-06-03T09:01:00+00:00',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/conversations/conversation_api/messages') {
+        expect(init?.method ?? 'GET').toBe('GET');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  content: '系统进展如何？',
+                  created_at: '2026-06-03T09:00:00+00:00',
+                  id: 'assistant_message_user',
+                  product_id: 'product_118',
+                  role: 'user',
+                },
+                {
+                  content: '当前已进入 AI 助手迭代开发。',
+                  created_at: '2026-06-03T09:01:00+00:00',
+                  id: 'assistant_message_api',
+                  model: 'codex-auto-review',
+                  role: 'assistant',
+                  suggestions: ['查看任务中心'],
+                },
+              ],
+              total: 2,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAssistantConversations()).resolves.toEqual([
+      {
+        createdAt: '2026-06-03T09:00:00+00:00',
+        id: 'conversation_api',
+        lastMessageAt: '2026-06-03T09:01:00+00:00',
+        messageCount: 2,
+        productId: 'product_118',
+        title: '系统进展如何？',
+        updatedAt: '2026-06-03T09:01:00+00:00',
+      },
+    ]);
+    await expect(fetchAssistantConversationMessages('conversation_api')).resolves.toEqual([
+      {
+        content: '系统进展如何？',
+        createdAt: '2026-06-03T09:00:00+00:00',
+        id: 'assistant_message_user',
+        model: undefined,
+        productId: 'product_118',
+        role: 'user',
+        suggestions: [],
+      },
+      {
+        content: '当前已进入 AI 助手迭代开发。',
+        createdAt: '2026-06-03T09:01:00+00:00',
+        id: 'assistant_message_api',
+        model: 'codex-auto-review',
+        productId: undefined,
+        role: 'assistant',
+        suggestions: ['查看任务中心'],
+      },
+    ]);
+  });
+
   it('sends management CRUD mutations to backend APIs with the stored token', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -5100,45 +5267,55 @@ describe('AI Brain Ant Design Pro workbench', () => {
     await startTaskCenterTask('task_api');
     await approveTaskCenterReview('review_api', 1);
     await createTechnicalSolutionTask({
+      createdAt: '2026-06-03 09:00',
       id: 'task_design',
       label: '产品详细设计：CRUD 需求',
       owner: 'user_admin',
+      product: 'AI Brain',
       productId: 'product_api',
       requirementId: 'requirement_api',
       status: 'completed',
       type: 'product_detail_design',
     });
     await createDevelopmentPlanningTask({
+      createdAt: '2026-06-03 09:00',
       id: 'task_solution',
       label: '技术方案：CRUD 需求',
       owner: 'user_admin',
+      product: 'AI Brain',
       productId: 'product_api',
       requirementId: 'requirement_api',
       status: 'completed',
       type: 'technical_solution',
     });
     await createAutomatedTestingTask({
+      createdAt: '2026-06-03 09:00',
       id: 'task_solution',
       label: '技术方案：CRUD 需求',
       owner: 'user_admin',
+      product: 'AI Brain',
       productId: 'product_api',
       requirementId: 'requirement_api',
       status: 'completed',
       type: 'technical_solution',
     });
     await createReleaseReadinessTask({
+      createdAt: '2026-06-03 09:00',
       id: 'task_solution',
       label: '技术方案：CRUD 需求',
       owner: 'user_admin',
+      product: 'AI Brain',
       productId: 'product_api',
       requirementId: 'requirement_api',
       status: 'completed',
       type: 'technical_solution',
     });
     await createPostReleaseAnalysisTask({
+      createdAt: '2026-06-03 09:00',
       id: 'task_release',
       label: '发布评估：CRUD 需求',
       owner: 'user_admin',
+      product: 'AI Brain',
       productId: 'product_api',
       requirementId: 'requirement_api',
       status: 'completed',
@@ -5155,9 +5332,11 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
     await createCodeReviewTask(
       {
+        createdAt: '2026-06-03 09:00',
         id: 'task_solution',
         label: '技术方案：CRUD 需求',
         owner: 'user_admin',
+        product: 'AI Brain',
         productId: 'product_api',
         requirementId: 'requirement_api',
         status: 'completed',

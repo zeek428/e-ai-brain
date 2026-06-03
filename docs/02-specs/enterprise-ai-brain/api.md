@@ -81,6 +81,7 @@
 | v1.1.57 | 2026-06-02 | 新增 AI 助手聊天接口，基于当前 AI Brain 系统上下文和模型网关回答产品、任务、进展和配置问题 | Codex |
 | v1.1.58 | 2026-06-03 | 全链路真实用例复跑后补齐产品详情、GitHub PR 列表、持久化模型网关健康检查和模型失败任务重试契约 | Codex |
 | v1.1.59 | 2026-06-03 | 全链路 GitHub PR 复跑后补齐 code-review 外部命令缺失时自动使用模型网关适配器、Review payload 和输出规范化的启动契约 | Codex |
+| v1.1.60 | 2026-06-03 | AI 助手聊天记录按用户级保存，新增会话列表、会话消息查询 API 与 `assistant_conversations` / `assistant_messages` 结构表 | Codex |
 
 ---
 
@@ -90,9 +91,9 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、AI 助手、产品上下文、研发全链路 AI 任务、GitLab MR / GitHub PR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、AI 助手、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。AI 助手通过模型网关 Chat 能力回答 AI Brain 系统相关问题，请求会携带脱敏系统上下文摘要，包括产品、需求、AI 任务、Git 仓库和模型网关配置状态；模型日志只记录 `purpose=assistant_chat` 元数据，不保存完整用户消息、系统上下文或助手回答。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
+当前源码实现说明：MVP 骨架已实现认证、AI 助手、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。AI 助手通过模型网关 Chat 能力回答 AI Brain 系统相关问题，请求会携带脱敏系统上下文摘要，包括产品、需求、AI 任务、Git 仓库和模型网关配置状态；模型日志只记录 `purpose=assistant_chat` 元数据，不保存完整用户消息、系统上下文或助手回答；完整对话内容按当前登录用户写入助手会话与消息结构表，并且历史查询只返回本人会话。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
 
-产品管理页面可维护产品版本、模块、Git 资源和产品相关系统；产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置和模型调用元数据会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
+产品管理页面可维护产品版本、模块、Git 资源和产品相关系统；产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置、模型调用元数据、AI 助手会话和助手消息会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`、`assistant_conversations`、`assistant_messages`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 
 知识文档创建、更新和知识沉淀采纳会同步重建 chunk，并通过 active/default OpenAI-compatible 模型网关或环境模型网关调用 `/embeddings` 生成 `knowledge_chunks.embedding`；知识文档可选绑定 `product_id` 作为产品归属上下文，首页 IT 团队看板按产品筛选时只统计该产品归属或该产品任务沉淀产生的知识文档；索引失败进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`score` 和来源引用，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，GitHub PR 预览和快照读取 `project_path=owner/repo` 或可解析 owner/repo 的 `remote_url`，并通过环境变量、服务端密钥引用或本地直填只读 token 解析凭据；缺少 provider 地址、仓库路径或凭据时返回明确错误，不生成本地假 MR/PR。
 
@@ -255,6 +256,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | System | PATCH | `/api/system/model-gateway-configs/{config_id}` | 更新模型网关配置。 |
 | System | DELETE | `/api/system/model-gateway-configs/{config_id}` | 删除模型网关配置。 |
 | System | GET | `/api/model-gateway/logs` | 查询模型调用元数据日志，不返回完整 prompt 或输出。 |
+| Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
+| Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
@@ -763,6 +766,61 @@ POST /api/assistant/chat
 ```
 
 助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。`system_context` 只进入模型请求，不写入响应或模型日志；模型日志以 `purpose=assistant_chat` 记录元数据，审计事件为 `assistant.chat_completed`。
+
+`conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
+
+当前用户会话列表：
+
+```http
+GET /api/assistant/conversations
+```
+
+响应：
+
+```json
+{
+  "items": [
+    {
+      "id": "conversation_001",
+      "title": "AI Brain 项目现在开发到哪里了？",
+      "product_id": "product_001",
+      "message_count": 2,
+      "last_message_at": "2026-06-03T09:00:00+00:00",
+      "created_at": "2026-06-03T09:00:00+00:00",
+      "updated_at": "2026-06-03T09:00:00+00:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+当前用户会话消息：
+
+```http
+GET /api/assistant/conversations/{conversation_id}/messages
+```
+
+响应：
+
+```json
+{
+  "items": [
+    {
+      "id": "assistant_message_001",
+      "role": "user",
+      "content": "AI Brain 项目现在开发到哪里了？"
+    },
+    {
+      "id": "assistant_message_002",
+      "role": "assistant",
+      "content": "当前已支持按用户保存聊天历史。",
+      "model": "codex-auto-review",
+      "suggestions": ["查看任务中心"]
+    }
+  ],
+  "total": 2
+}
+```
 
 ### 需求管理
 

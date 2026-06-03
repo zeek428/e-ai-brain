@@ -119,7 +119,8 @@ export default function ModelGatewayPage() {
   };
 
   const handleTest = async () => {
-    const testTarget = form.getFieldValue('test_target') ?? 'chat_and_embedding';
+    const testTarget = (form.getFieldValue('test_target') ??
+      'chat_and_embedding') as ModelGatewayFormValues['test_target'];
     await form.validateFields(TEST_TARGET_FIELDS[testTarget]);
     const values = form.getFieldsValue();
     setIsTesting(true);

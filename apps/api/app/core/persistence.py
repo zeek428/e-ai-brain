@@ -75,6 +75,10 @@ MODEL_GATEWAY_FIELDS = [
     "model_gateway_configs",
     "model_gateway_logs",
 ]
+ASSISTANT_CHAT_FIELDS = [
+    "assistant_conversations",
+    "assistant_messages",
+]
 GITLAB_REVIEW_FIELDS = [
     "gitlab_mr_snapshots",
     "code_review_reports",
@@ -91,6 +95,8 @@ COLLECTION_FIELDS = [
     "related_systems",
     "model_gateway_configs",
     "model_gateway_logs",
+    "assistant_conversations",
+    "assistant_messages",
     "gitlab_mr_snapshots",
     "code_review_reports",
     "knowledge_documents",
@@ -238,6 +244,12 @@ class ModelGatewayRepository(Protocol):
     def save_model_gateway(self, payload: dict[str, Any]) -> None: ...
 
 
+class AssistantChatRepository(Protocol):
+    def load_assistant_chat(self) -> dict[str, Any] | None: ...
+
+    def save_assistant_chat(self, payload: dict[str, Any]) -> None: ...
+
+
 class GitlabReviewRepository(Protocol):
     def load_gitlab_review(self) -> dict[str, Any] | None: ...
 
@@ -348,6 +360,13 @@ def _model_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "model_gateway_configs": deepcopy(payload.get("model_gateway_configs", {})),
         "model_gateway_logs": deepcopy(payload.get("model_gateway_logs", [])),
+    }
+
+
+def _assistant_chat_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "assistant_conversations": deepcopy(payload.get("assistant_conversations", {})),
+        "assistant_messages": deepcopy(payload.get("assistant_messages", {})),
     }
 
 
@@ -587,6 +606,13 @@ def _repository_load_model_gateway(repository: SnapshotRepository) -> dict[str, 
     return load_model_gateway()
 
 
+def _repository_load_assistant_chat(repository: SnapshotRepository) -> dict[str, Any] | None:
+    load_assistant_chat = getattr(repository, "load_assistant_chat", None)
+    if load_assistant_chat is None:
+        return None
+    return load_assistant_chat()
+
+
 def _repository_load_gitlab_review(repository: SnapshotRepository) -> dict[str, Any] | None:
     load_gitlab_review = getattr(repository, "load_gitlab_review", None)
     if load_gitlab_review is None:
@@ -764,6 +790,15 @@ def _repository_save_model_gateway(
         save_model_gateway(_model_gateway_payload(payload))
 
 
+def _repository_save_assistant_chat(
+    repository: SnapshotRepository,
+    payload: dict[str, Any],
+) -> None:
+    save_assistant_chat = getattr(repository, "save_assistant_chat", None)
+    if save_assistant_chat is not None:
+        save_assistant_chat(_assistant_chat_payload(payload))
+
+
 def _repository_save_gitlab_review(
     repository: SnapshotRepository,
     payload: dict[str, Any],
@@ -860,6 +895,10 @@ def _has_pending_attribution_items(payload: dict[str, Any] | None) -> bool:
 
 def _has_model_gateway_items(payload: dict[str, Any] | None) -> bool:
     return bool(payload) and any(payload.get(field) for field in MODEL_GATEWAY_FIELDS)
+
+
+def _has_assistant_chat_items(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and any(payload.get(field) for field in ASSISTANT_CHAT_FIELDS)
 
 
 def _has_gitlab_review_items(payload: dict[str, Any] | None) -> bool:
@@ -1090,6 +1129,22 @@ def _sync_model_gateway_counters(payload: dict[str, Any]) -> None:
     counters["model_log"] = max(
         counters.get("model_log", 0),
         _max_numeric_suffix_from_values(payload.get("model_gateway_logs", []), "model_log"),
+    )
+    payload["counters"] = counters
+
+
+def _sync_assistant_chat_counters(payload: dict[str, Any]) -> None:
+    counters = deepcopy(payload.get("counters", {}))
+    counters["conversation"] = max(
+        counters.get("conversation", 0),
+        _max_numeric_suffix(payload.get("assistant_conversations", {}), "conversation"),
+    )
+    counters["assistant_message"] = max(
+        counters.get("assistant_message", 0),
+        _max_numeric_suffix(
+            payload.get("assistant_messages", {}),
+            "assistant_message",
+        ),
     )
     payload["counters"] = counters
 
@@ -1768,6 +1823,14 @@ class PersistentMemoryStore(MemoryStore):
                 MODEL_GATEWAY_FIELDS,
             )
             _sync_model_gateway_counters(payload)
+        assistant_chat_payload = _repository_load_assistant_chat(repository)
+        if _has_assistant_chat_items(assistant_chat_payload):
+            _replace_collection_payload(
+                payload,
+                _assistant_chat_payload(assistant_chat_payload),
+                ASSISTANT_CHAT_FIELDS,
+            )
+            _sync_assistant_chat_counters(payload)
         gitlab_review_payload = _repository_load_gitlab_review(repository)
         if _has_gitlab_review_items(gitlab_review_payload):
             _replace_collection_payload(
@@ -1843,6 +1906,7 @@ class PersistentMemoryStore(MemoryStore):
         _repository_save_collector_runs(self.repository, payload)
         _repository_save_pending_attribution(self.repository, payload)
         _repository_save_model_gateway(self.repository, payload)
+        _repository_save_assistant_chat(self.repository, payload)
         _repository_save_gitlab_review(self.repository, payload)
         _repository_save_mock_writebacks(self.repository, payload)
 
@@ -2037,6 +2101,16 @@ class PostgresSnapshotRepository:
             "model_gateway_logs": logs,
         }
 
+    def load_assistant_chat(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                conversations = self._load_assistant_conversations(cursor)
+                messages = self._load_assistant_messages(cursor)
+        return {
+            "assistant_conversations": conversations,
+            "assistant_messages": messages,
+        }
+
     def load_gitlab_review(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -2226,6 +2300,16 @@ class PostgresSnapshotRepository:
                 self._delete_missing(cursor, "model_gateway_configs", configs)
                 self._upsert_model_gateway_configs(cursor, configs)
                 self._upsert_model_gateway_logs(cursor, logs)
+
+    def save_assistant_chat(self, payload: dict[str, Any]) -> None:
+        conversations = payload.get("assistant_conversations", {})
+        messages = payload.get("assistant_messages", {})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._delete_missing(cursor, "assistant_messages", messages)
+                self._delete_missing(cursor, "assistant_conversations", conversations)
+                self._upsert_assistant_conversations(cursor, conversations)
+                self._upsert_assistant_messages(cursor, messages)
 
     def save_gitlab_review(self, payload: dict[str, Any]) -> None:
         snapshots = payload.get("gitlab_mr_snapshots", {})
@@ -3348,6 +3432,67 @@ class PostgresSnapshotRepository:
                     log.pop(optional_key)
             logs.append(log)
         return logs
+
+    def _load_assistant_conversations(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, user_id, product_id, title, message_count, last_message_at,
+                   created_at, updated_at
+            FROM assistant_conversations
+            ORDER BY updated_at, id
+            """
+        )
+        conversations = {}
+        for row in cursor.fetchall():
+            conversation = {
+                "created_at": row[6].isoformat() if row[6] else None,
+                "id": row[0],
+                "last_message_at": row[5].isoformat() if row[5] else None,
+                "message_count": row[4],
+                "product_id": row[2],
+                "title": row[3],
+                "updated_at": row[7].isoformat() if row[7] else None,
+                "user_id": row[1],
+            }
+            for optional_key in (
+                "created_at",
+                "last_message_at",
+                "product_id",
+                "updated_at",
+            ):
+                if conversation[optional_key] is None:
+                    conversation.pop(optional_key)
+            conversations[row[0]] = conversation
+        return conversations
+
+    def _load_assistant_messages(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, conversation_id, user_id, role, content, product_id, model,
+                   suggestions, created_at, updated_at
+            FROM assistant_messages
+            ORDER BY created_at, id
+            """
+        )
+        messages = {}
+        for row in cursor.fetchall():
+            message = {
+                "content": row[4],
+                "conversation_id": row[1],
+                "created_at": row[8].isoformat() if row[8] else None,
+                "id": row[0],
+                "model": row[6],
+                "product_id": row[5],
+                "role": row[3],
+                "suggestions": list(row[7] or []),
+                "updated_at": row[9].isoformat() if row[9] else None,
+                "user_id": row[2],
+            }
+            for optional_key in ("created_at", "model", "product_id", "updated_at"):
+                if message[optional_key] is None:
+                    message.pop(optional_key)
+            messages[row[0]] = message
+        return messages
 
     def _load_gitlab_mr_snapshots(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
@@ -5080,6 +5225,89 @@ class PostgresSnapshotRepository:
                     log["status"],
                     log.get("error"),
                     log.get("model_gateway_config_id"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_assistant_conversations(
+        self,
+        cursor,
+        conversations: dict[str, dict[str, Any]],
+    ) -> None:
+        for conversation in conversations.values():
+            created_at = conversation.get("created_at")
+            updated_at = conversation.get("updated_at") or conversation.get("last_message_at")
+            updated_at = updated_at or created_at
+            cursor.execute(
+                """
+                INSERT INTO assistant_conversations (
+                  id, user_id, product_id, title, message_count, last_message_at,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s::timestamptz,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  user_id = EXCLUDED.user_id,
+                  product_id = EXCLUDED.product_id,
+                  title = EXCLUDED.title,
+                  message_count = EXCLUDED.message_count,
+                  last_message_at = EXCLUDED.last_message_at,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    conversation["id"],
+                    conversation["user_id"],
+                    conversation.get("product_id"),
+                    conversation.get("title", "新对话"),
+                    conversation.get("message_count", 0),
+                    conversation.get("last_message_at"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def _upsert_assistant_messages(
+        self,
+        cursor,
+        messages: dict[str, dict[str, Any]],
+    ) -> None:
+        import json
+
+        for message in messages.values():
+            created_at = message.get("created_at")
+            updated_at = message.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO assistant_messages (
+                  id, conversation_id, user_id, role, content, product_id, model,
+                  suggestions, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  conversation_id = EXCLUDED.conversation_id,
+                  user_id = EXCLUDED.user_id,
+                  role = EXCLUDED.role,
+                  content = EXCLUDED.content,
+                  product_id = EXCLUDED.product_id,
+                  model = EXCLUDED.model,
+                  suggestions = EXCLUDED.suggestions,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    message["id"],
+                    message["conversation_id"],
+                    message["user_id"],
+                    message["role"],
+                    message["content"],
+                    message.get("product_id"),
+                    message.get("model"),
+                    json.dumps(message.get("suggestions", []), ensure_ascii=False),
                     created_at,
                     updated_at,
                 ),

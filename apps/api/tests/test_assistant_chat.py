@@ -182,3 +182,85 @@ def test_ai_assistant_chat_includes_ai_brain_system_progress_context(monkeypatch
     assert "ai_tasks_total" in user_message
     assert "AI 助手聊天界面" in user_message
     assert task["task_id"] in user_message
+
+
+def test_ai_assistant_chat_persists_user_scoped_conversation_history(monkeypatch):
+    headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "当前 AI Brain 已能回答系统进展。",
+                                        "suggestions": ["查看任务中心"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 12, "prompt_tokens": 20, "total_tokens": 32},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "AI Brain 现在开发到哪里了？"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    conversation_id = response.json()["data"]["conversation_id"]
+
+    conversations = client.get("/api/assistant/conversations", headers=headers).json()["data"]
+    assert conversations["total"] == 1
+    assert conversations["items"][0] == {
+        "created_at": conversations["items"][0]["created_at"],
+        "id": conversation_id,
+        "last_message_at": conversations["items"][0]["last_message_at"],
+        "message_count": 2,
+        "product_id": None,
+        "title": "AI Brain 现在开发到哪里了？",
+        "updated_at": conversations["items"][0]["updated_at"],
+    }
+
+    messages = client.get(
+        f"/api/assistant/conversations/{conversation_id}/messages",
+        headers=headers,
+    ).json()["data"]
+    assert messages["total"] == 2
+    assert [(item["role"], item["content"]) for item in messages["items"]] == [
+        ("user", "AI Brain 现在开发到哪里了？"),
+        ("assistant", "当前 AI Brain 已能回答系统进展。"),
+    ]
+
+    reviewer_conversations = client.get(
+        "/api/assistant/conversations",
+        headers=reviewer_headers,
+    ).json()["data"]
+    assert reviewer_conversations == {"items": [], "total": 0}
+    forbidden_messages = client.get(
+        f"/api/assistant/conversations/{conversation_id}/messages",
+        headers=reviewer_headers,
+    )
+    assert forbidden_messages.status_code == 404

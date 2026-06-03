@@ -94,6 +94,26 @@ export type AssistantChatResponse = {
   suggestions: string[];
 };
 
+export type AssistantConversationSummary = {
+  createdAt?: string;
+  id: string;
+  lastMessageAt?: string;
+  messageCount: number;
+  productId?: string;
+  title: string;
+  updatedAt?: string;
+};
+
+export type AssistantConversationMessage = {
+  content: string;
+  createdAt?: string;
+  id: string;
+  model?: string;
+  productId?: string;
+  role: 'assistant' | 'user';
+  suggestions: string[];
+};
+
 type AssistantChatApiResponse = {
   conversation_id: string;
   latency_ms?: number;
@@ -103,6 +123,26 @@ type AssistantChatApiResponse = {
     role?: string;
   };
   model?: string;
+  suggestions?: string[];
+};
+
+type AssistantConversationApiRecord = {
+  created_at?: string;
+  id: string;
+  last_message_at?: string;
+  message_count?: number;
+  product_id?: string;
+  title?: string;
+  updated_at?: string;
+};
+
+type AssistantMessageApiRecord = {
+  content?: string;
+  created_at?: string;
+  id?: string;
+  model?: string;
+  product_id?: string;
+  role?: string;
   suggestions?: string[];
 };
 
@@ -1138,6 +1178,48 @@ export async function chatWithAssistant(
     model: response.model ?? '',
     suggestions: response.suggestions ?? [],
   };
+}
+
+export async function fetchAssistantConversations(): Promise<AssistantConversationSummary[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<AssistantConversationApiRecord>>(
+    '/api/assistant/conversations',
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return response.items.map((item) => ({
+    createdAt: item.created_at,
+    id: item.id,
+    lastMessageAt: item.last_message_at,
+    messageCount: Number(item.message_count ?? 0),
+    productId: item.product_id,
+    title: item.title ?? '新对话',
+    updatedAt: item.updated_at,
+  }));
+}
+
+export async function fetchAssistantConversationMessages(
+  conversationId: string,
+): Promise<AssistantConversationMessage[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<AssistantMessageApiRecord>>(
+    `/api/assistant/conversations/${conversationId}/messages`,
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return response.items.map((item) => ({
+    content: item.content ?? '',
+    createdAt: item.created_at,
+    id: item.id ?? conversationId,
+    model: item.model,
+    productId: item.product_id,
+    role: item.role === 'user' ? 'user' : 'assistant',
+    suggestions: item.suggestions ?? [],
+  }));
 }
 
 export function getAccessToken() {
@@ -2284,6 +2366,8 @@ export async function fetchTaskCenterTaskDetail(
     : [];
 
   return {
+    createdAt: formatListDate(detail.created_at ?? detail.updated_at),
+    createdAtValue: detail.created_at ?? detail.updated_at,
     currentStep: formatUnknownValue(detail.current_step),
     graphRunIds,
     id: detail.id,
@@ -2295,6 +2379,7 @@ export async function fetchTaskCenterTaskDetail(
     owner: detail.created_by ?? '-',
     pendingReviewId:
       typeof pendingReview?.id === 'string' && pendingReview.id ? pendingReview.id : undefined,
+    product: formatUnknownValue(product.name ?? product.code ?? detail.product_id),
     productId: detail.product_id,
     productName: formatUnknownValue(product.name ?? product.code ?? detail.product_id),
     requirementId: detail.requirement_id,

@@ -1,15 +1,24 @@
 import {
   ClockCircleOutlined,
   DatabaseOutlined,
+  MessageOutlined,
+  PlusOutlined,
   ProjectOutlined,
   RobotOutlined,
   SendOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import { Button, Input, Space, Spin, Tag, Typography, message as toast } from 'antd';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { chatWithAssistant, type AssistantChatResponse } from '../../services/aiBrain';
+import {
+  chatWithAssistant,
+  fetchAssistantConversationMessages,
+  fetchAssistantConversations,
+  type AssistantChatResponse,
+  type AssistantConversationMessage,
+  type AssistantConversationSummary,
+} from '../../services/aiBrain';
 import { formatMutationError } from '../../utils/managementCrud';
 
 const { Text, Title } = Typography;
@@ -20,6 +29,14 @@ type ChatMessage = {
   id: string;
   role: 'assistant' | 'user';
 };
+
+const welcomeMessages: ChatMessage[] = [
+  {
+    content: '我在，直接问我当前进展。',
+    id: 'assistant-welcome',
+    role: 'assistant',
+  },
+];
 
 const starterPrompts = [
   {
@@ -54,18 +71,70 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
 
 export default function AssistantPage() {
   const [conversationId, setConversationId] = useState<string>();
+  const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
   const [inputValue, setInputValue] = useState('');
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      content: '我在，直接问我当前进展。',
-      id: 'assistant-welcome',
-      role: 'assistant',
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
 
   const canSend = useMemo(() => inputValue.trim().length > 0 && !isSending, [inputValue, isSending]);
+
+  const loadConversations = useCallback(async () => {
+    setIsLoadingConversations(true);
+    try {
+      setConversations(await fetchAssistantConversations());
+    } catch (error) {
+      toast.error(formatMutationError(error));
+    } finally {
+      setIsLoadingConversations(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadConversations();
+  }, [loadConversations]);
+
+  const startNewConversation = () => {
+    setConversationId(undefined);
+    setLastResponse(undefined);
+    setMessages(welcomeMessages);
+  };
+
+  const openConversation = async (targetConversationId: string) => {
+    setConversationId(targetConversationId);
+    setIsLoadingMessages(true);
+    try {
+      const history = await fetchAssistantConversationMessages(targetConversationId);
+      setMessages(
+        history.length
+          ? history.map((item: AssistantConversationMessage) => ({
+              content: item.content,
+              id: item.id,
+              role: item.role,
+            }))
+          : welcomeMessages,
+      );
+      const latestAssistantMessage = [...history].reverse().find((item) => item.role === 'assistant');
+      setLastResponse(
+        latestAssistantMessage
+          ? {
+              content: latestAssistantMessage.content,
+              conversationId: targetConversationId,
+              latencyMs: 0,
+              messageId: latestAssistantMessage.id,
+              model: latestAssistantMessage.model ?? '',
+              suggestions: latestAssistantMessage.suggestions,
+            }
+          : undefined,
+      );
+    } catch (error) {
+      toast.error(formatMutationError(error));
+    } finally {
+      setIsLoadingMessages(false);
+    }
+  };
 
   const sendMessage = async (messageText = inputValue) => {
     const content = messageText.trim();
@@ -96,6 +165,7 @@ export default function AssistantPage() {
           role: 'assistant',
         },
       ]);
+      await loadConversations();
     } catch (error) {
       toast.error(formatMutationError(error));
       setMessages((items) => [
@@ -119,6 +189,9 @@ export default function AssistantPage() {
       <div className="assistant-workspace">
         <aside className="assistant-sidebar">
           <Title level={3}>AI 助手</Title>
+          <Button block icon={<PlusOutlined />} onClick={startNewConversation}>
+            新对话
+          </Button>
           <div className="assistant-prompt-list">
             {starterPrompts.map((item) => (
               <Button
@@ -130,6 +203,32 @@ export default function AssistantPage() {
                 {item.label}
               </Button>
             ))}
+          </div>
+          <div className="assistant-history-panel">
+            <div className="assistant-history-title">
+              <Text strong>最近对话</Text>
+              {isLoadingConversations ? <Spin size="small" /> : null}
+            </div>
+            <div className="assistant-history-list">
+              {conversations.length ? (
+                conversations.map((item) => (
+                  <Button
+                    block
+                    className={item.id === conversationId ? 'assistant-history-active' : undefined}
+                    icon={<MessageOutlined />}
+                    key={item.id}
+                    onClick={() => void openConversation(item.id)}
+                  >
+                    <span className="assistant-history-button-text">
+                      <span>{item.title}</span>
+                      <span>{item.messageCount} 条</span>
+                    </span>
+                  </Button>
+                ))
+              ) : (
+                <Text type="secondary">暂无历史对话</Text>
+              )}
+            </div>
           </div>
           <div className="assistant-context-panel">
             <Text strong>上下文</Text>
@@ -158,6 +257,12 @@ export default function AssistantPage() {
             {messages.map((item) => (
               <AssistantBubble key={item.id} message={item} />
             ))}
+            {isLoadingMessages ? (
+              <div className="assistant-thinking">
+                <Spin size="small" />
+                <Text type="secondary">加载中</Text>
+              </div>
+            ) : null}
             {isSending ? (
               <div className="assistant-thinking">
                 <Spin size="small" />

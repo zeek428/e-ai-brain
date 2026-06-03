@@ -228,6 +228,53 @@ body {
   height: 40px;
 }
 
+.assistant-history-panel {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.assistant-history-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.assistant-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-history-list .ant-btn {
+  justify-content: flex-start;
+  height: auto;
+  min-height: 44px;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.assistant-history-active {
+  border-color: #2f6fed;
+  background: #eef4ff;
+}
+
+.assistant-history-button-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.assistant-history-button-text span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assistant-history-button-text span:last-child {
+  color: #6b7280;
+  font-size: 12px;
+}
+
 .assistant-context-panel {
   display: grid;
   gap: 12px;

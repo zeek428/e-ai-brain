@@ -450,15 +450,18 @@ export default function TaskCenterPage() {
   }, []);
 
   const handlePreviewCodeReview = useCallback(async () => {
-    const repository = codeReviewDraft?.repositories.find(
-      (item) => item.id === codeReviewDraft.repositoryId,
-    );
+    const draft = codeReviewDraft;
+    if (!draft) {
+      message.error('请先选择技术方案任务。');
+      return;
+    }
+    const repository = draft.repositories.find((item) => item.id === draft.repositoryId);
     if (!repository) {
       message.error('请选择代码库。');
       return;
     }
     try {
-      const preview = await previewCodeReviewPullRequest(repository, codeReviewDraft.mrIid);
+      const preview = await previewCodeReviewPullRequest(repository, draft.mrIid);
       setCodeReviewDraft((current) => (current ? { ...current, preview } : current));
     } catch (taskError) {
       message.error(formatMutationError(taskError));
@@ -466,26 +469,29 @@ export default function TaskCenterPage() {
   }, [codeReviewDraft]);
 
   const handleCreateCodeReview = useCallback(async () => {
-    const repository = codeReviewDraft?.repositories.find(
-      (item) => item.id === codeReviewDraft.repositoryId,
-    );
+    const draft = codeReviewDraft;
+    if (!draft) {
+      message.error('请先选择技术方案任务。');
+      return;
+    }
+    const repository = draft.repositories.find((item) => item.id === draft.repositoryId);
     if (!repository) {
       message.error('请选择代码库。');
       return;
     }
-    if (!codeReviewDraft.task.requirementId) {
+    if (!draft.task.requirementId) {
       message.error('缺少需求编号，无法创建 Code Review 任务。');
       return;
     }
     setCodeReviewDraft((current) => (current ? { ...current, submitting: true } : current));
     try {
       const snapshot = await snapshotCodeReviewPullRequest({
-        mrIid: codeReviewDraft.mrIid,
+        mrIid: draft.mrIid,
         repository,
-        requirementId: codeReviewDraft.task.requirementId,
-        technicalSolutionTaskId: codeReviewDraft.task.id,
+        requirementId: draft.task.requirementId,
+        technicalSolutionTaskId: draft.task.id,
       });
-      await createCodeReviewTask(codeReviewDraft.task, snapshot.id, codeReviewDraft.mrIid);
+      await createCodeReviewTask(draft.task, snapshot.id, draft.mrIid);
       message.success('Code Review 任务已创建');
       setCodeReviewDraft(undefined);
       await reloadTaskCenter();

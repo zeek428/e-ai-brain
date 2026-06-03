@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手聊天记录按登录用户保存，新增 `/api/assistant/conversations` 与 `/api/assistant/conversations/{conversation_id}/messages`，前端侧栏展示最近对话并可打开历史消息；新增 `019_assistant_chat_history.sql` 和 `assistant_conversations` / `assistant_messages` 结构表。
 - AI Brain GitHub PR 真实复跑后补齐 code_review 本地联调策略：默认外部执行器命令为空且模型网关可用时，代码 Review 任务自动通过 `model_gateway` 适配器生成结构化报告，Review prompt 携带 MR/PR 快照和技术方案，并保留模型调用审计。
 - 全链路真实用例复跑后新增 GitHub PR 列表接口 `/api/devops/github/pull-requests/{repository_id}`，支持基于产品 GitHub 凭据列出可访问 PR，避免代码 Review 创建前必须手工猜 PR 编号。
 - 产品配置补齐 `GET /api/products/{product_id}` 详情接口，便于从产品管理进入配置或全链路脚本校验时直接读取产品主体。

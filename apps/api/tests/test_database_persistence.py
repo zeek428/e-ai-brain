@@ -20,6 +20,7 @@ class FakeSnapshotRepository:
         self.audit_events_payload: dict | None = None
         self.bugs_payload: dict | None = None
         self.model_gateway_payload: dict | None = None
+        self.assistant_chat_payload: dict | None = None
         self.gitlab_review_payload: dict | None = None
         self.mock_writebacks_payload: dict | None = None
         self.gitlab_daily_code_metrics_payload: dict | None = None
@@ -86,6 +87,12 @@ class FakeSnapshotRepository:
 
     def save_model_gateway(self, payload: dict) -> None:
         self.model_gateway_payload = payload
+
+    def load_assistant_chat(self) -> dict | None:
+        return self.assistant_chat_payload
+
+    def save_assistant_chat(self, payload: dict) -> None:
+        self.assistant_chat_payload = payload
 
     def load_gitlab_review(self) -> dict | None:
         return self.gitlab_review_payload
@@ -1905,6 +1912,107 @@ def test_structured_model_gateway_restore_and_sync_counters():
     assert [log["id"] for log in rebuilt_store.model_gateway_logs] == ["model_log_007"]
     assert rebuilt_store.new_id("model_gateway_config") == "model_gateway_config_010"
     assert rebuilt_store.new_id("model_log") == "model_log_008"
+
+
+def test_assistant_chat_history_is_persisted_through_fine_grained_repository_payload():
+    repository = FakeSnapshotRepository()
+    current_store = PersistentMemoryStore.from_repository(repository)
+    current_store.assistant_conversations["conversation_009"] = {
+        "created_at": "2026-06-03T08:00:00+00:00",
+        "id": "conversation_009",
+        "last_message_at": "2026-06-03T08:01:00+00:00",
+        "message_count": 2,
+        "product_id": "product_001",
+        "title": "AI Brain 进展",
+        "updated_at": "2026-06-03T08:01:00+00:00",
+        "user_id": "user_admin",
+    }
+    current_store.assistant_messages["assistant_message_011"] = {
+        "content": "AI Brain 现在开发到哪里了？",
+        "conversation_id": "conversation_009",
+        "created_at": "2026-06-03T08:00:00+00:00",
+        "id": "assistant_message_011",
+        "model": None,
+        "product_id": "product_001",
+        "role": "user",
+        "suggestions": [],
+        "user_id": "user_admin",
+    }
+    current_store.assistant_messages["assistant_message_012"] = {
+        "content": "已完成 GitHub PR Review 链路。",
+        "conversation_id": "conversation_009",
+        "created_at": "2026-06-03T08:01:00+00:00",
+        "id": "assistant_message_012",
+        "model": "gpt-review",
+        "product_id": "product_001",
+        "role": "assistant",
+        "suggestions": ["查看任务中心"],
+        "user_id": "user_admin",
+    }
+
+    current_store.persist()
+
+    assert repository.assistant_chat_payload == {
+        "assistant_conversations": current_store.assistant_conversations,
+        "assistant_messages": current_store.assistant_messages,
+    }
+
+
+def test_structured_assistant_chat_history_restore_and_sync_counters():
+    repository = FakeSnapshotRepository()
+    repository.payload = {
+        "assistant_conversations": {
+            "conversation_002": {
+                "id": "conversation_002",
+                "message_count": 1,
+                "title": "旧快照会话",
+                "user_id": "user_admin",
+            }
+        },
+        "assistant_messages": {
+            "assistant_message_002": {
+                "content": "旧快照消息",
+                "conversation_id": "conversation_002",
+                "id": "assistant_message_002",
+                "role": "user",
+                "user_id": "user_admin",
+            }
+        },
+    }
+    repository.assistant_chat_payload = {
+        "assistant_conversations": {
+            "conversation_009": {
+                "created_at": "2026-06-03T08:00:00+00:00",
+                "id": "conversation_009",
+                "last_message_at": "2026-06-03T08:01:00+00:00",
+                "message_count": 2,
+                "product_id": None,
+                "title": "结构表会话",
+                "updated_at": "2026-06-03T08:01:00+00:00",
+                "user_id": "user_admin",
+            }
+        },
+        "assistant_messages": {
+            "assistant_message_011": {
+                "content": "结构表消息",
+                "conversation_id": "conversation_009",
+                "created_at": "2026-06-03T08:00:00+00:00",
+                "id": "assistant_message_011",
+                "model": None,
+                "product_id": None,
+                "role": "user",
+                "suggestions": [],
+                "user_id": "user_admin",
+            }
+        },
+    }
+
+    rebuilt_store = PersistentMemoryStore.from_repository(repository)
+
+    assert list(rebuilt_store.assistant_conversations) == ["conversation_009"]
+    assert list(rebuilt_store.assistant_messages) == ["assistant_message_011"]
+    assert rebuilt_store.new_id("conversation") == "conversation_010"
+    assert rebuilt_store.new_id("assistant_message") == "assistant_message_012"
 
 
 def test_gitlab_review_artifacts_are_persisted_through_fine_grained_repository_payload():
