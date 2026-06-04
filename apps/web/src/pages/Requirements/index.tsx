@@ -118,6 +118,32 @@ function renderSummaryTag(label: string, value: number, color?: string) {
   );
 }
 
+function formatRiskLevel(level?: string) {
+  if (level === 'high') {
+    return '高';
+  }
+  if (level === 'medium') {
+    return '中';
+  }
+  if (level === 'low') {
+    return '低';
+  }
+  return level || '-';
+}
+
+function formatSnapshotRisk(snapshot: RequirementFullChainRecord['gitSnapshots'][number]) {
+  const summary = snapshot.riskSummary;
+  if (!summary) {
+    return '-';
+  }
+  const largestFile = summary.largestFile?.path
+    ? `最大文件 ${summary.largestFile.path} (${summary.largestFile.lineCount ?? 0} 行)`
+    : '无最大文件';
+  return `${formatRiskLevel(summary.riskLevel)}风险 · ${summary.fileCount ?? 0} 文件 · +${
+    summary.totalAdditions ?? 0
+  }/-${summary.totalDeletions ?? 0} · ${largestFile}`;
+}
+
 function buildRequirementListQuery(query: ManagementListQuery): RequirementListQuery {
   return {
     page: query.page,
@@ -700,6 +726,41 @@ export default function RequirementsPage() {
                         <Space orientation="vertical" size={2}>
                           <Text>{task.label}</Text>
                           <Text type="secondary">{task.id} · {task.status}</Text>
+                        </Space>
+                      </Descriptions.Item>
+                    ))}
+                  </Descriptions>
+                ) : null}
+                {fullChain.gitSnapshots.length ? (
+                  <Descriptions bordered column={1} size="small" title="PR/MR 证据">
+                    {fullChain.gitSnapshots.map((snapshot) => (
+                      <Descriptions.Item key={snapshot.id} label={`快照 ${snapshot.mrIid}`}>
+                        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+                          <Space size={[6, 6]} wrap>
+                            <Tag color="geekblue">{snapshot.id}</Tag>
+                            <Tag color="purple">{formatSnapshotRisk(snapshot)}</Tag>
+                            {snapshot.diffSizeBytes !== undefined ? (
+                              <Tag>diff {snapshot.diffSizeBytes} bytes</Tag>
+                            ) : null}
+                          </Space>
+                          {snapshot.diffFileTree.length ? (
+                            <Space size={[6, 6]} wrap>
+                              {snapshot.diffFileTree.map((item) => (
+                                <Tag key={item.path} color="blue">
+                                  {item.path} · {item.fileCount} 文件 · +{item.additions}/-{item.deletions}
+                                </Tag>
+                              ))}
+                            </Space>
+                          ) : null}
+                          {snapshot.reviewChecklist.length ? (
+                            <Space orientation="vertical" size={2}>
+                              {snapshot.reviewChecklist.map((item) => (
+                                <Text key={item} type="secondary">
+                                  {item}
+                                </Text>
+                              ))}
+                            </Space>
+                          ) : null}
                         </Space>
                       </Descriptions.Item>
                     ))}

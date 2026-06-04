@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.88 |
+| 功能版本 | v1.1.89 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -111,6 +111,7 @@
 | v1.1.86 | 2026-06-04 | Bug 管理新增多选批量处理，支持批量更新状态、严重级别或处理人并写入批次审计 | Codex |
 | v1.1.87 | 2026-06-05 | AI 助手上下文增强为可回答迭代进度、阻塞需求、待确认 Review、代码评审结论和 Bug 分布 | Codex |
 | v1.1.88 | 2026-06-05 | GitLab MR / GitHub PR 预览增强为 Review 准备视图，提供 diff 文件树、风险摘要和 Review Checklist | Codex |
+| v1.1.89 | 2026-06-05 | 需求全链路详情页展示 PR/MR 证据，包括快照风险摘要、diff 文件树和 Review Checklist | Codex |
 
 ---
 
@@ -160,7 +161,7 @@ DB-first 迁移状态：上述结构化持久化不代表所有 API 已经直连
 
 需求批量排期的目标版本选择应与后端校验一致：需求管理页读取该产品全部版本并仅保留 `planning`/`active`，过滤 `testing`、`released` 和 `archived`；批量接口必须以追加/upsert 方式保存 `requirement.batch_scheduled` 审计事件，不能使用覆盖式审计快照保存导致历史批次审计被删除。
 
-审计与运行页面支持查看真实审计详情，并从审计主体优先发起生命周期链路追踪。生命周期视图、需求全链路详情和首页 IT 团队看板的 AI 任务、待确认 Review、知识沉淀和风险信号聚合会先按任务类型读权限过滤，不能通过聚合接口绕过任务详情权限。生命周期上下文已支持从真实 Bug、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户使用指标、用户反馈和迭代规划建议起点回溯同产品/版本/模块任务链路，并把这些真实证据写入 downstream 关系；缺少对应证据时返回动态 `missing_context`，不合成兜底关系。需求全链路详情由 `GET /api/requirements/{requirement_id}/full-chain` 承载，面向需求管理页一次返回需求、产品、迭代版本、AI 任务、Review、GitLab MR / GitHub PR 兼容快照、Code Review 报告、Bug、Jenkins 发布和知识沉淀候选，并生成按发生时间排序的页面时间线，前端不得再多接口拼装该详情。首页 IT 团队看板已基于真实产品、需求、AI 任务、待确认 Review、知识和审计数据返回 MVP 聚合摘要；传入 `product_id` 时，知识文档和审计事件也必须按产品归属过滤，不能把其他产品的知识或审计计数混入当前产品；后续需继续把看板十余类主体的聚合计算沉淀为专门 SQL/物化 read model，避免扩大运行时集合依赖。产品、需求、迭代版本、Bug、任务、知识文档、审计事件、研发运营指标和用户洞察主列表均已通过后端接口承载分页、排序和筛选，前端主列表不得再拉全量数据后本地拼装；采集运行、待归属队列、模型网关配置、用户和角色等低数据量子表可暂保留独立列表接口，但不得作为主业务列表的多接口聚合替代。GitLab MR / GitHub PR 预览和 diff 快照已接入只读 API：GitLab 产品 Git 资源需提供可解析的 `remote_url` 或 `GITLAB_BASE_URL`，GitHub 产品 Git 资源需提供 `project_path=owner/repo` 或可解析 owner/repo 的 `remote_url`，GitHub Enterprise 可通过 `GITHUB_BASE_URL` 指定 API base；凭据引用推荐使用环境变量或服务端密钥引用，本地联调可直填只读 token，系统只读取变更元信息、文件摘要、diff 文件树、风险摘要和 Review Checklist，不回写 GitLab/GitHub；任务中心创建 Code Review 前必须展示这些预览信息，帮助确认 MR/PR 变更范围和重点检查项。GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户使用指标、采集运行记录和待归属数据队列可通过真实登记/导入接口落库，不依赖前端示例数据；外部自动采集器尚未接入。无记录时返回真实空集合，不提供前端本地兜底行或后端伪造统计数据；采集运行记录只描述采集尝试，不自动创建 GitLab/Jenkins/线上日志/用户洞察指标；待归属队列只记录未归属事实和人工处理结果，不自动生成指标、反馈或迭代建议。
+审计与运行页面支持查看真实审计详情，并从审计主体优先发起生命周期链路追踪。生命周期视图、需求全链路详情和首页 IT 团队看板的 AI 任务、待确认 Review、知识沉淀和风险信号聚合会先按任务类型读权限过滤，不能通过聚合接口绕过任务详情权限。生命周期上下文已支持从真实 Bug、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户使用指标、用户反馈和迭代规划建议起点回溯同产品/版本/模块任务链路，并把这些真实证据写入 downstream 关系；缺少对应证据时返回动态 `missing_context`，不合成兜底关系。需求全链路详情由 `GET /api/requirements/{requirement_id}/full-chain` 承载，面向需求管理页一次返回需求、产品、迭代版本、AI 任务、Review、GitLab MR / GitHub PR 兼容快照、Code Review 报告、Bug、Jenkins 发布和知识沉淀候选，并生成按发生时间排序的页面时间线；前端在同一弹窗展示 PR/MR 快照风险摘要、diff 文件树和 Review Checklist，不得再多接口拼装该详情。首页 IT 团队看板已基于真实产品、需求、AI 任务、待确认 Review、知识和审计数据返回 MVP 聚合摘要；传入 `product_id` 时，知识文档和审计事件也必须按产品归属过滤，不能把其他产品的知识或审计计数混入当前产品；后续需继续把看板十余类主体的聚合计算沉淀为专门 SQL/物化 read model，避免扩大运行时集合依赖。产品、需求、迭代版本、Bug、任务、知识文档、审计事件、研发运营指标和用户洞察主列表均已通过后端接口承载分页、排序和筛选，前端主列表不得再拉全量数据后本地拼装；采集运行、待归属队列、模型网关配置、用户和角色等低数据量子表可暂保留独立列表接口，但不得作为主业务列表的多接口聚合替代。GitLab MR / GitHub PR 预览和 diff 快照已接入只读 API：GitLab 产品 Git 资源需提供可解析的 `remote_url` 或 `GITLAB_BASE_URL`，GitHub 产品 Git 资源需提供 `project_path=owner/repo` 或可解析 owner/repo 的 `remote_url`，GitHub Enterprise 可通过 `GITHUB_BASE_URL` 指定 API base；凭据引用推荐使用环境变量或服务端密钥引用，本地联调可直填只读 token，系统只读取变更元信息、文件摘要、diff 文件树、风险摘要和 Review Checklist，不回写 GitLab/GitHub；任务中心创建 Code Review 前必须展示这些预览信息，帮助确认 MR/PR 变更范围和重点检查项。GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户使用指标、采集运行记录和待归属数据队列可通过真实登记/导入接口落库，不依赖前端示例数据；外部自动采集器尚未接入。无记录时返回真实空集合，不提供前端本地兜底行或后端伪造统计数据；采集运行记录只描述采集尝试，不自动创建 GitLab/Jenkins/线上日志/用户洞察指标；待归属队列只记录未归属事实和人工处理结果，不自动生成指标、反馈或迭代建议。
 
 当前补充实现：迭代规划建议已作为真实业务主体接入 `iteration_plan_suggestions` 与 `iteration_plan_decisions`。生成接口只基于真实用户反馈和 Bug 证据生成建议；无证据时返回空集合，不生成占位建议。确认接口支持采纳、修改后采纳、驳回和显式转需求，只有确认且 `convert_to_requirement=true` 时才创建真实 `requirements` 记录。
 

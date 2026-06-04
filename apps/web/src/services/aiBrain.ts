@@ -772,12 +772,16 @@ export type CodeReviewRiskSummary = {
 };
 
 export type GitLabMergeRequestSnapshot = {
+  changedFilesSummary: unknown[];
   createdAt?: string;
   diffLimitBytes?: number;
+  diffFileTree: CodeReviewDiffTreeItem[];
   diffSizeBytes?: number;
   id: string;
   mrIid: number;
+  reviewChecklist: string[];
   repositoryId: string;
+  riskSummary?: CodeReviewRiskSummary;
 };
 
 export type CodeReviewReportRecord = {
@@ -1305,12 +1309,16 @@ type GitLabMergeRequestPreviewResponse = {
 };
 
 type GitLabMergeRequestSnapshotResponse = {
+  changed_files_summary?: unknown[];
   created_at?: string;
+  diff_file_tree?: GitLabMergeRequestPreviewResponse['diff_file_tree'];
   diff_limit_bytes?: number;
   diff_size_bytes?: number;
   id: string;
   mr_iid: number;
+  review_checklist?: string[];
   repository_id: string;
+  risk_summary?: GitLabMergeRequestPreviewResponse['risk_summary'];
 };
 
 type CodeReviewReportResponse = {
@@ -2651,12 +2659,16 @@ function mapRequirementFullChain(
       summary: report.summary ?? report.id,
     })),
     gitSnapshots: (chain.git_snapshots ?? []).map((snapshot) => ({
+      changedFilesSummary: snapshot.changed_files_summary ?? [],
       createdAt: formatListDate(snapshot.created_at),
       diffLimitBytes: snapshot.diff_limit_bytes,
+      diffFileTree: normalizeDiffFileTree(snapshot.diff_file_tree),
       diffSizeBytes: snapshot.diff_size_bytes,
       id: snapshot.id,
       mrIid: snapshot.mr_iid,
+      reviewChecklist: snapshot.review_checklist ?? [],
       repositoryId: snapshot.repository_id,
+      riskSummary: normalizeRiskSummary(snapshot.risk_summary),
     })),
     iterationVersion: chain.iteration_version
       ? {
@@ -3589,12 +3601,16 @@ export async function snapshotGitLabMergeRequest({
   );
 
   return {
+    changedFilesSummary: snapshot.changed_files_summary ?? [],
     createdAt: formatListDate(snapshot.created_at),
     diffLimitBytes: snapshot.diff_limit_bytes,
+    diffFileTree: normalizeDiffFileTree(snapshot.diff_file_tree),
     diffSizeBytes: snapshot.diff_size_bytes,
     id: snapshot.id,
     mrIid: snapshot.mr_iid,
+    reviewChecklist: snapshot.review_checklist ?? [],
     repositoryId: snapshot.repository_id,
+    riskSummary: normalizeRiskSummary(snapshot.risk_summary),
   };
 }
 
@@ -3631,12 +3647,16 @@ export async function snapshotCodeReviewPullRequest({
   );
 
   return {
+    changedFilesSummary: snapshot.changed_files_summary ?? [],
     createdAt: formatListDate(snapshot.created_at),
     diffLimitBytes: snapshot.diff_limit_bytes,
+    diffFileTree: normalizeDiffFileTree(snapshot.diff_file_tree),
     diffSizeBytes: snapshot.diff_size_bytes,
     id: snapshot.id,
     mrIid: snapshot.mr_iid,
+    reviewChecklist: snapshot.review_checklist ?? [],
     repositoryId: snapshot.repository_id,
+    riskSummary: normalizeRiskSummary(snapshot.risk_summary),
   };
 }
 

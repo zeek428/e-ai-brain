@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 需求全链路详情页的 PR/MR 快照区展示风险摘要、diff 文件树和 Review Checklist，用户可在同一弹窗查看需求到代码评审证据，不再跳转任务中心核对变更范围。
 - GitLab MR / GitHub PR 预览新增 diff 文件树、风险摘要和 Review Checklist，任务中心创建 Code Review 前展示变更范围、变更明细和检查项，代码评审报告问题定位兼容更多 file/path/line 字段。
 - AI 助手系统上下文增强，模型请求新增迭代进度、阻塞需求、待确认 Review、最近代码评审结论、Bug 分布和知识沉淀摘要，前端新增“阻塞与待确认”快捷问题。
 - Bug 管理新增多选“批量处理”入口，后端新增 `POST /api/bugs/batch-update`，支持批量更新状态、严重级别或处理人，非法状态流转和重复 ID 返回 skipped 明细，并写入批次级与逐 Bug 审计。

@@ -4546,7 +4546,34 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 summary: 'Review 结论：补充用户级隔离测试。',
               },
             ],
-            git_snapshots: [{ created_at: '2026-06-04T09:30:00+00:00', id: 'snapshot_pr_12', mr_iid: 12 }],
+            git_snapshots: [
+              {
+                changed_files_summary: [
+                  { additions: 6, deletions: 1, path: 'apps/api/app/main.py' },
+                  { additions: 4, deletions: 0, path: 'apps/web/src/pages/Assistant/index.tsx' },
+                ],
+                created_at: '2026-06-04T09:30:00+00:00',
+                diff_file_tree: [
+                  { additions: 10, deletions: 1, file_count: 2, path: 'apps' },
+                ],
+                id: 'snapshot_pr_12',
+                mr_iid: 12,
+                review_checklist: ['确认用户级历史记录隔离测试覆盖'],
+                risk_summary: {
+                  file_count: 2,
+                  largest_file: {
+                    additions: 6,
+                    deletions: 1,
+                    line_count: 7,
+                    path: 'apps/api/app/main.py',
+                  },
+                  risk_level: 'medium',
+                  total_additions: 10,
+                  total_changed_lines: 11,
+                  total_deletions: 1,
+                },
+              },
+            ],
             iteration_version: {
               code: '2026-06-assistant-history',
               id: 'version_assistant_history',
@@ -4632,6 +4659,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('需求：AI 助手历史记录')).toBeInTheDocument();
     expect(screen.getByText('AI 任务：产品详细设计：AI 助手历史记录')).toBeInTheDocument();
     expect(screen.getByText('代码评审：report_history')).toBeInTheDocument();
+    expect(screen.getByText('PR/MR 证据')).toBeInTheDocument();
+    expect(screen.getByText(/中风险 · 2 文件 · \+10\/-1/)).toBeInTheDocument();
+    expect(screen.getByText(/apps · 2 文件 · \+10\/-1/)).toBeInTheDocument();
+    expect(screen.getByText('确认用户级历史记录隔离测试覆盖')).toBeInTheDocument();
     expect(screen.getByText('1 个 AI 任务')).toBeInTheDocument();
     expect(screen.getByText('1 个 Bug')).toBeInTheDocument();
     expect(screen.getByText('1 个发布记录')).toBeInTheDocument();
