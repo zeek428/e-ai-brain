@@ -806,6 +806,7 @@ class FakeSnapshotRepository:
         self,
         *,
         product_id: str | None = None,
+        version_id: str | None = None,
         status: str | None = None,
         severity: str | None = None,
         source: str | None = None,
@@ -814,6 +815,8 @@ class FakeSnapshotRepository:
         bugs = [dict(bug) for bug in payload.get("bugs", {}).values()]
         if product_id:
             bugs = [bug for bug in bugs if bug.get("product_id") == product_id]
+        if version_id:
+            bugs = [bug for bug in bugs if bug.get("version_id") == version_id]
         if status:
             bugs = [bug for bug in bugs if bug.get("status") == status]
         if severity:

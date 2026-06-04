@@ -1001,7 +1001,9 @@ type BugListItem = {
   source?: string;
   status?: string;
   title: string;
+  version_code?: string | null;
   version_id?: string | null;
+  version_name?: string | null;
 };
 
 type TaskListItem = {
@@ -2525,6 +2527,9 @@ export async function fetchManagementBugs(): Promise<BugRecord[]> {
     status: normalizeBugStatus(bug.status),
     title: bug.title,
     versionId: bug.version_id ?? undefined,
+    versionName: bug.version_id
+      ? formatUnknownValue(bug.version_name ?? bug.version_code ?? bug.version_id)
+      : '未关联',
   }));
 }
 

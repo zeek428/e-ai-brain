@@ -4865,6 +4865,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 status: 'closed',
                 title: '支付失败',
                 version_id: 'version_api',
+                version_name: 'v1 MVP',
               },
               {
                 assignee: 'rd@example.com',
@@ -4877,7 +4878,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 source: 'ai_auto_test',
                 status: 'triaged',
                 title: '支付重复问题',
-                version_id: 'version_api',
+                version_id: 'version_regression',
+                version_name: 'v2 回归',
               },
             ],
             total: 2,
@@ -4895,6 +4897,18 @@ describe('AI Brain Ant Design Pro workbench', () => {
     render(<BugsPage />);
 
     expect(await screen.findByText('支付失败')).toBeInTheDocument();
+    expect(screen.getByText('v1 MVP')).toBeInTheDocument();
+    expect(screen.getByText('v2 回归')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('迭代版本'), { target: { value: 'v1 MVP' } });
+    fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
+
+    expect(screen.getByText('支付失败')).toBeInTheDocument();
+    expect(screen.queryByText('支付重复问题')).not.toBeInTheDocument();
+
+    fireEvent.reset(screen.getByRole('form', { name: '查询表格' }));
+    expect(screen.getByText('支付重复问题')).toBeInTheDocument();
+
     const bugRow = screen.getByText('支付失败').closest('tr');
     expect(bugRow).not.toBeNull();
     fireEvent.click(within(bugRow as HTMLElement).getByRole('button', { name: /编辑/ }));

@@ -124,6 +124,7 @@ export type BugRecord = {
     | 'verified';
   title: string;
   versionId?: string;
+  versionName: string;
 };
 
 export type KnowledgeRecord = {

@@ -2851,6 +2851,18 @@ def _requirement_summary_projection(
     }
 
 
+def _bug_summary_projection(
+    bug: dict[str, Any],
+    current_store: MemoryStore,
+) -> dict[str, Any]:
+    version = current_store.product_versions.get(bug.get("version_id"), {})
+    return {
+        **bug,
+        "version_code": version.get("code"),
+        "version_name": version.get("name"),
+    }
+
+
 def _public_model_gateway_config(config: dict[str, Any]) -> dict[str, Any]:
     public_config = {
         key: value
@@ -11802,6 +11814,7 @@ def dashboard_metrics(
 def list_bugs(
     request: Request,
     product_id: str | None = None,
+    version_id: str | None = None,
     status: str | None = None,
     severity: str | None = None,
     source: str | None = None,
@@ -11813,6 +11826,7 @@ def list_bugs(
     if repository is not None:
         items = repository.list_bugs(
             product_id=product_id,
+            version_id=version_id,
             status=status,
             severity=severity,
             source=source,
@@ -11821,6 +11835,8 @@ def list_bugs(
         items = list(current_store.bugs.values())
         if product_id:
             items = [item for item in items if item["product_id"] == product_id]
+        if version_id:
+            items = [item for item in items if item.get("version_id") == version_id]
         if status:
             items = [item for item in items if item["status"] == status]
         if severity:
@@ -11828,6 +11844,7 @@ def list_bugs(
         if source:
             items = [item for item in items if item["source"] == source]
         items.sort(key=lambda item: item["created_at"], reverse=True)
+        items = [_bug_summary_projection(item, current_store) for item in items]
     return envelope({"items": items, "total": len(items)}, get_trace_id(request))
 
 
@@ -11888,7 +11905,7 @@ def create_bug(
         },
     )
     _save_bug_record(current_store, bug, audit_event=audit_event)
-    return envelope(bug, get_trace_id(request))
+    return envelope(_bug_summary_projection(bug, current_store), get_trace_id(request))
 
 
 @app.patch("/api/bugs/{bug_id}")
@@ -11940,7 +11957,7 @@ def patch_bug(
         },
     )
     _save_bug_record(current_store, bug, audit_event=audit_event)
-    return envelope(bug, get_trace_id(request))
+    return envelope(_bug_summary_projection(bug, current_store), get_trace_id(request))
 
 
 @app.delete("/api/bugs/{bug_id}")

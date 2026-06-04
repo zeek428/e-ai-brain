@@ -57,12 +57,31 @@ def test_bug_management_creates_filters_and_updates_state_machine():
     assert bug["status"] == "needs_info"
     assert bug["source"] == "ai_auto_test"
     assert bug["severity"] == "critical"
+    other_version = client.post(
+        f"/api/products/{context['product_id']}/versions",
+        json={"code": "v2", "name": "v2 验收"},
+        headers=headers,
+    ).json()["data"]
 
     filtered = client.get(
-        f"/api/bugs?product_id={context['product_id']}&status=needs_info",
+        (
+            f"/api/bugs?product_id={context['product_id']}"
+            f"&status=needs_info&version_id={context['version_id']}"
+        ),
         headers=headers,
     ).json()["data"]
     assert [item["id"] for item in filtered["items"]] == [bug["id"]]
+    assert filtered["items"][0]["version_code"] == "v1"
+    assert filtered["items"][0]["version_name"] == "v1 MVP"
+
+    other_version_bugs = client.get(
+        (
+            f"/api/bugs?product_id={context['product_id']}"
+            f"&version_id={other_version['id']}"
+        ),
+        headers=headers,
+    ).json()["data"]
+    assert other_version_bugs["items"] == []
 
     triaged = client.patch(
         f"/api/bugs/{bug['id']}",

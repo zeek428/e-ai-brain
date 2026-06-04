@@ -282,6 +282,10 @@ export default function BugsPage() {
         title: '所属模块',
       },
       {
+        dataIndex: 'versionName',
+        title: '迭代版本',
+      },
+      {
         dataIndex: 'severity',
         title: '严重级别',
         render: (_, row) => {
@@ -339,6 +343,7 @@ export default function BugsPage() {
         filters={[
           { label: 'Bug 标题', name: 'title', type: 'text' },
           { label: '所属模块', name: 'module', type: 'text' },
+          { label: '迭代版本', name: 'versionName', type: 'text' },
           {
             label: '严重级别',
             name: 'severity',

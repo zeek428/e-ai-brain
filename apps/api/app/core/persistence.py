@@ -398,6 +398,7 @@ class BugRepository(Protocol):
         self,
         *,
         product_id: str | None = None,
+        version_id: str | None = None,
         status: str | None = None,
         severity: str | None = None,
         source: str | None = None,
@@ -3415,6 +3416,7 @@ class PostgresSnapshotRepository:
         self,
         *,
         product_id: str | None = None,
+        version_id: str | None = None,
         status: str | None = None,
         severity: str | None = None,
         source: str | None = None,
@@ -3422,29 +3424,33 @@ class PostgresSnapshotRepository:
         where_clauses: list[str] = []
         params: list[Any] = []
         if product_id is not None:
-            where_clauses.append("product_id = %s")
+            where_clauses.append("b.product_id = %s")
             params.append(product_id)
+        if version_id is not None:
+            where_clauses.append("b.version_id = %s")
+            params.append(version_id)
         if status is not None:
-            where_clauses.append("status = %s")
+            where_clauses.append("b.status = %s")
             params.append(status)
         if severity is not None:
-            where_clauses.append("severity = %s")
+            where_clauses.append("b.severity = %s")
             params.append(severity)
         if source is not None:
-            where_clauses.append("source = %s")
+            where_clauses.append("b.source = %s")
             params.append(source)
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, product_id, version_id, module_code, source, title,
-                           severity, description, status, assignee, related_task_id,
-                           requirement_id, reproduce_steps, evidence, duplicate_of_bug_id,
-                           created_by, created_at, updated_at
-                    FROM bugs
+                    SELECT b.id, b.product_id, b.version_id, b.module_code, b.source, b.title,
+                           b.severity, b.description, b.status, b.assignee, b.related_task_id,
+                           b.requirement_id, b.reproduce_steps, b.evidence, b.duplicate_of_bug_id,
+                           b.created_by, b.created_at, b.updated_at, v.code, v.name
+                    FROM bugs b
+                    LEFT JOIN product_versions v ON v.id = b.version_id
                     {where_clause}
-                    ORDER BY created_at DESC, id DESC
+                    ORDER BY b.created_at DESC, b.id DESC
                     """,
                     tuple(params),
                 )
@@ -3468,7 +3474,9 @@ class PostgresSnapshotRepository:
                         "status": row[8],
                         "title": row[5],
                         "updated_at": row[17].isoformat() if row[17] else None,
+                        "version_code": row[18],
                         "version_id": row[2],
+                        "version_name": row[19],
                     }
                     for optional_key in (
                         "assignee",
@@ -3478,7 +3486,9 @@ class PostgresSnapshotRepository:
                         "related_task_id",
                         "requirement_id",
                         "updated_at",
+                        "version_code",
                         "version_id",
+                        "version_name",
                     ):
                         if bug[optional_key] is None:
                             bug.pop(optional_key)

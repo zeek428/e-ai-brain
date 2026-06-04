@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.83 |
+| 功能版本 | v1.1.84 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -105,6 +105,7 @@
 | v1.1.81 | 2026-06-04 | 新增需求批量排期接口，支持需求管理批量排期和迭代版本页归集需求入口 | Codex |
 | v1.1.82 | 2026-06-04 | 明确需求批量排期可选择未归档 planning 版本，并修正批次审计为追加保存而非覆盖式快照保存 | Codex |
 | v1.1.83 | 2026-06-04 | 新增迭代版本状态推进接口，支持影响预览、需求状态同步、阻塞项和直接状态 PATCH 拦截 | Codex |
+| v1.1.84 | 2026-06-04 | Bug 列表支持迭代版本过滤并返回版本编码和名称投影 | Codex |
 
 ---
 
@@ -339,7 +340,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | DevOps | POST | `/api/devops/jenkins/releases` | 登记真实 Jenkins 发布记录。 |
 | Ops | GET | `/api/ops/online-log-metrics` | 查询线上运行日志运营指标。 |
 | Ops | POST | `/api/ops/online-log-metrics` | 登记真实线上运行日志聚合指标。 |
-| Bug | GET | `/api/bugs` | 查询 Bug 列表。 |
+| Bug | GET | `/api/bugs` | 查询 Bug 列表，支持产品、迭代版本、状态、严重程度和来源过滤。 |
 | Bug | POST | `/api/bugs` | v1.1 基础接口，登记 AI 自动测试或人工测试 Bug。 |
 | Bug | PATCH | `/api/bugs/{bug_id}` | v1.1 基础接口，更新 Bug 状态、分派人、复现信息或重复归并关系。 |
 | Bug | DELETE | `/api/bugs/{bug_id}` | 删除 Bug 记录。 |
@@ -2095,10 +2096,22 @@ POST /api/planning/iteration-suggestions/{suggestion_id}/decide
 查询和登记：
 
 ```http
-GET /api/bugs?product_id=product_001&status=open
+GET /api/bugs?product_id=product_001&version_id=version_001&status=open
 POST /api/bugs
 PATCH /api/bugs/{bug_id}
 ```
+
+查询参数：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| product_id | string | 可选，按产品过滤。 |
+| version_id | string | 可选，按迭代版本过滤。 |
+| status | string | 可选，按 Bug 状态过滤。 |
+| severity | string | 可选，按严重程度过滤。 |
+| source | string | 可选，按来源过滤。 |
+
+列表响应中的每条 Bug 除 `product_id`、`version_id` 外，还返回 `version_code`、`version_name` 作为页面展示投影；未关联版本时这两个字段为空。
 
 登记请求体：
 
@@ -2127,7 +2140,7 @@ PATCH /api/bugs/{bug_id}
 - AI 自动测试来源缺少 `reproduce_steps` 时初始状态为 `needs_info`；人工登记或带复现步骤的 Bug 初始状态为 `open`。
 - 提交 `duplicate_of_bug_id` 时重复 Bug 初始状态为 `closed`，并保留主 Bug 关联，避免重复进入修复队列。
 - 状态更新必须符合状态机约束，非法跨越返回 `BUG_STATE_INVALID`；创建和更新均写入 `bug.created` 或 `bug.updated` 审计事件。
-- Bug 管理工作台必须从真实 `/api/bugs` 响应映射 `reproduce_steps`、`evidence`、`duplicate_of_bug_id`、`requirement_id` 和 `related_task_id`；登记弹窗允许录入复现步骤、对象型证据 JSON、关联需求和关联任务；编辑弹窗允许维护复现步骤、证据 JSON、状态、处理人和重复归并，重复归并候选仅展示同产品 Bug，来源只读展示，不允许把 AI 自动测试或上线后分析来源在前端改写为人工来源。
+- Bug 管理工作台必须从真实 `/api/bugs` 响应映射 `version_code`、`version_name`、`reproduce_steps`、`evidence`、`duplicate_of_bug_id`、`requirement_id` 和 `related_task_id`；列表展示迭代版本并支持按版本名、编码或未关联状态过滤；登记弹窗允许录入复现步骤、对象型证据 JSON、关联需求和关联任务；编辑弹窗允许维护复现步骤、证据 JSON、状态、处理人和重复归并，重复归并候选仅展示同产品 Bug，来源只读展示，不允许把 AI 自动测试或上线后分析来源在前端改写为人工来源。
 
 ### 软件研发全流程感知
 
