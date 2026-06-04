@@ -7344,6 +7344,89 @@ def _summarize_gitlab_change(change: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _changed_file_path(item: dict[str, Any]) -> str:
+    return str(
+        item.get("path")
+        or item.get("file_path")
+        or item.get("filename")
+        or item.get("new_path")
+        or item.get("old_path")
+        or "-"
+    )
+
+
+def _summarize_changed_files_for_review(
+    changed_files_summary: list[dict[str, Any]],
+) -> dict[str, Any]:
+    file_tree: dict[str, dict[str, Any]] = {}
+    total_additions = 0
+    total_deletions = 0
+    largest_file: dict[str, Any] | None = None
+    for item in changed_files_summary:
+        path = _changed_file_path(item)
+        additions = int(item.get("additions") or 0)
+        deletions = int(item.get("deletions") or 0)
+        line_count = additions + deletions
+        total_additions += additions
+        total_deletions += deletions
+        if largest_file is None or line_count > int(largest_file.get("line_count") or 0):
+            largest_file = {
+                "additions": additions,
+                "deletions": deletions,
+                "line_count": line_count,
+                "path": path,
+            }
+        root = path.split("/", 1)[0] if "/" in path else path
+        node = file_tree.setdefault(
+            root,
+            {"additions": 0, "deletions": 0, "file_count": 0, "path": root},
+        )
+        node["additions"] += additions
+        node["deletions"] += deletions
+        node["file_count"] += 1
+    file_count = len(changed_files_summary)
+    total_changed_lines = total_additions + total_deletions
+    if file_count > 30 or total_changed_lines > 1200:
+        risk_level = "high"
+    elif file_count > 10 or total_changed_lines > 400:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+    review_checklist = [
+        "确认变更文件归属目标需求和技术方案范围",
+        "重点检查高变更量文件的异常处理、权限和数据一致性",
+        "确认测试覆盖包含主要路径、边界场景和回归风险",
+        "确认不包含密钥、凭据、调试输出或无关格式化变更",
+    ]
+    return {
+        "diff_file_tree": sorted(
+            file_tree.values(),
+            key=lambda item: (-int(item["file_count"]), str(item["path"])),
+        ),
+        "review_checklist": review_checklist,
+        "risk_summary": {
+            "file_count": file_count,
+            "largest_file": largest_file,
+            "risk_level": risk_level,
+            "total_additions": total_additions,
+            "total_changed_lines": total_changed_lines,
+            "total_deletions": total_deletions,
+        },
+    }
+
+
+def _enrich_code_review_preview(preview: dict[str, Any]) -> dict[str, Any]:
+    changed_files_summary = [
+        item
+        for item in preview.get("changed_files_summary", [])
+        if isinstance(item, dict)
+    ]
+    return {
+        **preview,
+        **_summarize_changed_files_for_review(changed_files_summary),
+    }
+
+
 def _gitlab_changes(payload: dict[str, Any]) -> list[dict[str, Any]]:
     changes = payload.get("changes")
     if isinstance(changes, list):
@@ -7402,7 +7485,7 @@ def _real_gitlab_preview(repository: dict[str, Any], mr_iid: int) -> dict[str, A
 
 
 def _gitlab_preview(repository: dict[str, Any], mr_iid: int) -> dict[str, Any]:
-    return _real_gitlab_preview(repository, mr_iid)
+    return _enrich_code_review_preview(_real_gitlab_preview(repository, mr_iid))
 
 
 def _github_base_url(repository: dict[str, Any]) -> str | None:
@@ -7631,7 +7714,7 @@ def _real_github_preview(repository: dict[str, Any], pr_number: int) -> dict[str
 
 
 def _github_preview(repository: dict[str, Any], pr_number: int) -> dict[str, Any]:
-    return _real_github_preview(repository, pr_number)
+    return _enrich_code_review_preview(_real_github_preview(repository, pr_number))
 
 
 def _diff_payload(preview: dict[str, Any]) -> str:
@@ -7842,6 +7925,9 @@ def _create_code_review_source_snapshot(
         "head_sha": preview["head_sha"],
         "diff_refs": preview["diff_refs"],
         "changed_files_summary": preview["changed_files_summary"],
+        "diff_file_tree": preview.get("diff_file_tree", []),
+        "review_checklist": preview.get("review_checklist", []),
+        "risk_summary": preview.get("risk_summary", {}),
         "diff_storage_ref": f"memory://{diff_storage_prefix}/{snapshot_id}",
         "diff_size_bytes": diff_size_bytes,
         "diff_limit_bytes": diff_limit_bytes,

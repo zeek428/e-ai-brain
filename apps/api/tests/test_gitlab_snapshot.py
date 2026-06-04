@@ -54,6 +54,23 @@ def test_gitlab_mr_preview_reads_real_gitlab_api_when_remote_url_is_configured(m
         {"path": "apps/api/app/main.py", "additions": 1, "deletions": 1},
         {"path": "apps/web/src/App.tsx", "additions": 2, "deletions": 0},
     ]
+    assert preview["diff_file_tree"] == [
+        {"path": "apps", "file_count": 2, "additions": 3, "deletions": 1}
+    ]
+    assert preview["risk_summary"] == {
+        "file_count": 2,
+        "largest_file": {
+            "additions": 1,
+            "deletions": 1,
+            "line_count": 2,
+            "path": "apps/api/app/main.py",
+        },
+        "risk_level": "low",
+        "total_additions": 3,
+        "total_changed_lines": 4,
+        "total_deletions": 1,
+    }
+    assert "确认变更文件归属目标需求和技术方案范围" in preview["review_checklist"]
     assert preview["writeback_allowed"] is False
     assert calls == [
         {

@@ -190,11 +190,51 @@ function formatFinding(finding: unknown, index: number) {
     return `${index + 1}. ${String(finding ?? '-')}`;
   }
   const item = finding as Record<string, unknown>;
-  const location = [item.file_path, item.line_start ? `:${item.line_start}` : undefined]
-    .filter(Boolean)
-    .join('');
+  const filePath = item.file_path ?? item.file ?? item.path ?? item.filename;
+  const line =
+    item.line_start ??
+    item.line ??
+    item.line_number ??
+    item.start_line ??
+    item.lineStart;
+  const location = [filePath, line ? `:${line}` : undefined].filter(Boolean).join('');
   const summary = item.message ?? item.summary ?? item.suggestion ?? JSON.stringify(item);
   return `${index + 1}. ${[item.severity, location, summary].filter(Boolean).join(' · ')}`;
+}
+
+function formatRiskLevel(level?: string) {
+  if (level === 'high') {
+    return '高';
+  }
+  if (level === 'medium') {
+    return '中';
+  }
+  if (level === 'low') {
+    return '低';
+  }
+  return level || '-';
+}
+
+function formatRiskSummary(preview?: GitLabMergeRequestPreview) {
+  const summary = preview?.riskSummary;
+  if (!summary) {
+    return '-';
+  }
+  const largestFile = summary.largestFile?.path
+    ? `最大文件 ${summary.largestFile.path} (${summary.largestFile.lineCount ?? 0} 行)`
+    : '无最大文件';
+  return `${formatRiskLevel(summary.riskLevel)}风险 · ${summary.fileCount ?? 0} 文件 · +${
+    summary.totalAdditions ?? 0
+  }/-${summary.totalDeletions ?? 0} · ${largestFile}`;
+}
+
+function formatChangedFileSummary(file: unknown, index: number) {
+  if (!file || typeof file !== 'object' || Array.isArray(file)) {
+    return `${index + 1}. ${String(file ?? '-')}`;
+  }
+  const item = file as Record<string, unknown>;
+  const path = item.path ?? item.file_path ?? item.file ?? item.filename ?? '-';
+  return `${index + 1}. ${path} · +${item.additions ?? 0}/-${item.deletions ?? 0}`;
 }
 
 function formatJsonPreview(value: unknown) {
@@ -1435,10 +1475,49 @@ export default function TaskCenterPage() {
               <Descriptions.Item label="变更文件">
                 {codeReviewDraft.preview.changedFileCount}
               </Descriptions.Item>
+              <Descriptions.Item label="风险摘要">
+                {formatRiskSummary(codeReviewDraft.preview)}
+              </Descriptions.Item>
               <Descriptions.Item label="远端回写">
                 {codeReviewDraft.preview.writebackAllowed ? '允许' : '不回写'}
               </Descriptions.Item>
             </Descriptions>
+          ) : null}
+          {codeReviewDraft?.preview?.diffFileTree.length ? (
+            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+              <Text strong>变更文件树</Text>
+              <Space size={[6, 6]} wrap>
+                {codeReviewDraft.preview.diffFileTree.map((item) => (
+                  <Tag key={item.path} color="blue">
+                    {item.path} · {item.fileCount} 文件 · +{item.additions}/-{item.deletions}
+                  </Tag>
+                ))}
+              </Space>
+            </Space>
+          ) : null}
+          {codeReviewDraft?.preview?.changedFilesSummary.length ? (
+            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+              <Text strong>变更文件明细</Text>
+              <Input.TextArea
+                autoSize={{ maxRows: 8, minRows: 3 }}
+                readOnly
+                value={codeReviewDraft.preview.changedFilesSummary
+                  .map(formatChangedFileSummary)
+                  .join('\n')}
+              />
+            </Space>
+          ) : null}
+          {codeReviewDraft?.preview?.reviewChecklist.length ? (
+            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+              <Text strong>Review Checklist</Text>
+              <Input.TextArea
+                autoSize={{ maxRows: 8, minRows: 3 }}
+                readOnly
+                value={codeReviewDraft.preview.reviewChecklist
+                  .map((item, index) => `${index + 1}. ${item}`)
+                  .join('\n')}
+              />
+            </Space>
           ) : null}
         </Space>
       </Modal>

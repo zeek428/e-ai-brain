@@ -738,13 +738,37 @@ export type GitLabMergeRequestPreview = {
   author: string;
   changedFileCount: number;
   changedFilesSummary: unknown[];
+  diffFileTree: CodeReviewDiffTreeItem[];
   mrIid: number;
+  reviewChecklist: string[];
   repositoryId: string;
+  riskSummary?: CodeReviewRiskSummary;
   sourceBranch?: string;
   targetBranch?: string;
   title: string;
   webUrl?: string;
   writebackAllowed: boolean;
+};
+
+export type CodeReviewDiffTreeItem = {
+  additions: number;
+  deletions: number;
+  fileCount: number;
+  path: string;
+};
+
+export type CodeReviewRiskSummary = {
+  fileCount?: number;
+  largestFile?: {
+    additions?: number;
+    deletions?: number;
+    lineCount?: number;
+    path?: string;
+  } | null;
+  riskLevel?: string;
+  totalAdditions?: number;
+  totalChangedLines?: number;
+  totalDeletions?: number;
 };
 
 export type GitLabMergeRequestSnapshot = {
@@ -1251,8 +1275,28 @@ type GitLabMergeRequestPreviewResponse = {
   author?: unknown;
   changed_file_count?: number;
   changed_files_summary?: unknown[];
+  diff_file_tree?: Array<{
+    additions?: number;
+    deletions?: number;
+    file_count?: number;
+    path?: string;
+  }>;
   mr_iid: number;
+  review_checklist?: string[];
   repository_id: string;
+  risk_summary?: {
+    file_count?: number;
+    largest_file?: {
+      additions?: number;
+      deletions?: number;
+      line_count?: number;
+      path?: string;
+    } | null;
+    risk_level?: string;
+    total_additions?: number;
+    total_changed_lines?: number;
+    total_deletions?: number;
+  };
   source_branch?: string;
   target_branch?: string;
   title?: string;
@@ -1781,6 +1825,40 @@ function formatGitLabAuthor(value: unknown): string {
     return formatUnknownValue(author.name ?? author.username ?? author.login);
   }
   return formatUnknownValue(value);
+}
+
+function normalizeDiffFileTree(
+  items?: GitLabMergeRequestPreviewResponse['diff_file_tree'],
+): CodeReviewDiffTreeItem[] {
+  return (items ?? []).map((item) => ({
+    additions: item.additions ?? 0,
+    deletions: item.deletions ?? 0,
+    fileCount: item.file_count ?? 0,
+    path: item.path ?? '-',
+  }));
+}
+
+function normalizeRiskSummary(
+  summary?: GitLabMergeRequestPreviewResponse['risk_summary'],
+): CodeReviewRiskSummary | undefined {
+  if (!summary) {
+    return undefined;
+  }
+  return {
+    fileCount: summary.file_count,
+    largestFile: summary.largest_file
+      ? {
+          additions: summary.largest_file.additions,
+          deletions: summary.largest_file.deletions,
+          lineCount: summary.largest_file.line_count,
+          path: summary.largest_file.path,
+        }
+      : null,
+    riskLevel: summary.risk_level,
+    totalAdditions: summary.total_additions,
+    totalChangedLines: summary.total_changed_lines,
+    totalDeletions: summary.total_deletions,
+  };
 }
 
 function firstKnownValue(item: FlexibleListItem, keys: string[]) {
@@ -3443,8 +3521,11 @@ export async function previewGitLabMergeRequest(
     author: formatGitLabAuthor(preview.author),
     changedFileCount: preview.changed_file_count ?? 0,
     changedFilesSummary: preview.changed_files_summary ?? [],
+    diffFileTree: normalizeDiffFileTree(preview.diff_file_tree),
     mrIid: preview.mr_iid,
+    reviewChecklist: preview.review_checklist ?? [],
     repositoryId: preview.repository_id,
+    riskSummary: normalizeRiskSummary(preview.risk_summary),
     sourceBranch: preview.source_branch,
     targetBranch: preview.target_branch,
     title: preview.title ?? `MR !${preview.mr_iid}`,
@@ -3470,8 +3551,11 @@ export async function previewCodeReviewPullRequest(
     author: formatGitLabAuthor(preview.author),
     changedFileCount: preview.changed_file_count ?? 0,
     changedFilesSummary: preview.changed_files_summary ?? [],
+    diffFileTree: normalizeDiffFileTree(preview.diff_file_tree),
     mrIid: preview.mr_iid,
+    reviewChecklist: preview.review_checklist ?? [],
     repositoryId: preview.repository_id,
+    riskSummary: normalizeRiskSummary(preview.risk_summary),
     sourceBranch: preview.source_branch,
     targetBranch: preview.target_branch,
     title: preview.title ?? `PR #${preview.mr_iid}`,

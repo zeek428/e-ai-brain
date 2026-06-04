@@ -1234,6 +1234,41 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (input === '/api/devops/gitlab/merge-requests/repo_api/1/preview') {
+        return jsonResponse({
+          data: {
+            author: { name: 'Alice', username: 'alice' },
+            changed_file_count: 2,
+            changed_files_summary: [
+              { additions: 4, deletions: 1, path: 'apps/api/app/main.py' },
+              { additions: 2, deletions: 0, path: 'apps/web/src/pages/TaskCenter/index.tsx' },
+            ],
+            diff_file_tree: [
+              { additions: 6, deletions: 1, file_count: 2, path: 'apps' },
+            ],
+            mr_iid: 1,
+            repository_id: 'repo_api',
+            review_checklist: ['确认变更文件归属目标需求和技术方案范围'],
+            risk_summary: {
+              file_count: 2,
+              largest_file: {
+                additions: 4,
+                deletions: 1,
+                line_count: 5,
+                path: 'apps/api/app/main.py',
+              },
+              risk_level: 'low',
+              total_additions: 6,
+              total_changed_lines: 7,
+              total_deletions: 1,
+            },
+            source_branch: 'feature/review-preview',
+            target_branch: 'main',
+            title: '任务中心预览 MR',
+            writeback_allowed: false,
+          },
+        });
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -1256,6 +1291,16 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(codeReviewForm).toHaveClass('ant-form-vertical');
     expect(codeReviewForm).not.toHaveClass('ant-form-inline');
     expect(screen.getByText('GitLab · AI Brain 仓库 (platform/ai-brain)')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /预览 GitLab MR/ })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /预览 GitLab MR/ }));
+    expect(await screen.findByText('任务中心预览 MR')).toBeInTheDocument();
+    expect(screen.getByText(/低风险 · 2 文件 · \+6\/-1/)).toBeInTheDocument();
+    expect(screen.getByText('变更文件树')).toBeInTheDocument();
+    expect(screen.getByText(/apps · 2 文件 · \+6\/-1/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/apps\/api\/app\/main.py · \+4\/-1/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/确认变更文件归属目标需求和技术方案范围/)).toBeInTheDocument();
   });
 
   it('offers post-release analysis from completed release readiness rows', async () => {
@@ -6277,9 +6322,28 @@ describe('AI Brain Ant Design Pro workbench', () => {
             data: {
               author: { login: 'zeek428' },
               changed_file_count: 2,
-              changed_files_summary: [],
+              changed_files_summary: [
+                { additions: 3, deletions: 1, path: 'apps/api/app/main.py' },
+              ],
+              diff_file_tree: [
+                { additions: 3, deletions: 1, file_count: 1, path: 'apps' },
+              ],
               mr_iid: 3,
               repository_id: 'repo_github',
+              review_checklist: ['确认变更文件归属目标需求和技术方案范围'],
+              risk_summary: {
+                file_count: 1,
+                largest_file: {
+                  additions: 3,
+                  deletions: 1,
+                  line_count: 4,
+                  path: 'apps/api/app/main.py',
+                },
+                risk_level: 'low',
+                total_additions: 3,
+                total_changed_lines: 4,
+                total_deletions: 1,
+              },
               source_branch: 'feature/github-pr',
               target_branch: 'main',
               title: '真实 GitHub PR',
@@ -6319,7 +6383,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
     };
 
     await expect(previewCodeReviewPullRequest(repository, 3)).resolves.toMatchObject({
+      diffFileTree: [{ additions: 3, deletions: 1, fileCount: 1, path: 'apps' }],
       mrIid: 3,
+      reviewChecklist: ['确认变更文件归属目标需求和技术方案范围'],
+      riskSummary: expect.objectContaining({ riskLevel: 'low', totalChangedLines: 4 }),
       title: '真实 GitHub PR',
     });
     await expect(
