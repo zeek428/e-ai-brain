@@ -1,6 +1,6 @@
-import { ArrowRightOutlined, CalendarOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { ArrowRightOutlined, CalendarOutlined, DeleteOutlined, EditOutlined, EyeOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, message } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
@@ -46,6 +46,24 @@ const versionStatusLabels: Record<ProductVersionRecord['status'], { color: strin
   released: { color: 'green', label: '已发布' },
   testing: { color: 'purple', label: '测试中' },
 };
+const requirementStatusLabels: Record<RequirementRecord['status'], { color: string; label: string }> = {
+  accepted: { color: 'green', label: '已验收' },
+  approved: { color: 'green', label: '需求池' },
+  cancelled: { color: 'default', label: '已取消' },
+  closed: { color: 'default', label: '已关闭' },
+  code_reviewing: { color: 'purple', label: '代码评审中' },
+  deferred: { color: 'default', label: '暂缓' },
+  designing: { color: 'blue', label: '设计中' },
+  developing: { color: 'geekblue', label: '开发中' },
+  draft: { color: 'default', label: '草稿' },
+  planned: { color: 'cyan', label: '已排期' },
+  ready_for_dev: { color: 'lime', label: '待开发' },
+  ready_for_release: { color: 'orange', label: '待发布' },
+  rejected: { color: 'red', label: '已拒绝' },
+  released: { color: 'green', label: '已发布' },
+  submitted: { color: 'gold', label: '待评审' },
+  testing: { color: 'volcano', label: '测试中' },
+};
 
 const collectableRequirementStatuses = new Set<RequirementRecord['status']>(['approved', 'planned']);
 const collectableVersionStatuses = new Set<ProductVersionRecord['status']>(['active', 'planning']);
@@ -73,6 +91,7 @@ export default function IterationVersionsPage() {
   const [editingVersion, setEditingVersion] = useState<ProductVersionRecord | null>(null);
   const [collectingVersion, setCollectingVersion] = useState<ProductVersionRecord | null>(null);
   const [advancingVersion, setAdvancingVersion] = useState<ProductVersionRecord | null>(null);
+  const [viewingVersion, setViewingVersion] = useState<ProductVersionRecord | null>(null);
   const [advancePreview, setAdvancePreview] = useState<ProductVersionAdvanceStatusResult | null>(null);
   const [collectRequirementIds, setCollectRequirementIds] = useState<string[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -116,6 +135,14 @@ export default function IterationVersionsPage() {
         collectableRequirementStatuses.has(requirement.status),
     );
   }, [collectingVersion, requirements]);
+  const currentVersionRequirements = useMemo(() => {
+    if (!viewingVersion) {
+      return [];
+    }
+    return requirements
+      .filter((requirement) => requirement.versionId === viewingVersion.id)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }, [requirements, viewingVersion]);
   const advanceTargetOptions = useMemo(() => {
     const nextStatus = advancingVersion ? versionStatusAdvanceTargets[advancingVersion.status] : undefined;
     return nextStatus
@@ -348,6 +375,9 @@ export default function IterationVersionsPage() {
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
+            <Button icon={<EyeOutlined />} onClick={() => setViewingVersion(row)} type="link">
+              查看需求
+            </Button>
             <Button
               disabled={!versionStatusAdvanceTargets[row.status]}
               icon={<ArrowRightOutlined />}
@@ -402,6 +432,56 @@ export default function IterationVersionsPage() {
         tableTitle="迭代版本列表"
         title="迭代版本"
       />
+      <Modal
+        destroyOnHidden
+        footer={null}
+        onCancel={() => setViewingVersion(null)}
+        open={Boolean(viewingVersion)}
+        title={viewingVersion ? `查看需求 · ${viewingVersion.code}` : '查看需求'}
+        width={920}
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            title={
+              viewingVersion
+                ? `${viewingVersion.productName ?? viewingVersion.productId} · ${viewingVersion.name} · ${
+                    versionStatusLabels[viewingVersion.status].label
+                  } · ${currentVersionRequirements.length} 条需求`
+                : '请选择迭代版本'
+            }
+            type="info"
+          />
+          <Table<RequirementRecord>
+            columns={[
+              { dataIndex: 'id', title: '需求编号' },
+              { dataIndex: 'title', title: '需求标题' },
+              {
+                dataIndex: 'status',
+                render: (_, row) => {
+                  const statusLabel = requirementStatusLabels[row.status];
+                  return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
+                },
+                title: '状态',
+              },
+              {
+                dataIndex: 'priority',
+                render: (_, row) => (
+                  <StatusTag color={row.priority === 'P0' ? 'red' : 'blue'} label={row.priority} />
+                ),
+                title: '优先级',
+              },
+              { dataIndex: 'updatedAt', title: '更新时间' },
+            ]}
+            dataSource={currentVersionRequirements}
+            locale={{
+              emptyText: requirementStatus === 'loading' ? '正在加载需求' : '当前版本暂无需求',
+            }}
+            pagination={currentVersionRequirements.length > 5 ? { pageSize: 5 } : false}
+            rowKey="id"
+            size="small"
+          />
+        </Space>
+      </Modal>
       <Modal
         confirmLoading={isSaving}
         destroyOnHidden

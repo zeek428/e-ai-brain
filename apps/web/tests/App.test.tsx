@@ -4373,6 +4373,108 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
   });
 
+  it('shows requirements for a testing iteration version without enabling collection', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/product-versions') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-08',
+                id: 'version_testing',
+                name: '2026-08 测试迭代',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: 'AI Brain',
+                status: 'testing',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'API-PRODUCT', id: 'product_api', name: 'AI Brain', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [],
+            total: 0,
+          },
+        });
+      }
+      if (path === '/api/requirements' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '测试中需求内容',
+                created_at: '2026-06-04T08:00:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_testing',
+                priority: 'P0',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: 'AI Brain',
+                status: 'testing',
+                title: '测试中版本需求',
+                updated_at: '2026-06-04T09:00:00+00:00',
+                version_id: 'version_testing',
+                version_name: '2026-08 测试迭代',
+              },
+              {
+                content: '其他版本需求内容',
+                created_at: '2026-06-04T08:10:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_other',
+                priority: 'P1',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: 'AI Brain',
+                status: 'code_reviewing',
+                title: '其他版本需求',
+                updated_at: '2026-06-04T08:30:00+00:00',
+                version_id: 'version_other',
+                version_name: '2026-07',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<IterationVersionsPage />);
+
+    const [versionRowText] = await screen.findAllByText('2026-08');
+    const versionRow = versionRowText.closest('tr') as HTMLElement;
+    expect(within(versionRow).getByRole('button', { name: /归集需求/ })).toBeDisabled();
+    fireEvent.click(within(versionRow).getByRole('button', { name: /查看需求/ }));
+
+    expect(await screen.findByText('查看需求 · 2026-08')).toBeInTheDocument();
+    expect(screen.getByText('AI Brain · 2026-08 测试迭代 · 测试中 · 1 条需求')).toBeInTheDocument();
+    expect(screen.getByText('测试中版本需求')).toBeInTheDocument();
+    expect(screen.getByText('requirement_testing')).toBeInTheDocument();
+    expect(screen.queryByText('其他版本需求')).not.toBeInTheDocument();
+  });
+
   it('advances iteration version status with requirement impact preview', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

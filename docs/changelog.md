@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 迭代版本页新增“查看需求”只读入口，测试中、已发布和历史归档版本也能直接查看当前版本需求清单；“归集需求”仍仅限规划中/开发中版本。
 - 迭代版本状态扩展为“规划中 / 开发中 / 测试中 / 已发布”，新增 `/api/product-versions/{version_id}/advance-status` 和迭代版本页“推进状态”入口，支持影响预览、需求状态同步推进、阻塞项提示、强制进入测试风险记录和发布阻塞校验。
 - 需求管理新增多选“批量排期”，迭代版本页新增“归集需求”入口，后端新增 `/api/requirements/batch-schedule`，支持将同产品需求池/已排期需求快速归集到 planning/active 迭代版本，并记录批量级与逐需求审计。
 - 真实网页验收修复需求页批量排期目标版本只显示 active 的问题：现在可选择 planning/active 版本并过滤 testing/released/archived；批次审计改为追加保存，避免覆盖历史 `requirement.batch_scheduled` 审计。
