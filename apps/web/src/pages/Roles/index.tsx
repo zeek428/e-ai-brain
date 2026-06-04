@@ -42,6 +42,21 @@ function renderTagList(items: string[], maxVisible = items.length) {
   );
 }
 
+function renderRoleScopeSummary(row: RoleManagementRow) {
+  return (
+    <Space orientation="vertical" size={4}>
+      <Space size={[4, 4]} wrap>
+        <Tag>{row.responsibilities.length} 项职责</Tag>
+        <Tag>{row.limitations.length} 条边界</Tag>
+      </Space>
+      <Text type="secondary">
+        {row.data_scope ? '已配置数据范围' : '未配置数据范围'} ·{' '}
+        {row.decision_scope ? '已配置决策范围' : '未配置决策范围'}
+      </Text>
+    </Space>
+  );
+}
+
 function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<RoleManagementRow>[] {
   return [
     {
@@ -50,16 +65,12 @@ function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<
       title: '角色',
       width: 200,
       render: (_, row) => (
-        <Space orientation="vertical" size={0}>
+        <Space orientation="vertical" size={2}>
           <Text strong>{row.name}</Text>
           <Text type="secondary">{row.code}</Text>
+          <StatusTag color="default" label={row.categoryText} />
         </Space>
       ),
-    },
-    {
-      dataIndex: 'categoryText',
-      title: '分类',
-      width: 110,
     },
     {
       dataIndex: 'businessRoleText',
@@ -68,16 +79,10 @@ function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<
       render: (_, row) => renderTagList(row.business_roles, 2),
     },
     {
-      dataIndex: 'description',
-      ellipsis: true,
-      title: '定位',
-      width: 260,
-    },
-    {
-      dataIndex: 'data_scope',
-      ellipsis: true,
-      title: '数据范围',
-      width: 200,
+      dataIndex: 'responsibilityText',
+      title: '职责与范围',
+      width: 220,
+      render: (_, row) => renderRoleScopeSummary(row),
     },
     {
       dataIndex: 'menuScopeText',
@@ -88,30 +93,27 @@ function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<
     {
       dataIndex: 'permissionText',
       title: '权限点',
-      width: 130,
+      width: 120,
       render: (_, row) => <Tag color="blue">{row.permissions.length} 个权限点</Tag>,
-    },
-    {
-      dataIndex: 'assignableText',
-      title: '可分配',
-      width: 96,
-      render: (_, row) =>
-        row.is_assignable ? (
-          <StatusTag color="green" label="可分配" />
-        ) : (
-          <StatusTag color="default" label="不可分配" />
-        ),
     },
     {
       dataIndex: 'statusText',
       title: '状态',
-      width: 90,
-      render: (_, row) =>
-        row.status === 'active' ? (
-          <StatusTag color="green" label="启用" />
-        ) : (
-          <StatusTag color="default" label="停用" />
-        ),
+      width: 120,
+      render: (_, row) => (
+        <Space orientation="vertical" size={4}>
+          {row.status === 'active' ? (
+            <StatusTag color="green" label="启用" />
+          ) : (
+            <StatusTag color="default" label="停用" />
+          )}
+          {row.is_assignable ? (
+            <StatusTag color="green" label="可分配" />
+          ) : (
+            <StatusTag color="default" label="不可分配" />
+          )}
+        </Space>
+      ),
     },
     {
       fixed: 'right',
@@ -183,7 +185,7 @@ export default function RolesPage() {
         onReload={() => void reload()}
         rowKey="code"
         tableLayout="fixed"
-        tableScroll={{ x: 1600 }}
+        tableScroll={{ x: 1160 }}
         tableTitle="角色定义"
         title="角色管理"
       />

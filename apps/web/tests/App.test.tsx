@@ -5684,10 +5684,15 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getAllByText('系统管理').length).toBeGreaterThan(0);
     expect(screen.getByText('授权业务列表')).toBeInTheDocument();
     expect(screen.getAllByText('1 个权限点')).toHaveLength(2);
+    expect(screen.getByText('职责与范围')).toBeInTheDocument();
+    expect(screen.queryByText('负责用户、角色、模型网关、审计与系统级配置管理。')).not.toBeInTheDocument();
+    expect(screen.queryByText('全平台。')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
 
     expect(await screen.findByRole('dialog', { name: '角色详情 · 系统管理员' })).toBeInTheDocument();
+    expect(screen.getByText('负责用户、角色、模型网关、审计与系统级配置管理。')).toBeInTheDocument();
+    expect(screen.getByText('全平台。')).toBeInTheDocument();
     expect(screen.getByText('系统治理。')).toBeInTheDocument();
     expect(screen.getByText('维护用户和角色。')).toBeInTheDocument();
     expect(screen.getByText('不能代替业务负责人做最终产品决策。')).toBeInTheDocument();
