@@ -48,7 +48,7 @@ FastAPI 模块化单体
 
 | 模块 | 职责 | 技术栈 |
 |------|------|--------|
-| web | 团队看板、AI 助手、任务中心/任务管理、产品管理、需求管理、Bug 管理、研发运营看板、用户洞察/迭代规划、知识中心、审计与运行 | React + TypeScript + Ant Design Pro |
+| web | 团队看板、AI 助手、任务中心/任务管理、产品管理、需求管理、Bug 管理、研发运营看板、用户洞察、知识中心、审计与运行 | React + TypeScript + Ant Design Pro |
 | api | JSON API、认证、产品配置、需求审批、任务管理、Bug 管理、研发运营指标和模块化领域逻辑 | FastAPI + Python |
 | assistant | 基于服务端脱敏系统上下文回答 AI Brain 系统信息、项目进展、产品、任务、Git 仓库和模型网关状态问题 | FastAPI + 模型网关 Chat |
 | product_config | 产品、版本、模块、Git 资源、内部 GitLab 项目绑定和相关系统主数据 | PostgreSQL |
@@ -98,7 +98,7 @@ FastAPI 模块化单体
 | 决策项 | 结论 | 维护文档 |
 |--------|------|----------|
 | v1 系统形态 | 模块化单体 | [技术规格](../enterprise-ai-brain/spec.md) |
-| 业务主体 | 产品、需求、AI 任务、Bug、知识中心、研发度量/看板和用户洞察/迭代规划是一等主体或独立运营视图 | [PRD](../../01-prd/enterprise-ai-brain/prd.md) 和 [技术规格](../enterprise-ai-brain/spec.md) |
+| 业务主体 | 产品、需求、AI 任务、Bug、知识中心、研发度量/看板和用户洞察（含迭代规划建议）是一等主体或独立运营视图 | [PRD](../../01-prd/enterprise-ai-brain/prd.md) 和 [技术规格](../enterprise-ai-brain/spec.md) |
 | 需求任务关系 | 需求审批后生成 AI 任务，任务保存需求快照和产品上下文 | [技术规格](../enterprise-ai-brain/spec.md) |
 | AI 任务类型 | v1 MVP 覆盖产品详细设计、技术方案和内部 GitLab MR 代码 Review；后续扩展开发计划、自动化测试、发布评估和上线后分析，统一使用 task_type、状态机、人工确认和审计 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 全流程感知 | 需求、设计、代码、Review、测试、Bug、发布、线上日志、用户使用、用户反馈、迭代规划建议、知识和审计通过 lifecycle_context 串联，支持上下游追溯和风险定位 | [技术规格](../enterprise-ai-brain/spec.md) |

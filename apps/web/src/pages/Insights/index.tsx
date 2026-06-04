@@ -518,8 +518,8 @@ export default function InsightsPage() {
         onReload={() => void reload()}
         primaryAction="登记反馈"
         rowKey="id"
-        tableTitle="用户洞察/迭代规划"
-        title="用户洞察/迭代规划"
+        tableTitle="用户洞察"
+        title="用户洞察"
         toolbarActions={[
           <Button aria-label="登记使用指标" key="usage" onClick={() => setUsageOpen(true)}>
             登记使用指标

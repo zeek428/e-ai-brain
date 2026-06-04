@@ -220,7 +220,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 
 ### 主体级 API 约定
 
-产品、需求、AI 任务、Bug、知识中心、研发运营指标/看板和用户洞察/迭代规划是独立业务主体或独立运营视图。API 设计应遵循以下约定：
+产品、需求、AI 任务、Bug、知识中心、研发运营指标/看板和用户洞察（含迭代规划建议）是独立业务主体或独立运营视图。API 设计应遵循以下约定：
 
 - 产品接口维护长期主数据，归档版本不得用于新需求或新任务。
 - 需求接口维护业务事实和审批状态，生成任务时必须把需求快照写入任务输入。
@@ -1826,7 +1826,7 @@ Content-Type: application/json
 
 `source_type` 只允许 `gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback`、`iteration_plan_suggestion`；`status` 只允许 `pending`、`resolved`、`ignored`；`resolution_action` 只允许 `link_existing_context` 或 `ignore_as_noise`。`collector_run_id` 如传入必须存在；建议产品和归属产品必须为 active；建议模块和归属模块必须属于对应产品；归属需求必须属于归属产品。`link_existing_context` 必须提交 `resolved_product_id`，可选提交模块、需求或目标业务主体；`ignore_as_noise` 不允许提交任何归属上下文字段。队列项一旦 `resolved` 或 `ignored` 即为终态，重复处理返回 `409 PENDING_ATTRIBUTION_STATE_INVALID`。创建、归属和忽略分别写入 `pending_attribution.created`、`pending_attribution.resolved`、`pending_attribution.ignored` 审计事件。队列处理只记录人工归属结果，不自动生成 GitLab/Jenkins/线上日志/用户使用/用户反馈/迭代建议/需求等业务数据。
 
-### 用户洞察与迭代规划
+### 用户洞察（含迭代规划建议）
 
 用户使用指标：
 

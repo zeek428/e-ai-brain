@@ -107,7 +107,7 @@ const routes = [
       },
       {
         path: '/governance/insights',
-        name: '用户洞察/迭代规划',
+        name: '用户洞察',
         icon: 'RobotOutlined',
         component: './Insights',
       },

@@ -2101,6 +2101,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     rerender(<InsightsPage />);
 
     expect(screen.queryByRole('heading', { level: 1, name: '用户洞察/迭代规划' })).not.toBeInTheDocument();
+    expect(screen.getAllByText('用户洞察').length).toBeGreaterThan(0);
     expect(screen.queryByText('后续阶段')).not.toBeInTheDocument();
     expect(screen.queryByText('当前预留入口，后续接入用户使用、反馈和 AI 迭代建议。')).not.toBeInTheDocument();
     expect(screen.queryByText('待接入')).not.toBeInTheDocument();
