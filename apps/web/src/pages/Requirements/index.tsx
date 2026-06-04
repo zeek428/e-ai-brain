@@ -346,8 +346,8 @@ export default function RequirementsPage() {
         title: '负责人',
       },
       {
-        dataIndex: 'updatedAt',
-        title: '更新时间',
+        dataIndex: 'createdAt',
+        title: '创建时间',
       },
       {
         key: 'actions',

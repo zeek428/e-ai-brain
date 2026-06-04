@@ -1,7 +1,8 @@
-import { ProTable, type ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Checkbox, Form, Input, Modal, Select, Space } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ProColumns } from '@ant-design/pro-components';
+import { Button, Checkbox, Descriptions, Form, Input, Modal, Select, Space, Typography } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
 
+import { DateStringPicker } from '../../components/DateStringPicker';
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ProductContextOption } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
@@ -10,13 +11,11 @@ import {
   createUserFeedback,
   createUserUsageMetric,
   decideIterationSuggestion,
-  fetchPendingAttributionItems,
   fetchProductContextOptions,
   fetchUserInsights,
   updateUserFeedback,
   type IterationSuggestionCreatePayload,
   type IterationSuggestionDecisionPayload,
-  type PendingAttributionItem,
   type UserFeedbackCreatePayload,
   type UserInsightRecord,
   type UserUsageMetricCreatePayload,
@@ -116,6 +115,8 @@ const iterationDecisionOptions = [
   { label: '修改后采纳', value: 'edited_accepted' },
   { label: '驳回', value: 'rejected' },
 ];
+
+const { Paragraph, Text } = Typography;
 
 function buildFeedbackPayload(values: FeedbackFormValues): UserFeedbackCreatePayload {
   return {
@@ -240,118 +241,88 @@ function versionOptionsFromContexts(productContexts: ProductContextOption[], pro
 
 function useInsightColumns(
   onDecide: (row: UserInsightRecord) => void,
+  onDetail: (row: UserInsightRecord) => void,
   onTriage: (row: UserInsightRecord) => void,
 ) {
   return useMemo<ProColumns<UserInsightRecord>[]>(
     () => [
       {
         dataIndex: 'category',
+        ellipsis: true,
         title: '数据类型',
+        width: 96,
       },
       {
         dataIndex: 'summary',
+        ellipsis: true,
+        render: (_, row) => (
+          <Text ellipsis={{ tooltip: row.summary }} style={{ display: 'block', maxWidth: '100%' }}>
+            {row.summary}
+          </Text>
+        ),
         title: '摘要',
+        width: 420,
       },
       {
         dataIndex: 'owner',
+        ellipsis: true,
         title: '归属用户',
+        width: 120,
       },
       {
         dataIndex: 'status',
         title: '状态',
         render: (_, row) => <StatusTag color={statusColor(row.status)} label={row.status} />,
+        width: 100,
       },
       {
         dataIndex: 'updatedAt',
         title: '更新时间',
+        width: 130,
       },
       {
+        fixed: 'right',
         key: 'actions',
         render: (_, row) => {
+          const detailAction = (
+            <Button key="detail" onClick={() => onDetail(row)} size="small" type="link">
+              详情
+            </Button>
+          );
           if (row.category === '用户反馈') {
             return (
-              <Button onClick={() => onTriage(row)} size="small" type="link">
-                处理反馈
-              </Button>
+              <Space size={0}>
+                {detailAction}
+                <Button key="triage" onClick={() => onTriage(row)} size="small" type="link">
+                  处理反馈
+                </Button>
+              </Space>
             );
           }
           if (row.category === '迭代建议' && row.status === 'suggested') {
             return (
-              <Button onClick={() => onDecide(row)} size="small" type="link">
-                确认建议
-              </Button>
+              <Space size={0}>
+                {detailAction}
+                <Button key="decide" onClick={() => onDecide(row)} size="small" type="link">
+                  确认建议
+                </Button>
+              </Space>
             );
           }
-          return null;
+          return detailAction;
         },
         title: '操作',
+        width: 128,
       },
     ],
-    [onDecide, onTriage],
-  );
-}
-
-function pendingAttributionStatusColor(status: string) {
-  if (status === 'resolved') {
-    return 'green';
-  }
-  if (status === 'ignored') {
-    return 'default';
-  }
-  return 'gold';
-}
-
-function usePendingAttributionColumns() {
-  return useMemo<ProColumns<PendingAttributionItem>[]>(
-    () => [
-      {
-        dataIndex: 'sourceType',
-        search: false,
-        title: '来源类型',
-      },
-      {
-        dataIndex: 'sourceSystem',
-        search: false,
-        title: '来源系统',
-      },
-      {
-        dataIndex: 'rawSubjectId',
-        search: false,
-        title: '原始主体 ID',
-        render: (_, row) => row.rawSubjectId ?? '-',
-      },
-      {
-        dataIndex: 'summary',
-        search: false,
-        title: '摘要',
-      },
-      {
-        dataIndex: 'suggestedProductId',
-        search: false,
-        title: '建议产品',
-        render: (_, row) => row.suggestedProductId ?? '-',
-      },
-      {
-        dataIndex: 'status',
-        search: false,
-        title: '状态',
-        render: (_, row) => (
-          <StatusTag color={pendingAttributionStatusColor(row.status)} label={row.status} />
-        ),
-      },
-      {
-        dataIndex: 'createdAt',
-        search: false,
-        title: '创建时间',
-      },
-    ],
-    [],
+    [onDecide, onDetail, onTriage],
   );
 }
 
 export default function InsightsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState<UserInsightRecord | null>(null);
+  const [detailTarget, setDetailTarget] = useState<UserInsightRecord | null>(null);
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [triageTarget, setTriageTarget] = useState<UserInsightRecord | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
@@ -369,26 +340,12 @@ export default function InsightsPage() {
     () => versionOptionsFromContexts(productContexts, suggestionProductId),
     [productContexts, suggestionProductId],
   );
-  const loadPendingAttributionItems = useCallback(async () => {
-    const [usageItems, feedbackItems] = await Promise.all([
-      fetchPendingAttributionItems({ source_type: 'user_usage_metric' }),
-      fetchPendingAttributionItems({ source_type: 'user_feedback' }),
-    ]);
-    return [...usageItems, ...feedbackItems];
-  }, []);
   const {
     error,
     reload,
     rows: dataSource,
     status,
   } = useRemoteRows(fetchUserInsights);
-  const {
-    error: pendingAttributionError,
-    reload: reloadPendingAttribution,
-    rows: pendingAttributionItems,
-    status: pendingAttributionStatus,
-  } = useRemoteRows(loadPendingAttributionItems);
-  const pendingAttributionColumns = usePendingAttributionColumns();
   const columns = useInsightColumns(
     (row) => {
       setDecisionTarget(row);
@@ -400,6 +357,7 @@ export default function InsightsPage() {
         editedTitle: undefined,
       });
     },
+    (row) => setDetailTarget(row),
     (row) => {
       setTriageTarget(row);
       triageForm.setFieldsValue({
@@ -518,6 +476,8 @@ export default function InsightsPage() {
         onReload={() => void reload()}
         primaryAction="登记反馈"
         rowKey="id"
+        tableLayout="fixed"
+        tableScroll={{ x: 994 }}
         tableTitle="用户洞察"
         title="用户洞察"
         toolbarActions={[
@@ -529,36 +489,37 @@ export default function InsightsPage() {
           </Button>,
         ]}
       />
-      <div style={{ margin: '16px 24px 24px' }}>
-        {pendingAttributionError ? (
-          <Alert
-            className="management-list-alert"
-            showIcon
-            title={formatRemoteRowsError(pendingAttributionError)}
-            type="warning"
-          />
+      <Modal
+        footer={null}
+        onCancel={() => setDetailTarget(null)}
+        open={Boolean(detailTarget)}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+        title="用户洞察详情"
+        width={760}
+      >
+        {detailTarget ? (
+          <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+            <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>{detailTarget.summary}</Paragraph>
+            <Descriptions column={2} size="small">
+              <Descriptions.Item label="数据类型">{detailTarget.category}</Descriptions.Item>
+              <Descriptions.Item label="状态">
+                <StatusTag color={statusColor(detailTarget.status)} label={detailTarget.status} />
+              </Descriptions.Item>
+              <Descriptions.Item label="归属用户">{detailTarget.owner}</Descriptions.Item>
+              <Descriptions.Item label="更新时间">{detailTarget.updatedAt}</Descriptions.Item>
+              <Descriptions.Item label="产品 ID">{detailTarget.productId || '-'}</Descriptions.Item>
+              <Descriptions.Item label="版本 ID">{detailTarget.versionId || '-'}</Descriptions.Item>
+              <Descriptions.Item label="模块编码">{detailTarget.moduleCode || '-'}</Descriptions.Item>
+              <Descriptions.Item label="功能编码">{detailTarget.featureCode || '-'}</Descriptions.Item>
+              <Descriptions.Item label="反馈类型">{detailTarget.feedbackType || '-'}</Descriptions.Item>
+              <Descriptions.Item label="规划周期">{detailTarget.planningCycle || '-'}</Descriptions.Item>
+              <Descriptions.Item label="优先级">{detailTarget.priority || '-'}</Descriptions.Item>
+              <Descriptions.Item label="置信度">{detailTarget.confidenceLevel || '-'}</Descriptions.Item>
+              <Descriptions.Item label="转化需求 ID">{detailTarget.convertedRequirementId || '-'}</Descriptions.Item>
+            </Descriptions>
+          </Space>
         ) : null}
-        <ProTable<PendingAttributionItem>
-          cardBordered
-          columns={pendingAttributionColumns}
-          dataSource={pendingAttributionItems}
-          dateFormatter="string"
-          headerTitle="待归属使用/反馈数据"
-          loading={pendingAttributionStatus === 'loading'}
-          options={{
-            density: true,
-            reload: () => void reloadPendingAttribution(),
-            setting: true,
-          }}
-          pagination={{
-            pageSize: 10,
-            showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 条`,
-          }}
-          rowKey="id"
-          search={false}
-        />
-      </div>
+      </Modal>
       <Modal
         destroyOnHidden
         okText="保存"
@@ -608,10 +569,10 @@ export default function InsightsPage() {
             <Input />
           </Form.Item>
           <Form.Item label="窗口开始" name="windowStart" rules={[{ required: true, message: '请输入窗口开始时间' }]}>
-            <Input placeholder="2026-06-01T00:00:00Z" />
+            <DateStringPicker mode="dateTime" placeholder="请选择窗口开始时间" />
           </Form.Item>
           <Form.Item label="窗口结束" name="windowEnd" rules={[{ required: true, message: '请输入窗口结束时间' }]}>
-            <Input placeholder="2026-06-01T01:00:00Z" />
+            <DateStringPicker mode="dateTime" placeholder="请选择窗口结束时间" />
           </Form.Item>
           <Form.Item label="活跃用户" name="activeUsers" rules={[optionalNonNegativeIntegerRule('活跃用户')]}>
             <Input />

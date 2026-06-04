@@ -71,6 +71,7 @@ export type ProductContextOption = {
 
 export type RequirementRecord = {
   content?: string;
+  createdAt: string;
   id: string;
   moduleCode?: string;
   owner: string;
@@ -102,6 +103,7 @@ export type RequirementRecord = {
 
 export type BugRecord = {
   assignee: string;
+  createdAt: string;
   description?: string;
   duplicateOfBugId?: string;
   evidence?: Record<string, unknown>;

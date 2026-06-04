@@ -2,6 +2,7 @@ import { PlusOutlined } from '@ant-design/icons';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Tag } from 'antd';
+import type { TableProps } from 'antd';
 import type { TableRowSelection } from 'antd/es/table/interface';
 import { type ReactNode, useMemo, useState } from 'react';
 
@@ -31,6 +32,8 @@ type ManagementListPageProps<Row extends Record<string, unknown>> = {
   };
   rowKey: keyof Row & string;
   rowSelection?: TableRowSelection<Row>;
+  tableLayout?: TableProps<Row>['tableLayout'];
+  tableScroll?: TableProps<Row>['scroll'];
   tableTitle: string;
   title: string;
   toolbarActions?: ReactNode[];
@@ -116,6 +119,8 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
   remote,
   rowKey,
   rowSelection,
+  tableLayout,
+  tableScroll,
   tableTitle,
   title,
   toolbarActions = [],
@@ -237,10 +242,12 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         }}
         rowKey={rowKey}
         rowSelection={rowSelection}
+        scroll={tableScroll}
         search={{
           defaultCollapsed: false,
           labelWidth: 100,
         }}
+        tableLayout={tableLayout}
         toolBarRender={() => [
           ...toolbarActions,
           ...(primaryAction

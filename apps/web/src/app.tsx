@@ -90,7 +90,7 @@ export const layout = ({ initialState }: { initialState?: InitialState }) => ({
   },
   siderWidth: 256,
   splitMenus: false,
-  title: 'AI Brain',
+  title: 'Enterprise AI Brain',
 });
 
 export function rootContainer(container: ReactNode) {

@@ -314,6 +314,10 @@ export default function BugsPage() {
         title: '处理人',
       },
       {
+        dataIndex: 'createdAt',
+        title: '创建时间',
+      },
+      {
         key: 'actions',
         title: '操作',
         valueType: 'option',

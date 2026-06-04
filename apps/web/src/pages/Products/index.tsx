@@ -4,6 +4,7 @@ import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 
+import { DateStringPicker } from '../../components/DateStringPicker';
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type {
   ProductGitRepositoryRecord,
@@ -798,6 +799,12 @@ export default function ProductsPage() {
                   <Select options={versionCreateStatusOptions} />
                 </Form.Item>
               )}
+              <Form.Item label="开始时间" name="start_date">
+                <DateStringPicker placeholder="请选择开始时间" />
+              </Form.Item>
+              <Form.Item label="计划发布时间" name="release_date">
+                <DateStringPicker placeholder="请选择计划发布时间" />
+              </Form.Item>
             </>
           ) : null}
           {resourceEditor?.kind === 'module' ? (

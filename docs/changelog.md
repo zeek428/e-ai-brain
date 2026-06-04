@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- Bug 管理列表新增“创建时间”展示列，使用后端 `created_at` 标准字段，便于按登记先后追踪缺陷。
 - Bug 登记目标版本下拉改为读取同产品未归档迭代版本，支持在“测试中”和“已发布”版本继续登记缺陷归属，历史归档版本仍过滤。
 - 迭代版本从“开发中”推进到“测试中”时，版本内 `approved/planned/ready_for_dev/designing/developing/code_reviewing` 需求会统一同步为“测试中”，并新增历史数据回填迁移，避免版本已进入测试但需求仍停留在需求池、排期、设计或开发状态。
 - Bug 管理列表新增“迭代版本”展示列和查询条件，`GET /api/bugs` 支持 `version_id` 过滤并返回 `version_code`、`version_name`，便于按版本定位缺陷归属。
@@ -123,7 +124,7 @@
 - Jenkins 发布记录从空集合入口升级为真实业务主体，支持按产品版本登记、筛选、审计记录和 `jenkins_release_records` PostgreSQL 结构表持久化。
 - 线上运行日志指标从空集合入口升级为真实业务主体，支持按产品、模块、环境和时间窗口登记、筛选、审计记录和 `online_log_metrics` PostgreSQL 结构表持久化。
 - 采集运行记录升级为真实业务主体，新增 `/api/collectors/runs` 查询、登记和状态更新接口、`collector_runs` PostgreSQL 结构表、审计事件和研发运营页面操作入口，不自动生成指标数据。
-- 待归属数据队列升级为真实业务主体，新增 `/api/attribution/pending-items` 查询、登记和处理接口、`pending_attribution_items` PostgreSQL 结构表、审计事件、DevOps 处理弹窗和用户洞察只读可见性；队列处理不自动生成指标或反馈数据。
+- 待归属数据队列升级为真实业务主体，新增 `/api/attribution/pending-items` 查询、登记和处理接口、`pending_attribution_items` PostgreSQL 结构表、审计事件和 DevOps 处理弹窗；队列处理不自动生成指标或反馈数据。
 - Code Review 报告生成接入独立 `code_review_executor` 边界，默认适配 Claude Code `code-review` skill 命令，支持显式 `model_gateway` 适配器，并记录 `code_review.executor_called` / `code_review.executor_failed` 审计事件。
 - 新增 `scripts/production_readiness_check.py` 发布门禁脚本，自动检查 Docker Compose、API health、Redis、PostgreSQL pgvector/pgcrypto、模型网关脱敏配置和 GitLab MR 只读 preview/snapshot。
 - 首页 IT 团队看板从静态欢迎页升级为真实 MVP 聚合视图，展示产品、需求、AI 任务、待确认 Review、知识沉淀和审计摘要。
@@ -160,6 +161,12 @@
 - 审计与运行列表新增真实详情弹窗和生命周期链路追踪操作，可从审计主体查看上下游、风险信号和缺失上下文。
 
 ### Changed
+- 用户洞察列表改为固定列宽和固定表格布局，操作列固定在右侧，长摘要使用省略展示并新增“详情”弹窗，避免反馈内容过长导致页面变形。
+- 需求管理列表时间列从“更新时间”调整为“创建时间”，使用后端 `created_at` 标准字段，便于按需求提交先后查看。
+- 前端所有日期/时间登记字段统一改为 Ant Design DatePicker：迭代版本、产品配置版本、用户洞察使用指标、研发运营 GitLab 指标、Jenkins 发布、线上日志和采集运行登记不再使用普通文本输入，并保持原 API 日期字符串格式。
+- 用户洞察列表合并使用趋势、用户反馈和迭代建议后，默认统一按更新时间倒序展示，不再先按数据类型分组排序。
+- 前端左上角品牌名从 `AI Brain` 调整为 `Enterprise AI Brain`。
+- 用户洞察页面移除“待归属使用/反馈数据”只读表，待归属队列统一保留在研发运营页面处理，避免出现无操作按钮的重复入口。
 - 前端运营治理菜单将“用户洞察/迭代规划”展示名收敛为“用户洞察”，页面内继续保留使用趋势、用户反馈和迭代建议能力，文档以“用户洞察（含迭代规划建议）”说明领域边界。
 - `PERSISTENCE_MODE` 默认值改为 `postgres`；非测试环境配置 `memory` 会 fail fast，`MemoryStore` 降级为 `APP_ENV=test/testing/pytest` 下的测试 helper。
 - 前端产品管理、需求列表、迭代版本和产品上下文下拉改用批量版本接口与后端聚合字段，移除逐产品拉取版本导致的 N+1 页面查询。

@@ -380,6 +380,12 @@ import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
 import TaskCenterPage from '../src/pages/TaskCenter';
 import { getInitialState } from '../src/app';
 
+function fillDatePicker(label: string, value: string) {
+  const input = screen.getByLabelText(label);
+  fireEvent.change(input, { target: { value } });
+  fireEvent.blur(input);
+}
+
 const roleCatalogEnvelope = {
   data: {
     items: [
@@ -2369,6 +2375,15 @@ describe('AI Brain Ant Design Pro workbench', () => {
     render(<InsightsPage />);
 
     expect(await screen.findByText('已有反馈内容')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '数据类型' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '摘要' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '操作' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+    expect(await screen.findByRole('dialog', { name: '用户洞察详情' })).toBeInTheDocument();
+    expect(screen.getAllByText('已有反馈内容')).not.toHaveLength(0);
+    expect(screen.getByText('产品 ID')).toBeInTheDocument();
+    expect(screen.getByText('product_api')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByLabelText('Close')[0]);
     fireEvent.click(screen.getByRole('button', { name: '登记反馈' }));
     fireEvent.mouseDown(screen.getByLabelText('所属产品'));
     fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
@@ -2404,6 +2419,83 @@ describe('AI Brain Ant Design Pro workbench', () => {
         }),
       ]),
     );
+  });
+
+  it('sorts user insights by updated time across insight categories', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/product-versions?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/insights/usage-metrics') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                feature_code: 'old-usage',
+                id: 'usage_old',
+                product_id: 'product_api',
+                status: 'active',
+                updated_at: '2026-06-01T08:00:00Z',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/insights/user-feedback') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '最新反馈',
+                created_by: 'user_admin',
+                id: 'feedback_new',
+                product_id: 'product_api',
+                status: 'open',
+                updated_at: '2026-06-04T09:00:00Z',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/planning/iteration-suggestions') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_by: 'user_admin',
+                id: 'suggestion_mid',
+                product_id: 'product_api',
+                status: 'suggested',
+                title: '中间建议',
+                updated_at: '2026-06-03T08:00:00Z',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<InsightsPage />);
+
+    await screen.findByText('最新反馈');
+    const tableText = screen.getByRole('table').textContent ?? '';
+    expect(tableText.indexOf('最新反馈')).toBeLessThan(tableText.indexOf('中间建议'));
+    expect(tableText.indexOf('中间建议')).toBeLessThan(tableText.indexOf('old-usage'));
   });
 
   it('records real usage metrics from the insights page', async () => {
@@ -2453,8 +2545,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.change(screen.getByLabelText('模块编码'), { target: { value: 'search' } });
     fireEvent.change(screen.getByLabelText('功能编码'), { target: { value: 'semantic-search' } });
     fireEvent.change(screen.getByLabelText('用户分群'), { target: { value: 'rd' } });
-    fireEvent.change(screen.getByLabelText('窗口开始'), { target: { value: '2026-06-01T00:00:00Z' } });
-    fireEvent.change(screen.getByLabelText('窗口结束'), { target: { value: '2026-06-01T01:00:00Z' } });
+    fillDatePicker('窗口开始', '2026-06-01T00:00:00Z');
+    fillDatePicker('窗口结束', '2026-06-01T01:00:00Z');
     fireEvent.change(screen.getByLabelText('活跃用户'), { target: { value: '42' } });
     fireEvent.change(screen.getByLabelText('事件次数'), { target: { value: '120' } });
     fireEvent.change(screen.getByLabelText('转化次数'), { target: { value: '15' } });
@@ -2557,7 +2649,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
     fireEvent.mouseDown(screen.getByLabelText('Git 仓库'));
     fireEvent.click(await screen.findByRole('option', { name: '研发平台 API (rd/platform-api)' }));
-    fireEvent.change(screen.getByLabelText('指标日期'), { target: { value: '2026-06-01' } });
+    fillDatePicker('指标日期', '2026-06-01');
     fireEvent.change(screen.getByLabelText('提交数'), { target: { value: '7' } });
     fireEvent.change(screen.getByLabelText('活跃作者数'), { target: { value: '4' } });
     fireEvent.change(screen.getByLabelText('MR 数'), { target: { value: '2' } });
@@ -2659,8 +2751,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.change(screen.getByLabelText('触发人'), { target: { value: 'jenkins-admin' } });
     fireEvent.change(screen.getByLabelText('Commit SHA'), { target: { value: 'abc123def456' } });
     fireEvent.change(screen.getByLabelText('耗时秒数'), { target: { value: '480' } });
-    fireEvent.change(screen.getByLabelText('开始时间'), { target: { value: '2026-06-01T12:22:00Z' } });
-    fireEvent.change(screen.getByLabelText('部署时间'), { target: { value: '2026-06-01T12:30:00Z' } });
+    fillDatePicker('开始时间', '2026-06-01T12:22:00Z');
+    fillDatePicker('部署时间', '2026-06-01T12:30:00Z');
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     await waitFor(() =>
@@ -2743,8 +2835,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.click(screen.getByRole('button', { name: '登记线上日志' }));
     fireEvent.change(screen.getByLabelText('模块编码'), { target: { value: 'checkout' } });
     fireEvent.change(screen.getByLabelText('运行环境'), { target: { value: 'prod' } });
-    fireEvent.change(screen.getByLabelText('窗口开始'), { target: { value: '2026-06-01T00:00:00Z' } });
-    fireEvent.change(screen.getByLabelText('窗口结束'), { target: { value: '2026-06-01T01:00:00Z' } });
+    fillDatePicker('窗口开始', '2026-06-01T00:00:00Z');
+    fillDatePicker('窗口结束', '2026-06-01T01:00:00Z');
     fireEvent.change(screen.getByLabelText('请求数'), { target: { value: '2400' } });
     fireEvent.change(screen.getByLabelText('错误数'), { target: { value: '12' } });
     fireEvent.change(screen.getByLabelText('P95 延迟毫秒'), { target: { value: '318.5' } });
@@ -3072,7 +3164,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.mouseDown(screen.getByLabelText('所属产品'));
     fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
     fireEvent.change(screen.getByLabelText('来源系统'), { target: { value: 'gitlab' } });
-    fireEvent.change(screen.getByLabelText('开始时间'), { target: { value: '2026-06-01T08:00:00Z' } });
+    fillDatePicker('开始时间', '2026-06-01T08:00:00Z');
     fireEvent.change(screen.getByLabelText('导入记录数'), { target: { value: '3' } });
     fireEvent.change(screen.getByLabelText('Payload 摘要 JSON'), {
       target: { value: '{"repository_path":"rd/platform-api"}' },
@@ -3322,6 +3414,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('form', { name: '查询表格' })).toBeInTheDocument();
     expect(screen.getByText('需求列表')).toBeInTheDocument();
     expect(screen.getAllByText('需求标题')).not.toHaveLength(0);
+    expect(screen.getByText('创建时间')).toBeInTheDocument();
+    expect(screen.queryByText('更新时间')).not.toBeInTheDocument();
     expect(screen.queryByText('产品详细设计辅助')).not.toBeInTheDocument();
 
     rerender(<BugsPage />);
@@ -4221,6 +4315,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
     render(<RequirementsPage />);
 
     await screen.findByText('归集需求一');
+    expect(screen.getByText('创建时间')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-04 08:00')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-04 08:10')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('迭代版本'), { target: { value: '2026-05' } });
     fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
@@ -4851,6 +4948,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
             items: [
               {
                 assignee: 'qa@example.com',
+                created_at: '2026-06-04T08:00:00+00:00',
                 description: '支付链路失败',
                 duplicate_of_bug_id: 'bug_target',
                 evidence: { log_id: 'log-1' },
@@ -4867,6 +4965,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
               },
               {
                 assignee: 'rd@example.com',
+                created_at: '2026-06-04T08:10:00+00:00',
                 description: '同类支付问题',
                 id: 'bug_target',
                 module_code: 'checkout',
@@ -4895,6 +4994,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
     render(<BugsPage />);
 
     expect(await screen.findByText('支付失败')).toBeInTheDocument();
+    expect(screen.getByText('创建时间')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-04 08:00')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-04 08:10')).toBeInTheDocument();
     expect(screen.getByText('v1 MVP')).toBeInTheDocument();
     expect(screen.getByText('v2 回归')).toBeInTheDocument();
 

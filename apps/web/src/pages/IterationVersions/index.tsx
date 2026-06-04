@@ -3,6 +3,7 @@ import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, message } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 
+import { DateStringPicker } from '../../components/DateStringPicker';
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ProductContextOption, ProductVersionRecord, RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
@@ -513,10 +514,10 @@ export default function IterationVersionsPage() {
             </Form.Item>
           ) : null}
           <Form.Item label="开始时间" name="start_date">
-            <Input placeholder="YYYY-MM-DD" />
+            <DateStringPicker placeholder="请选择开始时间" />
           </Form.Item>
           <Form.Item label="计划发布时间" name="release_date">
-            <Input placeholder="YYYY-MM-DD" />
+            <DateStringPicker placeholder="请选择计划发布时间" />
           </Form.Item>
           <Form.Item label="目标说明" name="description">
             <Input.TextArea rows={3} />

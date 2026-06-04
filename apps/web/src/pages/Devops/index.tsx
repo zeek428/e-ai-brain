@@ -2,6 +2,7 @@ import { ProTable, type ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Form, Input, Modal, Radio, Select, Space } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { DateStringPicker } from '../../components/DateStringPicker';
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ProductContextOption, ProductModuleRecord, RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
@@ -1019,7 +1020,7 @@ export default function DevopsPage() {
             <Select options={collectorRunStatusOptions} />
           </Form.Item>
           <Form.Item label="开始时间" name="startedAt">
-            <Input placeholder="2026-06-01T08:00:00Z" />
+            <DateStringPicker mode="dateTime" placeholder="请选择开始时间" />
           </Form.Item>
           <Form.Item label="导入记录数" name="recordsImported" rules={[optionalNonNegativeIntegerRule('导入记录数')]}>
             <Input />
@@ -1151,7 +1152,7 @@ export default function DevopsPage() {
             <Select options={gitRepositoryOptions} />
           </Form.Item>
           <Form.Item label="指标日期" name="metricDate" rules={[{ required: true, message: '请输入指标日期' }]}>
-            <Input placeholder="2026-06-01" />
+            <DateStringPicker placeholder="请选择指标日期" />
           </Form.Item>
           <Form.Item label="提交数" name="commitCount" rules={[optionalNonNegativeIntegerRule('提交数')]}>
             <Input />
@@ -1221,10 +1222,10 @@ export default function DevopsPage() {
             <Input />
           </Form.Item>
           <Form.Item label="开始时间" name="startedAt">
-            <Input placeholder="2026-06-01T12:22:00Z" />
+            <DateStringPicker mode="dateTime" placeholder="请选择开始时间" />
           </Form.Item>
           <Form.Item label="部署时间" name="deployedAt">
-            <Input placeholder="2026-06-01T12:30:00Z" />
+            <DateStringPicker mode="dateTime" placeholder="请选择部署时间" />
           </Form.Item>
           <Form.Item label="失败原因" name="failureReason">
             <Input.TextArea rows={3} />
@@ -1252,10 +1253,10 @@ export default function DevopsPage() {
             <Input placeholder="prod" />
           </Form.Item>
           <Form.Item label="窗口开始" name="windowStart" rules={[{ required: true, message: '请输入窗口开始时间' }]}>
-            <Input placeholder="2026-06-01T00:00:00Z" />
+            <DateStringPicker mode="dateTime" placeholder="请选择窗口开始时间" />
           </Form.Item>
           <Form.Item label="窗口结束" name="windowEnd" rules={[{ required: true, message: '请输入窗口结束时间' }]}>
-            <Input placeholder="2026-06-01T01:00:00Z" />
+            <DateStringPicker mode="dateTime" placeholder="请选择窗口结束时间" />
           </Form.Item>
           <Form.Item label="请求数" name="requestCount" rules={[optionalNonNegativeIntegerRule('请求数')]}>
             <Input />

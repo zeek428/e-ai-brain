@@ -252,6 +252,7 @@ export type UserInsightRecord = {
   status: string;
   summary: string;
   updatedAt: string;
+  updatedAtSortValue?: string;
   versionId?: string;
 };
 
@@ -988,6 +989,7 @@ type LifecycleContextResponse = {
 
 type BugListItem = {
   assignee?: string | null;
+  created_at?: string;
   description?: string;
   duplicate_of_bug_id?: string | null;
   evidence?: unknown;
@@ -2289,6 +2291,7 @@ function mapRequirementRecord(requirement: RequirementListItem): RequirementReco
     productId: requirement.product_id,
     status: normalizeRequirementStatus(requirement.status),
     title: requirement.title,
+    createdAt: formatListDate(requirement.created_at),
     updatedAt: formatListDate(requirement.updated_at ?? requirement.created_at),
     versionId: requirement.version_id,
     versionName: requirement.version_id
@@ -2526,6 +2529,7 @@ export async function fetchManagementBugs(): Promise<BugRecord[]> {
 
   return bugs.items.map((bug) => ({
     assignee: bug.assignee ?? '-',
+    createdAt: formatListDate(bug.created_at),
     description: bug.description,
     duplicateOfBugId: bug.duplicate_of_bug_id ?? undefined,
     evidence: normalizeObjectRecord(bug.evidence),
@@ -3493,35 +3497,51 @@ export async function resolvePendingAttributionItem(
 }
 
 function mapUserInsights(category: string, items: FlexibleListItem[]): UserInsightRecord[] {
-  return items.map((item, index) => ({
-    category,
-    confidenceLevel: formatUnknownValue(item.confidence_level),
-    convertedRequirementId: formatUnknownValue(item.converted_requirement_id),
-    featureCode: formatUnknownValue(item.feature_code),
-    feedbackType: formatUnknownValue(item.feedback_type),
-    id: formatUnknownValue(item.id ?? `${category}-${index}`),
-    moduleCode: formatUnknownValue(item.module_code),
-    owner: formatUnknownValue(firstKnownValue(item, ['user_id', 'owner_id', 'created_by', 'actor_id'])),
-    planningCycle: formatUnknownValue(item.planning_cycle),
-    priority: formatUnknownValue(item.priority),
-    productId: formatUnknownValue(item.product_id),
-    status: formatUnknownValue(item.status),
-    summary: formatUnknownValue(
-      firstKnownValue(item, [
-        'summary',
-        'title',
-        'content',
-        'feedback_text',
-        'suggestion',
-        'recommendation_reason',
-        'feature_code',
-      ]),
-    ),
-    updatedAt: formatListDate(
-      formatUnknownValue(firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'window_start'])),
-    ),
-    versionId: formatUnknownValue(item.version_id),
-  }));
+  return items.map((item, index) => {
+    const updatedAtSortValue = formatUnknownValue(
+      firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'window_start']),
+    );
+    return {
+      category,
+      confidenceLevel: formatUnknownValue(item.confidence_level),
+      convertedRequirementId: formatUnknownValue(item.converted_requirement_id),
+      featureCode: formatUnknownValue(item.feature_code),
+      feedbackType: formatUnknownValue(item.feedback_type),
+      id: formatUnknownValue(item.id ?? `${category}-${index}`),
+      moduleCode: formatUnknownValue(item.module_code),
+      owner: formatUnknownValue(firstKnownValue(item, ['user_id', 'owner_id', 'created_by', 'actor_id'])),
+      planningCycle: formatUnknownValue(item.planning_cycle),
+      priority: formatUnknownValue(item.priority),
+      productId: formatUnknownValue(item.product_id),
+      status: formatUnknownValue(item.status),
+      summary: formatUnknownValue(
+        firstKnownValue(item, [
+          'summary',
+          'title',
+          'content',
+          'feedback_text',
+          'suggestion',
+          'recommendation_reason',
+          'feature_code',
+        ]),
+      ),
+      updatedAt: formatListDate(updatedAtSortValue),
+      updatedAtSortValue,
+      versionId: formatUnknownValue(item.version_id),
+    };
+  });
+}
+
+function sortUserInsightsByUpdatedAt(records: UserInsightRecord[]): UserInsightRecord[] {
+  return [...records].sort((left, right) => {
+    const rightTime = Date.parse(right.updatedAtSortValue ?? '');
+    const leftTime = Date.parse(left.updatedAtSortValue ?? '');
+    const timeDiff = (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    return right.id.localeCompare(left.id);
+  });
 }
 
 export async function fetchUserInsights(): Promise<UserInsightRecord[]> {
@@ -3532,11 +3552,11 @@ export async function fetchUserInsights(): Promise<UserInsightRecord[]> {
     apiRequest<ListResponse<FlexibleListItem>>('/api/planning/iteration-suggestions', { token }),
   ]);
 
-  return [
+  return sortUserInsightsByUpdatedAt([
     ...mapUserInsights('使用趋势', usageMetrics.items),
     ...mapUserInsights('用户反馈', feedbackItems.items),
     ...mapUserInsights('迭代建议', iterationSuggestions.items),
-  ];
+  ]);
 }
 
 export async function createUserFeedback(payload: UserFeedbackCreatePayload): Promise<FlexibleListItem> {
