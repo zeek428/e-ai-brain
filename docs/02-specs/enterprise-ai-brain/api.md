@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.89 |
+| 功能版本 | v1.1.90 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -111,6 +111,7 @@
 | v1.1.87 | 2026-06-04 | 新增研发运营和用户洞察统一聚合列表接口，前端主列表改为服务端分页、排序和筛选 | Codex |
 | v1.1.88 | 2026-06-04 | 新增需求全链路详情接口，一次返回需求、迭代版本、任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀时间线 | Codex |
 | v1.1.89 | 2026-06-04 | 新增 Bug 批量处理接口，支持多选批量更新状态、严重级别或处理人并记录批次审计 | Codex |
+| v1.1.90 | 2026-06-05 | AI 助手系统上下文新增迭代进度、待确认 Review、Bug 分布、代码评审结论和知识沉淀摘要 | Codex |
 
 ---
 
@@ -120,7 +121,7 @@
 
 API 面向 React 工作台，覆盖认证、业务大脑、AI 助手、产品上下文、研发全链路 AI 任务、GitLab MR / GitHub PR 代码 Review、软件研发全流程感知、人工确认、Bug 管理、知识中心、模型网关配置、GitLab 代码质量、线上运行日志、Jenkins 发布、用户使用洞察、用户反馈、AI 迭代规划建议、首页 IT 团队看板、模拟回写、Markdown 导出和审计查询。
 
-当前源码实现说明：MVP 骨架已实现认证、AI 助手、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。AI 助手通过模型网关 Chat 能力回答 AI Brain 系统相关问题，请求会携带脱敏系统上下文摘要，包括产品、需求、AI 任务、Git 仓库和模型网关配置状态；模型日志只记录 `purpose=assistant_chat` 元数据，不保存完整用户消息、系统上下文或助手回答；完整对话内容按当前登录用户写入助手会话与消息结构表，并且历史查询只返回本人会话。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
+当前源码实现说明：MVP 骨架已实现认证、AI 助手、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。AI 助手通过模型网关 Chat 能力回答 AI Brain 系统相关问题，请求会携带脱敏系统上下文摘要，包括产品、迭代版本进度、需求、AI 任务、待确认 Review、最近代码评审结论、Bug 分布、高风险 Bug、知识沉淀、Git 仓库和模型网关配置状态；模型日志只记录 `purpose=assistant_chat` 元数据，不保存完整用户消息、系统上下文或助手回答；完整对话内容按当前登录用户写入助手会话与消息结构表，并且历史查询只返回本人会话。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
 
 产品管理页面可维护产品、模块、Git 资源和产品相关系统；需求交付下的迭代版本页面维护 `product_versions`，用于需求排期和任务版本上下文。`GET /api/product-versions` 支持批量查询版本并返回 `product_code`、`product_name` 投影，`active_only=true` 只返回 active 版本；`GET /api/requirements` 返回需求主体同时带 `product_code`、`product_name`、`version_code`、`version_name`；`POST /api/requirements/batch-schedule` 支持将多条同产品 `approved/planned` 需求批量归集到 `planning` 或 `active` 迭代版本，并返回 updated/skipped 明细；`GET /api/ai-tasks` 在 PostgreSQL 模式按产品表 SQL join 返回 `product_name`，并支持 `product_id`、`created_from`、`created_to` 等筛选。产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置、模型调用元数据、AI 助手会话和助手消息会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`、`assistant_conversations`、`assistant_messages`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 

@@ -3951,16 +3951,119 @@ def _assistant_system_context(
         for task in current_store.ai_tasks.values()
         if not product_ids or task.get("product_id") in product_ids
     ]
+    task_by_id = {str(task["id"]): task for task in tasks}
+    task_ids = set(task_by_id)
+    versions = [
+        version
+        for version in current_store.product_versions.values()
+        if not product_ids or version.get("product_id") in product_ids
+    ]
+    bugs = [
+        bug
+        for bug in current_store.bugs.values()
+        if not product_ids or bug.get("product_id") in product_ids
+    ]
+    open_bugs = [bug for bug in bugs if bug.get("status") != "closed"]
+    high_severity_bugs = [
+        bug for bug in open_bugs if bug.get("severity") in {"blocker", "critical", "major"}
+    ]
+    pending_reviews = [
+        review
+        for review in current_store.human_reviews.values()
+        if review.get("status") == "pending" and str(review.get("ai_task_id")) in task_ids
+    ]
+    code_review_reports = [
+        report
+        for report in current_store.code_review_reports.values()
+        if str(report.get("task_id")) in task_ids
+    ]
+    knowledge_deposits = [
+        deposit
+        for deposit in current_store.knowledge_deposits.values()
+        if str(deposit.get("ai_task_id")) in task_ids
+    ]
     repositories = [
         repository
         for repository in current_store.product_git_repositories.values()
         if not product_ids or repository.get("product_id") in product_ids
     ]
+    version_progress = []
+    for version in sorted(
+        versions,
+        key=lambda item: item.get("updated_at") or item.get("created_at") or item.get("code") or "",
+        reverse=True,
+    )[:8]:
+        version_requirements = [
+            requirement
+            for requirement in requirements
+            if requirement.get("version_id") == version["id"]
+        ]
+        version_requirement_ids = {requirement["id"] for requirement in version_requirements}
+        version_tasks = [
+            task
+            for task in tasks
+            if task.get("version_id") == version["id"]
+            or task.get("requirement_id") in version_requirement_ids
+        ]
+        version_task_ids = {task["id"] for task in version_tasks}
+        version_bugs = [bug for bug in bugs if bug.get("version_id") == version["id"]]
+        version_progress.append(
+            {
+                "ai_task_count": len(version_tasks),
+                "ai_tasks_by_status": _count_by(version_tasks, "status"),
+                "code": version.get("code"),
+                "id": version["id"],
+                "name": version.get("name"),
+                "open_bug_count": len(
+                    [bug for bug in version_bugs if bug.get("status") != "closed"]
+                ),
+                "pending_review_count": len(
+                    [
+                        review
+                        for review in pending_reviews
+                        if review.get("ai_task_id") in version_task_ids
+                    ]
+                ),
+                "requirement_count": len(version_requirements),
+                "requirements_by_status": _count_by(version_requirements, "status"),
+                "status": version.get("status"),
+            }
+        )
+    blocked_requirement_ids = {
+        str(bug.get("requirement_id"))
+        for bug in high_severity_bugs
+        if bug.get("requirement_id")
+    }
+    blocked_requirements = [
+        {
+            "id": requirement["id"],
+            "priority": requirement.get("priority"),
+            "reason": (
+                "high_severity_open_bug"
+                if requirement["id"] in blocked_requirement_ids
+                else f"status:{requirement.get('status')}"
+            ),
+            "status": requirement.get("status"),
+            "title": requirement.get("title"),
+            "version_id": requirement.get("version_id"),
+        }
+        for requirement in requirements
+        if requirement["id"] in blocked_requirement_ids
+        or requirement.get("status") in {"rejected", "deferred", "cancelled"}
+    ][:8]
     default_gateway = _default_model_gateway_config(current_store)
     return {
         "ai_tasks_by_status": _count_by(tasks, "status"),
         "ai_tasks_by_type": _count_by(tasks, "task_type"),
         "ai_tasks_total": len(tasks),
+        "blocked_requirements": blocked_requirements,
+        "bug_distribution": {
+            "by_severity": _count_by(bugs, "severity"),
+            "by_status": _count_by(bugs, "status"),
+            "high_severity_open": len(high_severity_bugs),
+            "open": len(open_bugs),
+            "total": len(bugs),
+        },
         "git_repositories": [
             {
                 "default_branch": repository.get("default_branch"),
@@ -3971,6 +4074,8 @@ def _assistant_system_context(
             }
             for repository in repositories[:8]
         ],
+        "iteration_progress": version_progress,
+        "knowledge_deposits_total": len(knowledge_deposits),
         "latest_requirements": [
             {
                 "id": requirement["id"],
@@ -3993,6 +4098,34 @@ def _assistant_system_context(
             }
             for task in sorted(tasks, key=lambda item: item.get("created_at", ""), reverse=True)[:8]
         ],
+        "open_high_severity_bugs": [
+            {
+                "id": bug["id"],
+                "requirement_id": bug.get("requirement_id"),
+                "severity": bug.get("severity"),
+                "status": bug.get("status"),
+                "title": bug.get("title"),
+                "version_id": bug.get("version_id"),
+            }
+            for bug in sorted(
+                high_severity_bugs,
+                key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+                reverse=True,
+            )[:6]
+        ],
+        "pending_reviews": [
+            {
+                "ai_task_id": review.get("ai_task_id"),
+                "id": review.get("id"),
+                "review_type": review.get("review_type"),
+                "task_title": task_by_id.get(str(review.get("ai_task_id")), {}).get("title"),
+            }
+            for review in sorted(
+                pending_reviews,
+                key=lambda item: item.get("created_at") or item.get("updated_at") or "",
+                reverse=True,
+            )[:8]
+        ],
         "model_gateway": {
             "api_key_configured": bool(default_gateway and default_gateway.get("api_key")),
             "chat_model": default_gateway.get("default_chat_model") if default_gateway else None,
@@ -4008,7 +4141,42 @@ def _assistant_system_context(
             }
             for product in products[:8]
         ],
+        "recent_code_review_reports": [
+            {
+                "finding_count": len(report.get("findings") or []),
+                "id": report.get("id"),
+                "risk_level": report.get("risk_level"),
+                "status": report.get("status"),
+                "summary": report.get("summary"),
+                "task_id": report.get("task_id"),
+                "task_title": task_by_id.get(str(report.get("task_id")), {}).get("title"),
+            }
+            for report in sorted(
+                code_review_reports,
+                key=lambda item: _first_list_value(
+                    item,
+                    ("archived_at", "updated_at", "created_at", "id"),
+                )
+                or "",
+                reverse=True,
+            )[:6]
+        ],
+        "recent_knowledge_deposits": [
+            {
+                "ai_task_id": deposit.get("ai_task_id"),
+                "id": deposit.get("id"),
+                "status": deposit.get("status"),
+                "task_title": task_by_id.get(str(deposit.get("ai_task_id")), {}).get("title"),
+                "title": deposit.get("title"),
+            }
+            for deposit in sorted(
+                knowledge_deposits,
+                key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+                reverse=True,
+            )[:6]
+        ],
         "requirements_by_status": _count_by(requirements, "status"),
+        "requirements_by_version": _count_by(requirements, "version_id"),
         "requirements_total": len(requirements),
     }
 
@@ -4034,7 +4202,8 @@ def _assistant_chat_messages(
                 "You are AI Brain's assistant for R&D delivery work. Answer in Chinese. "
                 "Use system_context to answer questions about AI Brain configuration, "
                 "development progress, requirements, tasks, repositories, "
-                "and model gateway status. "
+                "iteration progress, pending reviews, code review conclusions, "
+                "bug distribution, knowledge deposits, and model gateway status. "
                 "Return one compact JSON object with string field answer and optional "
                 "array field suggestions. Do not include markdown fences."
             ),

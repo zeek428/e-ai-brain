@@ -133,6 +133,59 @@ def test_ai_assistant_chat_includes_ai_brain_system_progress_context(monkeypatch
         headers=headers,
     )
     task = task_response.json()["data"]
+    task_id = task["task_id"]
+    now = "2026-06-05T08:00:00+00:00"
+    app.state.store.human_reviews["review_assistant_pending"] = {
+        "ai_task_id": task_id,
+        "created_at": now,
+        "id": "review_assistant_pending",
+        "review_type": "product_design",
+        "status": "pending",
+        "updated_at": now,
+        "version": 1,
+    }
+    app.state.store.bugs["bug_assistant_blocker"] = {
+        "assignee": "qa@example.com",
+        "created_at": now,
+        "description": "助手上下文应展示高优先级阻塞缺陷。",
+        "duplicate_of_bug_id": None,
+        "evidence": {},
+        "id": "bug_assistant_blocker",
+        "module_code": None,
+        "product_id": product["id"],
+        "related_task_id": task_id,
+        "reproduce_steps": ["打开助手", "查看进展"],
+        "requirement_id": requirement["id"],
+        "severity": "critical",
+        "source": "manual_test",
+        "status": "open",
+        "title": "助手进度阻塞 Bug",
+        "updated_at": now,
+        "version_id": version["id"],
+    }
+    app.state.store.code_review_reports["report_assistant_recent"] = {
+        "archived_at": now,
+        "executor": {"executor_name": "pytest-code-review"},
+        "findings": [{"file": "apps/web/src/pages/Assistant/index.tsx", "severity": "low"}],
+        "gitlab_mr_snapshot_id": "snapshot_assistant_recent",
+        "gitlab_writeback_performed": False,
+        "id": "report_assistant_recent",
+        "review_id": "review_assistant_pending",
+        "risk_level": "low",
+        "status": "confirmed",
+        "summary": "最近代码 Review 结论：风险低，关注助手上下文覆盖。",
+        "task_id": task_id,
+    }
+    app.state.store.knowledge_deposits["deposit_assistant_recent"] = {
+        "ai_task_id": task_id,
+        "content": "AI 助手上下文增强验证记录。",
+        "created_at": now,
+        "id": "deposit_assistant_recent",
+        "knowledge_document_id": None,
+        "status": "pending",
+        "title": "AI 助手上下文增强知识沉淀",
+        "updated_at": now,
+    }
 
     class FakeResponse:
         def __enter__(self):
@@ -182,6 +235,16 @@ def test_ai_assistant_chat_includes_ai_brain_system_progress_context(monkeypatch
     assert "ai_tasks_total" in user_message
     assert "AI 助手聊天界面" in user_message
     assert task["task_id"] in user_message
+    assert "iteration_progress" in user_message
+    assert "pending_reviews" in user_message
+    assert "review_assistant_pending" in user_message
+    assert "bug_distribution" in user_message
+    assert "助手进度阻塞 Bug" in user_message
+    assert "blocked_requirements" in user_message
+    assert "recent_code_review_reports" in user_message
+    assert "最近代码 Review 结论：风险低" in user_message
+    assert "knowledge_deposits_total" in user_message
+    assert "AI 助手上下文增强知识沉淀" in user_message
 
 
 def test_ai_assistant_chat_persists_user_scoped_conversation_history(monkeypatch):

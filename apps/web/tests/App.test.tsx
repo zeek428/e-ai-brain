@@ -1724,6 +1724,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     expect(screen.getAllByText('AI 助手').length).toBeGreaterThan(0);
     expect(screen.getAllByText('项目进展').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('阻塞与待确认').length).toBeGreaterThan(0);
     expect(screen.getAllByText('模型网关').length).toBeGreaterThan(0);
     fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
       target: { value: 'AI Brain 项目现在开发到哪里了？' },

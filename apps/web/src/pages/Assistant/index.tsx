@@ -1,6 +1,7 @@
 import {
   ClockCircleOutlined,
   DatabaseOutlined,
+  ExclamationCircleOutlined,
   MessageOutlined,
   PlusOutlined,
   ProjectOutlined,
@@ -48,6 +49,11 @@ const starterPrompts = [
     icon: <DatabaseOutlined />,
     label: '系统数据',
     prompt: '当前产品、需求、任务和知识沉淀情况如何？',
+  },
+  {
+    icon: <ExclamationCircleOutlined />,
+    label: '阻塞与待确认',
+    prompt: '当前迭代有哪些阻塞需求、待确认 Review、代码评审结论和高风险 Bug？',
   },
   {
     icon: <ClockCircleOutlined />,
@@ -235,6 +241,7 @@ export default function AssistantPage() {
             <Space size={[6, 6]} wrap>
               <Tag color="blue">AI Brain</Tag>
               <Tag color="green">项目进展</Tag>
+              <Tag color="red">阻塞与待确认</Tag>
               <Tag color="purple">模型网关</Tag>
               <Tag color="geekblue">GitHub PR</Tag>
             </Space>
