@@ -60,7 +60,10 @@ def _runtime_data_access_mode() -> str:
 
 def build_store() -> MemoryStore:
     if settings.persistence_mode == "postgres":
-        repository = PostgresSnapshotRepository(settings.database_url)
+        repository = PostgresSnapshotRepository(
+            settings.database_url,
+            pool_max_size=settings.database_pool_max_size,
+        )
         return PostgresRuntimeStore(repository)
     _ensure_memory_mode_allowed()
     if settings.persistence_mode != "memory":
@@ -70,7 +73,10 @@ def build_store() -> MemoryStore:
 
 def build_user_repository() -> MemoryUserRepository | PostgresUserRepository:
     if settings.persistence_mode == "postgres":
-        return PostgresUserRepository(settings.database_url)
+        return PostgresUserRepository(
+            settings.database_url,
+            pool_max_size=settings.database_pool_max_size,
+        )
     _ensure_memory_mode_allowed()
     if settings.persistence_mode != "memory":
         raise RuntimeError(f"Unsupported PERSISTENCE_MODE={settings.persistence_mode}")
@@ -801,6 +807,19 @@ def _task_allowed_roles(task: dict[str, Any]) -> set[str]:
 def _can_read_task(user: dict[str, Any], task: dict[str, Any]) -> bool:
     user_roles = set(user["roles"])
     return "admin" in user_roles or bool(user_roles.intersection(_task_allowed_roles(task)))
+
+
+def _task_read_scope(user: dict[str, Any]) -> str:
+    user_roles = set(user["roles"])
+    if "admin" in user_roles or "rd_owner" in user_roles:
+        return "all"
+    if "product_owner" in user_roles and "reviewer" in user_roles:
+        return "all"
+    if "product_owner" in user_roles:
+        return "non_code_review"
+    if "reviewer" in user_roles:
+        return "code_review"
+    return "none"
 
 
 def _require_task_read_role(user: dict[str, Any], task: dict[str, Any]) -> None:
@@ -2182,6 +2201,16 @@ def _task_workflow_query_repository(current_store: MemoryStore) -> Any | None:
         return None
     required_methods = ("get_task_workflow_source_rows",)
     if all(getattr(repository, method_name, None) is not None for method_name in required_methods):
+        return repository
+    return None
+
+
+def _pending_review_query_repository(current_store: MemoryStore) -> Any | None:
+    repository = _runtime_repository(current_store)
+    if repository is None:
+        return None
+    list_pending_reviews = getattr(repository, "list_pending_review_summaries", None)
+    if callable(list_pending_reviews):
         return repository
     return None
 
@@ -7000,6 +7029,10 @@ def list_ai_tasks(
     requirement_id: str | None = None,
     created_from: str | None = None,
     created_to: str | None = None,
+    keyword: str | None = None,
+    created_by: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
@@ -7007,6 +7040,18 @@ def list_ai_tasks(
     to_at = _parse_iso_datetime(created_to, "created_to") if created_to else None
     repository = _postgres_snapshot_repository(current_store)
     if repository is not None:
+        read_scope = _task_read_scope(user)
+        total = repository.count_ai_task_summaries(
+            status=status,
+            task_type=task_type,
+            product_id=product_id,
+            requirement_id=requirement_id,
+            created_from=from_at,
+            created_to=to_at,
+            keyword=keyword,
+            created_by=created_by,
+            read_scope=read_scope,
+        )
         items = repository.list_ai_task_summaries(
             status=status,
             task_type=task_type,
@@ -7014,9 +7059,16 @@ def list_ai_tasks(
             requirement_id=requirement_id,
             created_from=from_at,
             created_to=to_at,
+            keyword=keyword,
+            created_by=created_by,
+            read_scope=read_scope,
+            limit=page_size,
+            offset=(page - 1) * page_size,
         )
-        items = [item for item in items if _can_read_task(user, item)]
-        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+        return envelope(
+            {"items": items, "page": page, "page_size": page_size, "total": total},
+            get_trace_id(request),
+        )
     items = [
         item
         for item in current_store.ai_tasks.values()
@@ -7043,11 +7095,30 @@ def list_ai_tasks(
                 continue
             filtered_items.append(item)
         items = filtered_items
+    if keyword:
+        normalized_keyword = keyword.lower()
+        items = [
+            item
+            for item in items
+            if normalized_keyword
+            in f"{item.get('id', '')} {item.get('title', '')} {item.get('task_type', '')}".lower()
+        ]
+    if created_by:
+        normalized_created_by = created_by.lower()
+        items = [
+            item
+            for item in items
+            if normalized_created_by in str(item.get("created_by", "")).lower()
+        ]
     items.sort(key=lambda item: item["id"])
+    total = len(items)
+    items = items[(page - 1) * page_size : page * page_size]
     return envelope(
         {
             "items": [_task_summary_projection(item, current_store) for item in items],
-            "total": len(items),
+            "page": page,
+            "page_size": page_size,
+            "total": total,
         },
         get_trace_id(request),
     )
@@ -8091,6 +8162,10 @@ def pending_reviews(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
+    repository = _pending_review_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_pending_review_summaries(read_scope=_task_read_scope(user))
+        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
     read_store = _task_workflow_read_store(current_store)
     items = [
         review

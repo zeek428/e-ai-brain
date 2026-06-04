@@ -22,13 +22,25 @@ type ManagementListPageProps<Row extends Record<string, unknown>> = {
   onPrimaryAction?: () => void;
   onReload?: () => void;
   primaryAction?: string;
+  remote?: {
+    onChange: (query: ManagementListQuery) => void;
+    page: number;
+    pageSize: number;
+    total: number;
+  };
   rowKey: keyof Row & string;
   tableTitle: string;
   title: string;
   toolbarActions?: ReactNode[];
 };
 
-type FilterValues = Record<string, unknown>;
+export type FilterValues = Record<string, unknown>;
+
+export type ManagementListQuery = {
+  filters: FilterValues;
+  page: number;
+  pageSize: number;
+};
 
 function normalizeFilterValue(value: unknown) {
   return String(value ?? '').trim();
@@ -99,6 +111,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
   onPrimaryAction,
   onReload,
   primaryAction,
+  remote,
   rowKey,
   tableTitle,
   title,
@@ -135,29 +148,49 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
 
   const filteredDataSource = useMemo(
     () =>
-      dataSource.filter((row) =>
-        filters.every((field) => {
-          const filterValue = normalizeFilterValue(filterValues[field.name]);
+      remote
+        ? dataSource
+        : dataSource.filter((row) =>
+            filters.every((field) => {
+              const filterValue = normalizeFilterValue(filterValues[field.name]);
 
-          if (!filterValue) {
-            return true;
-          }
+              if (!filterValue) {
+                return true;
+              }
 
-          const rowValue = normalizeFilterValue(row[field.name as keyof Row]);
+              const rowValue = normalizeFilterValue(row[field.name as keyof Row]);
 
-          if (field.type === 'dateRange') {
-            return isWithinDateRange(row[field.name as keyof Row], filterValues[field.name]);
-          }
+              if (field.type === 'dateRange') {
+                return isWithinDateRange(row[field.name as keyof Row], filterValues[field.name]);
+              }
 
-          if (field.type === 'select') {
-            return rowValue === filterValue;
-          }
+              if (field.type === 'select') {
+                return rowValue === filterValue;
+              }
 
-          return rowValue.toLowerCase().includes(filterValue.toLowerCase());
-        }),
-      ),
-    [dataSource, filterValues, filters],
+              return rowValue.toLowerCase().includes(filterValue.toLowerCase());
+            }),
+          ),
+    [dataSource, filterValues, filters, remote],
   );
+
+  const handleReset = () => {
+    setFilterValues({});
+    remote?.onChange({
+      filters: {},
+      page: 1,
+      pageSize: remote.pageSize,
+    });
+  };
+
+  const handleSubmit = (values: FilterValues) => {
+    setFilterValues(values);
+    remote?.onChange({
+      filters: values,
+      page: 1,
+      pageSize: remote.pageSize,
+    });
+  };
 
   return (
     <PageContainer
@@ -174,8 +207,18 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         dateFormatter="string"
         headerTitle={tableTitle}
         loading={loading}
-        onReset={() => setFilterValues({})}
-        onSubmit={(values) => setFilterValues(values)}
+        onChange={(pagination) => {
+          if (!remote) {
+            return;
+          }
+          remote.onChange({
+            filters: filterValues,
+            page: pagination.current ?? remote.page,
+            pageSize: pagination.pageSize ?? remote.pageSize,
+          });
+        }}
+        onReset={handleReset}
+        onSubmit={handleSubmit}
         options={{
           density: true,
           fullScreen: true,
@@ -183,9 +226,11 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
           setting: true,
         }}
         pagination={{
-          pageSize: 10,
+          current: remote?.page,
+          pageSize: remote?.pageSize ?? 10,
           showSizeChanger: true,
           showTotal: (total) => `共 ${total} 条`,
+          total: remote?.total,
         }}
         rowKey={rowKey}
         rowSelection={{}}

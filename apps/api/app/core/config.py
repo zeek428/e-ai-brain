@@ -18,6 +18,7 @@ class Settings:
             "DATABASE_URL",
             "postgresql://ai_brain:password@localhost:5432/ai_brain",
         )
+        self.database_pool_max_size = int(os.getenv("DATABASE_POOL_MAX_SIZE", "5"))
         self.persistence_mode = os.getenv("PERSISTENCE_MODE", "postgres").lower()
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.model_gateway_base_url = os.getenv("MODEL_GATEWAY_BASE_URL", "")

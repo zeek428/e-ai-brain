@@ -635,6 +635,29 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         );
       }
+      if (input === '/api/products?active_only=true') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [{ code: 'aibrain', id: 'product_api', name: 'AI Brain 产品' }],
+              total: 1,
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      if (input === '/api/product-versions?active_only=true') {
+        return new Response(
+          JSON.stringify({ data: { items: [], total: 0 } }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
       expect(input).toBe('/api/ai-tasks');
       return new Response(
         JSON.stringify({
@@ -736,7 +759,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(await screen.findByText('接口任务输出摘要')).toBeInTheDocument();
     expect(screen.getAllByText('确认编号')).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
   });
 
   it('filters task center tasks by product and time range', async () => {
@@ -748,6 +771,17 @@ describe('AI Brain Ant Design Pro workbench', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (input === '/api/reviews/pending') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'aibrain', id: 'product_api', name: 'AI Brain 产品' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/ai-tasks') {
@@ -792,6 +826,32 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (
+        typeof input === 'string' &&
+        input.startsWith('/api/ai-tasks?') &&
+        input.includes('product_id=product_api')
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_at: '2026-06-02T09:30:00+00:00',
+                created_by: 'user_admin',
+                id: 'task_target',
+                product_id: 'product_api',
+                product_name: 'AI Brain 产品',
+                requirement_id: 'requirement_api',
+                status: 'completed',
+                task_type: 'technical_solution',
+                title: '目标技术方案任务',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -804,7 +864,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('过期技术方案任务')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('所属产品'), {
-      target: { value: 'AI Brain 产品' },
+      target: { value: 'product_api' },
     });
     fireEvent.change(screen.getByLabelText('时间段 开始'), {
       target: { value: '2026-06-01' },
@@ -814,8 +874,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: '查询' }));
 
-    expect(screen.getByText('目标技术方案任务')).toBeInTheDocument();
-    expect(screen.queryByText('其他产品任务')).not.toBeInTheDocument();
+    expect(await screen.findByText('目标技术方案任务')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('其他产品任务')).not.toBeInTheDocument());
     expect(screen.queryByText('过期技术方案任务')).not.toBeInTheDocument();
   });
 
@@ -828,6 +888,12 @@ describe('AI Brain Ant Design Pro workbench', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (input === '/api/reviews/pending') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/ai-tasks') {
@@ -899,13 +965,16 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('真实需求快照')).toBeInTheDocument();
     expect(screen.getByText('graph_run_api')).toBeInTheDocument();
     expect(screen.getByDisplayValue(/任务详情输出摘要/)).toBeInTheDocument();
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
-        ['/api/ai-tasks', 'GET'],
-        ['/api/reviews/pending', 'GET'],
-        ['/api/ai-tasks/task_detail_api', 'GET'],
-      ]),
-    );
+    await waitFor(() => {
+      const relevantCalls = fetchMock.mock.calls
+          .map(([path, init]) => [path, init?.method ?? 'GET'])
+          .filter(([path]) => !String(path).startsWith('/api/products'))
+          .filter(([path]) => !String(path).startsWith('/api/product-versions'));
+      expect(relevantCalls).toHaveLength(3);
+      expect(relevantCalls).toContainEqual(['/api/ai-tasks', 'GET']);
+      expect(relevantCalls).toContainEqual(['/api/reviews/pending', 'GET']);
+      expect(relevantCalls).toContainEqual(['/api/ai-tasks/task_detail_api', 'GET']);
+    });
   });
 
   it('submits edit-approved review decisions from the task center dialog', async () => {
@@ -1071,6 +1140,12 @@ describe('AI Brain Ant Design Pro workbench', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (input === '/api/reviews/pending') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/ai-tasks') {
@@ -1256,11 +1331,20 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     expect(await screen.findByText('已生成')).toBeInTheDocument();
     expect(screen.getByText('mock_issue_api')).toBeInTheDocument();
-    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
-      ['/api/ai-tasks', 'GET'],
-      ['/api/reviews/pending', 'GET'],
-      ['/api/writeback/results/task_solution_done', 'GET'],
-      ['/api/writeback/results/task_solution_done', 'POST'],
+    const relevantWritebackCalls = fetchMock.mock.calls
+        .map(([path, init]) => [path, init?.method])
+        .filter(([path]) => !String(path).startsWith('/api/products'))
+        .filter(([path]) => !String(path).startsWith('/api/product-versions'));
+    expect(relevantWritebackCalls).toHaveLength(4);
+    expect(relevantWritebackCalls).toContainEqual(['/api/ai-tasks', 'GET']);
+    expect(relevantWritebackCalls).toContainEqual(['/api/reviews/pending', 'GET']);
+    expect(relevantWritebackCalls).toContainEqual([
+      '/api/writeback/results/task_solution_done',
+      'GET',
+    ]);
+    expect(relevantWritebackCalls).toContainEqual([
+      '/api/writeback/results/task_solution_done',
+      'POST',
     ]);
   });
 

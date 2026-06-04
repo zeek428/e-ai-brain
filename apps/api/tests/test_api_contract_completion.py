@@ -15,11 +15,17 @@ def auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def create_draft_task(headers: dict[str, str]) -> dict[str, str]:
-    app.state.store.reset()
+def create_draft_task(
+    headers: dict[str, str],
+    *,
+    product_code: str = "rd-platform",
+    reset_store: bool = True,
+) -> dict[str, str]:
+    if reset_store:
+        app.state.store.reset()
     product = client.post(
         "/api/products",
-        json={"code": "rd-platform", "name": "研发大脑平台"},
+        json={"code": product_code, "name": "研发大脑平台"},
         headers=headers,
     ).json()["data"]
     version = client.post(
@@ -85,6 +91,43 @@ def test_ai_task_list_supports_product_and_created_time_filters():
         headers=headers,
     ).json()["data"]
     assert outside_range["items"] == []
+
+
+def test_ai_task_list_supports_server_side_pagination():
+    headers = auth_headers()
+    first_context = create_draft_task(headers, product_code="rd-platform-page-1")
+    second_context = create_draft_task(
+        headers,
+        product_code="rd-platform-page-2",
+        reset_store=False,
+    )
+
+    first_page = client.get(
+        "/api/ai-tasks?page=1&page_size=1",
+        headers=headers,
+    ).json()["data"]
+    second_page = client.get(
+        "/api/ai-tasks?page=2&page_size=1",
+        headers=headers,
+    ).json()["data"]
+
+    assert first_page["total"] == 2
+    assert first_page["page"] == 1
+    assert first_page["page_size"] == 1
+    assert [item["id"] for item in first_page["items"]] == [first_context["task_id"]]
+    assert [item["id"] for item in second_page["items"]] == [second_context["task_id"]]
+
+    keyword_result = client.get(
+        f"/api/ai-tasks?keyword={second_context['task_id']}",
+        headers=headers,
+    ).json()["data"]
+    owner_result = client.get(
+        "/api/ai-tasks?created_by=user_admin",
+        headers=headers,
+    ).json()["data"]
+
+    assert [item["id"] for item in keyword_result["items"]] == [second_context["task_id"]]
+    assert owner_result["total"] == 2
 
 
 def test_brain_app_contract_reads_runtime_configuration():

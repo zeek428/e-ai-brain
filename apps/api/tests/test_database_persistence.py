@@ -529,6 +529,28 @@ class FakeSnapshotRepository:
             "tasks": [dict(item) for item in tasks_payload.get("ai_tasks", {}).values()],
         }
 
+    def list_pending_review_summaries(self, *, read_scope: str | None = None) -> list[dict]:
+        tasks_payload = self.ai_tasks_payload or {}
+        workflow_payload = self.workflow_runtime_payload or {}
+        tasks = tasks_payload.get("ai_tasks", {})
+
+        def can_read_task(task: dict) -> bool:
+            if read_scope in {None, "all"}:
+                return True
+            if read_scope == "code_review":
+                return task.get("task_type") == "code_review"
+            if read_scope == "non_code_review":
+                return task.get("task_type") != "code_review"
+            return False
+
+        return [
+            dict(review)
+            for review in workflow_payload.get("human_reviews", {}).values()
+            if review.get("status") == "pending"
+            and (task := tasks.get(review.get("ai_task_id"))) is not None
+            and can_read_task(task)
+        ]
+
     def save_workflow_runtime(self, payload: dict) -> None:
         self.workflow_runtime_payload = payload
 
@@ -2468,7 +2490,7 @@ def test_start_task_writes_review_graph_and_checkpoint_without_request_persist()
         assert [review["id"] for review in pending_reviews] == [started["review_id"]]
         assert review_detail["id"] == started["review_id"]
         assert review_detail["task"]["id"] == generated["task_id"]
-        assert repository.task_workflow_source_row_reads == 4
+        assert repository.task_workflow_source_row_reads == 3
         assert (
             f"start:{generated['task_id']}:{started['review_id']}:"
             f"{started['graph_run_id']}:{started['checkpoint_id']}"
@@ -5623,6 +5645,53 @@ def test_ai_task_start_and_review_update_write_workflow_runtime_payload():
         assert repository.workflow_runtime_payload["graph_runs"][started["graph_run_id"]][
             "status"
         ] == "completed"
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_pending_reviews_route_uses_direct_repository_query():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    repository.ai_tasks_payload = {
+        "ai_tasks": {
+            "task_perf_001": {
+                "id": "task_perf_001",
+                "brain_app_id": "rd_brain",
+                "current_step": "human_review",
+                "created_by": "user_admin",
+                "product_id": "product_perf",
+                "requirement_id": "req_perf",
+                "status": "waiting_review",
+                "task_type": "product_detail_design",
+                "title": "任务管理查询性能优化",
+            }
+        }
+    }
+    repository.workflow_runtime_payload = {
+        "graph_checkpoints": {},
+        "graph_runs": {},
+        "human_reviews": {
+            "review_perf_001": {
+                "ai_task_id": "task_perf_001",
+                "content": {"summary": "性能优化确认"},
+                "id": "review_perf_001",
+                "stage": "human_review",
+                "status": "pending",
+                "version": 1,
+            }
+        },
+    }
+    app.state.store = PersistentMemoryStore.from_repository(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        pending = client.get("/api/reviews/pending", headers=headers).json()["data"]
+
+        assert [item["id"] for item in pending["items"]] == ["review_perf_001"]
+        assert repository.task_workflow_source_row_reads == 0
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users

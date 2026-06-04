@@ -15,10 +15,18 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import {
+  ManagementListPage,
+  StatusTag,
+  type ManagementListQuery,
+} from '../../components/ManagementListPage';
+import {
+  formatRemoteRowsError,
+  type RemoteRowsError,
+  useRemoteRows,
+} from '../../hooks/useRemoteRows';
 import {
   approveTaskCenterReview,
   createAutomatedTestingTask,
@@ -30,6 +38,7 @@ import {
   createTaskWritebackResult,
   editApproveTaskCenterReview,
   fetchCodeReviewReport,
+  fetchProductContextOptions,
   fetchProductGitRepositories,
   fetchTaskMarkdown,
   fetchTaskCenterPendingReviews,
@@ -103,6 +112,60 @@ type RejectReviewFormValues = {
 type SubmitMoreInfoFormValues = {
   answer: string;
 };
+
+type TaskRowsState = {
+  error?: RemoteRowsError;
+  page: number;
+  pageSize: number;
+  rows: TaskCenterTaskRecord[];
+  status: 'error' | 'loading' | 'ready';
+  total: number;
+};
+
+function normalizeQueryValue(value: unknown) {
+  return String(value ?? '').trim();
+}
+
+function normalizeQueryDate(value: unknown, boundary: 'end' | 'start') {
+  const raw = normalizeQueryValue(
+    typeof value === 'object' &&
+      value !== null &&
+      'format' in value &&
+      typeof value.format === 'function'
+      ? value.format('YYYY-MM-DD')
+      : value,
+  );
+  if (!raw) {
+    return undefined;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return boundary === 'end' ? `${raw}T23:59:59Z` : `${raw}T00:00:00Z`;
+  }
+  return raw;
+}
+
+function normalizeQueryDateRange(value: unknown) {
+  if (Array.isArray(value)) {
+    return [value[0], value[1]] as const;
+  }
+  const [start = '', end = ''] = normalizeQueryValue(value).split(',');
+  return [start, end] as const;
+}
+
+function buildTaskCenterQuery(query: ManagementListQuery) {
+  const [createdFrom, createdTo] = normalizeQueryDateRange(query.filters.createdAtValue);
+  return {
+    createdFrom: normalizeQueryDate(createdFrom, 'start'),
+    createdTo: normalizeQueryDate(createdTo, 'end'),
+    keyword: normalizeQueryValue(query.filters.label) || undefined,
+    owner: normalizeQueryValue(query.filters.owner) || undefined,
+    page: query.page,
+    pageSize: query.pageSize,
+    productId: normalizeQueryValue(query.filters.productId) || undefined,
+    status: normalizeQueryValue(query.filters.status) || undefined,
+    taskType: normalizeQueryValue(query.filters.type) || undefined,
+  };
+}
 
 function splitTextLines(value: string) {
   return value
@@ -198,18 +261,112 @@ export default function TaskCenterPage() {
     submitting: boolean;
     task: TaskCenterTaskRecord;
   }>();
+  const [taskQuery, setTaskQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+  });
+  const [taskRowsState, setTaskRowsState] = useState<TaskRowsState>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
   const {
-    error,
-    reload: reloadTasks,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchTaskCenterTasks);
+    error: productOptionsError,
+    rows: productOptions,
+  } = useRemoteRows(fetchProductContextOptions);
   const {
     error: reviewsError,
     reload: reloadReviews,
     rows: reviewRows,
     status: reviewsStatus,
   } = useRemoteRows(fetchTaskCenterPendingReviews);
+
+  useEffect(() => {
+    let isCurrent = true;
+    fetchTaskCenterTasks(buildTaskCenterQuery(taskQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setTaskRowsState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((taskError: unknown) => {
+        if (!isCurrent) {
+          return;
+        }
+        const normalizedError = taskError as Error & {
+          code?: string;
+          traceId?: string;
+        };
+        setTaskRowsState({
+          error: {
+            code: normalizedError.code,
+            message: normalizedError instanceof Error ? normalizedError.message : '接口请求失败',
+            traceId: normalizedError.traceId,
+          },
+          page: taskQuery.page,
+          pageSize: taskQuery.pageSize,
+          rows: [],
+          status: 'error',
+          total: 0,
+        });
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [taskQuery]);
+
+  const handleTaskQueryChange = useCallback((query: ManagementListQuery) => {
+    setTaskRowsState((current) => ({
+      ...current,
+      page: query.page,
+      pageSize: query.pageSize,
+      status: 'loading',
+    }));
+    setTaskQuery(query);
+  }, []);
+
+  const reloadTasks = useCallback(async () => {
+    setTaskRowsState((current) => ({
+      ...current,
+      status: 'loading',
+    }));
+    try {
+      const result = await fetchTaskCenterTasks(buildTaskCenterQuery(taskQuery));
+      setTaskRowsState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (taskError: unknown) {
+      const normalizedError = taskError as Error & {
+        code?: string;
+        traceId?: string;
+      };
+      setTaskRowsState({
+        error: {
+          code: normalizedError.code,
+          message: normalizedError instanceof Error ? normalizedError.message : '接口请求失败',
+          traceId: normalizedError.traceId,
+        },
+        page: taskQuery.page,
+        pageSize: taskQuery.pageSize,
+        rows: [],
+        status: 'error',
+        total: 0,
+      });
+    }
+  }, [taskQuery]);
 
   const reloadTaskCenter = useCallback(async () => {
     await Promise.all([reloadTasks(), reloadReviews()]);
@@ -221,6 +378,14 @@ export default function TaskCenterPage() {
         ? reviewRows.filter((review) => review.aiTaskId === reviewDialog.task?.id)
         : reviewRows,
     [reviewDialog, reviewRows],
+  );
+  const productFilterOptions = useMemo(
+    () =>
+      productOptions.map((product) => ({
+        label: product.name ?? product.code ?? product.id,
+        value: product.id,
+      })),
+    [productOptions],
   );
   const selectedActionTask = actionDialog?.task;
 
@@ -819,10 +984,15 @@ export default function TaskCenterPage() {
       <ManagementListPage<TaskCenterTaskRecord>
         breadcrumbGroup="任务中心"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={taskRowsState.rows}
         filters={[
           { label: '任务', name: 'label', type: 'text' },
-          { label: '所属产品', name: 'product', type: 'text' },
+          {
+            label: '所属产品',
+            name: 'productId',
+            options: productFilterOptions,
+            type: 'select',
+          },
           {
             label: '任务类型',
             name: 'type',
@@ -853,9 +1023,15 @@ export default function TaskCenterPage() {
           { label: '时间段', name: 'createdAtValue', type: 'dateRange' },
           { label: '负责人', name: 'owner', type: 'text' },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error ?? reviewsError)}
+        loading={taskRowsState.status === 'loading'}
+        notice={formatRemoteRowsError(taskRowsState.error ?? reviewsError ?? productOptionsError)}
         onReload={() => void reloadTaskCenter()}
+        remote={{
+          onChange: handleTaskQueryChange,
+          page: taskRowsState.page,
+          pageSize: taskRowsState.pageSize,
+          total: taskRowsState.total,
+        }}
         rowKey="id"
         tableTitle="任务列表"
         title="任务管理"

@@ -4,6 +4,7 @@ from copy import deepcopy
 from time import sleep
 from typing import Any, Protocol
 
+from app.core.db import DatabaseConnectionPool
 from app.core.store import DEFAULT_BRAIN_APP_ID, MemoryStore
 
 STATE_KEY = "memory_store"
@@ -2401,20 +2402,27 @@ class PostgresRuntimeStore(MemoryStore):
 
 
 class PostgresSnapshotRepository:
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, *, pool_max_size: int = 5) -> None:
         self.database_url = database_url
+        self._pool = DatabaseConnectionPool(
+            factory=self._open_connection,
+            max_size=pool_max_size,
+        )
 
-    def _connect(self, *, autocommit: bool = True):
+    def _open_connection(self):
         import psycopg
 
         last_error: Exception | None = None
         for _ in range(20):
             try:
-                return psycopg.connect(self.database_url, autocommit=autocommit)
+                return psycopg.connect(self.database_url)
             except psycopg.OperationalError as exc:
                 last_error = exc
                 sleep(0.5)
         raise last_error or RuntimeError("PostgreSQL connection failed")
+
+    def _connect(self, *, autocommit: bool = True):
+        return self._pool.connection(autocommit=autocommit)
 
     def next_id(self, prefix: str) -> str:
         with self._connect(autocommit=False) as connection:
@@ -2796,7 +2804,27 @@ class PostgresSnapshotRepository:
                     requirements.append(requirement)
                 return requirements
 
-    def list_ai_task_summaries(
+    def _append_ai_task_read_scope(
+        self,
+        where_clauses: list[str],
+        *,
+        read_scope: str | None,
+        table_alias: str = "t",
+    ) -> None:
+        if read_scope is None or read_scope == "all":
+            return
+        if read_scope == "code_review":
+            where_clauses.append(f"{table_alias}.task_type = 'code_review'")
+            return
+        if read_scope == "non_code_review":
+            where_clauses.append(f"{table_alias}.task_type <> 'code_review'")
+            return
+        if read_scope == "none":
+            where_clauses.append("1 = 0")
+            return
+        raise ValueError(f"Unsupported AI task read scope: {read_scope}")
+
+    def _ai_task_summary_where(
         self,
         *,
         status: str | None = None,
@@ -2805,9 +2833,21 @@ class PostgresSnapshotRepository:
         requirement_id: str | None = None,
         created_from: Any | None = None,
         created_to: Any | None = None,
-    ) -> list[dict[str, Any]]:
+        keyword: str | None = None,
+        created_by: str | None = None,
+        read_scope: str | None = None,
+    ) -> tuple[str, list[Any]]:
         where_clauses: list[str] = []
         params: list[Any] = []
+        if keyword is not None:
+            where_clauses.append(
+                "(t.id ILIKE %s OR t.title ILIKE %s OR t.task_type ILIKE %s)"
+            )
+            keyword_pattern = f"%{keyword}%"
+            params.extend([keyword_pattern, keyword_pattern, keyword_pattern])
+        if created_by is not None:
+            where_clauses.append("t.created_by ILIKE %s")
+            params.append(f"%{created_by}%")
         if status is not None:
             where_clauses.append("t.status = %s")
             params.append(status)
@@ -2826,7 +2866,80 @@ class PostgresSnapshotRepository:
         if created_to is not None:
             where_clauses.append("COALESCE(t.created_at, t.updated_at) <= %s")
             params.append(created_to)
+        self._append_ai_task_read_scope(where_clauses, read_scope=read_scope)
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        return where_clause, params
+
+    def count_ai_task_summaries(
+        self,
+        *,
+        status: str | None = None,
+        task_type: str | None = None,
+        product_id: str | None = None,
+        requirement_id: str | None = None,
+        created_from: Any | None = None,
+        created_to: Any | None = None,
+        keyword: str | None = None,
+        created_by: str | None = None,
+        read_scope: str | None = None,
+    ) -> int:
+        where_clause, params = self._ai_task_summary_where(
+            status=status,
+            task_type=task_type,
+            product_id=product_id,
+            requirement_id=requirement_id,
+            created_from=created_from,
+            created_to=created_to,
+            keyword=keyword,
+            created_by=created_by,
+            read_scope=read_scope,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM ai_tasks t
+                    {where_clause}
+                    """,
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+        return int(row[0] if row else 0)
+
+    def list_ai_task_summaries(
+        self,
+        *,
+        status: str | None = None,
+        task_type: str | None = None,
+        product_id: str | None = None,
+        requirement_id: str | None = None,
+        created_from: Any | None = None,
+        created_to: Any | None = None,
+        keyword: str | None = None,
+        created_by: str | None = None,
+        read_scope: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = self._ai_task_summary_where(
+            status=status,
+            task_type=task_type,
+            product_id=product_id,
+            requirement_id=requirement_id,
+            created_from=created_from,
+            created_to=created_to,
+            keyword=keyword,
+            created_by=created_by,
+            read_scope=read_scope,
+        )
+        paging_clause = ""
+        if limit is not None:
+            paging_clause += " LIMIT %s"
+            params.append(limit)
+        if offset is not None:
+            paging_clause += " OFFSET %s"
+            params.append(offset)
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -2839,6 +2952,7 @@ class PostgresSnapshotRepository:
                     LEFT JOIN products p ON p.id = t.product_id
                     {where_clause}
                     ORDER BY t.id
+                    {paging_clause}
                     """,
                     tuple(params),
                 )
@@ -2858,6 +2972,40 @@ class PostgresSnapshotRepository:
                         "title": row[4],
                         "updated_at": row[12].isoformat() if row[12] else None,
                         "version_id": row[7],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
+    def list_pending_review_summaries(
+        self,
+        *,
+        read_scope: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses = ["r.status = 'pending'"]
+        self._append_ai_task_read_scope(where_clauses, read_scope=read_scope, table_alias="t")
+        where_clause = f"WHERE {' AND '.join(where_clauses)}"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT r.id, r.ai_task_id, r.stage, r.status, r.content, r.version,
+                           r.created_at, r.updated_at
+                    FROM human_reviews r
+                    JOIN ai_tasks t ON t.id = r.ai_task_id
+                    {where_clause}
+                    ORDER BY r.created_at DESC, r.id
+                    """
+                )
+                return [
+                    {
+                        "ai_task_id": row[1],
+                        "content": row[4],
+                        "created_at": row[6].isoformat() if row[6] else None,
+                        "id": row[0],
+                        "stage": row[2],
+                        "status": row[3],
+                        "updated_at": row[7].isoformat() if row[7] else None,
+                        "version": row[5],
                     }
                     for row in cursor.fetchall()
                 ]

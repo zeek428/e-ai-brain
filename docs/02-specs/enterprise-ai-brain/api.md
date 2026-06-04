@@ -190,7 +190,7 @@ curl -X POST http://localhost:8000/api/auth/login \
 | 参数名 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | page | int | 1 | 页码。当前主要用于任务列表。 |
-| page_size | int | 20 | 每页数量，最大 100。 |
+| page_size | int | 10 | 每页数量，最大 100。 |
 
 ### 角色要求
 
@@ -290,7 +290,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Requirement | POST | `/api/requirements/{requirement_id}/reject` | 驳回需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/close` | 关闭需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/generate-task` | 需求排期后生成 AI 任务。 |
-| AI Task | GET | `/api/ai-tasks` | 任务列表，支持按状态和任务类型筛选。 |
+| AI Task | GET | `/api/ai-tasks` | 任务列表，支持按状态、任务类型、产品、需求、创建时间、关键词、创建人筛选，并返回分页结果。 |
 | AI Task | POST | `/api/ai-tasks` | 低层任务创建接口。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；停在 `model_gateway_failed` 或 `code_review_executor_failed` 的失败任务可用同一 task_id 重试。 |
 | AI Task | GET | `/api/ai-tasks/{task_id}` | 任务详情。 |
@@ -1035,8 +1035,8 @@ POST /api/ai-tasks
 GET /api/ai-tasks?status=waiting_review&task_type=code_review&product_id=product_001&created_from=2026-06-01T00:00:00Z&created_to=2026-06-02T23:59:59Z&page=1&page_size=20
 ```
 
-可按 `status`、`task_type`、`product_id`、`requirement_id`、`created_from` 和 `created_to` 查询；创建时间范围基于任务 `created_at`，缺少创建时间的历史任务不会命中时间段筛选。
-列表只返回当前用户有权读取的任务摘要，包括 `product_name`、`created_at` 和 `updated_at`，不返回 `requirement_snapshot`、`product_context`、`input_json` 或 `output_json` 等任务内部上下文。
+可按 `status`、`task_type`、`product_id`、`requirement_id`、`created_from`、`created_to`、`keyword` 和 `created_by` 查询；创建时间范围基于任务 `created_at`，缺少创建时间的历史任务不会命中时间段筛选。`page` 从 1 开始，`page_size` 默认 10、最大 100。
+列表只返回当前用户有权读取的任务摘要，包括 `product_name`、`created_at` 和 `updated_at`，不返回 `requirement_snapshot`、`product_context`、`input_json` 或 `output_json` 等任务内部上下文。响应 `data` 包含 `items`、`total`、`page` 和 `page_size`，任务管理页必须将筛选和分页条件传到后端，不再先拉全量任务后本地过滤。
 
 启动任务：
 

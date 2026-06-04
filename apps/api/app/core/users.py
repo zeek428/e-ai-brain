@@ -4,6 +4,7 @@ from copy import deepcopy
 from time import sleep
 from typing import Any
 
+from app.core.db import DatabaseConnectionPool
 from app.core.security import hash_password
 
 ADMIN_PASSWORD_HASH = (
@@ -109,20 +110,27 @@ class MemoryUserRepository:
 
 
 class PostgresUserRepository:
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, *, pool_max_size: int = 5) -> None:
         self.database_url = database_url
+        self._pool = DatabaseConnectionPool(
+            factory=self._open_connection,
+            max_size=pool_max_size,
+        )
 
-    def _connect(self):
+    def _open_connection(self):
         import psycopg
 
         last_error: Exception | None = None
         for _ in range(20):
             try:
-                return psycopg.connect(self.database_url, autocommit=True)
+                return psycopg.connect(self.database_url)
             except psycopg.OperationalError as exc:
                 last_error = exc
                 sleep(0.5)
         raise last_error or RuntimeError("PostgreSQL connection failed")
+
+    def _connect(self):
+        return self._pool.connection(autocommit=True)
 
     def get_by_username(self, username: str) -> dict[str, Any] | None:
         with self._connect() as connection:

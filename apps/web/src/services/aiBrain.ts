@@ -35,6 +35,8 @@ type ApiErrorPayload = {
 
 type ListResponse<T> = {
   items: T[];
+  page?: number;
+  page_size?: number;
   total: number;
 };
 
@@ -178,6 +180,25 @@ export type TaskCenterTaskRecord = {
   requirementId?: string;
   status: string;
   type: string;
+};
+
+export type TaskCenterTaskQuery = {
+  createdFrom?: string;
+  createdTo?: string;
+  keyword?: string;
+  owner?: string;
+  page?: number;
+  pageSize?: number;
+  productId?: string;
+  status?: string;
+  taskType?: string;
+};
+
+export type TaskCenterTaskListResult = {
+  page: number;
+  pageSize: number;
+  rows: TaskCenterTaskRecord[];
+  total: number;
 };
 
 export type TaskCenterTaskDetailRecord = TaskCenterTaskRecord & {
@@ -2379,22 +2400,52 @@ export async function deleteManagementBug(bugId: string) {
   });
 }
 
-export async function fetchTaskCenterTasks(): Promise<TaskCenterTaskRecord[]> {
-  const token = requireAccessToken();
-  const tasks = await apiRequest<ListResponse<TaskListItem>>('/api/ai-tasks', { token });
+function appendQueryParam(params: URLSearchParams, key: string, value?: string | number) {
+  if (value === undefined || value === null || value === '') {
+    return;
+  }
+  params.set(key, String(value));
+}
 
-  return tasks.items.map((task) => ({
-    createdAt: formatListDate(task.created_at ?? task.updated_at),
-    createdAtValue: task.created_at ?? task.updated_at,
-    id: task.id,
-    label: task.title ?? task.task_type ?? task.id,
-    owner: task.created_by ?? '-',
-    product: task.product_name ?? task.product_id ?? '-',
-    productId: task.product_id,
-    requirementId: task.requirement_id,
-    status: task.status ?? '-',
-    type: task.task_type ?? '-',
-  }));
+export async function fetchTaskCenterTasks(
+  query: TaskCenterTaskQuery = {},
+): Promise<TaskCenterTaskListResult> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'created_by', query.owner);
+  appendQueryParam(params, 'product_id', query.productId);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'task_type', query.taskType);
+  appendQueryParam(params, 'created_from', query.createdFrom);
+  appendQueryParam(params, 'created_to', query.createdTo);
+  if ((query.page ?? 1) !== 1) {
+    appendQueryParam(params, 'page', query.page);
+  }
+  if ((query.pageSize ?? 10) !== 10) {
+    appendQueryParam(params, 'page_size', query.pageSize);
+  }
+  const taskQueryString = params.toString();
+  const taskPath = taskQueryString ? `/api/ai-tasks?${taskQueryString}` : '/api/ai-tasks';
+  const tasks = await apiRequest<ListResponse<TaskListItem>>(taskPath, { token });
+
+  return {
+    page: tasks.page ?? query.page ?? 1,
+    pageSize: tasks.page_size ?? query.pageSize ?? 10,
+    rows: tasks.items.map((task) => ({
+      createdAt: formatListDate(task.created_at ?? task.updated_at),
+      createdAtValue: task.created_at ?? task.updated_at,
+      id: task.id,
+      label: task.title ?? task.task_type ?? task.id,
+      owner: task.created_by ?? '-',
+      product: task.product_name ?? task.product_id ?? '-',
+      productId: task.product_id,
+      requirementId: task.requirement_id,
+      status: task.status ?? '-',
+      type: task.task_type ?? '-',
+    })),
+    total: tasks.total,
+  };
 }
 
 export async function fetchTaskCenterTaskDetail(
