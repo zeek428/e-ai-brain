@@ -49,7 +49,7 @@ Historical menu. Do not execute these stale options again; they are completed or
 - [x] **Step 1: Build an evidence table**
 
   Map each `**状态**: 待测试` case to exact automated tests. Examples already visible:
-  - TC-AIBRAIN-TASK-FUNC-001: `apps/api/tests/test_mvp_a_flow.py::test_requirement_to_product_detail_design_human_review_flow`
+  - TC-AIBRAIN-TASK-FUNC-001: `apps/api/tests/test_graph_runtime.py::test_starting_task_creates_graph_run_checkpoint_and_task_detail_projection`
   - TC-AIBRAIN-KNOWLEDGE-FUNC-005: `apps/api/tests/test_knowledge_governance.py`
   - TC-AIBRAIN-REVIEW-FUNC-023A: `apps/api/tests/test_gitlab_snapshot.py`
   - TC-AIBRAIN-REVIEW-FUNC-023B: `apps/api/tests/test_code_review_report.py`

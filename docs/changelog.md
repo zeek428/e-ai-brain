@@ -216,6 +216,7 @@
 - `docs/design/` 不再作为后续版本迭代的维护目录。
 
 ### Removed
+- 移除早期 MVP-A 后端长链路冒烟测试 `apps/api/tests/test_mvp_a_flow.py`，该覆盖已由需求生命周期、Graph Runtime、Review、审计和 DB-first 持久化拆分测试承接，并同步更新测试用例文档的自动化证据映射。
 - 移除已合并到规范化本地开发指南的 `docs/development/local-environment.md`。
 
 ### Fixed

@@ -3341,7 +3341,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 created_at: '2026-05-31T08:00:00+00:00',
                 event_type: 'requirement.approved',
                 id: 'audit_api',
-                payload: { comment: '进入 MVP-A' },
+                payload: { comment: '进入设计评审' },
                 subject_id: 'requirement_api',
                 subject_type: 'requirement',
               },
@@ -3434,7 +3434,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.click(within(auditRow as HTMLElement).getByRole('button', { name: '详情' }));
     expect(await screen.findByText('审计详情')).toBeInTheDocument();
     expect(screen.getAllByText('requirement: requirement_api')).not.toHaveLength(0);
-    expect(screen.getByText(/进入 MVP-A/)).toBeInTheDocument();
+    expect(screen.getByText(/进入设计评审/)).toBeInTheDocument();
 
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /close/i }));
     fireEvent.click(within(auditRow as HTMLElement).getByRole('button', { name: '链路追踪' }));
