@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { message, Modal, notification } from 'antd';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@ant-design/pro-components', async () => {
@@ -426,6 +427,9 @@ const roleCatalogEnvelope = {
 
 describe('AI Brain Ant Design Pro workbench', () => {
   afterEach(() => {
+    Modal.destroyAll();
+    message.destroy();
+    notification.destroy();
     cleanup();
     window.localStorage.clear();
     window.history.pushState({}, '', '/');
@@ -1291,10 +1295,20 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(codeReviewForm).toHaveClass('ant-form-vertical');
     expect(codeReviewForm).not.toHaveClass('ant-form-inline');
     expect(screen.getByText('GitLab · AI Brain 仓库 (platform/ai-brain)')).toBeInTheDocument();
+    await waitFor(() => {
+      const previewButton = screen.getByRole('button', { name: /预览 GitLab MR/ });
+      expect(previewButton).toBeEnabled();
+      expect(previewButton).not.toHaveClass('ant-btn-loading');
+    });
+    const previewButton = screen.getByRole('button', { name: /预览 GitLab MR/ });
+    fireEvent.click(previewButton);
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /预览 GitLab MR/ })).toBeEnabled(),
+      expect(
+        fetchMock.mock.calls.some(
+          ([path]) => path === '/api/devops/gitlab/merge-requests/repo_api/1/preview',
+        ),
+      ).toBe(true),
     );
-    fireEvent.click(screen.getByRole('button', { name: /预览 GitLab MR/ }));
     expect(await screen.findByText('任务中心预览 MR')).toBeInTheDocument();
     expect(screen.getByText(/低风险 · 2 文件 · \+6\/-1/)).toBeInTheDocument();
     expect(screen.getByText('变更文件树')).toBeInTheDocument();
@@ -4453,6 +4467,136 @@ describe('AI Brain Ant Design Pro workbench', () => {
       reason: '纳入 2026-06 迭代',
       requirement_ids: ['requirement_pool', 'requirement_planned'],
       version_id: 'version_target',
+    });
+  });
+
+  it('batch generates tasks for selected planned requirements from the requirements page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      if (path === '/api/products' || path.startsWith('/api/products?')) {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions' || path.startsWith('/api/product-versions?')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-06',
+                id: 'version_target',
+                name: '2026-06',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'planning',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '批量生成任务一内容',
+                created_at: '2026-06-04T08:00:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_batch_task_a',
+                priority: 'P1',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'planned',
+                title: '批量生成任务一',
+                version_id: 'version_target',
+                version_name: '2026-06',
+              },
+              {
+                content: '批量生成任务二内容',
+                created_at: '2026-06-04T08:10:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_batch_task_b',
+                priority: 'P1',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'planned',
+                title: '批量生成任务二',
+                version_id: 'version_target',
+                version_name: '2026-06',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
+      if (path === '/api/requirements/batch-generate-tasks' && method === 'POST') {
+        return jsonResponse({
+          data: {
+            batch_id: 'requirement_task_batch_001',
+            generated: [
+              {
+                requirement_id: 'requirement_batch_task_a',
+                task_id: 'task_batch_a',
+                task_status: 'draft',
+                task_type: 'product_detail_design',
+              },
+              {
+                requirement_id: 'requirement_batch_task_b',
+                task_id: 'task_batch_b',
+                task_status: 'draft',
+                task_type: 'product_detail_design',
+              },
+            ],
+            generated_count: 2,
+            product_id: 'product_api',
+            skipped: [],
+            skipped_count: 0,
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<RequirementsPage />);
+
+    await screen.findByText('批量生成任务一');
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_batch_task_a' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_batch_task_b' }));
+    fireEvent.click(screen.getByRole('button', { name: /批量生成任务/ }));
+
+    expect(await screen.findByText('将为 2 条已排期需求生成产品详细设计任务')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('生成原因'), {
+      target: { value: '批量进入产品详细设计' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '确认生成' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/requirements/batch-generate-tasks',
+        'POST',
+      ]),
+    );
+    const batchCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/requirements/batch-generate-tasks' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(batchCall?.[1]?.body))).toEqual({
+      product_id: 'product_api',
+      reason: '批量进入产品详细设计',
+      requirement_ids: ['requirement_batch_task_a', 'requirement_batch_task_b'],
     });
   });
 

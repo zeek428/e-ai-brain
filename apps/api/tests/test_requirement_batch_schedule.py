@@ -191,3 +191,84 @@ def test_batch_schedule_rejects_archived_target_version():
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "PRODUCT_VERSION_ARCHIVED"
+
+
+def test_batch_generate_tasks_creates_tasks_for_planned_requirements_and_records_audit():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "batch-task-product")
+    version = create_version(headers, product["id"], "2026-07")
+
+    first_requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "批量生成任务 A", version["id"])["id"],
+    )
+    second_requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "批量生成任务 B", version["id"])["id"],
+    )
+    pool_requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "未排期需求")["id"],
+    )
+
+    response = client.post(
+        "/api/requirements/batch-generate-tasks",
+        json={
+            "product_id": product["id"],
+            "reason": "批量进入产品详细设计",
+            "requirement_ids": [
+                first_requirement["id"],
+                second_requirement["id"],
+                pool_requirement["id"],
+                first_requirement["id"],
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["batch_id"].startswith("requirement_task_batch_")
+    assert data["generated_count"] == 2
+    assert [item["requirement_id"] for item in data["generated"]] == [
+        first_requirement["id"],
+        second_requirement["id"],
+    ]
+    assert [item["task_status"] for item in data["generated"]] == ["draft", "draft"]
+    assert {
+        item["id"]: item["code"]
+        for item in data["skipped"]
+    } == {
+        pool_requirement["id"]: "REQUIREMENT_STATE_INVALID",
+        first_requirement["id"]: "DUPLICATE_REQUIREMENT",
+    }
+
+    first_detail = client.get(
+        f"/api/requirements/{first_requirement['id']}",
+        headers=headers,
+    ).json()["data"]
+    second_detail = client.get(
+        f"/api/requirements/{second_requirement['id']}",
+        headers=headers,
+    ).json()["data"]
+    pool_detail = client.get(
+        f"/api/requirements/{pool_requirement['id']}",
+        headers=headers,
+    ).json()["data"]
+    assert first_detail["status"] == "designing"
+    assert second_detail["status"] == "designing"
+    assert pool_detail["status"] == "approved"
+    assert len(first_detail["task_ids"]) == 1
+    assert len(second_detail["task_ids"]) == 1
+    assert pool_detail["task_ids"] == []
+
+    batch_audits = client.get(
+        f"/api/audit/events?subject_type=requirement_task_batch&subject_id={data['batch_id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert [event["event_type"] for event in batch_audits] == [
+        "requirement.batch_tasks_generated"
+    ]
+    assert batch_audits[0]["payload"]["generated_count"] == 2
+    assert batch_audits[0]["payload"]["skipped_count"] == 2

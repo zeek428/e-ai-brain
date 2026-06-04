@@ -509,6 +509,12 @@ class RequirementBatchScheduleRequest(BaseModel):
     reason: str | None = None
 
 
+class RequirementBatchGenerateTasksRequest(BaseModel):
+    product_id: str
+    requirement_ids: list[str] = Field(min_length=1)
+    reason: str | None = None
+
+
 class RequirementDecisionRequest(BaseModel):
     comment: str | None = None
     rejection_reason: str | None = None
@@ -7164,25 +7170,15 @@ def _product_context(current_store: MemoryStore, requirement: dict[str, Any]) ->
     }
 
 
-@app.post("/api/requirements/{requirement_id}/generate-task")
-def generate_task_from_requirement(
+def _generate_product_detail_design_task(
+    current_store: MemoryStore,
+    *,
+    audit_payload: dict[str, Any] | None = None,
+    now: str,
+    requirement: dict[str, Any],
     requirement_id: str,
-    request: Request,
-    user: dict[str, Any] = CurrentUser,
+    user: dict[str, Any],
 ) -> dict[str, Any]:
-    _require_roles(user, {"product_owner", "rd_owner"})
-    current_store = _task_workflow_write_store(store(request))
-    requirement = current_store.requirements.get(requirement_id)
-    if requirement is None:
-        raise api_error(404, "NOT_FOUND", "Requirement not found")
-    if _canonical_requirement_status(requirement.get("status")) != "planned":
-        raise api_error(
-            409,
-            "REQUIREMENT_STATE_INVALID",
-            "Only planned requirements can generate tasks",
-        )
-
-    now = datetime.now(UTC).isoformat()
     task_id = current_store.new_id("task")
     task = {
         "id": task_id,
@@ -7215,6 +7211,12 @@ def generate_task_from_requirement(
     if not _uses_repository_context(current_store):
         current_store.ai_tasks[task_id] = task
         current_store.requirements[requirement_id] = updated_requirement
+    payload = {
+        "brain_app_code": task["brain_app_id"],
+        "task_type": "product_detail_design",
+    }
+    if audit_payload:
+        payload.update(audit_payload)
     audit_event = _record_audit_event(
         current_store,
         event_type="ai_task.created",
@@ -7222,10 +7224,7 @@ def generate_task_from_requirement(
         ai_task_id=task_id,
         subject_type="ai_task",
         subject_id=task_id,
-        payload={
-            "brain_app_code": task["brain_app_id"],
-            "task_type": "product_detail_design",
-        },
+        payload=payload,
     )
     _save_requirement_and_ai_task_records(
         current_store,
@@ -7233,8 +7232,152 @@ def generate_task_from_requirement(
         task=task,
         audit_event=audit_event,
     )
+    return {
+        "requirement_id": requirement_id,
+        "task_id": task_id,
+        "task_status": task["status"],
+        "task_type": task["task_type"],
+    }
+
+
+@app.post("/api/requirements/batch-generate-tasks")
+def batch_generate_requirement_tasks(
+    request: Request,
+    payload: RequirementBatchGenerateTasksRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = _task_workflow_write_store(store(request))
+    product = current_store.products.get(payload.product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
+
+    batch_id = current_store.new_id("requirement_task_batch")
+    now = datetime.now(UTC).isoformat()
+    generated: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    seen_requirement_ids: set[str] = set()
+
+    for requirement_id in payload.requirement_ids:
+        if requirement_id in seen_requirement_ids:
+            skipped.append(
+                {
+                    "code": "DUPLICATE_REQUIREMENT",
+                    "id": requirement_id,
+                    "message": "Requirement was already included in this batch",
+                }
+            )
+            continue
+        seen_requirement_ids.add(requirement_id)
+
+        requirement = current_store.requirements.get(requirement_id)
+        if requirement is None:
+            skipped.append(
+                {
+                    "code": "NOT_FOUND",
+                    "id": requirement_id,
+                    "message": "Requirement not found",
+                }
+            )
+            continue
+        if requirement.get("product_id") != payload.product_id:
+            skipped.append(
+                {
+                    "code": "PRODUCT_MISMATCH",
+                    "id": requirement_id,
+                    "message": "Requirement belongs to another product",
+                }
+            )
+            continue
+        if _canonical_requirement_status(requirement.get("status")) != "planned":
+            skipped.append(
+                {
+                    "code": "REQUIREMENT_STATE_INVALID",
+                    "id": requirement_id,
+                    "message": "Only planned requirements can generate tasks",
+                }
+            )
+            continue
+
+        generated.append(
+            _generate_product_detail_design_task(
+                current_store,
+                audit_payload={
+                    "batch_id": batch_id,
+                    "operation": "batch_generate_tasks",
+                    "reason": payload.reason,
+                },
+                now=now,
+                requirement=requirement,
+                requirement_id=requirement_id,
+                user=user,
+            )
+        )
+
+    batch_audit_event = _record_audit_event(
+        current_store,
+        event_type="requirement.batch_tasks_generated",
+        actor_id=user["id"],
+        subject_type="requirement_task_batch",
+        subject_id=batch_id,
+        payload={
+            "generated_count": len(generated),
+            "generated_task_ids": [item["task_id"] for item in generated],
+            "product_id": payload.product_id,
+            "reason": payload.reason,
+            "requirement_ids": payload.requirement_ids,
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+        },
+    )
+    _save_audit_event(current_store, batch_audit_event)
     return envelope(
-        {"task_id": task_id, "task_type": task["task_type"], "task_status": task["status"]},
+        {
+            "batch_id": batch_id,
+            "generated": generated,
+            "generated_count": len(generated),
+            "product_id": payload.product_id,
+            "reason": payload.reason,
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+        },
+        get_trace_id(request),
+    )
+
+
+@app.post("/api/requirements/{requirement_id}/generate-task")
+def generate_task_from_requirement(
+    requirement_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = _task_workflow_write_store(store(request))
+    requirement = current_store.requirements.get(requirement_id)
+    if requirement is None:
+        raise api_error(404, "NOT_FOUND", "Requirement not found")
+    if _canonical_requirement_status(requirement.get("status")) != "planned":
+        raise api_error(
+            409,
+            "REQUIREMENT_STATE_INVALID",
+            "Only planned requirements can generate tasks",
+        )
+
+    generated = _generate_product_detail_design_task(
+        current_store,
+        now=datetime.now(UTC).isoformat(),
+        requirement=requirement,
+        requirement_id=requirement_id,
+        user=user,
+    )
+    return envelope(
+        {
+            "task_id": generated["task_id"],
+            "task_type": generated["task_type"],
+            "task_status": generated["task_status"],
+        },
         get_trace_id(request),
     )
 

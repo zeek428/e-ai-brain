@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.92 |
+| 功能版本 | v1.1.93 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -114,6 +114,7 @@
 | v1.1.90 | 2026-06-05 | AI 助手系统上下文新增迭代进度、待确认 Review、Bug 分布、代码评审结论和知识沉淀摘要 | Codex |
 | v1.1.91 | 2026-06-05 | GitLab MR / GitHub PR 预览响应新增 diff 文件树、风险摘要和 Review Checklist，用于任务中心创建 Code Review 前确认变更范围 | Codex |
 | v1.1.92 | 2026-06-05 | 需求全链路详情中的 PR/MR 快照证据展示复用风险摘要、diff 文件树和 Review Checklist 字段 | Codex |
+| v1.1.93 | 2026-06-05 | 新增需求批量生成任务接口，支持同产品已排期需求批量生成产品详细设计任务并记录批次审计 | Codex |
 
 ---
 
@@ -125,7 +126,7 @@ API 面向 React 工作台，覆盖认证、业务大脑、AI 助手、产品上
 
 当前源码实现说明：MVP 骨架已实现认证、AI 助手、产品/需求/任务/Review/知识/审计/导出/GitLab MR 与 GitHub PR 只读预览、diff 快照、code_review 报告闭环。AI 助手通过模型网关 Chat 能力回答 AI Brain 系统相关问题，请求会携带脱敏系统上下文摘要，包括产品、迭代版本进度、需求、AI 任务、待确认 Review、最近代码评审结论、Bug 分布、高风险 Bug、知识沉淀、Git 仓库和模型网关配置状态；模型日志只记录 `purpose=assistant_chat` 元数据，不保存完整用户消息、系统上下文或助手回答；完整对话内容按当前登录用户写入助手会话与消息结构表，并且历史查询只返回本人会话。产品配置、需求、知识文档、Bug、用户管理、用户反馈和模型网关配置已具备当前管理页所需 CRUD 能力，删除接口会对已被需求、任务或关联资源占用的主体返回 `RESOURCE_IN_USE`；用户使用指标已具备真实登记和查询能力。MVP 明确定义 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 六个可分配角色，`GET /api/auth/roles` 返回角色目录、业务角色映射、职责、数据范围、决策范围、可见入口、限制边界、权限点和排序信息，系统管理下的角色管理页面只读展示该目录，用户管理和知识权限配置只能从该目录选择角色，不得自由创建或录入未定义角色。
 
-产品管理页面可维护产品、模块、Git 资源和产品相关系统；需求交付下的迭代版本页面维护 `product_versions`，用于需求排期和任务版本上下文。`GET /api/product-versions` 支持批量查询版本并返回 `product_code`、`product_name` 投影，`active_only=true` 只返回 active 版本；`GET /api/requirements` 返回需求主体同时带 `product_code`、`product_name`、`version_code`、`version_name`；`POST /api/requirements/batch-schedule` 支持将多条同产品 `approved/planned` 需求批量归集到 `planning` 或 `active` 迭代版本，并返回 updated/skipped 明细；`GET /api/ai-tasks` 在 PostgreSQL 模式按产品表 SQL join 返回 `product_name`，并支持 `product_id`、`created_from`、`created_to` 等筛选。产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置、模型调用元数据、AI 助手会话和助手消息会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`、`assistant_conversations`、`assistant_messages`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
+产品管理页面可维护产品、模块、Git 资源和产品相关系统；需求交付下的迭代版本页面维护 `product_versions`，用于需求排期和任务版本上下文。`GET /api/product-versions` 支持批量查询版本并返回 `product_code`、`product_name` 投影，`active_only=true` 只返回 active 版本；`GET /api/requirements` 返回需求主体同时带 `product_code`、`product_name`、`version_code`、`version_name`；`POST /api/requirements/batch-schedule` 支持将多条同产品 `approved/planned` 需求批量归集到 `planning` 或 `active` 迭代版本，并返回 updated/skipped 明细；`POST /api/requirements/batch-generate-tasks` 支持将多条同产品 `planned` 需求批量生成产品详细设计任务，并返回 generated/skipped 明细；`GET /api/ai-tasks` 在 PostgreSQL 模式按产品表 SQL join 返回 `product_name`，并支持 `product_id`、`created_from`、`created_to` 等筛选。产品、版本、模块、Git 资源、相关系统、需求台账、AI 任务核心字段、人工确认、Graph Run、检查点、GitLab MR 快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、迭代规划建议/确认、模拟 Issue 回写、模型网关配置、模型调用元数据、AI 助手会话和助手消息会同步写入 PostgreSQL 结构表 `products`、`product_versions`、`product_modules`、`product_git_repositories`、`related_systems`、`requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`、`gitlab_mr_snapshots`、`code_review_reports`、`knowledge_documents`、`knowledge_chunks`、`knowledge_deposits`、`audit_events`、`bugs`、`gitlab_daily_code_metrics`、`jenkins_release_records`、`online_log_metrics`、`user_feedback`、`user_usage_metrics`、`collector_runs`、`pending_attribution_items`、`iteration_plan_suggestions`、`iteration_plan_decisions`、`mock_issues`、`model_gateway_configs`、`model_gateway_logs`、`assistant_conversations`、`assistant_messages`。所有 PostgreSQL 结构表必须包含 `created_at` 与 `updated_at` 标准时间字段；新增表必须在建表 SQL 中定义这两个字段，既有环境通过 `018_standard_timestamps.sql` 可重复迁移补齐。Git 资源列表只展示凭据是否已配置，不返回凭据引用或 token 明文。
 
 知识文档创建、更新和知识沉淀采纳会同步重建文本 chunk，并在 active/default OpenAI-compatible 模型网关或环境模型网关支持 `/embeddings` 时生成 `knowledge_chunks.embedding`；Embedding 不可用时文档进入 `text_indexed`，保留 `vector_index_error`/兼容 `index_error`，关键词检索继续可用；Embedding 成功时进入 `vector_indexed`，历史 `indexed` 仅作为兼容状态读取；知识文档可选绑定 `product_id` 作为产品归属上下文，首页 IT 团队看板按产品筛选时只统计该产品归属或该产品任务沉淀产生的知识文档；基础文本索引失败才进入 `index_failed`、保留 `index_error` 并清理旧 chunk，`/api/knowledge/documents/{document_id}/retry-index` 可重建失败索引或将 `text_indexed` 补建为向量索引；`/api/knowledge/search` 先按文档和 chunk 权限过滤，再对有 embedding 的 chunk 执行向量排序并返回真实存在的 chunk 内容、`chunk_id`、`chunk_index`、`retrieval_mode`、`score` 和来源引用，没有可读向量 chunk 时不调用 query embedding 并直接走关键词检索，不返回无权限 chunk，也不为缺失 chunk 的 indexed 文档合成整篇文档结果。GitLab MR 预览和快照读取产品 Git 资源的 `remote_url` 或 `GITLAB_BASE_URL`，GitHub PR 列表、预览和快照读取 `project_path=owner/repo` 或可解析 owner/repo 的 `remote_url`，并通过环境变量、服务端密钥引用或本地直填只读 token 解析凭据；MR/PR 预览响应除基础元信息外，还返回 `changed_files_summary`、`diff_file_tree`、`risk_summary` 和 `review_checklist`，任务中心创建 Code Review 前据此展示变更范围、风险摘要和人工检查项；缺少 provider 地址、仓库路径或凭据时返回明确错误，不生成本地假 MR/PR。
 
@@ -297,6 +298,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-schedule` | 批量归集同产品需求到迭代版本。 |
+| Requirement | POST | `/api/requirements/batch-generate-tasks` | 批量为同产品已排期需求生成产品详细设计任务。 |
 | Requirement | GET | `/api/requirements/{requirement_id}` | 需求详情。 |
 | Requirement | GET | `/api/requirements/{requirement_id}/full-chain` | 需求全链路详情，按时间线聚合需求、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀；`git_snapshots` 可包含风险摘要、diff 文件树和 Review Checklist。 |
 | Requirement | PATCH | `/api/requirements/{requirement_id}` | 更新待审批或已驳回需求。 |
@@ -934,8 +936,8 @@ POST /api/requirements
 - `input.product_id` 必填且必须指向启用产品；`input.version_id` 可选，填写时必须指向同产品 `planning` 或 `active` 迭代版本。
 - 审批通过调用 `POST /api/requirements/{requirement_id}/approve`。
 - 审批通过但未选择迭代版本时进入 `approved` 需求池；已选择或后续补充有效迭代版本时进入 `planned`。
-- 批量排期调用 `POST /api/requirements/batch-schedule`，静态路由必须先于 `/api/requirements/{requirement_id}` 注册，避免被动态详情路由吞掉。
-- 只有 `planned` 需求可以调用 `POST /api/requirements/{requirement_id}/generate-task`。
+- 批量排期调用 `POST /api/requirements/batch-schedule`，批量生成任务调用 `POST /api/requirements/batch-generate-tasks`；静态路由必须先于 `/api/requirements/{requirement_id}` 注册，避免被动态详情路由吞掉。
+- 只有 `planned` 需求可以调用 `POST /api/requirements/{requirement_id}/generate-task` 或被批量生成任务接口处理。
 - 生成产品详细设计任务后需求状态进入 `designing`，后续 AI 任务创建和人工确认会继续推进到 `ready_for_dev`、`developing`、`code_reviewing`、`testing`、`ready_for_release`、`released` 或 `accepted`。需求仍保留原始输入和审批结论。
 - 关闭需求后不得再生成新 AI 任务。
 
@@ -1000,6 +1002,60 @@ POST /api/requirements/batch-schedule
         "id": "requirement_003",
         "code": "REQUIREMENT_STATE_INVALID",
         "message": "Only requirement pool or planned requirements can be scheduled"
+      }
+    ]
+  },
+  "trace_id": "trace_xxx"
+}
+```
+
+批量生成任务请求：
+
+```http
+POST /api/requirements/batch-generate-tasks
+```
+
+请求体：
+
+```json
+{
+  "product_id": "product_001",
+  "requirement_ids": ["requirement_001", "requirement_002"],
+  "reason": "批量进入产品详细设计"
+}
+```
+
+规则：
+
+- 仅 `product_owner`、`rd_owner` 或 `admin` 可调用。
+- `product_id` 必须为启用产品；请求内需求必须属于该产品且状态为 `planned`。
+- 每条合法需求生成一个 draft `product_detail_design` AI 任务，需求 `task_ids` 追加新任务 ID，状态进入 `designing`。
+- 缺失、重复、跨产品或非 `planned` 需求不生成任务，进入 `skipped` 明细；合法项继续处理，不因部分跳过回滚整个批次。
+- 成功请求记录一条 `requirement.batch_tasks_generated` 审计事件，subject 为 `requirement_task_batch`；每个生成任务沿用 `ai_task.created` 审计，payload 带 `batch_id`、operation 和 reason。
+
+响应体：
+
+```json
+{
+  "data": {
+    "batch_id": "requirement_task_batch_001",
+    "product_id": "product_001",
+    "reason": "批量进入产品详细设计",
+    "generated_count": 2,
+    "skipped_count": 1,
+    "generated": [
+      {
+        "requirement_id": "requirement_001",
+        "task_id": "task_001",
+        "task_status": "draft",
+        "task_type": "product_detail_design"
+      }
+    ],
+    "skipped": [
+      {
+        "id": "requirement_003",
+        "code": "REQUIREMENT_STATE_INVALID",
+        "message": "Only planned requirements can generate tasks"
       }
     ]
   },
@@ -2569,6 +2625,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.93 | 2026-06-05 | 新增需求批量生成任务接口，支持同产品已排期需求批量生成产品详细设计任务并记录批次审计。 |
 | v1.1.92 | 2026-06-05 | 需求全链路详情中的 PR/MR 快照证据展示复用风险摘要、diff 文件树和 Review Checklist 字段。 |
 | v1.1.91 | 2026-06-05 | GitLab MR / GitHub PR 预览新增 diff 文件树、风险摘要和 Review Checklist 字段，任务中心创建 Code Review 前展示变更范围和检查项。 |
 | v1.1.63 | 2026-06-03 | 需求创建允许不指定迭代版本，排期后才能生成 AI 任务，接口状态改为需求池和研发交付状态机。 |
@@ -2615,4 +2672,4 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | v1.0.0 | 2026-05-27 | 初始版本 |
 
 ---
-最后更新: 2026-06-02
+最后更新: 2026-06-05

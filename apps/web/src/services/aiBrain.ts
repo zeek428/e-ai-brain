@@ -908,7 +908,7 @@ export type RequirementBatchSchedulePayload = {
   version_id: string;
 };
 
-type RequirementBatchScheduleSkippedItem = {
+type RequirementBatchSkippedItem = {
   code: string;
   id: string;
   message: string;
@@ -918,7 +918,7 @@ type RequirementBatchScheduleResponse = {
   batch_id: string;
   product_id: string;
   reason?: string | null;
-  skipped: RequirementBatchScheduleSkippedItem[];
+  skipped: RequirementBatchSkippedItem[];
   skipped_count: number;
   updated: RequirementListItem[];
   updated_count: number;
@@ -929,11 +929,44 @@ export type RequirementBatchScheduleResult = {
   batchId: string;
   productId: string;
   reason?: string | null;
-  skipped: RequirementBatchScheduleSkippedItem[];
+  skipped: RequirementBatchSkippedItem[];
   skippedCount: number;
   updated: RequirementRecord[];
   updatedCount: number;
   versionId: string;
+};
+
+export type RequirementBatchGenerateTasksPayload = {
+  product_id: string;
+  reason?: string;
+  requirement_ids: string[];
+};
+
+type RequirementBatchGeneratedTaskItem = {
+  requirement_id: string;
+  task_id: string;
+  task_status: string;
+  task_type: string;
+};
+
+type RequirementBatchGenerateTasksResponse = {
+  batch_id: string;
+  generated: RequirementBatchGeneratedTaskItem[];
+  generated_count: number;
+  product_id: string;
+  reason?: string | null;
+  skipped: RequirementBatchSkippedItem[];
+  skipped_count: number;
+};
+
+export type RequirementBatchGenerateTasksResult = {
+  batchId: string;
+  generated: RequirementBatchGeneratedTaskItem[];
+  generatedCount: number;
+  productId: string;
+  reason?: string | null;
+  skipped: RequirementBatchSkippedItem[];
+  skippedCount: number;
 };
 
 export type ProductVersionMutationPayload = {
@@ -2810,6 +2843,29 @@ export async function batchScheduleRequirements(
     updated: result.updated.map(mapRequirementRecord),
     updatedCount: result.updated_count,
     versionId: result.version_id,
+  };
+}
+
+export async function batchGenerateRequirementTasks(
+  payload: RequirementBatchGenerateTasksPayload,
+): Promise<RequirementBatchGenerateTasksResult> {
+  const token = requireAccessToken();
+  const result = await apiRequest<RequirementBatchGenerateTasksResponse>(
+    '/api/requirements/batch-generate-tasks',
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return {
+    batchId: result.batch_id,
+    generated: result.generated,
+    generatedCount: result.generated_count,
+    productId: result.product_id,
+    reason: result.reason,
+    skipped: result.skipped,
+    skippedCount: result.skipped_count,
   };
 }
 

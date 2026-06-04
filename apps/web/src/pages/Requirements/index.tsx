@@ -1,4 +1,4 @@
-import { ApartmentOutlined, CalendarOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { ApartmentOutlined, CalendarOutlined, DeleteOutlined, EditOutlined, RocketOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Descriptions, Form, Input, Modal, Popconfirm, Select, Space, Spin, Tag, Timeline, Typography, message } from 'antd';
 import { type Key, useCallback, useEffect, useMemo, useState } from 'react';
@@ -8,6 +8,7 @@ import type { RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   approveManagementRequirement,
+  batchGenerateRequirementTasks,
   batchScheduleRequirements,
   createManagementRequirement,
   deleteManagementRequirement,
@@ -54,6 +55,10 @@ type BatchScheduleFormValues = {
   product_id: string;
   reason?: string;
   version_id: string;
+};
+
+type BatchGenerateTaskFormValues = {
+  reason?: string;
 };
 
 const batchSchedulableStatuses = new Set<RequirementRecord['status']>(['approved', 'planned']);
@@ -161,16 +166,19 @@ function buildRequirementListQuery(query: ManagementListQuery): RequirementListQ
 export default function RequirementsPage() {
   const [form] = Form.useForm<RequirementFormValues>();
   const [batchForm] = Form.useForm<BatchScheduleFormValues>();
+  const [batchGenerateForm] = Form.useForm<BatchGenerateTaskFormValues>();
   const [rejectForm] = Form.useForm<{ rejection_reason: string }>();
   const [editingRequirement, setEditingRequirement] = useState<RequirementRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [isBatchGenerateModalOpen, setIsBatchGenerateModalOpen] = useState(false);
   const [rejectingRequirement, setRejectingRequirement] = useState<RequirementRecord | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [fullChainRequirement, setFullChainRequirement] = useState<RequirementRecord | null>(null);
   const [fullChain, setFullChain] = useState<RequirementFullChainRecord | null>(null);
   const [fullChainError, setFullChainError] = useState<RemoteRowsError>();
   const [isFullChainLoading, setIsFullChainLoading] = useState(false);
+  const [isBatchGenerateSaving, setIsBatchGenerateSaving] = useState(false);
   const [isBatchSaving, setIsBatchSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
@@ -269,6 +277,10 @@ export default function RequirementsPage() {
     const selectedIds = new Set(selectedRequirementIds);
     return listState.rows.filter((row) => selectedIds.has(row.id));
   }, [listState.rows, selectedRequirementIds]);
+  const selectedBatchGeneratableRequirements = useMemo(
+    () => selectedRequirements.filter((row) => row.status === 'planned'),
+    [selectedRequirements],
+  );
   const productOptions = useMemo(
     () =>
       productContexts.map((product) => ({
@@ -424,6 +436,61 @@ export default function RequirementsPage() {
     }
   };
 
+  const openBatchGenerateTaskModal = useCallback(() => {
+    if (selectedRequirements.length === 0) {
+      message.warning('请先选择要生成任务的需求');
+      return;
+    }
+    const productIds = Array.from(
+      new Set(
+        selectedRequirements
+          .map((row) => row.productId)
+          .filter((productId): productId is string => Boolean(productId)),
+      ),
+    );
+    if (productIds.length !== 1) {
+      message.warning('请选择同一产品下的需求批量生成任务');
+      return;
+    }
+    if (selectedBatchGeneratableRequirements.length === 0) {
+      message.warning('请选择已排期需求生成任务');
+      return;
+    }
+    batchGenerateForm.resetFields();
+    setIsBatchGenerateModalOpen(true);
+  }, [batchGenerateForm, selectedBatchGeneratableRequirements.length, selectedRequirements]);
+
+  const handleBatchGenerateTasks = async () => {
+    let values: BatchGenerateTaskFormValues;
+    try {
+      values = await batchGenerateForm.validateFields();
+    } catch {
+      return;
+    }
+    const productId = selectedRequirements.find((row) => row.productId)?.productId;
+    if (!productId) {
+      message.warning('未找到所选需求的产品');
+      return;
+    }
+    setIsBatchGenerateSaving(true);
+    try {
+      const result = await batchGenerateRequirementTasks({
+        product_id: productId,
+        reason: trimText(values.reason),
+        requirement_ids: selectedRequirementIds,
+      });
+      const skippedText = result.skippedCount ? `，跳过 ${result.skippedCount} 条` : '';
+      message.success(`已生成 ${result.generatedCount} 个任务${skippedText}`);
+      setIsBatchGenerateModalOpen(false);
+      setSelectedRowKeys([]);
+      await reload();
+    } catch (batchError) {
+      message.error(formatMutationError(batchError));
+    } finally {
+      setIsBatchGenerateSaving(false);
+    }
+  };
+
   const handleApprove = useCallback(async (row: RequirementRecord) => {
     try {
       await approveManagementRequirement(row.id);
@@ -491,8 +558,16 @@ export default function RequirementsPage() {
       >
         批量排期
       </Button>,
+      <Button
+        disabled={selectedRowKeys.length === 0}
+        icon={<RocketOutlined />}
+        key="batch-generate-tasks"
+        onClick={openBatchGenerateTaskModal}
+      >
+        批量生成任务
+      </Button>,
     ],
-    [openBatchScheduleModal, selectedRowKeys.length],
+    [openBatchGenerateTaskModal, openBatchScheduleModal, selectedRowKeys.length],
   );
 
   const columns = useMemo<ProColumns<RequirementRecord>[]>(
@@ -796,6 +871,36 @@ export default function RequirementsPage() {
               />
             </Form.Item>
             <Form.Item label="归集原因" name="reason">
+              <Input.TextArea autoSize={{ minRows: 2 }} />
+            </Form.Item>
+          </Form>
+        </Space>
+      </Modal>
+      <Modal
+        confirmLoading={isBatchGenerateSaving}
+        destroyOnHidden
+        okText="确认生成"
+        onCancel={() => setIsBatchGenerateModalOpen(false)}
+        onOk={() => void handleBatchGenerateTasks()}
+        open={isBatchGenerateModalOpen}
+        title="批量生成任务"
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            title={`将为 ${selectedBatchGeneratableRequirements.length} 条已排期需求生成产品详细设计任务`}
+            type="info"
+          />
+          {selectedRequirements.length > selectedBatchGeneratableRequirements.length ? (
+            <Alert
+              showIcon
+              title={`另有 ${
+                selectedRequirements.length - selectedBatchGeneratableRequirements.length
+              } 条非已排期需求将由后端跳过`}
+              type="warning"
+            />
+          ) : null}
+          <Form<BatchGenerateTaskFormValues> form={batchGenerateForm} layout="vertical">
+            <Form.Item label="生成原因" name="reason">
               <Input.TextArea autoSize={{ minRows: 2 }} />
             </Form.Item>
           </Form>
