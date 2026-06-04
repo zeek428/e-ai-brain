@@ -377,6 +377,81 @@ def test_lifecycle_context_and_dashboard_queries_materialize_persistent_records(
     assert snapshot["metrics"]["online_log_summary"] == dashboard["online_log_summary"]
 
 
+def test_requirement_full_chain_returns_requirement_timeline_and_related_subjects(monkeypatch):
+    install_real_gitlab_api_stub(monkeypatch)
+    headers = auth_headers()
+    lifecycle = build_mvp_lifecycle(headers)
+    evidence = add_v1_2_lifecycle_evidence(headers, lifecycle)
+
+    response = client.get(
+        f"/api/requirements/{lifecycle['requirement_id']}/full-chain",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    full_chain = response.json()["data"]
+    assert full_chain["requirement"]["id"] == lifecycle["requirement_id"]
+    assert full_chain["product"]["id"] == lifecycle["product_id"]
+    assert full_chain["iteration_version"]["id"] == lifecycle["version_id"]
+
+    assert {task["id"] for task in full_chain["ai_tasks"]} >= {
+        lifecycle["design_task_id"],
+        lifecycle["solution_task_id"],
+        lifecycle["review_task_id"],
+    }
+    assert {review["id"] for review in full_chain["reviews"]} >= {
+        lifecycle["design_review_id"],
+        lifecycle["review_id"],
+    }
+    assert {report["id"] for report in full_chain["code_review_reports"]} == {
+        lifecycle["code_review_report_id"]
+    }
+    assert {snapshot["id"] for snapshot in full_chain["git_snapshots"]} == {
+        lifecycle["snapshot_id"]
+    }
+    assert {bug["id"] for bug in full_chain["bugs"]} == {evidence["bug_id"]}
+    assert {release["id"] for release in full_chain["jenkins_releases"]} == {
+        evidence["jenkins_release_id"]
+    }
+    assert lifecycle["knowledge_deposit_id"] in {
+        deposit["id"] for deposit in full_chain["knowledge_deposits"]
+    }
+
+    timeline = full_chain["timeline"]
+    assert {item["type"] for item in timeline} >= {
+        "requirement",
+        "iteration_version",
+        "ai_task",
+        "review",
+        "git_snapshot",
+        "code_review_report",
+        "bug",
+        "jenkins_release",
+        "knowledge_deposit",
+    }
+    assert [item["occurred_at"] for item in timeline] == sorted(
+        item["occurred_at"] for item in timeline
+    )
+    code_review_event = next(
+        item
+        for item in timeline
+        if item["type"] == "code_review_report"
+        and item["subject_id"] == lifecycle["code_review_report_id"]
+    )
+    assert code_review_event["title"] == f"代码评审：{lifecycle['code_review_report_id']}"
+    assert code_review_event["metadata"]["summary"]
+    assert full_chain["summary"] == {
+        "ai_tasks": len(full_chain["ai_tasks"]),
+        "reviews": len(full_chain["reviews"]),
+        "git_snapshots": len(full_chain["git_snapshots"]),
+        "code_review_reports": len(full_chain["code_review_reports"]),
+        "bugs": len(full_chain["bugs"]),
+        "jenkins_releases": len(full_chain["jenkins_releases"]),
+        "knowledge_deposits": len(full_chain["knowledge_deposits"]),
+        "timeline_events": len(timeline),
+    }
+
+
 def test_lifecycle_context_requires_query_anchor():
     headers = auth_headers()
 

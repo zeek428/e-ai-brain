@@ -169,6 +169,62 @@ export type RequirementResponse = {
   status: string;
 };
 
+export type RequirementFullChainTimelineItem = {
+  occurredAt: string;
+  occurredAtValue?: string;
+  status?: string;
+  subjectId: string;
+  title: string;
+  type: string;
+};
+
+export type RequirementFullChainSummary = {
+  aiTasks: number;
+  bugs: number;
+  codeReviewReports: number;
+  gitSnapshots: number;
+  jenkinsReleases: number;
+  knowledgeDeposits: number;
+  reviews: number;
+  timelineEvents: number;
+};
+
+export type RequirementFullChainRecord = {
+  aiTasks: TaskCenterTaskRecord[];
+  bugs: BugRecord[];
+  codeReviewReports: CodeReviewReportRecord[];
+  gitSnapshots: GitLabMergeRequestSnapshot[];
+  iterationVersion?: {
+    code?: string;
+    id: string;
+    name?: string;
+    status?: string;
+  };
+  jenkinsReleases: Array<{
+    buildId?: string;
+    createdAt: string;
+    id: string;
+    jobName?: string;
+    status: string;
+  }>;
+  knowledgeDeposits: KnowledgeDepositRecord[];
+  product?: {
+    code?: string;
+    id: string;
+    name?: string;
+  };
+  requirement: RequirementRecord;
+  reviews: Array<{
+    aiTaskId?: string;
+    createdAt: string;
+    id: string;
+    status: string;
+  }>;
+  status: string;
+  summary: RequirementFullChainSummary;
+  timeline: RequirementFullChainTimelineItem[];
+};
+
 export type TaskCenterTaskRecord = {
   createdAt: string;
   createdAtValue?: string;
@@ -676,6 +732,7 @@ export type GitLabMergeRequestPreview = {
 };
 
 export type GitLabMergeRequestSnapshot = {
+  createdAt?: string;
   diffLimitBytes?: number;
   diffSizeBytes?: number;
   id: string;
@@ -1061,6 +1118,39 @@ type LifecycleContextResponse = {
   upstream?: LifecycleRelationItem[];
 };
 
+type RequirementFullChainTimelineItemResponse = {
+  occurred_at?: string;
+  status?: string | null;
+  subject_id?: string;
+  title?: string;
+  type?: string;
+};
+
+type RequirementFullChainResponse = {
+  ai_tasks?: TaskListItem[];
+  bugs?: BugListItem[];
+  code_review_reports?: CodeReviewReportResponse[];
+  git_snapshots?: GitLabMergeRequestSnapshotResponse[];
+  iteration_version?: ProductVersionListItem | null;
+  jenkins_releases?: FlexibleListItem[];
+  knowledge_deposits?: KnowledgeDepositListItem[];
+  product?: ProductResponse | null;
+  requirement: RequirementListItem;
+  reviews?: PendingReviewListItem[];
+  status?: string;
+  summary?: Partial<{
+    ai_tasks: number;
+    bugs: number;
+    code_review_reports: number;
+    git_snapshots: number;
+    jenkins_releases: number;
+    knowledge_deposits: number;
+    reviews: number;
+    timeline_events: number;
+  }>;
+  timeline?: RequirementFullChainTimelineItemResponse[];
+};
+
 type BugListItem = {
   assignee?: string | null;
   created_at?: string;
@@ -1155,6 +1245,7 @@ type GitLabMergeRequestPreviewResponse = {
 };
 
 type GitLabMergeRequestSnapshotResponse = {
+  created_at?: string;
   diff_limit_bytes?: number;
   diff_size_bytes?: number;
   id: string;
@@ -1163,6 +1254,8 @@ type GitLabMergeRequestSnapshotResponse = {
 };
 
 type CodeReviewReportResponse = {
+  archived_at?: string;
+  created_at?: string;
   executor?: unknown;
   findings?: unknown[];
   gitlab_writeback_performed?: boolean;
@@ -1213,6 +1306,7 @@ type KnowledgeSearchResultItem = {
 type PendingReviewListItem = {
   ai_task_id: string;
   content?: Record<string, unknown>;
+  created_at?: string;
   id: string;
   stage?: string;
   status?: string;
@@ -2431,6 +2525,97 @@ function mapRequirementRecord(requirement: RequirementListItem): RequirementReco
   };
 }
 
+function mapTaskRecord(task: TaskListItem): TaskCenterTaskRecord {
+  return {
+    createdAt: formatListDate(task.created_at ?? task.updated_at),
+    createdAtValue: task.created_at ?? task.updated_at,
+    id: task.id,
+    label: task.title ?? task.task_type ?? task.id,
+    owner: task.created_by ?? '-',
+    product: task.product_name ?? task.product_id ?? '-',
+    productId: task.product_id,
+    requirementId: task.requirement_id,
+    status: task.status ?? '-',
+    type: task.task_type ?? '-',
+  };
+}
+
+function mapRequirementFullChain(
+  chain: RequirementFullChainResponse,
+): RequirementFullChainRecord {
+  const summary = chain.summary ?? {};
+  return {
+    aiTasks: (chain.ai_tasks ?? []).map(mapTaskRecord),
+    bugs: (chain.bugs ?? []).map(mapBugRecord),
+    codeReviewReports: (chain.code_review_reports ?? []).map((report) => ({
+      executor: report.executor,
+      findings: report.findings ?? [],
+      gitlabWritebackPerformed: report.gitlab_writeback_performed ?? false,
+      id: report.id,
+      riskLevel: report.risk_level ?? '-',
+      status: report.status ?? '-',
+      summary: report.summary ?? report.id,
+    })),
+    gitSnapshots: (chain.git_snapshots ?? []).map((snapshot) => ({
+      createdAt: formatListDate(snapshot.created_at),
+      diffLimitBytes: snapshot.diff_limit_bytes,
+      diffSizeBytes: snapshot.diff_size_bytes,
+      id: snapshot.id,
+      mrIid: snapshot.mr_iid,
+      repositoryId: snapshot.repository_id,
+    })),
+    iterationVersion: chain.iteration_version
+      ? {
+          code: chain.iteration_version.code,
+          id: chain.iteration_version.id,
+          name: chain.iteration_version.name,
+          status: chain.iteration_version.status,
+        }
+      : undefined,
+    jenkinsReleases: (chain.jenkins_releases ?? []).map((release) => ({
+      buildId: formatUnknownValue(release.build_id),
+      createdAt: formatListDate(formatUnknownValue(release.deployed_at ?? release.started_at ?? release.created_at)),
+      id: formatUnknownValue(release.id),
+      jobName: formatUnknownValue(release.job_name),
+      status: formatUnknownValue(release.status),
+    })),
+    knowledgeDeposits: (chain.knowledge_deposits ?? []).map(mapKnowledgeDeposit),
+    product: chain.product
+      ? {
+          code: chain.product.code,
+          id: chain.product.id,
+          name: chain.product.name,
+        }
+      : undefined,
+    requirement: mapRequirementRecord(chain.requirement),
+    reviews: (chain.reviews ?? []).map((review) => ({
+      aiTaskId: review.ai_task_id,
+      createdAt: formatListDate(formatUnknownValue(review.created_at)),
+      id: review.id,
+      status: review.status ?? '-',
+    })),
+    status: chain.status ?? 'available',
+    summary: {
+      aiTasks: normalizeDashboardCount(summary.ai_tasks),
+      bugs: normalizeDashboardCount(summary.bugs),
+      codeReviewReports: normalizeDashboardCount(summary.code_review_reports),
+      gitSnapshots: normalizeDashboardCount(summary.git_snapshots),
+      jenkinsReleases: normalizeDashboardCount(summary.jenkins_releases),
+      knowledgeDeposits: normalizeDashboardCount(summary.knowledge_deposits),
+      reviews: normalizeDashboardCount(summary.reviews),
+      timelineEvents: normalizeDashboardCount(summary.timeline_events),
+    },
+    timeline: (chain.timeline ?? []).map((item) => ({
+      occurredAt: formatListDate(item.occurred_at),
+      occurredAtValue: item.occurred_at,
+      status: item.status ?? undefined,
+      subjectId: item.subject_id ?? '-',
+      title: item.title ?? item.subject_id ?? '-',
+      type: item.type ?? '-',
+    })),
+  };
+}
+
 export async function fetchManagementRequirements(): Promise<RequirementRecord[]> {
   const token = requireAccessToken();
   const requirements = await apiRequest<ListResponse<RequirementListItem>>('/api/requirements', {
@@ -2463,6 +2648,18 @@ export async function fetchManagementRequirementList(
     rows: requirements.items.map(mapRequirementRecord),
     total: requirements.total,
   };
+}
+
+export async function fetchRequirementFullChain(
+  requirementId: string,
+): Promise<RequirementFullChainRecord> {
+  const token = requireAccessToken();
+  const chain = await apiRequest<RequirementFullChainResponse>(
+    `/api/requirements/${requirementId}/full-chain`,
+    { token },
+  );
+
+  return mapRequirementFullChain(chain);
 }
 
 export async function createManagementRequirement(payload: RequirementMutationPayload) {
@@ -2875,18 +3072,7 @@ export async function fetchTaskCenterTasks(
   return {
     page: tasks.page ?? query.page ?? 1,
     pageSize: tasks.page_size ?? query.pageSize ?? 10,
-    rows: tasks.items.map((task) => ({
-      createdAt: formatListDate(task.created_at ?? task.updated_at),
-      createdAtValue: task.created_at ?? task.updated_at,
-      id: task.id,
-      label: task.title ?? task.task_type ?? task.id,
-      owner: task.created_by ?? '-',
-      product: task.product_name ?? task.product_id ?? '-',
-      productId: task.product_id,
-      requirementId: task.requirement_id,
-      status: task.status ?? '-',
-      type: task.task_type ?? '-',
-    })),
+    rows: tasks.items.map(mapTaskRecord),
     total: tasks.total,
   };
 }
@@ -3274,6 +3460,7 @@ export async function snapshotGitLabMergeRequest({
   );
 
   return {
+    createdAt: formatListDate(snapshot.created_at),
     diffLimitBytes: snapshot.diff_limit_bytes,
     diffSizeBytes: snapshot.diff_size_bytes,
     id: snapshot.id,
@@ -3315,6 +3502,7 @@ export async function snapshotCodeReviewPullRequest({
   );
 
   return {
+    createdAt: formatListDate(snapshot.created_at),
     diffLimitBytes: snapshot.diff_limit_bytes,
     diffSizeBytes: snapshot.diff_size_bytes,
     id: snapshot.id,

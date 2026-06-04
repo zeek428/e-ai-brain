@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.87 |
+| 功能版本 | v1.1.88 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -109,6 +109,7 @@
 | v1.1.85 | 2026-06-04 | 调整迭代版本推进到测试中时的需求同步规则，已进入交付链路需求统一推进到 testing | Codex |
 | v1.1.86 | 2026-06-04 | 明确 Bug 管理登记弹窗目标版本使用同产品未归档版本选项，支持 testing/released 版本缺陷归属 | Codex |
 | v1.1.87 | 2026-06-04 | 新增研发运营和用户洞察统一聚合列表接口，前端主列表改为服务端分页、排序和筛选 | Codex |
+| v1.1.88 | 2026-06-04 | 新增需求全链路详情接口，一次返回需求、迭代版本、任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀时间线 | Codex |
 
 ---
 
@@ -293,6 +294,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-schedule` | 批量归集同产品需求到迭代版本。 |
 | Requirement | GET | `/api/requirements/{requirement_id}` | 需求详情。 |
+| Requirement | GET | `/api/requirements/{requirement_id}/full-chain` | 需求全链路详情，按时间线聚合需求、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀。 |
 | Requirement | PATCH | `/api/requirements/{requirement_id}` | 更新待审批或已驳回需求。 |
 | Requirement | DELETE | `/api/requirements/{requirement_id}` | 删除未生成任务的需求。 |
 | Requirement | POST | `/api/requirements/{requirement_id}/approve` | 审批通过需求。 |

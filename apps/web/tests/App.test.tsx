@@ -4410,6 +4410,188 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
   });
 
+  it('opens a requirement full-chain timeline from the requirements page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'AI-BRAIN', id: 'product_ai_brain', name: 'AI Brain', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions' || path.startsWith('/api/product-versions?')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-06-assistant-history',
+                id: 'version_assistant_history',
+                name: '2026-06 AI 助手历史记录迭代',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_ai_brain',
+                product_name: 'AI Brain',
+                status: 'testing',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '按用户级别保存 AI 助手会话。',
+                created_at: '2026-06-04T07:41:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_084',
+                priority: 'P0',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_ai_brain',
+                product_name: 'AI Brain',
+                status: 'testing',
+                title: 'AI 助手历史记录',
+                version_id: 'version_assistant_history',
+                version_name: '2026-06 AI 助手历史记录迭代',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/requirements/requirement_084/full-chain') {
+        return jsonResponse({
+          data: {
+            ai_tasks: [
+              {
+                created_at: '2026-06-04T08:00:00+00:00',
+                id: 'task_design',
+                requirement_id: 'requirement_084',
+                status: 'completed',
+                task_type: 'product_detail_design',
+                title: '产品详细设计：AI 助手历史记录',
+              },
+            ],
+            bugs: [
+              {
+                created_at: '2026-06-04T11:00:00+00:00',
+                id: 'bug_history',
+                severity: 'critical',
+                status: 'open',
+                title: '聊天记录未按用户隔离',
+              },
+            ],
+            code_review_reports: [
+              {
+                archived_at: '2026-06-04T10:00:00+00:00',
+                id: 'report_history',
+                risk_level: 'medium',
+                status: 'confirmed',
+                summary: 'Review 结论：补充用户级隔离测试。',
+              },
+            ],
+            git_snapshots: [{ created_at: '2026-06-04T09:30:00+00:00', id: 'snapshot_pr_12', mr_iid: 12 }],
+            iteration_version: {
+              code: '2026-06-assistant-history',
+              id: 'version_assistant_history',
+              name: '2026-06 AI 助手历史记录迭代',
+              status: 'testing',
+            },
+            jenkins_releases: [
+              {
+                build_id: 'build-084',
+                created_at: '2026-06-04T12:00:00+00:00',
+                id: 'jenkins_release_084',
+                job_name: 'ai-brain-release',
+                status: 'failed',
+              },
+            ],
+            knowledge_deposits: [
+              {
+                created_at: '2026-06-04T10:30:00+00:00',
+                id: 'deposit_history',
+                status: 'pending',
+                title: 'AI 助手历史记录 知识沉淀',
+              },
+            ],
+            product: { code: 'AI-BRAIN', id: 'product_ai_brain', name: 'AI Brain' },
+            requirement: {
+              created_at: '2026-06-04T07:41:00+00:00',
+              id: 'requirement_084',
+              product_id: 'product_ai_brain',
+              status: 'testing',
+              title: 'AI 助手历史记录',
+              version_id: 'version_assistant_history',
+            },
+            reviews: [{ ai_task_id: 'task_design', created_at: '2026-06-04T08:20:00+00:00', id: 'review_design', status: 'approved' }],
+            status: 'available',
+            summary: {
+              ai_tasks: 1,
+              bugs: 1,
+              code_review_reports: 1,
+              git_snapshots: 1,
+              jenkins_releases: 1,
+              knowledge_deposits: 1,
+              reviews: 1,
+              timeline_events: 8,
+            },
+            timeline: [
+              {
+                occurred_at: '2026-06-04T07:41:00+00:00',
+                status: 'testing',
+                subject_id: 'requirement_084',
+                title: '需求：AI 助手历史记录',
+                type: 'requirement',
+              },
+              {
+                occurred_at: '2026-06-04T08:00:00+00:00',
+                status: 'completed',
+                subject_id: 'task_design',
+                title: 'AI 任务：产品详细设计：AI 助手历史记录',
+                type: 'ai_task',
+              },
+              {
+                occurred_at: '2026-06-04T10:00:00+00:00',
+                metadata: { summary: 'Review 结论：补充用户级隔离测试。' },
+                status: 'confirmed',
+                subject_id: 'report_history',
+                title: '代码评审：report_history',
+                type: 'code_review_report',
+              },
+            ],
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<RequirementsPage />);
+
+    await screen.findByText('AI 助手历史记录');
+    fireEvent.click(screen.getByRole('button', { name: '全链路' }));
+
+    expect(await screen.findByRole('dialog', { name: '需求全链路 · requirement_084' })).toBeInTheDocument();
+    expect(screen.getByText('需求：AI 助手历史记录')).toBeInTheDocument();
+    expect(screen.getByText('AI 任务：产品详细设计：AI 助手历史记录')).toBeInTheDocument();
+    expect(screen.getByText('代码评审：report_history')).toBeInTheDocument();
+    expect(screen.getByText('1 个 AI 任务')).toBeInTheDocument();
+    expect(screen.getByText('1 个 Bug')).toBeInTheDocument();
+    expect(screen.getByText('1 个发布记录')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/requirements/requirement_084/full-chain');
+  });
+
   it('collects demand pool requirements from the iteration version page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

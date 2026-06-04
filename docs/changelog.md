@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 需求管理新增“全链路”详情入口，后端新增 `GET /api/requirements/{requirement_id}/full-chain`，一次聚合需求、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀时间线，减少跨页面跳转查看进度。
 - 用户洞察和研发运营主列表统一改为服务端聚合查询：新增 `/api/insights/items` 与 `/api/devops/operational-metrics`，支持 `page/page_size/sort_by/sort_order` 和页面查询条件，前端不再多接口拉全量后本地拼装分页。
 - 产品主列表补齐服务端聚合展示字段：`GET /api/products` 返回当前版本和模块数，前端远程产品列表不再额外拉取全量版本表拼装主表。
 - 主列表排序 helper 支持数值字段，修复审计 `sequence` 等数字列按字符串排序导致的顺序不稳定问题。
