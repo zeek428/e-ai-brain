@@ -1935,6 +1935,140 @@ def _list_payload(
     return envelope({"items": visible_items, "total": len(visible_items)}, trace_id)
 
 
+def _normalize_list_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _list_text_matches(item: dict[str, Any], keyword: str | None, fields: tuple[str, ...]) -> bool:
+    normalized_keyword = _normalize_list_text(keyword)
+    if not normalized_keyword:
+        return True
+    return normalized_keyword in " ".join(_normalize_list_text(item.get(field)) for field in fields)
+
+
+def _first_list_value(item: dict[str, Any], fields: tuple[str, ...]) -> Any:
+    for field in fields:
+        value = item.get(field)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _list_sort_value(value: Any) -> tuple[int, float | str]:
+    if value is None or value == "":
+        return (0, "")
+    if isinstance(value, bool):
+        return (1, float(int(value)))
+    if isinstance(value, (int, float)):
+        return (1, float(value))
+    return (2, _normalize_list_text(value))
+
+
+def _sort_list_items(
+    items: list[dict[str, Any]],
+    *,
+    allowed_fields: set[str],
+    default_sort_by: str,
+    sort_by: str | None,
+    sort_order: str,
+) -> list[dict[str, Any]]:
+    _ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    resolved_sort_by = sort_by or default_sort_by
+    if resolved_sort_by not in allowed_fields:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    return sorted(
+        items,
+        key=lambda item: _list_sort_value(item.get(resolved_sort_by)),
+        reverse=sort_order == "desc",
+    )
+
+
+def _paginated_list_payload(
+    items: list[dict[str, Any]],
+    *,
+    page: int | None,
+    page_size: int | None,
+    trace_id: str,
+) -> dict[str, Any]:
+    if page is None and page_size is None:
+        return envelope({"items": items, "total": len(items)}, trace_id)
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    total = len(items)
+    start = (resolved_page - 1) * resolved_page_size
+    end = start + resolved_page_size
+    return envelope(
+        {
+            "items": items[start:end],
+            "page": resolved_page,
+            "page_size": resolved_page_size,
+            "total": total,
+        },
+        trace_id,
+    )
+
+
+def _list_datetime_timestamp(value: Any) -> float:
+    if not value:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
+
+
+def _product_current_version_for_list(
+    current_store: MemoryStore,
+    product_id: str,
+) -> dict[str, Any] | None:
+    status_order = {"active": 0, "testing": 1, "released": 2, "planning": 3, "archived": 4}
+    versions = [
+        version
+        for version in current_store.product_versions.values()
+        if version.get("product_id") == product_id
+    ]
+    if not versions:
+        return None
+    return sorted(
+        versions,
+        key=lambda version: (
+            status_order.get(str(version.get("status") or ""), 9),
+            -_list_datetime_timestamp(version.get("updated_at") or version.get("created_at")),
+            _normalize_list_text(version.get("code")),
+        ),
+    )[0]
+
+
+def _product_list_projection(
+    item: dict[str, Any],
+    current_store: MemoryStore,
+) -> dict[str, Any]:
+    product_id = str(item.get("id") or "")
+    current_version = (
+        None
+        if item.get("current_version_name") and item.get("current_version_code")
+        else _product_current_version_for_list(current_store, product_id)
+    )
+    module_count = item.get("module_count")
+    if module_count is None:
+        module_count = sum(
+            1
+            for module in current_store.product_modules.values()
+            if module.get("product_id") == product_id and module.get("status") == "active"
+        )
+    return {
+        **item,
+        "current_version_code": item.get("current_version_code")
+        or (current_version or {}).get("code"),
+        "current_version_name": item.get("current_version_name")
+        or (current_version or {}).get("name"),
+        "module_count": module_count,
+    }
+
+
 class _RepositoryRequestContext:
     def __init__(self, repository: Any) -> None:
         self.repository = repository
@@ -4487,18 +4621,56 @@ def get_brain_app(
 def list_products(
     request: Request,
     active_only: bool = False,
+    code: str | None = None,
+    name: str | None = None,
+    owner_team: str | None = None,
+    status: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "asc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    _ensure_enum(status, PRODUCT_STATUSES, "product status")
     current_store = store(request)
     repository = _product_config_query_repository(current_store)
     if repository is not None:
         items = repository.list_products(active_only=active_only)
-        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
-    items = sorted(
-        current_store.products.values(),
-        key=lambda item: (item.get("display_order", 0), item["code"]),
+    else:
+        items = sorted(
+            current_store.products.values(),
+            key=lambda item: (item.get("display_order", 0), item["code"]),
+        )
+        if active_only:
+            items = [item for item in items if item.get("status") == "active"]
+    items = [_product_list_projection(item, current_store) for item in items]
+    if status:
+        items = [item for item in items if item.get("status") == status]
+    items = [item for item in items if _list_text_matches(item, code, ("code", "id"))]
+    items = [item for item in items if _list_text_matches(item, name, ("name",))]
+    items = [item for item in items if _list_text_matches(item, owner_team, ("owner_team",))]
+    items = _sort_list_items(
+        items,
+        allowed_fields={
+            "code",
+            "current_version_name",
+            "display_order",
+            "id",
+            "module_count",
+            "name",
+            "owner_team",
+            "status",
+        },
+        default_sort_by="display_order",
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
-    return _list_payload(items, trace_id=get_trace_id(request), active_only=active_only)
+    return _paginated_list_payload(
+        items,
+        page=page,
+        page_size=page_size,
+        trace_id=get_trace_id(request),
+    )
 
 
 @app.post("/api/products")
@@ -4666,19 +4838,63 @@ def delete_product(
 def list_all_product_versions(
     request: Request,
     active_only: bool = False,
+    code: str | None = None,
+    name: str | None = None,
+    product: str | None = None,
+    product_id: str | None = None,
+    status: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "asc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    _ensure_enum(status, VERSION_STATUSES, "product version status")
     current_store = store(request)
     repository = _postgres_snapshot_repository(current_store)
     if repository is not None:
         items = repository.list_product_version_summaries(active_only=active_only)
-        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+    else:
+        items = [
+            _product_version_summary_projection(version, current_store)
+            for version in current_store.product_versions.values()
+        ]
+        if active_only:
+            items = [item for item in items if item.get("status") == "active"]
+    if product_id:
+        items = [item for item in items if item.get("product_id") == product_id]
+    if status:
+        items = [item for item in items if item.get("status") == status]
+    items = [item for item in items if _list_text_matches(item, code, ("code",))]
+    items = [item for item in items if _list_text_matches(item, name, ("name",))]
     items = [
-        _product_version_summary_projection(version, current_store)
-        for version in current_store.product_versions.values()
+        item
+        for item in items
+        if _list_text_matches(item, product, ("product_code", "product_name", "product_id"))
     ]
-    items.sort(key=lambda item: (item.get("product_code") or "", item.get("code") or ""))
-    return _list_payload(items, trace_id=get_trace_id(request), active_only=active_only)
+    items = _sort_list_items(
+        items,
+        allowed_fields={
+            "code",
+            "created_at",
+            "name",
+            "product_code",
+            "product_name",
+            "release_date",
+            "start_date",
+            "status",
+            "updated_at",
+        },
+        default_sort_by="code",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return _paginated_list_payload(
+        items,
+        page=page,
+        page_size=page_size,
+        trace_id=get_trace_id(request),
+    )
 
 
 @app.get("/api/products/{product_id}/versions")
@@ -6147,10 +6363,20 @@ def batch_schedule_requirements(
 @app.get("/api/requirements")
 def list_requirements(
     request: Request,
+    priority: str | None = None,
     product_id: str | None = None,
+    product: str | None = None,
     status: str | None = None,
+    title: str | None = None,
+    version: str | None = None,
+    version_id: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    _ensure_enum(priority, {"P0", "P1", "P2"}, "requirement priority")
     current_store = store(request)
     read_store = _task_workflow_read_store(current_store)
     items = [
@@ -6166,8 +6392,45 @@ def list_requirements(
             for item in items
             if _canonical_requirement_status(item.get("status")) == expected_status
         ]
-    items.sort(key=lambda item: item["created_at"], reverse=True)
-    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+    if version_id:
+        items = [item for item in items if item.get("version_id") == version_id]
+    if priority:
+        items = [item for item in items if item.get("priority") == priority]
+    items = [item for item in items if _list_text_matches(item, title, ("title", "id"))]
+    items = [
+        item
+        for item in items
+        if _list_text_matches(item, product, ("product_code", "product_name", "product_id"))
+    ]
+    items = [
+        item
+        for item in items
+        if _list_text_matches(item, version, ("version_code", "version_name", "version_id"))
+    ]
+    items = _sort_list_items(
+        items,
+        allowed_fields={
+            "created_at",
+            "id",
+            "priority",
+            "product_code",
+            "product_name",
+            "status",
+            "title",
+            "updated_at",
+            "version_code",
+            "version_name",
+        },
+        default_sort_by="created_at",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return _paginated_list_payload(
+        items,
+        page=page,
+        page_size=page_size,
+        trace_id=get_trace_id(request),
+    )
 
 
 @app.get("/api/requirements/{requirement_id}")
@@ -7513,13 +7776,32 @@ def list_ai_tasks(
     created_to: str | None = None,
     keyword: str | None = None,
     created_by: str | None = None,
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=10, ge=1, le=100),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     current_store = store(request)
     from_at = _parse_iso_datetime(created_from, "created_from") if created_from else None
     to_at = _parse_iso_datetime(created_to, "created_to") if created_to else None
+    task_sort_fields = {
+        "created_at",
+        "created_by",
+        "id",
+        "product_id",
+        "product_name",
+        "status",
+        "task_type",
+        "title",
+        "updated_at",
+    }
+    _ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    resolved_sort_by = sort_by or "created_at"
+    if resolved_sort_by not in task_sort_fields:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
     repository = _postgres_snapshot_repository(current_store)
     if repository is not None:
         read_scope = _task_read_scope(user)
@@ -7544,11 +7826,18 @@ def list_ai_tasks(
             keyword=keyword,
             created_by=created_by,
             read_scope=read_scope,
-            limit=page_size,
-            offset=(page - 1) * page_size,
+            limit=resolved_page_size,
+            offset=(resolved_page - 1) * resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
         )
         return envelope(
-            {"items": items, "page": page, "page_size": page_size, "total": total},
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
             get_trace_id(request),
         )
     items = [
@@ -7592,14 +7881,21 @@ def list_ai_tasks(
             for item in items
             if normalized_created_by in str(item.get("created_by", "")).lower()
         ]
-    items.sort(key=lambda item: item["id"])
+    items = [_task_summary_projection(item, current_store) for item in items]
+    items = _sort_list_items(
+        items,
+        allowed_fields=task_sort_fields,
+        default_sort_by="created_at",
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+    )
     total = len(items)
-    items = items[(page - 1) * page_size : page * page_size]
+    items = items[(resolved_page - 1) * resolved_page_size : resolved_page * resolved_page_size]
     return envelope(
         {
-            "items": [_task_summary_projection(item, current_store) for item in items],
-            "page": page,
-            "page_size": page_size,
+            "items": items,
+            "page": resolved_page,
+            "page_size": resolved_page_size,
             "total": total,
         },
         get_trace_id(request),
@@ -8960,6 +9256,11 @@ def list_knowledge_documents(
     keyword: str | None = None,
     doc_type: str | None = None,
     index_status: str | None = None,
+    permission_role: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "asc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     if index_status:
@@ -8973,30 +9274,48 @@ def list_knowledge_documents(
             doc_type=doc_type,
             index_status=index_status,
         )
-        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
-    items = [
-        document
-        for document in current_store.knowledge_documents.values()
-        if _user_can_read_roles(user, document["permission_roles"])
-    ]
-    if keyword:
-        normalized_keyword = keyword.lower()
+    else:
         items = [
-            item
-            for item in items
-            if normalized_keyword in f"{item['title']} {item['content']}".lower()
+            document
+            for document in current_store.knowledge_documents.values()
+            if _user_can_read_roles(user, document["permission_roles"])
         ]
-    if doc_type:
-        items = [item for item in items if item["doc_type"] == doc_type]
-    if index_status:
-        items = [item for item in items if item["index_status"] == index_status]
-    items.sort(key=lambda item: item["id"])
-    return envelope(
-        {
-            "items": [_knowledge_document_response(current_store, item) for item in items],
-            "total": len(items),
+        if keyword:
+            normalized_keyword = keyword.lower()
+            items = [
+                item
+                for item in items
+                if normalized_keyword in f"{item['title']} {item['content']}".lower()
+            ]
+        if doc_type:
+            items = [item for item in items if item["doc_type"] == doc_type]
+        if index_status:
+            items = [item for item in items if item["index_status"] == index_status]
+        items = [_knowledge_document_response(current_store, item) for item in items]
+    items = [
+        item
+        for item in items
+        if _list_text_matches(item, permission_role, ("permission_roles",))
+    ]
+    items = _sort_list_items(
+        items,
+        allowed_fields={
+            "created_at",
+            "doc_type",
+            "id",
+            "index_status",
+            "title",
+            "updated_at",
         },
-        get_trace_id(request),
+        default_sort_by="id",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return _paginated_list_payload(
+        items,
+        page=page,
+        page_size=page_size,
+        trace_id=get_trace_id(request),
     )
 
 
@@ -9891,15 +10210,23 @@ def get_code_review_report(
 def audit_events(
     request: Request,
     ai_task_id: str | None = None,
+    actor: str | None = None,
     actor_id: str | None = None,
+    subject: str | None = None,
     subject_type: str | None = None,
     subject_id: str | None = None,
     event_type: str | None = None,
+    result: str | None = None,
     created_from: str | None = None,
     created_to: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require_roles(user, {"admin"})
+    _ensure_enum(result, {"failed", "success"}, "audit result")
     current_store = store(request)
     from_at = _parse_iso_datetime(created_from, "created_from") if created_from else None
     to_at = _parse_iso_datetime(created_to, "created_to") if created_to else None
@@ -9914,30 +10241,60 @@ def audit_events(
             created_from=from_at,
             created_to=to_at,
         )
-        return envelope({"items": items, "total": len(items)}, get_trace_id(request))
-    items = list(current_store.audit_events)
-    if actor_id:
-        items = [item for item in items if item.get("actor_id") == actor_id]
-    if event_type:
-        items = [item for item in items if item.get("event_type") == event_type]
-    if ai_task_id:
-        items = [item for item in items if item.get("ai_task_id") == ai_task_id]
-    if subject_type:
-        items = [item for item in items if item.get("subject_type") == subject_type]
-    if subject_id:
-        items = [item for item in items if item.get("subject_id") == subject_id]
-    if created_from or created_to:
-        filtered_items = []
-        for item in items:
-            event_at = _parse_iso_datetime(str(item.get("created_at") or ""), "created_at")
-            if from_at and event_at < from_at:
-                continue
-            if to_at and event_at > to_at:
-                continue
-            filtered_items.append(item)
-        items = filtered_items
-    items.sort(key=lambda item: item["sequence"], reverse=True)
-    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+    else:
+        items = list(current_store.audit_events)
+        if actor_id:
+            items = [item for item in items if item.get("actor_id") == actor_id]
+        if event_type:
+            items = [item for item in items if item.get("event_type") == event_type]
+        if ai_task_id:
+            items = [item for item in items if item.get("ai_task_id") == ai_task_id]
+        if subject_type:
+            items = [item for item in items if item.get("subject_type") == subject_type]
+        if subject_id:
+            items = [item for item in items if item.get("subject_id") == subject_id]
+        if created_from or created_to:
+            filtered_items = []
+            for item in items:
+                event_at = _parse_iso_datetime(str(item.get("created_at") or ""), "created_at")
+                if from_at and event_at < from_at:
+                    continue
+                if to_at and event_at > to_at:
+                    continue
+                filtered_items.append(item)
+            items = filtered_items
+    items = [{**item, "result": item.get("result", "success")} for item in items]
+    if result:
+        items = [item for item in items if item.get("result", "success") == result]
+    items = [item for item in items if _list_text_matches(item, actor, ("actor_id",))]
+    items = [
+        item
+        for item in items
+        if _list_text_matches(item, subject, ("subject_type", "subject_id", "ai_task_id"))
+    ]
+    items = _sort_list_items(
+        items,
+        allowed_fields={
+            "actor_id",
+            "ai_task_id",
+            "created_at",
+            "event_type",
+            "id",
+            "result",
+            "sequence",
+            "subject_id",
+            "subject_type",
+        },
+        default_sort_by="sequence",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return _paginated_list_payload(
+        items,
+        page=page,
+        page_size=page_size,
+        trace_id=get_trace_id(request),
+    )
 
 
 def _render_markdown(current_store: MemoryStore, task: dict[str, Any]) -> str:
@@ -11818,11 +12175,18 @@ def dashboard_metrics(
 @app.get("/api/bugs")
 def list_bugs(
     request: Request,
+    module: str | None = None,
     product_id: str | None = None,
     version_id: str | None = None,
+    version: str | None = None,
     status: str | None = None,
     severity: str | None = None,
     source: str | None = None,
+    title: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _validate_bug_enums(source=source, severity=severity, status=status)
@@ -11850,7 +12214,38 @@ def list_bugs(
             items = [item for item in items if item["source"] == source]
         items.sort(key=lambda item: item["created_at"], reverse=True)
         items = [_bug_summary_projection(item, current_store) for item in items]
-    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+    items = [item for item in items if _list_text_matches(item, title, ("title", "id"))]
+    items = [item for item in items if _list_text_matches(item, module, ("module_code",))]
+    items = [
+        item
+        for item in items
+        if _list_text_matches(item, version, ("version_code", "version_name", "version_id"))
+    ]
+    items = _sort_list_items(
+        items,
+        allowed_fields={
+            "assignee",
+            "created_at",
+            "id",
+            "module_code",
+            "severity",
+            "source",
+            "status",
+            "title",
+            "updated_at",
+            "version_code",
+            "version_name",
+        },
+        default_sort_by="created_at",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return _paginated_list_payload(
+        items,
+        page=page,
+        page_size=page_size,
+        trace_id=get_trace_id(request),
+    )
 
 
 @app.post("/api/bugs")
@@ -12297,6 +12692,116 @@ def resolve_pending_attribution_item(
     return envelope(item, get_trace_id(request))
 
 
+def _operational_metric_projection(category: str, item: dict[str, Any]) -> dict[str, Any]:
+    updated_at = _first_list_value(
+        item,
+        (
+            "updated_at",
+            "created_at",
+            "collected_at",
+            "deployed_at",
+            "started_at",
+            "metric_date",
+            "window_start",
+        ),
+    )
+    return {
+        **item,
+        "category": category,
+        "name": str(
+            _first_list_value(
+                item,
+                (
+                    "name",
+                    "metric_name",
+                    "repository_name",
+                    "release_name",
+                    "title",
+                    "job_name",
+                    "build_id",
+                    "repository_id",
+                    "metric_date",
+                    "environment",
+                    "window_start",
+                ),
+            )
+            or "-"
+        ),
+        "status": str(item.get("status") or "-"),
+        "updated_at": str(updated_at or ""),
+        "value": _first_list_value(
+            item,
+            (
+                "value",
+                "count",
+                "score",
+                "summary",
+                "commit_count",
+                "quality_score",
+                "build_id",
+                "duration_seconds",
+                "error_rate",
+                "request_count",
+                "p95_latency_ms",
+            ),
+        ),
+    }
+
+
+def _operational_metric_rows(current_store: MemoryStore) -> list[dict[str, Any]]:
+    repository = _operational_query_repository(current_store)
+    if repository is not None:
+        gitlab_metrics = repository.list_gitlab_daily_code_metrics()
+        jenkins_releases = repository.list_jenkins_release_records()
+        online_logs = repository.list_online_log_metrics()
+    else:
+        gitlab_metrics = list(current_store.gitlab_daily_code_metrics.values())
+        jenkins_releases = list(current_store.jenkins_release_records.values())
+        online_logs = list(current_store.online_log_metrics.values())
+    return [
+        *(_operational_metric_projection("GitLab 指标", item) for item in gitlab_metrics),
+        *(_operational_metric_projection("Jenkins 发布", item) for item in jenkins_releases),
+        *(_operational_metric_projection("线上日志", item) for item in online_logs),
+    ]
+
+
+@app.get("/api/devops/operational-metrics")
+def operational_metrics(
+    request: Request,
+    category: str | None = None,
+    name: str | None = None,
+    status: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    items = _operational_metric_rows(store(request))
+    if category is not None:
+        items = [item for item in items if item.get("category") == category]
+    if status is not None:
+        items = [item for item in items if item.get("status") == status]
+    items = [
+        item
+        for item in items
+        if _list_text_matches(item, name, ("name", "id", "product_id", "version_id", "module_code"))
+    ]
+    items = _sort_list_items(
+        items,
+        allowed_fields={"category", "id", "name", "status", "updated_at", "value"},
+        default_sort_by="updated_at",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return _paginated_list_payload(
+        items,
+        page=page,
+        page_size=page_size,
+        trace_id=get_trace_id(request),
+    )
+
+
 @app.get("/api/devops/gitlab/daily-code-metrics")
 def gitlab_metrics(
     request: Request,
@@ -12625,6 +13130,109 @@ def create_online_log_metric(
         audit_event=audit_event,
     )
     return envelope(metric, get_trace_id(request))
+
+
+def _user_insight_projection(category: str, item: dict[str, Any]) -> dict[str, Any]:
+    updated_at = _first_list_value(
+        item,
+        (
+            "updated_at",
+            "created_at",
+            "observed_at",
+            "window_start",
+        ),
+    )
+    return {
+        **item,
+        "category": category,
+        "confidence_level": str(item.get("confidence_level") or "-"),
+        "converted_requirement_id": str(item.get("converted_requirement_id") or "-"),
+        "feature_code": str(item.get("feature_code") or "-"),
+        "feedback_type": str(item.get("feedback_type") or "-"),
+        "module_code": str(item.get("module_code") or "-"),
+        "owner": str(
+            _first_list_value(item, ("user_id", "owner_id", "created_by", "actor_id")) or "-"
+        ),
+        "planning_cycle": str(item.get("planning_cycle") or "-"),
+        "priority": str(item.get("priority") or "-"),
+        "product_id": str(item.get("product_id") or "-"),
+        "status": str(item.get("status") or "-"),
+        "summary": str(
+            _first_list_value(
+                item,
+                (
+                    "summary",
+                    "title",
+                    "content",
+                    "feedback_text",
+                    "suggestion",
+                    "recommendation_reason",
+                    "feature_code",
+                ),
+            )
+            or "-"
+        ),
+        "updated_at": str(updated_at or ""),
+        "version_id": str(item.get("version_id") or "-"),
+    }
+
+
+def _user_insight_rows(current_store: MemoryStore) -> list[dict[str, Any]]:
+    repository = _insight_query_repository(current_store)
+    if repository is not None:
+        usage_metrics = repository.list_user_usage_metrics()
+        feedback_items = repository.list_user_feedback()
+        iteration_suggestions = repository.list_iteration_plan_suggestions()
+    else:
+        usage_metrics = list(current_store.user_usage_metrics.values())
+        feedback_items = list(current_store.user_feedback.values())
+        iteration_suggestions = list(current_store.iteration_plan_suggestions.values())
+    return [
+        *(_user_insight_projection("使用趋势", item) for item in usage_metrics),
+        *(_user_insight_projection("用户反馈", item) for item in feedback_items),
+        *(_user_insight_projection("迭代建议", item) for item in iteration_suggestions),
+    ]
+
+
+@app.get("/api/insights/items")
+def insight_items(
+    request: Request,
+    category: str | None = None,
+    summary: str | None = None,
+    status: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    items = _user_insight_rows(store(request))
+    if category is not None:
+        items = [item for item in items if item.get("category") == category]
+    if status is not None:
+        items = [item for item in items if item.get("status") == status]
+    items = [
+        item
+        for item in items
+        if _list_text_matches(
+            item,
+            summary,
+            ("summary", "id", "product_id", "version_id", "module_code", "feature_code"),
+        )
+    ]
+    items = _sort_list_items(
+        items,
+        allowed_fields={"category", "id", "owner", "status", "summary", "updated_at"},
+        default_sort_by="updated_at",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return _paginated_list_payload(
+        items,
+        page=page,
+        page_size=page_size,
+        trace_id=get_trace_id(request),
+    )
 
 
 @app.get("/api/insights/usage-metrics")

@@ -161,6 +161,66 @@ def test_product_detail_endpoint_returns_single_product():
     assert missing.json()["detail"]["code"] == "NOT_FOUND"
 
 
+def test_product_list_supports_server_pagination_sort_and_filters():
+    app.state.store.reset()
+    headers = auth_headers()
+    first = client.post(
+        "/api/products",
+        json={
+            "code": "list-a",
+            "name": "列表产品 A",
+            "owner_team": "growth",
+            "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        f"/api/products/{first['id']}/versions",
+        json={"code": "list-a-v1", "name": "列表产品 A 版本", "status": "testing"},
+        headers=headers,
+    )
+    client.post(
+        f"/api/products/{first['id']}/modules",
+        json={"code": "list-a-module", "name": "列表产品 A 模块", "status": "active"},
+        headers=headers,
+    )
+    second = client.post(
+        "/api/products",
+        json={
+            "code": "list-b",
+            "name": "列表产品 B",
+            "owner_team": "platform",
+            "status": "inactive",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    filtered = client.get(
+        "/api/products?owner_team=platform&status=inactive&page=1&page_size=1"
+        "&sort_by=code&sort_order=desc",
+        headers=headers,
+    ).json()["data"]
+    invalid_sort = client.get(
+        "/api/products?page=1&page_size=10&sort_by=unsupported",
+        headers=headers,
+    )
+
+    assert filtered["page"] == 1
+    assert filtered["page_size"] == 1
+    assert filtered["total"] == 1
+    assert [item["id"] for item in filtered["items"]] == [second["id"]]
+    assert first["id"] not in [item["id"] for item in filtered["items"]]
+    assert invalid_sort.status_code == 400
+    assert invalid_sort.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+    projected = client.get(
+        "/api/products?code=list-a&page=1&page_size=1",
+        headers=headers,
+    ).json()["data"]
+    assert projected["items"][0]["current_version_name"] == "列表产品 A 版本"
+    assert projected["items"][0]["module_count"] == 1
+
+
 def test_related_systems_are_saved_in_generated_task_product_context():
     app.state.store.reset()
     headers = auth_headers()

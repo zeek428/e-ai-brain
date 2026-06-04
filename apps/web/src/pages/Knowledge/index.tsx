@@ -5,20 +5,22 @@ import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Typ
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import type { ManagementListQuery } from '../../components/ManagementListPage';
 import type { KnowledgeRecord } from '../../data/management';
 import { type UserRoleDefinition, toUserRoleOptions } from '../../data/roles';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   approveKnowledgeDeposit,
   createManagementKnowledgeDocument,
   deleteManagementKnowledgeDocument,
   fetchKnowledgeDeposits,
   fetchKnowledgeSearchResults,
-  fetchManagementKnowledge,
+  fetchManagementKnowledgeList,
   fetchRoleDefinitions,
   rejectKnowledgeDeposit,
   retryKnowledgeDocumentIndex,
   updateManagementKnowledgeDocument,
+  type KnowledgeListQuery,
   type KnowledgeDepositRecord,
   type KnowledgeSearchResultRecord,
 } from '../../services/aiBrain';
@@ -60,6 +62,32 @@ type KnowledgeSearchFormValues = {
   top_k?: number;
 };
 
+const knowledgeSortFieldMap: Record<string, string> = {
+  documentType: 'doc_type',
+  id: 'id',
+  ownerRole: 'permission_roles',
+  status: 'index_status',
+  title: 'title',
+  updatedAt: 'updated_at',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildKnowledgeListQuery(query: ManagementListQuery): KnowledgeListQuery {
+  return {
+    documentType: normalizeFilterText(query.filters.documentType),
+    keyword: normalizeFilterText(query.filters.title),
+    ownerRole: normalizeFilterText(query.filters.ownerRole),
+    page: query.page,
+    pageSize: query.pageSize,
+    sortField: query.sortField ? knowledgeSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(query.filters.status),
+  };
+}
+
 export default function KnowledgePage() {
   const [form] = Form.useForm<KnowledgeFormValues>();
   const [rejectDepositForm] = Form.useForm<RejectDepositFormValues>();
@@ -77,13 +105,49 @@ export default function KnowledgePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [roleCatalogError, setRoleCatalogError] = useState<string | undefined>();
   const [roleDefinitions, setRoleDefinitions] = useState<UserRoleDefinition[]>([]);
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchManagementKnowledge);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'updatedAt',
+    sortOrder: 'descend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: KnowledgeRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
   const roleOptions = useMemo(() => toUserRoleOptions(roleDefinitions), [roleDefinitions]);
+
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchManagementKnowledgeList(buildKnowledgeListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -106,6 +170,36 @@ export default function KnowledgePage() {
       isCurrent = false;
     };
   }, []);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchManagementKnowledgeList(buildKnowledgeListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
 
   const openCreateModal = () => {
     setEditingDocument(null);
@@ -256,22 +350,27 @@ export default function KnowledgePage() {
     () => [
       {
         dataIndex: 'id',
+        sorter: true,
         title: '知识编号',
       },
       {
         dataIndex: 'title',
+        sorter: true,
         title: '知识标题',
       },
       {
         dataIndex: 'documentType',
+        sorter: true,
         title: '类型',
       },
       {
         dataIndex: 'ownerRole',
+        sorter: true,
         title: '权限角色',
       },
       {
         dataIndex: 'status',
+        sorter: true,
         title: '状态',
         render: (_, row) => {
           const statusLabel = statusLabels[row.status];
@@ -285,6 +384,7 @@ export default function KnowledgePage() {
       },
       {
         dataIndex: 'updatedAt',
+        sorter: true,
         title: '更新时间',
       },
       {
@@ -387,7 +487,7 @@ export default function KnowledgePage() {
       <ManagementListPage<KnowledgeRecord>
         breadcrumbGroup="产品资产"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           { label: '知识标题', name: 'title', type: 'text' },
           {
@@ -417,11 +517,17 @@ export default function KnowledgePage() {
             type: 'select',
           },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error) ?? roleCatalogError}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error) ?? roleCatalogError}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="导入文档"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
         tableTitle="知识列表"
         title="知识中心"

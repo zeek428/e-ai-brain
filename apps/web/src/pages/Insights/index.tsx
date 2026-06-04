@@ -1,21 +1,22 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Checkbox, Descriptions, Form, Input, Modal, Select, Space, Typography } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
-import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { ProductContextOption } from '../../data/management';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   createIterationSuggestions,
   createUserFeedback,
   createUserUsageMetric,
   decideIterationSuggestion,
   fetchProductContextOptions,
-  fetchUserInsights,
+  fetchUserInsightList,
   updateUserFeedback,
   type IterationSuggestionCreatePayload,
   type IterationSuggestionDecisionPayload,
+  type UserInsightListQuery,
   type UserFeedbackCreatePayload,
   type UserInsightRecord,
   type UserUsageMetricCreatePayload,
@@ -117,6 +118,31 @@ const iterationDecisionOptions = [
 ];
 
 const { Paragraph, Text } = Typography;
+
+const insightSortFieldMap: Record<string, string> = {
+  category: 'category',
+  owner: 'owner',
+  status: 'status',
+  summary: 'summary',
+  updatedAt: 'updated_at',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildInsightListQuery(query: ManagementListQuery): UserInsightListQuery {
+  const filters = query.filters;
+  return {
+    category: normalizeFilterText(filters.category),
+    page: query.page,
+    pageSize: query.pageSize,
+    sortField: query.sortField ? insightSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(filters.status),
+    summary: normalizeFilterText(filters.summary),
+  };
+}
 
 function buildFeedbackPayload(values: FeedbackFormValues): UserFeedbackCreatePayload {
   return {
@@ -249,6 +275,7 @@ function useInsightColumns(
       {
         dataIndex: 'category',
         ellipsis: true,
+        sorter: true,
         title: '数据类型',
         width: 96,
       },
@@ -260,23 +287,27 @@ function useInsightColumns(
             {row.summary}
           </Text>
         ),
+        sorter: true,
         title: '摘要',
         width: 420,
       },
       {
         dataIndex: 'owner',
         ellipsis: true,
+        sorter: true,
         title: '归属用户',
         width: 120,
       },
       {
         dataIndex: 'status',
+        sorter: true,
         title: '状态',
         render: (_, row) => <StatusTag color={statusColor(row.status)} label={row.status} />,
         width: 100,
       },
       {
         dataIndex: 'updatedAt',
+        sorter: true,
         title: '更新时间',
         width: 130,
       },
@@ -332,6 +363,47 @@ export default function InsightsPage() {
   const [triageForm] = Form.useForm<TriageFormValues>();
   const [usageForm] = Form.useForm<UsageMetricFormValues>();
   const productContexts = useProductContexts();
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'updatedAt',
+    sortOrder: 'descend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: UserInsightRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchUserInsightList(buildInsightListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
   const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
   const suggestionProductId = Form.useWatch('productId', suggestionForm);
   const decisionValue = Form.useWatch('decision', decisionForm);
@@ -340,12 +412,35 @@ export default function InsightsPage() {
     () => versionOptionsFromContexts(productContexts, suggestionProductId),
     [productContexts, suggestionProductId],
   );
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchUserInsights);
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchUserInsightList(buildInsightListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
   const columns = useInsightColumns(
     (row) => {
       setDecisionTarget(row);
@@ -455,7 +550,7 @@ export default function InsightsPage() {
       <ManagementListPage<UserInsightRecord>
         breadcrumbGroup="运营治理"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           {
             label: '数据类型',
@@ -470,11 +565,17 @@ export default function InsightsPage() {
           { label: '摘要', name: 'summary', type: 'text' },
           { label: '状态', name: 'status', type: 'text' },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error)}
         onPrimaryAction={() => setCreateOpen(true)}
         onReload={() => void reload()}
         primaryAction="登记反馈"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
         tableLayout="fixed"
         tableScroll={{ x: 994 }}

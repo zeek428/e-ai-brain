@@ -16,7 +16,7 @@ export type RemoteRowsResult<Row> = RemoteRowsState<Row> & {
   reload: () => Promise<void>;
 };
 
-function normalizeError(error: unknown): RemoteRowsError {
+export function normalizeRemoteRowsError(error: unknown): RemoteRowsError {
   if (error instanceof Error) {
     const errorWithDetails = error as Error & {
       code?: string;
@@ -58,7 +58,7 @@ export function useRemoteRows<Row>(loadRows: () => Promise<Row[]>): RemoteRowsRe
       setState({ rows: loadedRows, status: 'ready' });
     } catch (error: unknown) {
       setState({
-        error: normalizeError(error),
+        error: normalizeRemoteRowsError(error),
         rows: [],
         status: 'error',
       });
@@ -77,7 +77,7 @@ export function useRemoteRows<Row>(loadRows: () => Promise<Row[]>): RemoteRowsRe
       .catch((error: unknown) => {
         if (isCurrent) {
           setState({
-            error: normalizeError(error),
+            error: normalizeRemoteRowsError(error),
             rows: [],
             status: 'error',
           });

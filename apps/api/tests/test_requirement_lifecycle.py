@@ -181,6 +181,62 @@ def test_requirement_list_returns_product_and_iteration_version_projection():
     assert listed["version_name"] == version["name"]
 
 
+def test_requirement_list_supports_server_pagination_sort_and_filters():
+    app.state.store.reset()
+    headers = auth_headers()
+    product, version = create_product_and_version(headers)
+    other_product = client.post(
+        "/api/products",
+        json={"code": "other-product", "name": "其他产品"},
+        headers=headers,
+    ).json()["data"]
+
+    for title, target_product_id in [
+        ("Alpha 远程查询需求", product["id"]),
+        ("Beta 远程查询需求", product["id"]),
+        ("Gamma 其他产品需求", other_product["id"]),
+    ]:
+        client.post(
+            "/api/requirements",
+            json={
+                "content": f"{title} 内容",
+                "priority": "P1",
+                "product_id": target_product_id,
+                "title": title,
+                "version_id": version["id"] if target_product_id == product["id"] else None,
+            },
+            headers=headers,
+        )
+
+    first_page = client.get(
+        (
+            "/api/requirements?title=远程查询&product=rd-platform&version=v1"
+            "&page=1&page_size=1&sort_by=title&sort_order=asc"
+        ),
+        headers=headers,
+    ).json()["data"]
+    second_page = client.get(
+        (
+            "/api/requirements?title=远程查询&product=rd-platform&version=v1"
+            "&page=2&page_size=1&sort_by=title&sort_order=asc"
+        ),
+        headers=headers,
+    ).json()["data"]
+
+    assert first_page["page"] == 1
+    assert first_page["page_size"] == 1
+    assert first_page["total"] == 2
+    assert [item["title"] for item in first_page["items"]] == ["Alpha 远程查询需求"]
+    assert [item["title"] for item in second_page["items"]] == ["Beta 远程查询需求"]
+
+    invalid_sort = client.get(
+        "/api/requirements?page=1&page_size=10&sort_by=unsupported",
+        headers=headers,
+    )
+    assert invalid_sort.status_code == 400
+    assert invalid_sort.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
 def test_product_versions_batch_list_returns_product_projection():
     app.state.store.reset()
     headers = auth_headers()
@@ -197,6 +253,57 @@ def test_product_versions_batch_list_returns_product_projection():
             "product_name": product["name"],
         }
     ]
+
+
+def test_product_versions_batch_list_supports_server_pagination_sort_and_filters():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = client.post(
+        "/api/products",
+        json={"code": "server-list-product", "name": "服务端查询产品"},
+        headers=headers,
+    ).json()["data"]
+    other_product = client.post(
+        "/api/products",
+        json={"code": "another-product", "name": "其他产品"},
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": "2026-06", "name": "六月迭代", "status": "planning"},
+        headers=headers,
+    )
+    client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": "2026-07", "name": "七月迭代", "status": "planning"},
+        headers=headers,
+    )
+    client.post(
+        f"/api/products/{other_product['id']}/versions",
+        json={"code": "2026-08", "name": "其他迭代", "status": "planning"},
+        headers=headers,
+    )
+
+    first_page = client.get(
+        (
+            "/api/product-versions?product=server-list-product&status=planning"
+            "&page=1&page_size=1&sort_by=code&sort_order=desc"
+        ),
+        headers=headers,
+    ).json()["data"]
+    second_page = client.get(
+        (
+            "/api/product-versions?product=server-list-product&status=planning"
+            "&page=2&page_size=1&sort_by=code&sort_order=desc"
+        ),
+        headers=headers,
+    ).json()["data"]
+
+    assert first_page["page"] == 1
+    assert first_page["page_size"] == 1
+    assert first_page["total"] == 2
+    assert [item["code"] for item in first_page["items"]] == ["2026-07"]
+    assert [item["code"] for item in second_page["items"]] == ["2026-06"]
 
 
 def test_requirement_cannot_be_created_for_inactive_product():

@@ -698,7 +698,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         );
       }
-      expect(input).toBe('/api/ai-tasks');
+      expect(String(input).startsWith('/api/ai-tasks')).toBe(true);
+      expect(String(input).startsWith('/api/ai-tasks/')).toBe(false);
       return new Response(
         JSON.stringify({
           data: {
@@ -824,7 +825,14 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/ai-tasks') {
+      if (
+        input === '/api/ai-tasks' ||
+        (
+          typeof input === 'string' &&
+          input.startsWith('/api/ai-tasks?') &&
+          !input.includes('product_id=')
+        )
+      ) {
         return jsonResponse({
           data: {
             items: [
@@ -936,7 +944,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/ai-tasks') {
+      if (input === '/api/ai-tasks' || (typeof input === 'string' && input.startsWith('/api/ai-tasks?'))) {
         return jsonResponse({
           data: {
             items: [
@@ -1007,7 +1015,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByDisplayValue(/任务详情输出摘要/)).toBeInTheDocument();
     await waitFor(() => {
       const relevantCalls = fetchMock.mock.calls
-          .map(([path, init]) => [path, init?.method ?? 'GET'])
+          .map(([path, init]) => [
+            String(path).startsWith('/api/ai-tasks?') ? '/api/ai-tasks' : path,
+            init?.method ?? 'GET',
+          ])
           .filter(([path]) => !String(path).startsWith('/api/products'))
           .filter(([path]) => !String(path).startsWith('/api/product-versions'));
       expect(relevantCalls).toHaveLength(3);
@@ -1042,7 +1053,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/ai-tasks') {
+      if (input === '/api/ai-tasks' || (typeof input === 'string' && input.startsWith('/api/ai-tasks?'))) {
         return jsonResponse({
           data: {
             items: [
@@ -1119,7 +1130,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/ai-tasks') {
+      if (input === '/api/ai-tasks' || (typeof input === 'string' && input.startsWith('/api/ai-tasks?'))) {
         return jsonResponse({
           data: {
             items: [
@@ -1188,7 +1199,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/ai-tasks') {
+      if (input === '/api/ai-tasks' || (typeof input === 'string' && input.startsWith('/api/ai-tasks?'))) {
         return jsonResponse({
           data: {
             items: [
@@ -1258,7 +1269,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (input === '/api/reviews/pending') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      expect(input).toBe('/api/ai-tasks');
+      expect(String(input).startsWith('/api/ai-tasks')).toBe(true);
+      expect(String(input).startsWith('/api/ai-tasks/')).toBe(false);
       return jsonResponse({
         data: {
           items: [
@@ -1301,7 +1313,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (input === '/api/reviews/pending') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/ai-tasks') {
+      if (input === '/api/ai-tasks' || (typeof input === 'string' && input.startsWith('/api/ai-tasks?'))) {
         return jsonResponse({
           data: {
             items: [
@@ -1372,7 +1384,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(await screen.findByText('已生成')).toBeInTheDocument();
     expect(screen.getByText('mock_issue_api')).toBeInTheDocument();
     const relevantWritebackCalls = fetchMock.mock.calls
-        .map(([path, init]) => [path, init?.method])
+        .map(([path, init]) => [
+          String(path).startsWith('/api/ai-tasks?') ? '/api/ai-tasks' : path,
+          init?.method,
+        ])
         .filter(([path]) => !String(path).startsWith('/api/products'))
         .filter(([path]) => !String(path).startsWith('/api/product-versions'));
     expect(relevantWritebackCalls).toHaveLength(4);
@@ -1396,7 +1411,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/ai-tasks') {
+      if (input === '/api/ai-tasks' || (typeof input === 'string' && input.startsWith('/api/ai-tasks?'))) {
         return jsonResponse({
           data: {
             items: [
@@ -1798,7 +1813,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/knowledge/documents') {
+      if (String(input) === '/api/knowledge/documents' || String(input).startsWith('/api/knowledge/documents?')) {
         return jsonResponse({
           data: {
             items: [
@@ -1877,7 +1892,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/knowledge/documents') {
+      if (String(input) === '/api/knowledge/documents' || String(input).startsWith('/api/knowledge/documents?')) {
         return jsonResponse({
           data: {
             items: [
@@ -1931,9 +1946,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     expect(await screen.findByText('需求评估规则内容')).toBeInTheDocument();
     expect(screen.getByText('manual · 需求评估规则')).toBeInTheDocument();
-    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
-      ['/api/knowledge/documents', 'GET'],
+    expect(fetchMock.mock.calls.map(([path, init]) => [String(path).split('?')[0], init?.method ?? 'GET'])).toEqual([
       ['/api/auth/roles', 'GET'],
+      ['/api/knowledge/documents', 'GET'],
       ['/api/knowledge/search', 'POST'],
     ]);
   });
@@ -1947,7 +1962,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     let retryCalled = false;
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/knowledge/documents') {
+      if (String(input) === '/api/knowledge/documents' || String(input).startsWith('/api/knowledge/documents?')) {
         return jsonResponse({
           data: {
             items: [
@@ -2007,6 +2022,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
         status: 200,
       });
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
       if (input === '/api/dashboard/it-team') {
         return jsonResponse({
           data: {
@@ -2085,6 +2101,43 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path.startsWith('/api/devops/operational-metrics')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                category: 'GitLab 指标',
+                id: 'gitlab_metric_dashboard',
+                name: '首页仓库指标',
+                status: 'collected',
+                updated_at: '2026-06-04T08:00:00Z',
+                value: 9,
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      if (path.startsWith('/api/insights/items')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                category: '使用趋势',
+                id: 'usage_dashboard',
+                status: 'active',
+                summary: '首页使用趋势',
+                updated_at: '2026-06-04T08:00:00Z',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
       return jsonResponse({ data: { items: [], total: 0 } });
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -2127,16 +2180,11 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
     expect(screen.getByText('研发运营指标')).toBeInTheDocument();
     expect(screen.getByText('GitLab 指标')).toBeInTheDocument();
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(
-        expect.arrayContaining([
-          '/api/devops/gitlab/daily-code-metrics',
-          '/api/devops/jenkins/releases',
-          '/api/ops/online-log-metrics',
-          '/api/products?active_only=true',
-        ]),
-      ),
-    );
+    await waitFor(() => {
+      const paths = fetchMock.mock.calls.map(([path]) => String(path));
+      expect(paths.some((path) => path.startsWith('/api/devops/operational-metrics'))).toBe(true);
+      expect(paths).toEqual(expect.arrayContaining(['/api/products?active_only=true']));
+    });
 
     rerender(<InsightsPage />);
 
@@ -2147,15 +2195,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('待接入')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
     expect(screen.getByText('使用趋势')).toBeInTheDocument();
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(
-        expect.arrayContaining([
-          '/api/insights/usage-metrics',
-          '/api/insights/user-feedback',
-          '/api/planning/iteration-suggestions',
-        ]),
-      ),
-    );
+    await waitFor(() => {
+      const paths = fetchMock.mock.calls.map(([path]) => String(path));
+      expect(paths.some((path) => path.startsWith('/api/insights/items'))).toBe(true);
+    });
   });
 
   it('reloads the dashboard with a selected product filter', async () => {
@@ -2315,8 +2358,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },
         status: 200,
-      });
+    });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
       if (input === '/api/products?active_only=true') {
         return jsonResponse({
           data: {
@@ -2350,19 +2394,22 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/insights/user-feedback') {
+      if (path.startsWith('/api/insights/items')) {
         return jsonResponse({
           data: {
             items: [
               {
-                content: '已有反馈内容',
+                category: '用户反馈',
                 created_by: 'user_admin',
                 id: 'feedback_existing',
                 product_id: 'product_api',
                 status: 'open',
+                summary: '已有反馈内容',
                 updated_at: '2026-06-01T08:00:00Z',
               },
             ],
+            page: 1,
+            page_size: 10,
             total: 1,
           },
         });
@@ -2428,60 +2475,49 @@ describe('AI Brain Ant Design Pro workbench', () => {
         status: 200,
       });
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
       if (input === '/api/products?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/insights/usage-metrics') {
+      if (path.startsWith('/api/insights/items')) {
         return jsonResponse({
           data: {
             items: [
               {
+                category: '用户反馈',
+                created_by: 'user_admin',
+                id: 'feedback_new',
+                product_id: 'product_api',
+                status: 'open',
+                summary: '最新反馈',
+                updated_at: '2026-06-04T09:00:00Z',
+              },
+              {
+                category: '迭代建议',
+                created_by: 'user_admin',
+                id: 'suggestion_mid',
+                product_id: 'product_api',
+                status: 'suggested',
+                summary: '中间建议',
+                updated_at: '2026-06-03T08:00:00Z',
+              },
+              {
+                category: '使用趋势',
                 created_by: 'user_admin',
                 feature_code: 'old-usage',
                 id: 'usage_old',
                 product_id: 'product_api',
                 status: 'active',
+                summary: 'old-usage',
                 updated_at: '2026-06-01T08:00:00Z',
               },
             ],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/insights/user-feedback') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                content: '最新反馈',
-                created_by: 'user_admin',
-                id: 'feedback_new',
-                product_id: 'product_api',
-                status: 'open',
-                updated_at: '2026-06-04T09:00:00Z',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/planning/iteration-suggestions') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                created_by: 'user_admin',
-                id: 'suggestion_mid',
-                product_id: 'product_api',
-                status: 'suggested',
-                title: '中间建议',
-                updated_at: '2026-06-03T08:00:00Z',
-              },
-            ],
-            total: 1,
+            page: 1,
+            page_size: 10,
+            total: 3,
           },
         });
       }
@@ -2503,8 +2539,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },
         status: 200,
-      });
+    });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
       if (input === '/api/products?active_only=true') {
         return jsonResponse({
           data: {
@@ -3000,7 +3037,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (input === '/api/products/product_api/modules') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products') {
+      if (String(input) === '/api/products' || String(input).startsWith('/api/products?')) {
         return jsonResponse({
           data: {
             items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
@@ -3077,7 +3114,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (input === '/api/products?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products') {
+      if (String(input) === '/api/products' || String(input).startsWith('/api/products?')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/requirements') {
@@ -3263,6 +3300,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
         status: 200,
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
       if (input === '/api/products?active_only=true') {
         return jsonResponse({
           data: {
@@ -3319,21 +3357,24 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/planning/iteration-suggestions') {
+      if (path.startsWith('/api/insights/items')) {
         return jsonResponse({
           data: {
             items: [
               {
+                category: '迭代建议',
                 confidence_level: 'medium',
                 id: 'suggestion_existing',
                 planning_cycle: '2026Q3',
                 priority: 'P1',
                 product_id: 'product_api',
                 status: 'suggested',
-                title: '优化知识检索',
+                summary: '优化知识检索',
                 updated_at: '2026-06-01T08:00:00Z',
               },
             ],
+            page: 1,
+            page_size: 10,
             total: 1,
           },
         });
@@ -3460,7 +3501,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/audit/events') {
+      if (String(input) === '/api/audit/events' || String(input).startsWith('/api/audit/events?')) {
         return jsonResponse({
           data: {
             items: [
@@ -3590,32 +3631,38 @@ describe('AI Brain Ant Design Pro workbench', () => {
   it('filters management table rows from query conditions', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
       const path = String(input);
-      if (path.includes('/versions')) {
+      if (path.includes('/versions') || path.startsWith('/api/product-versions')) {
         return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
           headers: { 'Content-Type': 'application/json' },
           status: 200,
         });
       }
+      const productItems = [
+        {
+          code: 'AI-BRAIN',
+          id: 'product_ai_brain',
+          name: '企业 AI 大脑平台',
+          owner_team: 'AI Platform',
+          status: 'active',
+        },
+        {
+          code: 'RD-BRAIN',
+          id: 'product_rd_brain',
+          name: '研发大脑',
+          owner_team: 'R&D Enablement',
+          status: 'active',
+        },
+      ].filter((item) => {
+        if (!path.includes('code=RD-BRAIN')) {
+          return true;
+        }
+        return item.code === 'RD-BRAIN';
+      });
       return new Response(
         JSON.stringify({
           data: {
-            items: [
-              {
-                code: 'AI-BRAIN',
-                id: 'product_ai_brain',
-                name: '企业 AI 大脑平台',
-                owner_team: 'AI Platform',
-                status: 'active',
-              },
-              {
-                code: 'RD-BRAIN',
-                id: 'product_rd_brain',
-                name: '研发大脑',
-                owner_team: 'R&D Enablement',
-                status: 'active',
-              },
-            ],
-            total: 2,
+            items: productItems,
+            total: productItems.length,
           },
         }),
         {
@@ -3634,12 +3681,12 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.change(screen.getByLabelText('产品编码'), { target: { value: 'RD-BRAIN' } });
     fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
 
-    expect(screen.getByText('RD-BRAIN')).toBeInTheDocument();
-    expect(screen.queryByText('AI-BRAIN')).not.toBeInTheDocument();
+    expect(await screen.findByText('RD-BRAIN')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('AI-BRAIN')).not.toBeInTheDocument());
 
     fireEvent.reset(screen.getByRole('form', { name: '查询表格' }));
 
-    expect(screen.getByText('AI-BRAIN')).toBeInTheDocument();
+    expect(await screen.findByText('AI-BRAIN')).toBeInTheDocument();
   });
 
   it('manages product versions modules and git resources from the product page', async () => {
@@ -3653,7 +3700,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       const method = init?.method ?? 'GET';
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
 
-      if (path === '/api/products') {
+      if (path === '/api/products' || path.startsWith('/api/products?')) {
         return jsonResponse({
           data: {
             items: [
@@ -3923,7 +3970,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       const path = String(input);
       const method = init?.method ?? 'GET';
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (path === '/api/products' && method === 'GET') {
+      if ((path === '/api/products' || path.startsWith('/api/products?')) && method === 'GET') {
         return jsonResponse({
           data: {
             items: [
@@ -4190,10 +4237,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (path === '/api/products?active_only=true') {
         return activeProductsPromise;
       }
-      if (path === '/api/product-versions') {
+      if (path === '/api/product-versions' || path.startsWith('/api/product-versions?')) {
         return requirementVersionsPromise;
       }
-      if (path === '/api/requirements') {
+      if (path === '/api/requirements' || path.startsWith('/api/requirements?')) {
         return requirementsPromise;
       }
       return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
@@ -4232,7 +4279,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/product-versions') {
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
         return jsonResponse({
           data: {
             items: [
@@ -4259,38 +4309,40 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/requirements' && method === 'GET') {
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        const isVersionFiltered = path.includes('version=2026-05');
+        const items = [
+          {
+            content: '归集需求一内容',
+            created_at: '2026-06-04T08:00:00+00:00',
+            created_by: 'user_admin',
+            id: 'requirement_pool',
+            priority: 'P1',
+            product_code: 'API-PRODUCT',
+            product_id: 'product_api',
+            product_name: '接口产品',
+            status: 'approved',
+            title: '归集需求一',
+          },
+          {
+            content: '归集需求二内容',
+            created_at: '2026-06-04T08:10:00+00:00',
+            created_by: 'user_admin',
+            id: 'requirement_planned',
+            priority: 'P1',
+            product_code: 'API-PRODUCT',
+            product_id: 'product_api',
+            product_name: '接口产品',
+            status: 'planned',
+            title: '归集需求二',
+            version_id: 'version_old',
+            version_name: '2026-05',
+          },
+        ];
         return jsonResponse({
           data: {
-            items: [
-              {
-                content: '归集需求一内容',
-                created_at: '2026-06-04T08:00:00+00:00',
-                created_by: 'user_admin',
-                id: 'requirement_pool',
-                priority: 'P1',
-                product_code: 'API-PRODUCT',
-                product_id: 'product_api',
-                product_name: '接口产品',
-                status: 'approved',
-                title: '归集需求一',
-              },
-              {
-                content: '归集需求二内容',
-                created_at: '2026-06-04T08:10:00+00:00',
-                created_by: 'user_admin',
-                id: 'requirement_planned',
-                priority: 'P1',
-                product_code: 'API-PRODUCT',
-                product_id: 'product_api',
-                product_name: '接口产品',
-                status: 'planned',
-                title: '归集需求二',
-                version_id: 'version_old',
-                version_name: '2026-05',
-              },
-            ],
-            total: 2,
+            items: isVersionFiltered ? items.slice(1) : items,
+            total: isVersionFiltered ? 1 : 2,
           },
         });
       }
@@ -4322,11 +4374,11 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.change(screen.getByLabelText('迭代版本'), { target: { value: '2026-05' } });
     fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
 
+    await waitFor(() => expect(screen.queryByText('归集需求一')).not.toBeInTheDocument());
     expect(screen.getByText('归集需求二')).toBeInTheDocument();
-    expect(screen.queryByText('归集需求一')).not.toBeInTheDocument();
 
     fireEvent.reset(screen.getByRole('form', { name: '查询表格' }));
-    expect(screen.getByText('归集需求一')).toBeInTheDocument();
+    expect(await screen.findByText('归集需求一')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_pool' }));
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_planned' }));
@@ -4368,7 +4420,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
       const path = String(input);
       const method = init?.method ?? 'GET';
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (path === '/api/product-versions') {
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
         return jsonResponse({
           data: {
             items: [
@@ -4410,7 +4465,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/requirements' && method === 'GET') {
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
         return jsonResponse({
           data: {
             items: [
@@ -4490,7 +4545,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
       const path = String(input);
       const method = init?.method ?? 'GET';
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (path === '/api/product-versions') {
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
         return jsonResponse({
           data: {
             items: [
@@ -4524,7 +4582,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/requirements' && method === 'GET') {
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
         return jsonResponse({
           data: {
             items: [
@@ -4592,7 +4650,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
       const path = String(input);
       const method = init?.method ?? 'GET';
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (path === '/api/product-versions') {
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
         return jsonResponse({
           data: {
             items: [
@@ -4621,7 +4682,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (path === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (path === '/api/requirements' && method === 'GET') {
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
         return jsonResponse({
           data: {
             items: [
@@ -4748,7 +4809,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
       const path = String(input);
-      if (path === '/api/products') {
+      if (path === '/api/products' || path.startsWith('/api/products?')) {
         return jsonResponse({
           data: {
             items: [
@@ -4780,7 +4841,11 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/product-versions' || path === '/api/product-versions?active_only=true') {
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions' ||
+        path.startsWith('/api/product-versions?')
+      ) {
         return jsonResponse({
           data: {
             items: [
@@ -4798,7 +4863,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/requirements') {
+      if (path === '/api/requirements' || path.startsWith('/api/requirements?')) {
         return jsonResponse({
           data: {
             items: [
@@ -4818,7 +4883,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/bugs') {
+      if (path === '/api/bugs' || path.startsWith('/api/bugs?')) {
         return jsonResponse({
           data: {
             items: [
@@ -4835,7 +4900,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/knowledge/documents') {
+      if (path === '/api/knowledge/documents' || path.startsWith('/api/knowledge/documents?')) {
         return jsonResponse({
           data: {
             items: [
@@ -4926,7 +4991,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/product-versions') {
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
         return jsonResponse({
           data: {
             items: [
@@ -4942,44 +5010,46 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/bugs' && method === 'GET') {
+      if ((path === '/api/bugs' || path.startsWith('/api/bugs?')) && method === 'GET') {
+        const isVersionFiltered = path.includes('version=v1+MVP') || path.includes('version=v1%20MVP');
+        const items = [
+          {
+            assignee: 'qa@example.com',
+            created_at: '2026-06-04T08:00:00+00:00',
+            description: '支付链路失败',
+            duplicate_of_bug_id: 'bug_target',
+            evidence: { log_id: 'log-1' },
+            id: 'bug_main',
+            module_code: 'checkout',
+            product_id: 'product_api',
+            reproduce_steps: ['打开支付页', '点击支付'],
+            severity: 'major',
+            source: 'manual_test',
+            status: 'closed',
+            title: '支付失败',
+            version_id: 'version_api',
+            version_name: 'v1 MVP',
+          },
+          {
+            assignee: 'rd@example.com',
+            created_at: '2026-06-04T08:10:00+00:00',
+            description: '同类支付问题',
+            id: 'bug_target',
+            module_code: 'checkout',
+            product_id: 'product_api',
+            reproduce_steps: [],
+            severity: 'minor',
+            source: 'ai_auto_test',
+            status: 'triaged',
+            title: '支付重复问题',
+            version_id: 'version_regression',
+            version_name: 'v2 回归',
+          },
+        ];
         return jsonResponse({
           data: {
-            items: [
-              {
-                assignee: 'qa@example.com',
-                created_at: '2026-06-04T08:00:00+00:00',
-                description: '支付链路失败',
-                duplicate_of_bug_id: 'bug_target',
-                evidence: { log_id: 'log-1' },
-                id: 'bug_main',
-                module_code: 'checkout',
-                product_id: 'product_api',
-                reproduce_steps: ['打开支付页', '点击支付'],
-                severity: 'major',
-                source: 'manual_test',
-                status: 'closed',
-                title: '支付失败',
-                version_id: 'version_api',
-                version_name: 'v1 MVP',
-              },
-              {
-                assignee: 'rd@example.com',
-                created_at: '2026-06-04T08:10:00+00:00',
-                description: '同类支付问题',
-                id: 'bug_target',
-                module_code: 'checkout',
-                product_id: 'product_api',
-                reproduce_steps: [],
-                severity: 'minor',
-                source: 'ai_auto_test',
-                status: 'triaged',
-                title: '支付重复问题',
-                version_id: 'version_regression',
-                version_name: 'v2 回归',
-              },
-            ],
-            total: 2,
+            items: isVersionFiltered ? items.slice(0, 1) : items,
+            total: isVersionFiltered ? 1 : 2,
           },
         });
       }
@@ -5003,11 +5073,11 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.change(screen.getByLabelText('迭代版本'), { target: { value: 'v1 MVP' } });
     fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
 
+    await waitFor(() => expect(screen.queryByText('支付重复问题')).not.toBeInTheDocument());
     expect(screen.getByText('支付失败')).toBeInTheDocument();
-    expect(screen.queryByText('支付重复问题')).not.toBeInTheDocument();
 
     fireEvent.reset(screen.getByRole('form', { name: '查询表格' }));
-    expect(screen.getByText('支付重复问题')).toBeInTheDocument();
+    expect(await screen.findByText('支付重复问题')).toBeInTheDocument();
 
     const bugRow = screen.getByText('支付失败').closest('tr');
     expect(bugRow).not.toBeNull();
@@ -5070,7 +5140,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/product-versions') {
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
         return jsonResponse({
           data: {
             items: [
@@ -5096,7 +5169,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (path === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (path === '/api/bugs' && method === 'GET') {
+      if ((path === '/api/bugs' || path.startsWith('/api/bugs?')) && method === 'GET') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (path === '/api/bugs' && method === 'POST') {
@@ -5216,7 +5289,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
 
-      if (path === '/api/products') {
+      if (path === '/api/products' || path.startsWith('/api/products?')) {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse({
           data: {
@@ -5250,7 +5323,11 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/product-versions' || path === '/api/product-versions?active_only=true') {
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions' ||
+        path.startsWith('/api/product-versions?')
+      ) {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse({
           data: {
@@ -5269,7 +5346,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/requirements') {
+      if (path === '/api/requirements' || path.startsWith('/api/requirements?')) {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse({
           data: {
@@ -5291,7 +5368,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/knowledge/documents') {
+      if (path === '/api/knowledge/documents' || path.startsWith('/api/knowledge/documents?')) {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse({
           data: {
@@ -5312,7 +5389,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse(roleCatalogEnvelope);
       }
-      if (path === '/api/bugs') {
+      if (path === '/api/bugs' || path.startsWith('/api/bugs?')) {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse({
           data: {
@@ -5331,7 +5408,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (path === '/api/audit/events') {
+      if (path === '/api/audit/events' || path.startsWith('/api/audit/events?')) {
         expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
         return jsonResponse({
           data: {

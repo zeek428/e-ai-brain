@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.86 |
+| 功能版本 | v1.1.87 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -108,6 +108,7 @@
 | v1.1.84 | 2026-06-04 | Bug 列表支持迭代版本过滤并返回版本编码和名称投影 | Codex |
 | v1.1.85 | 2026-06-04 | 调整迭代版本推进到测试中时的需求同步规则，已进入交付链路需求统一推进到 testing | Codex |
 | v1.1.86 | 2026-06-04 | 明确 Bug 管理登记弹窗目标版本使用同产品未归档版本选项，支持 testing/released 版本缺陷归属 | Codex |
+| v1.1.87 | 2026-06-04 | 新增研发运营和用户洞察统一聚合列表接口，前端主列表改为服务端分页、排序和筛选 | Codex |
 
 ---
 
@@ -326,6 +327,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Audit | GET | `/api/audit/events` | 查询审计事件。 |
 | DevOps | GET | `/api/devops/gitlab/daily-code-metrics` | 查询真实 GitLab 每日提交和代码质量审核结果。 |
 | DevOps | POST | `/api/devops/gitlab/daily-code-metrics` | 登记真实 GitLab 每日提交和代码质量审核结果。 |
+| DevOps | GET | `/api/devops/operational-metrics` | 查询研发运营统一聚合列表，支持服务端分页、排序和筛选。 |
 | Collectors | GET | `/api/collectors/runs` | 查询 DevOps/洞察采集运行记录。 |
 | Collectors | POST | `/api/collectors/runs` | 登记一次真实采集或导入运行。 |
 | Collectors | PATCH | `/api/collectors/runs/{run_id}` | 更新采集运行状态、导入数量、错误说明或摘要。 |
@@ -348,6 +350,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Bug | DELETE | `/api/bugs/{bug_id}` | 删除 Bug 记录。 |
 | Lifecycle | GET | `/api/lifecycle/context` | 查询软件研发全流程上下文关系、上下游影响和风险信号。 |
 | Dashboard | GET | `/api/dashboard/it-team` | 查询首页 IT 团队看板。 |
+| Insights | GET | `/api/insights/items` | 查询用户洞察统一聚合列表，支持服务端分页、排序和筛选。 |
 | Insights | GET | `/api/insights/usage-metrics` | 查询真实用户使用指标。 |
 | Insights | POST | `/api/insights/usage-metrics` | 登记真实用户使用指标。 |
 | Insights | GET | `/api/insights/user-feedback` | 查询用户反馈列表。 |
@@ -545,6 +548,9 @@ GET /api/products/{product_id}/versions?active_only=true
 GET /api/products/{product_id}/modules?active_only=true
 GET /api/products/{product_id}/git-repositories?active_only=true
 ```
+
+产品列表主表还支持 `code/name/owner_team/status/page/page_size/sort_by/sort_order`；响应行包含
+`current_version_code`、`current_version_name` 和 `module_count`，由服务端聚合产品版本与模块结构表，前端产品列表不得再为主表展示额外拉取全量版本或模块列表。
 
 维护接口：
 
@@ -1674,6 +1680,14 @@ Content-Type: application/json
 
 服务端校验产品处于 active 状态且版本归属该产品，archived 版本不得登记发布记录；`status` 只能为 `success`、`failed`、`running` 或 `canceled`，构建编号和耗时不得为负数，部署时间不得早于开始时间；写入 `jenkins_release_records` 后记录 `jenkins_release.created` 审计事件。
 
+研发运营统一聚合列表：
+
+```http
+GET /api/devops/operational-metrics?category=Jenkins%20发布&name=deploy&status=success&page=1&page_size=10&sort_by=updated_at&sort_order=desc
+```
+
+该接口面向研发运营主列表聚合 GitLab 每日代码指标、Jenkins 发布记录和线上运行日志指标，返回统一行字段 `category`、`name`、`value`、`status`、`updated_at` 以及原始上下文字段。支持 `category` 精确筛选，`name` 文本筛选，`status` 精确筛选，`page/page_size` 服务端分页，`sort_by` 支持 `category/id/name/status/updated_at/value`，`sort_order` 支持 `asc/desc`。前端研发运营指标主列表必须调用该接口，不再并发拉取三类原始接口后本地拼装、排序或分页；登记弹窗仍使用各原始 POST 接口写入真实指标。
+
 线上运行日志运营指标：
 
 ```http
@@ -1988,6 +2002,14 @@ PATCH /api/insights/user-feedback/{feedback_id}
   "related_requirement_id": "requirement_001"
 }
 ```
+
+用户洞察统一聚合列表：
+
+```http
+GET /api/insights/items?category=用户反馈&summary=迭代版本&status=open&page=1&page_size=10&sort_by=updated_at&sort_order=desc
+```
+
+该接口面向用户洞察主列表聚合用户使用指标、用户反馈和 AI 迭代规划建议，返回统一行字段 `category`、`summary`、`owner`、`status`、`updated_at`、`product_id`、`version_id`、`module_code`、`feature_code`，并保留 `confidence_level`、`planning_cycle`、`priority` 和 `converted_requirement_id` 等迭代建议上下文。支持 `category` 精确筛选，`summary` 文本筛选，`status` 精确筛选，`page/page_size` 服务端分页，`sort_by` 支持 `category/id/owner/status/summary/updated_at`，`sort_order` 支持 `asc/desc`。前端用户洞察主列表必须调用该接口，不再并发拉取使用指标、反馈和迭代建议三个原始接口后本地拼装、排序或分页；登记、处理和决策仍使用对应原始写接口。
 
 反馈状态支持：`open | triaged | linked | resolved | archived`。`POST /api/insights/user-feedback` 允许任意已登录用户登记真实反馈；`PATCH /api/insights/user-feedback/{feedback_id}` 仅允许 `product_owner`、`rd_owner` 或 `admin` 更新状态、标签、情绪、评分和处理备注；GET 支持按 `product_id`、`module_code`、`feature_code`、`status` 和 `created_by` 筛选。反馈写入 `user_feedback` 结构表，并记录 `user_feedback.created` / `user_feedback.updated` 审计事件。
 

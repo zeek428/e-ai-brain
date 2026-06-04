@@ -1,21 +1,22 @@
 import { ArrowRightOutlined, CalendarOutlined, DeleteOutlined, EditOutlined, EyeOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, message } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
-import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { ProductContextOption, ProductVersionRecord, RequirementRecord } from '../../data/management';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   advanceProductVersionStatus,
   batchScheduleRequirements,
   createProductVersion,
   deleteProductVersion,
-  fetchDeliveryIterationVersions,
+  fetchDeliveryIterationVersionList,
   fetchManagementRequirements,
   fetchProductContextOptions,
   type ProductVersionAdvanceStatusResult,
+  type ProductVersionListQuery,
   updateProductVersion,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -84,6 +85,31 @@ const versionStatusOptions = [
 const versionCreateStatusOptions = versionStatusOptions.filter((option) =>
   ['active', 'planning'].includes(option.value),
 );
+const versionSortFieldMap: Record<string, string> = {
+  code: 'code',
+  name: 'name',
+  productName: 'product_name',
+  releaseDate: 'release_date',
+  startDate: 'start_date',
+  status: 'status',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildVersionListQuery(query: ManagementListQuery): ProductVersionListQuery {
+  return {
+    code: normalizeFilterText(query.filters.code),
+    name: normalizeFilterText(query.filters.name),
+    page: query.page,
+    pageSize: query.pageSize,
+    product: normalizeFilterText(query.filters.productName),
+    sortField: query.sortField ? versionSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(query.filters.status),
+  };
+}
 
 export default function IterationVersionsPage() {
   const [form] = Form.useForm<IterationVersionFormValues>();
@@ -100,12 +126,27 @@ export default function IterationVersionsPage() {
   const [isAdvanceSaving, setIsAdvanceSaving] = useState(false);
   const [isCollectSaving, setIsCollectSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchDeliveryIterationVersions);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'code',
+    sortOrder: 'ascend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: ProductVersionRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
   const {
     error: requirementError,
     reload: reloadRequirements,
@@ -126,6 +167,57 @@ export default function IterationVersionsPage() {
       })),
     [productContexts],
   );
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchDeliveryIterationVersionList(buildVersionListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchDeliveryIterationVersionList(buildVersionListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
+
   const collectableRequirements = useMemo(() => {
     if (!collectingVersion?.productId) {
       return [];
@@ -339,18 +431,22 @@ export default function IterationVersionsPage() {
     () => [
       {
         dataIndex: 'productName',
+        sorter: true,
         title: '所属产品',
       },
       {
         dataIndex: 'code',
+        sorter: true,
         title: '版本编码',
       },
       {
         dataIndex: 'name',
+        sorter: true,
         title: '版本名称',
       },
       {
         dataIndex: 'status',
+        sorter: true,
         title: '状态',
         render: (_, row) => {
           const statusLabel = versionStatusLabels[row.status];
@@ -359,11 +455,13 @@ export default function IterationVersionsPage() {
       },
       {
         dataIndex: 'startDate',
+        sorter: true,
         title: '开始时间',
         render: (_, row) => row.startDate ?? '-',
       },
       {
         dataIndex: 'releaseDate',
+        sorter: true,
         title: '计划发布时间',
         render: (_, row) => row.releaseDate ?? '-',
       },
@@ -412,7 +510,7 @@ export default function IterationVersionsPage() {
       <ManagementListPage<ProductVersionRecord>
         breadcrumbGroup="需求交付"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           { label: '所属产品', name: 'productName', type: 'text' },
           { label: '版本编码', name: 'code', type: 'text' },
@@ -424,11 +522,17 @@ export default function IterationVersionsPage() {
             type: 'select',
           },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error ?? productError ?? requirementError)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error ?? productError ?? requirementError)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增迭代版本"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
         tableTitle="迭代版本列表"
         title="迭代版本"

@@ -1,13 +1,14 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Descriptions, Modal, Space, Tag, Typography, message } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { AuditRecord } from '../../data/management';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   fetchLifecycleContext,
-  fetchManagementAudit,
+  fetchManagementAuditList,
+  type AuditListQuery,
   type LifecycleContextRecord,
 } from '../../services/aiBrain';
 import { formatMutationError } from '../../utils/managementCrud';
@@ -64,6 +65,32 @@ function RelationList({ items }: { items: LifecycleContextRecord['downstream'] }
   );
 }
 
+const auditSortFieldMap: Record<string, string> = {
+  actor: 'actor_id',
+  eventType: 'event_type',
+  id: 'id',
+  result: 'result',
+  subject: 'subject_type',
+  timestamp: 'created_at',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildAuditListQuery(query: ManagementListQuery): AuditListQuery {
+  return {
+    actor: normalizeFilterText(query.filters.actor),
+    eventType: normalizeFilterText(query.filters.eventType),
+    page: query.page,
+    pageSize: query.pageSize,
+    result: normalizeFilterText(query.filters.result),
+    sortField: query.sortField ? auditSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    subject: normalizeFilterText(query.filters.subject),
+  };
+}
+
 export default function AuditPage() {
   const [selectedAudit, setSelectedAudit] = useState<AuditRecord>();
   const [traceDialog, setTraceDialog] = useState<{
@@ -71,12 +98,77 @@ export default function AuditPage() {
     loading: boolean;
     row: AuditRecord;
   }>();
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchManagementAudit);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'timestamp',
+    sortOrder: 'descend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: AuditRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchManagementAuditList(buildAuditListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchManagementAuditList(buildAuditListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
 
   const openTraceDialog = useCallback(async (row: AuditRecord) => {
     const params = resolveTraceParams(row);
@@ -98,22 +190,27 @@ export default function AuditPage() {
     () => [
       {
         dataIndex: 'id',
+        sorter: true,
         title: '审计编号',
       },
       {
         dataIndex: 'eventType',
+        sorter: true,
         title: '事件类型',
       },
       {
         dataIndex: 'subject',
+        sorter: true,
         title: '主体',
       },
       {
         dataIndex: 'actor',
+        sorter: true,
         title: '操作者',
       },
       {
         dataIndex: 'result',
+        sorter: true,
         title: '结果',
         render: (_, row) =>
           row.result === 'success' ? (
@@ -124,6 +221,7 @@ export default function AuditPage() {
       },
       {
         dataIndex: 'timestamp',
+        sorter: true,
         title: '发生时间',
       },
       {
@@ -150,7 +248,7 @@ export default function AuditPage() {
       <ManagementListPage<AuditRecord>
         breadcrumbGroup="运营治理"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           { label: '事件类型', name: 'eventType', type: 'text' },
           { label: '主体', name: 'subject', type: 'text' },
@@ -165,9 +263,15 @@ export default function AuditPage() {
             type: 'select',
           },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error)}
         onReload={() => void reload()}
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
         tableTitle="审计列表"
         title="审计与运行"

@@ -1,16 +1,18 @@
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { BugRecord } from '../../data/management';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   createManagementBug,
   deleteManagementBug,
   fetchBugProductContextOptions,
   fetchManagementBugs,
+  fetchManagementBugList,
+  type BugListQuery,
   updateManagementBug,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -108,22 +110,72 @@ function isFormValidationError(error: unknown) {
   );
 }
 
+const bugSortFieldMap: Record<string, string> = {
+  assignee: 'assignee',
+  createdAt: 'created_at',
+  id: 'id',
+  module: 'module_code',
+  severity: 'severity',
+  source: 'source',
+  status: 'status',
+  title: 'title',
+  versionName: 'version_name',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildBugListQuery(query: ManagementListQuery): BugListQuery {
+  return {
+    module: normalizeFilterText(query.filters.module),
+    page: query.page,
+    pageSize: query.pageSize,
+    severity: normalizeFilterText(query.filters.severity),
+    sortField: query.sortField ? bugSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(query.filters.status),
+    title: normalizeFilterText(query.filters.title),
+    version: normalizeFilterText(query.filters.versionName),
+  };
+}
+
 export default function BugsPage() {
   const [form] = Form.useForm<BugFormValues>();
   const [editingBug, setEditingBug] = useState<BugRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchManagementBugs);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'createdAt',
+    sortOrder: 'descend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: BugRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
   const {
     error: productContextError,
     rows: productContexts,
     status: productContextStatus,
   } = useRemoteRows(fetchBugProductContextOptions);
+  const {
+    error: duplicateBugsError,
+    reload: reloadDuplicateBugs,
+    rows: duplicateBugs,
+  } = useRemoteRows(fetchManagementBugs);
   const selectedProductId = Form.useWatch('product_id', form);
   const selectedProduct = useMemo(
     () => productContexts.find((product) => product.id === selectedProductId),
@@ -148,7 +200,7 @@ export default function BugsPage() {
   const duplicateBugOptions = useMemo(
     () => {
       const duplicateProductId = editingBug?.productId ?? selectedProductId;
-      return dataSource
+      return duplicateBugs
         .filter(
           (bug) =>
             bug.id !== editingBug?.id &&
@@ -159,8 +211,58 @@ export default function BugsPage() {
           value: bug.id,
         }));
     },
-    [dataSource, editingBug?.id, editingBug?.productId, selectedProductId],
+    [duplicateBugs, editingBug?.id, editingBug?.productId, selectedProductId],
   );
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchManagementBugList(buildBugListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchManagementBugList(buildBugListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
 
   const openCreateModal = () => {
     setEditingBug(null);
@@ -246,6 +348,7 @@ export default function BugsPage() {
         message.success('Bug 已登记');
       }
       setIsModalOpen(false);
+      void reloadDuplicateBugs();
       void reload();
     } catch (saveError) {
       if (isFormValidationError(saveError)) {
@@ -261,32 +364,38 @@ export default function BugsPage() {
     try {
       await deleteManagementBug(row.id);
       message.success('Bug 已删除');
+      await reloadDuplicateBugs();
       await reload();
     } catch (deleteError) {
       message.error(formatMutationError(deleteError));
     }
-  }, [reload]);
+  }, [reload, reloadDuplicateBugs]);
 
   const columns = useMemo<ProColumns<BugRecord>[]>(
     () => [
       {
         dataIndex: 'id',
+        sorter: true,
         title: 'Bug 编号',
       },
       {
         dataIndex: 'title',
+        sorter: true,
         title: 'Bug 标题',
       },
       {
         dataIndex: 'module',
+        sorter: true,
         title: '所属模块',
       },
       {
         dataIndex: 'versionName',
+        sorter: true,
         title: '迭代版本',
       },
       {
         dataIndex: 'severity',
+        sorter: true,
         title: '严重级别',
         render: (_, row) => {
           const severity = severityLabels[row.severity];
@@ -295,6 +404,7 @@ export default function BugsPage() {
       },
       {
         dataIndex: 'status',
+        sorter: true,
         title: '状态',
         render: (_, row) => {
           const statusLabel = statusLabels[row.status];
@@ -303,6 +413,7 @@ export default function BugsPage() {
       },
       {
         dataIndex: 'source',
+        sorter: true,
         title: '来源',
         render: (_, row) => {
           const source = sourceLabels[row.source];
@@ -311,10 +422,12 @@ export default function BugsPage() {
       },
       {
         dataIndex: 'assignee',
+        sorter: true,
         title: '处理人',
       },
       {
         dataIndex: 'createdAt',
+        sorter: true,
         title: '创建时间',
       },
       {
@@ -343,7 +456,7 @@ export default function BugsPage() {
       <ManagementListPage<BugRecord>
         breadcrumbGroup="需求交付"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           { label: 'Bug 标题', name: 'title', type: 'text' },
           { label: '所属模块', name: 'module', type: 'text' },
@@ -375,11 +488,17 @@ export default function BugsPage() {
             type: 'select',
           },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error ?? productContextError)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error ?? productContextError ?? duplicateBugsError)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="登记 Bug"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
         tableTitle="Bug 列表"
         title="Bug 管理"

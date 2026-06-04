@@ -1,20 +1,21 @@
 import { CalendarOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
-import { type Key, useCallback, useMemo, useState } from 'react';
+import { type Key, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { RequirementRecord } from '../../data/management';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   approveManagementRequirement,
   batchScheduleRequirements,
   createManagementRequirement,
   deleteManagementRequirement,
-  fetchManagementRequirements,
+  fetchManagementRequirementList,
   fetchRequirementProductContextOptions,
   generateRequirementTask,
   rejectManagementRequirement,
+  type RequirementListQuery,
   updateManagementRequirement,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -54,6 +55,33 @@ type BatchScheduleFormValues = {
 };
 
 const batchSchedulableStatuses = new Set<RequirementRecord['status']>(['approved', 'planned']);
+const requirementSortFieldMap: Record<string, string> = {
+  createdAt: 'created_at',
+  id: 'id',
+  priority: 'priority',
+  product: 'product_name',
+  status: 'status',
+  title: 'title',
+  versionName: 'version_name',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildRequirementListQuery(query: ManagementListQuery): RequirementListQuery {
+  return {
+    page: query.page,
+    pageSize: query.pageSize,
+    priority: normalizeFilterText(query.filters.priority),
+    product: normalizeFilterText(query.filters.product),
+    sortField: query.sortField ? requirementSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(query.filters.status),
+    title: normalizeFilterText(query.filters.title),
+    version: normalizeFilterText(query.filters.versionName),
+  };
+}
 
 export default function RequirementsPage() {
   const [form] = Form.useForm<RequirementFormValues>();
@@ -66,12 +94,27 @@ export default function RequirementsPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [isBatchSaving, setIsBatchSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchManagementRequirements);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'createdAt',
+    sortOrder: 'descend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: RequirementRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
   const {
     error: productContextError,
     reload: reloadProductContexts,
@@ -92,10 +135,61 @@ export default function RequirementsPage() {
     () => selectedRowKeys.map((key) => String(key)),
     [selectedRowKeys],
   );
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchManagementRequirementList(buildRequirementListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchManagementRequirementList(buildRequirementListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
+
   const selectedRequirements = useMemo(() => {
     const selectedIds = new Set(selectedRequirementIds);
-    return dataSource.filter((row) => selectedIds.has(row.id));
-  }, [dataSource, selectedRequirementIds]);
+    return listState.rows.filter((row) => selectedIds.has(row.id));
+  }, [listState.rows, selectedRequirementIds]);
   const productOptions = useMemo(
     () =>
       productContexts.map((product) => ({
@@ -312,22 +406,27 @@ export default function RequirementsPage() {
     () => [
       {
         dataIndex: 'id',
+        sorter: true,
         title: '需求编号',
       },
       {
         dataIndex: 'title',
+        sorter: true,
         title: '需求标题',
       },
       {
         dataIndex: 'product',
+        sorter: true,
         title: '所属产品',
       },
       {
         dataIndex: 'versionName',
+        sorter: true,
         title: '迭代版本',
       },
       {
         dataIndex: 'priority',
+        sorter: true,
         title: '优先级',
         render: (_, row) => (
           <StatusTag color={row.priority === 'P0' ? 'red' : 'blue'} label={row.priority} />
@@ -335,6 +434,7 @@ export default function RequirementsPage() {
       },
       {
         dataIndex: 'status',
+        sorter: true,
         title: '状态',
         render: (_, row) => {
           const statusLabel = statusLabels[row.status];
@@ -347,6 +447,7 @@ export default function RequirementsPage() {
       },
       {
         dataIndex: 'createdAt',
+        sorter: true,
         title: '创建时间',
       },
       {
@@ -390,7 +491,7 @@ export default function RequirementsPage() {
       <ManagementListPage<RequirementRecord>
         breadcrumbGroup="需求交付"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           { label: '需求标题', name: 'title', type: 'text' },
           { label: '所属产品', name: 'product', type: 'text' },
@@ -429,11 +530,17 @@ export default function RequirementsPage() {
             type: 'select',
           },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error ?? productContextError)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error ?? productContextError)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增需求"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
         rowSelection={{
           getCheckboxProps: (row) => ({

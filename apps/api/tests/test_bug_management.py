@@ -151,6 +151,50 @@ def test_bug_duplicate_merge_keeps_duplicate_out_of_open_queue():
     assert [item["id"] for item in open_bugs] == [primary["id"]]
 
 
+def test_bug_list_supports_server_pagination_sort_and_text_filters():
+    headers = auth_headers()
+    context = create_product_context(headers)
+    create_bug(
+        headers,
+        context,
+        source="manual_test",
+        title="Alpha checkout 回归",
+    )
+    create_bug(
+        headers,
+        context,
+        source="manual_test",
+        title="Beta checkout 回归",
+    )
+    create_bug(
+        headers,
+        context,
+        source="manual_test",
+        title="Gamma profile 回归",
+    )
+
+    first_page = client.get(
+        (
+            "/api/bugs?title=checkout&module=knowledge&version=v1"
+            "&page=1&page_size=1&sort_by=title&sort_order=asc"
+        ),
+        headers=headers,
+    ).json()["data"]
+    second_page = client.get(
+        (
+            "/api/bugs?title=checkout&module=knowledge&version=v1"
+            "&page=2&page_size=1&sort_by=title&sort_order=asc"
+        ),
+        headers=headers,
+    ).json()["data"]
+
+    assert first_page["page"] == 1
+    assert first_page["page_size"] == 1
+    assert first_page["total"] == 2
+    assert [item["title"] for item in first_page["items"]] == ["Alpha checkout 回归"]
+    assert [item["title"] for item in second_page["items"]] == ["Beta checkout 回归"]
+
+
 def test_bug_management_rejects_invalid_context_state_and_roles():
     headers = auth_headers()
     reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")

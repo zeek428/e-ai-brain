@@ -152,6 +152,15 @@ function normalizeQueryDateRange(value: unknown) {
   return [start, end] as const;
 }
 
+const taskSortFieldMap: Record<string, string> = {
+  createdAt: 'created_at',
+  label: 'title',
+  owner: 'created_by',
+  product: 'product_name',
+  status: 'status',
+  type: 'task_type',
+};
+
 function buildTaskCenterQuery(query: ManagementListQuery) {
   const [createdFrom, createdTo] = normalizeQueryDateRange(query.filters.createdAtValue);
   return {
@@ -162,6 +171,8 @@ function buildTaskCenterQuery(query: ManagementListQuery) {
     page: query.page,
     pageSize: query.pageSize,
     productId: normalizeQueryValue(query.filters.productId) || undefined,
+    sortField: query.sortField ? taskSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
     status: normalizeQueryValue(query.filters.status) || undefined,
     taskType: normalizeQueryValue(query.filters.type) || undefined,
   };
@@ -265,6 +276,8 @@ export default function TaskCenterPage() {
     filters: {},
     page: 1,
     pageSize: 10,
+    sortField: 'createdAt',
+    sortOrder: 'descend',
   });
   const [taskRowsState, setTaskRowsState] = useState<TaskRowsState>({
     page: 1,
@@ -885,6 +898,7 @@ export default function TaskCenterPage() {
         title: '任务',
         dataIndex: 'label',
         key: 'label',
+        sorter: true,
         render: (_value, row) => (
           <span className="task-name">
             <strong>{row.label}</strong>
@@ -896,11 +910,13 @@ export default function TaskCenterPage() {
         title: '所属产品',
         dataIndex: 'product',
         key: 'product',
+        sorter: true,
       },
       {
         title: '状态',
         dataIndex: 'status',
         key: 'status',
+        sorter: true,
         render: (_, row) => {
           const statusLabel = taskStatusLabels[row.status] ?? { color: 'blue', label: row.status };
           return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
@@ -910,11 +926,13 @@ export default function TaskCenterPage() {
         title: '创建时间',
         dataIndex: 'createdAt',
         key: 'createdAt',
+        sorter: true,
       },
       {
         title: '负责人',
         dataIndex: 'owner',
         key: 'owner',
+        sorter: true,
       },
       {
         key: 'actions',

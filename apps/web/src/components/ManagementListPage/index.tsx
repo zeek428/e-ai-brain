@@ -3,7 +3,7 @@ import { PageContainer, ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Tag } from 'antd';
 import type { TableProps } from 'antd';
-import type { TableRowSelection } from 'antd/es/table/interface';
+import type { SorterResult, TableRowSelection } from 'antd/es/table/interface';
 import { type ReactNode, useMemo, useState } from 'react';
 
 type FilterField = {
@@ -45,7 +45,30 @@ export type ManagementListQuery = {
   filters: FilterValues;
   page: number;
   pageSize: number;
+  sortField?: string;
+  sortOrder?: 'ascend' | 'descend';
 };
+
+function normalizeSorter<Row>(sorter: SorterResult<Row> | SorterResult<Row>[]) {
+  const activeSorter = Array.isArray(sorter)
+    ? sorter.find((item) => item.order)
+    : sorter.order
+      ? sorter
+      : undefined;
+  if (!activeSorter) {
+    return {};
+  }
+  const field =
+    typeof activeSorter.field === 'string'
+      ? activeSorter.field
+      : typeof activeSorter.columnKey === 'string'
+        ? activeSorter.columnKey
+        : undefined;
+  return {
+    sortField: field,
+    sortOrder: activeSorter.order ?? undefined,
+  };
+}
 
 function normalizeFilterValue(value: unknown) {
   return String(value ?? '').trim();
@@ -215,7 +238,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         dateFormatter="string"
         headerTitle={tableTitle}
         loading={loading}
-        onChange={(pagination) => {
+        onChange={(pagination, _tableFilters, sorter) => {
           if (!remote) {
             return;
           }
@@ -223,6 +246,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
             filters: filterValues,
             page: pagination.current ?? remote.page,
             pageSize: pagination.pageSize ?? remote.pageSize,
+            ...normalizeSorter(sorter),
           });
         }}
         onReset={handleReset}

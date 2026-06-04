@@ -103,11 +103,11 @@ def test_ai_task_list_supports_server_side_pagination():
     )
 
     first_page = client.get(
-        "/api/ai-tasks?page=1&page_size=1",
+        "/api/ai-tasks?page=1&page_size=1&sort_by=id&sort_order=asc",
         headers=headers,
     ).json()["data"]
     second_page = client.get(
-        "/api/ai-tasks?page=2&page_size=1",
+        "/api/ai-tasks?page=2&page_size=1&sort_by=id&sort_order=asc",
         headers=headers,
     ).json()["data"]
 
@@ -128,6 +128,33 @@ def test_ai_task_list_supports_server_side_pagination():
 
     assert [item["id"] for item in keyword_result["items"]] == [second_context["task_id"]]
     assert owner_result["total"] == 2
+
+
+def test_ai_task_list_supports_server_side_sorting():
+    headers = auth_headers()
+    first_context = create_draft_task(headers, product_code="rd-platform-sort-1")
+    second_context = create_draft_task(
+        headers,
+        product_code="rd-platform-sort-2",
+        reset_store=False,
+    )
+
+    sorted_by_id = client.get(
+        "/api/ai-tasks?page=1&page_size=1&sort_by=id&sort_order=desc",
+        headers=headers,
+    ).json()["data"]
+    invalid_sort = client.get(
+        "/api/ai-tasks?page=1&page_size=10&sort_by=unsupported",
+        headers=headers,
+    )
+
+    assert sorted_by_id["page"] == 1
+    assert sorted_by_id["page_size"] == 1
+    assert sorted_by_id["total"] == 2
+    assert [item["id"] for item in sorted_by_id["items"]] == [second_context["task_id"]]
+    assert first_context["task_id"] != second_context["task_id"]
+    assert invalid_sort.status_code == 400
+    assert invalid_sort.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
 def test_brain_app_contract_reads_runtime_configuration():
@@ -186,3 +213,73 @@ def test_review_detail_cancel_task_and_knowledge_document_list_contracts():
     ).json()["data"]
     documents = client.get("/api/knowledge/documents", headers=headers).json()["data"]
     assert [item["id"] for item in documents["items"]] == [document["id"]]
+
+
+def test_knowledge_document_list_supports_server_pagination_sort_and_filters():
+    headers = auth_headers()
+    create_draft_task(headers)
+    first = client.post(
+        "/api/knowledge/documents",
+        json={
+            "content": "contract api source",
+            "doc_type": "manual",
+            "permission_roles": ["admin"],
+            "title": "列表知识 A",
+        },
+        headers=headers,
+    ).json()["data"]
+    second = client.post(
+        "/api/knowledge/documents",
+        json={
+            "content": "searchable marker source",
+            "doc_type": "Spec",
+            "permission_roles": ["admin", "knowledge_owner"],
+            "title": "列表知识 B",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    filtered = client.get(
+        "/api/knowledge/documents?keyword=marker&doc_type=Spec&permission_role=knowledge_owner"
+        "&page=1&page_size=1&sort_by=title&sort_order=desc",
+        headers=headers,
+    ).json()["data"]
+    invalid_sort = client.get(
+        "/api/knowledge/documents?page=1&page_size=10&sort_by=unsupported",
+        headers=headers,
+    )
+
+    assert filtered["page"] == 1
+    assert filtered["page_size"] == 1
+    assert filtered["total"] == 1
+    assert [item["id"] for item in filtered["items"]] == [second["id"]]
+    assert first["id"] not in [item["id"] for item in filtered["items"]]
+    assert invalid_sort.status_code == 400
+    assert invalid_sort.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
+def test_audit_event_list_supports_server_pagination_sort_and_filters():
+    headers = auth_headers()
+    context = create_draft_task(headers)
+
+    filtered = client.get(
+        (
+            "/api/audit/events?subject=ai_task"
+            f"&actor=user_admin&ai_task_id={context['task_id']}"
+            "&result=success&page=1&page_size=1&sort_by=event_type&sort_order=asc"
+        ),
+        headers=headers,
+    ).json()["data"]
+    invalid_sort = client.get(
+        "/api/audit/events?page=1&page_size=10&sort_by=unsupported",
+        headers=headers,
+    )
+
+    assert filtered["page"] == 1
+    assert filtered["page_size"] == 1
+    assert filtered["total"] >= 1
+    assert filtered["items"][0]["actor_id"] == "user_admin"
+    assert filtered["items"][0]["ai_task_id"] == context["task_id"]
+    assert filtered["items"][0]["result"] == "success"
+    assert invalid_sort.status_code == 400
+    assert invalid_sort.json()["detail"]["code"] == "VALIDATION_ERROR"

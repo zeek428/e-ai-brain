@@ -132,3 +132,61 @@ def test_user_feedback_rejects_invalid_context_values_and_update_roles():
     )
     assert forbidden_update.status_code == 403
     assert forbidden_update.json()["detail"]["code"] == "FORBIDDEN"
+
+
+def test_user_insight_items_support_server_pagination_sort_and_filters():
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    context = create_product_context(admin_headers)
+
+    client.post(
+        "/api/insights/usage-metrics",
+        json={
+            "active_users": 20,
+            "event_count": 120,
+            "feature_code": "dashboard",
+            "module_code": context["module_code"],
+            "product_id": context["product_id"],
+            "user_segment": "admin",
+            "window_end": "2026-06-01T01:00:00Z",
+            "window_start": "2026-06-01T00:00:00Z",
+        },
+        headers=admin_headers,
+    )
+    feedback = client.post(
+        "/api/insights/user-feedback",
+        json={
+            "content": "知识检索详情页需要支持按迭代版本过滤。",
+            "feedback_type": "improvement",
+            "module_code": context["module_code"],
+            "product_id": context["product_id"],
+            "source_channel": "in_app",
+        },
+        headers=reviewer_headers,
+    ).json()["data"]
+
+    filtered = client.get(
+        (
+            "/api/insights/items"
+            "?category=用户反馈"
+            "&summary=迭代版本"
+            "&status=open"
+            "&page=1&page_size=1"
+            "&sort_by=updated_at&sort_order=desc"
+        ),
+        headers=admin_headers,
+    ).json()["data"]
+
+    assert filtered["total"] == 1
+    assert filtered["page"] == 1
+    assert filtered["page_size"] == 1
+    assert filtered["items"][0]["id"] == feedback["id"]
+    assert filtered["items"][0]["category"] == "用户反馈"
+    assert filtered["items"][0]["summary"] == "知识检索详情页需要支持按迭代版本过滤。"
+
+    invalid_sort = client.get(
+        "/api/insights/items?page=1&page_size=10&sort_by=unsupported",
+        headers=admin_headers,
+    )
+    assert invalid_sort.status_code == 400
+    assert invalid_sort.json()["detail"]["code"] == "VALIDATION_ERROR"

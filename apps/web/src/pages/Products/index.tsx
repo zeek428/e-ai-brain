@@ -2,10 +2,10 @@ import { DeleteOutlined, EditOutlined, PlusOutlined, SettingOutlined } from '@an
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
-import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type {
   ProductGitRepositoryRecord,
   ProductModuleRecord,
@@ -13,7 +13,7 @@ import type {
   ProductRelatedSystemRecord,
   ProductVersionRecord,
 } from '../../data/management';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   createManagementProduct,
   createProductGitRepository,
@@ -25,7 +25,7 @@ import {
   deleteProductModule,
   deleteProductRelatedSystem,
   deleteProductVersion,
-  fetchManagementProducts,
+  fetchManagementProductList,
   fetchProductGitRepositoryRecords,
   fetchProductModules,
   fetchProductRelatedSystems,
@@ -35,6 +35,7 @@ import {
   updateProductModule,
   updateProductRelatedSystem,
   updateProductVersion,
+  type ProductListQuery,
   type ProductGitRepositoryMutationPayload,
   type ProductModuleMutationPayload,
   type ProductRelatedSystemMutationPayload,
@@ -112,6 +113,32 @@ function resourceEditorTitle(editor?: ProductResourceEditor) {
   return `${action} Git 资源`;
 }
 
+const productSortFieldMap: Record<string, string> = {
+  code: 'code',
+  moduleCount: 'module_count',
+  name: 'name',
+  ownerTeam: 'owner_team',
+  status: 'status',
+  version: 'current_version_name',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildProductListQuery(query: ManagementListQuery): ProductListQuery {
+  return {
+    code: normalizeFilterText(query.filters.code),
+    name: normalizeFilterText(query.filters.name),
+    ownerTeam: normalizeFilterText(query.filters.ownerTeam),
+    page: query.page,
+    pageSize: query.pageSize,
+    sortField: query.sortField ? productSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(query.filters.status),
+  };
+}
+
 export default function ProductsPage() {
   const [form] = Form.useForm<ProductFormValues>();
   const [resourceForm] = Form.useForm<ProductResourceFormValues>();
@@ -125,12 +152,77 @@ export default function ProductsPage() {
   const [relatedSystemRows, setRelatedSystemRows] = useState<ProductRelatedSystemRecord[]>([]);
   const [repositoryRows, setRepositoryRows] = useState<ProductGitRepositoryRecord[]>([]);
   const [resourceEditor, setResourceEditor] = useState<ProductResourceEditor>();
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchManagementProducts);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'code',
+    sortOrder: 'ascend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: ProductRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchManagementProductList(buildProductListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchManagementProductList(buildProductListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
 
   const loadProductResources = useCallback(async (productId: string) => {
     setConfigLoading(true);
@@ -552,26 +644,32 @@ export default function ProductsPage() {
     () => [
       {
         dataIndex: 'code',
+        sorter: true,
         title: '产品编码',
       },
       {
         dataIndex: 'name',
+        sorter: true,
         title: '产品名称',
       },
       {
         dataIndex: 'ownerTeam',
+        sorter: true,
         title: '负责团队',
       },
       {
         dataIndex: 'version',
+        sorter: true,
         title: '当前版本',
       },
       {
         dataIndex: 'moduleCount',
+        sorter: true,
         title: '模块数',
       },
       {
         dataIndex: 'status',
+        sorter: true,
         title: '状态',
         render: (_, row) =>
           row.status === 'active' ? (
@@ -618,7 +716,7 @@ export default function ProductsPage() {
       <ManagementListPage<ProductRecord>
         breadcrumbGroup="产品资产"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           { label: '产品编码', name: 'code', type: 'text' },
           { label: '产品名称', name: 'name', type: 'text' },
@@ -633,11 +731,17 @@ export default function ProductsPage() {
             type: 'select',
           },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增产品"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
         tableTitle="产品列表"
         title="产品管理"

@@ -190,8 +190,82 @@ export type TaskCenterTaskQuery = {
   page?: number;
   pageSize?: number;
   productId?: string;
+  sortField?: string;
+  sortOrder?: RemoteSortOrder;
   status?: string;
   taskType?: string;
+};
+
+type RemoteSortOrder = 'ascend' | 'descend';
+
+type RemoteListQuery = {
+  page?: number;
+  pageSize?: number;
+  sortField?: string;
+  sortOrder?: RemoteSortOrder;
+};
+
+export type RequirementListQuery = RemoteListQuery & {
+  priority?: string;
+  product?: string;
+  status?: string;
+  title?: string;
+  version?: string;
+};
+
+export type ProductListQuery = RemoteListQuery & {
+  code?: string;
+  name?: string;
+  ownerTeam?: string;
+  status?: string;
+};
+
+export type BugListQuery = RemoteListQuery & {
+  module?: string;
+  severity?: string;
+  status?: string;
+  title?: string;
+  version?: string;
+};
+
+export type ProductVersionListQuery = RemoteListQuery & {
+  code?: string;
+  name?: string;
+  product?: string;
+  status?: string;
+};
+
+export type KnowledgeListQuery = RemoteListQuery & {
+  documentType?: string;
+  keyword?: string;
+  ownerRole?: string;
+  status?: string;
+};
+
+export type AuditListQuery = RemoteListQuery & {
+  actor?: string;
+  eventType?: string;
+  result?: string;
+  subject?: string;
+};
+
+export type OperationalMetricListQuery = RemoteListQuery & {
+  category?: string;
+  name?: string;
+  status?: string;
+};
+
+export type UserInsightListQuery = RemoteListQuery & {
+  category?: string;
+  status?: string;
+  summary?: string;
+};
+
+export type RemoteListResult<Row> = {
+  page: number;
+  pageSize: number;
+  rows: Row[];
+  total: number;
 };
 
 export type TaskCenterTaskListResult = {
@@ -1737,7 +1811,16 @@ export async function fetchManagementProducts(): Promise<ProductRecord[]> {
     new Map<string, ProductVersionListItem[]>(),
   );
 
-  return products.items.map((product) => ({
+  return products.items.map((product) =>
+    mapProductRecord(product, versionsByProductId.get(product.id)),
+  );
+}
+
+function mapProductRecord(
+  product: ProductListItem,
+  versions: ProductVersionListItem[] = [],
+): ProductRecord {
+  return {
     code: product.code ?? product.id,
     id: product.id,
     moduleCount: product.module_count ?? 0,
@@ -1746,10 +1829,34 @@ export async function fetchManagementProducts(): Promise<ProductRecord[]> {
     status: normalizeProductStatus(product.status),
     version:
       product.current_version_name ??
-      versionsByProductId.get(product.id)?.find((version) => version.status === 'active')?.name ??
-      versionsByProductId.get(product.id)?.[0]?.name ??
+      versions.find((version) => version.status === 'active')?.name ??
+      versions[0]?.name ??
       '未配置',
-  }));
+  };
+}
+
+export async function fetchManagementProductList(
+  query: ProductListQuery = {},
+): Promise<RemoteListResult<ProductRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'code', query.code);
+  appendQueryParam(params, 'name', query.name);
+  appendQueryParam(params, 'owner_team', query.ownerTeam);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const products = await apiRequest<ListResponse<ProductListItem>>(
+    queryString ? `/api/products?${queryString}` : '/api/products',
+    { token },
+  );
+
+  return {
+    page: products.page ?? query.page ?? 1,
+    pageSize: products.page_size ?? query.pageSize ?? 10,
+    rows: products.items.map((product) => mapProductRecord(product)),
+    total: products.total,
+  };
 }
 
 export async function createManagementProduct(payload: ProductMutationPayload) {
@@ -1893,6 +2000,30 @@ export async function fetchDeliveryIterationVersions(): Promise<ProductVersionRe
     { token },
   );
   return versions.items.map(mapProductVersionRecord);
+}
+
+export async function fetchDeliveryIterationVersionList(
+  query: ProductVersionListQuery = {},
+): Promise<RemoteListResult<ProductVersionRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'code', query.code);
+  appendQueryParam(params, 'name', query.name);
+  appendQueryParam(params, 'product', query.product);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
+    queryString ? `/api/product-versions?${queryString}` : '/api/product-versions',
+    { token },
+  );
+
+  return {
+    page: versions.page ?? query.page ?? 1,
+    pageSize: versions.page_size ?? query.pageSize ?? 10,
+    rows: versions.items.map(mapProductVersionRecord),
+    total: versions.total,
+  };
 }
 
 export async function createProductVersion(
@@ -2309,6 +2440,31 @@ export async function fetchManagementRequirements(): Promise<RequirementRecord[]
   return requirements.items.map(mapRequirementRecord);
 }
 
+export async function fetchManagementRequirementList(
+  query: RequirementListQuery = {},
+): Promise<RemoteListResult<RequirementRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'priority', query.priority);
+  appendQueryParam(params, 'product', query.product);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'title', query.title);
+  appendQueryParam(params, 'version', query.version);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const requirements = await apiRequest<ListResponse<RequirementListItem>>(
+    queryString ? `/api/requirements?${queryString}` : '/api/requirements',
+    { token },
+  );
+
+  return {
+    page: requirements.page ?? query.page ?? 1,
+    pageSize: requirements.page_size ?? query.pageSize ?? 10,
+    rows: requirements.items.map(mapRequirementRecord),
+    total: requirements.total,
+  };
+}
+
 export async function createManagementRequirement(payload: RequirementMutationPayload) {
   const token = requireAccessToken();
   return apiRequest<RequirementResponse>('/api/requirements', {
@@ -2398,7 +2554,11 @@ export async function fetchManagementKnowledge(): Promise<KnowledgeRecord[]> {
     { token },
   );
 
-  return documents.items.map((document) => ({
+  return documents.items.map(mapKnowledgeRecord);
+}
+
+function mapKnowledgeRecord(document: KnowledgeDocumentListItem): KnowledgeRecord {
+  return {
     content: document.content,
     documentType: document.doc_type ?? '-',
     id: document.id,
@@ -2410,7 +2570,31 @@ export async function fetchManagementKnowledge(): Promise<KnowledgeRecord[]> {
     title: document.title,
     updatedAt: formatListDate(document.updated_at ?? document.created_at),
     vectorIndexError: document.vector_index_error,
-  }));
+  };
+}
+
+export async function fetchManagementKnowledgeList(
+  query: KnowledgeListQuery = {},
+): Promise<RemoteListResult<KnowledgeRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'doc_type', query.documentType);
+  appendQueryParam(params, 'permission_role', query.ownerRole);
+  appendQueryParam(params, 'index_status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const documents = await apiRequest<ListResponse<KnowledgeDocumentListItem>>(
+    queryString ? `/api/knowledge/documents?${queryString}` : '/api/knowledge/documents',
+    { token },
+  );
+
+  return {
+    page: documents.page ?? query.page ?? 1,
+    pageSize: documents.page_size ?? query.pageSize ?? 10,
+    rows: documents.items.map(mapKnowledgeRecord),
+    total: documents.total,
+  };
 }
 
 export async function createManagementKnowledgeDocument(payload: KnowledgeDocumentMutationPayload) {
@@ -2457,7 +2641,11 @@ export async function fetchManagementAudit(): Promise<AuditRecord[]> {
   const token = requireAccessToken();
   const events = await apiRequest<ListResponse<AuditEventListItem>>('/api/audit/events', { token });
 
-  return events.items.map((event) => ({
+  return events.items.map(mapAuditRecord);
+}
+
+function mapAuditRecord(event: AuditEventListItem): AuditRecord {
+  return {
     actor: event.actor_id ?? '-',
     aiTaskId: event.ai_task_id ?? undefined,
     eventType: event.event_type,
@@ -2469,7 +2657,31 @@ export async function fetchManagementAudit(): Promise<AuditRecord[]> {
     subjectId: event.subject_id,
     subjectType: event.subject_type,
     timestamp: formatListDate(event.created_at),
-  }));
+  };
+}
+
+export async function fetchManagementAuditList(
+  query: AuditListQuery = {},
+): Promise<RemoteListResult<AuditRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'actor', query.actor);
+  appendQueryParam(params, 'event_type', query.eventType);
+  appendQueryParam(params, 'result', query.result);
+  appendQueryParam(params, 'subject', query.subject);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const events = await apiRequest<ListResponse<AuditEventListItem>>(
+    queryString ? `/api/audit/events?${queryString}` : '/api/audit/events',
+    { token },
+  );
+
+  return {
+    page: events.page ?? query.page ?? 1,
+    pageSize: events.page_size ?? query.pageSize ?? 10,
+    rows: events.items.map(mapAuditRecord),
+    total: events.total,
+  };
 }
 
 function mapLifecycleRelation(item: LifecycleRelationItem): LifecycleRelationRecord {
@@ -2550,6 +2762,55 @@ export async function fetchManagementBugs(): Promise<BugRecord[]> {
   }));
 }
 
+function mapBugRecord(bug: BugListItem): BugRecord {
+  return {
+    assignee: bug.assignee ?? '-',
+    createdAt: formatListDate(bug.created_at),
+    description: bug.description,
+    duplicateOfBugId: bug.duplicate_of_bug_id ?? undefined,
+    evidence: normalizeObjectRecord(bug.evidence),
+    id: bug.id,
+    module: bug.module_code ?? '-',
+    productId: bug.product_id,
+    relatedTaskId: bug.related_task_id ?? undefined,
+    reproduceSteps: normalizeStringList(bug.reproduce_steps),
+    requirementId: bug.requirement_id ?? undefined,
+    severity: normalizeBugSeverity(bug.severity),
+    source: normalizeBugSource(bug.source),
+    status: normalizeBugStatus(bug.status),
+    title: bug.title,
+    versionId: bug.version_id ?? undefined,
+    versionName: bug.version_id
+      ? formatUnknownValue(bug.version_name ?? bug.version_code ?? bug.version_id)
+      : '未关联',
+  };
+}
+
+export async function fetchManagementBugList(
+  query: BugListQuery = {},
+): Promise<RemoteListResult<BugRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'module', query.module);
+  appendQueryParam(params, 'severity', query.severity);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'title', query.title);
+  appendQueryParam(params, 'version', query.version);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const bugs = await apiRequest<ListResponse<BugListItem>>(
+    queryString ? `/api/bugs?${queryString}` : '/api/bugs',
+    { token },
+  );
+
+  return {
+    page: bugs.page ?? query.page ?? 1,
+    pageSize: bugs.page_size ?? query.pageSize ?? 10,
+    rows: bugs.items.map(mapBugRecord),
+    total: bugs.total,
+  };
+}
+
 export async function createManagementBug(payload: BugMutationPayload) {
   const token = requireAccessToken();
   return apiRequest<{ id: string }>('/api/bugs', {
@@ -2583,6 +2844,17 @@ function appendQueryParam(params: URLSearchParams, key: string, value?: string |
   params.set(key, String(value));
 }
 
+function appendRemoteListParams(params: URLSearchParams, query: RemoteListQuery) {
+  appendQueryParam(params, 'page', query.page ?? 1);
+  appendQueryParam(params, 'page_size', query.pageSize ?? 10);
+  appendQueryParam(params, 'sort_by', query.sortField);
+  appendQueryParam(
+    params,
+    'sort_order',
+    query.sortOrder === 'ascend' ? 'asc' : query.sortOrder === 'descend' ? 'desc' : undefined,
+  );
+}
+
 export async function fetchTaskCenterTasks(
   query: TaskCenterTaskQuery = {},
 ): Promise<TaskCenterTaskListResult> {
@@ -2595,12 +2867,7 @@ export async function fetchTaskCenterTasks(
   appendQueryParam(params, 'task_type', query.taskType);
   appendQueryParam(params, 'created_from', query.createdFrom);
   appendQueryParam(params, 'created_to', query.createdTo);
-  if ((query.page ?? 1) !== 1) {
-    appendQueryParam(params, 'page', query.page);
-  }
-  if ((query.pageSize ?? 10) !== 10) {
-    appendQueryParam(params, 'page_size', query.pageSize);
-  }
+  appendRemoteListParams(params, query);
   const taskQueryString = params.toString();
   const taskPath = taskQueryString ? `/api/ai-tasks?${taskQueryString}` : '/api/ai-tasks';
   const tasks = await apiRequest<ListResponse<TaskListItem>>(taskPath, { token });
@@ -3308,6 +3575,46 @@ function mapOperationalMetrics(
   }));
 }
 
+function mapOperationalMetricRecord(item: FlexibleListItem, index: number): OperationalMetricRecord {
+  return {
+    category: formatUnknownValue(item.category),
+    id: formatUnknownValue(item.id ?? `operational-metric-${index}`),
+    name: formatUnknownValue(
+      firstKnownValue(item, [
+        'name',
+        'metric_name',
+        'repository_name',
+        'release_name',
+        'title',
+        'job_name',
+        'build_id',
+        'metric_date',
+        'environment',
+        'window_start',
+      ]),
+    ),
+    status: formatUnknownValue(item.status),
+    updatedAt: formatListDate(
+      formatUnknownValue(firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'date'])),
+    ),
+    value: formatUnknownValue(
+      firstKnownValue(item, [
+        'value',
+        'count',
+        'score',
+        'summary',
+        'commit_count',
+        'quality_score',
+        'build_id',
+        'duration_seconds',
+        'error_rate',
+        'request_count',
+        'p95_latency_ms',
+      ]),
+    ),
+  };
+}
+
 export async function fetchDevopsMetrics(): Promise<OperationalMetricRecord[]> {
   const token = requireAccessToken();
   const [gitlabMetrics, jenkinsReleases, onlineLogs] = await Promise.all([
@@ -3321,6 +3628,29 @@ export async function fetchDevopsMetrics(): Promise<OperationalMetricRecord[]> {
     ...mapOperationalMetrics('Jenkins 发布', jenkinsReleases.items),
     ...mapOperationalMetrics('线上日志', onlineLogs.items),
   ];
+}
+
+export async function fetchDevopsMetricList(
+  query: OperationalMetricListQuery = {},
+): Promise<RemoteListResult<OperationalMetricRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'category', query.category);
+  appendQueryParam(params, 'name', query.name);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const path = queryString
+    ? `/api/devops/operational-metrics?${queryString}`
+    : '/api/devops/operational-metrics';
+  const metrics = await apiRequest<ListResponse<FlexibleListItem>>(path, { token });
+
+  return {
+    page: metrics.page ?? query.page ?? 1,
+    pageSize: metrics.page_size ?? query.pageSize ?? 10,
+    rows: metrics.items.map(mapOperationalMetricRecord),
+    total: metrics.total,
+  };
 }
 
 export async function createGitLabDailyCodeMetric(
@@ -3532,6 +3862,40 @@ function mapUserInsights(category: string, items: FlexibleListItem[]): UserInsig
   });
 }
 
+function mapUserInsightRecord(item: FlexibleListItem, index: number): UserInsightRecord {
+  const updatedAtSortValue = formatUnknownValue(
+    firstKnownValue(item, ['updated_at', 'created_at', 'observed_at', 'window_start']),
+  );
+  return {
+    category: formatUnknownValue(item.category),
+    confidenceLevel: formatUnknownValue(item.confidence_level),
+    convertedRequirementId: formatUnknownValue(item.converted_requirement_id),
+    featureCode: formatUnknownValue(item.feature_code),
+    feedbackType: formatUnknownValue(item.feedback_type),
+    id: formatUnknownValue(item.id ?? `user-insight-${index}`),
+    moduleCode: formatUnknownValue(item.module_code),
+    owner: formatUnknownValue(firstKnownValue(item, ['owner', 'user_id', 'owner_id', 'created_by', 'actor_id'])),
+    planningCycle: formatUnknownValue(item.planning_cycle),
+    priority: formatUnknownValue(item.priority),
+    productId: formatUnknownValue(item.product_id),
+    status: formatUnknownValue(item.status),
+    summary: formatUnknownValue(
+      firstKnownValue(item, [
+        'summary',
+        'title',
+        'content',
+        'feedback_text',
+        'suggestion',
+        'recommendation_reason',
+        'feature_code',
+      ]),
+    ),
+    updatedAt: formatListDate(updatedAtSortValue),
+    updatedAtSortValue,
+    versionId: formatUnknownValue(item.version_id),
+  };
+}
+
 function sortUserInsightsByUpdatedAt(records: UserInsightRecord[]): UserInsightRecord[] {
   return [...records].sort((left, right) => {
     const rightTime = Date.parse(right.updatedAtSortValue ?? '');
@@ -3557,6 +3921,27 @@ export async function fetchUserInsights(): Promise<UserInsightRecord[]> {
     ...mapUserInsights('用户反馈', feedbackItems.items),
     ...mapUserInsights('迭代建议', iterationSuggestions.items),
   ]);
+}
+
+export async function fetchUserInsightList(
+  query: UserInsightListQuery = {},
+): Promise<RemoteListResult<UserInsightRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'category', query.category);
+  appendQueryParam(params, 'summary', query.summary);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const path = queryString ? `/api/insights/items?${queryString}` : '/api/insights/items';
+  const insights = await apiRequest<ListResponse<FlexibleListItem>>(path, { token });
+
+  return {
+    page: insights.page ?? query.page ?? 1,
+    pageSize: insights.page_size ?? query.pageSize ?? 10,
+    rows: insights.items.map(mapUserInsightRecord),
+    total: insights.total,
+  };
 }
 
 export async function createUserFeedback(payload: UserFeedbackCreatePayload): Promise<FlexibleListItem> {

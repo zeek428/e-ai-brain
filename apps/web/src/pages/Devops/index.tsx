@@ -3,16 +3,21 @@ import { Alert, Button, Form, Input, Modal, Radio, Select, Space } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
-import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { ProductContextOption, ProductModuleRecord, RequirementRecord } from '../../data/management';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import {
+  formatRemoteRowsError,
+  normalizeRemoteRowsError,
+  useRemoteRows,
+  type RemoteRowsError,
+} from '../../hooks/useRemoteRows';
 import {
   createGitLabDailyCodeMetric,
   createJenkinsRelease,
   createOnlineLogMetric,
   createCollectorRun,
   fetchCollectorRuns,
-  fetchDevopsMetrics,
+  fetchDevopsMetricList,
   fetchManagementRequirements,
   fetchPendingAttributionItems,
   fetchProductContextOptions,
@@ -26,6 +31,7 @@ import {
   type JenkinsReleaseCreatePayload,
   type OnlineLogMetricCreatePayload,
   type OperationalMetricRecord,
+  type OperationalMetricListQuery,
   type PendingAttributionItem,
   type PendingAttributionResolvePayload,
   type ProductGitRepositoryOption,
@@ -384,26 +390,58 @@ function buildPendingAttributionResolvePayload(
   };
 }
 
+const operationalMetricSortFieldMap: Record<string, string> = {
+  category: 'category',
+  name: 'name',
+  status: 'status',
+  updatedAt: 'updated_at',
+  value: 'value',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildOperationalMetricListQuery(query: ManagementListQuery): OperationalMetricListQuery {
+  const filters = query.filters;
+  return {
+    category: normalizeFilterText(filters.category),
+    name: normalizeFilterText(filters.name),
+    page: query.page,
+    pageSize: query.pageSize,
+    sortField: query.sortField
+      ? operationalMetricSortFieldMap[query.sortField] ?? query.sortField
+      : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(filters.status),
+  };
+}
+
 const columns: ProColumns<OperationalMetricRecord>[] = [
   {
     dataIndex: 'category',
+    sorter: true,
     title: '指标来源',
   },
   {
     dataIndex: 'name',
+    sorter: true,
     title: '指标名称',
   },
   {
     dataIndex: 'value',
+    sorter: true,
     title: '指标值',
   },
   {
     dataIndex: 'status',
+    sorter: true,
     title: '状态',
     render: (_, row) => <StatusTag color={row.status === '-' ? 'default' : 'blue'} label={row.status} />,
   },
   {
     dataIndex: 'updatedAt',
+    sorter: true,
     title: '更新时间',
   },
 ];
@@ -428,12 +466,47 @@ export default function DevopsPage() {
     items: ProductGitRepositoryOption[];
     productId: string;
   } | null>(null);
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchDevopsMetrics);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'updatedAt',
+    sortOrder: 'descend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: OperationalMetricRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchDevopsMetricList(buildOperationalMetricListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
   const {
     error: collectorRunError,
     reload: reloadCollectorRuns,
@@ -481,6 +554,36 @@ export default function DevopsPage() {
       })),
     [repositoryOptions],
   );
+
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchDevopsMetricList(buildOperationalMetricListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
 
   useEffect(() => {
     let mounted = true;
@@ -888,7 +991,7 @@ export default function DevopsPage() {
       <ManagementListPage<OperationalMetricRecord>
         breadcrumbGroup="运营治理"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           {
             label: '指标来源',
@@ -903,9 +1006,15 @@ export default function DevopsPage() {
           { label: '指标名称', name: 'name', type: 'text' },
           { label: '状态', name: 'status', type: 'text' },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error)}
         onReload={() => void reload()}
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
         tableTitle="研发运营指标"
         title="研发运营看板"

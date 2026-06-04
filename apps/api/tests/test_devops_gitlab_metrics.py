@@ -132,3 +132,63 @@ def test_gitlab_daily_code_metrics_validate_context_roles_and_ranges():
     )
     assert missing_repository.status_code == 404
     assert missing_repository.json()["detail"]["code"] == "NOT_FOUND"
+
+
+def test_devops_operational_metrics_support_server_pagination_sort_and_filters():
+    admin_headers = auth_headers()
+    context = create_gitlab_context(admin_headers)
+    version = client.post(
+        f"/api/products/{context['product_id']}/versions",
+        json={"code": "v2.0.0", "name": "v2.0.0"},
+        headers=admin_headers,
+    ).json()["data"]
+
+    client.post(
+        "/api/devops/gitlab/daily-code-metrics",
+        json={
+            "commit_count": 3,
+            "metric_date": "2026-06-01",
+            "product_id": context["product_id"],
+            "repository_id": context["repository_id"],
+            "status": "collected",
+        },
+        headers=admin_headers,
+    )
+    release = client.post(
+        "/api/devops/jenkins/releases",
+        json={
+            "build_id": "build-20260601-ops",
+            "environment": "prod",
+            "job_name": "enterprise-ai-brain-deploy",
+            "product_id": context["product_id"],
+            "status": "success",
+            "version_id": version["id"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    filtered = client.get(
+        (
+            "/api/devops/operational-metrics"
+            "?category=Jenkins 发布"
+            "&name=ai-brain"
+            "&status=success"
+            "&page=1&page_size=1"
+            "&sort_by=updated_at&sort_order=desc"
+        ),
+        headers=admin_headers,
+    ).json()["data"]
+
+    assert filtered["total"] == 1
+    assert filtered["page"] == 1
+    assert filtered["page_size"] == 1
+    assert filtered["items"][0]["id"] == release["id"]
+    assert filtered["items"][0]["category"] == "Jenkins 发布"
+    assert filtered["items"][0]["name"] == "enterprise-ai-brain-deploy"
+
+    invalid_sort = client.get(
+        "/api/devops/operational-metrics?page=1&page_size=10&sort_by=unsupported",
+        headers=admin_headers,
+    )
+    assert invalid_sort.status_code == 400
+    assert invalid_sort.json()["detail"]["code"] == "VALIDATION_ERROR"

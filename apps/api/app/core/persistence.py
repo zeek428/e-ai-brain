@@ -2521,23 +2521,49 @@ class PostgresSnapshotRepository:
         return {"brain_apps": brain_apps}
 
     def list_products(self, *, active_only: bool = False) -> list[dict[str, Any]]:
-        where_clause = "WHERE status = 'active'" if active_only else ""
+        where_clause = "WHERE p.status = 'active'" if active_only else ""
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, code, name, description, owner_team, status, display_order
-                    FROM products
+                    SELECT p.id, p.code, p.name, p.description, p.owner_team,
+                           p.status, p.display_order, current_version.code,
+                           current_version.name, COALESCE(module_counts.module_count, 0)
+                    FROM products p
+                    LEFT JOIN LATERAL (
+                        SELECT code, name
+                        FROM product_versions v
+                        WHERE v.product_id = p.id
+                        ORDER BY CASE v.status
+                            WHEN 'active' THEN 0
+                            WHEN 'testing' THEN 1
+                            WHEN 'released' THEN 2
+                            WHEN 'planning' THEN 3
+                            ELSE 4
+                        END,
+                        COALESCE(v.updated_at, v.created_at) DESC,
+                        v.code ASC
+                        LIMIT 1
+                    ) current_version ON TRUE
+                    LEFT JOIN (
+                        SELECT product_id, COUNT(*) AS module_count
+                        FROM product_modules
+                        WHERE status = 'active'
+                        GROUP BY product_id
+                    ) module_counts ON module_counts.product_id = p.id
                     {where_clause}
-                    ORDER BY display_order, code
+                    ORDER BY p.display_order, p.code
                     """
                 )
                 return [
                     {
                         "code": row[1],
+                        "current_version_code": row[7],
+                        "current_version_name": row[8],
                         "description": row[3],
                         "display_order": row[6],
                         "id": row[0],
+                        "module_count": row[9],
                         "name": row[2],
                         "owner_team": row[4],
                         "status": row[5],
@@ -2924,6 +2950,8 @@ class PostgresSnapshotRepository:
         read_scope: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
     ) -> list[dict[str, Any]]:
         where_clause, params = self._ai_task_summary_where(
             status=status,
@@ -2936,6 +2964,19 @@ class PostgresSnapshotRepository:
             created_by=created_by,
             read_scope=read_scope,
         )
+        sort_columns = {
+            "created_at": "COALESCE(t.created_at, t.updated_at)",
+            "created_by": "t.created_by",
+            "id": "t.id",
+            "product_id": "t.product_id",
+            "product_name": "COALESCE(p.name, t.product_context->'product'->>'name')",
+            "status": "t.status",
+            "task_type": "t.task_type",
+            "title": "t.title",
+            "updated_at": "COALESCE(t.updated_at, t.created_at)",
+        }
+        order_column = sort_columns.get(sort_by, sort_columns["created_at"])
+        order_direction = "ASC" if sort_order == "asc" else "DESC"
         paging_clause = ""
         if limit is not None:
             paging_clause += " LIMIT %s"
@@ -2954,7 +2995,7 @@ class PostgresSnapshotRepository:
                     FROM ai_tasks t
                     LEFT JOIN products p ON p.id = t.product_id
                     {where_clause}
-                    ORDER BY t.id
+                    ORDER BY {order_column} {order_direction}, t.id ASC
                     {paging_clause}
                     """,
                     tuple(params),

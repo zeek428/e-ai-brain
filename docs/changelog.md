@@ -8,6 +8,9 @@
 ## [Unreleased]
 
 ### Added
+- 用户洞察和研发运营主列表统一改为服务端聚合查询：新增 `/api/insights/items` 与 `/api/devops/operational-metrics`，支持 `page/page_size/sort_by/sort_order` 和页面查询条件，前端不再多接口拉全量后本地拼装分页。
+- 产品主列表补齐服务端聚合展示字段：`GET /api/products` 返回当前版本和模块数，前端远程产品列表不再额外拉取全量版本表拼装主表。
+- 主列表排序 helper 支持数值字段，修复审计 `sequence` 等数字列按字符串排序导致的顺序不稳定问题。
 - Bug 管理列表新增“创建时间”展示列，使用后端 `created_at` 标准字段，便于按登记先后追踪缺陷。
 - Bug 登记目标版本下拉改为读取同产品未归档迭代版本，支持在“测试中”和“已发布”版本继续登记缺陷归属，历史归档版本仍过滤。
 - 迭代版本从“开发中”推进到“测试中”时，版本内 `approved/planned/ready_for_dev/designing/developing/code_reviewing` 需求会统一同步为“测试中”，并新增历史数据回填迁移，避免版本已进入测试但需求仍停留在需求池、排期、设计或开发状态。
