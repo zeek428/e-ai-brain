@@ -4221,6 +4221,16 @@ describe('AI Brain Ant Design Pro workbench', () => {
     render(<RequirementsPage />);
 
     await screen.findByText('归集需求一');
+
+    fireEvent.change(screen.getByLabelText('迭代版本'), { target: { value: '2026-05' } });
+    fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
+
+    expect(screen.getByText('归集需求二')).toBeInTheDocument();
+    expect(screen.queryByText('归集需求一')).not.toBeInTheDocument();
+
+    fireEvent.reset(screen.getByRole('form', { name: '查询表格' }));
+    expect(screen.getByText('归集需求一')).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_pool' }));
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_planned' }));
     fireEvent.click(screen.getByRole('button', { name: /批量排期/ }));

@@ -394,6 +394,7 @@ export default function RequirementsPage() {
         filters={[
           { label: '需求标题', name: 'title', type: 'text' },
           { label: '所属产品', name: 'product', type: 'text' },
+          { label: '迭代版本', name: 'versionName', type: 'text' },
           {
             label: '状态',
             name: 'status',
