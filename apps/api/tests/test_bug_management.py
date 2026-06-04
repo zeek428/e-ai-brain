@@ -195,6 +195,78 @@ def test_bug_list_supports_server_pagination_sort_and_text_filters():
     assert [item["title"] for item in second_page["items"]] == ["Beta checkout 回归"]
 
 
+def test_bug_batch_update_updates_eligible_bugs_and_records_audit():
+    headers = auth_headers()
+    context = create_product_context(headers)
+    primary = create_bug(headers, context, source="manual_test", title="批量主 Bug")
+    needs_info = create_bug(headers, context, source="ai_auto_test", title="批量待补充 Bug")
+    duplicate = create_bug(
+        headers,
+        context,
+        duplicate_of_bug_id=primary["id"],
+        source="manual_test",
+        title="批量重复 Bug",
+    )
+
+    response = client.post(
+        "/api/bugs/batch-update",
+        json={
+            "assignee": "qa@example.com",
+            "bug_ids": [primary["id"], needs_info["id"], duplicate["id"], primary["id"]],
+            "reason": "批量分诊给 QA",
+            "severity": "major",
+            "status": "triaged",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["batch_id"].startswith("bug_batch_")
+    assert data["updated_count"] == 2
+    assert [item["id"] for item in data["updated"]] == [primary["id"], needs_info["id"]]
+    assert {item["status"] for item in data["updated"]} == {"triaged"}
+    assert {item["assignee"] for item in data["updated"]} == {"qa@example.com"}
+    assert data["skipped"] == [
+        {
+            "code": "BUG_STATE_INVALID",
+            "id": duplicate["id"],
+            "message": "Bug cannot move to requested status",
+        },
+        {
+            "code": "DUPLICATE_BUG",
+            "id": primary["id"],
+            "message": "Bug was already included in this batch",
+        },
+    ]
+
+    batch_audits = client.get(
+        f"/api/audit/events?subject_type=bug_batch&subject_id={data['batch_id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert [event["event_type"] for event in batch_audits] == ["bug.batch_updated"]
+    assert batch_audits[0]["payload"]["updated_count"] == 2
+    assert batch_audits[0]["payload"]["skipped_count"] == 2
+
+    bug_audits = client.get(
+        f"/api/audit/events?subject_type=bug&subject_id={primary['id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert bug_audits[0]["payload"]["batch_id"] == data["batch_id"]
+    assert bug_audits[0]["payload"]["operation"] == "batch_update"
+
+
+def test_bug_batch_update_rejects_null_only_update_fields():
+    response = client.post(
+        "/api/bugs/batch-update",
+        json={"bug_ids": ["bug_missing"], "status": None},
+        headers=auth_headers(),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
 def test_bug_management_rejects_invalid_context_state_and_roles():
     headers = auth_headers()
     reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")

@@ -1,12 +1,13 @@
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { CheckSquareOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type Key, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { BugRecord } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
+  batchUpdateManagementBugs,
   createManagementBug,
   deleteManagementBug,
   fetchBugProductContextOptions,
@@ -56,6 +57,13 @@ type BugFormValues = {
   status?: BugRecord['status'];
   title: string;
   version_id?: string;
+};
+
+type BugBatchFormValues = {
+  assignee?: string;
+  reason?: string;
+  severity?: BugRecord['severity'];
+  status?: BugRecord['status'];
 };
 
 function formatEvidenceJson(evidence?: Record<string, unknown>) {
@@ -142,9 +150,13 @@ function buildBugListQuery(query: ManagementListQuery): BugListQuery {
 
 export default function BugsPage() {
   const [form] = Form.useForm<BugFormValues>();
+  const [batchForm] = Form.useForm<BugBatchFormValues>();
   const [editingBug, setEditingBug] = useState<BugRecord | null>(null);
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [isBatchSaving, setIsBatchSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
     page: 1,
@@ -177,6 +189,10 @@ export default function BugsPage() {
     rows: duplicateBugs,
   } = useRemoteRows(fetchManagementBugs);
   const selectedProductId = Form.useWatch('product_id', form);
+  const selectedBugIds = useMemo(
+    () => selectedRowKeys.map((key) => String(key)),
+    [selectedRowKeys],
+  );
   const selectedProduct = useMemo(
     () => productContexts.find((product) => product.id === selectedProductId),
     [productContexts, selectedProductId],
@@ -371,6 +387,60 @@ export default function BugsPage() {
     }
   }, [reload, reloadDuplicateBugs]);
 
+  const openBatchModal = useCallback(() => {
+    if (selectedBugIds.length === 0) {
+      message.warning('请选择需要批量处理的 Bug');
+      return;
+    }
+    batchForm.resetFields();
+    setIsBatchModalOpen(true);
+  }, [batchForm, selectedBugIds.length]);
+
+  const handleBatchUpdate = useCallback(async () => {
+    try {
+      const values = await batchForm.validateFields();
+      const payload = {
+        assignee: trimText(values.assignee),
+        bug_ids: selectedBugIds,
+        reason: trimText(values.reason),
+        severity: values.severity,
+        status: values.status,
+      };
+      if (!payload.status && !payload.severity && !payload.assignee) {
+        message.warning('请至少选择一个批量更新字段');
+        return;
+      }
+      setIsBatchSaving(true);
+      const result = await batchUpdateManagementBugs(payload);
+      message.success(`Bug 批量处理完成：更新 ${result.updatedCount} 条，跳过 ${result.skippedCount} 条`);
+      setSelectedRowKeys([]);
+      setIsBatchModalOpen(false);
+      await reloadDuplicateBugs();
+      await reload();
+    } catch (batchError) {
+      if (isFormValidationError(batchError)) {
+        return;
+      }
+      message.error(formatMutationError(batchError));
+    } finally {
+      setIsBatchSaving(false);
+    }
+  }, [batchForm, reload, reloadDuplicateBugs, selectedBugIds]);
+
+  const toolbarActions = useMemo(
+    () => [
+      <Button
+        disabled={selectedRowKeys.length === 0}
+        icon={<CheckSquareOutlined />}
+        key="batch-update"
+        onClick={openBatchModal}
+      >
+        批量处理
+      </Button>,
+    ],
+    [openBatchModal, selectedRowKeys.length],
+  );
+
   const columns = useMemo<ProColumns<BugRecord>[]>(
     () => [
       {
@@ -500,9 +570,62 @@ export default function BugsPage() {
           total: listState.total,
         }}
         rowKey="id"
+        rowSelection={{
+          onChange: setSelectedRowKeys,
+          selectedRowKeys,
+        }}
         tableTitle="Bug 列表"
         title="Bug 管理"
+        toolbarActions={toolbarActions}
       />
+      <Modal
+        cancelText="取消"
+        confirmLoading={isBatchSaving}
+        destroyOnHidden
+        onCancel={() => setIsBatchModalOpen(false)}
+        okText="批量处理"
+        onOk={handleBatchUpdate}
+        open={isBatchModalOpen}
+        title={`批量处理 Bug（${selectedBugIds.length} 条）`}
+        width={560}
+      >
+        <Form<BugBatchFormValues> form={batchForm} layout="vertical">
+          <Form.Item label="状态" name="status">
+            <Select
+              allowClear
+              options={[
+                { label: '待处理', value: 'open' },
+                { label: '待补充', value: 'needs_info' },
+                { label: '已分诊', value: 'triaged' },
+                { label: '已分派', value: 'assigned' },
+                { label: '已修复', value: 'fixed' },
+                { label: '已验证', value: 'verified' },
+                { label: '已关闭', value: 'closed' },
+                { label: '重新打开', value: 'reopened' },
+              ]}
+              placeholder="可选，按状态机批量推进"
+            />
+          </Form.Item>
+          <Form.Item label="严重级别" name="severity">
+            <Select
+              allowClear
+              options={[
+                { label: '阻断', value: 'blocker' },
+                { label: '致命', value: 'critical' },
+                { label: '严重', value: 'major' },
+                { label: '一般', value: 'minor' },
+              ]}
+              placeholder="可选"
+            />
+          </Form.Item>
+          <Form.Item label="处理人" name="assignee">
+            <Input placeholder="可选，例如 qa@example.com" />
+          </Form.Item>
+          <Form.Item label="处理说明" name="reason">
+            <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="可选，写入批量审计" />
+          </Form.Item>
+        </Form>
+      </Modal>
       <Modal
         cancelText="取消"
         confirmLoading={isSaving}

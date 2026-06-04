@@ -605,6 +605,14 @@ class BugPatchRequest(BaseModel):
     duplicate_of_bug_id: str | None = None
 
 
+class BugBatchUpdateRequest(BaseModel):
+    bug_ids: list[str] = Field(min_length=1, max_length=100)
+    status: str | None = None
+    severity: str | None = None
+    assignee: str | None = None
+    reason: str | None = None
+
+
 class GitlabDailyCodeMetricRequest(BaseModel):
     product_id: str
     repository_id: str
@@ -3024,6 +3032,10 @@ def _compact_lifecycle_title(prefix: str, subject_id: str, label: str | None = N
     return f"{prefix}：{text}"
 
 
+def _full_chain_git_snapshot_ref(snapshot: dict[str, Any]) -> str:
+    return str(snapshot.get("source_ref") or snapshot.get("mr_iid") or snapshot["id"])
+
+
 def _full_chain_event(
     *,
     event_type: str,
@@ -3199,9 +3211,7 @@ def _requirement_full_chain_payload(
             occurred_at=_first_present_value(snapshot, ("captured_at", "created_at", "updated_at")),
             subject_id=str(snapshot["id"]),
             status=snapshot.get("status"),
-            title=(
-                f"PR/MR 快照：{snapshot.get('source_ref') or snapshot.get('mr_iid') or snapshot['id']}"
-            ),
+            title=f"PR/MR 快照：{_full_chain_git_snapshot_ref(snapshot)}",
             metadata={"repository_id": snapshot.get("repository_id")},
         )
         for snapshot in git_snapshots
@@ -12614,6 +12624,127 @@ def create_bug(
     )
     _save_bug_record(current_store, bug, audit_event=audit_event)
     return envelope(_bug_summary_projection(bug, current_store), get_trace_id(request))
+
+
+@app.post("/api/bugs/batch-update")
+def batch_update_bugs(
+    request: Request,
+    payload: BugBatchUpdateRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_bug_write_role(user)
+    _validate_bug_enums(severity=payload.severity, status=payload.status)
+    update_fields: set[str] = set()
+    if payload.status is not None:
+        update_fields.add("status")
+    if payload.severity is not None:
+        update_fields.add("severity")
+    if "assignee" in payload.model_fields_set:
+        update_fields.add("assignee")
+    if not update_fields:
+        raise api_error(400, "VALIDATION_ERROR", "At least one bug update field is required")
+
+    current_store = _task_workflow_write_store(store(request))
+    batch_id = current_store.new_id("bug_batch")
+    now = datetime.now(UTC).isoformat()
+    updated: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    seen_bug_ids: set[str] = set()
+
+    for bug_id in payload.bug_ids:
+        if bug_id in seen_bug_ids:
+            skipped.append(
+                {
+                    "code": "DUPLICATE_BUG",
+                    "id": bug_id,
+                    "message": "Bug was already included in this batch",
+                }
+            )
+            continue
+        seen_bug_ids.add(bug_id)
+
+        bug = current_store.bugs.get(bug_id)
+        if bug is None:
+            skipped.append(
+                {
+                    "code": "NOT_FOUND",
+                    "id": bug_id,
+                    "message": "Bug not found",
+                }
+            )
+            continue
+
+        updates: dict[str, Any] = {}
+        if "status" in update_fields and payload.status is not None:
+            try:
+                _ensure_bug_status_transition(bug["status"], payload.status)
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                skipped.append(
+                    {
+                        "code": str(detail.get("code") or "BUG_STATE_INVALID"),
+                        "id": bug_id,
+                        "message": str(
+                            detail.get("message") or "Bug cannot move to requested status"
+                        ),
+                    }
+                )
+                continue
+            updates["status"] = payload.status
+        if "severity" in update_fields and payload.severity is not None:
+            updates["severity"] = payload.severity
+        if "assignee" in update_fields:
+            updates["assignee"] = payload.assignee.strip() if payload.assignee else None
+
+        patched_bug = {**bug, **updates, "updated_at": now}
+        if not _uses_repository_context(current_store):
+            current_store.bugs[bug_id] = patched_bug
+        audit_event = _record_audit_event(
+            current_store,
+            event_type="bug.updated",
+            actor_id=user["id"],
+            subject_type="bug",
+            subject_id=bug_id,
+            payload={
+                "batch_id": batch_id,
+                "from_status": bug.get("status"),
+                "operation": "batch_update",
+                "reason": payload.reason,
+                "to_status": patched_bug.get("status"),
+                "updated_fields": sorted(updates.keys()),
+            },
+        )
+        _save_bug_record(current_store, patched_bug, audit_event=audit_event)
+        updated.append(_bug_summary_projection(patched_bug, current_store))
+
+    batch_audit_event = _record_audit_event(
+        current_store,
+        event_type="bug.batch_updated",
+        actor_id=user["id"],
+        subject_type="bug_batch",
+        subject_id=batch_id,
+        payload={
+            "bug_ids": payload.bug_ids,
+            "reason": payload.reason,
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "updated_count": len(updated),
+            "updated_fields": sorted(update_fields),
+            "updated_ids": [item["id"] for item in updated],
+        },
+    )
+    _save_audit_event(current_store, batch_audit_event)
+    return envelope(
+        {
+            "batch_id": batch_id,
+            "reason": payload.reason,
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "updated": updated,
+            "updated_count": len(updated),
+        },
+        get_trace_id(request),
+    )
 
 
 @app.patch("/api/bugs/{bug_id}")

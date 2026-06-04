@@ -5298,6 +5298,155 @@ describe('AI Brain Ant Design Pro workbench', () => {
     );
   });
 
+  it('batch updates selected bugs from the bug management page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const bugRows = [
+      {
+        assignee: 'user_admin',
+        created_at: '2026-06-04T09:00:00+00:00',
+        description: '批量处理第一条',
+        id: 'bug_batch_one',
+        module_code: 'delivery',
+        product_id: 'product_api',
+        reproduce_steps: [],
+        severity: 'minor',
+        source: 'manual_test',
+        status: 'open',
+        title: '批量 Bug 一',
+        version_id: 'version_api',
+        version_name: 'v1 MVP',
+      },
+      {
+        assignee: 'user_admin',
+        created_at: '2026-06-04T09:10:00+00:00',
+        description: '批量处理第二条',
+        id: 'bug_batch_two',
+        module_code: 'delivery',
+        product_id: 'product_api',
+        reproduce_steps: [],
+        severity: 'major',
+        source: 'manual_test',
+        status: 'needs_info',
+        title: '批量 Bug 二',
+        version_id: 'version_api',
+        version_name: 'v1 MVP',
+      },
+    ];
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      if (path === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'API-PRODUCT',
+                id: 'product_api',
+                name: '接口产品',
+                owner_team: 'API Team',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'v1',
+                id: 'version_api',
+                name: 'v1 MVP',
+                product_id: 'product_api',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if ((path === '/api/bugs' || path.startsWith('/api/bugs?')) && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: bugRows,
+            page: 1,
+            page_size: 10,
+            total: bugRows.length,
+          },
+        });
+      }
+      if (path === '/api/bugs/batch-update' && method === 'POST') {
+        return jsonResponse({
+          data: {
+            batch_id: 'bug_batch_001',
+            skipped: [
+              {
+                code: 'BUG_STATE_INVALID',
+                id: 'bug_closed',
+                message: 'Bug cannot move to requested status',
+              },
+            ],
+            skipped_count: 1,
+            updated: bugRows.map((bug) => ({
+              ...bug,
+              assignee: 'qa@example.com',
+              severity: 'major',
+              status: 'triaged',
+            })),
+            updated_count: 2,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path} ${method}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<BugsPage />);
+
+    expect(await screen.findByText('批量 Bug 一')).toBeInTheDocument();
+    expect(screen.getByText('批量 Bug 二')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 bug_batch_one' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 bug_batch_two' }));
+    fireEvent.click(screen.getByRole('button', { name: /批量处理/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: /批量处理 Bug/ });
+    expect(within(dialog).getByLabelText('状态')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('严重级别')).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText('处理人'), {
+      target: { value: 'qa@example.com' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('处理说明'), {
+      target: { value: '批量分诊给 QA' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /批量处理/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/bugs/batch-update',
+        'POST',
+      ]),
+    );
+    const batchCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/bugs/batch-update' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(batchCall?.[1]?.body))).toEqual({
+      assignee: 'qa@example.com',
+      bug_ids: ['bug_batch_one', 'bug_batch_two'],
+      reason: '批量分诊给 QA',
+    });
+  });
+
   it('allows selecting a testing iteration version when registering a bug', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

@@ -284,6 +284,22 @@ export type BugListQuery = RemoteListQuery & {
   version?: string;
 };
 
+export type BugBatchUpdatePayload = {
+  assignee?: string;
+  bug_ids: string[];
+  reason?: string;
+  severity?: string;
+  status?: string;
+};
+
+export type BugBatchUpdateResult = {
+  batchId: string;
+  skipped: Array<{ code: string; id: string; message: string }>;
+  skippedCount: number;
+  updated: BugRecord[];
+  updatedCount: number;
+};
+
 export type ProductVersionListQuery = RemoteListQuery & {
   code?: string;
   name?: string;
@@ -3024,6 +3040,35 @@ export async function updateManagementBug(bugId: string, payload: BugMutationPay
     method: 'PATCH',
     token,
   });
+}
+
+export async function batchUpdateManagementBugs(
+  payload: BugBatchUpdatePayload,
+): Promise<BugBatchUpdateResult> {
+  const token = requireAccessToken();
+  const result = await apiRequest<{
+    batch_id: string;
+    skipped?: Array<{ code?: string; id?: string; message?: string }>;
+    skipped_count?: number;
+    updated?: BugListItem[];
+    updated_count?: number;
+  }>('/api/bugs/batch-update', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+
+  return {
+    batchId: result.batch_id,
+    skipped: (result.skipped ?? []).map((item) => ({
+      code: item.code ?? 'UNKNOWN',
+      id: item.id ?? '-',
+      message: item.message ?? '-',
+    })),
+    skippedCount: normalizeDashboardCount(result.skipped_count),
+    updated: (result.updated ?? []).map(mapBugRecord),
+    updatedCount: normalizeDashboardCount(result.updated_count),
+  };
 }
 
 export async function deleteManagementBug(bugId: string) {
