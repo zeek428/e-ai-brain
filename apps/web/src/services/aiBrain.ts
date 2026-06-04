@@ -769,6 +769,44 @@ export type ProductVersionMutationPayload = {
   status?: string;
 };
 
+export type ProductVersionAdvanceStatusPayload = {
+  force?: boolean;
+  preview_only?: boolean;
+  reason?: string;
+  target_status: string;
+};
+
+type ProductVersionAdvanceRequirementImpact = {
+  block_reason?: string;
+  from_status?: string;
+  id: string;
+  status?: string;
+  title: string;
+  to_status?: string;
+};
+
+type ProductVersionAdvanceStatusResponse = {
+  blocked_requirements: ProductVersionAdvanceRequirementImpact[];
+  force: boolean;
+  from_status: string;
+  preview_only: boolean;
+  target_status: string;
+  unchanged_requirements: ProductVersionAdvanceRequirementImpact[];
+  updated_requirements: ProductVersionAdvanceRequirementImpact[];
+  version: ProductVersionListItem;
+};
+
+export type ProductVersionAdvanceStatusResult = {
+  blockedRequirements: ProductVersionAdvanceRequirementImpact[];
+  force: boolean;
+  fromStatus: ProductVersionRecord['status'];
+  previewOnly: boolean;
+  targetStatus: ProductVersionRecord['status'];
+  unchangedRequirements: ProductVersionAdvanceRequirementImpact[];
+  updatedRequirements: ProductVersionAdvanceRequirementImpact[];
+  version: ProductVersionRecord;
+};
+
 export type ProductModuleMutationPayload = {
   code?: string;
   description?: string;
@@ -1413,7 +1451,12 @@ function normalizeProductStatus(status?: string): ProductRecord['status'] {
 }
 
 function normalizeProductVersionStatus(status?: string): ProductVersionRecord['status'] {
-  if (status === 'archived' || status === 'planning') {
+  if (
+    status === 'archived' ||
+    status === 'planning' ||
+    status === 'released' ||
+    status === 'testing'
+  ) {
     return status;
   }
   return 'active';
@@ -1742,7 +1785,7 @@ function mapProductVersionOption(version: ProductVersionListItem): ProductVersio
 }
 
 function isRequirementSchedulableVersion(version: ProductVersionListItem): boolean {
-  return (version.status ?? '').toLowerCase() !== 'archived';
+  return ['active', 'planning'].includes((version.status ?? '').toLowerCase());
 }
 
 function mapProductContexts(
@@ -1866,6 +1909,31 @@ export async function updateProductVersion(
     method: 'PATCH',
     token,
   });
+}
+
+export async function advanceProductVersionStatus(
+  versionId: string,
+  payload: ProductVersionAdvanceStatusPayload,
+): Promise<ProductVersionAdvanceStatusResult> {
+  const token = requireAccessToken();
+  const result = await apiRequest<ProductVersionAdvanceStatusResponse>(
+    `/api/product-versions/${versionId}/advance-status`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return {
+    blockedRequirements: result.blocked_requirements,
+    force: result.force,
+    fromStatus: normalizeProductVersionStatus(result.from_status),
+    previewOnly: result.preview_only,
+    targetStatus: normalizeProductVersionStatus(result.target_status),
+    unchangedRequirements: result.unchanged_requirements,
+    updatedRequirements: result.updated_requirements,
+    version: mapProductVersionRecord(result.version),
+  };
 }
 
 export async function deleteProductVersion(versionId: string) {

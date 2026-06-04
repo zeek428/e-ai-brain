@@ -8,8 +8,9 @@
 ## [Unreleased]
 
 ### Added
-- 需求管理新增多选“批量排期”，迭代版本页新增“归集需求”入口，后端新增 `/api/requirements/batch-schedule`，支持将同产品需求池/已排期需求快速归集到未归档迭代版本，并记录批量级与逐需求审计。
-- 真实网页验收修复需求页批量排期目标版本只显示 active 的问题：现在可选择 planning/active 等未归档版本并过滤 archived；批次审计改为追加保存，避免覆盖历史 `requirement.batch_scheduled` 审计。
+- 迭代版本状态扩展为“规划中 / 开发中 / 测试中 / 已发布”，新增 `/api/product-versions/{version_id}/advance-status` 和迭代版本页“推进状态”入口，支持影响预览、需求状态同步推进、阻塞项提示、强制进入测试风险记录和发布阻塞校验。
+- 需求管理新增多选“批量排期”，迭代版本页新增“归集需求”入口，后端新增 `/api/requirements/batch-schedule`，支持将同产品需求池/已排期需求快速归集到 planning/active 迭代版本，并记录批量级与逐需求审计。
+- 真实网页验收修复需求页批量排期目标版本只显示 active 的问题：现在可选择 planning/active 版本并过滤 testing/released/archived；批次审计改为追加保存，避免覆盖历史 `requirement.batch_scheduled` 审计。
 - 测试流程新增提交前真实网页界面验证门禁：影响前端或用户可见页面的改动，必须在真实 Web 页面完成 URL/标题、非空渲染、目标交互、旧文案消失和控制台健康检查，通过后才能提交代码。
 - 任务管理查询性能优化：API 增加 PostgreSQL 连接复用，`GET /api/ai-tasks` 支持 `keyword`、`created_by`、`page`、`page_size` 远程查询分页，任务管理页仅对任务列表启用远程筛选分页；`GET /api/reviews/pending` 改为 SQL 直查待确认摘要，避免加载任务工作流全量兼容快照。
 - DB-first 迁移继续收敛知识、任务运行态、运营采集、用户洞察和迭代规划写接口：PostgreSQL 路径现在构造明确 records/payloads 直接调用 repository，新增记录不再依赖请求态集合充当写入事实源；MemoryStore 集合写入仅保留为测试 helper fallback。
@@ -30,7 +31,7 @@
 - DB-first 迁移补齐知识沉淀候选列表 repository-first 读取，`status` 过滤进入查询层，运行态 store 过期时仍从结构表返回沉淀候选。
 - DB-first 迁移补齐知识检索 repository-first 候选查询，文档权限、chunk 权限、可检索状态和关键词过滤进入查询层，保留关键词兜底和兼容向量排序。
 - DB-first 迁移补齐知识沉淀 approve/reject 写接口的 repository 当前记录读取，运行态 store 过期时仍能完成审核并写回结构表与审计事件。
-- 需求创建支持不指定迭代版本，审批后先进入需求池，排期到未归档迭代版本后才能生成 AI 任务；需求交付新增“迭代版本”页面，需求状态按设计、开发、代码评审、测试、发布和验收流程推进。
+- 需求创建支持不指定迭代版本，审批后先进入需求池，排期到 planning/active 迭代版本后才能生成 AI 任务；需求交付新增“迭代版本”页面，需求状态按设计、开发、代码评审、测试、发布和验收流程推进。
 - 模型网关配置拆分 Chat 与 Embedding 能力：Embedding 可禁用、复用 Chat 连接或单独配置 baseURL/API Key，知识向量 chunk 记录 embedding_config_id/model/dimension，检索只比较兼容向量并保留关键词兜底。
 - 知识索引新增文本兜底模式：Embedding 不可用时仍保存文本 chunk 并进入 `text_indexed`，知识检索以关键词模式返回可访问结果；Embedding 恢复后可通过重试升级为 `vector_indexed`。
 - AI 助手聊天记录按登录用户保存，新增 `/api/assistant/conversations` 与 `/api/assistant/conversations/{conversation_id}/messages`，前端侧栏展示最近对话并可打开历史消息；新增 `019_assistant_chat_history.sql` 和 `assistant_conversations` / `assistant_messages` 结构表。

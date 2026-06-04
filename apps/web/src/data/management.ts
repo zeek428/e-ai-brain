@@ -26,7 +26,7 @@ export type ProductVersionRecord = {
   productName?: string;
   releaseDate?: string;
   startDate?: string;
-  status: 'active' | 'archived' | 'planning';
+  status: 'active' | 'archived' | 'planning' | 'released' | 'testing';
 };
 
 export type ProductModuleRecord = {

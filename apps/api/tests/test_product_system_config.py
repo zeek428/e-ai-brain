@@ -334,11 +334,24 @@ def test_product_config_rejects_duplicate_codes_and_invalid_statuses():
     assert duplicate_module.status_code == 409
     assert duplicate_module.json()["detail"]["code"] == "PRODUCT_MODULE_CODE_EXISTS"
 
-    archived = client.patch(
+    direct_archive = client.patch(
         f"/api/product-versions/{version['id']}",
         json={"status": "archived"},
         headers=headers,
-    ).json()["data"]
+    )
+    assert direct_archive.status_code == 409
+    assert direct_archive.json()["detail"]["code"] == "PRODUCT_VERSION_STATUS_ADVANCE_REQUIRED"
+
+    for target_status in ["active", "testing", "released", "archived"]:
+        advance_response = client.post(
+            f"/api/product-versions/{version['id']}/advance-status",
+            json={"reason": "验证归档版本校验", "target_status": target_status},
+            headers=headers,
+        )
+        assert advance_response.status_code == 200
+        archived = advance_response.json()["data"]["version"]
+    assert archived["status"] == "archived"
+
     requirement = client.post(
         "/api/requirements",
         json={

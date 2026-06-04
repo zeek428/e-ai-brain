@@ -78,10 +78,16 @@ type ProductResourceEditor =
   | { kind: 'version'; record?: ProductVersionRecord; submitting: boolean };
 
 const versionStatusLabels: Record<ProductVersionRecord['status'], { color: string; label: string }> = {
-  active: { color: 'green', label: '启用' },
-  archived: { color: 'default', label: '归档' },
+  active: { color: 'blue', label: '开发中' },
+  archived: { color: 'default', label: '历史归档' },
   planning: { color: 'gold', label: '规划中' },
+  released: { color: 'green', label: '已发布' },
+  testing: { color: 'purple', label: '测试中' },
 };
+const versionCreateStatusOptions = [
+  { label: '规划中', value: 'planning' },
+  { label: '开发中', value: 'active' },
+];
 
 const activeStatusLabels: Record<'active' | 'inactive', { color: string; label: string }> = {
   active: { color: 'green', label: '启用' },
@@ -235,7 +241,7 @@ export default function ProductsPage() {
         name: version?.name,
         release_date: version?.releaseDate,
         start_date: version?.startDate,
-        status: version?.status ?? 'active',
+        status: version?.status ?? 'planning',
       });
       setResourceEditor({ kind, record: version, submitting: false });
       return;
@@ -299,12 +305,14 @@ export default function ProductsPage() {
           name: values.name.trim(),
           release_date: trimText(values.release_date),
           start_date: trimText(values.start_date),
-          status: values.status ?? 'active',
         };
         if (resourceEditor.record) {
           await updateProductVersion(resourceEditor.record.id, payload);
         } else {
-          await createProductVersion(configProduct.id, payload);
+          await createProductVersion(configProduct.id, {
+            ...payload,
+            status: values.status ?? 'active',
+          });
         }
       }
       if (resourceEditor.kind === 'module') {
@@ -785,15 +793,11 @@ export default function ProductsPage() {
               <Form.Item label="版本名称" name="name" rules={[{ required: true, message: '请输入版本名称' }]}>
                 <Input />
               </Form.Item>
-              <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
-                <Select
-                  options={[
-                    { label: '启用', value: 'active' },
-                    { label: '规划中', value: 'planning' },
-                    { label: '归档', value: 'archived' },
-                  ]}
-                />
-              </Form.Item>
+              {resourceEditor.record ? null : (
+                <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
+                  <Select options={versionCreateStatusOptions} />
+                </Form.Item>
+              )}
             </>
           ) : null}
           {resourceEditor?.kind === 'module' ? (

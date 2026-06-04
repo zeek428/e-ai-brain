@@ -199,7 +199,75 @@ PENDING_ATTRIBUTION_RESOLUTION_ACTIONS = {"ignore_as_noise", "link_existing_cont
 USER_ROLES = ASSIGNABLE_ROLE_CODES
 USER_STATUSES = {"active", "inactive"}
 PRODUCT_STATUSES = {"active", "inactive"}
-VERSION_STATUSES = {"planning", "active", "archived"}
+VERSION_STATUSES = {"active", "archived", "planning", "released", "testing"}
+VERSION_MAIN_STATUSES = {"active", "planning", "released", "testing"}
+VERSION_STATUS_TRANSITIONS = {
+    "active": {"testing"},
+    "planning": {"active"},
+    "released": {"archived"},
+    "testing": {"released"},
+}
+VERSION_REQUIREMENT_AUTO_ADVANCE = {
+    "active": {
+        "approved": "ready_for_dev",
+        "planned": "ready_for_dev",
+    },
+    "released": {
+        "ready_for_release": "released",
+        "testing": "released",
+    },
+    "testing": {
+        "code_reviewing": "testing",
+    },
+}
+VERSION_REQUIREMENT_ALLOWED_UNCHANGED = {
+    "active": {
+        "accepted",
+        "cancelled",
+        "closed",
+        "code_reviewing",
+        "deferred",
+        "developing",
+        "ready_for_dev",
+        "ready_for_release",
+        "rejected",
+        "released",
+        "testing",
+    },
+    "released": {
+        "accepted",
+        "cancelled",
+        "closed",
+        "deferred",
+        "rejected",
+        "released",
+    },
+    "archived": {
+        "accepted",
+        "cancelled",
+        "closed",
+        "deferred",
+        "rejected",
+        "released",
+    },
+    "testing": {
+        "accepted",
+        "cancelled",
+        "closed",
+        "deferred",
+        "ready_for_release",
+        "rejected",
+        "released",
+        "testing",
+    },
+}
+VERSION_REQUIREMENT_BLOCK_REASONS = {
+    "active": "需求尚未进入可开发状态，版本进入开发会形成范围风险",
+    "archived": "需求尚未达到发布或终止状态，归档会形成历史数据风险",
+    "released": "需求尚未达到发布或终止状态，不能发布版本",
+    "testing": "需求尚未完成开发评审，进入测试会形成版本风险",
+}
+REQUIREMENT_SCHEDULABLE_VERSION_STATUSES = {"active", "planning"}
 MODULE_STATUSES = {"active", "inactive"}
 GIT_REPO_STATUSES = {"active", "inactive"}
 GIT_REPO_PROVIDERS = {"gitlab", "github"}
@@ -285,6 +353,13 @@ class ProductVersionPatchRequest(BaseModel):
     status: str | None = None
     start_date: str | None = None
     release_date: str | None = None
+
+
+class ProductVersionAdvanceStatusRequest(BaseModel):
+    target_status: str
+    reason: str | None = None
+    force: bool = False
+    preview_only: bool = False
 
 
 class ProductModuleRequest(BaseModel):
@@ -871,7 +946,134 @@ def _validate_requirement_version(
         raise api_error(404, "NOT_FOUND", "Product version not found")
     if version["status"] == "archived":
         raise api_error(400, "PRODUCT_VERSION_ARCHIVED", "Archived version cannot be used")
+    if version["status"] not in REQUIREMENT_SCHEDULABLE_VERSION_STATUSES:
+        raise api_error(
+            400,
+            "PRODUCT_VERSION_NOT_SCHEDULABLE",
+            "Only planning or active versions can be used for requirement scheduling",
+        )
     return version
+
+
+def _requirement_advance_item(
+    requirement: dict[str, Any],
+    *,
+    from_status: str,
+    to_status: str,
+) -> dict[str, str]:
+    return {
+        "from_status": from_status,
+        "id": requirement["id"],
+        "title": requirement["title"],
+        "to_status": to_status,
+    }
+
+
+def _requirement_block_item(
+    requirement: dict[str, Any],
+    *,
+    block_reason: str,
+    status: str,
+) -> dict[str, str]:
+    return {
+        "block_reason": block_reason,
+        "id": requirement["id"],
+        "status": status,
+        "title": requirement["title"],
+    }
+
+
+def _requirements_for_version(
+    current_store: MemoryStore,
+    version_id: str,
+) -> list[dict[str, Any]]:
+    requirements = [
+        requirement
+        for requirement in current_store.requirements.values()
+        if requirement.get("version_id") == version_id
+    ]
+    requirements.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""))
+    return requirements
+
+
+def _build_version_advance_impact(
+    current_store: MemoryStore,
+    *,
+    target_status: str,
+    version_id: str,
+) -> dict[str, list[dict[str, str]]]:
+    auto_advance = VERSION_REQUIREMENT_AUTO_ADVANCE.get(target_status, {})
+    allowed_unchanged = VERSION_REQUIREMENT_ALLOWED_UNCHANGED.get(target_status, set())
+    block_reason = VERSION_REQUIREMENT_BLOCK_REASONS.get(
+        target_status,
+        "需求状态不满足版本推进条件",
+    )
+    updated: list[dict[str, str]] = []
+    blocked: list[dict[str, str]] = []
+    unchanged: list[dict[str, str]] = []
+    for requirement in _requirements_for_version(current_store, version_id):
+        status = _canonical_requirement_status(requirement.get("status"))
+        next_status = auto_advance.get(status)
+        if next_status is not None:
+            updated.append(
+                _requirement_advance_item(
+                    requirement,
+                    from_status=status,
+                    to_status=next_status,
+                )
+            )
+            continue
+        if status in allowed_unchanged:
+            unchanged.append(
+                {
+                    "id": requirement["id"],
+                    "status": status,
+                    "title": requirement["title"],
+                }
+            )
+            continue
+        blocked.append(
+            _requirement_block_item(
+                requirement,
+                block_reason=block_reason,
+                status=status,
+            )
+        )
+    return {
+        "blocked_requirements": blocked,
+        "unchanged_requirements": unchanged,
+        "updated_requirements": updated,
+    }
+
+
+def _validate_version_status_transition(from_status: str, target_status: str) -> None:
+    _ensure_enum(target_status, VERSION_STATUSES, "product version target status")
+    if target_status == "archived":
+        if from_status != "released":
+            raise api_error(
+                409,
+                "PRODUCT_VERSION_STATUS_INVALID",
+                "Only released versions can be archived",
+            )
+        return
+    if target_status not in VERSION_MAIN_STATUSES:
+        raise api_error(
+            400,
+            "PRODUCT_VERSION_STATUS_INVALID",
+            "Target status is not a version delivery stage",
+        )
+    if target_status == from_status:
+        raise api_error(
+            400,
+            "PRODUCT_VERSION_STATUS_UNCHANGED",
+            "Target status must be different from current status",
+        )
+    if target_status not in VERSION_STATUS_TRANSITIONS.get(from_status, set()):
+        raise api_error(
+            409,
+            "PRODUCT_VERSION_STATUS_INVALID",
+            "Version status must be advanced through the configured delivery flow",
+        )
 
 
 def _advance_requirement_after_task_created(
@@ -4538,6 +4740,115 @@ def create_product_version(
     return envelope(version, get_trace_id(request))
 
 
+@app.post("/api/product-versions/{version_id}/advance-status")
+def advance_product_version_status(
+    version_id: str,
+    request: Request,
+    payload: ProductVersionAdvanceStatusRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = _task_workflow_write_store(store(request))
+    version = current_store.product_versions.get(version_id)
+    if version is None:
+        raise api_error(404, "NOT_FOUND", "Product version not found")
+    from_status = version.get("status", "planning")
+    target_status = payload.target_status
+    _validate_version_status_transition(from_status, target_status)
+    impact = _build_version_advance_impact(
+        current_store,
+        target_status=target_status,
+        version_id=version_id,
+    )
+    blocked_requirements = impact["blocked_requirements"]
+    if (
+        not payload.preview_only
+        and blocked_requirements
+        and (target_status == "released" or not payload.force)
+    ):
+        raise api_error(
+            409,
+            "PRODUCT_VERSION_STATUS_BLOCKED",
+            "Version has requirements that block this status transition",
+        )
+
+    response_version = version
+    if not payload.preview_only:
+        now = datetime.now(UTC).isoformat()
+        response_version = {
+            **version,
+            "status": target_status,
+            "updated_at": now,
+        }
+        if not _uses_repository_context(current_store):
+            current_store.product_versions[version_id] = response_version
+        for item in impact["updated_requirements"]:
+            requirement = current_store.requirements[item["id"]]
+            updated_requirement = {
+                **requirement,
+                "status": item["to_status"],
+                "updated_at": now,
+            }
+            if not _uses_repository_context(current_store):
+                current_store.requirements[item["id"]] = updated_requirement
+            requirement_audit_event = _record_audit_event(
+                current_store,
+                event_type="requirement.updated",
+                actor_id=user["id"],
+                subject_type="requirement",
+                subject_id=item["id"],
+                payload={
+                    "from_status": item["from_status"],
+                    "operation": "version_status_advance",
+                    "product_id": version["product_id"],
+                    "reason": payload.reason,
+                    "to_status": item["to_status"],
+                    "version_id": version_id,
+                    "version_status_from": from_status,
+                    "version_status_to": target_status,
+                },
+            )
+            _save_requirement_record(
+                current_store,
+                updated_requirement,
+                audit_event=requirement_audit_event,
+            )
+        version_audit_event = _record_audit_event(
+            current_store,
+            event_type="product_version.status_advanced",
+            actor_id=user["id"],
+            subject_type="product_version",
+            subject_id=version_id,
+            payload={
+                "blocked_requirements": blocked_requirements,
+                "force": payload.force,
+                "from_status": from_status,
+                "reason": payload.reason,
+                "target_status": target_status,
+                "unchanged_requirements": impact["unchanged_requirements"],
+                "updated_requirements": impact["updated_requirements"],
+            },
+        )
+        _save_product_config_record(
+            current_store,
+            "product_versions",
+            response_version,
+            audit_event=version_audit_event,
+        )
+
+    return envelope(
+        {
+            **impact,
+            "force": payload.force,
+            "from_status": from_status,
+            "preview_only": payload.preview_only,
+            "target_status": target_status,
+            "version": _product_version_summary_projection(response_version, current_store),
+        },
+        get_trace_id(request),
+    )
+
+
 @app.patch("/api/product-versions/{version_id}")
 def patch_product_version(
     version_id: str,
@@ -4566,6 +4877,12 @@ def patch_product_version(
         )
     if "status" in updates:
         _ensure_enum(updates["status"], VERSION_STATUSES, "product version status")
+        if updates["status"] != version.get("status"):
+            raise api_error(
+                409,
+                "PRODUCT_VERSION_STATUS_ADVANCE_REQUIRED",
+                "Use the version status advance endpoint to change delivery status",
+            )
     version = {**version, **updates}
     if not _uses_repository_context(current_store):
         current_store.product_versions[version_id] = version

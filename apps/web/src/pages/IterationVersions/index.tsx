@@ -1,4 +1,4 @@
-import { CalendarOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { ArrowRightOutlined, CalendarOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
@@ -7,12 +7,14 @@ import { ManagementListPage, StatusTag } from '../../components/ManagementListPa
 import type { ProductContextOption, ProductVersionRecord, RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
+  advanceProductVersionStatus,
   batchScheduleRequirements,
   createProductVersion,
   deleteProductVersion,
   fetchDeliveryIterationVersions,
   fetchManagementRequirements,
   fetchProductContextOptions,
+  type ProductVersionAdvanceStatusResult,
   updateProductVersion,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -31,21 +33,51 @@ type CollectRequirementsFormValues = {
   reason?: string;
 };
 
+type AdvanceVersionFormValues = {
+  force?: boolean;
+  reason?: string;
+  target_status: ProductVersionRecord['status'];
+};
+
 const versionStatusLabels: Record<ProductVersionRecord['status'], { color: string; label: string }> = {
   active: { color: 'blue', label: '开发中' },
-  archived: { color: 'default', label: '已归档' },
+  archived: { color: 'default', label: '历史归档' },
   planning: { color: 'gold', label: '规划中' },
+  released: { color: 'green', label: '已发布' },
+  testing: { color: 'purple', label: '测试中' },
 };
 
 const collectableRequirementStatuses = new Set<RequirementRecord['status']>(['approved', 'planned']);
+const collectableVersionStatuses = new Set<ProductVersionRecord['status']>(['active', 'planning']);
+const versionStatusAdvanceTargets: Partial<Record<ProductVersionRecord['status'], ProductVersionRecord['status']>> = {
+  active: 'testing',
+  planning: 'active',
+  testing: 'released',
+};
+
+const versionStatusOptions = [
+  { label: '规划中', value: 'planning' },
+  { label: '开发中', value: 'active' },
+  { label: '测试中', value: 'testing' },
+  { label: '已发布', value: 'released' },
+  { label: '历史归档', value: 'archived' },
+];
+const versionCreateStatusOptions = versionStatusOptions.filter((option) =>
+  ['active', 'planning'].includes(option.value),
+);
 
 export default function IterationVersionsPage() {
   const [form] = Form.useForm<IterationVersionFormValues>();
   const [collectForm] = Form.useForm<CollectRequirementsFormValues>();
+  const [advanceForm] = Form.useForm<AdvanceVersionFormValues>();
   const [editingVersion, setEditingVersion] = useState<ProductVersionRecord | null>(null);
   const [collectingVersion, setCollectingVersion] = useState<ProductVersionRecord | null>(null);
+  const [advancingVersion, setAdvancingVersion] = useState<ProductVersionRecord | null>(null);
+  const [advancePreview, setAdvancePreview] = useState<ProductVersionAdvanceStatusResult | null>(null);
   const [collectRequirementIds, setCollectRequirementIds] = useState<string[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isAdvancePreviewLoading, setIsAdvancePreviewLoading] = useState(false);
+  const [isAdvanceSaving, setIsAdvanceSaving] = useState(false);
   const [isCollectSaving, setIsCollectSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const {
@@ -84,6 +116,12 @@ export default function IterationVersionsPage() {
         collectableRequirementStatuses.has(requirement.status),
     );
   }, [collectingVersion, requirements]);
+  const advanceTargetOptions = useMemo(() => {
+    const nextStatus = advancingVersion ? versionStatusAdvanceTargets[advancingVersion.status] : undefined;
+    return nextStatus
+      ? [{ label: versionStatusLabels[nextStatus].label, value: nextStatus }]
+      : [];
+  }, [advancingVersion]);
 
   const openCreateModal = () => {
     setEditingVersion(null);
@@ -117,7 +155,7 @@ export default function IterationVersionsPage() {
       name: values.name.trim(),
       release_date: trimText(values.release_date),
       start_date: trimText(values.start_date),
-      status: values.status,
+      ...(editingVersion ? {} : { status: values.status ?? 'planning' }),
     };
     setIsSaving(true);
     try {
@@ -148,8 +186,8 @@ export default function IterationVersionsPage() {
   }, [reload]);
 
   const openCollectModal = useCallback((row: ProductVersionRecord) => {
-    if (row.status === 'archived') {
-      message.warning('已归档版本不能归集需求');
+    if (!collectableVersionStatuses.has(row.status)) {
+      message.warning('只有规划中或开发中的版本可以归集需求');
       return;
     }
     setCollectingVersion(row);
@@ -190,6 +228,82 @@ export default function IterationVersionsPage() {
       message.error(formatMutationError(collectError));
     } finally {
       setIsCollectSaving(false);
+    }
+  };
+
+  const openAdvanceModal = useCallback((row: ProductVersionRecord) => {
+    const nextStatus = versionStatusAdvanceTargets[row.status];
+    if (!nextStatus) {
+      message.warning('当前版本状态没有可推进的下一阶段');
+      return;
+    }
+    setAdvancingVersion(row);
+    setAdvancePreview(null);
+    advanceForm.resetFields();
+    advanceForm.setFieldsValue({
+      force: false,
+      reason: undefined,
+      target_status: nextStatus,
+    });
+  }, [advanceForm]);
+
+  const handlePreviewAdvance = async () => {
+    if (!advancingVersion) {
+      return;
+    }
+    let values: AdvanceVersionFormValues;
+    try {
+      values = await advanceForm.validateFields();
+    } catch {
+      return;
+    }
+    setIsAdvancePreviewLoading(true);
+    try {
+      const result = await advanceProductVersionStatus(advancingVersion.id, {
+        force: Boolean(values.force),
+        preview_only: true,
+        reason: trimText(values.reason),
+        target_status: values.target_status,
+      });
+      setAdvancePreview(result);
+    } catch (previewError) {
+      message.error(formatMutationError(previewError));
+    } finally {
+      setIsAdvancePreviewLoading(false);
+    }
+  };
+
+  const handleAdvanceVersion = async () => {
+    if (!advancingVersion) {
+      return;
+    }
+    if (!advancePreview) {
+      message.warning('请先生成影响预览');
+      return;
+    }
+    let values: AdvanceVersionFormValues;
+    try {
+      values = await advanceForm.validateFields();
+    } catch {
+      return;
+    }
+    setIsAdvanceSaving(true);
+    try {
+      const result = await advanceProductVersionStatus(advancingVersion.id, {
+        force: Boolean(values.force),
+        preview_only: false,
+        reason: trimText(values.reason),
+        target_status: values.target_status,
+      });
+      message.success(`版本已推进到${versionStatusLabels[result.targetStatus].label}`);
+      setAdvancingVersion(null);
+      setAdvancePreview(null);
+      await reload();
+      await reloadRequirements();
+    } catch (advanceError) {
+      message.error(formatMutationError(advanceError));
+    } finally {
+      setIsAdvanceSaving(false);
     }
   };
 
@@ -235,7 +349,15 @@ export default function IterationVersionsPage() {
               编辑
             </Button>
             <Button
-              disabled={row.status === 'archived'}
+              disabled={!versionStatusAdvanceTargets[row.status]}
+              icon={<ArrowRightOutlined />}
+              onClick={() => openAdvanceModal(row)}
+              type="link"
+            >
+              推进状态
+            </Button>
+            <Button
+              disabled={!collectableVersionStatuses.has(row.status)}
               icon={<CalendarOutlined />}
               onClick={() => openCollectModal(row)}
               type="link"
@@ -251,7 +373,7 @@ export default function IterationVersionsPage() {
         ),
       },
     ],
-    [handleDelete, openCollectModal, openEditModal],
+    [handleDelete, openAdvanceModal, openCollectModal, openEditModal],
   );
 
   return (
@@ -267,11 +389,7 @@ export default function IterationVersionsPage() {
           {
             label: '状态',
             name: 'status',
-            options: [
-              { label: '规划中', value: 'planning' },
-              { label: '开发中', value: 'active' },
-              { label: '已归档', value: 'archived' },
-            ],
+            options: versionStatusOptions,
             type: 'select',
           },
         ]}
@@ -309,15 +427,11 @@ export default function IterationVersionsPage() {
           <Form.Item label="版本名称" name="name" rules={[{ required: true, message: '请输入版本名称' }]}>
             <Input />
           </Form.Item>
-          <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
-            <Select
-              options={[
-                { label: '规划中', value: 'planning' },
-                { label: '开发中', value: 'active' },
-                { label: '已归档', value: 'archived' },
-              ]}
-            />
-          </Form.Item>
+          {!editingVersion ? (
+            <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
+              <Select options={versionCreateStatusOptions} />
+            </Form.Item>
+          ) : null}
           <Form.Item label="开始时间" name="start_date">
             <Input placeholder="YYYY-MM-DD" />
           </Form.Item>
@@ -328,6 +442,70 @@ export default function IterationVersionsPage() {
             <Input.TextArea rows={3} />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        confirmLoading={isAdvanceSaving}
+        destroyOnHidden
+        okText="确认推进"
+        onCancel={() => {
+          setAdvancingVersion(null);
+          setAdvancePreview(null);
+        }}
+        onOk={() => void handleAdvanceVersion()}
+        open={Boolean(advancingVersion)}
+        title="推进版本状态"
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            title={
+              advancingVersion
+                ? `${advancingVersion.code} · ${versionStatusLabels[advancingVersion.status].label}`
+                : '请选择迭代版本'
+            }
+            type="info"
+          />
+          <Form<AdvanceVersionFormValues>
+            form={advanceForm}
+            layout="vertical"
+            onValuesChange={(changedValues) => {
+              if ('target_status' in changedValues) {
+                setAdvancePreview(null);
+              }
+            }}
+          >
+            <Form.Item label="目标状态" name="target_status" rules={[{ required: true, message: '请选择目标状态' }]}>
+              <Select options={advanceTargetOptions} />
+            </Form.Item>
+            <Form.Item label="推进原因" name="reason">
+              <Input.TextArea autoSize={{ minRows: 2 }} />
+            </Form.Item>
+            <Form.Item name="force" valuePropName="checked">
+              <Checkbox>允许带风险推进</Checkbox>
+            </Form.Item>
+            <Button loading={isAdvancePreviewLoading} onClick={() => void handlePreviewAdvance()}>
+              生成影响预览
+            </Button>
+          </Form>
+          {advancePreview ? (
+            <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+              <Alert title={`将推进 ${advancePreview.updatedRequirements.length} 条需求`} type="success" />
+              {advancePreview.updatedRequirements.map((requirement) => (
+                <div key={requirement.id}>
+                  {requirement.title} · {requirement.from_status} → {requirement.to_status}
+                </div>
+              ))}
+              <Alert
+                title={`阻塞 ${advancePreview.blockedRequirements.length} 条需求`}
+                type={advancePreview.blockedRequirements.length ? 'warning' : 'info'}
+              />
+              {advancePreview.blockedRequirements.map((requirement) => (
+                <div key={requirement.id}>
+                  {requirement.title} · {requirement.status} · {requirement.block_reason}
+                </div>
+              ))}
+            </Space>
+          ) : null}
+        </Space>
       </Modal>
       <Modal
         confirmLoading={isCollectSaving}

@@ -4373,6 +4373,166 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
   });
 
+  it('advances iteration version status with requirement impact preview', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/product-versions') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-07',
+                id: 'version_active',
+                name: '2026-07',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/requirements' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '开发尚未完成',
+                created_at: '2026-06-04T08:00:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_planned',
+                priority: 'P1',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'planned',
+                title: '开发阻塞需求',
+                version_id: 'version_active',
+                version_name: '2026-07',
+              },
+              {
+                content: '已经完成代码评审',
+                created_at: '2026-06-04T08:10:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_reviewed',
+                priority: 'P1',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'code_reviewing',
+                title: '可进入测试需求',
+                version_id: 'version_active',
+                version_name: '2026-07',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
+      if (path === '/api/product-versions/version_active/advance-status' && method === 'POST') {
+        const body = JSON.parse(String(init?.body));
+        return jsonResponse({
+          data: {
+            blocked_requirements: [
+              {
+                block_reason: '需求尚未完成开发评审，进入测试会形成版本风险',
+                id: 'requirement_planned',
+                status: 'planned',
+                title: '开发阻塞需求',
+              },
+            ],
+            force: Boolean(body.force),
+            from_status: 'active',
+            preview_only: Boolean(body.preview_only),
+            target_status: 'testing',
+            unchanged_requirements: [],
+            updated_requirements: [
+              {
+                from_status: 'code_reviewing',
+                id: 'requirement_reviewed',
+                title: '可进入测试需求',
+                to_status: 'testing',
+              },
+            ],
+            version: {
+              code: '2026-07',
+              id: 'version_active',
+              name: '2026-07',
+              product_code: 'API-PRODUCT',
+              product_id: 'product_api',
+              product_name: '接口产品',
+              status: body.preview_only ? 'active' : 'testing',
+            },
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<IterationVersionsPage />);
+
+    const [versionRowText] = await screen.findAllByText('2026-07');
+    const versionRow = versionRowText.closest('tr') as HTMLElement;
+    fireEvent.click(within(versionRow).getByRole('button', { name: /推进状态/ }));
+
+    expect(await screen.findByText('推进版本状态')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '生成影响预览' }));
+
+    expect(await screen.findByText('将推进 1 条需求')).toBeInTheDocument();
+    expect(screen.getByText('阻塞 1 条需求')).toBeInTheDocument();
+    expect(screen.getByText(/开发阻塞需求/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('允许带风险推进'));
+    fireEvent.change(screen.getByLabelText('推进原因'), {
+      target: { value: '进入系统测试' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '确认推进' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/product-versions/version_active/advance-status',
+        'POST',
+      ]),
+    );
+    const advanceCalls = fetchMock.mock.calls.filter(
+      ([path, init]) => path === '/api/product-versions/version_active/advance-status' && init?.method === 'POST',
+    );
+    expect(advanceCalls).toHaveLength(2);
+    expect(JSON.parse(String(advanceCalls[0]?.[1]?.body))).toEqual({
+      force: false,
+      preview_only: true,
+      reason: undefined,
+      target_status: 'testing',
+    });
+    expect(JSON.parse(String(advanceCalls[1]?.[1]?.body))).toEqual({
+      force: true,
+      preview_only: false,
+      reason: '进入系统测试',
+      target_status: 'testing',
+    });
+  });
+
   it('renders executable CRUD buttons on management pages', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
