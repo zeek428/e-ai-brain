@@ -1,15 +1,17 @@
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { CalendarOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
-import type { ProductContextOption, ProductVersionRecord } from '../../data/management';
+import type { ProductContextOption, ProductVersionRecord, RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
+  batchScheduleRequirements,
   createProductVersion,
   deleteProductVersion,
   fetchDeliveryIterationVersions,
+  fetchManagementRequirements,
   fetchProductContextOptions,
   updateProductVersion,
 } from '../../services/aiBrain';
@@ -25,16 +27,26 @@ type IterationVersionFormValues = {
   status: ProductVersionRecord['status'];
 };
 
+type CollectRequirementsFormValues = {
+  reason?: string;
+};
+
 const versionStatusLabels: Record<ProductVersionRecord['status'], { color: string; label: string }> = {
   active: { color: 'blue', label: '开发中' },
   archived: { color: 'default', label: '已归档' },
   planning: { color: 'gold', label: '规划中' },
 };
 
+const collectableRequirementStatuses = new Set<RequirementRecord['status']>(['approved', 'planned']);
+
 export default function IterationVersionsPage() {
   const [form] = Form.useForm<IterationVersionFormValues>();
+  const [collectForm] = Form.useForm<CollectRequirementsFormValues>();
   const [editingVersion, setEditingVersion] = useState<ProductVersionRecord | null>(null);
+  const [collectingVersion, setCollectingVersion] = useState<ProductVersionRecord | null>(null);
+  const [collectRequirementIds, setCollectRequirementIds] = useState<string[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCollectSaving, setIsCollectSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const {
     error,
@@ -42,6 +54,12 @@ export default function IterationVersionsPage() {
     rows: dataSource,
     status,
   } = useRemoteRows(fetchDeliveryIterationVersions);
+  const {
+    error: requirementError,
+    reload: reloadRequirements,
+    rows: requirements,
+    status: requirementStatus,
+  } = useRemoteRows(fetchManagementRequirements);
   const {
     error: productError,
     rows: productContexts,
@@ -56,6 +74,16 @@ export default function IterationVersionsPage() {
       })),
     [productContexts],
   );
+  const collectableRequirements = useMemo(() => {
+    if (!collectingVersion?.productId) {
+      return [];
+    }
+    return requirements.filter(
+      (requirement) =>
+        requirement.productId === collectingVersion.productId &&
+        collectableRequirementStatuses.has(requirement.status),
+    );
+  }, [collectingVersion, requirements]);
 
   const openCreateModal = () => {
     setEditingVersion(null);
@@ -119,6 +147,52 @@ export default function IterationVersionsPage() {
     }
   }, [reload]);
 
+  const openCollectModal = useCallback((row: ProductVersionRecord) => {
+    if (row.status === 'archived') {
+      message.warning('已归档版本不能归集需求');
+      return;
+    }
+    setCollectingVersion(row);
+    setCollectRequirementIds([]);
+    collectForm.resetFields();
+  }, [collectForm]);
+
+  const handleCollectRequirements = async () => {
+    if (!collectingVersion?.productId) {
+      message.error('版本缺少所属产品，无法归集需求');
+      return;
+    }
+    if (collectRequirementIds.length === 0) {
+      message.warning('请至少选择一条需求');
+      return;
+    }
+    let values: CollectRequirementsFormValues;
+    try {
+      values = await collectForm.validateFields();
+    } catch {
+      return;
+    }
+    setIsCollectSaving(true);
+    try {
+      const result = await batchScheduleRequirements({
+        product_id: collectingVersion.productId,
+        reason: trimText(values.reason),
+        requirement_ids: collectRequirementIds,
+        version_id: collectingVersion.id,
+      });
+      const skippedText = result.skippedCount ? `，跳过 ${result.skippedCount} 条` : '';
+      message.success(`已归集 ${result.updatedCount} 条需求${skippedText}`);
+      setCollectingVersion(null);
+      setCollectRequirementIds([]);
+      await reload();
+      await reloadRequirements();
+    } catch (collectError) {
+      message.error(formatMutationError(collectError));
+    } finally {
+      setIsCollectSaving(false);
+    }
+  };
+
   const columns = useMemo<ProColumns<ProductVersionRecord>[]>(
     () => [
       {
@@ -160,6 +234,14 @@ export default function IterationVersionsPage() {
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
+            <Button
+              disabled={row.status === 'archived'}
+              icon={<CalendarOutlined />}
+              onClick={() => openCollectModal(row)}
+              type="link"
+            >
+              归集需求
+            </Button>
             <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除版本 ${row.code}？`}>
               <Button danger icon={<DeleteOutlined />} type="link">
                 删除
@@ -169,7 +251,7 @@ export default function IterationVersionsPage() {
         ),
       },
     ],
-    [handleDelete, openEditModal],
+    [handleDelete, openCollectModal, openEditModal],
   );
 
   return (
@@ -194,7 +276,7 @@ export default function IterationVersionsPage() {
           },
         ]}
         loading={status === 'loading'}
-        notice={formatRemoteRowsError(error ?? productError)}
+        notice={formatRemoteRowsError(error ?? productError ?? requirementError)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增迭代版本"
@@ -246,6 +328,57 @@ export default function IterationVersionsPage() {
             <Input.TextArea rows={3} />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        confirmLoading={isCollectSaving}
+        destroyOnHidden
+        okText="确认归集"
+        onCancel={() => setCollectingVersion(null)}
+        onOk={() => void handleCollectRequirements()}
+        open={Boolean(collectingVersion)}
+        title={collectingVersion ? `归集需求到 ${collectingVersion.code}` : '归集需求'}
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            title={
+              collectingVersion
+                ? `${collectingVersion.productName ?? collectingVersion.productId} · ${collectingVersion.name}`
+                : '请选择迭代版本'
+            }
+            type="info"
+          />
+          {collectableRequirements.length ? (
+            <Checkbox.Group
+              onChange={(values) => setCollectRequirementIds(values.map((value) => String(value)))}
+              value={collectRequirementIds}
+            >
+              <Space orientation="vertical">
+                {collectableRequirements.map((requirement) => (
+                  <Checkbox key={requirement.id} value={requirement.id}>
+                    {requirement.title}
+                    <span style={{ color: '#667085', marginLeft: 8 }}>
+                      {requirement.versionName ?? '未排期'} · {requirement.id}
+                    </span>
+                  </Checkbox>
+                ))}
+              </Space>
+            </Checkbox.Group>
+          ) : (
+            <Alert
+              title={
+                requirementStatus === 'loading'
+                  ? '正在加载可归集需求'
+                  : '当前版本所属产品暂无需求池或已排期需求'
+              }
+              type="warning"
+            />
+          )}
+          <Form<CollectRequirementsFormValues> form={collectForm} layout="vertical">
+            <Form.Item label="归集原因" name="reason">
+              <Input.TextArea autoSize={{ minRows: 2 }} />
+            </Form.Item>
+          </Form>
+        </Space>
       </Modal>
     </>
   );

@@ -67,6 +67,7 @@ vi.mock('@ant-design/pro-components', async () => {
     onReset,
     onSubmit,
     rowKey,
+    rowSelection,
     toolBarRender,
   }: {
     columns: Array<{
@@ -84,10 +85,26 @@ vi.mock('@ant-design/pro-components', async () => {
     onReset?: () => void;
     onSubmit?: (values: Record<string, unknown>) => void;
     rowKey: keyof Row;
+    rowSelection?: {
+      getCheckboxProps?: (record: Row) => { disabled?: boolean };
+      onChange?: (selectedRowKeys: React.Key[], selectedRows: Row[]) => void;
+      selectedRowKeys?: React.Key[];
+    };
     toolBarRender?: () => React.ReactNode[];
   }) {
     const searchColumns = columns.filter((column) => column.search !== false);
     const tableColumns = columns.filter((column) => !column.hideInTable);
+    const selectedKeys = new Set((rowSelection?.selectedRowKeys ?? []).map(String));
+    const toggleSelection = (row: Row, checked: boolean) => {
+      const rowId = String(row[rowKey]);
+      const nextKeys = checked
+        ? [...selectedKeys, rowId]
+        : [...selectedKeys].filter((selectedKey) => selectedKey !== rowId);
+      rowSelection?.onChange?.(
+        nextKeys,
+        dataSource.filter((item) => nextKeys.includes(String(item[rowKey]))),
+      );
+    };
 
     return React.createElement(
       'section',
@@ -165,6 +182,7 @@ vi.mock('@ant-design/pro-components', async () => {
           React.createElement(
             'tr',
             null,
+            rowSelection ? React.createElement('th', { key: '__selection' }, '选择') : null,
             tableColumns.map((column) =>
               React.createElement('th', { key: String(column.key ?? column.dataIndex) }, column.title),
             ),
@@ -177,6 +195,20 @@ vi.mock('@ant-design/pro-components', async () => {
             React.createElement(
               'tr',
               { key: String(row[rowKey]) },
+              rowSelection
+                ? React.createElement(
+                    'td',
+                    { key: '__selection' },
+                    React.createElement('input', {
+                      'aria-label': `选择 ${String(row[rowKey])}`,
+                      checked: selectedKeys.has(String(row[rowKey])),
+                      disabled: rowSelection.getCheckboxProps?.(row).disabled,
+                      onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
+                        toggleSelection(row, event.currentTarget.checked),
+                      type: 'checkbox',
+                    }),
+                  )
+                : null,
               tableColumns.map((column) =>
                 React.createElement(
                   'td',
@@ -276,6 +308,7 @@ import AssistantPage from '../src/pages/Assistant';
 import DashboardPage from '../src/pages/Dashboard';
 import DevopsPage from '../src/pages/Devops';
 import InsightsPage from '../src/pages/Insights';
+import IterationVersionsPage from '../src/pages/IterationVersions';
 import KnowledgePage from '../src/pages/Knowledge';
 import LoginPage from '../src/pages/Login';
 import ModelGatewayPage from '../src/pages/ModelGateway';
@@ -289,6 +322,7 @@ import {
   approveTaskCenterReview,
   apiRequest,
   AUTH_STATE_EVENT,
+  batchScheduleRequirements,
   clearAccessToken,
   createAutomatedTestingTask,
   createDevelopmentPlanningTask,
@@ -4047,12 +4081,12 @@ describe('AI Brain Ant Design Pro workbench', () => {
       });
     let resolveActiveProducts: (response: Response) => void = () => {};
     let resolveRequirements: (response: Response) => void = () => {};
-    let resolveActiveVersions: (response: Response) => void = () => {};
+    let resolveRequirementVersions: (response: Response) => void = () => {};
     const activeProductsPromise = new Promise<Response>((resolve) => {
       resolveActiveProducts = resolve;
     });
-    const activeVersionsPromise = new Promise<Response>((resolve) => {
-      resolveActiveVersions = resolve;
+    const requirementVersionsPromise = new Promise<Response>((resolve) => {
+      resolveRequirementVersions = resolve;
     });
     const requirementsPromise = new Promise<Response>((resolve) => {
       resolveRequirements = resolve;
@@ -4062,8 +4096,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (path === '/api/products?active_only=true') {
         return activeProductsPromise;
       }
-      if (path === '/api/product-versions?active_only=true') {
-        return activeVersionsPromise;
+      if (path === '/api/product-versions') {
+        return requirementVersionsPromise;
       }
       if (path === '/api/requirements') {
         return requirementsPromise;
@@ -4078,12 +4112,265 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('产品详细设计辅助')).not.toBeInTheDocument();
 
     resolveActiveProducts(jsonResponse({ data: { items: [], total: 0 } }));
-    resolveActiveVersions(jsonResponse({ data: { items: [], total: 0 } }));
+    resolveRequirementVersions(jsonResponse({ data: { items: [], total: 0 } }));
     resolveRequirements(jsonResponse({ data: { items: [], total: 0 } }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(screen.queryByText('产品详细设计辅助')).not.toBeInTheDocument();
     expect(screen.queryByText(/接口异常/)).not.toBeInTheDocument();
+  });
+
+  it('batch schedules selected requirements from the requirements page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-06',
+                id: 'version_target',
+                name: '2026-06',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'planning',
+              },
+              {
+                code: 'archived',
+                id: 'version_archived',
+                name: '归档版本',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'archived',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
+      if (path === '/api/requirements' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '归集需求一内容',
+                created_at: '2026-06-04T08:00:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_pool',
+                priority: 'P1',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'approved',
+                title: '归集需求一',
+              },
+              {
+                content: '归集需求二内容',
+                created_at: '2026-06-04T08:10:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_planned',
+                priority: 'P1',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'planned',
+                title: '归集需求二',
+                version_id: 'version_old',
+                version_name: '2026-05',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
+      if (path === '/api/requirements/batch-schedule' && method === 'POST') {
+        return jsonResponse({
+          data: {
+            batch_id: 'requirement_batch_001',
+            product_id: 'product_api',
+            skipped: [],
+            skipped_count: 0,
+            updated: [],
+            updated_count: 2,
+            version_id: 'version_target',
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<RequirementsPage />);
+
+    await screen.findByText('归集需求一');
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_pool' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_planned' }));
+    fireEvent.click(screen.getByRole('button', { name: /批量排期/ }));
+
+    expect(await screen.findByText('已选择 2 条需求')).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByLabelText('目标版本'));
+    expect(screen.queryByRole('option', { name: 'archived · 归档版本' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('option', { name: '2026-06 · 2026-06' }));
+    fireEvent.change(screen.getByLabelText('归集原因'), {
+      target: { value: '纳入 2026-06 迭代' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '确认归集' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/requirements/batch-schedule',
+        'POST',
+      ]),
+    );
+    const batchCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/requirements/batch-schedule' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(batchCall?.[1]?.body))).toEqual({
+      product_id: 'product_api',
+      reason: '纳入 2026-06 迭代',
+      requirement_ids: ['requirement_pool', 'requirement_planned'],
+      version_id: 'version_target',
+    });
+  });
+
+  it('collects demand pool requirements from the iteration version page', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/product-versions') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-06',
+                id: 'version_target',
+                name: '2026-06',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'planning',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-06',
+                id: 'version_target',
+                name: '2026-06',
+                product_id: 'product_api',
+                status: 'planning',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/requirements' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '需求池内容',
+                created_at: '2026-06-04T08:00:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_pool',
+                priority: 'P1',
+                product_code: 'API-PRODUCT',
+                product_id: 'product_api',
+                product_name: '接口产品',
+                status: 'approved',
+                title: '需求池待归集',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/requirements/batch-schedule' && method === 'POST') {
+        return jsonResponse({
+          data: {
+            batch_id: 'requirement_batch_002',
+            product_id: 'product_api',
+            skipped: [],
+            skipped_count: 0,
+            updated: [],
+            updated_count: 1,
+            version_id: 'version_target',
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<IterationVersionsPage />);
+
+    const [versionRowText] = await screen.findAllByText('2026-06');
+    fireEvent.click(
+      within(versionRowText.closest('tr') as HTMLElement).getByRole('button', {
+        name: /归集需求/,
+      }),
+    );
+    fireEvent.click(await screen.findByRole('checkbox', { name: /需求池待归集/ }));
+    fireEvent.change(screen.getByLabelText('归集原因'), {
+      target: { value: '归入版本入口' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '确认归集' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/requirements/batch-schedule',
+        'POST',
+      ]),
+    );
+    const batchCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/requirements/batch-schedule' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(batchCall?.[1]?.body))).toEqual({
+      product_id: 'product_api',
+      reason: '归入版本入口',
+      requirement_ids: ['requirement_pool'],
+      version_id: 'version_target',
+    });
   });
 
   it('renders executable CRUD buttons on management pages', async () => {
@@ -5350,6 +5637,33 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (input === '/api/requirements/batch-schedule') {
+        return jsonResponse({
+          data: {
+            batch_id: 'requirement_batch_api',
+            product_id: 'product_api',
+            skipped: [],
+            skipped_count: 0,
+            updated: [
+              {
+                content: '需求内容',
+                created_at: '2026-06-04T08:00:00+00:00',
+                id: 'requirement_api',
+                priority: 'P1',
+                product_code: 'CRUD',
+                product_id: 'product_api',
+                status: 'planned',
+                title: 'CRUD 需求',
+                updated_at: '2026-06-04T08:30:00+00:00',
+                version_id: 'version_api',
+                version_name: 'v1',
+              },
+            ],
+            updated_count: 1,
+            version_id: 'version_api',
+          },
+        });
+      }
       return jsonResponse({
         data: {
           id: String(input).includes('/api/products') ? 'product_api' : 'resource_api',
@@ -5486,6 +5800,14 @@ describe('AI Brain Ant Design Pro workbench', () => {
       riskLevel: 'medium',
       status: 'pending_review',
     });
+    const batchScheduleResult = await batchScheduleRequirements({
+      product_id: 'product_api',
+      reason: '纳入 CRUD 版本',
+      requirement_ids: ['requirement_api'],
+      version_id: 'version_api',
+    });
+    expect(batchScheduleResult.batchId).toBe('requirement_batch_api');
+    expect(batchScheduleResult.updatedCount).toBe(1);
 
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
       ['/api/products', 'POST'],
@@ -5519,6 +5841,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       ['/api/devops/gitlab/merge-requests/repo_api/42/snapshot', 'POST'],
       ['/api/ai-tasks', 'POST'],
       ['/api/ai-tasks/task_code_review/code-review-report', 'GET'],
+      ['/api/requirements/batch-schedule', 'POST'],
     ]);
     expect(fetchMock.mock.calls[20]?.[1]?.body).toBe(
       JSON.stringify({
@@ -5572,6 +5895,14 @@ describe('AI Brain Ant Design Pro workbench', () => {
         requirement_id: 'requirement_api',
         task_type: 'code_review',
         title: 'Code Review：CRUD 需求 MR !42',
+      }),
+    );
+    expect(fetchMock.mock.calls[31]?.[1]?.body).toBe(
+      JSON.stringify({
+        product_id: 'product_api',
+        reason: '纳入 CRUD 版本',
+        requirement_ids: ['requirement_api'],
+        version_id: 'version_api',
       }),
     );
   });

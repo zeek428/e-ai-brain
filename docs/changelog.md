@@ -8,6 +8,8 @@
 ## [Unreleased]
 
 ### Added
+- 需求管理新增多选“批量排期”，迭代版本页新增“归集需求”入口，后端新增 `/api/requirements/batch-schedule`，支持将同产品需求池/已排期需求快速归集到未归档迭代版本，并记录批量级与逐需求审计。
+- 真实网页验收修复需求页批量排期目标版本只显示 active 的问题：现在可选择 planning/active 等未归档版本并过滤 archived；批次审计改为追加保存，避免覆盖历史 `requirement.batch_scheduled` 审计。
 - 测试流程新增提交前真实网页界面验证门禁：影响前端或用户可见页面的改动，必须在真实 Web 页面完成 URL/标题、非空渲染、目标交互、旧文案消失和控制台健康检查，通过后才能提交代码。
 - 任务管理查询性能优化：API 增加 PostgreSQL 连接复用，`GET /api/ai-tasks` 支持 `keyword`、`created_by`、`page`、`page_size` 远程查询分页，任务管理页仅对任务列表启用远程筛选分页；`GET /api/reviews/pending` 改为 SQL 直查待确认摘要，避免加载任务工作流全量兼容快照。
 - DB-first 迁移继续收敛知识、任务运行态、运营采集、用户洞察和迭代规划写接口：PostgreSQL 路径现在构造明确 records/payloads 直接调用 repository，新增记录不再依赖请求态集合充当写入事实源；MemoryStore 集合写入仅保留为测试 helper fallback。

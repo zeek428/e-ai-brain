@@ -388,6 +388,8 @@ class AuditRepository(Protocol):
 
     def save_audit_events(self, payload: dict[str, Any]) -> None: ...
 
+    def append_audit_event(self, audit_event: dict[str, Any]) -> None: ...
+
 
 class BugRepository(Protocol):
     def load_bugs(self) -> dict[str, Any] | None: ...
@@ -4738,6 +4740,11 @@ class PostgresSnapshotRepository:
                     [str(event["id"]) for event in audit_events if event.get("id")],
                 )
                 self._upsert_audit_events(cursor, audit_events)
+
+    def append_audit_event(self, audit_event: dict[str, Any]) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_audit_events(cursor, [audit_event])
 
     def save_bugs(self, payload: dict[str, Any]) -> None:
         bugs = self._clean_bug_references(payload.get("bugs", {}))

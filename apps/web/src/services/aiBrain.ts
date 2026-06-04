@@ -725,6 +725,41 @@ export type RequirementMutationPayload = {
   version_id?: string | null;
 };
 
+export type RequirementBatchSchedulePayload = {
+  product_id: string;
+  reason?: string;
+  requirement_ids: string[];
+  version_id: string;
+};
+
+type RequirementBatchScheduleSkippedItem = {
+  code: string;
+  id: string;
+  message: string;
+};
+
+type RequirementBatchScheduleResponse = {
+  batch_id: string;
+  product_id: string;
+  reason?: string | null;
+  skipped: RequirementBatchScheduleSkippedItem[];
+  skipped_count: number;
+  updated: RequirementListItem[];
+  updated_count: number;
+  version_id: string;
+};
+
+export type RequirementBatchScheduleResult = {
+  batchId: string;
+  productId: string;
+  reason?: string | null;
+  skipped: RequirementBatchScheduleSkippedItem[];
+  skippedCount: number;
+  updated: RequirementRecord[];
+  updatedCount: number;
+  versionId: string;
+};
+
 export type ProductVersionMutationPayload = {
   code?: string;
   description?: string;
@@ -1706,6 +1741,32 @@ function mapProductVersionOption(version: ProductVersionListItem): ProductVersio
   };
 }
 
+function isRequirementSchedulableVersion(version: ProductVersionListItem): boolean {
+  return (version.status ?? '').toLowerCase() !== 'archived';
+}
+
+function mapProductContexts(
+  products: ProductListItem[],
+  versions: ProductVersionListItem[],
+): ProductContextOption[] {
+  const versionsByProductId = versions.reduce(
+    (groupedVersions, version) => {
+      const rows = groupedVersions.get(version.product_id) ?? [];
+      rows.push(version);
+      groupedVersions.set(version.product_id, rows);
+      return groupedVersions;
+    },
+    new Map<string, ProductVersionListItem[]>(),
+  );
+
+  return products.map((product) => ({
+    code: product.code ?? product.id,
+    id: product.id,
+    name: product.name,
+    versions: (versionsByProductId.get(product.id) ?? []).map(mapProductVersionOption),
+  }));
+}
+
 function mapProductVersionRecord(version: ProductVersionListItem): ProductVersionRecord {
   return {
     code: version.code ?? version.id,
@@ -1959,22 +2020,19 @@ export async function fetchProductContextOptions(): Promise<ProductContextOption
       token,
     }),
   ]);
-  const versionsByProductId = versions.items.reduce(
-    (groupedVersions, version) => {
-      const rows = groupedVersions.get(version.product_id) ?? [];
-      rows.push(version);
-      groupedVersions.set(version.product_id, rows);
-      return groupedVersions;
-    },
-    new Map<string, ProductVersionListItem[]>(),
-  );
+  return mapProductContexts(products.items, versions.items);
+}
 
-  return products.items.map((product) => ({
-    code: product.code ?? product.id,
-    id: product.id,
-    name: product.name,
-    versions: (versionsByProductId.get(product.id) ?? []).map(mapProductVersionOption),
-  }));
+export async function fetchRequirementProductContextOptions(): Promise<ProductContextOption[]> {
+  const token = requireAccessToken();
+  const [products, versions] = await Promise.all([
+    apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', { token }),
+    apiRequest<ListResponse<ProductVersionListItem>>('/api/product-versions', { token }),
+  ]);
+  return mapProductContexts(
+    products.items,
+    versions.items.filter(isRequirementSchedulableVersion),
+  );
 }
 
 export async function fetchActiveProductOptions(): Promise<ProductFilterOption[]> {
@@ -2137,13 +2195,8 @@ export async function deleteModelGatewayConfig(configId: string) {
   );
 }
 
-export async function fetchManagementRequirements(): Promise<RequirementRecord[]> {
-  const token = requireAccessToken();
-  const requirements = await apiRequest<ListResponse<RequirementListItem>>('/api/requirements', {
-    token,
-  });
-
-  return requirements.items.map((requirement) => ({
+function mapRequirementRecord(requirement: RequirementListItem): RequirementRecord {
+  return {
     content: requirement.content,
     id: requirement.id,
     moduleCode: requirement.module_code ?? undefined,
@@ -2158,7 +2211,16 @@ export async function fetchManagementRequirements(): Promise<RequirementRecord[]
     versionName: requirement.version_id
       ? (requirement.version_name ?? requirement.version_code ?? requirement.version_id)
       : '未排期',
-  }));
+  };
+}
+
+export async function fetchManagementRequirements(): Promise<RequirementRecord[]> {
+  const token = requireAccessToken();
+  const requirements = await apiRequest<ListResponse<RequirementListItem>>('/api/requirements', {
+    token,
+  });
+
+  return requirements.items.map(mapRequirementRecord);
 }
 
 export async function createManagementRequirement(payload: RequirementMutationPayload) {
@@ -2180,6 +2242,30 @@ export async function updateManagementRequirement(
     method: 'PATCH',
     token,
   });
+}
+
+export async function batchScheduleRequirements(
+  payload: RequirementBatchSchedulePayload,
+): Promise<RequirementBatchScheduleResult> {
+  const token = requireAccessToken();
+  const result = await apiRequest<RequirementBatchScheduleResponse>(
+    '/api/requirements/batch-schedule',
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return {
+    batchId: result.batch_id,
+    productId: result.product_id,
+    reason: result.reason,
+    skipped: result.skipped,
+    skippedCount: result.skipped_count,
+    updated: result.updated.map(mapRequirementRecord),
+    updatedCount: result.updated_count,
+    versionId: result.version_id,
+  };
 }
 
 export async function deleteManagementRequirement(requirementId: string) {

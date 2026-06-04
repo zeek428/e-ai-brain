@@ -1,17 +1,18 @@
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { CalendarOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { Alert, Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
+import { type Key, useCallback, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
 import {
   approveManagementRequirement,
+  batchScheduleRequirements,
   createManagementRequirement,
   deleteManagementRequirement,
-  fetchProductContextOptions,
   fetchManagementRequirements,
+  fetchRequirementProductContextOptions,
   generateRequirementTask,
   rejectManagementRequirement,
   updateManagementRequirement,
@@ -46,12 +47,24 @@ type RequirementFormValues = {
   version_id?: string;
 };
 
+type BatchScheduleFormValues = {
+  product_id: string;
+  reason?: string;
+  version_id: string;
+};
+
+const batchSchedulableStatuses = new Set<RequirementRecord['status']>(['approved', 'planned']);
+
 export default function RequirementsPage() {
   const [form] = Form.useForm<RequirementFormValues>();
+  const [batchForm] = Form.useForm<BatchScheduleFormValues>();
   const [rejectForm] = Form.useForm<{ rejection_reason: string }>();
   const [editingRequirement, setEditingRequirement] = useState<RequirementRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [rejectingRequirement, setRejectingRequirement] = useState<RequirementRecord | null>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
+  const [isBatchSaving, setIsBatchSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const {
     error,
@@ -64,12 +77,25 @@ export default function RequirementsPage() {
     reload: reloadProductContexts,
     rows: productContexts,
     status: productContextStatus,
-  } = useRemoteRows(fetchProductContextOptions);
+  } = useRemoteRows(fetchRequirementProductContextOptions);
   const selectedProductId = Form.useWatch('product_id', form);
+  const selectedBatchProductId = Form.useWatch('product_id', batchForm);
   const selectedProduct = useMemo(
     () => productContexts.find((product) => product.id === selectedProductId),
     [productContexts, selectedProductId],
   );
+  const selectedBatchProduct = useMemo(
+    () => productContexts.find((product) => product.id === selectedBatchProductId),
+    [productContexts, selectedBatchProductId],
+  );
+  const selectedRequirementIds = useMemo(
+    () => selectedRowKeys.map((key) => String(key)),
+    [selectedRowKeys],
+  );
+  const selectedRequirements = useMemo(() => {
+    const selectedIds = new Set(selectedRequirementIds);
+    return dataSource.filter((row) => selectedIds.has(row.id));
+  }, [dataSource, selectedRequirementIds]);
   const productOptions = useMemo(
     () =>
       productContexts.map((product) => ({
@@ -87,6 +113,15 @@ export default function RequirementsPage() {
       value: version.id,
     }));
   }, [selectedProduct]);
+  const batchVersionOptions = useMemo(() => {
+    if (!selectedBatchProduct) {
+      return [];
+    }
+    return selectedBatchProduct.versions.map((version) => ({
+      label: `${version.code} · ${version.name}`,
+      value: version.id,
+    }));
+  }, [selectedBatchProduct]);
 
   const openCreateModal = () => {
     setEditingRequirement(null);
@@ -160,6 +195,62 @@ export default function RequirementsPage() {
     }
   }, [reload]);
 
+  const openBatchScheduleModal = useCallback(() => {
+    if (selectedRequirements.length === 0) {
+      message.warning('请先选择要排期的需求');
+      return;
+    }
+    const productIds = Array.from(
+      new Set(
+        selectedRequirements
+          .map((row) => row.productId)
+          .filter((productId): productId is string => Boolean(productId)),
+      ),
+    );
+    if (productIds.length !== 1) {
+      message.warning('请选择同一产品下的需求进行批量排期');
+      return;
+    }
+    const productId = productIds[0];
+    const productContext = productContexts.find((product) => product.id === productId);
+    batchForm.resetFields();
+    batchForm.setFieldsValue({
+      product_id: productId,
+      reason: undefined,
+      version_id:
+        productContext?.versions.length === 1 ? productContext.versions[0].id : undefined,
+    });
+    setIsBatchModalOpen(true);
+  }, [batchForm, productContexts, selectedRequirements]);
+
+  const handleBatchSchedule = async () => {
+    let values: BatchScheduleFormValues;
+    try {
+      values = await batchForm.validateFields();
+    } catch {
+      return;
+    }
+    setIsBatchSaving(true);
+    try {
+      const result = await batchScheduleRequirements({
+        product_id: values.product_id,
+        reason: trimText(values.reason),
+        requirement_ids: selectedRequirementIds,
+        version_id: values.version_id,
+      });
+      const skippedText = result.skippedCount ? `，跳过 ${result.skippedCount} 条` : '';
+      message.success(`已归集 ${result.updatedCount} 条需求${skippedText}`);
+      setIsBatchModalOpen(false);
+      setSelectedRowKeys([]);
+      await reload();
+      void reloadProductContexts();
+    } catch (batchError) {
+      message.error(formatMutationError(batchError));
+    } finally {
+      setIsBatchSaving(false);
+    }
+  };
+
   const handleApprove = useCallback(async (row: RequirementRecord) => {
     try {
       await approveManagementRequirement(row.id);
@@ -202,6 +293,20 @@ export default function RequirementsPage() {
       message.error(formatMutationError(decisionError));
     }
   }, [reload]);
+
+  const toolbarActions = useMemo(
+    () => [
+      <Button
+        disabled={selectedRowKeys.length === 0}
+        icon={<CalendarOutlined />}
+        key="batch-schedule"
+        onClick={openBatchScheduleModal}
+      >
+        批量排期
+      </Button>,
+    ],
+    [openBatchScheduleModal, selectedRowKeys.length],
+  );
 
   const columns = useMemo<ProColumns<RequirementRecord>[]>(
     () => [
@@ -329,9 +434,47 @@ export default function RequirementsPage() {
         onReload={() => void reload()}
         primaryAction="新增需求"
         rowKey="id"
+        rowSelection={{
+          getCheckboxProps: (row) => ({
+            disabled: !batchSchedulableStatuses.has(row.status),
+          }),
+          onChange: (keys) => setSelectedRowKeys(keys),
+          selectedRowKeys,
+        }}
         tableTitle="需求列表"
         title="需求管理"
+        toolbarActions={toolbarActions}
       />
+      <Modal
+        confirmLoading={isBatchSaving}
+        destroyOnHidden
+        okText="确认归集"
+        onCancel={() => setIsBatchModalOpen(false)}
+        onOk={() => void handleBatchSchedule()}
+        open={isBatchModalOpen}
+        title="批量排期需求"
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Alert title={`已选择 ${selectedRequirements.length} 条需求`} type="info" />
+          <Form<BatchScheduleFormValues> form={batchForm} layout="vertical">
+            <Form.Item label="所属产品" name="product_id" rules={[{ required: true, message: '请选择产品' }]}>
+              <Select disabled options={productOptions} />
+            </Form.Item>
+            <Form.Item label="目标版本" name="version_id" rules={[{ required: true, message: '请选择目标版本' }]}>
+              <Select
+                loading={productContextStatus === 'loading'}
+                optionFilterProp="label"
+                options={batchVersionOptions}
+                placeholder="请选择要归集到的迭代版本"
+                showSearch
+              />
+            </Form.Item>
+            <Form.Item label="归集原因" name="reason">
+              <Input.TextArea autoSize={{ minRows: 2 }} />
+            </Form.Item>
+          </Form>
+        </Space>
+      </Modal>
       <Modal
         confirmLoading={isSaving}
         destroyOnHidden

@@ -124,6 +124,7 @@ LEGACY_REQUIREMENT_STATUS_ALIASES = {
     "task_created": "designing",
 }
 REQUIREMENT_CLOSABLE_STATUSES = REQUIREMENT_STATUSES - {"draft", "submitted"}
+REQUIREMENT_BATCH_SCHEDULABLE_STATUSES = {"approved", "planned"}
 REQUIREMENT_TASK_CREATABLE_STATUSES = {
     "code_reviewing",
     "designing",
@@ -419,6 +420,13 @@ class RequirementPatchRequest(BaseModel):
     module_code: str | None = None
     content: str | None = None
     priority: str | None = None
+
+
+class RequirementBatchScheduleRequest(BaseModel):
+    product_id: str
+    version_id: str
+    requirement_ids: list[str] = Field(min_length=1)
+    reason: str | None = None
 
 
 class RequirementDecisionRequest(BaseModel):
@@ -2255,6 +2263,17 @@ def _save_requirement_record(
     save_record = getattr(repository, "save_requirement_record", None)
     if save_record is not None:
         save_record(record, audit_event=audit_event)
+
+
+def _save_audit_event(current_store: MemoryStore, audit_event: dict[str, Any]) -> None:
+    repository = _runtime_repository(current_store)
+    append_event = getattr(repository, "append_audit_event", None)
+    if append_event is not None:
+        append_event(audit_event)
+        return
+    save_events = getattr(repository, "save_audit_events", None)
+    if save_events is not None:
+        save_events({"audit_events": [audit_event]})
 
 
 def _delete_requirement_record(
@@ -5660,6 +5679,135 @@ def create_requirement(
     )
     _save_requirement_record(current_store, requirement, audit_event=audit_event)
     return envelope(requirement, get_trace_id(request))
+
+
+@app.post("/api/requirements/batch-schedule")
+def batch_schedule_requirements(
+    request: Request,
+    payload: RequirementBatchScheduleRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    _require_roles(user, {"product_owner", "rd_owner"})
+    current_store = _task_workflow_write_store(store(request))
+    product = current_store.products.get(payload.product_id)
+    if product is None:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    if product["status"] != "active":
+        raise api_error(400, "PRODUCT_INACTIVE", "Inactive product cannot be used")
+    _validate_requirement_version(
+        current_store,
+        product_id=payload.product_id,
+        version_id=payload.version_id,
+    )
+
+    batch_id = current_store.new_id("requirement_batch")
+    now = datetime.now(UTC).isoformat()
+    updated: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    seen_requirement_ids: set[str] = set()
+
+    for requirement_id in payload.requirement_ids:
+        if requirement_id in seen_requirement_ids:
+            skipped.append(
+                {
+                    "code": "DUPLICATE_REQUIREMENT",
+                    "id": requirement_id,
+                    "message": "Requirement was already included in this batch",
+                }
+            )
+            continue
+        seen_requirement_ids.add(requirement_id)
+
+        requirement = current_store.requirements.get(requirement_id)
+        if requirement is None:
+            skipped.append(
+                {
+                    "code": "NOT_FOUND",
+                    "id": requirement_id,
+                    "message": "Requirement not found",
+                }
+            )
+            continue
+        if requirement.get("product_id") != payload.product_id:
+            skipped.append(
+                {
+                    "code": "PRODUCT_MISMATCH",
+                    "id": requirement_id,
+                    "message": "Requirement belongs to another product",
+                }
+            )
+            continue
+
+        current_status = _canonical_requirement_status(requirement.get("status"))
+        if current_status not in REQUIREMENT_BATCH_SCHEDULABLE_STATUSES:
+            skipped.append(
+                {
+                    "code": "REQUIREMENT_STATE_INVALID",
+                    "id": requirement_id,
+                    "message": "Only requirement pool or planned requirements can be scheduled",
+                }
+            )
+            continue
+
+        from_version_id = requirement.get("version_id")
+        scheduled_requirement = {
+            **requirement,
+            "status": "planned",
+            "updated_at": now,
+            "version_id": payload.version_id,
+        }
+        if not _uses_repository_context(current_store):
+            current_store.requirements[requirement_id] = scheduled_requirement
+        audit_event = _record_audit_event(
+            current_store,
+            event_type="requirement.updated",
+            actor_id=user["id"],
+            subject_type="requirement",
+            subject_id=requirement_id,
+            payload={
+                "batch_id": batch_id,
+                "from_status": current_status,
+                "from_version_id": from_version_id,
+                "operation": "batch_schedule",
+                "reason": payload.reason,
+                "to_status": "planned",
+                "to_version_id": payload.version_id,
+            },
+        )
+        _save_requirement_record(current_store, scheduled_requirement, audit_event=audit_event)
+        updated.append(_requirement_summary_projection(scheduled_requirement, current_store))
+
+    batch_audit_event = _record_audit_event(
+        current_store,
+        event_type="requirement.batch_scheduled",
+        actor_id=user["id"],
+        subject_type="requirement_batch",
+        subject_id=batch_id,
+        payload={
+            "product_id": payload.product_id,
+            "reason": payload.reason,
+            "requirement_ids": payload.requirement_ids,
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "updated_count": len(updated),
+            "updated_ids": [item["id"] for item in updated],
+            "version_id": payload.version_id,
+        },
+    )
+    _save_audit_event(current_store, batch_audit_event)
+    return envelope(
+        {
+            "batch_id": batch_id,
+            "product_id": payload.product_id,
+            "reason": payload.reason,
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "updated": updated,
+            "updated_count": len(updated),
+            "version_id": payload.version_id,
+        },
+        get_trace_id(request),
+    )
 
 
 @app.get("/api/requirements")
