@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.84 |
+| 功能版本 | v1.1.85 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -106,6 +106,7 @@
 | v1.1.82 | 2026-06-04 | 明确需求批量排期可选择未归档 planning 版本，并修正批次审计为追加保存而非覆盖式快照保存 | Codex |
 | v1.1.83 | 2026-06-04 | 新增迭代版本状态推进接口，支持影响预览、需求状态同步、阻塞项和直接状态 PATCH 拦截 | Codex |
 | v1.1.84 | 2026-06-04 | Bug 列表支持迭代版本过滤并返回版本编码和名称投影 | Codex |
+| v1.1.85 | 2026-06-04 | 调整迭代版本推进到测试中时的需求同步规则，已进入交付链路需求统一推进到 testing | Codex |
 
 ---
 
@@ -641,7 +642,7 @@ POST /api/product-versions/version_001/advance-status
 {
   "target_status": "testing",
   "reason": "进入系统测试",
-  "force": true,
+  "force": false,
   "preview_only": false
 }
 ```
@@ -650,7 +651,7 @@ POST /api/product-versions/version_001/advance-status
 
 - `preview_only=true` 只返回影响预览，不修改版本或需求。
 - `planning -> active`：`approved/planned` 需求同步推进到 `ready_for_dev`。
-- `active -> testing`：`code_reviewing` 需求同步推进到 `testing`；`planned/designing/ready_for_dev/developing` 等需求进入阻塞明细，未设置 `force=true` 时返回 `PRODUCT_VERSION_STATUS_BLOCKED`，强制推进时版本进入测试中但阻塞需求保持原状态。
+- `active -> testing`：`approved/planned/ready_for_dev/designing/developing/code_reviewing` 等已进入交付链路的版本内需求同步推进到 `testing`；`draft/submitted` 等未完成审批入池状态进入阻塞明细，未设置 `force=true` 时返回 `PRODUCT_VERSION_STATUS_BLOCKED`，强制推进时版本进入测试中但阻塞需求保持原状态。
 - `testing -> released`：`testing/ready_for_release` 需求同步推进到 `released`；仍处于设计、开发、评审等未完成状态的需求必须先延期、取消或关闭，`force=true` 不绕过发布阻塞。
 - `released -> archived`：归档仅作为历史管理动作；`released/accepted/deferred/cancelled/closed/rejected` 需求保持不变，未完成需求作为归档风险项。
 - 成功推进记录 `product_version.status_advanced` 审计事件；每条被同步推进的需求另记录 `requirement.updated`，payload 包含版本状态来源、目标、原因和需求状态来源/目标。

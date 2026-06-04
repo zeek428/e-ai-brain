@@ -4485,7 +4485,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('其他版本需求')).not.toBeInTheDocument();
   });
 
-  it('advances iteration version status with requirement impact preview', async () => {
+  it('advances iteration version status with synchronized requirement impact preview', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
         headers: { 'Content-Type': 'application/json' },
@@ -4538,7 +4538,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 product_id: 'product_api',
                 product_name: '接口产品',
                 status: 'planned',
-                title: '开发阻塞需求',
+                title: '同步到测试需求',
                 version_id: 'version_active',
                 version_name: '2026-07',
               },
@@ -4565,20 +4565,19 @@ describe('AI Brain Ant Design Pro workbench', () => {
         const body = JSON.parse(String(init?.body));
         return jsonResponse({
           data: {
-            blocked_requirements: [
-              {
-                block_reason: '需求尚未完成开发评审，进入测试会形成版本风险',
-                id: 'requirement_planned',
-                status: 'planned',
-                title: '开发阻塞需求',
-              },
-            ],
+            blocked_requirements: [],
             force: Boolean(body.force),
             from_status: 'active',
             preview_only: Boolean(body.preview_only),
             target_status: 'testing',
             unchanged_requirements: [],
             updated_requirements: [
+              {
+                from_status: 'planned',
+                id: 'requirement_planned',
+                title: '同步到测试需求',
+                to_status: 'testing',
+              },
               {
                 from_status: 'code_reviewing',
                 id: 'requirement_reviewed',
@@ -4612,10 +4611,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(await screen.findByText('推进版本状态')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '生成影响预览' }));
 
-    expect(await screen.findByText('将推进 1 条需求')).toBeInTheDocument();
-    expect(screen.getByText('阻塞 1 条需求')).toBeInTheDocument();
-    expect(screen.getByText(/开发阻塞需求/)).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('允许带风险推进'));
+    expect(await screen.findByText('将推进 2 条需求')).toBeInTheDocument();
+    expect(screen.getByText('阻塞 0 条需求')).toBeInTheDocument();
+    expect(screen.getByText(/同步到测试需求/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('推进原因'), {
       target: { value: '进入系统测试' },
     });
@@ -4638,7 +4636,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       target_status: 'testing',
     });
     expect(JSON.parse(String(advanceCalls[1]?.[1]?.body))).toEqual({
-      force: true,
+      force: false,
       preview_only: false,
       reason: '进入系统测试',
       target_status: 'testing',

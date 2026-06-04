@@ -112,7 +112,7 @@ def test_advancing_planning_version_to_active_moves_planned_requirements_to_read
     assert "product_version.status_advanced" in [event["event_type"] for event in audits]
 
 
-def test_advancing_active_version_to_testing_previews_blocks_and_allows_forced_transition():
+def test_advancing_active_version_to_testing_syncs_included_requirements_to_testing():
     app.state.store.reset()
     headers = auth_headers()
     product = create_product(headers, "version-flow-testing")
@@ -121,10 +121,25 @@ def test_advancing_active_version_to_testing_previews_blocks_and_allows_forced_t
         headers,
         create_requirement(headers, product["id"], "仍未开发需求", version["id"])["id"],
     )
+    ready_requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "待开发需求", version["id"])["id"],
+    )
+    designing_requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "设计中需求", version["id"])["id"],
+    )
+    developing_requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "开发中需求", version["id"])["id"],
+    )
     review_requirement = approve_requirement(
         headers,
         create_requirement(headers, product["id"], "已评审需求", version["id"])["id"],
     )
+    set_requirement_status(ready_requirement["id"], "ready_for_dev")
+    set_requirement_status(designing_requirement["id"], "task_created")
+    set_requirement_status(developing_requirement["id"], "developing")
     set_requirement_status(review_requirement["id"], "code_reviewing")
 
     preview = client.post(
@@ -137,44 +152,34 @@ def test_advancing_active_version_to_testing_previews_blocks_and_allows_forced_t
     preview_data = preview.json()["data"]
     assert preview_data["preview_only"] is True
     assert preview_data["version"]["status"] == "active"
-    assert preview_data["updated_requirements"] == [
-        {
-            "from_status": "code_reviewing",
-            "id": review_requirement["id"],
-            "title": "已评审需求",
-            "to_status": "testing",
-        }
-    ]
-    assert preview_data["blocked_requirements"] == [
-        {
-            "block_reason": "需求尚未完成开发评审，进入测试会形成版本风险",
-            "id": planned_requirement["id"],
-            "status": "planned",
-            "title": "仍未开发需求",
-        }
-    ]
+    assert {
+        item["id"]: (item["from_status"], item["to_status"])
+        for item in preview_data["updated_requirements"]
+    } == {
+        planned_requirement["id"]: ("planned", "testing"),
+        ready_requirement["id"]: ("ready_for_dev", "testing"),
+        designing_requirement["id"]: ("designing", "testing"),
+        developing_requirement["id"]: ("developing", "testing"),
+        review_requirement["id"]: ("code_reviewing", "testing"),
+    }
+    assert preview_data["blocked_requirements"] == []
     assert get_requirement(headers, review_requirement["id"])["status"] == "code_reviewing"
 
-    blocked = client.post(
+    advanced = client.post(
         f"/api/product-versions/{version['id']}/advance-status",
-        json={"target_status": "testing"},
-        headers=headers,
-    )
-    assert blocked.status_code == 409
-    assert blocked.json()["detail"]["code"] == "PRODUCT_VERSION_STATUS_BLOCKED"
-
-    forced = client.post(
-        f"/api/product-versions/{version['id']}/advance-status",
-        json={"force": True, "reason": "带风险进入测试", "target_status": "testing"},
+        json={"reason": "进入系统测试", "target_status": "testing"},
         headers=headers,
     )
 
-    assert forced.status_code == 200
-    forced_data = forced.json()["data"]
-    assert forced_data["version"]["status"] == "testing"
+    assert advanced.status_code == 200
+    advanced_data = advanced.json()["data"]
+    assert advanced_data["version"]["status"] == "testing"
+    assert advanced_data["blocked_requirements"] == []
+    assert get_requirement(headers, planned_requirement["id"])["status"] == "testing"
+    assert get_requirement(headers, ready_requirement["id"])["status"] == "testing"
+    assert get_requirement(headers, designing_requirement["id"])["status"] == "testing"
+    assert get_requirement(headers, developing_requirement["id"])["status"] == "testing"
     assert get_requirement(headers, review_requirement["id"])["status"] == "testing"
-    assert get_requirement(headers, planned_requirement["id"])["status"] == "planned"
-    assert forced_data["blocked_requirements"][0]["id"] == planned_requirement["id"]
 
 
 def test_advancing_testing_version_to_released_blocks_unfinished_requirements():

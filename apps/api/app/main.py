@@ -217,7 +217,12 @@ VERSION_REQUIREMENT_AUTO_ADVANCE = {
         "testing": "released",
     },
     "testing": {
+        "approved": "testing",
         "code_reviewing": "testing",
+        "designing": "testing",
+        "developing": "testing",
+        "planned": "testing",
+        "ready_for_dev": "testing",
     },
 }
 VERSION_REQUIREMENT_ALLOWED_UNCHANGED = {
@@ -265,7 +270,7 @@ VERSION_REQUIREMENT_BLOCK_REASONS = {
     "active": "需求尚未进入可开发状态，版本进入开发会形成范围风险",
     "archived": "需求尚未达到发布或终止状态，归档会形成历史数据风险",
     "released": "需求尚未达到发布或终止状态，不能发布版本",
-    "testing": "需求尚未完成开发评审，进入测试会形成版本风险",
+    "testing": "需求尚未进入可交付状态，进入测试会形成版本风险",
 }
 REQUIREMENT_SCHEDULABLE_VERSION_STATUSES = {"active", "planning"}
 MODULE_STATUSES = {"active", "inactive"}
