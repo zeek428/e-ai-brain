@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.85 |
+| 功能版本 | v1.1.86 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -107,6 +107,7 @@
 | v1.1.83 | 2026-06-04 | 新增迭代版本状态推进接口，支持影响预览、需求状态同步、阻塞项和直接状态 PATCH 拦截 | Codex |
 | v1.1.84 | 2026-06-04 | Bug 列表支持迭代版本过滤并返回版本编码和名称投影 | Codex |
 | v1.1.85 | 2026-06-04 | 调整迭代版本推进到测试中时的需求同步规则，已进入交付链路需求统一推进到 testing | Codex |
+| v1.1.86 | 2026-06-04 | 明确 Bug 管理登记弹窗目标版本使用同产品未归档版本选项，支持 testing/released 版本缺陷归属 | Codex |
 
 ---
 
@@ -2141,7 +2142,7 @@ PATCH /api/bugs/{bug_id}
 - AI 自动测试来源缺少 `reproduce_steps` 时初始状态为 `needs_info`；人工登记或带复现步骤的 Bug 初始状态为 `open`。
 - 提交 `duplicate_of_bug_id` 时重复 Bug 初始状态为 `closed`，并保留主 Bug 关联，避免重复进入修复队列。
 - 状态更新必须符合状态机约束，非法跨越返回 `BUG_STATE_INVALID`；创建和更新均写入 `bug.created` 或 `bug.updated` 审计事件。
-- Bug 管理工作台必须从真实 `/api/bugs` 响应映射 `version_code`、`version_name`、`reproduce_steps`、`evidence`、`duplicate_of_bug_id`、`requirement_id` 和 `related_task_id`；列表展示迭代版本并支持按版本名、编码或未关联状态过滤；登记弹窗允许录入复现步骤、对象型证据 JSON、关联需求和关联任务；编辑弹窗允许维护复现步骤、证据 JSON、状态、处理人和重复归并，重复归并候选仅展示同产品 Bug，来源只读展示，不允许把 AI 自动测试或上线后分析来源在前端改写为人工来源。
+- Bug 管理工作台必须从真实 `/api/bugs` 响应映射 `version_code`、`version_name`、`reproduce_steps`、`evidence`、`duplicate_of_bug_id`、`requirement_id` 和 `related_task_id`；列表展示迭代版本并支持按版本名、编码或未关联状态过滤；登记弹窗允许录入复现步骤、对象型证据 JSON、关联需求和关联任务，目标版本选项读取同产品未归档迭代版本，支持 `planning`、`active`、`testing` 和 `released`，过滤 `archived`；编辑弹窗允许维护复现步骤、证据 JSON、状态、处理人和重复归并，重复归并候选仅展示同产品 Bug，来源只读展示，不允许把 AI 自动测试或上线后分析来源在前端改写为人工来源。
 
 ### 软件研发全流程感知
 

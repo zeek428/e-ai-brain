@@ -1790,6 +1790,10 @@ function isRequirementSchedulableVersion(version: ProductVersionListItem): boole
   return ['active', 'planning'].includes((version.status ?? '').toLowerCase());
 }
 
+function isBugAssignableVersion(version: ProductVersionListItem): boolean {
+  return (version.status ?? '').toLowerCase() !== 'archived';
+}
+
 function mapProductContexts(
   products: ProductListItem[],
   versions: ProductVersionListItem[],
@@ -2091,6 +2095,15 @@ export async function fetchProductContextOptions(): Promise<ProductContextOption
     }),
   ]);
   return mapProductContexts(products.items, versions.items);
+}
+
+export async function fetchBugProductContextOptions(): Promise<ProductContextOption[]> {
+  const token = requireAccessToken();
+  const [products, versions] = await Promise.all([
+    apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', { token }),
+    apiRequest<ListResponse<ProductVersionListItem>>('/api/product-versions', { token }),
+  ]);
+  return mapProductContexts(products.items, versions.items.filter(isBugAssignableVersion));
 }
 
 export async function fetchRequirementProductContextOptions(): Promise<ProductContextOption[]> {

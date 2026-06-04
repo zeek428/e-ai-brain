@@ -9,7 +9,7 @@ import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows'
 import {
   createManagementBug,
   deleteManagementBug,
-  fetchProductContextOptions,
+  fetchBugProductContextOptions,
   fetchManagementBugs,
   updateManagementBug,
 } from '../../services/aiBrain';
@@ -123,7 +123,7 @@ export default function BugsPage() {
     error: productContextError,
     rows: productContexts,
     status: productContextStatus,
-  } = useRemoteRows(fetchProductContextOptions);
+  } = useRemoteRows(fetchBugProductContextOptions);
   const selectedProductId = Form.useWatch('product_id', form);
   const selectedProduct = useMemo(
     () => productContexts.find((product) => product.id === selectedProductId),
