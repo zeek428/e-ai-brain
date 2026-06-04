@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 测试流程新增提交前真实网页界面验证门禁：影响前端或用户可见页面的改动，必须在真实 Web 页面完成 URL/标题、非空渲染、目标交互、旧文案消失和控制台健康检查，通过后才能提交代码。
 - 任务管理查询性能优化：API 增加 PostgreSQL 连接复用，`GET /api/ai-tasks` 支持 `keyword`、`created_by`、`page`、`page_size` 远程查询分页，任务管理页仅对任务列表启用远程筛选分页；`GET /api/reviews/pending` 改为 SQL 直查待确认摘要，避免加载任务工作流全量兼容快照。
 - DB-first 迁移继续收敛知识、任务运行态、运营采集、用户洞察和迭代规划写接口：PostgreSQL 路径现在构造明确 records/payloads 直接调用 repository，新增记录不再依赖请求态集合充当写入事实源；MemoryStore 集合写入仅保留为测试 helper fallback。
 - DB-first 迁移补齐任务工作流写路径的请求级 repository source rows 上下文，任务启动、取消、补充信息和 Review approve/edit-approve/reject/request-more-info 在全局运行时 store 过期时仍可读取结构表源数据并在 handler 返回前写回 PostgreSQL。

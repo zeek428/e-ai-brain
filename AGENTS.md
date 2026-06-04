@@ -55,6 +55,10 @@ uv run pytest path/to/test_file.py::test_name
 
 If package scripts or app directories are added later, prefer the checked-in scripts over inferred commands and update this file.
 
+## Testing and Commit Gate
+
+For any change that affects frontend routes, menus, visible copy, page components, frontend service mappings, or backend API behavior that changes a rendered page, run actual web UI validation before committing. Start or restart the real web service, use the PostgreSQL-backed API runtime, open the target page in a browser, log in with the relevant role, and verify the URL/title, non-blank render, expected menu/text/table/modal/interaction, absence of stale UI, and no relevant console/runtime errors. If Umi/MFSU cache, old ports, or stale bundles prevent the page from reflecting the change, fix the running environment and repeat the browser check. Do not commit until both automated tests and the real webpage validation pass, and include the URL, role, checked page/flow, commands, and result in the final summary.
+
 ## Intended Architecture
 
 AI Brain v1 is an enterprise AI brain platform. The initial sample application is the R&D brain (`rd_brain`), which runs the loop from requirement submission through AI-assisted analysis, human confirmation, task writeback, export, and knowledge deposit.

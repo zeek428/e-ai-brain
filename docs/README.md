@@ -44,7 +44,8 @@ PGVECTOR_IMAGE=e-ai-brain-postgres-pgvector docker compose up -d --no-deps postg
 4. 再按 MVP-C 实现知识中心导入、权限过滤检索、知识沉淀审核、模拟 Issue 幂等生成、主体级审计和后续阶段入口空状态。
 5. 前端页面优先实现产品配置、需求管理、任务中心待确认弹窗、知识中心、Bug 管理、审计与运行入口；研发运营、用户洞察、迭代规划和首页 IT 团队看板必须读取真实 API 与真实结构表，未接入外部自动采集器时展示真实空状态，不返回示例数据、占位统计或伪造结果。
 6. 测试按 `test-case.md` 的 MVP-A/B/C 切片和 P0 用例先跑通，再补 v1.1、v1.2 和生产就绪用例。
-7. 发布前执行部署、监控和故障响应 runbook 中的生产就绪门禁脚本 `scripts/production_readiness_check.py`，尤其是密钥掩码、GitLab 只读边界、数据库迁移、pgvector/pgcrypto、备份恢复和审计可追踪；脚本在目标环境通过前不得宣称可发布。
+7. 任何影响前端、页面可见文案、路由、交互、服务映射或页面展示的后端改动，提交前必须打开真实 Web 页面完成界面验证；记录 URL、角色、目标页面、关键交互、自动化命令和验证结果，网页验证未通过不得提交。
+8. 发布前执行部署、监控和故障响应 runbook 中的生产就绪门禁脚本 `scripts/production_readiness_check.py`，尤其是密钥掩码、GitLab 只读边界、数据库迁移、pgvector/pgcrypto、备份恢复和审计可追踪；脚本在目标环境通过前不得宣称可发布。
 
 ## 文档结构
 
@@ -95,4 +96,4 @@ uv run pytest
 ```
 
 ---
-最后更新: 2026-05-30
+最后更新: 2026-06-04
