@@ -5267,15 +5267,22 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('系统管理');
     expect(await screen.findByText('角色定义')).toBeInTheDocument();
-    expect(screen.getByText('系统管理员 (admin)')).toBeInTheDocument();
-    expect(screen.getByText('查看者 (viewer)')).toBeInTheDocument();
+    expect(screen.getByText('系统管理员')).toBeInTheDocument();
+    expect(screen.getByText('admin')).toBeInTheDocument();
+    expect(screen.getByText('查看者')).toBeInTheDocument();
+    expect(screen.getByText('viewer')).toBeInTheDocument();
     expect(screen.getByText('平台管理员')).toBeInTheDocument();
     expect(screen.getByText('只读参与者')).toBeInTheDocument();
     expect(screen.getAllByText('系统管理').length).toBeGreaterThan(0);
     expect(screen.getByText('授权业务列表')).toBeInTheDocument();
+    expect(screen.getAllByText('1 个权限点')).toHaveLength(2);
+
+    fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
+
+    expect(await screen.findByRole('dialog', { name: '角色详情 · 系统管理员' })).toBeInTheDocument();
     expect(screen.getByText('系统治理。')).toBeInTheDocument();
-    expect(screen.getByText('无写入或审批决策权限。')).toBeInTheDocument();
-    expect(screen.getByText('不能执行写操作、审批或配置变更。')).toBeInTheDocument();
+    expect(screen.getByText('维护用户和角色。')).toBeInTheDocument();
+    expect(screen.getByText('不能代替业务负责人做最终产品决策。')).toBeInTheDocument();
     expect(screen.getByText('system.users.manage')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /新增角色|删除/ })).not.toBeInTheDocument();
   });
