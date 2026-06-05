@@ -4810,6 +4810,18 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('1 个 AI 任务')).toBeInTheDocument();
     expect(screen.getByText('1 个 Bug')).toBeInTheDocument();
     expect(screen.getByText('1 个发布记录')).toBeInTheDocument();
+    const stageProgress = screen.getByLabelText('全链路阶段进度');
+    expect(within(stageProgress).getByText('阶段进度')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('需求')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('迭代版本')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('AI 任务')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('Review')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('PR/代码评审')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('Bug')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('发布')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('知识沉淀')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('testing · 1 项')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('1 快照 / 1 报告')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/requirements/requirement_084/full-chain');
   });
 

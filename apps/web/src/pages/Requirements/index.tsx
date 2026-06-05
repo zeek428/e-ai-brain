@@ -1,6 +1,6 @@
 import { ApartmentOutlined, CalendarOutlined, DeleteOutlined, EditOutlined, RocketOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Descriptions, Form, Input, Modal, Popconfirm, Select, Space, Spin, Tag, Timeline, Typography, message } from 'antd';
+import { Alert, Button, Descriptions, Form, Input, Modal, Popconfirm, Select, Space, Spin, Steps, Tag, Timeline, Typography, message } from 'antd';
 import { type Key, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
@@ -121,6 +121,62 @@ function renderSummaryTag(label: string, value: number, color?: string) {
       {label}
     </Tag>
   );
+}
+
+function buildFullChainStageItems(fullChain: RequirementFullChainRecord) {
+  const summary = fullChain.summary;
+  const stages = [
+    {
+      count: 1,
+      detail: `${fullChain.requirement.status} · 1 项`,
+      title: '需求',
+    },
+    {
+      count: fullChain.iterationVersion ? 1 : 0,
+      detail: fullChain.iterationVersion
+        ? `${fullChain.iterationVersion.status ?? '-'} · ${
+            fullChain.iterationVersion.code ?? fullChain.iterationVersion.id
+          }`
+        : '未排期',
+      title: '迭代版本',
+    },
+    {
+      count: summary.aiTasks,
+      detail: `${summary.aiTasks} 项`,
+      title: 'AI 任务',
+    },
+    {
+      count: summary.reviews,
+      detail: `${summary.reviews} 项`,
+      title: 'Review',
+    },
+    {
+      count: summary.gitSnapshots + summary.codeReviewReports,
+      detail: `${summary.gitSnapshots} 快照 / ${summary.codeReviewReports} 报告`,
+      title: 'PR/代码评审',
+    },
+    {
+      count: summary.bugs,
+      detail: `${summary.bugs} 项`,
+      title: 'Bug',
+    },
+    {
+      count: summary.jenkinsReleases,
+      detail: `${summary.jenkinsReleases} 项`,
+      title: '发布',
+    },
+    {
+      count: summary.knowledgeDeposits,
+      detail: `${summary.knowledgeDeposits} 项`,
+      title: '知识沉淀',
+    },
+  ];
+
+  return stages.map((stage) => ({
+    content: <Text type="secondary">{stage.detail}</Text>,
+    status: stage.count > 0 ? ('finish' as const) : ('wait' as const),
+    title: stage.title,
+  }));
 }
 
 function formatRiskLevel(level?: string) {
@@ -775,6 +831,22 @@ export default function RequirementsPage() {
                     </Space>
                   </Descriptions.Item>
                 </Descriptions>
+                <section aria-label="全链路阶段进度">
+                  <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+                    <Text strong>阶段进度</Text>
+                    {(() => {
+                      const stageItems = buildFullChainStageItems(fullChain);
+                      const firstPendingIndex = stageItems.findIndex((item) => item.status === 'wait');
+                      return (
+                        <Steps
+                          current={firstPendingIndex >= 0 ? firstPendingIndex : stageItems.length - 1}
+                          items={stageItems}
+                          size="small"
+                        />
+                      );
+                    })()}
+                  </Space>
+                </section>
                 <Timeline
                   items={fullChain.timeline.map((item) => ({
                     content: (

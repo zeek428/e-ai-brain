@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 需求全链路详情弹窗新增阶段进度视图，按需求、迭代版本、AI 任务、Review、PR/代码评审、Bug、发布和知识沉淀展示链路覆盖状态。
 - 需求管理新增多选“批量生成任务”入口，后端新增 `POST /api/requirements/batch-generate-tasks`，支持同产品已排期需求批量生成产品详细设计任务，返回 generated/skipped 明细并记录 `requirement.batch_tasks_generated` 与逐任务审计。
 - 角色管理列表改为摘要化展示，保留角色、业务角色、职责与范围摘要、可见入口、权限数量和状态，完整职责/数据范围/限制边界/权限点通过详情弹窗查看，避免长文本撑高表格。
 - 需求全链路详情页的 PR/MR 快照区展示风险摘要、diff 文件树和 Review Checklist，用户可在同一弹窗查看需求到代码评审证据，不再跳转任务中心核对变更范围。
