@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 需求全链路新增独立详情页 `/delivery/requirements/{requirement_id}/full-chain`，需求列表保留弹窗快查并提供“详情页”入口，弹窗和详情页共用阶段进度、时间线与 PR/MR 证据展示。
 - 需求全链路详情弹窗新增阶段进度视图，按需求、迭代版本、AI 任务、Review、PR/代码评审、Bug、发布和知识沉淀展示链路覆盖状态。
 - 需求管理新增多选“批量生成任务”入口，后端新增 `POST /api/requirements/batch-generate-tasks`，支持同产品已排期需求批量生成产品详细设计任务，返回 generated/skipped 明细并记录 `requirement.batch_tasks_generated` 与逐任务审计。
 - 角色管理列表改为摘要化展示，保留角色、业务角色、职责与范围摘要、可见入口、权限数量和状态，完整职责/数据范围/限制边界/权限点通过详情弹窗查看，避免长文本撑高表格。
@@ -33,6 +34,9 @@
 - DB-first 迁移继续收敛知识、任务运行态、运营采集、用户洞察和迭代规划写接口：PostgreSQL 路径现在构造明确 records/payloads 直接调用 repository，新增记录不再依赖请求态集合充当写入事实源；MemoryStore 集合写入仅保留为测试 helper fallback。
 - DB-first 迁移补齐任务工作流写路径的请求级 repository source rows 上下文，任务启动、取消、补充信息和 Review approve/edit-approve/reject/request-more-info 在全局运行时 store 过期时仍可读取结构表源数据并在 handler 返回前写回 PostgreSQL。
 - DB-first 迁移补齐任务工作流 repository source rows 读取入口，PostgreSQL 运行时需求详情、AI 任务详情、Graph Run 列表、待确认 Review、Review 详情、模拟回写结果、Code Review 报告和 Markdown 导出不再通过 repository read snapshot 承载读取。
+
+### Fixed
+- 需求全链路阶段进度从横向 Steps 改为自适应阶段条，避免 8 个阶段在弹窗内挤压导致“AI 任务 / Review / Bug”等文字断字换行。
 - DB-first 迁移补齐生命周期上下文 repository source rows 聚合入口，PostgreSQL 运行时 `/api/lifecycle/context` 不再通过 repository read snapshot 承载聚合，并通过 repository 写回生成的 lifecycle edges/risks。
 - DB-first 迁移补齐首页 IT 团队看板 repository source rows 聚合入口，PostgreSQL 运行时 `/api/dashboard/it-team` 不再通过 repository read snapshot 承载聚合，并通过单条 repository 写入保存 dashboard snapshot。
 - DB-first 迁移将 PostgreSQL 启动运行层从 `PersistentMemoryStore.from_repository(...)` 替换为轻量 `PostgresRuntimeStore(repository)`，启动不再恢复业务集合；`MemoryStore` 仅保留为测试 helper，PostgreSQL source rows 使用非 `MemoryStore` 的 `_RepositoryRequestContext`。

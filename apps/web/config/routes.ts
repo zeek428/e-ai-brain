@@ -54,6 +54,11 @@ const routes = [
         component: './Requirements',
       },
       {
+        path: '/delivery/requirements/:requirementId/full-chain',
+        component: './RequirementFullChain',
+        hideInMenu: true,
+      },
+      {
         path: '/delivery/versions',
         name: '迭代版本',
         icon: 'BranchesOutlined',
