@@ -502,23 +502,31 @@ export default function RequirementsPage() {
     () => [
       {
         dataIndex: 'id',
+        ellipsis: true,
         sorter: true,
         title: '需求编号',
+        width: 150,
       },
       {
         dataIndex: 'title',
+        ellipsis: true,
         sorter: true,
         title: '需求标题',
+        width: 210,
       },
       {
         dataIndex: 'product',
+        ellipsis: true,
         sorter: true,
         title: '所属产品',
+        width: 150,
       },
       {
         dataIndex: 'versionName',
+        ellipsis: true,
         sorter: true,
         title: '迭代版本',
+        width: 220,
       },
       {
         dataIndex: 'priority',
@@ -527,6 +535,7 @@ export default function RequirementsPage() {
         render: (_, row) => (
           <StatusTag color={row.priority === 'P0' ? 'red' : 'blue'} label={row.priority} />
         ),
+        width: 88,
       },
       {
         dataIndex: 'status',
@@ -536,22 +545,29 @@ export default function RequirementsPage() {
           const statusLabel = statusLabels[row.status];
           return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
         },
+        width: 112,
       },
       {
         dataIndex: 'owner',
+        ellipsis: true,
         title: '负责人',
+        width: 120,
       },
       {
         dataIndex: 'createdAt',
+        ellipsis: true,
         sorter: true,
         title: '创建时间',
+        width: 150,
       },
       {
+        fixed: 'right',
         key: 'actions',
         title: '操作',
         valueType: 'option',
+        width: 380,
         render: (_, row) => (
-          <Space size={4}>
+          <Space className="requirement-list-actions" size={0}>
             <Button icon={<ApartmentOutlined aria-hidden="true" />} onClick={() => void openFullChainModal(row)} type="link">
               全链路
             </Button>
@@ -651,11 +667,14 @@ export default function RequirementsPage() {
           onChange: (keys) => setSelectedRowKeys(keys),
           selectedRowKeys,
         }}
+        tableLayout="fixed"
+        tableScroll={{ x: 1640 }}
         tableTitle="需求列表"
         title="需求管理"
         toolbarActions={toolbarActions}
       />
       <Modal
+        className="requirement-full-chain-modal"
         destroyOnHidden
         footer={null}
         onCancel={() => {
@@ -664,8 +683,10 @@ export default function RequirementsPage() {
           setFullChainError(undefined);
         }}
         open={Boolean(fullChainRequirement)}
+        style={{ maxWidth: 'calc(100vw - 40px)' }}
+        styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflowX: 'hidden', overflowY: 'auto' } }}
         title={fullChainRequirement ? `需求全链路 · ${fullChainRequirement.id}` : '需求全链路'}
-        width={960}
+        width={1040}
       >
         <Spin spinning={isFullChainLoading}>
           <Space orientation="vertical" size={16} style={{ width: '100%' }}>

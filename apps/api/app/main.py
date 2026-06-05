@@ -13614,6 +13614,32 @@ def operational_metrics(
     sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    allowed_sort_fields = {"category", "id", "name", "status", "updated_at", "value"}
+    _ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    resolved_sort_by = sort_by or "updated_at"
+    if resolved_sort_by not in allowed_sort_fields:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+
+    repository = _operational_query_repository(store(request))
+    list_operational_metric_items = (
+        getattr(repository, "list_operational_metric_items", None)
+        if repository is not None
+        else None
+    )
+    if callable(list_operational_metric_items):
+        return envelope(
+            list_operational_metric_items(
+                category=category,
+                name=name,
+                status=status,
+                page=page,
+                page_size=page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            ),
+            get_trace_id(request),
+        )
+
     items = _operational_metric_rows(store(request))
     if category is not None:
         items = [item for item in items if item.get("category") == category]
@@ -13626,9 +13652,9 @@ def operational_metrics(
     ]
     items = _sort_list_items(
         items,
-        allowed_fields={"category", "id", "name", "status", "updated_at", "value"},
+        allowed_fields=allowed_sort_fields,
         default_sort_by="updated_at",
-        sort_by=sort_by,
+        sort_by=resolved_sort_by,
         sort_order=sort_order,
     )
     return _paginated_list_payload(
@@ -14043,6 +14069,30 @@ def insight_items(
     sort_order: str = "desc",
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
+    allowed_sort_fields = {"category", "id", "owner", "status", "summary", "updated_at"}
+    _ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    resolved_sort_by = sort_by or "updated_at"
+    if resolved_sort_by not in allowed_sort_fields:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+
+    repository = _insight_query_repository(store(request))
+    list_user_insight_items = (
+        getattr(repository, "list_user_insight_items", None) if repository is not None else None
+    )
+    if callable(list_user_insight_items):
+        return envelope(
+            list_user_insight_items(
+                category=category,
+                summary=summary,
+                status=status,
+                page=page,
+                page_size=page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            ),
+            get_trace_id(request),
+        )
+
     items = _user_insight_rows(store(request))
     if category is not None:
         items = [item for item in items if item.get("category") == category]
@@ -14059,9 +14109,9 @@ def insight_items(
     ]
     items = _sort_list_items(
         items,
-        allowed_fields={"category", "id", "owner", "status", "summary", "updated_at"},
+        allowed_fields=allowed_sort_fields,
         default_sort_by="updated_at",
-        sort_by=sort_by,
+        sort_by=resolved_sort_by,
         sort_order=sort_order,
     )
     return _paginated_list_payload(

@@ -18,6 +18,7 @@
 - Bug 管理新增多选“批量处理”入口，后端新增 `POST /api/bugs/batch-update`，支持批量更新状态、严重级别或处理人，非法状态流转和重复 ID 返回 skipped 明细，并写入批次级与逐 Bug 审计。
 - 需求管理新增“全链路”详情入口，后端新增 `GET /api/requirements/{requirement_id}/full-chain`，一次聚合需求、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀时间线，减少跨页面跳转查看进度。
 - 用户洞察和研发运营主列表统一改为服务端聚合查询：新增 `/api/insights/items` 与 `/api/devops/operational-metrics`，支持 `page/page_size/sort_by/sort_order` 和页面查询条件，前端不再多接口拉全量后本地拼装分页。
+- 明确列表查询优化边界：产品、需求、任务、Bug、研发运营和用户洞察等管理主列表优先服务端 SQL/read model 分页、排序和筛选；团队看板这类汇总视图可基于 PostgreSQL source rows 由 Python 聚合，不强制改为 SQL/物化 read model。
 - 产品主列表补齐服务端聚合展示字段：`GET /api/products` 返回当前版本和模块数，前端远程产品列表不再额外拉取全量版本表拼装主表。
 - 主列表排序 helper 支持数值字段，修复审计 `sequence` 等数字列按字符串排序导致的顺序不稳定问题。
 - Bug 管理列表新增“创建时间”展示列，使用后端 `created_at` 标准字段，便于按登记先后追踪缺陷。
@@ -36,6 +37,11 @@
 - DB-first 迁移补齐任务工作流 repository source rows 读取入口，PostgreSQL 运行时需求详情、AI 任务详情、Graph Run 列表、待确认 Review、Review 详情、模拟回写结果、Code Review 报告和 Markdown 导出不再通过 repository read snapshot 承载读取。
 
 ### Fixed
+- 修复需求管理列表列宽未固定导致需求标题、创建时间和右侧操作列被压缩换行/截断的问题；需求表格现在使用固定布局、明确列宽、右侧固定操作列和横向滚动。
+- `/api/insights/items` 用户洞察统一列表在 PostgreSQL 运行时改为 SQL read model 聚合查询，筛选、排序和分页由数据库完成，并新增用户反馈、用户使用指标和迭代建议更新时间排序索引。
+- `/api/devops/operational-metrics` 研发运营统一列表在 PostgreSQL 运行时改为 SQL read model 聚合查询，筛选、排序和分页由数据库完成，并新增 GitLab 指标、Jenkins 发布和线上日志更新时间排序索引。
+- 需求全链路阶段进度固定为 4/3/2/1 响应式网格，避免大屏或浏览器缩放下自动列数过多导致右侧阶段卡片被裁切。
+- 需求全链路弹窗摘要改为响应式网格，阶段进度和时间线中的需求/迭代状态展示中文业务状态，并限制弹窗横向溢出，避免长需求标题或版本名导致右侧内容被裁切。
 - 需求全链路阶段进度从横向 Steps 改为自适应阶段条，避免 8 个阶段在弹窗内挤压导致“AI 任务 / Review / Bug”等文字断字换行。
 - DB-first 迁移补齐生命周期上下文 repository source rows 聚合入口，PostgreSQL 运行时 `/api/lifecycle/context` 不再通过 repository read snapshot 承载聚合，并通过 repository 写回生成的 lifecycle edges/risks。
 - DB-first 迁移补齐首页 IT 团队看板 repository source rows 聚合入口，PostgreSQL 运行时 `/api/dashboard/it-team` 不再通过 repository read snapshot 承载聚合，并通过单条 repository 写入保存 dashboard snapshot。
@@ -211,7 +217,7 @@
 - Bug 列表改为 repository-first 读取，产品、状态、严重级别和来源过滤进入 SQL/repository 查询层，运行态 store 过期时仍从结构表返回 Bug 数据。
 - 采集运行、待归属队列、GitLab 每日代码指标、Jenkins 发布记录和线上运行日志指标新增 repository 单记录写入，创建/更新/处理记录及审计事件在 handler 返回前持久化。
 - 用户使用指标、用户反馈和迭代规划新增 repository 写入，反馈处理、建议生成、决策和转需求会在 handler 返回前持久化；转需求时同步写入新需求、建议、决策和完整审计事件。
-- 生命周期上下文查询和首页 IT 团队看板新增 handler 级物化记录写入，查询生成的 lifecycle edges/risks 与 dashboard snapshot 在返回前写入 PostgreSQL 结构表；聚合读取全面 SQL/read model 化仍在迁移计划中。
+- 生命周期上下文查询和首页 IT 团队看板新增 handler 级物化记录写入，查询生成的 lifecycle edges/risks 与 dashboard snapshot 在返回前写入 PostgreSQL 结构表；管理主列表继续推进 SQL/read model 查询，看板等汇总视图允许基于 PostgreSQL source rows 聚合。
 - 生命周期上下文和首页 IT 团队看板读接口在 PostgreSQL 运行时改为读取 repository source rows，避免依赖全局运行时 store 的已缓存集合；新增运行时 store 过期场景的 source-row 回归测试。
 - 请求结束全局 `persist()` 已从 API middleware 移除，所有 API 请求都不再通过请求结束同步进程内 store；模型网关配置创建、修改、删除和连接测试审计新增 handler 级 repository 写入，防止移除全局同步后丢失配置或审计。
 - 模型网关配置列表和模型调用日志列表改为 repository-first 读取，运行态 store 过期时仍从结构表返回配置、脱敏状态和按 purpose/status/task 过滤后的模型日志。

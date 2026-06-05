@@ -6618,6 +6618,168 @@ def test_insight_planning_routes_write_repository_without_request_persist():
         app.state.user_repository = original_users
 
 
+def test_operational_metrics_use_repository_read_model_for_sql_pagination():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+
+    class ReadModelOnlyOperationalRepository(FakeSnapshotRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.operational_metric_reads: list[dict] = []
+
+        def list_gitlab_daily_code_metrics(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("operational metrics should not load all GitLab metrics")
+
+        def list_jenkins_release_records(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("operational metrics should not load all Jenkins releases")
+
+        def list_online_log_metrics(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("operational metrics should not load all online logs")
+
+        def list_operational_metric_items(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.operational_metric_reads.append(dict(kwargs))
+            return {
+                "items": [
+                    {
+                        "build_id": "build-read-model",
+                        "category": "Jenkins 发布",
+                        "id": "jenkins_release_read_model",
+                        "name": "enterprise-ai-brain-deploy",
+                        "product_id": "product_read_model",
+                        "status": "success",
+                        "updated_at": "2026-06-05T09:30:00+00:00",
+                        "value": "build-read-model",
+                        "version_id": "version_read_model",
+                    }
+                ],
+                "page": 1,
+                "page_size": 1,
+                "total": 2,
+            }
+
+    repository = ReadModelOnlyOperationalRepository()
+    app.state.store = PostgresRuntimeStore(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        response = client.get(
+            (
+                "/api/devops/operational-metrics"
+                "?category=Jenkins 发布"
+                "&name=deploy"
+                "&status=success"
+                "&page=1&page_size=1"
+                "&sort_by=updated_at&sort_order=desc"
+            ),
+            headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["total"] == 2
+        assert data["page"] == 1
+        assert data["page_size"] == 1
+        assert data["items"][0]["id"] == "jenkins_release_read_model"
+        assert repository.operational_metric_reads == [
+            {
+                "category": "Jenkins 发布",
+                "name": "deploy",
+                "page": 1,
+                "page_size": 1,
+                "sort_by": "updated_at",
+                "sort_order": "desc",
+                "status": "success",
+            }
+        ]
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_insight_items_use_repository_read_model_for_sql_pagination():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+
+    class ReadModelOnlyInsightRepository(FakeSnapshotRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.user_insight_item_reads: list[dict] = []
+
+        def list_user_usage_metrics(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("insight items should not load all usage metrics")
+
+        def list_user_feedback(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("insight items should not load all feedback rows")
+
+        def list_iteration_plan_suggestions(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("insight items should not load all iteration suggestions")
+
+        def list_user_insight_items(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.user_insight_item_reads.append(dict(kwargs))
+            return {
+                "items": [
+                    {
+                        "category": "用户反馈",
+                        "confidence_level": "-",
+                        "converted_requirement_id": "-",
+                        "feature_code": "search",
+                        "feedback_type": "improvement",
+                        "id": "feedback_read_model",
+                        "module_code": "knowledge",
+                        "owner": "user_admin",
+                        "planning_cycle": "-",
+                        "priority": "-",
+                        "product_id": "product_read_model",
+                        "status": "open",
+                        "summary": "迭代版本筛选反馈",
+                        "updated_at": "2026-06-05T09:00:00+00:00",
+                        "version_id": "-",
+                    }
+                ],
+                "page": 1,
+                "page_size": 1,
+                "total": 3,
+            }
+
+    repository = ReadModelOnlyInsightRepository()
+    app.state.store = PostgresRuntimeStore(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        response = client.get(
+            (
+                "/api/insights/items"
+                "?category=用户反馈"
+                "&summary=迭代版本"
+                "&status=open"
+                "&page=1&page_size=1"
+                "&sort_by=updated_at&sort_order=desc"
+            ),
+            headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["total"] == 3
+        assert data["page"] == 1
+        assert data["page_size"] == 1
+        assert data["items"][0]["id"] == "feedback_read_model"
+        assert repository.user_insight_item_reads == [
+            {
+                "category": "用户反馈",
+                "page": 1,
+                "page_size": 1,
+                "sort_by": "updated_at",
+                "sort_order": "desc",
+                "status": "open",
+                "summary": "迭代版本",
+            }
+        ]
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
 def test_insight_planning_lists_use_repository_when_runtime_store_is_stale():
     original_store = app.state.store
     original_users = app.state.user_repository

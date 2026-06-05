@@ -487,6 +487,20 @@ class OnlineLogMetricRepository(Protocol):
     ) -> None: ...
 
 
+class OperationalMetricReadModelRepository(Protocol):
+    def list_operational_metric_items(
+        self,
+        *,
+        category: str | None = None,
+        name: str | None = None,
+        status: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+        sort_by: str,
+        sort_order: str,
+    ) -> dict[str, Any]: ...
+
+
 class UserUsageMetricRepository(Protocol):
     def load_user_usage_metrics(self) -> dict[str, Any] | None: ...
 
@@ -562,6 +576,18 @@ class IterationPlanningRepository(Protocol):
         audit_events: list[dict[str, Any]],
         requirement: dict[str, Any] | None = None,
     ) -> None: ...
+
+    def list_user_insight_items(
+        self,
+        *,
+        category: str | None = None,
+        summary: str | None = None,
+        status: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+        sort_by: str,
+        sort_order: str,
+    ) -> dict[str, Any]: ...
 
 
 class LifecycleContextRepository(Protocol):
@@ -3794,6 +3820,229 @@ class PostgresSnapshotRepository:
                     items.append(metric)
                 return items
 
+    def list_operational_metric_items(
+        self,
+        *,
+        category: str | None = None,
+        name: str | None = None,
+        status: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+        sort_by: str,
+        sort_order: str,
+    ) -> dict[str, Any]:
+        import json
+
+        sort_expressions = {
+            "category": "LOWER(category)",
+            "id": "LOWER(id)",
+            "name": "LOWER(name)",
+            "status": "LOWER(status)",
+            "updated_at": "updated_at",
+            "value": "LOWER(value)",
+        }
+        sort_expression = sort_expressions[sort_by]
+        sort_direction = "ASC" if sort_order == "asc" else "DESC"
+        base_query = """
+            WITH operational_rows AS (
+                SELECT 'GitLab 指标'::text AS category,
+                       id,
+                       repository_id AS name,
+                       status,
+                       COALESCE(
+                           updated_at,
+                           created_at,
+                           collected_at,
+                           metric_date::timestamptz
+                       ) AS updated_at,
+                       commit_count::text AS value,
+                       product_id,
+                       NULL::text AS version_id,
+                       NULL::text AS module_code,
+                       repository_id,
+                       NULL::text AS environment,
+                       jsonb_strip_nulls(
+                           jsonb_build_object(
+                               'active_author_count', active_author_count,
+                               'additions', additions,
+                               'changed_files', changed_files,
+                               'collected_at', collected_at,
+                               'commit_count', commit_count,
+                               'created_at', created_at,
+                               'created_by', created_by,
+                               'deletions', deletions,
+                               'merge_request_count', merge_request_count,
+                               'metric_date', metric_date,
+                               'product_id', product_id,
+                               'quality_score', quality_score,
+                               'repository_id', repository_id,
+                               'risk_count', risk_count,
+                               'source_channel', source_channel,
+                               'status', status,
+                               'updated_at', updated_at
+                           )
+                       )::text AS source_payload
+                FROM gitlab_daily_code_metrics
+                UNION ALL
+                SELECT 'Jenkins 发布'::text AS category,
+                       id,
+                       job_name AS name,
+                       status,
+                       COALESCE(updated_at, created_at, deployed_at, started_at) AS updated_at,
+                       build_id AS value,
+                       product_id,
+                       version_id,
+                       NULL::text AS module_code,
+                       NULL::text AS repository_id,
+                       environment,
+                       jsonb_strip_nulls(
+                           jsonb_build_object(
+                               'build_id', build_id,
+                               'build_number', build_number,
+                               'commit_sha', commit_sha,
+                               'created_at', created_at,
+                               'created_by', created_by,
+                               'deployed_at', deployed_at,
+                               'duration_seconds', duration_seconds,
+                               'environment', environment,
+                               'failure_reason', failure_reason,
+                               'job_name', job_name,
+                               'product_id', product_id,
+                               'source_channel', source_channel,
+                               'started_at', started_at,
+                               'status', status,
+                               'trigger_actor', trigger_actor,
+                               'updated_at', updated_at,
+                               'version_id', version_id
+                           )
+                       )::text AS source_payload
+                FROM jenkins_release_records
+                UNION ALL
+                SELECT '线上日志'::text AS category,
+                       id,
+                       environment AS name,
+                       status,
+                       COALESCE(updated_at, created_at, window_start) AS updated_at,
+                       error_rate::text AS value,
+                       product_id,
+                       NULL::text AS version_id,
+                       module_code,
+                       NULL::text AS repository_id,
+                       environment,
+                       jsonb_strip_nulls(
+                           jsonb_build_object(
+                               'anomaly_summary', anomaly_summary,
+                               'core_event_count', core_event_count,
+                               'created_at', created_at,
+                               'created_by', created_by,
+                               'environment', environment,
+                               'error_count', error_count,
+                               'error_rate', error_rate,
+                               'module_code', module_code,
+                               'p95_latency_ms', p95_latency_ms,
+                               'p99_latency_ms', p99_latency_ms,
+                               'product_id', product_id,
+                               'request_count', request_count,
+                               'source_channel', source_channel,
+                               'status', status,
+                               'updated_at', updated_at,
+                               'window_end', window_end,
+                               'window_start', window_start
+                           )
+                       )::text AS source_payload
+                FROM online_log_metrics
+            )
+        """
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if category is not None:
+            where_clauses.append("category = %s")
+            params.append(category)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if name is not None and name.strip():
+            where_clauses.append(
+                """
+                CONCAT_WS(
+                    ' ',
+                    name,
+                    id,
+                    product_id,
+                    version_id,
+                    module_code,
+                    repository_id,
+                    environment
+                ) ILIKE %s
+                """
+            )
+            params.append(f"%{name.strip()}%")
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        use_pagination = page is not None or page_size is not None
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        limit_clause = ""
+        query_params = list(params)
+        if use_pagination:
+            limit_clause = "LIMIT %s OFFSET %s"
+            query_params.extend(
+                [resolved_page_size, (resolved_page - 1) * resolved_page_size]
+            )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    {base_query}
+                    SELECT COUNT(*)
+                    FROM operational_rows
+                    {where_clause}
+                    """,
+                    tuple(params),
+                )
+                total = int(cursor.fetchone()[0])
+                cursor.execute(
+                    f"""
+                    {base_query}
+                    SELECT category, id, name, status, updated_at, value,
+                           product_id, version_id, module_code, repository_id,
+                           environment, source_payload
+                    FROM operational_rows
+                    {where_clause}
+                    ORDER BY {sort_expression} {sort_direction}, id {sort_direction}
+                    {limit_clause}
+                    """,
+                    tuple(query_params),
+                )
+                items = []
+                for row in cursor.fetchall():
+                    source_payload = json.loads(row[11] or "{}")
+                    item = {
+                        key: value
+                        for key, value in source_payload.items()
+                        if value is not None
+                    }
+                    item.update(
+                        {
+                            "category": row[0],
+                            "environment": row[10],
+                            "id": row[1],
+                            "module_code": row[8],
+                            "name": row[2],
+                            "product_id": row[6],
+                            "repository_id": row[9],
+                            "status": row[3],
+                            "updated_at": row[4].isoformat() if row[4] else "",
+                            "value": row[5],
+                            "version_id": row[7],
+                        }
+                    )
+                    items.append({key: value for key, value in item.items() if value is not None})
+        payload: dict[str, Any] = {"items": items, "total": total}
+        if use_pagination:
+            payload["page"] = resolved_page
+            payload["page_size"] = resolved_page_size
+        return payload
+
     def list_collector_runs(
         self,
         *,
@@ -4190,6 +4439,172 @@ class PostgresSnapshotRepository:
                             suggestion.pop(optional_key)
                     items.append(suggestion)
                 return items
+
+    def list_user_insight_items(
+        self,
+        *,
+        category: str | None = None,
+        summary: str | None = None,
+        status: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+        sort_by: str,
+        sort_order: str,
+    ) -> dict[str, Any]:
+        sort_expressions = {
+            "category": "LOWER(category)",
+            "id": "LOWER(id)",
+            "owner": "LOWER(owner)",
+            "status": "LOWER(status)",
+            "summary": "LOWER(summary)",
+            "updated_at": "updated_at",
+        }
+        sort_expression = sort_expressions[sort_by]
+        sort_direction = "ASC" if sort_order == "asc" else "DESC"
+        base_query = """
+            WITH insight_rows AS (
+                SELECT '使用趋势'::text AS category,
+                       id,
+                       created_by AS owner,
+                       '-'::text AS status,
+                       COALESCE(feature_code, '-') AS summary,
+                       COALESCE(updated_at, created_at, window_start) AS updated_at,
+                       product_id,
+                       '-'::text AS version_id,
+                       COALESCE(module_code, '-') AS module_code,
+                       COALESCE(feature_code, '-') AS feature_code,
+                       '-'::text AS feedback_type,
+                       '-'::text AS confidence_level,
+                       '-'::text AS planning_cycle,
+                       '-'::text AS priority,
+                       '-'::text AS converted_requirement_id
+                FROM user_usage_metrics
+                UNION ALL
+                SELECT '用户反馈'::text AS category,
+                       id,
+                       created_by AS owner,
+                       status,
+                       content AS summary,
+                       COALESCE(updated_at, created_at) AS updated_at,
+                       product_id,
+                       '-'::text AS version_id,
+                       COALESCE(module_code, '-') AS module_code,
+                       COALESCE(feature_code, '-') AS feature_code,
+                       feedback_type,
+                       '-'::text AS confidence_level,
+                       '-'::text AS planning_cycle,
+                       '-'::text AS priority,
+                       '-'::text AS converted_requirement_id
+                FROM user_feedback
+                UNION ALL
+                SELECT '迭代建议'::text AS category,
+                       id,
+                       created_by AS owner,
+                       status,
+                       title AS summary,
+                       COALESCE(updated_at, created_at) AS updated_at,
+                       product_id,
+                       COALESCE(version_id, '-') AS version_id,
+                       CASE
+                           WHEN jsonb_typeof(module_codes) = 'array'
+                                AND jsonb_array_length(module_codes) > 0
+                           THEN module_codes ->> 0
+                           ELSE '-'
+                       END AS module_code,
+                       '-'::text AS feature_code,
+                       '-'::text AS feedback_type,
+                       confidence_level,
+                       planning_cycle,
+                       priority,
+                       COALESCE(converted_requirement_id, '-') AS converted_requirement_id
+                FROM iteration_plan_suggestions
+            )
+        """
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if category is not None:
+            where_clauses.append("category = %s")
+            params.append(category)
+        if status is not None:
+            where_clauses.append("status = %s")
+            params.append(status)
+        if summary is not None and summary.strip():
+            where_clauses.append(
+                """
+                CONCAT_WS(
+                    ' ',
+                    summary,
+                    id,
+                    product_id,
+                    version_id,
+                    module_code,
+                    feature_code
+                ) ILIKE %s
+                """
+            )
+            params.append(f"%{summary.strip()}%")
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        use_pagination = page is not None or page_size is not None
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        limit_clause = ""
+        query_params = list(params)
+        if use_pagination:
+            limit_clause = "LIMIT %s OFFSET %s"
+            query_params.extend(
+                [resolved_page_size, (resolved_page - 1) * resolved_page_size]
+            )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    {base_query}
+                    SELECT COUNT(*)
+                    FROM insight_rows
+                    {where_clause}
+                    """,
+                    tuple(params),
+                )
+                total = int(cursor.fetchone()[0])
+                cursor.execute(
+                    f"""
+                    {base_query}
+                    SELECT category, id, owner, status, summary, updated_at,
+                           product_id, version_id, module_code, feature_code,
+                           feedback_type, confidence_level, planning_cycle, priority,
+                           converted_requirement_id
+                    FROM insight_rows
+                    {where_clause}
+                    ORDER BY {sort_expression} {sort_direction}, id {sort_direction}
+                    {limit_clause}
+                    """,
+                    tuple(query_params),
+                )
+                items = [
+                    {
+                        "category": row[0],
+                        "confidence_level": row[11],
+                        "converted_requirement_id": row[14],
+                        "feature_code": row[9],
+                        "feedback_type": row[10],
+                        "id": row[1],
+                        "module_code": row[8],
+                        "owner": row[2],
+                        "planning_cycle": row[12],
+                        "priority": row[13],
+                        "product_id": row[6],
+                        "status": row[3],
+                        "summary": row[4],
+                        "updated_at": row[5].isoformat() if row[5] else "",
+                        "version_id": row[7],
+                    }
+                    for row in cursor.fetchall()
+                ]
+        payload: dict[str, Any] = {"items": items, "total": total}
+        if use_pagination:
+            payload["page"] = resolved_page
+            payload["page_size"] = resolved_page_size
+        return payload
 
     def load_lifecycle_context(self) -> dict[str, Any]:
         with self._connect() as connection:

@@ -1,6 +1,6 @@
 import { PageContainer } from '@ant-design/pro-components';
 import { Alert, Button, Space, Spin } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { RequirementFullChainView } from '../../components/RequirementFullChainView';
 import {
@@ -22,31 +22,39 @@ export default function RequirementFullChainPage() {
   const requirementId = useMemo(() => parseRequirementId(window.location.pathname), []);
   const [chain, setChain] = useState<RequirementFullChainRecord | null>(null);
   const [error, setError] = useState<RemoteRowsError>();
-  const [isLoading, setIsLoading] = useState(true);
-
-  const loadFullChain = useCallback(async () => {
-    if (!requirementId) {
-      setChain(null);
-      setError({ message: '缺少需求 ID' });
-      setIsLoading(false);
-      return;
-    }
-    setIsLoading(true);
-    setError(undefined);
-    try {
-      const loadedChain = await fetchRequirementFullChain(requirementId);
-      setChain(loadedChain);
-    } catch (loadError: unknown) {
-      setChain(null);
-      setError(normalizeRemoteRowsError(loadError));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [requirementId]);
+  const [isLoading, setIsLoading] = useState(Boolean(requirementId));
 
   useEffect(() => {
-    void loadFullChain();
-  }, [loadFullChain]);
+    if (!requirementId) {
+      return undefined;
+    }
+    let isActive = true;
+    void fetchRequirementFullChain(requirementId)
+      .then((loadedChain) => {
+        if (!isActive) {
+          return;
+        }
+        setChain(loadedChain);
+        setError(undefined);
+      })
+      .catch((loadError: unknown) => {
+        if (!isActive) {
+          return;
+        }
+        setChain(null);
+        setError(normalizeRemoteRowsError(loadError));
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsLoading(false);
+        }
+      });
+    return () => {
+      isActive = false;
+    };
+  }, [requirementId]);
+
+  const visibleError = requirementId ? error : { message: '缺少需求 ID' };
 
   return (
     <PageContainer
@@ -62,7 +70,7 @@ export default function RequirementFullChainPage() {
     >
       <Spin spinning={isLoading}>
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          {error ? <Alert message={formatRemoteRowsError(error)} type="error" /> : null}
+          {visibleError ? <Alert message={formatRemoteRowsError(visibleError)} type="error" /> : null}
           {chain ? <RequirementFullChainView fullChain={chain} /> : null}
         </Space>
       </Spin>

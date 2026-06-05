@@ -69,6 +69,8 @@ vi.mock('@ant-design/pro-components', async () => {
     onSubmit,
     rowKey,
     rowSelection,
+    scroll,
+    tableLayout,
     toolBarRender,
   }: {
     columns: Array<{
@@ -91,6 +93,8 @@ vi.mock('@ant-design/pro-components', async () => {
       onChange?: (selectedRowKeys: React.Key[], selectedRows: Row[]) => void;
       selectedRowKeys?: React.Key[];
     };
+    scroll?: { x?: number | string | true };
+    tableLayout?: string;
     toolBarRender?: () => React.ReactNode[];
   }) {
     const searchColumns = columns.filter((column) => column.search !== false);
@@ -176,7 +180,10 @@ vi.mock('@ant-design/pro-components', async () => {
       toolBarRender?.(),
       React.createElement(
         'table',
-        null,
+        {
+          'data-table-layout': tableLayout,
+          'data-table-scroll-x': scroll?.x === undefined ? undefined : String(scroll.x),
+        },
         React.createElement(
           'thead',
           null,
@@ -2421,7 +2428,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
-      if (input === '/api/products?active_only=true') {
+      if (path === '/api/products?active_only=true') {
         return jsonResponse({
           data: {
             items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
@@ -2602,7 +2609,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
-      if (input === '/api/products?active_only=true') {
+      if (path === '/api/products?active_only=true') {
         return jsonResponse({
           data: {
             items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
@@ -2610,10 +2617,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (path === '/api/product-versions?active_only=true') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/insights/usage-metrics' && init?.method === 'POST') {
+      if (path === '/api/insights/usage-metrics' && init?.method === 'POST') {
         return jsonResponse({
           data: {
             active_users: 42,
@@ -2625,7 +2632,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
-      if (input === '/api/insights/usage-metrics') {
+      if (path === '/api/insights/usage-metrics') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       return jsonResponse({ data: { items: [], total: 0 } });
@@ -4427,6 +4434,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     render(<RequirementsPage />);
 
     await screen.findByText('归集需求一');
+    expect(screen.getByRole('table')).toHaveAttribute('data-table-layout', 'fixed');
+    expect(screen.getByRole('table')).toHaveAttribute('data-table-scroll-x', '1640');
     expect(screen.getByText('创建时间')).toBeInTheDocument();
     expect(screen.getByText('2026-06-04 08:00')).toBeInTheDocument();
     expect(screen.getByText('2026-06-04 08:10')).toBeInTheDocument();
@@ -4722,7 +4731,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
               code: '2026-06-assistant-history',
               id: 'version_assistant_history',
               name: '2026-06 AI 助手历史记录迭代',
-              status: 'testing',
+              status: 'active',
             },
             jenkins_releases: [
               {
@@ -4820,7 +4829,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(within(stageProgress).getByText('Bug')).toBeInTheDocument();
     expect(within(stageProgress).getByText('发布')).toBeInTheDocument();
     expect(within(stageProgress).getByText('知识沉淀')).toBeInTheDocument();
-    expect(within(stageProgress).getByText('testing · 1 项')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('测试中 · 1 项')).toBeInTheDocument();
+    expect(within(stageProgress).getByText('开发中 · 2026-06-assistant-history')).toBeInTheDocument();
     expect(within(stageProgress).getByText('1 快照 / 1 报告')).toBeInTheDocument();
     expect(within(stageProgress).getByRole('list', { name: '阶段进度清单' })).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/requirements/requirement_084/full-chain');

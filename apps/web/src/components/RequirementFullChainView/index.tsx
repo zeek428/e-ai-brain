@@ -53,6 +53,14 @@ const requirementStatusLabels: Record<string, { color: string; label: string }> 
   testing: { color: 'volcano', label: '测试中' },
 };
 
+const iterationVersionStatusLabels: Record<string, { color: string; label: string }> = {
+  active: { color: 'blue', label: '开发中' },
+  archived: { color: 'default', label: '已归档' },
+  planning: { color: 'gold', label: '规划中' },
+  released: { color: 'green', label: '已发布' },
+  testing: { color: 'purple', label: '测试中' },
+};
+
 const { Text } = Typography;
 
 function fullChainTypeLabel(type: string) {
@@ -69,18 +77,44 @@ function renderSummaryTag(label: string, value: number, color?: string) {
   );
 }
 
+function formatRequirementStatus(status: string) {
+  return requirementStatusLabels[status]?.label ?? status;
+}
+
+function formatIterationVersionStatus(status?: string) {
+  if (!status) {
+    return '-';
+  }
+  return iterationVersionStatusLabels[status]?.label ?? status;
+}
+
+function renderTimelineStatusTag(type: string, status?: string) {
+  if (!status) {
+    return null;
+  }
+  if (type === 'requirement') {
+    const statusLabel = requirementStatusLabels[status];
+    return <StatusTag color={statusLabel?.color ?? 'default'} label={statusLabel?.label ?? status} />;
+  }
+  if (type === 'iteration_version') {
+    const statusLabel = iterationVersionStatusLabels[status];
+    return <StatusTag color={statusLabel?.color ?? 'default'} label={statusLabel?.label ?? status} />;
+  }
+  return <Tag>{status}</Tag>;
+}
+
 function buildFullChainStageItems(fullChain: RequirementFullChainRecord) {
   const summary = fullChain.summary;
   const stages = [
     {
       count: 1,
-      detail: `${fullChain.requirement.status} · 1 项`,
+      detail: `${formatRequirementStatus(fullChain.requirement.status)} · 1 项`,
       title: '需求',
     },
     {
       count: fullChain.iterationVersion ? 1 : 0,
       detail: fullChain.iterationVersion
-        ? `${fullChain.iterationVersion.status ?? '-'} · ${
+        ? `${formatIterationVersionStatus(fullChain.iterationVersion.status)} · ${
             fullChain.iterationVersion.code ?? fullChain.iterationVersion.id
           }`
         : '未排期',
@@ -158,9 +192,10 @@ export function RequirementFullChainView({ fullChain }: { fullChain: Requirement
   const requirementStatus = requirementStatusLabels[fullChain.requirement.status];
 
   return (
-    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-      <Descriptions bordered column={2} size="small">
-        <Descriptions.Item label="需求" span={2}>
+    <Space className="requirement-full-chain-view" orientation="vertical" size={16} style={{ width: '100%' }}>
+      <section aria-label="需求链路摘要" className="requirement-full-chain-summary">
+        <div className="requirement-full-chain-summary-label">需求</div>
+        <div className="requirement-full-chain-summary-value requirement-full-chain-summary-wide">
           <Space size={8} wrap>
             <Text strong>{fullChain.requirement.title}</Text>
             <Tag>{fullChain.requirement.id}</Tag>
@@ -169,19 +204,22 @@ export function RequirementFullChainView({ fullChain }: { fullChain: Requirement
               label={requirementStatus?.label ?? fullChain.requirement.status}
             />
           </Space>
-        </Descriptions.Item>
-        <Descriptions.Item label="产品">
+        </div>
+        <div className="requirement-full-chain-summary-label">产品</div>
+        <div className="requirement-full-chain-summary-value">
           {fullChain.product?.code ?? fullChain.requirement.product}
           {fullChain.product?.name ? ` · ${fullChain.product.name}` : ''}
-        </Descriptions.Item>
-        <Descriptions.Item label="迭代版本">
+        </div>
+        <div className="requirement-full-chain-summary-label">迭代版本</div>
+        <div className="requirement-full-chain-summary-value">
           {fullChain.iterationVersion
             ? `${fullChain.iterationVersion.code ?? fullChain.iterationVersion.id} · ${
                 fullChain.iterationVersion.name ?? fullChain.iterationVersion.id
               }`
             : '未排期'}
-        </Descriptions.Item>
-        <Descriptions.Item label="链路摘要" span={2}>
+        </div>
+        <div className="requirement-full-chain-summary-label">链路摘要</div>
+        <div className="requirement-full-chain-summary-value requirement-full-chain-summary-wide">
           <Space size={[4, 4]} wrap>
             {renderSummaryTag('AI 任务', fullChain.summary.aiTasks, 'blue')}
             {renderSummaryTag('Review', fullChain.summary.reviews, 'cyan')}
@@ -191,20 +229,15 @@ export function RequirementFullChainView({ fullChain }: { fullChain: Requirement
             {renderSummaryTag('发布记录', fullChain.summary.jenkinsReleases, 'orange')}
             {renderSummaryTag('知识沉淀', fullChain.summary.knowledgeDeposits, 'green')}
           </Space>
-        </Descriptions.Item>
-      </Descriptions>
+        </div>
+      </section>
       <section aria-label="全链路阶段进度">
         <Space orientation="vertical" size={8} style={{ width: '100%' }}>
           <Text strong>阶段进度</Text>
           <div
             aria-label="阶段进度清单"
+            className="requirement-full-chain-stage-grid"
             role="list"
-            style={{
-              display: 'grid',
-              gap: 12,
-              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-              width: '100%',
-            }}
           >
             {stageItems.map((item, itemIndex) => {
               const isFinished = item.status === 'finish';
@@ -213,17 +246,11 @@ export function RequirementFullChainView({ fullChain }: { fullChain: Requirement
               return (
                 <div
                   key={item.title}
+                  className="requirement-full-chain-stage-card"
                   role="listitem"
                   style={{
-                    alignItems: 'flex-start',
                     background: isFinished ? '#f0f7ff' : '#fafafa',
                     border: `1px solid ${isCurrent ? '#1677ff' : isFinished ? '#91caff' : '#f0f0f0'}`,
-                    borderRadius: 8,
-                    display: 'flex',
-                    gap: 8,
-                    minHeight: 72,
-                    minWidth: 0,
-                    padding: '10px 12px',
                   }}
                 >
                   <span
@@ -245,8 +272,8 @@ export function RequirementFullChainView({ fullChain }: { fullChain: Requirement
                   >
                     {isFinished ? '✓' : item.index}
                   </span>
-                  <span style={{ display: 'block', minWidth: 0 }}>
-                    <Text strong style={{ display: 'block', whiteSpace: 'nowrap' }}>
+                  <span className="requirement-full-chain-stage-content">
+                    <Text strong style={{ display: 'block' }}>
                       {item.title}
                     </Text>
                     <Text
@@ -276,7 +303,7 @@ export function RequirementFullChainView({ fullChain }: { fullChain: Requirement
                   {fullChainTypeLabel(item.type)}
                 </Tag>
                 <Text strong>{item.title}</Text>
-                {item.status ? <Tag>{item.status}</Tag> : null}
+                {renderTimelineStatusTag(item.type, item.status)}
               </Space>
               <Text type="secondary">
                 {item.occurredAt} · {item.subjectId}
