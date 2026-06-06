@@ -209,7 +209,7 @@
 2. AI 输出引用知识时可追溯到真实存在的 chunk 来源。
 3. 索引状态与 chunk 行不一致时暴露真实空结果，不返回合成数据。
 
-**状态**: 已自动化覆盖。权限过滤、来源引用、embedding 排序和无兜底结果见 `apps/api/tests/test_knowledge_governance.py`；前端检索弹窗见 `apps/web/tests/App.test.tsx::opens knowledge search and shows permission-filtered sources`。
+**状态**: 已自动化覆盖。权限过滤、来源引用、embedding 排序和无兜底结果见 `apps/api/tests/test_knowledge_governance.py`；前端检索弹窗见 `apps/web/tests/KnowledgePage.test.tsx::opens knowledge search and shows permission-filtered sources`。
 
 ---
 

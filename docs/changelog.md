@@ -9,6 +9,7 @@
 
 ### Added
 - Code Review 报告弹窗新增“查看需求全链路”入口，可从任务中心报告直接跳转到对应需求 full-chain 详情页，补齐 Review 报告到需求全链路的闭环追踪。
+- 知识中心页面测试继续拆分：沉淀审核、权限检索来源展示和索引失败重试回归迁移到独立 `KnowledgePage.test.tsx`，降低 `App.test.tsx` 的知识域页面负担。
 - 需求全链路页面测试继续拆分：独立详情页直达路由、返回入口、版本内对比和共享展示组件回归迁移到 `RequirementFullChainPage.test.tsx`，减少 `App.test.tsx` 页面级用例聚集。
 - 后端测试拆分继续推进：AI 助手会话/消息结构化持久化与恢复计数器用例迁移到独立 `test_assistant_chat_persistence.py`，减少 `test_database_persistence.py` 巨型文件压力。
 - AI 助手页面测试继续拆分：聊天页面、引用链接、用户级会话历史和助手 service 映射用例迁移到独立 `AssistantPage.test.tsx`，让 `App.test.tsx` 回到更轻的工作台 smoke 角色。

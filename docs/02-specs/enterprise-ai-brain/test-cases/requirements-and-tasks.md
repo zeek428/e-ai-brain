@@ -417,7 +417,7 @@
 1. 知识中心不依赖 AI 任务完成也可以主动导入和检索。
 2. 知识沉淀必须审核后才能进入正式知识库。
 
-**状态**: 已自动化覆盖。知识导入、索引、检索、沉淀审核和失败重试见 `apps/api/tests/test_knowledge_governance.py` 与 `apps/web/tests/App.test.tsx` 知识中心用例。
+**状态**: 已自动化覆盖。知识导入、索引、检索、沉淀审核和失败重试见 `apps/api/tests/test_knowledge_governance.py` 与 `apps/web/tests/KnowledgePage.test.tsx` 知识中心用例。
 
 ---
 
