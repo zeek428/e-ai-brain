@@ -34,6 +34,7 @@ from app.services.assistant_request_context import (
 from app.services.assistant_request_context import (
     save_assistant_chat_records,
 )
+from app.services.assistant_tools import assistant_tool_results
 from app.services.model_gateway_logging import (
     estimate_tokens,
     model_gateway_log,
@@ -185,6 +186,7 @@ def assistant_chat_response(
         references=assistant_output["references"],
         role="assistant",
         suggestions=assistant_output["suggestions"],
+        tool_results=assistant_output["tool_results"],
         user_id=user["id"],
     )
     current_store.audit(
@@ -199,6 +201,7 @@ def assistant_chat_response(
             "product_id": normalized_payload.product_id,
             "reference_count": len(assistant_output["references"]),
             "suggestion_count": len(assistant_output["suggestions"]),
+            "tool_count": len(assistant_output["tool_results"]),
         },
     )
     save_assistant_chat_records(
@@ -268,6 +271,7 @@ def _assistant_chat_messages(
     *,
     model_gateway_status: str,
     payload: AssistantChatRequest,
+    tool_results: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
     default_gateway = _default_model_gateway_config(current_store)
     system_context = build_assistant_system_context(
@@ -276,10 +280,19 @@ def _assistant_chat_messages(
         model_gateway_status=model_gateway_status,
         product_id=payload.product_id,
     )
+    system_context["tool_results"] = tool_results
     system_context["reference_candidates"] = assistant_reference_candidates(
         current_store,
         message=payload.message,
         product_id=payload.product_id,
+    )
+    system_context["reference_candidates"] = _merge_assistant_references(
+        [
+            reference
+            for tool_result in tool_results
+            for reference in tool_result.get("references", [])
+        ],
+        system_context["reference_candidates"],
     )
     return assistant_context_chat_messages(
         context=payload.context,
@@ -309,10 +322,16 @@ def _call_model_gateway_for_assistant_chat(
     )
     provider = config["provider"]
     model = config["default_chat_model"]
+    tool_results = assistant_tool_results(
+        current_store,
+        message=payload.message,
+        product_id=payload.product_id,
+    )
     messages = _assistant_chat_messages(
         current_store,
         model_gateway_status=model_gateway_status,
         payload=payload,
+        tool_results=tool_results,
     )
     body = {
         "messages": messages,
@@ -342,12 +361,20 @@ def _call_model_gateway_for_assistant_chat(
         assistant_output = assistant_response_content(message.get("content"))
         if not assistant_output["answer"]:
             raise ValueError("Assistant response is missing answer")
-        references = assistant_output.get("references") or assistant_reference_candidates(
-            current_store,
-            message=payload.message,
-            product_id=payload.product_id,
+        references = assistant_output.get("references") or _merge_assistant_references(
+            [
+                reference
+                for tool_result in tool_results
+                for reference in tool_result.get("references", [])
+            ],
+            assistant_reference_candidates(
+                current_store,
+                message=payload.message,
+                product_id=payload.product_id,
+            ),
         )
         assistant_output["references"] = references
+        assistant_output["tool_results"] = tool_results
         latency_ms = int((perf_counter() - started) * 1000)
         log = model_gateway_log(
             current_store,
@@ -395,6 +422,25 @@ def _model_gateway_chat_completions_url(base_url: str) -> str:
     if normalized.endswith("/chat/completions"):
         return normalized
     return f"{normalized}/chat/completions"
+
+
+def _merge_assistant_references(
+    *reference_lists: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for reference_list in reference_lists:
+        for reference in reference_list:
+            key = (str(reference.get("type")), str(reference.get("id")))
+            if key in seen:
+                continue
+            if not all(reference.get(field) for field in ("id", "title", "type", "url")):
+                continue
+            seen.add(key)
+            references.append(reference)
+            if len(references) >= 6:
+                return references
+    return references
 
 
 def _ensure_non_blank(value: str | None, field: str) -> str:

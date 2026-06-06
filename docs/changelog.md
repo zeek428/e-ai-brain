@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手工具化查询增强：聊天前由后端 read-model 工具生成需求/任务进展、待确认 Review、代码评审、迭代、Bug 和模型网关 `tool_results`，模型请求优先携带工具结果，聊天响应与历史消息持久化工具结果和可跳转引用链接。
 - 前端首页看板页面测试继续拆分：首页 IT 团队看板、运营明细入口和产品/时间筛选回归迁移到 `DashboardPage.test.tsx`，`App.test.tsx` 继续收敛为少量跨管理模块 smoke。
 - 后端基础持久化测试继续拆分：PersistentMemoryStore 仓储边界和 repository read path 余量回归迁移到 `test_persistence_repository_boundaries.py` 与 `test_repository_read_paths.py`，`test_database_persistence.py` 收敛为共享 FakeRepository/fixture。
 - 后端 Git review API 持久化测试继续拆分：GitLab MR 快照 API DB-first 写入和 GitHub PR 列表/预览审计回归迁移到 `test_git_review_artifacts_persistence.py`，和 Git review artifact 用例按领域维护。

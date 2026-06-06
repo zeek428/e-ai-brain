@@ -229,8 +229,26 @@ def test_ai_assistant_chat_includes_ai_brain_system_progress_context(monkeypatch
     )
 
     assert response.status_code == 200
+    response_payload = response.json()["data"]
+    assert response_payload["message"]["references"][0] == {
+        "id": requirement["id"],
+        "title": "AI 助手聊天界面",
+        "type": "requirement",
+        "url": f"/delivery/requirements?requirement_id={requirement['id']}",
+    }
+    assert response_payload["message"]["tool_results"][0]["tool"] == (
+        "assistant.delivery_progress"
+    )
+    assert response_payload["message"]["tool_results"][0]["summary"]["requirements_total"] == 1
     user_message = captured_messages[1]["content"]
     assert "system_context" in user_message
+    user_payload = json.loads(user_message)
+    assert user_payload["system_context"]["tool_results"][0]["tool"] == (
+        "assistant.delivery_progress"
+    )
+    assert user_payload["system_context"]["tool_results"][0]["items"][0]["id"] == (
+        requirement["id"]
+    )
     assert "AI Brain" in user_message
     assert "requirements_total" in user_message
     assert "ai_tasks_total" in user_message
@@ -317,6 +335,7 @@ def test_ai_assistant_chat_persists_user_scoped_conversation_history(monkeypatch
         ("user", "AI Brain 现在开发到哪里了？"),
         ("assistant", "当前 AI Brain 已能回答系统进展。"),
     ]
+    assert messages["items"][1]["tool_results"][0]["tool"] == "assistant.delivery_progress"
 
     reviewer_conversations = client.get(
         "/api/assistant/conversations",

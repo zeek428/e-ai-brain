@@ -239,6 +239,8 @@ def assistant_chat_messages(
                 "development progress, requirements, tasks, repositories, "
                 "iteration progress, pending reviews, code review conclusions, "
                 "bug distribution, knowledge deposits, and model gateway status. "
+                "Prefer precise facts from system_context.tool_results; treat them as "
+                "backend read-model tool outputs and cite their references. "
                 "Return one compact JSON object with string field answer and optional "
                 "array fields suggestions and references. References must use items "
                 "from system_context.reference_candidates when useful. "
@@ -321,6 +323,9 @@ def public_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
     references = message.get("references") or (message.get("metadata_json") or {}).get("references")
     if references:
         public_message["references"] = normalize_assistant_references(references)
+    tool_results = (message.get("metadata_json") or {}).get("tool_results")
+    if isinstance(tool_results, list) and tool_results:
+        public_message["tool_results"] = tool_results
     return public_message
 
 

@@ -149,8 +149,11 @@ def append_assistant_message(
     model: str | None = None,
     references: list[dict[str, str]] | None = None,
     suggestions: list[str] | None = None,
+    tool_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     metadata_json = {"references": references or []}
+    if tool_results is not None:
+        metadata_json["tool_results"] = tool_results
     message = {
         "content": content,
         "conversation_id": conversation["id"],

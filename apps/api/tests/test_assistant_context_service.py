@@ -11,6 +11,7 @@ from app.services.assistant_context import (
     build_assistant_system_context,
     public_assistant_message,
 )
+from app.services.assistant_tools import assistant_tool_results
 
 
 def test_assistant_system_context_is_product_scoped_and_includes_delivery_signals():
@@ -193,6 +194,26 @@ def test_assistant_system_context_is_product_scoped_and_includes_delivery_signal
         },
     ]
 
+    tool_results = assistant_tool_results(
+        store,
+        message="当前迭代进展、待确认 Review 和代码评审结论是什么？",
+        product_id="product_001",
+    )
+    assert [item["tool"] for item in tool_results] == [
+        "assistant.delivery_progress",
+        "assistant.pending_reviews",
+        "assistant.code_review",
+        "assistant.iteration",
+    ]
+    assert tool_results[0]["summary"]["requirements_total"] == 1
+    assert tool_results[1]["items"][0]["id"] == "review_001"
+    assert tool_results[2]["references"][0] == {
+        "id": "report_001",
+        "title": "助手 Review 低风险",
+        "type": "code_review_report",
+        "url": "/tasks/management?code_review_report_id=report_001",
+    }
+
 
 def test_assistant_message_helpers_normalize_payloads_and_public_projection():
     system_context = {"requirements_total": 1}
@@ -234,7 +255,15 @@ def test_assistant_message_helpers_normalize_payloads_and_public_projection():
                         "type": "requirement",
                         "url": "/delivery/requirements?requirement_id=requirement_001",
                     }
-                ]
+                ],
+                "tool_results": [
+                    {
+                        "intent": "delivery_progress",
+                        "items": [],
+                        "summary": {"requirements_total": 1},
+                        "tool": "assistant.delivery_progress",
+                    }
+                ],
             },
             "role": "assistant",
             "suggestions": ["查看需求"],
@@ -255,4 +284,12 @@ def test_assistant_message_helpers_normalize_payloads_and_public_projection():
         ],
         "role": "assistant",
         "suggestions": ["查看需求"],
+        "tool_results": [
+            {
+                "intent": "delivery_progress",
+                "items": [],
+                "summary": {"requirements_total": 1},
+                "tool": "assistant.delivery_progress",
+            }
+        ],
     }
