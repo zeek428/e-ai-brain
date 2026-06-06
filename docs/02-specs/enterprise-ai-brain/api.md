@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.208 |
+| 功能版本 | v1.1.209 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.209 | 2026-06-07 | 需求 API 新增 `source` 来源字段与筛选排序；用户反馈新增转需求接口，转需求后同步反馈关联需求和 `linked` 状态 | Codex |
 | v1.1.208 | 2026-06-07 | Code Review 报告响应新增只读 `writeback_template`，提供可人工复制到 GitLab MR / GitHub PR 评论区的 Markdown 结论模板；系统仍不自动回写远端 | Codex |
 | v1.1.207 | 2026-06-07 | AI 助手聊天响应和历史消息新增 `tool_results`：后端在模型调用前按用户问题生成 delivery progress、pending reviews、code review、iteration、bugs、model gateway 等 read-model 工具结果，模型请求携带 `system_context.tool_results`，助手消息 metadata 持久化工具结果与引用链接 | Codex |
 | v1.1.206 | 2026-06-06 | GitLab MR / GitHub PR 预览响应新增 `permission_diagnostics`，快照响应新增 `previous_snapshot`、`diff_change_summary` 和 `snapshot_reused`，用于代码 Review 权限诊断、PR 刷新/重试和 diff 快照对比 | Codex |
@@ -252,7 +253,7 @@ API 面向 React 工作台，覆盖认证、业务大脑、AI 助手、产品上
 
 DB-first 迁移补充：`app_state_snapshots` 仅作为历史迁移表保留，当前 PostgreSQL 运行时启动恢复只读取结构表，不再从 app_state JSONB 快照恢复业务集合；手动 `PersistentMemoryStore.persist()` 也不再写入 app_state JSONB 快照。
 
-需求列表 DB-first 补充：`GET /api/requirements` 属于管理主列表，PostgreSQL 运行时必须通过需求台账 SQL read model 完成 `priority/product/product_id/status/title/version/version_id` 筛选、`created_at/id/priority/product_code/product_name/status/title/updated_at/version_code/version_name` 排序和 `page/page_size` 分页；不得为列表页先加载 task workflow source rows 再由接口层本地过滤或切片。需求详情、需求全链路、任务运行态、Review、回写和导出仍可读取 task workflow source rows 聚合上下文。
+需求列表 DB-first 补充：`GET /api/requirements` 属于管理主列表，PostgreSQL 运行时必须通过需求台账 SQL read model 完成 `priority/product/product_id/source/status/title/version/version_id` 筛选、`created_at/id/priority/product_code/product_name/source/status/title/updated_at/version_code/version_name` 排序和 `page/page_size` 分页；不得为列表页先加载 task workflow source rows 再由接口层本地过滤或切片。需求详情、需求全链路、任务运行态、Review、回写和导出仍可读取 task workflow source rows 聚合上下文。
 
 Bug 列表 DB-first 补充：`GET /api/bugs` 属于管理主列表，PostgreSQL 运行时必须通过 Bug SQL read model 完成 `module/product_id/severity/source/status/title/version/version_id` 筛选、`assignee/created_at/id/module_code/severity/source/status/title/updated_at/version_code/version_name` 排序和 `page/page_size` 分页；不得为列表页先加载全部 Bug 记录再由接口层本地过滤、排序或切片。
 
@@ -489,6 +490,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Insights | GET | `/api/insights/user-feedback` | 查询用户反馈列表。 |
 | Insights | POST | `/api/insights/user-feedback` | 登记真实用户反馈。 |
 | Insights | PATCH | `/api/insights/user-feedback/{feedback_id}` | 更新用户反馈状态和处理信息。 |
+| Insights | POST | `/api/insights/user-feedback/{feedback_id}/convert-requirement` | 将用户反馈转为正式需求，并同步反馈状态为 `linked`。 |
 | Planning | GET | `/api/planning/iteration-suggestions` | 查询 AI 迭代规划建议。 |
 | Planning | POST | `/api/planning/iteration-suggestions` | 基于真实反馈和 Bug 证据生成 AI 迭代规划建议。 |
 | Planning | POST | `/api/planning/iteration-suggestions/{suggestion_id}/decide` | 确认、修改后采纳或驳回迭代规划建议。 |
@@ -1132,6 +1134,7 @@ POST /api/requirements
 {
   "title": "支持企业知识库导入 Markdown",
   "priority": "P1",
+  "source": "business_department",
   "input": {
     "background": "团队知识散落在 Markdown 文档中",
     "business_goal": "导入后可被研发大脑检索引用",
@@ -1148,6 +1151,7 @@ POST /api/requirements
 
 - 新增后状态为 `submitted`。
 - 需求支持 `draft | submitted | approved | planned | designing | ready_for_dev | developing | code_reviewing | testing | ready_for_release | released | accepted | rejected | deferred | cancelled | closed` 生命周期；历史 `pending_approval` 和 `task_created` 分别兼容为 `submitted` 和 `designing`。
+- `source` 表示需求来源，允许 `business_department | product_planning | user_feedback | internal_research | other`，默认 `business_department`；列表支持按 `source` 筛选和排序。
 - `input.product_id` 必填且必须指向启用产品；`input.version_id` 可选，填写时必须指向同产品 `planning` 或 `active` 迭代版本。
 - 审批通过调用 `POST /api/requirements/{requirement_id}/approve`。
 - 审批通过但未选择迭代版本时进入 `approved` 需求池；已选择或后续补充有效迭代版本时进入 `planned`。
@@ -2531,6 +2535,7 @@ POST /api/insights/usage-metrics
 GET /api/insights/user-feedback?product_id=product_001&module_code=knowledge&status=open&page=1&page_size=20
 POST /api/insights/user-feedback
 PATCH /api/insights/user-feedback/{feedback_id}
+POST /api/insights/user-feedback/{feedback_id}/convert-requirement
 ```
 
 登记请求体：
@@ -2559,6 +2564,22 @@ GET /api/insights/items?category=用户反馈&summary=迭代版本&status=open&p
 该接口面向用户洞察主列表聚合用户使用指标、用户反馈和 AI 迭代规划建议，返回统一行字段 `category`、`summary`、`owner`、`status`、`updated_at`、`product_id`、`version_id`、`module_code`、`feature_code`，并保留 `feedback_type`、`confidence_level`、`planning_cycle`、`priority` 和 `converted_requirement_id` 等上下文。支持 `category` 精确筛选，`summary` 文本筛选，`status` 精确筛选，`page/page_size` 服务端分页，`sort_by` 支持 `category/id/owner/status/summary/updated_at`，`sort_order` 支持 `asc/desc`。PostgreSQL 运行时必须通过 repository SQL read model 聚合查询三类来源，并在 SQL 层完成筛选、排序和分页；MemoryStore 仅保留为测试 helper fallback。前端用户洞察主列表必须调用该接口，不再并发拉取使用指标、反馈和迭代建议三个原始接口后本地拼装、排序或分页；登记、处理和决策仍使用对应原始写接口。
 
 反馈状态支持：`open | triaged | linked | resolved | archived`。`POST /api/insights/user-feedback` 允许任意已登录用户登记真实反馈；`PATCH /api/insights/user-feedback/{feedback_id}` 仅允许 `product_owner`、`rd_owner` 或 `admin` 更新状态、标签、情绪、评分和处理备注；GET 支持按 `product_id`、`module_code`、`feature_code`、`status` 和 `created_by` 筛选。反馈写入 `user_feedback` 结构表，并记录 `user_feedback.created` / `user_feedback.updated` 审计事件。
+
+反馈转需求请求体：
+
+```json
+{
+  "product_id": "product_001",
+  "version_id": "version_001",
+  "module_code": "knowledge",
+  "title": "提升知识检索相关性",
+  "content": "用户反馈知识检索结果经常找不到最近方案，需要优化召回和排序。",
+  "priority": "P1",
+  "triage_note": "已确认纳入需求池"
+}
+```
+
+`POST /api/insights/user-feedback/{feedback_id}/convert-requirement` 仅允许 `product_owner`、`rd_owner` 或 `admin` 操作；`product_id` 必须指向 active 产品，`version_id` 可为空但填写时必须属于同产品，`module_code` 如填写必须属于同产品。接口在同一事务内创建 `requirements` 记录、写入 `source=user_feedback`、更新反馈 `product_id/related_requirement_id/status=linked/triage_note`，并记录 `requirement.created` 与 `user_feedback.linked_requirement` 审计事件。已关联需求的反馈重复转需求返回 409。
 
 迭代规划建议查询和生成：
 

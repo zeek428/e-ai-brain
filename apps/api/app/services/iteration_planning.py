@@ -203,6 +203,7 @@ def create_iteration_requirement(
         "module_code": suggestion["module_codes"][0] if suggestion["module_codes"] else None,
         "priority": suggestion["priority"],
         "product_id": suggestion["product_id"],
+        "source": "product_planning",
         "status": "submitted",
         "task_ids": [],
         "title": title,

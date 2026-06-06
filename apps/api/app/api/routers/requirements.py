@@ -42,6 +42,7 @@ class RequirementRequest(BaseModel):
     module_code: str | None = None
     content: str
     priority: str = "P1"
+    source: str = "business_department"
 
 
 class RequirementPatchRequest(BaseModel):
@@ -51,6 +52,7 @@ class RequirementPatchRequest(BaseModel):
     module_code: str | None = None
     content: str | None = None
     priority: str | None = None
+    source: str | None = None
 
 
 class RequirementBatchScheduleRequest(BaseModel):
@@ -144,6 +146,7 @@ def list_requirements(
     priority: str | None = None,
     product_id: str | None = None,
     product: str | None = None,
+    source: str | None = None,
     status: str | None = None,
     title: str | None = None,
     version: str | None = None,
@@ -162,6 +165,7 @@ def list_requirements(
         priority=priority,
         product=product,
         product_id=product_id,
+        source=source,
         sort_by=sort_by,
         sort_order=sort_order,
         started_at=started_at if isinstance(started_at, float) else perf_counter(),

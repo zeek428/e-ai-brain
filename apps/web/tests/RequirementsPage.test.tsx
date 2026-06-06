@@ -28,7 +28,7 @@ describe('RequirementsPage', () => {
       const path = String(input);
       const method = init?.method ?? 'GET';
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (path === '/api/products?active_only=true') {
+      if (path.startsWith('/api/products?active_only=true')) {
         return jsonResponse({
           data: {
             items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
@@ -192,7 +192,7 @@ describe('RequirementsPage', () => {
 
     await screen.findByText('归集需求一');
     expect(screen.getByRole('table')).toHaveAttribute('data-table-layout', 'fixed');
-    expect(screen.getByRole('table')).toHaveAttribute('data-table-scroll-x', '1600');
+    expect(screen.getByRole('table')).toHaveAttribute('data-table-scroll-x', '1720');
     expect(screen.getByRole('columnheader', { name: '需求标题' })).toHaveAttribute(
       'data-width',
       '260',
@@ -483,7 +483,7 @@ describe('RequirementsPage', () => {
       const path = String(input);
       const method = init?.method ?? 'GET';
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (path === '/api/products?active_only=true') {
+      if (path.startsWith('/api/products?active_only=true')) {
         return jsonResponse({
           data: {
             items: [{ code: 'AI-BRAIN', id: 'product_ai_brain', name: 'AI Brain', status: 'active' }],

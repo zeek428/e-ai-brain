@@ -59,6 +59,7 @@ type RequirementFormValues = {
   module_code?: string;
   priority: RequirementRecord['priority'];
   product_id: string;
+  source: string;
   title: string;
   version_id?: string;
 };
@@ -118,10 +119,24 @@ const requirementSortFieldMap: Record<string, string> = {
   id: 'id',
   priority: 'priority',
   product: 'product_name',
+  source: 'source',
   status: 'status',
   title: 'title',
   versionName: 'version_name',
 };
+
+const requirementSourceOptions = [
+  { label: '业务部门', value: 'business_department' },
+  { label: '产品规划', value: 'product_planning' },
+  { label: '用户反馈', value: 'user_feedback' },
+  { label: '内部调研', value: 'internal_research' },
+  { label: '其他', value: 'other' },
+];
+
+const requirementSourceLabels = requirementSourceOptions.reduce<Record<string, string>>(
+  (labels, option) => ({ ...labels, [option.value]: option.label }),
+  {},
+);
 
 function normalizeFilterText(value: unknown) {
   return String(value ?? '').trim() || undefined;
@@ -133,6 +148,7 @@ function buildRequirementListQuery(query: ManagementListQuery): RequirementListQ
     pageSize: query.pageSize,
     priority: normalizeFilterText(query.filters.priority),
     product: normalizeFilterText(query.filters.product),
+    source: normalizeFilterText(query.filters.source),
     sortField: query.sortField ? requirementSortFieldMap[query.sortField] ?? query.sortField : undefined,
     sortOrder: query.sortOrder,
     status: normalizeFilterText(query.filters.status),
@@ -301,6 +317,7 @@ export default function RequirementsPage() {
     form.setFieldsValue({
       priority: 'P1',
       product_id: firstProduct?.id,
+      source: 'business_department',
       version_id: undefined,
     });
     setIsModalOpen(true);
@@ -326,6 +343,7 @@ export default function RequirementsPage() {
       module_code: row.moduleCode,
       priority: row.priority,
       product_id: row.productId ?? row.product,
+      source: row.source ?? 'business_department',
       title: row.title,
       version_id: row.versionId,
     });
@@ -339,6 +357,7 @@ export default function RequirementsPage() {
       module_code: trimText(values.module_code),
       priority: values.priority,
       product_id: values.product_id.trim(),
+      source: values.source,
       title: values.title.trim(),
       ...(trimText(values.version_id) ? { version_id: trimText(values.version_id) } : {}),
     };
@@ -740,6 +759,13 @@ export default function RequirementsPage() {
         width: 88,
       },
       {
+        dataIndex: 'source',
+        sorter: true,
+        title: '需求来源',
+        render: (_, row) => requirementSourceLabels[row.source ?? 'business_department'] ?? row.source ?? '-',
+        width: 120,
+      },
+      {
         dataIndex: 'status',
         sorter: true,
         title: '状态',
@@ -875,6 +901,12 @@ export default function RequirementsPage() {
           { label: '所属产品', name: 'product', type: 'text' },
           { label: '迭代版本', name: 'versionName', type: 'text' },
           {
+            label: '需求来源',
+            name: 'source',
+            options: requirementSourceOptions,
+            type: 'select',
+          },
+          {
             label: '状态',
             name: 'status',
             options: [
@@ -928,7 +960,7 @@ export default function RequirementsPage() {
           selectedRowKeys,
         }}
         tableLayout="fixed"
-        tableScroll={{ x: 1600 }}
+        tableScroll={{ x: 1720 }}
         tableTitle="需求列表"
         title="需求管理"
         toolbarActions={toolbarActions}
@@ -1115,6 +1147,9 @@ export default function RequirementsPage() {
           </Form.Item>
           <Form.Item label="模块编码" name="module_code">
             <Input />
+          </Form.Item>
+          <Form.Item label="需求来源" name="source" rules={[{ required: true, message: '请选择需求来源' }]}>
+            <Select options={requirementSourceOptions} />
           </Form.Item>
           <Form.Item label="优先级" name="priority" rules={[{ required: true, message: '请选择优先级' }]}>
             <Select

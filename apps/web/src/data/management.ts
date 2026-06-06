@@ -78,6 +78,7 @@ export type RequirementRecord = {
   priority: 'P0' | 'P1' | 'P2';
   product: string;
   productId?: string;
+  source?: string;
   status:
     | 'accepted'
     | 'approved'

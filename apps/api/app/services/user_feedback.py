@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.api.deps import api_error, require_roles
+from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.user_insights import (
     ensure_enum,
     ensure_non_blank,
@@ -14,10 +15,12 @@ from app.services.user_insights import (
     user_insight_write_store,
     uses_repository_context,
 )
+from app.services.version_status import validate_requirement_version
 
 USER_FEEDBACK_TYPES = {"bug", "complaint", "improvement", "praise", "question"}
 USER_FEEDBACK_SENTIMENTS = {"negative", "neutral", "positive"}
 USER_FEEDBACK_STATUSES = {"archived", "linked", "open", "resolved", "triaged"}
+REQUIREMENT_PRIORITIES = {"P0", "P1", "P2"}
 
 
 def validate_user_feedback_enums(
@@ -211,3 +214,104 @@ def patch_user_feedback_response(
         audit_event=audit_event,
     )
     return feedback
+
+
+def save_user_feedback_requirement_conversion(
+    current_store: Any,
+    *,
+    audit_events: list[dict[str, Any]],
+    feedback: dict[str, Any],
+    requirement: dict[str, Any],
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_conversion = getattr(repository, "save_user_feedback_requirement_conversion", None)
+    if callable(save_conversion):
+        save_conversion(
+            audit_events=audit_events,
+            feedback=feedback,
+            requirement=requirement,
+        )
+
+
+def convert_user_feedback_to_requirement_response(
+    *,
+    current_store: Any,
+    feedback_id: str,
+    payload: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_user_feedback_triage_role(user)
+    current_store = user_insight_write_store(current_store)
+    feedback = current_store.user_feedback.get(feedback_id)
+    if feedback is None:
+        raise api_error(404, "NOT_FOUND", "User feedback not found")
+    if feedback.get("related_requirement_id"):
+        raise api_error(409, "RESOURCE_IN_USE", "User feedback already linked to requirement")
+
+    product_id = payload.product_id or feedback["product_id"]
+    if payload.priority not in REQUIREMENT_PRIORITIES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported requirement priority")
+    validate_user_feedback_context(
+        current_store,
+        product_id=product_id,
+        module_code=payload.module_code or feedback.get("module_code"),
+    )
+    validate_requirement_version(
+        current_store,
+        product_id=product_id,
+        version_id=payload.version_id,
+    )
+    title = ensure_non_blank(payload.title, "title")
+    content = ensure_non_blank(payload.content or feedback["content"], "content")
+    now = datetime.now(UTC).isoformat()
+    requirement = {
+        "assignee": user["id"],
+        "brain_app_id": DEFAULT_BRAIN_APP_ID,
+        "content": content,
+        "created_at": now,
+        "created_by": user["id"],
+        "id": current_store.new_id("requirement"),
+        "module_code": payload.module_code or feedback.get("module_code"),
+        "priority": payload.priority,
+        "product_id": product_id,
+        "source": "user_feedback",
+        "status": "submitted",
+        "task_ids": [],
+        "title": title,
+        "updated_at": now,
+        "version_id": payload.version_id,
+    }
+    feedback = {
+        **feedback,
+        "product_id": product_id,
+        "related_requirement_id": requirement["id"],
+        "status": "linked",
+        "triage_note": payload.triage_note or feedback.get("triage_note"),
+        "updated_at": now,
+    }
+    if not uses_repository_context(current_store):
+        current_store.requirements[requirement["id"]] = requirement
+        current_store.user_feedback[feedback_id] = feedback
+    requirement_audit_event = record_audit_event(
+        current_store,
+        event_type="requirement.created",
+        actor_id=user["id"],
+        subject_type="requirement",
+        subject_id=requirement["id"],
+        payload={"feedback_id": feedback_id, "source": "user_feedback"},
+    )
+    feedback_audit_event = record_audit_event(
+        current_store,
+        event_type="user_feedback.linked_requirement",
+        actor_id=user["id"],
+        subject_type="user_feedback",
+        subject_id=feedback_id,
+        payload={"requirement_id": requirement["id"], "status": feedback["status"]},
+    )
+    save_user_feedback_requirement_conversion(
+        current_store,
+        audit_events=[requirement_audit_event, feedback_audit_event],
+        feedback=feedback,
+        requirement=requirement,
+    )
+    return {"feedback": feedback, "requirement": requirement}

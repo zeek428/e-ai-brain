@@ -13,6 +13,14 @@ from app.core.listing import (
 from app.services.task_workflow_context import task_workflow_read_store
 from app.services.version_status import canonical_requirement_status
 
+REQUIREMENT_SOURCE_VALUES = {
+    "business_department",
+    "internal_research",
+    "other",
+    "product_planning",
+    "user_feedback",
+}
+
 REQUIREMENT_SORT_FIELDS = {
     "assignee",
     "created_at",
@@ -20,6 +28,7 @@ REQUIREMENT_SORT_FIELDS = {
     "priority",
     "product_code",
     "product_name",
+    "source",
     "status",
     "title",
     "updated_at",
@@ -62,6 +71,7 @@ def list_requirements_response(
     priority: str | None,
     product: str | None,
     product_id: str | None,
+    source: str | None,
     sort_by: str | None,
     sort_order: str,
     started_at: float | None,
@@ -72,6 +82,7 @@ def list_requirements_response(
     version_id: str | None,
 ) -> dict[str, Any]:
     ensure_list_enum(priority, {"P0", "P1", "P2"}, "requirement priority")
+    ensure_list_enum(source, REQUIREMENT_SOURCE_VALUES, "requirement source")
     ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
     resolved_sort_by = sort_by or "created_at"
     if resolved_sort_by not in REQUIREMENT_SORT_FIELDS:
@@ -81,6 +92,7 @@ def list_requirements_response(
         "priority": priority,
         "product": product,
         "product_id": product_id,
+        "source": source,
         "status": resolved_status,
         "title": title,
         "version": version,
@@ -135,6 +147,8 @@ def list_requirements_response(
         items = [item for item in items if item.get("version_id") == version_id]
     if priority:
         items = [item for item in items if item.get("priority") == priority]
+    if source:
+        items = [item for item in items if item.get("source") == source]
     items = [item for item in items if list_text_matches(item, title, ("title", "id"))]
     items = [
         item

@@ -280,6 +280,7 @@ type RemoteListQuery = {
 export type RequirementListQuery = RemoteListQuery & {
   priority?: string;
   product?: string;
+  source?: string;
   status?: string;
   title?: string;
   version?: string;
@@ -529,6 +530,16 @@ export type UserFeedbackPatchPayload = {
   status?: string;
   tags?: string[];
   triage_note?: string;
+};
+
+export type UserFeedbackConvertRequirementPayload = {
+  content?: string;
+  module_code?: string;
+  priority?: string;
+  product_id?: string;
+  title: string;
+  triage_note?: string;
+  version_id?: string;
 };
 
 export type UserUsageMetricCreatePayload = {
@@ -1052,6 +1063,7 @@ export type RequirementMutationPayload = {
   module_code?: string;
   priority?: string;
   product_id?: string;
+  source?: string;
   title?: string;
   version_id?: string | null;
 };
@@ -1340,6 +1352,7 @@ type RequirementListItem = {
   product_code?: string;
   product_id: string;
   product_name?: string;
+  source?: string;
   status?: string;
   title: string;
   updated_at?: string;
@@ -2762,10 +2775,14 @@ export async function deleteProductGitRepository(repositoryId: string) {
 export async function fetchProductContextOptions(): Promise<ProductContextOption[]> {
   const token = requireAccessToken();
   const [products, versions] = await Promise.all([
-    apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', { token }),
-    apiRequest<ListResponse<ProductVersionListItem>>('/api/product-versions?active_only=true', {
-      token,
-    }),
+    apiRequest<ListResponse<ProductListItem>>(
+      `/api/products?active_only=true&page_size=${PRODUCT_CONTEXT_PAGE_SIZE}`,
+      { token },
+    ),
+    apiRequest<ListResponse<ProductVersionListItem>>(
+      `/api/product-versions?active_only=true&page_size=${VERSION_CONTEXT_PAGE_SIZE}`,
+      { token },
+    ),
   ]);
   return mapProductContexts(products.items, versions.items);
 }
@@ -2788,8 +2805,14 @@ export async function fetchBugProductContextOptions(): Promise<ProductContextOpt
 export async function fetchRequirementProductContextOptions(): Promise<ProductContextOption[]> {
   const token = requireAccessToken();
   const [products, versions] = await Promise.all([
-    apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', { token }),
-    apiRequest<ListResponse<ProductVersionListItem>>('/api/product-versions', { token }),
+    apiRequest<ListResponse<ProductListItem>>(
+      `/api/products?active_only=true&page_size=${PRODUCT_CONTEXT_PAGE_SIZE}`,
+      { token },
+    ),
+    apiRequest<ListResponse<ProductVersionListItem>>(
+      `/api/product-versions?page_size=${VERSION_CONTEXT_PAGE_SIZE}`,
+      { token },
+    ),
   ]);
   return mapProductContexts(
     products.items,
@@ -3052,6 +3075,7 @@ function mapRequirementRecord(requirement: RequirementListItem): RequirementReco
     priority: normalizePriority(requirement.priority),
     product: requirement.product_code ?? requirement.product_name ?? requirement.product_id,
     productId: requirement.product_id,
+    source: requirement.source ?? 'business_department',
     status: normalizeRequirementStatus(requirement.status),
     title: requirement.title,
     createdAt: formatListDate(requirement.created_at),
@@ -3175,6 +3199,7 @@ export async function fetchManagementRequirementList(
   const params = new URLSearchParams();
   appendQueryParam(params, 'priority', query.priority);
   appendQueryParam(params, 'product', query.product);
+  appendQueryParam(params, 'source', query.source);
   appendQueryParam(params, 'status', query.status);
   appendQueryParam(params, 'title', query.title);
   appendQueryParam(params, 'version', query.version);
@@ -4735,7 +4760,7 @@ function mapUserInsights(category: string, items: FlexibleListItem[]): UserInsig
     return {
       category,
       confidenceLevel: formatUnknownValue(item.confidence_level),
-      convertedRequirementId: formatUnknownValue(item.converted_requirement_id),
+      convertedRequirementId: formatUnknownValue(item.converted_requirement_id ?? item.related_requirement_id),
       featureCode: formatUnknownValue(item.feature_code),
       feedbackType: formatUnknownValue(item.feedback_type),
       id: formatUnknownValue(item.id ?? `${category}-${index}`),
@@ -4770,7 +4795,7 @@ function mapUserInsightRecord(item: FlexibleListItem, index: number): UserInsigh
   return {
     category: formatUnknownValue(item.category),
     confidenceLevel: formatUnknownValue(item.confidence_level),
-    convertedRequirementId: formatUnknownValue(item.converted_requirement_id),
+    convertedRequirementId: formatUnknownValue(item.converted_requirement_id ?? item.related_requirement_id),
     featureCode: formatUnknownValue(item.feature_code),
     feedbackType: formatUnknownValue(item.feedback_type),
     id: formatUnknownValue(item.id ?? `user-insight-${index}`),
@@ -4875,6 +4900,21 @@ export async function updateUserFeedback(
     method: 'PATCH',
     token,
   });
+}
+
+export async function convertUserFeedbackToRequirement(
+  feedbackId: string,
+  payload: UserFeedbackConvertRequirementPayload,
+): Promise<{ feedback: FlexibleListItem; requirement: RequirementListItem }> {
+  const token = requireAccessToken();
+  return apiRequest<{ feedback: FlexibleListItem; requirement: RequirementListItem }>(
+    `/api/insights/user-feedback/${feedbackId}/convert-requirement`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 export async function createIterationSuggestions(

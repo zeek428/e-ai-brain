@@ -39,6 +39,13 @@ REQUIREMENT_STATUS_AFTER_TASK_CREATED = {
     "release_readiness": "ready_for_release",
     "technical_solution": "ready_for_dev",
 }
+REQUIREMENT_SOURCES = {
+    "business_department",
+    "internal_research",
+    "other",
+    "product_planning",
+    "user_feedback",
+}
 
 __all__ = [
     "REQUIREMENT_BATCH_SCHEDULABLE_STATUSES",
@@ -236,6 +243,8 @@ def create_requirement_result(
         for module in current_store.product_modules.values()
     ):
         raise api_error(404, "NOT_FOUND", "Product module not found")
+    if payload.source not in REQUIREMENT_SOURCES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported requirement source")
 
     requirement_id = current_store.new_id("requirement")
     requirement = {
@@ -248,6 +257,7 @@ def create_requirement_result(
         "module_code": payload.module_code,
         "priority": payload.priority,
         "product_id": payload.product_id,
+        "source": payload.source,
         "status": "submitted",
         "task_ids": [],
         "title": title,
@@ -286,6 +296,8 @@ def patch_requirement_result(
         updates["title"] = ensure_non_blank(updates["title"], "title")
     if "content" in updates:
         updates["content"] = ensure_non_blank(updates["content"], "content")
+    if "source" in updates and updates["source"] not in REQUIREMENT_SOURCES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported requirement source")
 
     next_product_id = updates.get("product_id", requirement["product_id"])
     next_version_id = updates.get("version_id", requirement["version_id"])

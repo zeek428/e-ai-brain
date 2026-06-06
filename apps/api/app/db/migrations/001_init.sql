@@ -365,6 +365,7 @@ CREATE TABLE IF NOT EXISTS requirements (
   module_code text,
   description text NOT NULL,
   priority text NOT NULL DEFAULT 'P1',
+  source text NOT NULL DEFAULT 'business_department',
   status text NOT NULL DEFAULT 'submitted',
   assignee text,
   created_by text NOT NULL,
@@ -635,6 +636,8 @@ CREATE INDEX IF NOT EXISTS idx_product_git_repositories_product_status
 CREATE INDEX IF NOT EXISTS idx_requirements_status ON requirements (status);
 CREATE INDEX IF NOT EXISTS idx_requirements_product_id ON requirements (product_id);
 CREATE INDEX IF NOT EXISTS idx_requirements_created_at ON requirements (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_requirements_source_created
+  ON requirements (source, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_tasks_status ON ai_tasks (status);
 CREATE INDEX IF NOT EXISTS idx_ai_tasks_requirement ON ai_tasks (requirement_id);
 CREATE INDEX IF NOT EXISTS idx_ai_tasks_product_status ON ai_tasks (product_id, status);

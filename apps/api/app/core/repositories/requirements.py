@@ -66,12 +66,12 @@ class RequirementReadRepository:
                 """
                 INSERT INTO requirements (
                   id, brain_app_id, title, product_id, version_id, module_code,
-                  description, priority,
+                  description, priority, source,
                   status, created_by, assignee, approval_comment, rejection_reason, task_ids,
                   created_at, updated_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -82,6 +82,7 @@ class RequirementReadRepository:
                   module_code = EXCLUDED.module_code,
                   description = EXCLUDED.description,
                   priority = EXCLUDED.priority,
+                  source = EXCLUDED.source,
                   status = EXCLUDED.status,
                   created_by = EXCLUDED.created_by,
                   assignee = EXCLUDED.assignee,
@@ -99,6 +100,7 @@ class RequirementReadRepository:
                     requirement.get("module_code"),
                     requirement["content"],
                     requirement.get("priority", "P1"),
+                    requirement.get("source", "business_department"),
                     requirement.get("status", "submitted"),
                     requirement["created_by"],
                     requirement.get("assignee"),
@@ -118,6 +120,7 @@ class RequirementReadRepository:
         product_id: str | None = None,
         status: str | None = None,
         title: str | None = None,
+        source: str | None = None,
         version: str | None = None,
         version_id: str | None = None,
     ) -> tuple[str, list[Any]]:
@@ -148,6 +151,9 @@ class RequirementReadRepository:
             title_pattern = f"%{title}%"
             where_clauses.append("(r.title ILIKE %s OR r.id ILIKE %s)")
             params.extend([title_pattern, title_pattern])
+        if source is not None:
+            where_clauses.append("r.source = %s")
+            params.append(source)
         if version is not None:
             version_pattern = f"%{version}%"
             where_clauses.append("(v.code ILIKE %s OR v.name ILIKE %s OR r.version_id ILIKE %s)")
@@ -166,6 +172,7 @@ class RequirementReadRepository:
         product_id: str | None = None,
         status: str | None = None,
         title: str | None = None,
+        source: str | None = None,
         version: str | None = None,
         version_id: str | None = None,
     ) -> int:
@@ -175,6 +182,7 @@ class RequirementReadRepository:
             product_id=product_id,
             status=status,
             title=title,
+            source=source,
             version=version,
             version_id=version_id,
         )
@@ -201,6 +209,7 @@ class RequirementReadRepository:
         product_id: str | None = None,
         status: str | None = None,
         title: str | None = None,
+        source: str | None = None,
         version: str | None = None,
         version_id: str | None = None,
         limit: int | None = None,
@@ -214,6 +223,7 @@ class RequirementReadRepository:
             product_id=product_id,
             status=status,
             title=title,
+            source=source,
             version=version,
             version_id=version_id,
         )
@@ -224,6 +234,7 @@ class RequirementReadRepository:
             "product_code": "p.code",
             "product_name": "p.name",
             "status": "r.status",
+            "source": "r.source",
             "assignee": "r.assignee",
             "title": "r.title",
             "updated_at": "COALESCE(r.updated_at, r.created_at)",
@@ -247,7 +258,7 @@ class RequirementReadRepository:
                            r.module_code, r.description, r.priority, r.status, r.created_by,
                            r.approval_comment, r.rejection_reason, r.task_ids,
                            r.created_at, r.updated_at, p.code, p.name, v.code, v.name,
-                           r.assignee
+                           r.assignee, r.source
                     FROM requirements r
                     JOIN products p ON p.id = r.product_id
                     LEFT JOIN product_versions v ON v.id = r.version_id
@@ -272,6 +283,7 @@ class RequirementReadRepository:
                         "product_id": row[3],
                         "product_name": row[16],
                         "status": row[8],
+                        "source": row[20] or "business_department",
                         "task_ids": list(row[12] or []),
                         "title": row[2],
                         "updated_at": row[14].isoformat() if row[14] else None,
@@ -292,7 +304,7 @@ class RequirementReadRepository:
             SELECT id, brain_app_id, title, product_id, version_id, module_code,
                    description, priority,
                    status, created_by, approval_comment, rejection_reason, task_ids,
-                   assignee,
+                   assignee, source,
                    created_at, updated_at
             FROM requirements
             ORDER BY created_at DESC, id
@@ -313,7 +325,7 @@ def _requirement_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
     return {
         "brain_app_id": row[1] or DEFAULT_BRAIN_APP_ID,
         "content": row[6],
-        "created_at": row[14].isoformat() if row[14] else None,
+        "created_at": row[15].isoformat() if row[15] else None,
         "created_by": row[9],
         "assignee": row[13],
         "id": row[0],
@@ -321,8 +333,9 @@ def _requirement_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
         "priority": row[7],
         "product_id": row[3],
         "status": row[8],
+        "source": row[14] or "business_department",
         "task_ids": list(row[12] or []),
         "title": row[2],
-        "updated_at": row[15].isoformat() if row[15] else None,
+        "updated_at": row[16].isoformat() if row[16] else None,
         "version_id": row[4],
     }

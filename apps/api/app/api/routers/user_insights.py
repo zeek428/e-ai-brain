@@ -14,6 +14,7 @@ from app.services.iteration_planning import (
     list_iteration_suggestions_response,
 )
 from app.services.user_feedback import (
+    convert_user_feedback_to_requirement_response,
     create_user_feedback_response,
     list_user_feedback_response,
     patch_user_feedback_response,
@@ -48,6 +49,16 @@ class UserFeedbackPatchRequest(BaseModel):
     satisfaction_score: int | None = None
     content: str | None = None
     tags: list[str] | None = None
+    triage_note: str | None = None
+
+
+class UserFeedbackConvertRequirementRequest(BaseModel):
+    title: str
+    content: str | None = None
+    product_id: str | None = None
+    version_id: str | None = None
+    module_code: str | None = None
+    priority: str = "P1"
     triage_note: str | None = None
 
 
@@ -194,6 +205,24 @@ def patch_user_feedback(
 ) -> dict[str, Any]:
     return envelope(
         patch_user_feedback_response(
+            current_store=store(request),
+            feedback_id=feedback_id,
+            payload=payload,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/insights/user-feedback/{feedback_id}/convert-requirement")
+def convert_user_feedback_to_requirement(
+    feedback_id: str,
+    payload: UserFeedbackConvertRequirementRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        convert_user_feedback_to_requirement_response(
             current_store=store(request),
             feedback_id=feedback_id,
             payload=payload,

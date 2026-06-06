@@ -181,6 +181,38 @@ def test_requirement_list_returns_product_and_iteration_version_projection():
     assert listed["version_name"] == version["name"]
 
 
+def test_requirement_source_is_persisted_and_filterable():
+    app.state.store.reset()
+    headers = auth_headers()
+    product, version = create_product_and_version(headers)
+
+    created = client.post(
+        "/api/requirements",
+        json={
+            "content": "产品规划产生的需求需要保留来源。",
+            "priority": "P1",
+            "product_id": product["id"],
+            "source": "product_planning",
+            "title": "来源字段需求",
+            "version_id": version["id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    assert created["source"] == "product_planning"
+
+    listed = client.get(
+        "/api/requirements?source=product_planning&sort_by=source",
+        headers=headers,
+    ).json()["data"]
+    assert listed["total"] == 1
+    assert listed["items"][0]["id"] == created["id"]
+    assert listed["items"][0]["source"] == "product_planning"
+
+    invalid = client.get("/api/requirements?source=unknown", headers=headers)
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
 def test_requirement_list_supports_server_pagination_sort_and_filters():
     app.state.store.reset()
     headers = auth_headers()

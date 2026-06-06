@@ -1,25 +1,19 @@
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Checkbox, Descriptions, Form, Input, Modal, Select, Space, Typography } from 'antd';
+import { Button, Descriptions, Form, Input, Modal, Select, Space, Typography, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { DateStringPicker } from '../../components/DateStringPicker';
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { ProductContextOption } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
-  createIterationSuggestions,
+  convertUserFeedbackToRequirement,
   createUserFeedback,
-  createUserUsageMetric,
-  decideIterationSuggestion,
   fetchProductContextOptions,
   fetchUserInsightList,
   updateUserFeedback,
-  type IterationSuggestionCreatePayload,
-  type IterationSuggestionDecisionPayload,
   type UserInsightListQuery,
   type UserFeedbackCreatePayload,
   type UserInsightRecord,
-  type UserUsageMetricCreatePayload,
 } from '../../services/aiBrain';
 
 type FeedbackFormValues = {
@@ -34,65 +28,14 @@ type TriageFormValues = {
   triageNote?: string;
 };
 
-type UsageMetricFormValues = {
-  activeUsers?: string;
-  avgDurationSeconds?: string;
-  bounceRate?: string;
-  conversionCount?: string;
-  conversionRate?: string;
-  errorCount?: string;
-  eventCount?: string;
-  featureCode: string;
+type ConvertRequirementFormValues = {
+  content?: string;
   moduleCode?: string;
+  priority: string;
   productId: string;
-  sourceChannel?: string;
-  userSegment?: string;
-  windowEnd: string;
-  windowStart: string;
-};
-
-function optionalNonNegativeNumberRule(label: string, max?: number) {
-  return {
-    validator: async (_: unknown, value?: string) => {
-      const trimmed = value?.trim();
-      if (!trimmed) {
-        return;
-      }
-      const parsed = Number(trimmed);
-      if (!Number.isFinite(parsed) || parsed < 0 || (max !== undefined && parsed > max)) {
-        throw new Error(`${label}请输入${max === 1 ? '0 到 1 之间的' : '非负'}数字`);
-      }
-    },
-  };
-}
-
-function optionalNonNegativeIntegerRule(label: string) {
-  return {
-    validator: async (_: unknown, value?: string) => {
-      const trimmed = value?.trim();
-      if (!trimmed) {
-        return;
-      }
-      const parsed = Number(trimmed);
-      if (!Number.isInteger(parsed) || parsed < 0) {
-        throw new Error(`${label}请输入非负整数`);
-      }
-    },
-  };
-}
-
-type SuggestionFormValues = {
-  planningCycle: string;
-  productId: string;
-  versionId: string;
-};
-
-type DecisionFormValues = {
-  comment?: string;
-  convertToRequirement?: boolean;
-  decision: string;
-  editedScope?: string;
-  editedTitle?: string;
+  title: string;
+  triageNote?: string;
+  versionId?: string;
 };
 
 const feedbackTypeOptions = [
@@ -109,12 +52,6 @@ const feedbackStatusOptions = [
   { label: '已关联', value: 'linked' },
   { label: '已解决', value: 'resolved' },
   { label: '已归档', value: 'archived' },
-];
-
-const iterationDecisionOptions = [
-  { label: '采纳', value: 'accepted' },
-  { label: '修改后采纳', value: 'edited_accepted' },
-  { label: '驳回', value: 'rejected' },
 ];
 
 const { Paragraph, Text } = Typography;
@@ -153,63 +90,12 @@ function buildFeedbackPayload(values: FeedbackFormValues): UserFeedbackCreatePay
   };
 }
 
-function buildSuggestionPayload(values: SuggestionFormValues): IterationSuggestionCreatePayload {
-  return {
-    constraints: { max_suggestions: 10 },
-    planning_cycle: values.planningCycle.trim(),
-    product_id: values.productId,
-    version_id: values.versionId,
-  };
-}
-
-function optionalNumber(value?: string) {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function numberOrZero(value?: string) {
-  return optionalNumber(value) ?? 0;
-}
-
-function buildUsageMetricPayload(values: UsageMetricFormValues): UserUsageMetricCreatePayload {
-  return {
-    active_users: numberOrZero(values.activeUsers),
-    avg_duration_seconds: optionalNumber(values.avgDurationSeconds),
-    bounce_rate: optionalNumber(values.bounceRate),
-    conversion_count: numberOrZero(values.conversionCount),
-    conversion_rate: optionalNumber(values.conversionRate),
-    error_count: numberOrZero(values.errorCount),
-    event_count: numberOrZero(values.eventCount),
-    feature_code: values.featureCode.trim(),
-    module_code: values.moduleCode?.trim() || undefined,
-    product_id: values.productId,
-    source_channel: values.sourceChannel?.trim() || 'manual_import',
-    user_segment: values.userSegment?.trim() || 'all',
-    window_end: values.windowEnd.trim(),
-    window_start: values.windowStart.trim(),
-  };
-}
-
-function buildDecisionPayload(values: DecisionFormValues): IterationSuggestionDecisionPayload {
-  const convertToRequirement = Boolean(values.convertToRequirement && values.decision !== 'rejected');
-  return {
-    comment: values.comment?.trim() || undefined,
-    convert_to_requirement: convertToRequirement,
-    decision: values.decision,
-    edited_scope: convertToRequirement ? values.editedScope?.trim() || undefined : undefined,
-    edited_title: convertToRequirement ? values.editedTitle?.trim() || undefined : undefined,
-  };
-}
-
 function statusColor(status: string) {
   if (
     status === 'accepted' ||
     status === 'archived' ||
     status === 'converted_to_requirement' ||
+    status === 'linked' ||
     status === 'resolved'
   ) {
     return 'green';
@@ -266,7 +152,7 @@ function versionOptionsFromContexts(productContexts: ProductContextOption[], pro
 }
 
 function useInsightColumns(
-  onDecide: (row: UserInsightRecord) => void,
+  onConvert: (row: UserInsightRecord) => void,
   onDetail: (row: UserInsightRecord) => void,
   onTriage: (row: UserInsightRecord) => void,
 ) {
@@ -324,18 +210,17 @@ function useInsightColumns(
             return (
               <Space size={0}>
                 {detailAction}
+                <Button
+                  disabled={row.status === 'linked'}
+                  key="convert"
+                  onClick={() => onConvert(row)}
+                  size="small"
+                  type="link"
+                >
+                  转需求
+                </Button>
                 <Button key="triage" onClick={() => onTriage(row)} size="small" type="link">
                   处理反馈
-                </Button>
-              </Space>
-            );
-          }
-          if (row.category === '迭代建议' && row.status === 'suggested') {
-            return (
-              <Space size={0}>
-                {detailAction}
-                <Button key="decide" onClick={() => onDecide(row)} size="small" type="link">
-                  确认建议
                 </Button>
               </Space>
             );
@@ -346,22 +231,19 @@ function useInsightColumns(
         width: 128,
       },
     ],
-    [onDecide, onDetail, onTriage],
+    [onConvert, onDetail, onTriage],
   );
 }
 
 export default function InsightsPage() {
+  const [convertTarget, setConvertTarget] = useState<UserInsightRecord | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [decisionTarget, setDecisionTarget] = useState<UserInsightRecord | null>(null);
   const [detailTarget, setDetailTarget] = useState<UserInsightRecord | null>(null);
-  const [suggestionOpen, setSuggestionOpen] = useState(false);
+  const [isConverting, setIsConverting] = useState(false);
   const [triageTarget, setTriageTarget] = useState<UserInsightRecord | null>(null);
-  const [usageOpen, setUsageOpen] = useState(false);
   const [createForm] = Form.useForm<FeedbackFormValues>();
-  const [decisionForm] = Form.useForm<DecisionFormValues>();
-  const [suggestionForm] = Form.useForm<SuggestionFormValues>();
+  const [convertForm] = Form.useForm<ConvertRequirementFormValues>();
   const [triageForm] = Form.useForm<TriageFormValues>();
-  const [usageForm] = Form.useForm<UsageMetricFormValues>();
   const productContexts = useProductContexts();
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
@@ -405,12 +287,10 @@ export default function InsightsPage() {
     }
   }, [listQuery]);
   const productOptions = useMemo(() => productOptionsFromContexts(productContexts), [productContexts]);
-  const suggestionProductId = Form.useWatch('productId', suggestionForm);
-  const decisionValue = Form.useWatch('decision', decisionForm);
-  const convertToRequirement = Form.useWatch('convertToRequirement', decisionForm);
+  const convertProductId = Form.useWatch('productId', convertForm);
   const versionOptions = useMemo(
-    () => versionOptionsFromContexts(productContexts, suggestionProductId),
-    [productContexts, suggestionProductId],
+    () => versionOptionsFromContexts(productContexts, convertProductId),
+    [convertProductId, productContexts],
   );
   useEffect(() => {
     let isCurrent = true;
@@ -443,13 +323,15 @@ export default function InsightsPage() {
   }, [listQuery]);
   const columns = useInsightColumns(
     (row) => {
-      setDecisionTarget(row);
-      decisionForm.setFieldsValue({
-        comment: undefined,
-        convertToRequirement: false,
-        decision: 'edited_accepted',
-        editedScope: undefined,
-        editedTitle: undefined,
+      setConvertTarget(row);
+      convertForm.setFieldsValue({
+        content: row.summary === '-' ? undefined : row.summary,
+        moduleCode: row.moduleCode === '-' ? undefined : row.moduleCode,
+        priority: 'P1',
+        productId: row.productId === '-' ? undefined : row.productId,
+        title: row.summary === '-' ? undefined : row.summary.slice(0, 80),
+        triageNote: undefined,
+        versionId: row.versionId === '-' ? undefined : row.versionId,
       });
     },
     (row) => setDetailTarget(row),
@@ -469,54 +351,11 @@ export default function InsightsPage() {
     createForm.setFieldValue('productId', productOptions[0]?.value);
   }, [createForm, createOpen, productOptions]);
 
-  useEffect(() => {
-    if (!usageOpen || productOptions.length !== 1 || usageForm.getFieldValue('productId')) {
-      return;
-    }
-    usageForm.setFieldValue('productId', productOptions[0]?.value);
-  }, [productOptions, usageForm, usageOpen]);
-
-  useEffect(() => {
-    if (!suggestionOpen || productOptions.length !== 1 || suggestionForm.getFieldValue('productId')) {
-      return;
-    }
-    suggestionForm.setFieldValue('productId', productOptions[0]?.value);
-  }, [productOptions, suggestionForm, suggestionOpen]);
-
-  useEffect(() => {
-    if (!suggestionOpen || versionOptions.length !== 1 || suggestionForm.getFieldValue('versionId')) {
-      return;
-    }
-    suggestionForm.setFieldValue('versionId', versionOptions[0]?.value);
-  }, [suggestionForm, suggestionOpen, versionOptions]);
-
-  useEffect(() => {
-    if (decisionValue === 'rejected' && decisionForm.getFieldValue('convertToRequirement')) {
-      decisionForm.setFieldValue('convertToRequirement', false);
-    }
-  }, [decisionForm, decisionValue]);
-
   const submitFeedback = async () => {
     const values = await createForm.validateFields();
     await createUserFeedback(buildFeedbackPayload(values));
     setCreateOpen(false);
     createForm.resetFields();
-    await reload();
-  };
-
-  const submitSuggestion = async () => {
-    const values = await suggestionForm.validateFields();
-    await createIterationSuggestions(buildSuggestionPayload(values));
-    setSuggestionOpen(false);
-    suggestionForm.resetFields();
-    await reload();
-  };
-
-  const submitUsageMetric = async () => {
-    const values = await usageForm.validateFields();
-    await createUserUsageMetric(buildUsageMetricPayload(values));
-    setUsageOpen(false);
-    usageForm.resetFields();
     await reload();
   };
 
@@ -534,15 +373,29 @@ export default function InsightsPage() {
     await reload();
   };
 
-  const submitDecision = async () => {
-    if (!decisionTarget) {
+  const submitConvertRequirement = async () => {
+    if (!convertTarget) {
       return;
     }
-    const values = await decisionForm.validateFields();
-    await decideIterationSuggestion(decisionTarget.id, buildDecisionPayload(values));
-    setDecisionTarget(null);
-    decisionForm.resetFields();
-    await reload();
+    const values = await convertForm.validateFields();
+    setIsConverting(true);
+    try {
+      const result = await convertUserFeedbackToRequirement(convertTarget.id, {
+        content: values.content?.trim() || undefined,
+        module_code: values.moduleCode?.trim() || undefined,
+        priority: values.priority,
+        product_id: values.productId,
+        title: values.title.trim(),
+        triage_note: values.triageNote?.trim() || undefined,
+        version_id: values.versionId,
+      });
+      message.success(`已转为需求：${result.requirement.id}`);
+      setConvertTarget(null);
+      convertForm.resetFields();
+      await reload();
+    } finally {
+      setIsConverting(false);
+    }
   };
 
   return (
@@ -581,14 +434,6 @@ export default function InsightsPage() {
         tableScroll={{ x: 994 }}
         tableTitle="用户洞察"
         title="用户洞察"
-        toolbarActions={[
-          <Button aria-label="登记使用指标" key="usage" onClick={() => setUsageOpen(true)}>
-            登记使用指标
-          </Button>,
-          <Button aria-label="生成迭代建议" key="suggestion" onClick={() => setSuggestionOpen(true)}>
-            生成迭代建议
-          </Button>,
-        ]}
       />
       <Modal
         footer={null}
@@ -622,84 +467,47 @@ export default function InsightsPage() {
         ) : null}
       </Modal>
       <Modal
+        confirmLoading={isConverting}
         destroyOnHidden
-        okText="保存"
-        okButtonProps={{ 'aria-label': '保存' }}
-        onCancel={() => setSuggestionOpen(false)}
-        onOk={() => void submitSuggestion()}
-        open={suggestionOpen}
-        title="生成迭代建议"
+        okText="转为需求"
+        okButtonProps={{ 'aria-label': '转为需求' }}
+        onCancel={() => setConvertTarget(null)}
+        onOk={() => void submitConvertRequirement()}
+        open={Boolean(convertTarget)}
+        title="用户反馈转需求"
       >
-        <Form<SuggestionFormValues> form={suggestionForm} layout="vertical">
-          <Form.Item label="所属产品" name="productId" rules={[{ required: true, message: '请选择所属产品' }]}>
-            <Select options={productOptions} />
-          </Form.Item>
-          <Form.Item label="目标版本" name="versionId" rules={[{ required: true, message: '请选择目标版本' }]}>
-            <Select options={versionOptions} />
-          </Form.Item>
-          <Form.Item label="规划周期" name="planningCycle" rules={[{ required: true, message: '请输入规划周期' }]}>
-            <Input />
-          </Form.Item>
-        </Form>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        okText="保存"
-        okButtonProps={{ 'aria-label': '保存' }}
-        onCancel={() => setUsageOpen(false)}
-        onOk={() => void submitUsageMetric()}
-        open={usageOpen}
-        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
-        title="登记使用指标"
-      >
-        <Form<UsageMetricFormValues>
-          form={usageForm}
-          initialValues={{ sourceChannel: 'manual_import', userSegment: 'all' }}
-          layout="vertical"
-        >
-          <Form.Item label="所属产品" name="productId" rules={[{ required: true, message: '请选择所属产品' }]}>
-            <Select options={productOptions} />
-          </Form.Item>
-          <Form.Item label="模块编码" name="moduleCode">
-            <Input />
-          </Form.Item>
-          <Form.Item label="功能编码" name="featureCode" rules={[{ required: true, message: '请输入功能编码' }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="用户分群" name="userSegment">
-            <Input />
-          </Form.Item>
-          <Form.Item label="窗口开始" name="windowStart" rules={[{ required: true, message: '请输入窗口开始时间' }]}>
-            <DateStringPicker mode="dateTime" placeholder="请选择窗口开始时间" />
-          </Form.Item>
-          <Form.Item label="窗口结束" name="windowEnd" rules={[{ required: true, message: '请输入窗口结束时间' }]}>
-            <DateStringPicker mode="dateTime" placeholder="请选择窗口结束时间" />
-          </Form.Item>
-          <Form.Item label="活跃用户" name="activeUsers" rules={[optionalNonNegativeIntegerRule('活跃用户')]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="事件次数" name="eventCount" rules={[optionalNonNegativeIntegerRule('事件次数')]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="转化次数" name="conversionCount" rules={[optionalNonNegativeIntegerRule('转化次数')]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="转化率" name="conversionRate" rules={[optionalNonNegativeNumberRule('转化率', 1)]}>
-            <Input placeholder="0.36" />
-          </Form.Item>
-          <Form.Item label="平均时长秒" name="avgDurationSeconds" rules={[optionalNonNegativeNumberRule('平均时长秒')]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="跳出率" name="bounceRate" rules={[optionalNonNegativeNumberRule('跳出率', 1)]}>
-            <Input placeholder="0.18" />
-          </Form.Item>
-          <Form.Item label="错误次数" name="errorCount" rules={[optionalNonNegativeIntegerRule('错误次数')]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="来源渠道" name="sourceChannel">
-            <Input />
-          </Form.Item>
-        </Form>
+        <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+          <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>{convertTarget?.summary}</Paragraph>
+          <Form<ConvertRequirementFormValues> form={convertForm} layout="vertical">
+            <Form.Item label="所属产品" name="productId" rules={[{ required: true, message: '请选择所属产品' }]}>
+              <Select optionFilterProp="label" options={productOptions} showSearch />
+            </Form.Item>
+            <Form.Item label="目标版本" name="versionId">
+              <Select allowClear optionFilterProp="label" options={versionOptions} placeholder="可留空" showSearch />
+            </Form.Item>
+            <Form.Item label="需求标题" name="title" rules={[{ required: true, message: '请输入需求标题' }]}>
+              <Input />
+            </Form.Item>
+            <Form.Item label="优先级" name="priority" rules={[{ required: true, message: '请选择优先级' }]}>
+              <Select
+                options={[
+                  { label: 'P0', value: 'P0' },
+                  { label: 'P1', value: 'P1' },
+                  { label: 'P2', value: 'P2' },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="模块编码" name="moduleCode">
+              <Input />
+            </Form.Item>
+            <Form.Item label="需求内容" name="content">
+              <Input.TextArea rows={4} />
+            </Form.Item>
+            <Form.Item label="处理备注" name="triageNote">
+              <Input.TextArea rows={2} />
+            </Form.Item>
+          </Form>
+        </Space>
       </Modal>
       <Modal
         destroyOnHidden
@@ -744,40 +552,6 @@ export default function InsightsPage() {
             <Form.Item label="处理备注" name="triageNote">
               <Input.TextArea rows={3} />
             </Form.Item>
-          </Form>
-        </Space>
-      </Modal>
-      <Modal
-        destroyOnHidden
-        okText="保存"
-        okButtonProps={{ 'aria-label': '保存' }}
-        onCancel={() => setDecisionTarget(null)}
-        onOk={() => void submitDecision()}
-        open={Boolean(decisionTarget)}
-        title="确认迭代建议"
-      >
-        <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
-          <div>{decisionTarget?.summary}</div>
-          <Form<DecisionFormValues> form={decisionForm} layout="vertical">
-            <Form.Item label="确认结论" name="decision" rules={[{ required: true, message: '请选择确认结论' }]}>
-              <Select options={iterationDecisionOptions} />
-            </Form.Item>
-            <Form.Item label="确认备注" name="comment">
-              <Input.TextArea rows={3} />
-            </Form.Item>
-            <Form.Item name="convertToRequirement" valuePropName="checked">
-              <Checkbox disabled={decisionValue === 'rejected'}>转为正式需求</Checkbox>
-            </Form.Item>
-            {convertToRequirement ? (
-              <>
-                <Form.Item label="需求标题" name="editedTitle">
-                  <Input />
-                </Form.Item>
-                <Form.Item label="需求范围" name="editedScope">
-                  <Input.TextArea rows={3} />
-                </Form.Item>
-              </>
-            ) : null}
           </Form>
         </Space>
       </Modal>

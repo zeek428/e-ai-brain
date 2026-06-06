@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { message, Modal, notification } from 'antd';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -32,7 +32,7 @@ describe('operational insights pages', () => {
     });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
-      if (path === '/api/products?active_only=true') {
+      if (path.startsWith('/api/products?active_only=true')) {
         return jsonResponse({
           data: {
             items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
@@ -40,7 +40,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (path.startsWith('/api/product-versions?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/insights/user-feedback' && init?.method === 'POST') {
@@ -62,6 +62,28 @@ describe('operational insights pages', () => {
             product_id: 'product_api',
             status: 'triaged',
             triage_note: '已纳入优化池',
+          },
+        });
+      }
+      if (
+        input === '/api/insights/user-feedback/feedback_existing/convert-requirement' &&
+        init?.method === 'POST'
+      ) {
+        return jsonResponse({
+          data: {
+            feedback: {
+              content: '已有反馈内容',
+              id: 'feedback_existing',
+              product_id: 'product_api',
+              related_requirement_id: 'requirement_from_feedback',
+              status: 'linked',
+            },
+            requirement: {
+              id: 'requirement_from_feedback',
+              product_id: 'product_api',
+              source: 'user_feedback',
+              title: '已有反馈内容',
+            },
           },
         });
       }
@@ -121,6 +143,14 @@ describe('operational insights pages', () => {
       ]),
     );
 
+    const feedbackRow = screen
+      .getAllByRole('row')
+      .find((row) => row.textContent?.includes('已有反馈内容'));
+    expect(feedbackRow).toBeDefined();
+    expect(within(feedbackRow as HTMLElement).getByRole('button', { name: '转需求' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '登记使用指标' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成迭代建议' })).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: '处理反馈' }));
     fireEvent.mouseDown(screen.getByLabelText('处理状态'));
     fireEvent.click(await screen.findByRole('option', { name: '已分诊' }));
@@ -147,10 +177,10 @@ describe('operational insights pages', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
       const path = String(input);
-      if (input === '/api/products?active_only=true') {
+      if (path.startsWith('/api/products?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (path.startsWith('/api/product-versions?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (path.startsWith('/api/insights/items')) {
@@ -205,89 +235,6 @@ describe('operational insights pages', () => {
     expect(tableText.indexOf('中间建议')).toBeLessThan(tableText.indexOf('old-usage'));
   });
 
-  it('records real usage metrics from the insights page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-    });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      const path = String(input);
-      if (path === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      if (path === '/api/product-versions?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (path === '/api/insights/usage-metrics' && init?.method === 'POST') {
-        return jsonResponse({
-          data: {
-            active_users: 42,
-            feature_code: 'semantic-search',
-            id: 'usage_created',
-            product_id: 'product_api',
-            user_segment: 'rd',
-            window_start: '2026-06-01T00:00:00Z',
-          },
-        });
-      }
-      if (path === '/api/insights/usage-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<InsightsPage />);
-
-    await screen.findByRole('button', { name: '登记使用指标' });
-    fireEvent.click(screen.getByRole('button', { name: '登记使用指标' }));
-    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
-    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
-    fireEvent.change(screen.getByLabelText('模块编码'), { target: { value: 'search' } });
-    fireEvent.change(screen.getByLabelText('功能编码'), { target: { value: 'semantic-search' } });
-    fireEvent.change(screen.getByLabelText('用户分群'), { target: { value: 'rd' } });
-    fillDatePicker('窗口开始', '2026-06-01T00:00:00Z');
-    fillDatePicker('窗口结束', '2026-06-01T01:00:00Z');
-    fireEvent.change(screen.getByLabelText('活跃用户'), { target: { value: '42' } });
-    fireEvent.change(screen.getByLabelText('事件次数'), { target: { value: '120' } });
-    fireEvent.change(screen.getByLabelText('转化次数'), { target: { value: '15' } });
-    fireEvent.change(screen.getByLabelText('转化率'), { target: { value: '0.36' } });
-    fireEvent.change(screen.getByLabelText('平均时长秒'), { target: { value: '36.5' } });
-    fireEvent.change(screen.getByLabelText('跳出率'), { target: { value: '0.18' } });
-    fireEvent.change(screen.getByLabelText('错误次数'), { target: { value: '2' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/insights/usage-metrics',
-        'POST',
-        JSON.stringify({
-          active_users: 42,
-          avg_duration_seconds: 36.5,
-          bounce_rate: 0.18,
-          conversion_count: 15,
-          conversion_rate: 0.36,
-          error_count: 2,
-          event_count: 120,
-          feature_code: 'semantic-search',
-          module_code: 'search',
-          product_id: 'product_api',
-          source_channel: 'manual_import',
-          user_segment: 'rd',
-          window_end: '2026-06-01T01:00:00Z',
-          window_start: '2026-06-01T00:00:00Z',
-        }),
-      ]),
-    );
-  });
-
   it('records real GitLab daily code metrics from the DevOps page', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -316,7 +263,7 @@ describe('operational insights pages', () => {
       if (input === '/api/ops/online-log-metrics') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (String(input).startsWith('/api/products?active_only=true')) {
         return jsonResponse({
           data: {
             items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
@@ -324,7 +271,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (String(input).startsWith('/api/product-versions?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/products/product_api/git-repositories?active_only=true') {
@@ -419,7 +366,7 @@ describe('operational insights pages', () => {
       if (input === '/api/ops/online-log-metrics') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (String(input).startsWith('/api/products?active_only=true')) {
         return jsonResponse({
           data: {
             items: [{ code: 'release-platform', id: 'product_release', name: '发布平台', status: 'active' }],
@@ -427,7 +374,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (String(input).startsWith('/api/product-versions?active_only=true')) {
         return jsonResponse({
           data: {
             items: [
@@ -513,7 +460,7 @@ describe('operational insights pages', () => {
       if (input === '/api/ops/online-log-metrics') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (String(input).startsWith('/api/products?active_only=true')) {
         return jsonResponse({
           data: {
             items: [
@@ -529,7 +476,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (String(input).startsWith('/api/product-versions?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       return jsonResponse({ data: { items: [], total: 0 } });
@@ -601,7 +548,7 @@ describe('operational insights pages', () => {
       if (input === '/api/collectors/runs') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (String(input).startsWith('/api/products?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       return jsonResponse({ data: { items: [], total: 0 } });
@@ -631,7 +578,7 @@ describe('operational insights pages', () => {
       if (input === '/api/attribution/pending-items') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (String(input).startsWith('/api/products?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       return jsonResponse({ data: { items: [], total: 0 } });
@@ -694,7 +641,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (input === '/api/products?active_only=true') {
+      if (String(input).startsWith('/api/products?active_only=true')) {
         return jsonResponse({
           data: {
             items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
@@ -702,7 +649,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (String(input).startsWith('/api/product-versions?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/products/product_api/modules') {
@@ -782,7 +729,7 @@ describe('operational insights pages', () => {
           },
         });
       }
-      if (input === '/api/products?active_only=true') {
+      if (String(input).startsWith('/api/products?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (String(input) === '/api/products' || String(input).startsWith('/api/products?')) {
@@ -850,7 +797,7 @@ describe('operational insights pages', () => {
       if (input === '/api/ops/online-log-metrics') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (String(input).startsWith('/api/products?active_only=true')) {
         return jsonResponse({
           data: {
             items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
@@ -942,7 +889,7 @@ describe('operational insights pages', () => {
       if (input === '/api/ops/online-log-metrics') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (String(input).startsWith('/api/products?active_only=true')) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       return jsonResponse({ data: { items: [], total: 0 } });
@@ -960,143 +907,6 @@ describe('operational insights pages', () => {
         '/api/collectors/runs/collector_run_001',
         'PATCH',
         JSON.stringify({ status: 'succeeded' }),
-      ]),
-    );
-  });
-
-  it('generates and decides real iteration suggestions from the insights page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      const path = String(input);
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/product-versions?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: '2026Q3',
-                id: 'version_api',
-                name: '2026 Q3',
-                product_id: 'product_api',
-                status: 'planning',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/planning/iteration-suggestions' && init?.method === 'POST') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                id: 'suggestion_generated',
-                planning_cycle: '2026Q3',
-                priority: 'P1',
-                product_id: 'product_api',
-                status: 'suggested',
-                title: '新迭代建议',
-                updated_at: '2026-06-01T08:30:00Z',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (
-        input === '/api/planning/iteration-suggestions/suggestion_existing/decide' &&
-        init?.method === 'POST'
-      ) {
-        return jsonResponse({
-          data: {
-            converted_requirement_id: 'requirement_from_suggestion',
-            decision: 'edited_accepted',
-            id: 'suggestion_existing',
-            status: 'converted_to_requirement',
-            title: '优化知识检索',
-          },
-        });
-      }
-      if (path.startsWith('/api/insights/items')) {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                category: '迭代建议',
-                confidence_level: 'medium',
-                id: 'suggestion_existing',
-                planning_cycle: '2026Q3',
-                priority: 'P1',
-                product_id: 'product_api',
-                status: 'suggested',
-                summary: '优化知识检索',
-                updated_at: '2026-06-01T08:00:00Z',
-              },
-            ],
-            page: 1,
-            page_size: 10,
-            total: 1,
-          },
-        });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<InsightsPage />);
-
-    expect(await screen.findByText('优化知识检索')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '生成迭代建议' }));
-    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
-    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
-    fireEvent.mouseDown(screen.getByLabelText('目标版本'));
-    fireEvent.click(await screen.findByRole('option', { name: '2026 Q3' }));
-    fireEvent.change(screen.getByLabelText('规划周期'), { target: { value: '2026Q3' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/planning/iteration-suggestions',
-        'POST',
-        JSON.stringify({
-          constraints: { max_suggestions: 10 },
-          planning_cycle: '2026Q3',
-          product_id: 'product_api',
-          version_id: 'version_api',
-        }),
-      ]),
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: '确认建议' }));
-    fireEvent.change(screen.getByLabelText('确认备注'), { target: { value: '进入下阶段' } });
-    fireEvent.click(screen.getByLabelText('转为正式需求'));
-    fireEvent.change(await screen.findByLabelText('需求标题'), { target: { value: '优化知识检索体验' } });
-    fireEvent.change(screen.getByLabelText('需求范围'), { target: { value: '优先处理检索召回与排序' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/planning/iteration-suggestions/suggestion_existing/decide',
-        'POST',
-        JSON.stringify({
-          comment: '进入下阶段',
-          convert_to_requirement: true,
-          decision: 'edited_accepted',
-          edited_scope: '优先处理检索召回与排序',
-          edited_title: '优化知识检索体验',
-        }),
       ]),
     );
   });

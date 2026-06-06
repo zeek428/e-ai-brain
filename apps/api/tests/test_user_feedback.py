@@ -86,6 +86,59 @@ def test_user_feedback_supports_create_filter_update_and_audit():
     ]
 
 
+def test_user_feedback_can_convert_to_requirement_and_sync_status():
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    context = create_product_context(admin_headers)
+
+    feedback = client.post(
+        "/api/insights/user-feedback",
+        json={
+            "content": "建议把用户洞察里的有效反馈快速转成需求。",
+            "feedback_type": "improvement",
+            "module_code": context["module_code"],
+            "product_id": context["product_id"],
+        },
+        headers=reviewer_headers,
+    ).json()["data"]
+
+    converted = client.post(
+        f"/api/insights/user-feedback/{feedback['id']}/convert-requirement",
+        json={
+            "priority": "P0",
+            "title": "用户反馈快速转需求",
+            "triage_note": "反馈有效，进入需求评审。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    requirement = converted["requirement"]
+    linked_feedback = converted["feedback"]
+    assert requirement["source"] == "user_feedback"
+    assert requirement["product_id"] == context["product_id"]
+    assert requirement["module_code"] == context["module_code"]
+    assert requirement["priority"] == "P0"
+    assert requirement["status"] == "submitted"
+    assert linked_feedback["status"] == "linked"
+    assert linked_feedback["related_requirement_id"] == requirement["id"]
+    assert linked_feedback["triage_note"] == "反馈有效，进入需求评审。"
+
+    listed = client.get(
+        f"/api/requirements?source=user_feedback&product_id={context['product_id']}",
+        headers=admin_headers,
+    ).json()["data"]
+    assert listed["total"] == 1
+    assert listed["items"][0]["id"] == requirement["id"]
+
+    duplicate = client.post(
+        f"/api/insights/user-feedback/{feedback['id']}/convert-requirement",
+        json={"title": "重复转需求"},
+        headers=admin_headers,
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "RESOURCE_IN_USE"
+
+
 def test_user_feedback_rejects_invalid_context_values_and_update_roles():
     admin_headers = auth_headers()
     reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")

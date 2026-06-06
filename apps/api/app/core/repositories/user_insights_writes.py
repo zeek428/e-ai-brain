@@ -40,6 +40,21 @@ class UserInsightWriteRepository:
                 if audit_event is not None and self._upsert_audit_events is not None:
                     self._upsert_audit_events(cursor, [audit_event])
 
+    def save_user_feedback_requirement_conversion(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        feedback: dict[str, Any],
+        requirement: dict[str, Any],
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                if self._upsert_requirements is not None:
+                    self._upsert_requirements(cursor, {requirement["id"]: requirement})
+                self.upsert_user_feedback(cursor, {feedback["id"]: feedback})
+                if self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, audit_events)
+
     def save_user_usage_metrics(self, payload: dict[str, Any]) -> None:
         metrics = payload.get("user_usage_metrics", {})
         with self._connect() as connection:
