@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端模型网关持久化测试继续拆分：模型网关配置/日志结构化持久化、恢复计数器和配置 API 写入回归迁移到独立 `test_model_gateway_persistence.py`。
 - 后端用户仓储测试继续拆分：用户仓储登录和用户管理 API 回归迁移到独立 `test_user_repository_auth.py`，避免继续堆在 `test_database_persistence.py` 中。
 - 后端持久化测试继续拆分：迭代建议和迭代决策的结构化持久化用例迁移到独立 `test_iteration_planning_persistence.py`，让迭代规划持久化回归按领域维护。
 - 后端持久化测试继续拆分：用户反馈和用户使用指标的结构化持久化用例迁移到独立 `test_user_insights_persistence.py`，让用户洞察持久化回归按领域维护。
