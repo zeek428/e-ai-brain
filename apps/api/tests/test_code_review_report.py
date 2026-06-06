@@ -123,6 +123,11 @@ def test_code_review_report_is_confirmed_and_archived_without_gitlab_writeback(m
     assert pending_report["risk_level"] == "medium"
     assert pending_report["findings"][0]["severity"] == "high"
     assert pending_report["gitlab_writeback_performed"] is False
+    assert pending_report["writeback_template"]["format"] == "markdown"
+    assert pending_report["writeback_template"]["writeback_allowed"] is False
+    assert "AI Brain Code Review 结论" in pending_report["writeback_template"]["body"]
+    assert "apps/api/app/main.py" in pending_report["writeback_template"]["body"]
+    assert "接口编排集中" in pending_report["writeback_template"]["body"]
 
     confirmed = client.post(
         f"/api/reviews/{started['review_id']}/approve",
@@ -138,6 +143,8 @@ def test_code_review_report_is_confirmed_and_archived_without_gitlab_writeback(m
     assert archived["status"] == "confirmed"
     assert archived["archived_at"].startswith("20")
     assert archived["gitlab_writeback_performed"] is False
+    assert archived["writeback_template"]["writeback_reason"] == "read_only_review_flow"
+    assert "报告 ID" in archived["writeback_template"]["body"]
 
     audit_response = client.get(
         f"/api/audit/events?ai_task_id={task['id']}",

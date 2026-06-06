@@ -77,6 +77,13 @@ describe('TaskCenterPage', () => {
             risk_level: 'medium',
             status: 'pending_review',
             summary: '发现 1 个高风险问题',
+            writeback_template: {
+              body: '## AI Brain Code Review 结论\n\n- 风险等级：medium\n- 远端回写：未自动回写',
+              format: 'markdown',
+              title: 'AI Brain Code Review: medium risk',
+              writeback_allowed: false,
+              writeback_reason: 'read_only_review_flow',
+            },
           },
         });
       }
@@ -94,6 +101,8 @@ describe('TaskCenterPage', () => {
     fireEvent.click(within(operationDialog).getByRole('button', { name: '查看报告' }));
 
     expect(await screen.findByText('发现 1 个高风险问题')).toBeInTheDocument();
+    expect(screen.getByText('Review 结论回写模板')).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/AI Brain Code Review 结论/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '查看需求全链路' })).toHaveAttribute(
       'href',
       '/delivery/requirements/requirement_api/full-chain',

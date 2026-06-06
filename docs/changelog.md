@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- Code Review 报告闭环增强：报告响应新增只读 Markdown `writeback_template`，任务中心报告弹窗展示 Review 结论回写模板，便于人工复制到 GitLab MR / GitHub PR 评论区，同时保持系统不自动远端回写。
 - AI 助手工具化查询增强：聊天前由后端 read-model 工具生成需求/任务进展、待确认 Review、代码评审、迭代、Bug 和模型网关 `tool_results`，模型请求优先携带工具结果，聊天响应与历史消息持久化工具结果和可跳转引用链接。
 - 前端首页看板页面测试继续拆分：首页 IT 团队看板、运营明细入口和产品/时间筛选回归迁移到 `DashboardPage.test.tsx`，`App.test.tsx` 继续收敛为少量跨管理模块 smoke。
 - 后端基础持久化测试继续拆分：PersistentMemoryStore 仓储边界和 repository read path 余量回归迁移到 `test_persistence_repository_boundaries.py` 与 `test_repository_read_paths.py`，`test_database_persistence.py` 收敛为共享 FakeRepository/fixture。

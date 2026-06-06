@@ -940,6 +940,13 @@ export type CodeReviewReportRecord = {
   riskLevel: string;
   status: string;
   summary: string;
+  writebackTemplate?: {
+    body: string;
+    format: string;
+    title: string;
+    writebackAllowed: boolean;
+    writebackReason: string;
+  };
 };
 
 export type TaskWritebackIssueRecord = {
@@ -1590,6 +1597,13 @@ type CodeReviewReportResponse = {
   risk_level?: string;
   status?: string;
   summary?: string;
+  writeback_template?: {
+    body?: string;
+    format?: string;
+    title?: string;
+    writeback_allowed?: boolean;
+    writeback_reason?: string;
+  };
 };
 
 type TaskWritebackIssueResponse = {
@@ -4241,6 +4255,15 @@ export async function fetchCodeReviewReport(taskId: string): Promise<CodeReviewR
     riskLevel: report.risk_level ?? '-',
     status: report.status ?? '-',
     summary: report.summary ?? '-',
+    writebackTemplate: report.writeback_template
+      ? {
+          body: report.writeback_template.body ?? '',
+          format: report.writeback_template.format ?? 'markdown',
+          title: report.writeback_template.title ?? 'AI Brain Code Review',
+          writebackAllowed: report.writeback_template.writeback_allowed ?? false,
+          writebackReason: report.writeback_template.writeback_reason ?? '-',
+        }
+      : undefined,
   };
 }
 

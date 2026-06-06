@@ -1786,6 +1786,16 @@ export default function TaskCenterPage() {
                   : '暂无问题'
               }
             />
+            {codeReviewReport.report.writebackTemplate ? (
+              <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+                <Text strong>Review 结论回写模板</Text>
+                <Input.TextArea
+                  readOnly
+                  rows={8}
+                  value={codeReviewReport.report.writebackTemplate.body}
+                />
+              </Space>
+            ) : null}
           </Space>
         ) : null}
       </Modal>

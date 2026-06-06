@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.207 |
+| 功能版本 | v1.1.208 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.208 | 2026-06-07 | Code Review 报告响应新增只读 `writeback_template`，提供可人工复制到 GitLab MR / GitHub PR 评论区的 Markdown 结论模板；系统仍不自动回写远端 | Codex |
 | v1.1.207 | 2026-06-07 | AI 助手聊天响应和历史消息新增 `tool_results`：后端在模型调用前按用户问题生成 delivery progress、pending reviews、code review、iteration、bugs、model gateway 等 read-model 工具结果，模型请求携带 `system_context.tool_results`，助手消息 metadata 持久化工具结果与引用链接 | Codex |
 | v1.1.206 | 2026-06-06 | GitLab MR / GitHub PR 预览响应新增 `permission_diagnostics`，快照响应新增 `previous_snapshot`、`diff_change_summary` 和 `snapshot_reused`，用于代码 Review 权限诊断、PR 刷新/重试和 diff 快照对比 | Codex |
 | v1.1.205 | 2026-06-06 | `GET /api/system/model-gateway-configs` 增强为模型网关配置管理列表接口，支持 `page/page_size/sort_by/sort_order/name/provider/status/is_default/default_chat_model/default_embedding_model/embedding_connection_mode`，分页响应返回 `query/performance` 观测元数据，未传分页参数时保留原全量配置列表兼容契约 | Codex |
@@ -470,7 +471,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | GitHub Review | GET | `/api/devops/github/pull-requests/{repository_id}` | 列出产品 GitHub 仓库可访问 PR，支持 `state` 和 `limit`。 |
 | GitHub Review | GET | `/api/devops/github/pull-requests/{repository_id}/{pr_number}/preview` | 预览 GitHub PR 元信息。 |
 | GitHub Review | POST | `/api/devops/github/pull-requests/{repository_id}/{pr_number}/snapshot` | 拉取 PR 元信息和 diff 摘要，生成 code_review 输入快照。 |
-| Code Review | GET | `/api/ai-tasks/{task_id}/code-review-report` | 查询 GitLab MR / GitHub PR 代码 Review 报告、执行器信息和确认状态。 |
+| Code Review | GET | `/api/ai-tasks/{task_id}/code-review-report` | 查询 GitLab MR / GitHub PR 代码 Review 报告、执行器信息、确认状态和只读回写模板。 |
 | DevOps | GET | `/api/devops/jenkins/releases` | 查询 Jenkins 发布记录。 |
 | DevOps | POST | `/api/devops/jenkins/releases` | 登记真实 Jenkins 发布记录。 |
 | Ops | GET | `/api/ops/online-log-metrics` | 查询线上运行日志运营指标。 |
@@ -1912,11 +1913,20 @@ GET /api/ai-tasks/{task_id}/code-review-report
       "status": "pending",
       "version": 1
     },
-    "archived_at": null
+    "archived_at": null,
+    "writeback_template": {
+      "format": "markdown",
+      "title": "AI Brain Code Review: high risk",
+      "writeback_allowed": false,
+      "writeback_reason": "read_only_review_flow",
+      "body": "## AI Brain Code Review 结论\n\n- 报告 ID：report_001\n- 风险等级：high\n- 远端回写：未自动回写，请人工确认后粘贴到 PR/MR 评论区。\n\n### 摘要\n发现 2 个高风险问题和 3 个中风险问题。"
+    }
   },
   "trace_id": "trace_review_001"
 }
 ```
+
+`writeback_template` 是只读 Markdown 模板，用于人工复制到 GitLab MR / GitHub PR 评论区；AI Brain 不自动调用远端评论、审批或分支变更接口，`writeback_allowed=false` 必须保持。
 
 约束：
 
