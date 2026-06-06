@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.339 |
+| 功能版本 | v1.1.340 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.340 | 2026-06-06 | 后端持久化测试拆分继续推进：将用户反馈和用户使用指标的结构化持久化用例迁移到独立 test_user_insights_persistence.py | Codex |
 | v1.1.339 | 2026-06-06 | 后端持久化测试拆分继续推进：将 GitLab 日指标、Jenkins 发布记录、线上日志指标和采集运行的结构化持久化用例迁移到独立 test_devops_metrics_persistence.py | Codex |
 | v1.1.338 | 2026-06-06 | 后端持久化测试拆分继续推进：将待归属数据 pending attribution 的结构化持久化和陈旧上下文清理用例迁移到独立 test_pending_attribution_persistence.py | Codex |
 | v1.1.337 | 2026-06-06 | 前端页面测试拆分继续推进：将需求管理批量排期/生成任务/全链路弹窗回归迁移到独立 RequirementsPage.test.tsx，将迭代版本归集需求/版本需求查看/状态推进影响预览迁移到独立 IterationVersionsPage.test.tsx | Codex |

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端持久化测试继续拆分：用户反馈和用户使用指标的结构化持久化用例迁移到独立 `test_user_insights_persistence.py`，让用户洞察持久化回归按领域维护。
 - 后端持久化测试继续拆分：GitLab 日指标、Jenkins 发布记录、线上日志指标和采集运行的结构化持久化用例迁移到独立 `test_devops_metrics_persistence.py`，让研发运营持久化回归按领域维护。
 - 后端持久化测试继续拆分：待归属数据 `pending_attribution` 的结构化持久化和陈旧上下文清理用例迁移到独立 `test_pending_attribution_persistence.py`，继续降低 `test_database_persistence.py` 巨型文件压力。
 - 需求交付页面测试继续拆分：需求管理批量排期、批量生成任务和全链路弹窗回归迁移到独立 `RequirementsPage.test.tsx`，迭代版本归集需求、版本需求查看和状态推进影响预览回归迁移到独立 `IterationVersionsPage.test.tsx`。
