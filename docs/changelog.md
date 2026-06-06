@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端用户仓储测试继续拆分：用户仓储登录和用户管理 API 回归迁移到独立 `test_user_repository_auth.py`，避免继续堆在 `test_database_persistence.py` 中。
 - 后端持久化测试继续拆分：迭代建议和迭代决策的结构化持久化用例迁移到独立 `test_iteration_planning_persistence.py`，让迭代规划持久化回归按领域维护。
 - 后端持久化测试继续拆分：用户反馈和用户使用指标的结构化持久化用例迁移到独立 `test_user_insights_persistence.py`，让用户洞察持久化回归按领域维护。
 - 后端持久化测试继续拆分：GitLab 日指标、Jenkins 发布记录、线上日志指标和采集运行的结构化持久化用例迁移到独立 `test_devops_metrics_persistence.py`，让研发运营持久化回归按领域维护。
