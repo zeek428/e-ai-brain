@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.321 |
+| 功能版本 | v1.1.322 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.322 | 2026-06-06 | 前端页面测试拆分继续推进：将任务中心 Code Review 报告全链路跳转用例迁移到独立 TaskCenterPage.test.tsx，保留 App.test.tsx 作为少量端到端工作台 smoke | Codex |
 | v1.1.321 | 2026-06-06 | 补充 Code Review 报告到需求全链路闭环验收：任务中心报告弹窗展示“查看需求全链路”入口，并验证跳转到对应需求 full-chain 详情页 | Codex |
 | v1.1.320 | 2026-06-06 | 补充 GitHub PR / GitLab MR 代码 Review 闭环验收：预览返回权限诊断，快照响应返回上一快照引用、diff 对比摘要和复用标记，任务中心展示快照结果用于 PR 刷新/重试排查 | Codex |
 | v1.1.319 | 2026-06-06 | PostgreSQL 旧库兼容验收补齐：PostgresSnapshotRepository 启动时执行安全 additive schema patch，补齐历史本地 volume 缺失的 requirements.assignee 字段和索引，避免需求列表与首页看板 SQL read model 在旧库上返回 500；真实页面 smoke 复验 8 个核心路由通过 | Codex |
