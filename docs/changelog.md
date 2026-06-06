@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- Code Review 报告弹窗新增“查看需求全链路”入口，可从任务中心报告直接跳转到对应需求 full-chain 详情页，补齐 Review 报告到需求全链路的闭环追踪。
 - GitHub PR / GitLab MR 代码 Review 闭环增强：预览响应新增权限诊断，快照响应新增上一快照引用、diff 新增/修改/删除对比和复用标记；任务中心创建 Code Review 后展示快照对比结果，便于 PR 刷新/重试和权限配置排查。
 - 测试用例文档按业务域拆分：`test-case.md` 保留版本信息、通用规范、MVP 验收切片和业务域索引，详细用例迁移到 `test-cases/core-workflow.md`、`test-cases/requirements-and-tasks.md`、`test-cases/devops-quality-and-insights.md` 与 `test-cases/supporting-matrices.md`，降低单文件维护成本。
 - 发布网页 smoke 门禁继续增强：`scripts/web_page_smoke.mjs` 监听浏览器网络响应，核心页面路由期间出现非 favicon 的 4xx/5xx 请求会直接判定失败，避免页面壳渲染但 API 404/500 未被发现。

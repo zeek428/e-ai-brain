@@ -400,7 +400,7 @@
 | 1 | 在任务中心基于已完成 `technical_solution` 选择产品 GitLab/GitHub 代码库并预览 MR/PR | 页面展示 MR/PR 标题、作者、分支、变更文件数、风险摘要、变更文件树、变更文件明细、Review Checklist 和“不回写远端”提示。 |
 | 2 | 生成 MR/PR diff 快照并 POST `/api/ai-tasks` 创建 `task_type=code_review` 任务 | 任务为 `draft`，input 包含 requirement_snapshot、product_context 和 gitlab_mr_snapshot 兼容引用。 |
 | 3 | POST `/api/ai-tasks/{id}/start` | 调用 code-review 执行器，任务进入 `waiting_review`，返回 pending review。 |
-| 4 | 在任务中心查看 Code Review 报告或 GET `/api/ai-tasks/{id}/code-review-report` | 返回 summary、risk_level、findings、文件/行号、建议、confidence、executor metadata 和 human_review。 |
+| 4 | 在任务中心查看 Code Review 报告或 GET `/api/ai-tasks/{id}/code-review-report` | 返回 summary、risk_level、findings、文件/行号、建议、confidence、executor metadata 和 human_review；任务中心报告弹窗提供“查看需求全链路”入口，跳转到该任务 `requirement_id` 对应的 `/delivery/requirements/{requirement_id}/full-chain`。 |
 | 5 | POST `/api/reviews/{id}/approve` 或 `edit-approve` | Review 报告归档到 AI Brain 内部，任务继续或完成。 |
 | 6 | 查询远端 MR/PR | 未新增评论，未改变审批状态、request changes、合并状态或分支。 |
 | 7 | GET `/api/audit/events?ai_task_id={id}` | 返回执行器调用、报告生成、人工确认和归档审计事件。 |
@@ -414,7 +414,7 @@
 3. 系统不得向 GitLab/GitHub 回写评论、审批状态、request changes、合并状态或分支变更。
 4. 执行器失败时返回 `CODE_REVIEW_EXECUTOR_FAILED`，停留在可排查的失败步骤并写入审计；修复配置后可用同一任务重试，避免复制新任务导致链路割裂。
 
-**状态**: 已自动化覆盖。Code Review 报告生成、确认归档、编辑确认、执行器失败语义，以及外部执行器命令缺失时复用模型网关的本地联调路径见 `apps/api/tests/test_code_review_report.py`；真实执行器/模型 provider 端到端按生产就绪门禁验证。2026-06-03 使用 AI Brain GitHub PR #1 最新 head 复跑时，`task_072` 基于 `snapshot_006` 生成 `report_006`，人工确认后任务完成且报告归档，GitHub issue comments、review comments 和 reviews 均为 0。
+**状态**: 已自动化覆盖。Code Review 报告生成、确认归档、编辑确认、执行器失败语义，以及外部执行器命令缺失时复用模型网关的本地联调路径见 `apps/api/tests/test_code_review_report.py`；任务中心报告弹窗的需求全链路跳转见 `apps/web/tests/App.test.tsx::opens a Code Review report with a requirement full-chain link`；真实执行器/模型 provider 端到端按生产就绪门禁验证。2026-06-03 使用 AI Brain GitHub PR #1 最新 head 复跑时，`task_072` 基于 `snapshot_006` 生成 `report_006`，人工确认后任务完成且报告归档，GitHub issue comments、review comments 和 reviews 均为 0。
 
 ---
 

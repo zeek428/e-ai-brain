@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.251 |
+| 功能版本 | v1.1.252 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.252 | 2026-06-06 | Code Review 报告弹窗新增需求全链路跳转入口，报告可从任务中心直接回到对应需求的完整交付链路，补齐 Review 报告到需求全链路的闭环追踪 | Codex |
 | v1.1.251 | 2026-06-06 | GitHub PR / GitLab MR 代码 Review 闭环增强：预览返回权限诊断，快照响应返回上一快照引用、diff 新增/修改/删除对比和复用标记，任务中心展示快照结果用于 PR 刷新、重试和配置排查 | Codex |
 | v1.1.250 | 2026-06-06 | persistence.py 大文件拆分继续收口：任务启动、Review 决策和任务状态更新的跨表写事务下沉到 TaskReadRepository，PostgresSnapshotRepository 只保留公开方法委托和跨域回调装配 | Codex |
 | v1.1.249 | 2026-06-06 | persistence.py 大文件拆分继续收口：删除需求和任务运行态私有 upsert 兼容入口，跨域事务直接调用 RequirementReadRepository 和 TaskReadRepository 的领域 upsert 方法 | Codex |

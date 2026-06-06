@@ -1763,6 +1763,18 @@ export default function TaskCenterPage() {
               <Descriptions.Item label="远端回写">
                 {codeReviewReport.report.gitlabWritebackPerformed ? '已回写' : '未回写'}
               </Descriptions.Item>
+              <Descriptions.Item label="需求全链路">
+                <Button
+                  disabled={!codeReviewReport.task.requirementId}
+                  href={
+                    codeReviewReport.task.requirementId
+                      ? `/delivery/requirements/${codeReviewReport.task.requirementId}/full-chain`
+                      : undefined
+                  }
+                >
+                  查看需求全链路
+                </Button>
+              </Descriptions.Item>
             </Descriptions>
             <Paragraph>{codeReviewReport.report.summary}</Paragraph>
             <Input.TextArea

@@ -468,6 +468,24 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         );
       }
+      if (input === '/api/ai-tasks/task_code_review/code-review-report') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              findings: [{ severity: 'high', summary: '缺少边界测试' }],
+              gitlab_writeback_performed: false,
+              id: 'report_api',
+              risk_level: 'medium',
+              status: 'pending_review',
+              summary: '发现 1 个高风险问题',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
       expect(String(input).startsWith('/api/ai-tasks')).toBe(true);
       expect(String(input).startsWith('/api/ai-tasks/')).toBe(false);
       return new Response(
@@ -591,6 +609,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('failed · model_gateway_failed · MODEL_GATEWAY_FAILED · temporary upstream error')).toBeInTheDocument();
     expect(screen.getByText('TASK_NOT_RETRYABLE · Task is not retryable')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '批量重试结果' })).not.toBeInTheDocument());
 
     expect(screen.getByRole('button', { name: '待确认' })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '操作' })).toHaveLength(5);
@@ -621,7 +640,6 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByRole('button', { name: '生成自动化测试' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '生成发布评估' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '创建 Code Review' })).toBeInTheDocument();
-    fireEvent.click(screen.getAllByLabelText('Close')[0]);
     fireEvent.click(screen.getByRole('button', { name: '待确认' }));
     expect(await screen.findByText('接口任务输出摘要')).toBeInTheDocument();
     const pendingReviewTable = screen
@@ -764,6 +782,89 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(await screen.findByText('目标技术方案任务')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('其他产品任务')).not.toBeInTheDocument());
     expect(screen.queryByText('过期技术方案任务')).not.toBeInTheDocument();
+  });
+
+  it('opens a Code Review report with a requirement full-chain link', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/reviews/pending') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (input === '/api/products?active_only=true') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'AI-BRAIN', id: 'product_api', name: 'AI Brain 产品' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/product-versions?active_only=true') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (typeof input === 'string' && input.startsWith('/api/ai-tasks?page=1&page_size=10')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                created_at: '2026-06-04T09:00:00+00:00',
+                id: 'task_code_review',
+                owner: 'user_admin',
+                product_id: 'product_api',
+                product_name: 'AI Brain 产品',
+                requirement_id: 'requirement_api',
+                status: 'waiting_review',
+                task_type: 'code_review',
+                title: 'Code Review：接口任务',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/ai-tasks/task_code_review/code-review-report') {
+        return jsonResponse({
+          data: {
+            findings: [
+              {
+                file_path: 'apps/api/app/main.py',
+                line_number: 42,
+                severity: 'high',
+                summary: '缺少边界测试',
+              },
+            ],
+            gitlab_writeback_performed: false,
+            id: 'report_api',
+            risk_level: 'medium',
+            status: 'pending_review',
+            summary: '发现 1 个高风险问题',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    const codeReviewTaskRow = (await screen.findByText('Code Review：接口任务')).closest('tr');
+    expect(codeReviewTaskRow).not.toBeNull();
+    fireEvent.click(within(codeReviewTaskRow as HTMLElement).getByRole('button', { name: '操作' }));
+    const operationDialog = await screen.findByTestId('task-operation-dialog');
+    fireEvent.click(within(operationDialog).getByRole('button', { name: '查看报告' }));
+
+    expect(await screen.findByText('发现 1 个高风险问题')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看需求全链路' })).toHaveAttribute(
+      'href',
+      '/delivery/requirements/requirement_api/full-chain',
+    );
   });
 
   it('opens real task details from task row operations', async () => {
