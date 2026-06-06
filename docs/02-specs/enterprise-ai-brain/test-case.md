@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.355 |
+| 功能版本 | v1.1.356 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.356 | 2026-06-07 | 后端持久化测试拆分继续推进：将研发运营采集运行、待归属、GitLab/Jenkins/线上日志列表读取与 DB-first 写入回归迁移到 test_operational_collection_persistence.py，和 operational collection 用例按领域维护 | Codex |
 | v1.1.355 | 2026-06-07 | 后端持久化测试拆分继续推进：将知识文档 API 结构化写入与审计 payload 回归迁移到 test_knowledge_audit_persistence.py，和知识审计持久化用例按领域维护 | Codex |
 | v1.1.354 | 2026-06-07 | 后端持久化测试拆分继续推进：将待确认 Review repository direct query 回归迁移到 test_workflow_runtime_persistence.py，和 workflow runtime 持久化用例按领域维护 | Codex |
 | v1.1.353 | 2026-06-07 | 后端持久化测试拆分继续推进：将需求 API、AI 任务生成 API 和任务启动/Review 更新的结构化写入回归迁移到 test_requirement_task_persistence.py，和需求任务持久化用例按领域维护 | Codex |
