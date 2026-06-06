@@ -24,6 +24,7 @@
 - 前端管理列表统一表格规范增强：`ManagementListPage` 默认固定布局、按显示列宽自动计算横向滚动宽度、默认长文本省略和操作列右固定；角色页入口/权限以数量摘要展示并在详情查看；DevOps 采集运行/待归属子表补齐固定列宽、横向滚动和操作列固定。
 
 ### Fixed
+- Bug 登记所属产品下拉补齐产品上下文分页：Bug 表单加载产品/版本上下文时请求 `page_size=100`，避免默认 10 条产品截断导致看不到 AI Brain；新增 Bug 默认优先选择 `AI-BRAIN` 产品，便于本系统真实测试用例登记。
 - PostgreSQL 旧库兼容验收补齐：`PostgresSnapshotRepository` 启动时执行安全 additive schema patch，补齐历史本地 volume 缺失的 `requirements.assignee` 字段和索引，避免需求列表与首页看板 SQL read model 在旧库上返回 500；真实页面 smoke 复验 8 个核心路由通过。
 - 模型网关 router 拆分继续收口：将模型网关配置列表的筛选、排序、分页、`query/performance` 观测和模型调用日志 repository-first 读取迁移到 `model_gateway_listing`，`model_gateway` router 收窄为配置测试、创建、修改、删除和响应封装编排。
 - 相关系统 router 拆分继续收口：将相关系统列表的 repository-first 读取、产品归属筛选、`active_only` 过滤和本地兼容排序迁移到 `related_system_listing`，`related_systems` router 收窄为相关系统创建、修改、删除和审计保存编排。

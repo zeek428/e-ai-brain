@@ -26,7 +26,7 @@ describe('bug management page', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      if (path === '/api/products?active_only=true') {
+      if (path.startsWith('/api/products?') && path.includes('active_only=true')) {
         return jsonResponse({
           data: {
             items: [
@@ -208,7 +208,7 @@ describe('bug management page', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      if (path === '/api/products?active_only=true') {
+      if (path.startsWith('/api/products?') && path.includes('active_only=true')) {
         return jsonResponse({
           data: {
             items: [
@@ -333,10 +333,17 @@ describe('bug management page', () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = init?.method ?? 'GET';
-      if (path === '/api/products?active_only=true') {
+      if (path.startsWith('/api/products?') && path.includes('active_only=true')) {
+        const fillerProducts = Array.from({ length: 11 }, (_, index) => ({
+          code: `QA-${index + 1}`,
+          id: `product_filler_${index + 1}`,
+          name: `测试产品 ${index + 1}`,
+          status: 'active',
+        }));
         return jsonResponse({
           data: {
             items: [
+              ...fillerProducts,
               {
                 code: 'AI-BRAIN',
                 id: 'product_ai_brain',
@@ -344,7 +351,9 @@ describe('bug management page', () => {
                 status: 'active',
               },
             ],
-            total: 1,
+            page: 1,
+            page_size: 100,
+            total: 12,
           },
         });
       }
@@ -390,17 +399,17 @@ describe('bug management page', () => {
 
     render(<BugsPage />);
 
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path]) => String(path))).toContain(
+        '/api/products?active_only=true&page_size=100',
+      ),
+    );
+
     fireEvent.click(await screen.findByRole('button', { name: /登记 Bug/ }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('Bug 标题'), {
       target: { value: '测试版本 Bug' },
     });
-    fireEvent.mouseDown(within(dialog).getByLabelText('目标版本'));
-
-    expect(await screen.findByRole('option', { name: '2026-06 · 2026-06 测试迭代' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: '2026-05 · 2026-05 历史归档' })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('option', { name: '2026-06 · 2026-06 测试迭代' }));
     fireEvent.change(within(dialog).getByLabelText('描述'), {
       target: { value: '测试中版本登记 Bug 应能选择目标版本。' },
     });

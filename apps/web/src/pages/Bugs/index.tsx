@@ -288,7 +288,9 @@ export default function BugsPage() {
   const openCreateModal = () => {
     setEditingBug(null);
     form.resetFields();
-    const firstProduct = productContexts[0];
+    const firstProduct =
+      productContexts.find((product) => product.code?.toUpperCase() === 'AI-BRAIN') ??
+      productContexts[0];
     form.setFieldsValue({
       duplicate_of_bug_id: undefined,
       evidence_json: '',

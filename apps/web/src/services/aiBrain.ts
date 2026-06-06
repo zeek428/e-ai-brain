@@ -40,6 +40,9 @@ type ListResponse<T> = {
   total: number;
 };
 
+const PRODUCT_CONTEXT_PAGE_SIZE = 100;
+const VERSION_CONTEXT_PAGE_SIZE = 100;
+
 const ACCESS_TOKEN_STORAGE_KEY = 'ai_brain_access_token';
 const CURRENT_USER_STORAGE_KEY = 'ai_brain_current_user';
 export const AUTH_STATE_EVENT = 'ai-brain-auth-state-changed';
@@ -2655,8 +2658,14 @@ export async function fetchProductContextOptions(): Promise<ProductContextOption
 export async function fetchBugProductContextOptions(): Promise<ProductContextOption[]> {
   const token = requireAccessToken();
   const [products, versions] = await Promise.all([
-    apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', { token }),
-    apiRequest<ListResponse<ProductVersionListItem>>('/api/product-versions', { token }),
+    apiRequest<ListResponse<ProductListItem>>(
+      `/api/products?active_only=true&page_size=${PRODUCT_CONTEXT_PAGE_SIZE}`,
+      { token },
+    ),
+    apiRequest<ListResponse<ProductVersionListItem>>(
+      `/api/product-versions?page_size=${VERSION_CONTEXT_PAGE_SIZE}`,
+      { token },
+    ),
   ]);
   return mapProductContexts(products.items, versions.items.filter(isBugAssignableVersion));
 }
