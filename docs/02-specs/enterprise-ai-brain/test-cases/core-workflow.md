@@ -393,6 +393,6 @@
 3. 聊天历史按用户保存并隔离，前端可展示最近对话、打开历史消息并继续显示来源链接。
 4. 模型日志和审计事件只记录脱敏元数据，不能保存完整 prompt、完整输出或密钥。
 
-**状态**: 已自动化覆盖。后端系统上下文注入、迭代进度/阻塞/待确认/代码评审/Bug 分布摘要、引用候选生成、模型日志脱敏和助手审计见 `apps/api/tests/test_assistant_context_service.py` 与 `apps/api/tests/test_assistant_chat.py`；前端聊天页面、快速问题、来源链接和服务请求映射见 `apps/web/tests/App.test.tsx`。
+**状态**: 已自动化覆盖。后端系统上下文注入、迭代进度/阻塞/待确认/代码评审/Bug 分布摘要、引用候选生成、模型日志脱敏和助手审计见 `apps/api/tests/test_assistant_context_service.py` 与 `apps/api/tests/test_assistant_chat.py`；前端聊天页面、快速问题、来源链接、用户级会话历史和服务请求映射见 `apps/web/tests/AssistantPage.test.tsx`。
 
 ---
