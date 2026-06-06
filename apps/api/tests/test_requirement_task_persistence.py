@@ -1,6 +1,6 @@
 from test_database_persistence import FakeSnapshotRepository, app, auth_headers, client
 
-from app.core.persistence import PersistentMemoryStore
+from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.users import MemoryUserRepository
 
 
@@ -512,6 +512,484 @@ def test_ai_task_start_and_review_update_write_workflow_runtime_payload():
         assert repository.workflow_runtime_payload["graph_runs"][started["graph_run_id"]][
             "status"
         ] == "completed"
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_requirement_routes_write_repository_without_request_persist():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+
+    def use_rebuilt_store_without_request_persist() -> None:
+        rebuilt_store = PersistentMemoryStore.from_repository(repository)
+        rebuilt_store.persist = lambda: None
+        app.state.store = rebuilt_store
+
+    use_rebuilt_store_without_request_persist()
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        product = client.post(
+            "/api/products",
+            json={"code": "REQ-DBFIRST", "name": "需求 DB-first 产品"},
+            headers=headers,
+        ).json()["data"]
+        version = client.post(
+            f"/api/products/{product['id']}/versions",
+            json={"code": "v1", "name": "v1", "status": "active"},
+            headers=headers,
+        ).json()["data"]
+        requirement = client.post(
+            "/api/requirements",
+            json={
+                "content": "需求台账写接口不能依赖请求结束 persist。",
+                "product_id": product["id"],
+                "title": "需求 DB-first 创建",
+            },
+            headers=headers,
+        ).json()["data"]
+
+        use_rebuilt_store_without_request_persist()
+        detail = client.get(
+            f"/api/requirements/{requirement['id']}",
+            headers=headers,
+        ).json()["data"]
+        assert detail["title"] == requirement["title"]
+        assert detail["status"] == "submitted"
+
+        approved = client.post(
+            f"/api/requirements/{requirement['id']}/approve",
+            json={"comment": "进入需求池"},
+            headers=headers,
+        ).json()["data"]
+        assert approved["status"] == "approved"
+        planned = client.patch(
+            f"/api/requirements/{requirement['id']}",
+            json={"version_id": version["id"]},
+            headers=headers,
+        ).json()["data"]
+        assert planned["status"] == "planned"
+        closed = client.post(
+            f"/api/requirements/{requirement['id']}/close",
+            headers=headers,
+        ).json()["data"]
+        assert closed["status"] == "closed"
+
+        use_rebuilt_store_without_request_persist()
+        closed_detail = client.get(
+            f"/api/requirements/{requirement['id']}",
+            headers=headers,
+        ).json()["data"]
+        assert closed_detail["status"] == "closed"
+        assert closed_detail["version_id"] == version["id"]
+
+        rejected_candidate = client.post(
+            "/api/requirements",
+            json={
+                "content": "用于验证拒绝和删除也直接写 repository。",
+                "product_id": product["id"],
+                "title": "需求 DB-first 驳回",
+            },
+            headers=headers,
+        ).json()["data"]
+        rejected = client.post(
+            f"/api/requirements/{rejected_candidate['id']}/reject",
+            json={"rejection_reason": "边界不清晰"},
+            headers=headers,
+        ).json()["data"]
+        assert rejected["status"] == "rejected"
+
+        delete_candidate = client.post(
+            "/api/requirements",
+            json={
+                "content": "用于验证删除直接写 repository。",
+                "product_id": product["id"],
+                "title": "需求 DB-first 删除",
+            },
+            headers=headers,
+        ).json()["data"]
+        delete_response = client.delete(
+            f"/api/requirements/{delete_candidate['id']}",
+            headers=headers,
+        )
+        assert delete_response.status_code == 200
+
+        use_rebuilt_store_without_request_persist()
+        deleted_detail = client.get(
+            f"/api/requirements/{delete_candidate['id']}",
+            headers=headers,
+        )
+        assert deleted_detail.status_code == 404
+        rejected_detail = client.get(
+            f"/api/requirements/{rejected_candidate['id']}",
+            headers=headers,
+        ).json()["data"]
+        assert rejected_detail["status"] == "rejected"
+        assert any(
+            write == f"save:{requirement['id']}:closed"
+            for write in repository.requirement_direct_writes
+        )
+        assert f"delete:{delete_candidate['id']}" in repository.requirement_direct_writes
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_generate_task_writes_requirement_and_ai_task_without_request_persist():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+
+    def use_rebuilt_store_without_request_persist() -> None:
+        rebuilt_store = PersistentMemoryStore.from_repository(repository)
+        rebuilt_store.persist = lambda: None
+        app.state.store = rebuilt_store
+
+    use_rebuilt_store_without_request_persist()
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        product = client.post(
+            "/api/products",
+            json={"code": "TASK-DBFIRST", "name": "任务 DB-first 产品"},
+            headers=headers,
+        ).json()["data"]
+        version = client.post(
+            f"/api/products/{product['id']}/versions",
+            json={"code": "v1", "name": "v1", "status": "active"},
+            headers=headers,
+        ).json()["data"]
+        requirement = client.post(
+            "/api/requirements",
+            json={
+                "content": "生成任务时需求和 AI task 必须同事务写入。",
+                "product_id": product["id"],
+                "title": "任务 DB-first 生成",
+            },
+            headers=headers,
+        ).json()["data"]
+        client.post(
+            f"/api/requirements/{requirement['id']}/approve",
+            json={"comment": "进入需求池"},
+            headers=headers,
+        )
+        planned = client.patch(
+            f"/api/requirements/{requirement['id']}",
+            json={"version_id": version["id"]},
+            headers=headers,
+        ).json()["data"]
+        assert planned["status"] == "planned"
+
+        generated = client.post(
+            f"/api/requirements/{requirement['id']}/generate-task",
+            headers=headers,
+        ).json()["data"]
+
+        use_rebuilt_store_without_request_persist()
+        app.state.store.requirements = {}
+        app.state.store.ai_tasks = {}
+        repository.task_workflow_source_row_reads = 0
+        requirement_detail = client.get(
+            f"/api/requirements/{requirement['id']}",
+            headers=headers,
+        ).json()["data"]
+        task_detail = client.get(
+            f"/api/ai-tasks/{generated['task_id']}",
+            headers=headers,
+        ).json()["data"]
+
+        assert requirement_detail["status"] == "designing"
+        assert requirement_detail["task_ids"] == [generated["task_id"]]
+        assert task_detail["status"] == "draft"
+        assert task_detail["requirement_id"] == requirement["id"]
+        assert task_detail["product_context"]["product"]["id"] == product["id"]
+        assert repository.task_workflow_source_row_reads == 2
+        assert (
+            f"save:{requirement['id']}:{generated['task_id']}:draft"
+            in repository.ai_task_direct_writes
+        )
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_requirement_and_task_writes_use_postgres_runtime_source_rows():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    app.state.store = PostgresRuntimeStore(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        product = client.post(
+            "/api/products",
+            json={"code": "REQ-PG-RUNTIME", "name": "需求 Runtime 产品"},
+            headers=headers,
+        ).json()["data"]
+        version = client.post(
+            f"/api/products/{product['id']}/versions",
+            json={"code": "v1", "name": "v1", "status": "active"},
+            headers=headers,
+        ).json()["data"]
+        module = client.post(
+            f"/api/products/{product['id']}/modules",
+            json={"code": "core", "name": "核心模块", "status": "active"},
+            headers=headers,
+        ).json()["data"]
+
+        requirement = client.post(
+            "/api/requirements",
+            json={
+                "content": "空启动容器下仍应从 repository source rows 校验产品上下文。",
+                "module_code": module["code"],
+                "product_id": product["id"],
+                "title": "Runtime source rows 需求",
+            },
+            headers=headers,
+        ).json()["data"]
+        approved = client.post(
+            f"/api/requirements/{requirement['id']}/approve",
+            json={"comment": "进入需求池"},
+            headers=headers,
+        ).json()["data"]
+        planned = client.patch(
+            f"/api/requirements/{requirement['id']}",
+            json={"version_id": version["id"]},
+            headers=headers,
+        ).json()["data"]
+        generated = client.post(
+            f"/api/requirements/{requirement['id']}/generate-task",
+            headers=headers,
+        ).json()["data"]
+
+        assert approved["status"] == "approved"
+        assert planned["status"] == "planned"
+        assert generated["task_status"] == "draft"
+        assert repository.task_workflow_source_row_reads >= 4
+        assert (
+            f"save:{requirement['id']}:{generated['task_id']}:draft"
+            in repository.ai_task_direct_writes
+        )
+        task = repository.ai_tasks_payload["ai_tasks"][generated["task_id"]]
+        assert task["product_context"]["product"]["id"] == product["id"]
+        assert task["product_context"]["module"]["code"] == module["code"]
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_start_task_writes_review_graph_and_checkpoint_without_request_persist():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+
+    def use_rebuilt_store_without_request_persist() -> None:
+        rebuilt_store = PersistentMemoryStore.from_repository(repository)
+        rebuilt_store.persist = lambda: None
+        app.state.store = rebuilt_store
+
+    use_rebuilt_store_without_request_persist()
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        product = client.post(
+            "/api/products",
+            json={"code": "START-DBFIRST", "name": "启动 DB-first 产品"},
+            headers=headers,
+        ).json()["data"]
+        version = client.post(
+            f"/api/products/{product['id']}/versions",
+            json={"code": "v1", "name": "v1", "status": "active"},
+            headers=headers,
+        ).json()["data"]
+        requirement = client.post(
+            "/api/requirements",
+            json={
+                "content": "启动任务必须直接写 Review、Graph Run 和 Checkpoint。",
+                "product_id": product["id"],
+                "title": "任务启动 DB-first",
+                "version_id": version["id"],
+            },
+            headers=headers,
+        ).json()["data"]
+        client.post(
+            f"/api/requirements/{requirement['id']}/approve",
+            json={"comment": "进入设计"},
+            headers=headers,
+        )
+        generated = client.post(
+            f"/api/requirements/{requirement['id']}/generate-task",
+            headers=headers,
+        ).json()["data"]
+        use_rebuilt_store_without_request_persist()
+        draft_detail = client.get(
+            f"/api/ai-tasks/{generated['task_id']}",
+            headers=headers,
+        ).json()["data"]
+
+        app.state.store.ai_tasks = {}
+        app.state.store.graph_runs = {}
+        app.state.store.human_reviews = {}
+        repository.task_workflow_source_row_reads = 0
+        started = client.post(
+            f"/api/ai-tasks/{generated['task_id']}/start",
+            headers=headers,
+        ).json()["data"]
+        assert repository.task_workflow_source_row_reads == 1
+
+        use_rebuilt_store_without_request_persist()
+        app.state.store.graph_runs = {}
+        app.state.store.human_reviews = {}
+        app.state.store.ai_tasks = {}
+        repository.task_workflow_source_row_reads = 0
+        detail = client.get(
+            f"/api/ai-tasks/{generated['task_id']}",
+            headers=headers,
+        ).json()["data"]
+        graph_runs = client.get(
+            f"/api/graph-runs?ai_task_id={generated['task_id']}",
+            headers=headers,
+        ).json()["data"]
+        pending_reviews = client.get("/api/reviews/pending", headers=headers).json()["data"][
+            "items"
+        ]
+        review_detail = client.get(
+            f"/api/reviews/{started['review_id']}",
+            headers=headers,
+        ).json()["data"]
+
+        assert detail["status"] == "waiting_review"
+        assert detail["pending_review"]["id"] == started["review_id"]
+        assert detail["current_step"] == "interrupt_for_human_review"
+        assert detail["checkpoint_id"] == started["checkpoint_id"]
+        assert detail["updated_at"] != draft_detail["updated_at"]
+        assert [run["id"] for run in graph_runs["items"]] == [started["graph_run_id"]]
+        assert graph_runs["items"][0]["checkpoint_id"] == started["checkpoint_id"]
+        assert [review["id"] for review in pending_reviews] == [started["review_id"]]
+        assert review_detail["id"] == started["review_id"]
+        assert review_detail["task"]["id"] == generated["task_id"]
+        assert repository.task_workflow_source_row_reads == 3
+        assert (
+            f"start:{generated['task_id']}:{started['review_id']}:"
+            f"{started['graph_run_id']}:{started['checkpoint_id']}"
+            in repository.workflow_direct_writes
+        )
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+
+def _create_generated_design_task(
+    headers: dict[str, str],
+    *,
+    product_code: str,
+    product_name: str,
+    requirement_title: str,
+) -> dict:
+    product = client.post(
+        "/api/products",
+        json={"code": product_code, "name": product_name},
+        headers=headers,
+    ).json()["data"]
+    version = client.post(
+        f"/api/products/{product['id']}/versions",
+        json={"code": "v1", "name": "v1", "status": "active"},
+        headers=headers,
+    ).json()["data"]
+    requirement = client.post(
+        "/api/requirements",
+        json={
+            "content": f"{requirement_title} 必须在失败时直接写 repository。",
+            "product_id": product["id"],
+            "title": requirement_title,
+            "version_id": version["id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        f"/api/requirements/{requirement['id']}/approve",
+        json={"comment": "进入设计"},
+        headers=headers,
+    )
+    return client.post(
+        f"/api/requirements/{requirement['id']}/generate-task",
+        headers=headers,
+    ).json()["data"]
+
+
+def test_create_followup_task_writes_requirement_and_ai_task_without_request_persist():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+
+    def use_rebuilt_store_without_request_persist() -> None:
+        rebuilt_store = PersistentMemoryStore.from_repository(repository)
+        rebuilt_store.persist = lambda: None
+        app.state.store = rebuilt_store
+
+    use_rebuilt_store_without_request_persist()
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        generated = _create_generated_design_task(
+            headers,
+            product_code="FOLLOWUP-DBFIRST",
+            product_name="后续任务 DB-first 产品",
+            requirement_title="后续任务创建 DB-first",
+        )
+        started = client.post(
+            f"/api/ai-tasks/{generated['task_id']}/start",
+            headers=headers,
+        ).json()["data"]
+        client.post(
+            f"/api/reviews/{started['review_id']}/approve",
+            json={"version": 1},
+            headers=headers,
+        )
+        use_rebuilt_store_without_request_persist()
+        design_detail = client.get(
+            f"/api/ai-tasks/{generated['task_id']}",
+            headers=headers,
+        ).json()["data"]
+
+        followup = client.post(
+            "/api/ai-tasks",
+            json={
+                "input": {"product_detail_design_task_id": generated["task_id"]},
+                "requirement_id": design_detail["requirement_id"],
+                "task_type": "technical_solution",
+                "title": "技术方案后续任务 DB-first",
+            },
+            headers=headers,
+        ).json()["data"]
+
+        use_rebuilt_store_without_request_persist()
+        followup_detail = client.get(
+            f"/api/ai-tasks/{followup['id']}",
+            headers=headers,
+        ).json()["data"]
+        requirement_detail = client.get(
+            f"/api/requirements/{design_detail['requirement_id']}",
+            headers=headers,
+        ).json()["data"]
+
+        assert followup_detail["status"] == "draft"
+        assert followup_detail["task_type"] == "technical_solution"
+        assert followup_detail["input"]["product_detail_design_task_id"] == generated["task_id"]
+        assert requirement_detail["status"] == "ready_for_dev"
+        assert requirement_detail["task_ids"] == [generated["task_id"], followup["id"]]
+        assert (
+            f"save:{design_detail['requirement_id']}:{followup['id']}:draft"
+            in repository.ai_task_direct_writes
+        )
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users
