@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.328 |
+| 功能版本 | v1.1.329 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.329 | 2026-06-06 | 前端测试拆分继续推进：将团队看板 product/time-range 查询、active 产品筛选和 GitHub PR preview/snapshot service 契约迁移到独立 DashboardServices.test.ts 与 GitReviewServices.test.ts | Codex |
 | v1.1.328 | 2026-06-06 | 前端测试拆分继续推进：将产品版本/模块/Git 仓库/相关系统 service 契约与 Git 凭据脱敏回归迁移到独立 ProductServices.test.ts | Codex |
 | v1.1.327 | 2026-06-06 | 前端页面测试拆分继续推进：将模型网关配置新增/编辑、仅 Chat 测试、密钥不回显和编辑不覆盖密钥页面回归迁移到独立 ModelGatewayPage.test.tsx | Codex |
 | v1.1.326 | 2026-06-06 | 前端页面测试拆分继续推进：将知识中心沉淀审核、权限检索来源展示和索引失败重试页面回归迁移到独立 KnowledgePage.test.tsx | Codex |
