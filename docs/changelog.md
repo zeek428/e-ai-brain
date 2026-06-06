@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端产品配置 API 写入测试继续拆分：产品、版本、模块和 Git 仓库 API 结构化写入回归迁移到 `test_product_config_persistence.py`，和产品配置持久化用例按领域维护。
 - 后端知识与审计持久化测试继续拆分：知识文档、知识分块、知识沉淀和审计事件结构化持久化与恢复计数器回归迁移到独立 `test_knowledge_audit_persistence.py`。
 - 后端 workflow runtime 持久化测试继续拆分：Graph Run、Graph Checkpoint 和 Human Review 结构化持久化、空结构表忽略历史快照和孤儿运行态清理回归迁移到独立 `test_workflow_runtime_persistence.py`。
 - 后端需求与 AI 任务持久化测试继续拆分：需求与 AI 任务结构化持久化、空结构表忽略历史快照和孤儿任务清理回归迁移到独立 `test_requirement_task_persistence.py`。

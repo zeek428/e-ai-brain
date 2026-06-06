@@ -1,6 +1,7 @@
-from test_database_persistence import FakeSnapshotRepository
+from test_database_persistence import FakeSnapshotRepository, app, auth_headers, client
 
 from app.core.persistence import PersistentMemoryStore
+from app.core.users import MemoryUserRepository
 
 
 def test_product_config_is_persisted_through_fine_grained_repository_payload():
@@ -259,3 +260,49 @@ def test_orphan_snapshot_requirements_are_ignored_after_structured_product_migra
     assert rebuilt_store.requirements == {}
     assert repository.requirements_payload == {"requirements": {}}
     assert rebuilt_store.new_id("requirement") == "requirement_001"
+
+
+def test_product_config_api_writes_fine_grained_repository_payload():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    app.state.store = PersistentMemoryStore.from_repository(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        product = client.post(
+            "/api/products",
+            json={"code": "TABLE-API", "name": "结构表 API 产品"},
+            headers=headers,
+        ).json()["data"]
+        version = client.post(
+            f"/api/products/{product['id']}/versions",
+            json={"code": "v1", "name": "v1"},
+            headers=headers,
+        ).json()["data"]
+        module = client.post(
+            f"/api/products/{product['id']}/modules",
+            json={"code": "core", "name": "核心模块"},
+            headers=headers,
+        ).json()["data"]
+        repository_record = client.post(
+            f"/api/products/{product['id']}/git-repositories",
+            json={
+                "name": "AI Brain API",
+                "project_id": "42",
+                "project_path": "platform/e-ai-brain",
+            },
+            headers=headers,
+        ).json()["data"]
+
+        assert repository.product_config_payload is not None
+        assert repository.product_config_payload["products"][product["id"]]["code"] == "TABLE-API"
+        assert repository.product_config_payload["product_versions"][version["id"]]["name"] == "v1"
+        assert repository.product_config_payload["product_modules"][module["id"]]["code"] == "core"
+        assert repository.product_config_payload["product_git_repositories"][
+            repository_record["id"]
+        ]["project_path"] == "platform/e-ai-brain"
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
