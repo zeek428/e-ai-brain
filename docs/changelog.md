@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 鉴权与路由前端测试继续拆分：Umi 路由注册、登录、鉴权初始化、auth state 事件、过期 token 清理和登出跳转回归迁移到独立 `AuthFlow.test.tsx`。
 - 管理 CRUD 前端测试继续拆分：产品/需求/Bug/知识/用户 CRUD、AI 任务创建、GitLab MR 预览/快照、Code Review 报告和批量排期 service 契约迁移到独立 `ManagementCrudServices.test.ts`。
 - 知识沉淀与写回前端测试继续拆分：MVP-C mock issue 写回、知识沉淀列表/审批/驳回和知识检索 service 契约迁移到独立 `KnowledgeWritebackServices.test.ts`。
 - Review 前端测试继续拆分：补充信息请求、任务补充信息提交、编辑确认和驳回 service 契约迁移到独立 `ReviewServices.test.ts`，减少 `App.test.tsx` 对纯 API 映射的承载。
