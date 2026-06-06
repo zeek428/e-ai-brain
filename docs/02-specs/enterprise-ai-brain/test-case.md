@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.356 |
+| 功能版本 | v1.1.357 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.357 | 2026-06-07 | 后端持久化测试拆分继续推进：将用户洞察指标、用户反馈、迭代建议生成/决策转需求和 stale runtime 列表读取回归迁移到 test_insight_planning_api_persistence.py，和 insight planning API 用例按领域维护 | Codex |
 | v1.1.356 | 2026-06-07 | 后端持久化测试拆分继续推进：将研发运营采集运行、待归属、GitLab/Jenkins/线上日志列表读取与 DB-first 写入回归迁移到 test_operational_collection_persistence.py，和 operational collection 用例按领域维护 | Codex |
 | v1.1.355 | 2026-06-07 | 后端持久化测试拆分继续推进：将知识文档 API 结构化写入与审计 payload 回归迁移到 test_knowledge_audit_persistence.py，和知识审计持久化用例按领域维护 | Codex |
 | v1.1.354 | 2026-06-07 | 后端持久化测试拆分继续推进：将待确认 Review repository direct query 回归迁移到 test_workflow_runtime_persistence.py，和 workflow runtime 持久化用例按领域维护 | Codex |

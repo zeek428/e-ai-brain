@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端 insight planning API 持久化测试继续拆分：用户洞察指标、用户反馈、迭代建议生成/决策转需求和 stale runtime 列表读取回归迁移到 `test_insight_planning_api_persistence.py`，和洞察规划 API 用例按领域维护。
 - 后端 operational collection 持久化测试继续拆分：研发运营采集运行、待归属、GitLab/Jenkins/线上日志列表读取与 DB-first 写入回归迁移到 `test_operational_collection_persistence.py`，和运营采集用例按领域维护。
 - 后端知识 API 写入测试继续拆分：知识文档 API 结构化写入与审计 payload 回归迁移到 `test_knowledge_audit_persistence.py`，和知识审计持久化用例按领域维护。
 - 后端待确认 Review 查询测试继续拆分：待确认 Review repository direct query 回归迁移到 `test_workflow_runtime_persistence.py`，和 workflow runtime 持久化用例按领域维护。
