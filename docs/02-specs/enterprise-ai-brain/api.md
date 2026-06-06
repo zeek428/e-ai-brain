@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.205 |
+| 功能版本 | v1.1.206 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.206 | 2026-06-06 | GitLab MR / GitHub PR 预览响应新增 `permission_diagnostics`，快照响应新增 `previous_snapshot`、`diff_change_summary` 和 `snapshot_reused`，用于代码 Review 权限诊断、PR 刷新/重试和 diff 快照对比 | Codex |
 | v1.1.205 | 2026-06-06 | `GET /api/system/model-gateway-configs` 增强为模型网关配置管理列表接口，支持 `page/page_size/sort_by/sort_order/name/provider/status/is_default/default_chat_model/default_embedding_model/embedding_connection_mode`，分页响应返回 `query/performance` 观测元数据，未传分页参数时保留原全量配置列表兼容契约 | Codex |
 | v1.1.204 | 2026-06-06 | `GET /api/auth/roles` 增强为角色管理只读列表接口，支持 `page/page_size/sort_by/sort_order/role/category/business_role/menu_scope/permission/status`，分页响应返回 `query/performance` 观测元数据，未传分页参数时保留原角色目录全量列表兼容契约 | Codex |
 | v1.1.203 | 2026-06-06 | `GET /api/users` 增强为用户管理 SQL/read model 列表接口，支持 `page/page_size/sort_by/sort_order/username/display_name/role/status`，分页响应返回 `query/performance` 观测元数据，未传分页参数时保留原全量列表兼容契约 | Codex |
@@ -1765,6 +1766,15 @@ GET /api/devops/github/pull-requests/{repository_id}/{pr_number}/preview
       "确认变更文件归属目标需求和技术方案范围",
       "确认测试覆盖包含主要路径、边界场景和回归风险"
     ],
+    "permission_diagnostics": {
+      "provider": "github",
+      "base_url_configured": true,
+      "repository_path_configured": true,
+      "credential_ref_configured": true,
+      "token_available": true,
+      "writeback_allowed": false,
+      "writeback_reason": "read_only_review_flow"
+    },
     "diff_refs": {
       "base_sha": "abc123",
       "head_sha": "def456"
@@ -1775,7 +1785,7 @@ GET /api/devops/github/pull-requests/{repository_id}/{pr_number}/preview
 }
 ```
 
-MR/PR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持 GitLab/GitHub 只读仓库绑定、变更预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再根据 provider 预览 MR 或 PR、展示文件树、变更明细、风险摘要和 Review Checklist，确认后生成快照，最后用兼容字段 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`。GitHub API 读取 `GET /repos/{owner}/{repo}/pulls/{number}` 和 `.../files?per_page=100`，其中 `owner/repo` 来自 `project_path` 或 `remote_url`。`remote_url` 用于推导 GitLab base URL 或 GitHub Enterprise base URL，也可由 `GITLAB_BASE_URL` / `GITHUB_BASE_URL` 提供；`credential_ref` 推荐使用环境变量或服务端密钥引用，本地联调可直填只读 token，响应不得返回凭据值。同一 `repository_id + snapshot_hash` 已存在时，快照接口返回已有 snapshot 并记录 `gitlab_mr.snapshot_reused` 或 `github_pr.snapshot_reused`，不得重复入库。MR/PR diff、变更文件数或单文件 diff 行数超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录对应 provider 的 `*.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`changed_file_count`、`changed_file_limit`、`file_diff_line_count`、`file_diff_line_limit`、`file_path`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
+MR/PR diff 快照是 code_review 任务的唯一输入快照来源。MVP-A 必须支持 GitLab/GitHub 只读仓库绑定、变更预览和 diff 快照生成；MVP-B 在快照基础上创建正式 `code_review` 任务并生成 Review 报告。任务中心前端应先读取产品 Git 资源，再根据 provider 预览 MR 或 PR、展示文件树、变更明细、风险摘要、Review Checklist 和 `permission_diagnostics`，确认后生成快照，最后用兼容字段 `gitlab_mr_snapshot_id` 创建 `code_review` 任务；任务创建接口不得静默重新拉取或覆盖已有快照。后端通过 GitLab API 读取 `GET /api/v4/projects/{project}/merge_requests/{iid}` 和 `.../{iid}/changes`，其中 `project` 来自产品 Git 资源的 `project_path` 或 `project_id`。GitHub API 读取 `GET /repos/{owner}/{repo}/pulls/{number}` 和 `.../files?per_page=100`，其中 `owner/repo` 来自 `project_path` 或 `remote_url`。`remote_url` 用于推导 GitLab base URL 或 GitHub Enterprise base URL，也可由 `GITLAB_BASE_URL` / `GITHUB_BASE_URL` 提供；`credential_ref` 推荐使用环境变量或服务端密钥引用，本地联调可直填只读 token，响应不得返回凭据值。预览响应的 `permission_diagnostics` 只暴露 base URL、仓库路径、凭据引用和 token 可用性等布尔诊断，不返回 token。快照响应会返回 `previous_snapshot`、`diff_change_summary` 和 `snapshot_reused`，用于比较同一 repository + MR/PR number 的上一轮快照。同一 `repository_id + snapshot_hash` 已存在时，快照接口返回已有 snapshot 并记录 `gitlab_mr.snapshot_reused` 或 `github_pr.snapshot_reused`，不得重复入库。MR/PR diff、变更文件数或单文件 diff 行数超过限制时返回 `GITLAB_MR_DIFF_TOO_LARGE`，不创建快照，并记录对应 provider 的 `*.snapshot_failed` 审计事件，payload 包含 `diff_size_bytes`、`diff_limit_bytes`、`changed_file_count`、`changed_file_limit`、`file_diff_line_count`、`file_diff_line_limit`、`file_path`、`mr_iid`、`requirement_id` 和 `technical_solution_task_id`。
 
 生成 MR diff 快照：
 
@@ -1807,8 +1817,22 @@ POST /api/devops/github/pull-requests/{repository_id}/{pr_number}/snapshot
     "repository_id": "repo_001",
     "mr_iid": 42,
     "changed_file_count": 8,
+    "diff_change_summary": {
+      "added_files_count": 1,
+      "modified_files_count": 2,
+      "removed_files_count": 0,
+      "added_files": ["apps/web/src/pages/TaskCenter/index.tsx"],
+      "modified_files": ["apps/api/app/services/git_review.py"],
+      "removed_files": []
+    },
     "diff_size_bytes": 48000,
     "diff_limit_bytes": 204800,
+    "previous_snapshot": {
+      "id": "mr_snapshot_previous",
+      "head_sha": "old456",
+      "created_at": "2026-05-29T09:00:00Z"
+    },
+    "snapshot_reused": false,
     "created_at": "2026-05-29T10:00:00Z"
   },
   "trace_id": "trace_gitlab_002"

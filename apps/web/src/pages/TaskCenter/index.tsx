@@ -54,6 +54,7 @@ import {
   requestTaskCenterReviewMoreInfo,
   snapshotCodeReviewPullRequest,
   type CodeReviewReportRecord,
+  type GitLabMergeRequestSnapshot,
   type GitLabMergeRequestPreview,
   type ProductGitRepositoryOption,
   type TaskWritebackResultRecord,
@@ -246,6 +247,31 @@ function formatRiskSummary(preview?: GitLabMergeRequestPreview) {
   }/-${summary.totalDeletions ?? 0} · ${largestFile}`;
 }
 
+function formatPermissionDiagnostics(preview?: GitLabMergeRequestPreview) {
+  const diagnostics = preview?.permissionDiagnostics;
+  if (!diagnostics) {
+    return '未返回诊断信息';
+  }
+  return [
+    `Provider: ${diagnostics.provider ?? '-'}`,
+    `Base URL: ${diagnostics.baseUrlConfigured ? '已配置' : '未配置'}`,
+    `仓库路径: ${diagnostics.repositoryPathConfigured ? '已配置' : '未配置'}`,
+    `凭据引用: ${diagnostics.credentialRefConfigured ? '已配置' : '未配置'}`,
+    `Token: ${diagnostics.tokenAvailable ? '可用' : '不可用'}`,
+    `远端回写: ${diagnostics.writebackAllowed ? '允许' : '只读'}`,
+  ].join(' · ');
+}
+
+function formatSnapshotDiffSummary(snapshot: GitLabMergeRequestSnapshot) {
+  const summary = snapshot.diffChangeSummary;
+  if (!summary || !snapshot.previousSnapshot) {
+    return '首次快照，无上一快照对比';
+  }
+  return `新增 ${summary.addedFilesCount ?? 0} 文件，修改 ${
+    summary.modifiedFilesCount ?? 0
+  } 文件，移除 ${summary.removedFilesCount ?? 0} 文件`;
+}
+
 function formatChangedFileSummary(file: unknown, index: number) {
   if (!file || typeof file !== 'object' || Array.isArray(file)) {
     return `${index + 1}. ${String(file ?? '-')}`;
@@ -276,6 +302,7 @@ export default function TaskCenterPage() {
   }>();
   const [codeReviewDraft, setCodeReviewDraft] = useState<{
     loading: boolean;
+    lastSnapshot?: GitLabMergeRequestSnapshot;
     mrIid: number;
     preview?: GitLabMergeRequestPreview;
     repositories: ProductGitRepositoryOption[];
@@ -828,6 +855,21 @@ export default function TaskCenterPage() {
       await createCodeReviewTask(draft.task, snapshot.id, draft.mrIid);
       message.success('Code Review 任务已创建');
       setCodeReviewDraft(undefined);
+      Modal.success({
+        content: (
+          <Space orientation="vertical" size={4}>
+            <Text>快照：{snapshot.snapshotReused ? '复用已有快照' : '已生成新快照'}</Text>
+            <Text>对比：{formatSnapshotDiffSummary(snapshot)}</Text>
+            {snapshot.previousSnapshot ? (
+              <Text type="secondary">
+                上一快照：{snapshot.previousSnapshot.id ?? '-'} ·{' '}
+                {snapshot.previousSnapshot.createdAt ?? '-'}
+              </Text>
+            ) : null}
+          </Space>
+        ),
+        title: 'Code Review 快照结果',
+      });
       await reloadTaskCenter();
     } catch (taskError) {
       setCodeReviewDraft((current) => (current ? { ...current, submitting: false } : current));
@@ -1654,6 +1696,9 @@ export default function TaskCenterPage() {
               </Descriptions.Item>
               <Descriptions.Item label="远端回写">
                 {codeReviewDraft.preview.writebackAllowed ? '允许' : '不回写'}
+              </Descriptions.Item>
+              <Descriptions.Item label="权限诊断">
+                {formatPermissionDiagnostics(codeReviewDraft.preview)}
               </Descriptions.Item>
             </Descriptions>
           ) : null}

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.api.deps import api_error
-from app.services.git_review_diff import diff_payload
+from app.services.git_review_diff import compare_changed_file_snapshots, diff_payload
 
 
 def save_git_review_snapshot_record(
@@ -150,6 +150,19 @@ def create_code_review_source_snapshot(
         raise api_error(413, "GITLAB_MR_DIFF_TOO_LARGE", "MR diff exceeds configured limit")
 
     snapshot_hash = hashlib.sha256(diff_content.encode()).hexdigest()
+    related_snapshots = [
+        snapshot
+        for snapshot in current_store.gitlab_mr_snapshots.values()
+        if snapshot.get("repository_id") == repository["id"]
+        and int(snapshot.get("mr_iid") or 0) == int(mr_iid)
+    ]
+    related_snapshots.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    previous_snapshot = related_snapshots[0] if related_snapshots else None
+    diff_change_summary = compare_changed_file_snapshots(
+        previous_snapshot.get("changed_files_summary") if previous_snapshot else None,
+        preview.get("changed_files_summary"),
+    )
+
     existing_snapshot = next(
         (
             snapshot
@@ -174,7 +187,12 @@ def create_code_review_source_snapshot(
             },
         )
         save_git_review_snapshot_record(current_store, snapshot=None, audit_event=audit_event)
-        return existing_snapshot
+        return {
+            **existing_snapshot,
+            "diff_change_summary": diff_change_summary,
+            "previous_snapshot": _snapshot_comparison_ref(previous_snapshot),
+            "snapshot_reused": True,
+        }
 
     snapshot_id = current_store.new_id("snapshot")
     snapshot = {
@@ -217,4 +235,20 @@ def create_code_review_source_snapshot(
         payload={"repository_id": repository["id"], "mr_iid": mr_iid},
     )
     save_git_review_snapshot_record(current_store, snapshot=snapshot, audit_event=audit_event)
-    return snapshot
+    return {
+        **snapshot,
+        "diff_change_summary": diff_change_summary,
+        "previous_snapshot": _snapshot_comparison_ref(previous_snapshot),
+        "snapshot_reused": False,
+    }
+
+
+def _snapshot_comparison_ref(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    return {
+        "created_at": snapshot.get("created_at"),
+        "head_sha": snapshot.get("head_sha"),
+        "id": snapshot.get("id"),
+        "snapshot_hash": snapshot.get("snapshot_hash"),
+    }

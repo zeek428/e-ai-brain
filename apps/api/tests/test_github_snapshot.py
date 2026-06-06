@@ -41,6 +41,15 @@ def test_github_repository_preview_reads_real_github_api(monkeypatch):
         {"path": "apps/web/src/pages/TaskCenter/index.tsx", "additions": 2, "deletions": 0},
     ]
     assert preview["writeback_allowed"] is False
+    assert preview["permission_diagnostics"] == {
+        "base_url_configured": True,
+        "credential_ref_configured": True,
+        "provider": "github",
+        "repository_path_configured": True,
+        "token_available": True,
+        "writeback_allowed": False,
+        "writeback_reason": "read_only_review_flow",
+    }
     assert calls == [
         {
             "base_url": "https://api.github.com",
@@ -153,3 +162,53 @@ def test_github_pull_request_snapshot_can_create_code_review_task(monkeypatch):
 
     assert task_response.status_code == 200
     assert task_response.json()["data"]["task_type"] == "code_review"
+
+
+def test_github_pull_request_snapshot_returns_diff_comparison(monkeypatch):
+    install_real_github_api_stub(monkeypatch)
+    headers = auth_headers()
+    context = build_confirmed_solution_context(
+        headers,
+        repository_payload={
+            "name": "AI Brain GitHub",
+            "remote_url": "git@github.com:zeek428/e-ai-brain.git",
+            "git_provider": "github",
+            "project_path": "zeek428/e-ai-brain",
+            "credential_ref": "ghp_direct_local_token",
+        },
+    )
+
+    first_snapshot = client.post(
+        f"/api/devops/github/pull-requests/{context['repository_id']}/3/snapshot",
+        json={
+            "requirement_id": context["requirement_id"],
+            "technical_solution_task_id": context["technical_solution_task_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+    stored_first_snapshot = client.app.state.store.gitlab_mr_snapshots[first_snapshot["id"]]
+    stored_first_snapshot["snapshot_hash"] = "previous-different-hash"
+    stored_first_snapshot["changed_files_summary"] = [
+        {"path": "apps/api/app/main.py", "additions": 1, "deletions": 1},
+        {"path": "docs/old.md", "additions": 0, "deletions": 2},
+    ]
+
+    second_snapshot = client.post(
+        f"/api/devops/github/pull-requests/{context['repository_id']}/3/snapshot",
+        json={
+            "requirement_id": context["requirement_id"],
+            "technical_solution_task_id": context["technical_solution_task_id"],
+        },
+        headers=headers,
+    ).json()["data"]
+
+    assert second_snapshot["previous_snapshot"]["id"] == first_snapshot["id"]
+    assert second_snapshot["snapshot_reused"] is False
+    assert second_snapshot["diff_change_summary"] == {
+        "added_files": ["apps/web/src/pages/TaskCenter/index.tsx"],
+        "added_files_count": 1,
+        "modified_files": ["apps/api/app/main.py"],
+        "modified_files_count": 1,
+        "removed_files": ["docs/old.md"],
+        "removed_files_count": 1,
+    }

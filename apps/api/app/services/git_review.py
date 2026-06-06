@@ -66,6 +66,26 @@ def credential_ref_token(credential_ref: str, *, fallback_env_names: list[str]) 
     return None
 
 
+def git_permission_diagnostics(
+    repository: dict[str, Any],
+    *,
+    provider: str,
+    token: str | None,
+    base_url: str | None,
+    repository_path: str | None,
+) -> dict[str, Any]:
+    credential_ref = str(repository.get("credential_ref") or "").strip()
+    return {
+        "base_url_configured": bool(base_url),
+        "credential_ref_configured": bool(credential_ref),
+        "provider": provider,
+        "repository_path_configured": bool(repository_path),
+        "token_available": bool(token),
+        "writeback_allowed": False,
+        "writeback_reason": "read_only_review_flow",
+    }
+
+
 def gitlab_base_url(repository: dict[str, Any]) -> str | None:
     return git_review_gitlab.gitlab_base_url(repository)
 
@@ -105,7 +125,7 @@ def real_gitlab_preview(repository: dict[str, Any], mr_iid: int) -> dict[str, An
 
 
 def gitlab_preview(repository: dict[str, Any], mr_iid: int) -> dict[str, Any]:
-    return git_review_gitlab.gitlab_preview(
+    preview = git_review_gitlab.gitlab_preview(
         repository,
         mr_iid,
         request_json=gitlab_request_json,
@@ -114,6 +134,16 @@ def gitlab_preview(repository: dict[str, Any], mr_iid: int) -> dict[str, Any]:
             fallback_env_names=fallback_env_names,
         ),
     )
+    return {
+        **preview,
+        "permission_diagnostics": git_permission_diagnostics(
+            repository,
+            provider="gitlab",
+            token=gitlab_access_token(repository),
+            base_url=gitlab_base_url(repository),
+            repository_path=repository.get("project_path") or repository.get("project_id"),
+        ),
+    }
 
 
 def github_base_url(repository: dict[str, Any]) -> str | None:
@@ -174,7 +204,12 @@ def github_pull_requests(
 
 
 def github_preview(repository: dict[str, Any], pr_number: int) -> dict[str, Any]:
-    return git_review_github.github_preview(
+    repository_path = None
+    try:
+        repository_path = github_repository_path(repository)
+    except Exception:
+        repository_path = None
+    preview = git_review_github.github_preview(
         repository,
         pr_number,
         request_json=github_request_json,
@@ -183,6 +218,16 @@ def github_preview(repository: dict[str, Any], pr_number: int) -> dict[str, Any]
             fallback_env_names=fallback_env_names,
         ),
     )
+    return {
+        **preview,
+        "permission_diagnostics": git_permission_diagnostics(
+            repository,
+            provider="github",
+            token=github_access_token(repository),
+            base_url=github_base_url(repository),
+            repository_path=repository_path,
+        ),
+    }
 
 
 def preview_gitlab_mr_response(

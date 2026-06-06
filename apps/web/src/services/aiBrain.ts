@@ -858,6 +858,7 @@ export type GitLabMergeRequestPreview = {
   changedFilesSummary: unknown[];
   diffFileTree: CodeReviewDiffTreeItem[];
   mrIid: number;
+  permissionDiagnostics?: CodeReviewPermissionDiagnostics;
   reviewChecklist: string[];
   repositoryId: string;
   riskSummary?: CodeReviewRiskSummary;
@@ -866,6 +867,16 @@ export type GitLabMergeRequestPreview = {
   title: string;
   webUrl?: string;
   writebackAllowed: boolean;
+};
+
+export type CodeReviewPermissionDiagnostics = {
+  baseUrlConfigured?: boolean;
+  credentialRefConfigured?: boolean;
+  provider?: string;
+  repositoryPathConfigured?: boolean;
+  tokenAvailable?: boolean;
+  writebackAllowed?: boolean;
+  writebackReason?: string;
 };
 
 export type CodeReviewDiffTreeItem = {
@@ -892,14 +903,33 @@ export type CodeReviewRiskSummary = {
 export type GitLabMergeRequestSnapshot = {
   changedFilesSummary: unknown[];
   createdAt?: string;
+  diffChangeSummary?: CodeReviewDiffChangeSummary;
   diffLimitBytes?: number;
   diffFileTree: CodeReviewDiffTreeItem[];
   diffSizeBytes?: number;
   id: string;
   mrIid: number;
+  previousSnapshot?: CodeReviewPreviousSnapshot | null;
   reviewChecklist: string[];
   repositoryId: string;
   riskSummary?: CodeReviewRiskSummary;
+  snapshotReused?: boolean;
+};
+
+export type CodeReviewDiffChangeSummary = {
+  addedFiles?: string[];
+  addedFilesCount?: number;
+  modifiedFiles?: string[];
+  modifiedFilesCount?: number;
+  removedFiles?: string[];
+  removedFilesCount?: number;
+};
+
+export type CodeReviewPreviousSnapshot = {
+  createdAt?: string;
+  headSha?: string;
+  id?: string;
+  snapshotHash?: string;
 };
 
 export type CodeReviewReportRecord = {
@@ -1491,6 +1521,15 @@ type GitLabMergeRequestPreviewResponse = {
     path?: string;
   }>;
   mr_iid: number;
+  permission_diagnostics?: {
+    base_url_configured?: boolean;
+    credential_ref_configured?: boolean;
+    provider?: string;
+    repository_path_configured?: boolean;
+    token_available?: boolean;
+    writeback_allowed?: boolean;
+    writeback_reason?: string;
+  };
   review_checklist?: string[];
   repository_id: string;
   risk_summary?: {
@@ -1516,14 +1555,29 @@ type GitLabMergeRequestPreviewResponse = {
 type GitLabMergeRequestSnapshotResponse = {
   changed_files_summary?: unknown[];
   created_at?: string;
+  diff_change_summary?: {
+    added_files?: string[];
+    added_files_count?: number;
+    modified_files?: string[];
+    modified_files_count?: number;
+    removed_files?: string[];
+    removed_files_count?: number;
+  };
   diff_file_tree?: GitLabMergeRequestPreviewResponse['diff_file_tree'];
   diff_limit_bytes?: number;
   diff_size_bytes?: number;
   id: string;
   mr_iid: number;
+  previous_snapshot?: {
+    created_at?: string;
+    head_sha?: string;
+    id?: string;
+    snapshot_hash?: string;
+  } | null;
   review_checklist?: string[];
   repository_id: string;
   risk_summary?: GitLabMergeRequestPreviewResponse['risk_summary'];
+  snapshot_reused?: boolean;
 };
 
 type CodeReviewReportResponse = {
@@ -2083,6 +2137,53 @@ function normalizeRiskSummary(
     totalAdditions: summary.total_additions,
     totalChangedLines: summary.total_changed_lines,
     totalDeletions: summary.total_deletions,
+  };
+}
+
+function normalizePermissionDiagnostics(
+  diagnostics?: GitLabMergeRequestPreviewResponse['permission_diagnostics'],
+): CodeReviewPermissionDiagnostics | undefined {
+  if (!diagnostics) {
+    return undefined;
+  }
+  return {
+    baseUrlConfigured: diagnostics.base_url_configured,
+    credentialRefConfigured: diagnostics.credential_ref_configured,
+    provider: diagnostics.provider,
+    repositoryPathConfigured: diagnostics.repository_path_configured,
+    tokenAvailable: diagnostics.token_available,
+    writebackAllowed: diagnostics.writeback_allowed,
+    writebackReason: diagnostics.writeback_reason,
+  };
+}
+
+function normalizeDiffChangeSummary(
+  summary?: GitLabMergeRequestSnapshotResponse['diff_change_summary'],
+): CodeReviewDiffChangeSummary | undefined {
+  if (!summary) {
+    return undefined;
+  }
+  return {
+    addedFiles: summary.added_files ?? [],
+    addedFilesCount: summary.added_files_count ?? 0,
+    modifiedFiles: summary.modified_files ?? [],
+    modifiedFilesCount: summary.modified_files_count ?? 0,
+    removedFiles: summary.removed_files ?? [],
+    removedFilesCount: summary.removed_files_count ?? 0,
+  };
+}
+
+function normalizePreviousSnapshot(
+  snapshot?: GitLabMergeRequestSnapshotResponse['previous_snapshot'],
+): CodeReviewPreviousSnapshot | null {
+  if (!snapshot) {
+    return null;
+  }
+  return {
+    createdAt: formatListDate(snapshot.created_at),
+    headSha: snapshot.head_sha,
+    id: snapshot.id,
+    snapshotHash: snapshot.snapshot_hash,
   };
 }
 
@@ -3967,6 +4068,7 @@ export async function previewGitLabMergeRequest(
     changedFilesSummary: preview.changed_files_summary ?? [],
     diffFileTree: normalizeDiffFileTree(preview.diff_file_tree),
     mrIid: preview.mr_iid,
+    permissionDiagnostics: normalizePermissionDiagnostics(preview.permission_diagnostics),
     reviewChecklist: preview.review_checklist ?? [],
     repositoryId: preview.repository_id,
     riskSummary: normalizeRiskSummary(preview.risk_summary),
@@ -3997,6 +4099,7 @@ export async function previewCodeReviewPullRequest(
     changedFilesSummary: preview.changed_files_summary ?? [],
     diffFileTree: normalizeDiffFileTree(preview.diff_file_tree),
     mrIid: preview.mr_iid,
+    permissionDiagnostics: normalizePermissionDiagnostics(preview.permission_diagnostics),
     reviewChecklist: preview.review_checklist ?? [],
     repositoryId: preview.repository_id,
     riskSummary: normalizeRiskSummary(preview.risk_summary),
@@ -4035,14 +4138,17 @@ export async function snapshotGitLabMergeRequest({
   return {
     changedFilesSummary: snapshot.changed_files_summary ?? [],
     createdAt: formatListDate(snapshot.created_at),
+    diffChangeSummary: normalizeDiffChangeSummary(snapshot.diff_change_summary),
     diffLimitBytes: snapshot.diff_limit_bytes,
     diffFileTree: normalizeDiffFileTree(snapshot.diff_file_tree),
     diffSizeBytes: snapshot.diff_size_bytes,
     id: snapshot.id,
     mrIid: snapshot.mr_iid,
+    previousSnapshot: normalizePreviousSnapshot(snapshot.previous_snapshot),
     reviewChecklist: snapshot.review_checklist ?? [],
     repositoryId: snapshot.repository_id,
     riskSummary: normalizeRiskSummary(snapshot.risk_summary),
+    snapshotReused: snapshot.snapshot_reused,
   };
 }
 
@@ -4081,14 +4187,17 @@ export async function snapshotCodeReviewPullRequest({
   return {
     changedFilesSummary: snapshot.changed_files_summary ?? [],
     createdAt: formatListDate(snapshot.created_at),
+    diffChangeSummary: normalizeDiffChangeSummary(snapshot.diff_change_summary),
     diffLimitBytes: snapshot.diff_limit_bytes,
     diffFileTree: normalizeDiffFileTree(snapshot.diff_file_tree),
     diffSizeBytes: snapshot.diff_size_bytes,
     id: snapshot.id,
     mrIid: snapshot.mr_iid,
+    previousSnapshot: normalizePreviousSnapshot(snapshot.previous_snapshot),
     reviewChecklist: snapshot.review_checklist ?? [],
     repositoryId: snapshot.repository_id,
     riskSummary: normalizeRiskSummary(snapshot.risk_summary),
+    snapshotReused: snapshot.snapshot_reused,
   };
 }
 

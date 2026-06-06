@@ -100,6 +100,40 @@ def enrich_code_review_preview(preview: dict[str, Any]) -> dict[str, Any]:
     return {**preview, **summarize_changed_files_for_review(changed_files_summary)}
 
 
+def compare_changed_file_snapshots(
+    previous_files: list[dict[str, Any]] | None,
+    current_files: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    previous_by_path = {
+        changed_file_path(item): item for item in previous_files or [] if isinstance(item, dict)
+    }
+    current_by_path = {
+        changed_file_path(item): item for item in current_files or [] if isinstance(item, dict)
+    }
+    previous_paths = set(previous_by_path)
+    current_paths = set(current_by_path)
+    added_paths = sorted(current_paths - previous_paths)
+    removed_paths = sorted(previous_paths - current_paths)
+    modified_paths = sorted(
+        path
+        for path in current_paths.intersection(previous_paths)
+        if _changed_file_line_total(current_by_path[path])
+        != _changed_file_line_total(previous_by_path[path])
+    )
+    return {
+        "added_files": added_paths,
+        "added_files_count": len(added_paths),
+        "modified_files": modified_paths,
+        "modified_files_count": len(modified_paths),
+        "removed_files": removed_paths,
+        "removed_files_count": len(removed_paths),
+    }
+
+
+def _changed_file_line_total(item: dict[str, Any]) -> tuple[int, int]:
+    return int(item.get("additions") or 0), int(item.get("deletions") or 0)
+
+
 def diff_payload(preview: dict[str, Any]) -> str:
     return json.dumps(
         {
