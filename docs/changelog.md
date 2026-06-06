@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 知识沉淀与写回前端测试继续拆分：MVP-C mock issue 写回、知识沉淀列表/审批/驳回和知识检索 service 契约迁移到独立 `KnowledgeWritebackServices.test.ts`。
 - Review 前端测试继续拆分：补充信息请求、任务补充信息提交、编辑确认和驳回 service 契约迁移到独立 `ReviewServices.test.ts`，减少 `App.test.tsx` 对纯 API 映射的承载。
 - 模型网关前端测试继续拆分：配置 CRUD、Chat-only 连接测试和密钥脱敏 service 契约迁移到独立 `ModelGatewayServices.test.ts`，页面交互回归继续保留在 `ModelGatewayPage.test.tsx`。
 - 前端 service 契约测试继续拆分：团队看板 product/time-range 查询、active 产品筛选和 GitHub PR preview/snapshot 映射迁移到独立 `DashboardServices.test.ts` 与 `GitReviewServices.test.ts`，让 `App.test.tsx` 继续收敛为页面级 smoke。
