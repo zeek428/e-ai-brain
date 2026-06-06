@@ -259,6 +259,7 @@ export default function DashboardPage() {
     setError(undefined);
     try {
       const nextDashboard = await fetchItTeamDashboard({
+        forceRefresh: true,
         productId: selectedProductId,
         timeRange: selectedApiTimeRange,
       });
@@ -319,7 +320,18 @@ export default function DashboardPage() {
       <div className="dashboard-header">
         <div>
           <Title level={3}>IT 团队看板</Title>
-          <Text type="secondary">真实数据窗口：{dashboard?.timeRange ?? '-'}</Text>
+          <Text type="secondary">
+            真实数据窗口：{dashboard?.timeRange ?? '-'}
+            {dashboard?.cacheMetadata.generatedAt && dashboard.cacheMetadata.generatedAt !== '-' ? (
+              <>
+                {' · '}生成时间：{dashboard.cacheMetadata.generatedAt}
+                {' · '}
+                {dashboard.cacheMetadata.cacheHit ? '缓存命中' : '实时刷新'}
+                {' · '}
+                {dashboard.cacheMetadata.durationMs}ms
+              </>
+            ) : null}
+          </Text>
         </div>
         <div className="dashboard-actions">
           <select

@@ -1,19 +1,25 @@
 import { DeleteOutlined, EditOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import type { ManagementListQuery } from '../../components/ManagementListPage';
 import type { UserRecord } from '../../data/management';
 import { type UserRoleDefinition, toUserRoleOptions } from '../../data/roles';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import {
+  formatRemoteRowsError,
+  normalizeRemoteRowsError,
+  type RemoteRowsError,
+} from '../../hooks/useRemoteRows';
 import {
   createManagementUser,
   deleteManagementUser,
   fetchRoleDefinitions,
-  fetchManagementUsers,
+  fetchManagementUserList,
   updateManagementUser,
 } from '../../services/aiBrain';
+import type { UserListQuery } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
 
 type UserFormValues = {
@@ -24,6 +30,30 @@ type UserFormValues = {
   username: string;
 };
 
+const userSortFieldMap: Record<string, string> = {
+  displayName: 'display_name',
+  status: 'status',
+  username: 'username',
+};
+
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildUserListQuery(query: ManagementListQuery): UserListQuery {
+  const filters = query.filters;
+  return {
+    displayName: normalizeFilterText(filters.displayName),
+    page: query.page,
+    pageSize: query.pageSize,
+    role: normalizeFilterText(filters.role),
+    sortField: query.sortField ? userSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(filters.status),
+    username: normalizeFilterText(filters.username),
+  };
+}
+
 export default function UsersPage() {
   const [form] = Form.useForm<UserFormValues>();
   const [editingUser, setEditingUser] = useState<UserRecord | null>(null);
@@ -31,23 +61,101 @@ export default function UsersPage() {
   const [isRoleCatalogOpen, setIsRoleCatalogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [roleDefinitions, setRoleDefinitions] = useState<UserRoleDefinition[]>([]);
-  const loadUsersWithRoles = useCallback(async () => {
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'username',
+    sortOrder: 'ascend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: UserRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
+  const loadRoleDefinitions = useCallback(async () => {
     const definitions = await fetchRoleDefinitions();
     setRoleDefinitions(definitions);
-    return fetchManagementUsers(definitions);
   }, []);
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(loadUsersWithRoles);
 
   const roleOptions = useMemo(() => toUserRoleOptions(roleDefinitions), [roleDefinitions]);
   const roleByCode = useMemo(
     () => new Map(roleDefinitions.map((role) => [role.code, role])),
     [roleDefinitions],
   );
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const definitions = roleDefinitions.length ? roleDefinitions : await fetchRoleDefinitions();
+      if (!roleDefinitions.length) {
+        setRoleDefinitions(definitions);
+      }
+      const result = await fetchManagementUserList(definitions, buildUserListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery, roleDefinitions]);
+
+  useEffect(() => {
+    void loadRoleDefinitions();
+  }, [loadRoleDefinitions]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    const load = async () => {
+      try {
+        const definitions = roleDefinitions.length ? roleDefinitions : await fetchRoleDefinitions();
+        if (isCurrent && !roleDefinitions.length) {
+          setRoleDefinitions(definitions);
+        }
+        const result = await fetchManagementUserList(definitions, buildUserListQuery(listQuery));
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      } catch (loadError: unknown) {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      }
+    };
+    void load();
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery, roleDefinitions]);
 
   const openCreateModal = () => {
     setEditingUser(null);
@@ -113,15 +221,20 @@ export default function UsersPage() {
     () => [
       {
         dataIndex: 'username',
+        sorter: true,
         title: '登录账号',
+        width: 220,
       },
       {
         dataIndex: 'displayName',
+        sorter: true,
         title: '显示名称',
+        width: 180,
       },
       {
         dataIndex: 'rolesText',
         title: '角色',
+        width: 220,
         render: (_, row) =>
           row.roles.length ? (
             <Space size={[4, 4]} wrap>
@@ -135,7 +248,9 @@ export default function UsersPage() {
       },
       {
         dataIndex: 'status',
+        sorter: true,
         title: '状态',
+        width: 120,
         render: (_, row) =>
           row.status === 'active' ? (
             <StatusTag color="green" label="启用" />
@@ -147,6 +262,7 @@ export default function UsersPage() {
         key: 'actions',
         title: '操作',
         valueType: 'option',
+        width: 180,
         render: (_, row) => (
           <Space size={4}>
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
@@ -169,11 +285,19 @@ export default function UsersPage() {
       <ManagementListPage<UserRecord>
         breadcrumbGroup="系统管理"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           { label: '登录账号', name: 'username', type: 'text' },
           { label: '显示名称', name: 'displayName', type: 'text' },
-          { label: '角色', name: 'rolesText', type: 'text' },
+          {
+            label: '角色',
+            name: 'role',
+            options: roleOptions.map((option) => ({
+              label: option.label,
+              value: option.value,
+            })),
+            type: 'select',
+          },
           {
             label: '状态',
             name: 'status',
@@ -184,11 +308,17 @@ export default function UsersPage() {
             type: 'select',
           },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增用户"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
         tableTitle="用户列表"
         title="用户管理"

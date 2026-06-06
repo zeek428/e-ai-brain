@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -39,6 +40,12 @@ def _options_from_args(args: argparse.Namespace) -> ReadinessOptions:
         postgres_db=args.postgres_db,
         postgres_user=args.postgres_user,
         project_root=str(REPO_ROOT),
+        rebuild=args.rebuild,
+        web_base_url=args.web_base_url,
+        web_smoke=args.web_smoke,
+        web_smoke_command=tuple(shlex.split(args.web_smoke_command))
+        if args.web_smoke_command
+        else None,
         username=_env("READINESS_USERNAME"),
     )
 
@@ -71,6 +78,31 @@ def main() -> int:
         "--postgres-user",
         default=_env("POSTGRES_USER", "ai_brain"),
         help="PostgreSQL user used inside the compose postgres service.",
+    )
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        default=_env("READINESS_REBUILD", "false").lower() in {"1", "true", "yes"},
+        help="Run docker compose up -d --build before readiness checks.",
+    )
+    parser.add_argument(
+        "--web-base-url",
+        default=_env("READINESS_WEB_BASE_URL", "http://localhost:5173"),
+        help="Web base URL, defaults to READINESS_WEB_BASE_URL or http://localhost:5173.",
+    )
+    parser.add_argument(
+        "--web-smoke",
+        action="store_true",
+        default=_env("READINESS_WEB_SMOKE", "false").lower() in {"1", "true", "yes"},
+        help="Run browser-backed web page smoke after API/list gates.",
+    )
+    parser.add_argument(
+        "--web-smoke-command",
+        default=_env("READINESS_WEB_SMOKE_COMMAND"),
+        help=(
+            "Optional custom web smoke command. Defaults to "
+            "`node scripts/web_page_smoke.mjs` with readiness URLs and auth."
+        ),
     )
     args = parser.parse_args()
 

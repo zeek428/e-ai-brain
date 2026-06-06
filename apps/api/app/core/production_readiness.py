@@ -27,6 +27,10 @@ class ReadinessOptions:
     postgres_db: str = "ai_brain"
     postgres_user: str = "ai_brain"
     project_root: str | None = None
+    rebuild: bool = False
+    web_base_url: str = "http://localhost:5173"
+    web_smoke: bool = False
+    web_smoke_command: tuple[str, ...] | None = None
     username: str | None = None
 
 
@@ -86,7 +90,11 @@ def _default_http_request(
     request = Request(url, data=data, headers=request_headers, method=method)
     try:
         with urlopen(request, timeout=20) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            response_text = response.read().decode("utf-8")
+            try:
+                payload = json.loads(response_text)
+            except json.JSONDecodeError:
+                payload = {"raw": response_text}
             return int(response.status), payload
     except HTTPError as exc:
         try:
@@ -138,8 +146,27 @@ def _compose_services_gate(
     return GateResult("compose_services", True, "api, web, postgres and redis are running")
 
 
+def _compose_rebuild_gate(
+    options: ReadinessOptions,
+    *,
+    run_command: CommandRunner,
+    project_root: str | None,
+) -> GateResult:
+    code, stdout, stderr = run_command(
+        _docker_command(options, "compose", "up", "-d", "--build"),
+        project_root,
+    )
+    if code != 0:
+        return GateResult("compose_rebuild", False, (stderr or stdout).strip())
+    return GateResult("compose_rebuild", True, "docker compose stack rebuilt and started")
+
+
 def _api_url(options: ReadinessOptions, path: str) -> str:
     return f"{options.api_base_url.rstrip('/')}{path}"
+
+
+def _web_url(options: ReadinessOptions, path: str = "") -> str:
+    return f"{options.web_base_url.rstrip('/')}{path}"
 
 
 def _api_health_gate(
@@ -157,6 +184,57 @@ def _api_health_gate(
     if not payload.get("trace_id"):
         return GateResult("api_health", False, "missing trace_id")
     return GateResult("api_health", True, "ok")
+
+
+def _web_shell_gate(
+    options: ReadinessOptions,
+    *,
+    http_request: Callable[..., tuple[int, dict[str, Any]]],
+) -> GateResult:
+    status, payload = http_request("GET", _web_url(options))
+    raw = payload.get("raw") if isinstance(payload, dict) else None
+    if status != 200:
+        return GateResult("web_shell", False, f"status={status}, payload={payload}")
+    if not isinstance(raw, str) or "<html" not in raw.lower():
+        return GateResult("web_shell", False, "web shell did not return HTML")
+    if "id=\"root\"" not in raw and "id='root'" not in raw and "Enterprise AI Brain" not in raw:
+        return GateResult("web_shell", False, "web shell is missing root mount or product title")
+    return GateResult("web_shell", True, "web shell returned HTML")
+
+
+def _web_smoke_command(options: ReadinessOptions) -> list[str]:
+    if options.web_smoke_command is not None:
+        return list(options.web_smoke_command)
+    project_root = Path(options.project_root or ".")
+    command = [
+        "node",
+        str(project_root / "scripts" / "web_page_smoke.mjs"),
+        "--api-base-url",
+        options.api_base_url,
+        "--web-base-url",
+        options.web_base_url,
+        "--expect-text",
+        "/system/roles=系统管理员",
+    ]
+    if options.bearer_token:
+        command.extend(["--bearer-token", options.bearer_token])
+    elif options.username and options.password:
+        command.extend(["--username", options.username, "--password", options.password])
+    return command
+
+
+def _web_page_smoke_gate(
+    options: ReadinessOptions,
+    *,
+    run_command: CommandRunner,
+    project_root: str | None,
+) -> GateResult:
+    command = _web_smoke_command(options)
+    code, stdout, stderr = run_command(command, project_root)
+    detail = (stderr or stdout or f"exit_code={code}").strip()
+    if code != 0:
+        return GateResult("web_page_smoke", False, detail)
+    return GateResult("web_page_smoke", True, detail or "ok")
 
 
 def _postgres_extensions_gate(
@@ -264,6 +342,35 @@ def _model_gateway_config_gate(
     return GateResult("model_gateway_config", True, "active default gateway is configured")
 
 
+def _core_list_gate(
+    name: str,
+    path: str,
+    options: ReadinessOptions,
+    *,
+    headers: dict[str, str],
+    http_request: Callable[..., tuple[int, dict[str, Any]]],
+) -> GateResult:
+    status, payload = http_request("GET", _api_url(options, path), headers=headers)
+    if status != 200:
+        return GateResult(name, False, f"status={status}, payload={payload}")
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    if not isinstance(data.get("items"), list):
+        return GateResult(name, False, "response is missing data.items")
+    if "total" not in data:
+        return GateResult(name, False, "response is missing data.total")
+    if not payload.get("trace_id"):
+        return GateResult(name, False, "response is missing trace_id")
+    query = data.get("query")
+    if not isinstance(query, dict) or "filters" not in query:
+        return GateResult(name, False, "response is missing query.filters")
+    performance = data.get("performance")
+    if not isinstance(performance, dict) or "duration_ms" not in performance:
+        return GateResult(name, False, "response is missing performance.duration_ms")
+    if "result_count" not in performance or "total" not in performance:
+        return GateResult(name, False, "response is missing performance row counts")
+    return GateResult(name, True, "ok")
+
+
 def _missing_gitlab_options(options: ReadinessOptions) -> list[str]:
     missing = []
     if not options.gitlab_repository_id:
@@ -338,32 +445,46 @@ def run_production_readiness_checks(
     run_command: CommandRunner = _default_run_command,
     http_request: Callable[..., tuple[int, dict[str, Any]]] = _default_http_request,
 ) -> ReadinessReport:
-    results = [
-        _command_gate(
-            "compose_config",
-            _docker_command(options, "compose", "config", "--quiet"),
-            run_command=run_command,
-            project_root=options.project_root,
-        ),
-        _compose_services_gate(
-            options,
-            run_command=run_command,
-            project_root=options.project_root,
-        ),
-        _api_health_gate(options, http_request=http_request),
-        _command_gate(
-            "redis_ping",
-            _docker_command(options, "compose", "exec", "-T", "redis", "redis-cli", "ping"),
-            run_command=run_command,
-            project_root=options.project_root,
-            expected_text="PONG",
-        ),
-        _postgres_extensions_gate(
-            options,
-            run_command=run_command,
-            project_root=options.project_root,
-        ),
-    ]
+    results = []
+    if options.rebuild:
+        results.append(
+            _compose_rebuild_gate(
+                options,
+                run_command=run_command,
+                project_root=options.project_root,
+            )
+        )
+        if not results[-1].ok:
+            return ReadinessReport(results)
+    results.extend(
+        [
+            _command_gate(
+                "compose_config",
+                _docker_command(options, "compose", "config", "--quiet"),
+                run_command=run_command,
+                project_root=options.project_root,
+            ),
+            _compose_services_gate(
+                options,
+                run_command=run_command,
+                project_root=options.project_root,
+            ),
+            _api_health_gate(options, http_request=http_request),
+            _command_gate(
+                "redis_ping",
+                _docker_command(options, "compose", "exec", "-T", "redis", "redis-cli", "ping"),
+                run_command=run_command,
+                project_root=options.project_root,
+                expected_text="PONG",
+            ),
+            _postgres_extensions_gate(
+                options,
+                run_command=run_command,
+                project_root=options.project_root,
+            ),
+            _web_shell_gate(options, http_request=http_request),
+        ]
+    )
     auth_result, headers = _auth_headers(options, http_request=http_request)
     results.append(auth_result)
     if headers is None:
@@ -371,6 +492,53 @@ def run_production_readiness_checks(
     results.append(
         _model_gateway_config_gate(options, headers=headers, http_request=http_request)
     )
+    results.extend(
+        [
+            _core_list_gate(
+                "core_list_requirements",
+                "/api/requirements?page=1&page_size=1",
+                options,
+                headers=headers,
+                http_request=http_request,
+            ),
+            _core_list_gate(
+                "core_list_tasks",
+                "/api/ai-tasks?page=1&page_size=1",
+                options,
+                headers=headers,
+                http_request=http_request,
+            ),
+            _core_list_gate(
+                "core_list_bugs",
+                "/api/bugs?page=1&page_size=1",
+                options,
+                headers=headers,
+                http_request=http_request,
+            ),
+            _core_list_gate(
+                "core_list_insights",
+                "/api/insights/items?page=1&page_size=1",
+                options,
+                headers=headers,
+                http_request=http_request,
+            ),
+            _core_list_gate(
+                "core_list_devops",
+                "/api/devops/operational-metrics?page=1&page_size=1",
+                options,
+                headers=headers,
+                http_request=http_request,
+            ),
+        ]
+    )
+    if options.web_smoke:
+        results.append(
+            _web_page_smoke_gate(
+                options,
+                run_command=run_command,
+                project_root=options.project_root,
+            )
+        )
     results.append(_gitlab_preview_gate(options, headers=headers, http_request=http_request))
     if results[-1].ok:
         results.append(_gitlab_snapshot_gate(options, headers=headers, http_request=http_request))

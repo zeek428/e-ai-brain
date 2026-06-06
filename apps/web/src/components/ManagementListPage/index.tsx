@@ -4,7 +4,7 @@ import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Tag } from 'antd';
 import type { TableProps } from 'antd';
 import type { SorterResult, TableRowSelection } from 'antd/es/table/interface';
-import { type ReactNode, useMemo, useState } from 'react';
+import { isValidElement, type ReactNode, useMemo, useState } from 'react';
 
 type FilterField = {
   label: string;
@@ -48,6 +48,51 @@ export type ManagementListQuery = {
   sortField?: string;
   sortOrder?: 'ascend' | 'descend';
 };
+
+const DEFAULT_ACTION_COLUMN_WIDTH = 220;
+const DEFAULT_DATA_COLUMN_WIDTH = 160;
+const MIN_TABLE_SCROLL_X = 960;
+
+function isActionColumn<Row extends Record<string, unknown>>(column: ProColumns<Row>) {
+  return column.valueType === 'option' || column.key === 'actions' || column.title === '操作';
+}
+
+function defaultColumnWidth<Row extends Record<string, unknown>>(column: ProColumns<Row>) {
+  return isActionColumn(column) ? DEFAULT_ACTION_COLUMN_WIDTH : DEFAULT_DATA_COLUMN_WIDTH;
+}
+
+type TableCellRenderResult = {
+  children?: ReactNode;
+  props: Record<string, unknown>;
+};
+
+function isTableCellRenderResult(value: unknown): value is TableCellRenderResult {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      !isValidElement(value) &&
+      'children' in value &&
+      'props' in value,
+  );
+}
+
+function wrapRenderedCell<Row extends Record<string, unknown>>(column: ProColumns<Row>) {
+  if (!column.render || isActionColumn(column)) {
+    return column.render;
+  }
+  return (...renderArgs: Parameters<NonNullable<ProColumns<Row>['render']>>) => {
+    const rendered = column.render?.(...renderArgs);
+    if (isTableCellRenderResult(rendered)) {
+      const cellResult: TableCellRenderResult = rendered;
+      return {
+        ...cellResult,
+        children: <div className="management-table-cell">{cellResult.children}</div>,
+      };
+    }
+    return <div className="management-table-cell">{rendered as ReactNode}</div>;
+  };
+}
 
 function normalizeSorter<Row>(sorter: SorterResult<Row> | SorterResult<Row>[]) {
   const activeSorter = Array.isArray(sorter)
@@ -149,6 +194,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
   toolbarActions = [],
 }: ManagementListPageProps<Row>) {
   const [filterValues, setFilterValues] = useState<FilterValues>({});
+  const resolvedTableLayout = tableLayout ?? 'fixed';
 
   const proTableColumns = useMemo<ProColumns<Row>[]>(
     () => [
@@ -171,11 +217,35 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
       })),
       ...columns.map<ProColumns<Row>>((column) => ({
         ...column,
+        ellipsis: column.ellipsis ?? (!column.render && !isActionColumn(column)),
+        fixed: column.fixed ?? (isActionColumn(column) ? 'right' : undefined),
+        render: wrapRenderedCell(column),
         search: false,
+        width: column.width ?? defaultColumnWidth(column),
       })),
     ],
     [columns, filters],
   );
+  const resolvedTableScroll = useMemo<TableProps<Row>['scroll']>(() => {
+    if (tableScroll) {
+      return tableScroll;
+    }
+    const widthTotal = proTableColumns.reduce((total, column) => {
+      if (column.hideInTable) {
+        return total;
+      }
+      const width = column.width;
+      if (typeof width === 'number') {
+        return total + width;
+      }
+      if (typeof width === 'string') {
+        const parsed = Number.parseInt(width, 10);
+        return Number.isFinite(parsed) ? total + parsed : total + defaultColumnWidth(column);
+      }
+      return total + defaultColumnWidth(column);
+    }, 0);
+    return { x: Math.max(MIN_TABLE_SCROLL_X, widthTotal) };
+  }, [proTableColumns, tableScroll]);
 
   const filteredDataSource = useMemo(
     () =>
@@ -233,6 +303,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
       {notice ? <Alert className="management-list-alert" showIcon title={notice} type="warning" /> : null}
       <ProTable<Row>
         cardBordered
+        className="management-list-table"
         columns={proTableColumns}
         dataSource={filteredDataSource}
         dateFormatter="string"
@@ -266,12 +337,12 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
         }}
         rowKey={rowKey}
         rowSelection={rowSelection}
-        scroll={tableScroll}
+        scroll={resolvedTableScroll}
         search={{
           defaultCollapsed: false,
           labelWidth: 100,
         }}
-        tableLayout={tableLayout}
+        tableLayout={resolvedTableLayout}
         toolBarRender={() => [
           ...toolbarActions,
           ...(primaryAction

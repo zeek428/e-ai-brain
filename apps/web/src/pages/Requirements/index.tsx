@@ -1,14 +1,25 @@
-import { ApartmentOutlined, CalendarOutlined, DeleteOutlined, EditOutlined, LinkOutlined, RocketOutlined } from '@ant-design/icons';
+import {
+  ApartmentOutlined,
+  CalendarOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  LinkOutlined,
+  MoreOutlined,
+  RocketOutlined,
+} from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import { Alert, Button, Form, Input, Modal, Popconfirm, Select, Space, Spin, message } from 'antd';
+import { Alert, Button, Dropdown, Form, Input, Modal, Select, Space, Spin, message } from 'antd';
 import { type Key, useCallback, useEffect, useMemo, useState } from 'react';
 
+import { ManagementBatchResultModal, type ManagementBatchResult } from '../../components/ManagementBatchResultModal';
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import { RequirementFullChainView } from '../../components/RequirementFullChainView';
 import type { RequirementRecord } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   approveManagementRequirement,
+  batchAdvanceRequirementStatus,
+  batchAssignRequirementOwner,
   batchGenerateRequirementTasks,
   batchScheduleRequirements,
   createManagementRequirement,
@@ -58,11 +69,50 @@ type BatchScheduleFormValues = {
   version_id: string;
 };
 
+type BatchAssignOwnerFormValues = {
+  assignee: string;
+  reason?: string;
+};
+
+type BatchAdvanceStatusFormValues = {
+  reason?: string;
+  target_status: RequirementRecord['status'];
+};
+
 type BatchGenerateTaskFormValues = {
   reason?: string;
 };
 
+const batchAssignableStatuses = new Set<RequirementRecord['status']>([
+  'accepted',
+  'approved',
+  'code_reviewing',
+  'deferred',
+  'designing',
+  'developing',
+  'draft',
+  'planned',
+  'ready_for_dev',
+  'ready_for_release',
+  'rejected',
+  'released',
+  'submitted',
+  'testing',
+]);
 const batchSchedulableStatuses = new Set<RequirementRecord['status']>(['approved', 'planned']);
+const batchAdvanceTargetOptions: Array<{ label: string; value: RequirementRecord['status'] }> = [
+  { label: '已排期', value: 'planned' },
+  { label: '待开发', value: 'ready_for_dev' },
+  { label: '开发中', value: 'developing' },
+  { label: '代码评审中', value: 'code_reviewing' },
+  { label: '测试中', value: 'testing' },
+  { label: '待发布', value: 'ready_for_release' },
+  { label: '已发布', value: 'released' },
+  { label: '已验收', value: 'accepted' },
+  { label: '暂缓', value: 'deferred' },
+  { label: '已取消', value: 'cancelled' },
+  { label: '已关闭', value: 'closed' },
+];
 const requirementSortFieldMap: Record<string, string> = {
   createdAt: 'created_at',
   id: 'id',
@@ -94,10 +144,14 @@ function buildRequirementListQuery(query: ManagementListQuery): RequirementListQ
 export default function RequirementsPage() {
   const [form] = Form.useForm<RequirementFormValues>();
   const [batchForm] = Form.useForm<BatchScheduleFormValues>();
+  const [batchAdvanceStatusForm] = Form.useForm<BatchAdvanceStatusFormValues>();
+  const [batchAssignOwnerForm] = Form.useForm<BatchAssignOwnerFormValues>();
   const [batchGenerateForm] = Form.useForm<BatchGenerateTaskFormValues>();
   const [rejectForm] = Form.useForm<{ rejection_reason: string }>();
   const [editingRequirement, setEditingRequirement] = useState<RequirementRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBatchAdvanceStatusModalOpen, setIsBatchAdvanceStatusModalOpen] = useState(false);
+  const [isBatchAssignOwnerModalOpen, setIsBatchAssignOwnerModalOpen] = useState(false);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [isBatchGenerateModalOpen, setIsBatchGenerateModalOpen] = useState(false);
   const [rejectingRequirement, setRejectingRequirement] = useState<RequirementRecord | null>(null);
@@ -105,7 +159,11 @@ export default function RequirementsPage() {
   const [fullChainRequirement, setFullChainRequirement] = useState<RequirementRecord | null>(null);
   const [fullChain, setFullChain] = useState<RequirementFullChainRecord | null>(null);
   const [fullChainError, setFullChainError] = useState<RemoteRowsError>();
+  const [fullChainVersionRequirements, setFullChainVersionRequirements] = useState<RequirementRecord[]>([]);
   const [isFullChainLoading, setIsFullChainLoading] = useState(false);
+  const [batchResult, setBatchResult] = useState<ManagementBatchResult | null>(null);
+  const [isBatchAdvanceStatusSaving, setIsBatchAdvanceStatusSaving] = useState(false);
+  const [isBatchAssignOwnerSaving, setIsBatchAssignOwnerSaving] = useState(false);
   const [isBatchGenerateSaving, setIsBatchGenerateSaving] = useState(false);
   const [isBatchSaving, setIsBatchSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -255,6 +313,12 @@ export default function RequirementsPage() {
     });
   }, [form]);
 
+  const showBatchResult = useCallback((result: ManagementBatchResult) => {
+    setBatchResult(result);
+    const skippedText = result.skipped.length ? `，跳过 ${result.skipped.length} 条` : '';
+    message.success(`${result.primaryLabel} ${result.primaryCount} 条需求${skippedText}`);
+  }, []);
+
   const openEditModal = useCallback((row: RequirementRecord) => {
     setEditingRequirement(row);
     form.setFieldsValue({
@@ -351,8 +415,13 @@ export default function RequirementsPage() {
         requirement_ids: selectedRequirementIds,
         version_id: values.version_id,
       });
-      const skippedText = result.skippedCount ? `，跳过 ${result.skippedCount} 条` : '';
-      message.success(`已归集 ${result.updatedCount} 条需求${skippedText}`);
+      showBatchResult({
+        batchId: result.batchId,
+        primaryCount: result.updatedCount,
+        primaryLabel: '已归集',
+        skipped: result.skipped,
+        title: '批量排期结果',
+      });
       setIsBatchModalOpen(false);
       setSelectedRowKeys([]);
       await reload();
@@ -361,6 +430,88 @@ export default function RequirementsPage() {
       message.error(formatMutationError(batchError));
     } finally {
       setIsBatchSaving(false);
+    }
+  };
+
+  const openBatchAssignOwnerModal = useCallback(() => {
+    if (selectedRequirements.length === 0) {
+      message.warning('请先选择要分配负责人的需求');
+      return;
+    }
+    batchAssignOwnerForm.resetFields();
+    setIsBatchAssignOwnerModalOpen(true);
+  }, [batchAssignOwnerForm, selectedRequirements.length]);
+
+  const handleBatchAssignOwner = async () => {
+    let values: BatchAssignOwnerFormValues;
+    try {
+      values = await batchAssignOwnerForm.validateFields();
+    } catch {
+      return;
+    }
+    setIsBatchAssignOwnerSaving(true);
+    try {
+      const result = await batchAssignRequirementOwner({
+        assignee: values.assignee.trim(),
+        reason: trimText(values.reason),
+        requirement_ids: selectedRequirementIds,
+      });
+      showBatchResult({
+        batchId: result.batchId,
+        primaryCount: result.updatedCount,
+        primaryLabel: '已分配',
+        skipped: result.skipped,
+        title: '批量分配负责人结果',
+      });
+      setIsBatchAssignOwnerModalOpen(false);
+      setSelectedRowKeys([]);
+      await reload();
+    } catch (batchError) {
+      message.error(formatMutationError(batchError));
+    } finally {
+      setIsBatchAssignOwnerSaving(false);
+    }
+  };
+
+  const openBatchAdvanceStatusModal = useCallback(() => {
+    if (selectedRequirements.length === 0) {
+      message.warning('请先选择要推进状态的需求');
+      return;
+    }
+    batchAdvanceStatusForm.resetFields();
+    batchAdvanceStatusForm.setFieldsValue({ target_status: 'ready_for_dev' });
+    setIsBatchAdvanceStatusModalOpen(true);
+  }, [batchAdvanceStatusForm, selectedRequirements.length]);
+
+  const handleBatchAdvanceStatus = async () => {
+    let values: BatchAdvanceStatusFormValues;
+    try {
+      values = await batchAdvanceStatusForm.validateFields();
+    } catch {
+      return;
+    }
+    setIsBatchAdvanceStatusSaving(true);
+    try {
+      const result = await batchAdvanceRequirementStatus({
+        reason: trimText(values.reason),
+        requirement_ids: selectedRequirementIds,
+        target_status: values.target_status,
+      });
+      const targetLabel = statusLabels[result.targetStatus]?.label ?? result.targetStatus;
+      showBatchResult({
+        batchId: result.batchId,
+        primaryCount: result.updatedCount,
+        primaryLabel: `已推进到${targetLabel}`,
+        skipped: result.skipped,
+        title: '批量推进状态结果',
+      });
+      setIsBatchAdvanceStatusModalOpen(false);
+      setSelectedRowKeys([]);
+      await reload();
+    } catch (batchError) {
+      message.error(formatMutationError(batchError));
+    } finally {
+      setIsBatchAdvanceStatusSaving(false);
     }
   };
 
@@ -407,8 +558,13 @@ export default function RequirementsPage() {
         reason: trimText(values.reason),
         requirement_ids: selectedRequirementIds,
       });
-      const skippedText = result.skippedCount ? `，跳过 ${result.skippedCount} 条` : '';
-      message.success(`已生成 ${result.generatedCount} 个任务${skippedText}`);
+      showBatchResult({
+        batchId: result.batchId,
+        primaryCount: result.generatedCount,
+        primaryLabel: '已生成任务',
+        skipped: result.skipped,
+        title: '批量生成任务结果',
+      });
       setIsBatchGenerateModalOpen(false);
       setSelectedRowKeys([]);
       await reload();
@@ -466,18 +622,58 @@ export default function RequirementsPage() {
     setFullChainRequirement(row);
     setFullChain(null);
     setFullChainError(undefined);
+    setFullChainVersionRequirements([]);
     setIsFullChainLoading(true);
     try {
-      setFullChain(await fetchRequirementFullChain(row.id));
+      const loadedChain = await fetchRequirementFullChain(row.id);
+      setFullChain(loadedChain);
+      if (loadedChain.iterationVersion?.id) {
+        try {
+          const versionRequirements = await fetchManagementRequirementList({
+            page: 1,
+            pageSize: 100,
+            sortField: 'created_at',
+            sortOrder: 'descend',
+            versionId: loadedChain.iterationVersion.id,
+          });
+          setFullChainVersionRequirements(versionRequirements.rows);
+        } catch {
+          setFullChainVersionRequirements([]);
+        }
+      }
     } catch (loadError: unknown) {
       setFullChainError(normalizeRemoteRowsError(loadError));
+      setFullChainVersionRequirements([]);
     } finally {
       setIsFullChainLoading(false);
     }
   }, []);
 
+  const openDeleteConfirm = useCallback((row: RequirementRecord) => {
+    Modal.confirm({
+      okText: '删除',
+      okButtonProps: { danger: true },
+      title: `删除需求 ${row.id}？`,
+      onOk: () => handleDelete(row),
+    });
+  }, [handleDelete]);
+
   const toolbarActions = useMemo(
     () => [
+      <Button
+        disabled={selectedRowKeys.length === 0}
+        key="batch-assign-owner"
+        onClick={openBatchAssignOwnerModal}
+      >
+        批量分配负责人
+      </Button>,
+      <Button
+        disabled={selectedRowKeys.length === 0}
+        key="batch-advance-status"
+        onClick={openBatchAdvanceStatusModal}
+      >
+        批量推进状态
+      </Button>,
       <Button
         disabled={selectedRowKeys.length === 0}
         icon={<CalendarOutlined />}
@@ -495,7 +691,13 @@ export default function RequirementsPage() {
         批量生成任务
       </Button>,
     ],
-    [openBatchGenerateTaskModal, openBatchScheduleModal, selectedRowKeys.length],
+    [
+      openBatchAdvanceStatusModal,
+      openBatchAssignOwnerModal,
+      openBatchGenerateTaskModal,
+      openBatchScheduleModal,
+      selectedRowKeys.length,
+    ],
   );
 
   const columns = useMemo<ProColumns<RequirementRecord>[]>(
@@ -505,28 +707,28 @@ export default function RequirementsPage() {
         ellipsis: true,
         sorter: true,
         title: '需求编号',
-        width: 150,
+        width: 162,
       },
       {
         dataIndex: 'title',
         ellipsis: true,
         sorter: true,
         title: '需求标题',
-        width: 210,
+        width: 260,
       },
       {
         dataIndex: 'product',
         ellipsis: true,
         sorter: true,
         title: '所属产品',
-        width: 150,
+        width: 168,
       },
       {
         dataIndex: 'versionName',
         ellipsis: true,
         sorter: true,
         title: '迭代版本',
-        width: 220,
+        width: 240,
       },
       {
         dataIndex: 'priority',
@@ -551,57 +753,115 @@ export default function RequirementsPage() {
         dataIndex: 'owner',
         ellipsis: true,
         title: '负责人',
-        width: 120,
+        width: 136,
       },
       {
         dataIndex: 'createdAt',
         ellipsis: true,
         sorter: true,
         title: '创建时间',
-        width: 150,
+        width: 168,
       },
       {
         fixed: 'right',
         key: 'actions',
         title: '操作',
         valueType: 'option',
-        width: 380,
+        width: 164,
         render: (_, row) => (
-          <Space className="requirement-list-actions" size={0}>
-            <Button icon={<ApartmentOutlined aria-hidden="true" />} onClick={() => void openFullChainModal(row)} type="link">
+          <Space className="requirement-list-actions" size={4}>
+            <Button
+              className="requirement-list-primary-action"
+              icon={<ApartmentOutlined aria-hidden="true" />}
+              onClick={() => void openFullChainModal(row)}
+              type="link"
+            >
               全链路
             </Button>
-            <Button href={`/delivery/requirements/${row.id}/full-chain`} icon={<LinkOutlined />} type="link">
-              详情页
-            </Button>
-            <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
-              编辑
-            </Button>
-            {row.status === 'submitted' ? (
-              <>
-                <Button onClick={() => handleApprove(row)} type="link">
-                  审批通过
-                </Button>
-                <Button danger onClick={() => openRejectModal(row)} type="link">
-                  驳回
-                </Button>
-              </>
-            ) : null}
-            {row.status === 'planned' ? (
-              <Button onClick={() => handleGenerateTask(row)} type="link">
-                生成任务
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    icon: <LinkOutlined />,
+                    key: 'detail-page',
+                    label: <a href={`/delivery/requirements/${row.id}/full-chain`}>详情页</a>,
+                  },
+                  {
+                    icon: <EditOutlined />,
+                    key: 'edit',
+                    label: '编辑',
+                  },
+                  ...(row.status === 'submitted'
+                    ? [
+                        {
+                          key: 'approve',
+                          label: '审批通过',
+                        },
+                        {
+                          danger: true,
+                          key: 'reject',
+                          label: '驳回',
+                        },
+                      ]
+                    : []),
+                  ...(row.status === 'planned'
+                    ? [
+                        {
+                          key: 'generate-task',
+                          label: '生成任务',
+                        },
+                      ]
+                    : []),
+                  {
+                    danger: true,
+                    icon: <DeleteOutlined />,
+                    key: 'delete',
+                    label: '删除',
+                  },
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'detail-page') {
+                    return;
+                  }
+                  if (key === 'edit') {
+                    openEditModal(row);
+                    return;
+                  }
+                  if (key === 'approve') {
+                    void handleApprove(row);
+                    return;
+                  }
+                  if (key === 'reject') {
+                    openRejectModal(row);
+                    return;
+                  }
+                  if (key === 'generate-task') {
+                    void handleGenerateTask(row);
+                    return;
+                  }
+                  if (key === 'delete') {
+                    openDeleteConfirm(row);
+                  }
+                },
+              }}
+              trigger={['click']}
+            >
+              <Button icon={<MoreOutlined />} type="link">
+                更多
               </Button>
-            ) : null}
-            <Popconfirm okText="删除" onConfirm={() => handleDelete(row)} title={`删除需求 ${row.id}？`}>
-              <Button danger icon={<DeleteOutlined />} type="link">
-                删除
-              </Button>
-            </Popconfirm>
+            </Dropdown>
           </Space>
         ),
       },
     ],
-    [handleApprove, handleDelete, handleGenerateTask, openEditModal, openFullChainModal, openRejectModal],
+    [
+      handleApprove,
+      handleGenerateTask,
+      openDeleteConfirm,
+      openEditModal,
+      openFullChainModal,
+      openRejectModal,
+    ],
   );
 
   return (
@@ -662,13 +922,13 @@ export default function RequirementsPage() {
         rowKey="id"
         rowSelection={{
           getCheckboxProps: (row) => ({
-            disabled: !batchSchedulableStatuses.has(row.status),
+            disabled: !batchAssignableStatuses.has(row.status),
           }),
           onChange: (keys) => setSelectedRowKeys(keys),
           selectedRowKeys,
         }}
         tableLayout="fixed"
-        tableScroll={{ x: 1640 }}
+        tableScroll={{ x: 1600 }}
         tableTitle="需求列表"
         title="需求管理"
         toolbarActions={toolbarActions}
@@ -681,6 +941,7 @@ export default function RequirementsPage() {
           setFullChainRequirement(null);
           setFullChain(null);
           setFullChainError(undefined);
+          setFullChainVersionRequirements([]);
         }}
         open={Boolean(fullChainRequirement)}
         style={{ maxWidth: 'calc(100vw - 40px)' }}
@@ -694,7 +955,10 @@ export default function RequirementsPage() {
               <Alert message={formatRemoteRowsError(fullChainError)} type="error" />
             ) : null}
             {fullChain ? (
-              <RequirementFullChainView fullChain={fullChain} />
+              <RequirementFullChainView
+                fullChain={fullChain}
+                versionRequirements={fullChainVersionRequirements}
+              />
             ) : null}
           </Space>
         </Spin>
@@ -724,7 +988,61 @@ export default function RequirementsPage() {
               />
             </Form.Item>
             <Form.Item label="归集原因" name="reason">
-              <Input.TextArea autoSize={{ minRows: 2 }} />
+              <Input.TextArea rows={2} />
+            </Form.Item>
+          </Form>
+        </Space>
+      </Modal>
+      <Modal
+        confirmLoading={isBatchAssignOwnerSaving}
+        destroyOnHidden
+        okText="确认分配"
+        onCancel={() => setIsBatchAssignOwnerModalOpen(false)}
+        onOk={() => void handleBatchAssignOwner()}
+        open={isBatchAssignOwnerModalOpen}
+        title="批量分配负责人"
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Alert title={`已选择 ${selectedRequirements.length} 条需求`} type="info" />
+          <Form<BatchAssignOwnerFormValues> form={batchAssignOwnerForm} layout="vertical">
+            <Form.Item
+              label="负责人"
+              name="assignee"
+              rules={[{ message: '请输入负责人', required: true, whitespace: true }]}
+            >
+              <Input placeholder="请输入负责人账号或姓名" />
+            </Form.Item>
+            <Form.Item label="分配原因" name="reason">
+              <Input.TextArea placeholder="可填写批量分配原因" rows={2} />
+            </Form.Item>
+          </Form>
+        </Space>
+      </Modal>
+      <Modal
+        confirmLoading={isBatchAdvanceStatusSaving}
+        destroyOnHidden
+        okText="确认推进"
+        onCancel={() => setIsBatchAdvanceStatusModalOpen(false)}
+        onOk={() => void handleBatchAdvanceStatus()}
+        open={isBatchAdvanceStatusModalOpen}
+        title="批量推进状态"
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            description="仅支持按研发流程向前推进，终态、重复或不符合路径的需求会由后端跳过。"
+            title={`已选择 ${selectedRequirements.length} 条需求`}
+            type="info"
+          />
+          <Form<BatchAdvanceStatusFormValues> form={batchAdvanceStatusForm} layout="vertical">
+            <Form.Item
+              label="目标状态"
+              name="target_status"
+              rules={[{ message: '请选择目标状态', required: true }]}
+            >
+              <Select options={batchAdvanceTargetOptions} placeholder="请选择目标状态" />
+            </Form.Item>
+            <Form.Item label="推进原因" name="reason">
+              <Input.TextArea placeholder="可填写批量推进原因" rows={2} />
             </Form.Item>
           </Form>
         </Space>
@@ -754,11 +1072,12 @@ export default function RequirementsPage() {
           ) : null}
           <Form<BatchGenerateTaskFormValues> form={batchGenerateForm} layout="vertical">
             <Form.Item label="生成原因" name="reason">
-              <Input.TextArea autoSize={{ minRows: 2 }} />
+              <Input.TextArea rows={2} />
             </Form.Item>
           </Form>
         </Space>
       </Modal>
+      <ManagementBatchResultModal onClose={() => setBatchResult(null)} result={batchResult} />
       <Modal
         confirmLoading={isSaving}
         destroyOnHidden
@@ -807,7 +1126,7 @@ export default function RequirementsPage() {
             />
           </Form.Item>
           <Form.Item label="需求内容" name="content" rules={[{ required: true, message: '请输入需求内容' }]}>
-            <Input.TextArea autoSize={{ minRows: 4 }} />
+            <Input.TextArea rows={4} />
           </Form.Item>
         </Form>
       </Modal>
@@ -824,7 +1143,7 @@ export default function RequirementsPage() {
             name="rejection_reason"
             rules={[{ required: true, message: '请输入驳回原因' }]}
           >
-            <Input.TextArea autoSize={{ minRows: 3 }} />
+            <Input.TextArea rows={3} />
           </Form.Item>
         </Form>
       </Modal>

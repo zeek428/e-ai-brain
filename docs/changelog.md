@@ -8,6 +8,236 @@
 ## [Unreleased]
 
 ### Added
+- 测试用例文档按业务域拆分：`test-case.md` 保留版本信息、通用规范、MVP 验收切片和业务域索引，详细用例迁移到 `test-cases/core-workflow.md`、`test-cases/requirements-and-tasks.md`、`test-cases/devops-quality-and-insights.md` 与 `test-cases/supporting-matrices.md`，降低单文件维护成本。
+- 发布网页 smoke 门禁继续增强：`scripts/web_page_smoke.mjs` 监听浏览器网络响应，核心页面路由期间出现非 favicon 的 4xx/5xx 请求会直接判定失败，避免页面壳渲染但 API 404/500 未被发现。
+- 管理列表查询性能观测继续补齐：产品、迭代版本、知识文档、审计事件等核心管理列表补充显式 P95 目标，慢查询日志测试覆盖分页、筛选和排序参数，真实接口回归验证响应包含 `query/performance`、行数和目标耗时。
+- 管理列表统一表格规范继续增强：`ManagementListPage` 增加稳定根样式入口，并统一约束工具栏换行、表格单元格换行和右固定操作列不换行；前端回归测试和需求、角色、用户洞察、研发运营真实页面 smoke 通过。
+- 前端管理列表统一表格规范继续增强：`ManagementListPage` 对非操作列自定义 render 包裹稳定单元格容器，约束长文本、Tag、Space 和状态摘要组合，降低角色、用户洞察、DevOps、Bug 等宽表页面因内容过长变形的风险。
+- 需求全链路详情新增版本内多需求对比：需求归属迭代版本时展示同版本需求总数、状态分布和当前需求位置，便于版本级交付验收。
+- 需求全链路详情新增“导出链路报告”操作，基于同一 full-chain payload 在前端生成 Markdown 报告，覆盖需求、产品、迭代版本、阶段实体摘要和完整时间线，便于真实迭代测试留痕。
+- 需求全链路详情时间线新增类型筛选：可按需求、AI 任务、代码评审、Bug、发布等事件类型聚焦查看，并显示筛选后/总事件数，便于复杂链路排查。
+- 模型网关配置列表接入服务端分页/筛选/排序和查询性能观测：`GET /api/system/model-gateway-configs` 分页模式支持配置名、Provider、状态、默认配置、Chat/Embedding 模型和 Embedding 连接模式筛选，返回 `query/performance` 元数据；前端模型网关页改为远程列表模式，同时保留配置全量读取兼容入口。
+- 发布网页 smoke 支持关键文本断言：`scripts/web_page_smoke.mjs` 新增 `--expect-text ROUTE=TEXT`，生产就绪门禁默认验证角色管理页出现“系统管理员”，减少页面非空但真实数据未渲染的假阳性。
+- 角色管理列表接入服务端分页/筛选/排序和查询性能观测：`GET /api/auth/roles` 分页模式支持角色、分类、业务角色、可见入口、权限点和状态筛选，返回 `query/performance` 元数据；前端角色页改为远程列表模式，同时保留角色目录全量读取兼容。
+- 任务管理待确认 Review 子表接入统一表格规范：固定布局、横向滚动、AI 输出摘要省略和操作列右固定，并扩展前端回归测试继续覆盖任务批量重试/取消与待确认表格布局。
+- 用户管理列表接入管理类服务端分页/筛选/排序和性能观测：`GET /api/users` 支持用户名、显示名、角色、状态筛选以及分页排序，PostgreSQL 运行时由 users SQL read model 返回分页结果和 `query/performance` 元数据；前端用户管理页改为远程列表模式并使用角色下拉筛选。
+- 前端管理列表统一表格规范增强：`ManagementListPage` 默认固定布局、按显示列宽自动计算横向滚动宽度、默认长文本省略和操作列右固定；角色页入口/权限以数量摘要展示并在详情查看；DevOps 采集运行/待归属子表补齐固定列宽、横向滚动和操作列固定。
+
+### Fixed
+- PostgreSQL 旧库兼容验收补齐：`PostgresSnapshotRepository` 启动时执行安全 additive schema patch，补齐历史本地 volume 缺失的 `requirements.assignee` 字段和索引，避免需求列表与首页看板 SQL read model 在旧库上返回 500；真实页面 smoke 复验 8 个核心路由通过。
+- 模型网关 router 拆分继续收口：将模型网关配置列表的筛选、排序、分页、`query/performance` 观测和模型调用日志 repository-first 读取迁移到 `model_gateway_listing`，`model_gateway` router 收窄为配置测试、创建、修改、删除和响应封装编排。
+- 相关系统 router 拆分继续收口：将相关系统列表的 repository-first 读取、产品归属筛选、`active_only` 过滤和本地兼容排序迁移到 `related_system_listing`，`related_systems` router 收窄为相关系统创建、修改、删除和审计保存编排。
+- 产品 Git 仓库 router 拆分继续收口：将单产品 Git 仓库列表的 repository-first 读取、凭据脱敏投影、`active_only` 过滤、缺失产品校验和本地兼容排序迁移到 `product_git_repository_listing`，`product_git_repositories` router 收窄为 GitLab/GitHub 绑定校验和仓库创建、修改、删除编排。
+- 产品模块 router 拆分继续收口：将单产品模块列表的 repository-first 读取、`active_only` 过滤、缺失产品校验和本地兼容排序迁移到 `product_module_listing`，`product_modules` router 收窄为模块创建、修改、删除和依赖保护编排。
+- 产品主体 router 拆分继续收口：将产品列表 SQL read model 探测、当前版本/模块数投影、本地兼容筛选排序分页和 `query/performance` 观测迁移到 `product_listing`，`products` router 收窄为端点装配、产品详情和产品 CRUD 编排。
+- 迭代版本 router 拆分继续收口：将全量迭代版本列表 SQL read model 探测、所属产品投影、本地兼容筛选排序分页和 `query/performance` 观测迁移到 `product_version_listing`，`product_versions` router 收窄为端点装配、单产品版本列表和版本写入/状态推进编排。
+- Bug 管理服务拆分继续收口：将 Bug 列表 SQL read model 探测、摘要投影、本地兼容筛选排序分页和 `query/performance` 观测迁移到 `bug_listing`，`bugs` service 收窄为 Bug 创建、批量更新、修改、删除和审计保存编排。
+- AI 助手聊天服务拆分继续收口：将 repository-backed request context、任务工作流 source rows 恢复、用户级会话/消息 source store 和助手聊天保存委托迁移到 `assistant_request_context`，`assistant_chat` 收窄为聊天校验、模型调用、消息写入和审计编排。
+- 模型网关 router 拆分继续收口：将配置连接测试的目标校验、既有配置凭据复用、Chat/Embedding 测试编排和测试审计保存迁移到 `model_gateway_config_tests`，`model_gateway` router 收窄为请求模型、鉴权、运行态 store 装配和响应封装。
+- 模型网关服务拆分继续收口：将 Chat/Embedding URL 规范化、连接测试结果构造、Embedding 响应解析和 Embedding context 构造迁移到 `model_gateway_runtime`，`model_gateway` 收窄为 OpenAI-compatible 调用、配置选择和测试编排并保留兼容导出。
+- 知识沉淀服务拆分继续收口：将知识内容切分、chunk 构造、文本索引/向量索引状态转换和 Embedding 失败降级逻辑迁移到 `knowledge_indexing`，`knowledge_deposits` 收窄为知识文档/沉淀读写编排并保留兼容导出。
+- Git review 服务拆分继续收口：将 GitLab base URL/凭据解析、项目 key 校验、MR 读取、changes 解析和 GitLab API 错误归一化迁移到 `git_review_gitlab`，`git_review` 保留 `gitlab_request_json`/`urlopen`/`gitlab_preview` 兼容 wrapper 与审计/快照编排。
+- Git review 服务拆分继续收口：将 GitHub base URL/凭据解析、仓库路径解析、PR 列表读取、PR 预览和 GitHub API 错误归一化迁移到 `git_review_github`，`git_review` 保留兼容 wrapper 与审计/快照编排，为后续 PR 刷新、重试和权限诊断增强打基础。
+- 需求交付服务拆分继续收口：将需求列表 SQL read model 入口、需求摘要投影、本地兼容筛选排序分页和查询性能观测响应迁移到 `requirement_listing`，`requirements` 收窄为需求写入、编辑、删除和任务生成编排，并保留兼容导出。
+- AI 助手上下文服务拆分继续收口：将引用候选、引用类型偏好、实体跳转路由和引用归一化迁移到 `assistant_references`，`assistant_context` 收窄为系统上下文、消息构造和公开投影，并保留兼容导出。
+- `persistence_contracts.py` 大文件拆分继续收口：将集合字段常量、历史 snapshot collection 清单和 ID counter 来源表迁移到 `persistence_fields`，`persistence_contracts` 收窄为 repository Protocol 契约并保留兼容导出。
+- `persistence_payloads.py` 大文件拆分继续收口：将结构化恢复与保存前的上下文清理、运行态链接同步和默认字段补齐 helper 迁移到 `persistence_payload_cleanup`，`persistence_payloads` 收窄为 repository load/save 包装与兼容导出门面。
+- `persistence_payloads.py` 大文件拆分继续收口：将结构化恢复时的 ID counter 同步 helper 迁移到 `persistence_payload_counters`，`persistence_payloads` 继续保留兼容导出并聚焦 repository load/save 包装与上下文清理。
+- `persistence_payloads.py` 大文件拆分继续收口：将纯 payload 选择/合并 helper 迁移到 `persistence_payload_selectors`，将结构化 payload 是否存在的检查 helper 迁移到 `persistence_payload_checks`，保留 `persistence_payloads` 兼容导出给历史测试兼容层使用。
+- `persistence.py` 大文件拆分继续收口：将 PostgreSQL snapshot repository 的领域仓储装配、callback bind 和兼容 alias 安装迁移到 `persistence_repositories`，`PostgresSnapshotRepository` 聚焦连接池、公开委托接口和连接重试。
+- 用户洞察仓储拆分继续推进：将用户洞察统一列表 SQL CTE、筛选、排序、分页和响应投影迁移到 `user_insights_lists` repository，`UserInsightReadRepository` 进一步收窄为单表读取与写入/列表委托入口。
+- 任务仓储拆分继续推进：将 AI 任务、Graph Run、Graph Checkpoint 和 Human Review 的基础保存与 upsert SQL 迁移到 `task_writes` repository，`TaskReadRepository` 收窄为任务读取、任务列表 read model 与跨域事务编排入口。
+- 知识仓储拆分继续推进：将知识文档、知识分块和知识沉淀的保存、删除、引用清理、向量 literal 格式化与 upsert SQL 迁移到 `knowledge_writes` repository，`KnowledgeReadRepository` 收窄为知识读取、搜索和兼容委托入口。
+- 用户洞察仓储拆分继续推进：将用户反馈、用户使用指标、迭代建议和迭代决策的批量保存、单记录保存、转需求事务与 upsert SQL 迁移到 `user_insights_writes` repository，`UserInsightReadRepository` 收窄为洞察读取、统一列表 read model 与兼容委托入口。
+- 研发运营仓储拆分继续推进：将 GitLab 每日代码指标、Jenkins 发布记录和线上日志指标的批量保存、单记录保存与 upsert SQL 迁移到 `devops_writes` repository，`DevopsReadRepository` 收窄为运营指标读取、列表 read model 与兼容委托入口。
+- 产品配置仓储拆分继续推进：将产品、迭代版本、模块、Git 仓库和相关系统的批量保存、单记录保存、删除与 upsert SQL 迁移到 `product_config_writes` repository，`ProductConfigReadRepository` 进一步收窄为读取门面与兼容委托入口。
+- 产品配置仓储拆分继续推进：将产品和迭代版本管理列表 SQL read model 的 count/list 查询迁移到 `product_config_lists` repository，`ProductConfigReadRepository` 收窄为产品配置恢复、详情读取和写入编排。
+- 生命周期上下文服务拆分继续推进：将 lifecycle subject 到任务集合解析、主体产品归属推导、审计/Mock Issue/知识沉淀等主体定位迁移到 `lifecycle_subjects` service，`lifecycle_context.py` 收窄为上下游关系构造和响应编排。
+- 模型网关服务拆分继续推进：将任务消息构造、产品上下文脱敏、模型输出 JSON 解析和 Code Review 风险归一化迁移到 `model_gateway_task_io` service，`model_gateway.py` 收窄为运行时配置、OpenAI-compatible 调用、Embedding 和连接测试编排。
+- Git review 服务拆分继续推进：将 PR/MR diff 快照上下文校验、大小限制、复用、失败审计和快照保存迁移到 `git_review_snapshots` service，`git_review.py` 收窄为 GitLab/GitHub provider 读取和接口响应编排。
+- 生命周期上下文服务拆分继续推进：将 `LifecycleContextReadModel`、repository 探测、source rows 转换和生命周期 edge/risk 保存 helper 迁移到 `lifecycle_source` service，`lifecycle_context.py` 收窄为主体定位、上下游关系构造和响应编排。
+- 模型网关服务拆分继续推进：将 repository 运行时上下文、配置 source store、配置保存 payload、公开脱敏投影、默认配置选择迁移到 `model_gateway_config_context` service，`model_gateway.py` 收窄为 Chat/Embedding 调用、连接测试和任务输出解析。
+- AI 助手聊天服务拆分继续推进：将用户级会话列表、会话消息读取、会话归属校验和消息追加迁移到 `assistant_history` service，并将 `AssistantServiceError` 抽到 `assistant_errors`，`assistant_chat.py` 收窄为聊天编排、上下文准备、模型网关调用和审计保存。
+- 需求交付服务拆分继续推进：将单需求审批、驳回和关闭决策迁移到 `requirement_decisions` service，`requirements.py` 收窄为需求创建/编辑/删除、任务生成、列表查询和共享持久化 helper，保持状态校验、活跃任务保护和 DB-first 审计契约不变。
+- 知识沉淀服务拆分继续推进：将知识沉淀采纳/驳回决策迁移到 `knowledge_deposit_decisions` service，`knowledge_deposits.py` 收窄为知识文档索引、repository 上下文和共享持久化 helper，保持知识沉淀状态校验、索引、模型日志和 DB-first 审计契约不变。
+- AI 助手聊天服务拆分继续推进：`assistant_chat` 复用 `model_gateway_logging` 的 token 估算、OpenAI usage 归一化和模型调用日志写入，消除助手本地重复日志实现，为后续助手工具化查询保持统一模型审计口径。
+- 模型网关服务拆分继续推进：将 token 估算、OpenAI Chat/Embedding usage 归一化和模型调用日志写入迁移到 `model_gateway_logging` service，`model_gateway.py` 继续收窄为运行时配置、Chat/Embedding 调用和连接测试编排。
+- Git review 服务拆分继续推进：将 GitLab/GitHub 变更文件摘要、diff 文件树、风险摘要、Review Checklist 和 diff payload 构造迁移到 `git_review_diff` service，`git_review.py` 收窄为 provider 读取、快照上下文校验、审计和快照编排。
+- 生命周期上下文服务拆分继续推进：将任务范围/证据匹配/缺失上下文判断迁移到 `lifecycle_evidence` service，将风险信号生成、稳定记录 ID 和 lifecycle edge/risk 物化迁移到 `lifecycle_risks` service，`lifecycle_context.py` 收窄为 source store、主体定位、上下游关系和响应编排。
+- 研发运营服务拆分继续推进：将线上日志指标列表、登记、时间窗口/指标范围校验和产品模块上下文校验迁移到独立 `operational_online_logs` service，`operational_records.py` 收窄为采集运行与共享运营 helper。
+- 研发运营服务拆分继续推进：将 Jenkins 发布记录列表、登记、时间/状态校验和产品版本上下文校验迁移到独立 `operational_jenkins_releases` service，`operational_records.py` 继续收窄为采集运行和线上日志指标。
+- 研发运营服务拆分继续推进：将 GitLab 每日代码指标列表、登记、日期校验、数值范围校验和产品 Git 仓库上下文校验迁移到独立 `operational_gitlab_metrics` service，`operational_records.py` 继续收窄为采集运行、Jenkins 发布和线上日志指标。
+- 用户洞察服务拆分继续推进：将用户使用指标列表、登记、时间窗口解析、数值范围校验和产品/模块上下文校验迁移到独立 `user_usage_metrics` service，`user_insights.py` 收窄为用户洞察统一列表和共享仓储 helper。
+- 用户洞察服务拆分继续推进：将迭代建议列表、生成、决策、证据收集、状态机校验和转需求逻辑迁移到独立 `iteration_planning` service，`user_insights.py` 收窄为用户洞察统一列表和使用指标。
+- 用户洞察服务拆分继续推进：将用户反馈列表、登记、处理、枚举/满意度校验和产品/模块/需求上下文校验迁移到独立 `user_feedback` service，`user_insights.py` 继续收窄为用户洞察聚合、使用指标和迭代建议。
+- 研发运营服务拆分继续推进：将待归属数据队列校验、列表、创建和处理迁移到独立 `operational_attribution` service，`attribution` router 直接引用待归属边界，`operational_records.py` 继续收窄为采集运行和 DevOps 指标记录。
+- 需求交付服务拆分继续推进：将批量生成任务、批量分配负责人、批量排期和批量推进状态迁移到独立 `requirement_batch_operations` service，`requirements.py` 收窄为单需求写入、任务生成 helper、列表查询和共享投影。
+- 模型网关服务拆分继续推进：将 Embedding 连接模式、维度校验、配置归一化和测试字段构建迁移到独立 `model_gateway_embeddings` service，`model_gateway.py` 保留兼容导出和 Chat/Embedding 调用行为不变。
+- 需求交付服务拆分继续推进：将需求详情和需求全链路只读投影、时间线事件、PR/MR 快照引用、代码评审/Bug/发布/知识沉淀链路摘要迁移到独立 `requirement_full_chain` service，`requirements.py` 继续收窄为需求写入、批量操作和列表查询。
+- persistence.py 大文件拆分继续收口：将仍需测试兼容的 repository 回调入口迁移到独立 `RepositoryCallbackHub`，`PostgresSnapshotRepository` 只负责仓储装配和兼容别名挂载，保留 `_upsert_*`、`_clean_*`、`_delete_missing*` 等边界测试入口。
+- 后端任务服务拆分继续推进：将 Review 通过和编辑通过决策编排迁移到独立 `task_review_decisions` service，`tasks` router 直接引用该决策边界，`ai_tasks.py` 收敛为兼容 re-export 薄模块。
+- 后端任务服务拆分继续推进：将 AI 任务创建、技术方案后续任务校验、发布准备/上线后分析上下文注入、GitHub/GitLab 代码评审快照校验、需求任务关联和任务创建审计保存迁移到独立 `task_creation` service，`ai_tasks.py` 收敛为 Review 完成决策编排。
+- 后端任务服务拆分继续推进：将 AI 任务详情投影、Graph Run 列表、待确认 Review 列表和 Review 详情读取迁移到独立 `task_read_details` service，`tasks` router 的只读工作流入口直接复用该查询边界。
+- 后端任务服务拆分继续推进：将 AI 任务启动执行、模型网关失败处理、Code Review executor 调用、Human Review 创建、Graph Run 启动和任务启动保存迁移到独立 `task_start_execution` service，`tasks` router 与批量重试直接复用该启动边界。
+- 后端任务服务拆分继续推进：将任务取消、补充信息提交、Review 驳回和要求补充信息迁移到独立 `task_state_transitions` service，并将任务保存/审计 helper 下沉到 `task_persistence_helpers`，批量操作和任务主流程复用同一保存边界。
+- 后端任务服务拆分继续推进：将 Review 完成后的代码评审报告确认、自动化测试/上线后 Bug 建议生成、知识沉淀、需求完成态推进和 Review 决策校验迁移到独立 `task_review_artifacts` service，`ai_tasks.py` 继续收窄为任务主流程编排。
+- 后端任务服务拆分继续推进：将产品/Git 上下文脱敏、任务归属校验、技术方案/发布准备前置校验和发布上下文聚合迁移到独立 `task_contexts` service，任务创建和上下文快照契约保持不变。
+- 后端任务服务拆分继续推进：将 Graph Run、Graph Checkpoint 创建、最新运行态查询和任务图状态推进迁移到独立 `task_graph_runtime` service，任务启动、Review 决策和批量取消运行态契约保持不变。
+- 后端任务服务拆分继续推进：将 AI 任务列表 SQL read model 入口、时间过滤解析、任务摘要投影和列表性能观测响应迁移到独立 `task_listing` service，任务管理列表分页/筛选/排序契约保持不变。
+- 后端任务服务拆分继续推进：将 Code Review executor payload、执行器选择、输出归一化和代码评审报告创建迁移到独立 `task_code_review_execution` service，`ai_tasks.py` 继续收窄并保持代码评审任务启动契约不变。
+- 后端任务服务拆分继续推进：将 AI 任务批量取消、批量重试和异常归一化逻辑迁移到独立 `task_batch_operations` service，`ai_tasks.py` 继续收窄为任务主流程、Review 和启动执行逻辑。
+- 前端测试文件拆分继续推进：将用户洞察登记/处理/迭代建议和研发运营指标、采集运行、待归属处理回归迁移到独立 `OperationalInsightsPages.test.tsx`，继续降低 `App.test.tsx` 单文件维护压力。
+- 前端测试文件拆分继续推进：将 Bug 管理证据/重复归并编辑、批量处理和登记 Bug 目标版本选择回归迁移到独立 `BugManagementPage.test.tsx`，继续降低 `App.test.tsx` 单文件维护压力。
+- 前端测试文件拆分继续推进：抽取共享 `proComponentsMock`，并将用户管理角色选项、角色管理目录与详情回归迁移到独立 `SystemManagementPages.test.tsx`，为后续按页面拆分 `App.test.tsx` 降低重复 mock 成本。
+- 前端测试文件拆分启动：将 `ManagementListPage` 固定布局、默认列宽、横向滚动和右固定操作列回归从超大的 `App.test.tsx` 迁移到独立 `ManagementListPage.test.tsx`。
+- 测试文件拆分继续推进：将知识文档、知识沉淀、知识检索、审计事件、模型网关配置和模型日志的 repository-first stale runtime 回归从超大的 `test_database_persistence.py` 迁移到 `test_repository_read_paths.py`。
+- persistence.py 大文件拆分继续收口：任务生成、任务启动、Review 决策和任务状态更新的跨表写事务下沉到 `TaskReadRepository`，`PostgresSnapshotRepository` 仅保留公开方法委托和跨域回调装配；仓储边界测试补充这些事务方法的委托防回退验证。
+- persistence.py 大文件拆分继续收口：删除需求和任务运行态私有 upsert 兼容入口，跨域事务直接调用 `RequirementReadRepository` 和 `TaskReadRepository` 的领域 upsert 方法，边界测试保留公开保存方法和 DB-first 写入回归验证。
+- persistence.py 大文件拆分继续收口：删除仅测试引用的产品配置私有 upsert 兼容入口，产品配置写入边界统一通过 `ProductConfigReadRepository` 的公开保存方法验证。
+- persistence.py 大文件拆分继续收口：删除未引用的知识沉淀 row 转换旧副本，并将通用 `delete_missing/delete_missing_ids` 表维护 helper 抽取到 `TableMaintenanceRepository`，`PostgresSnapshotRepository` 仅保留回调委托入口。
+- persistence.py 大文件拆分继续收口：数据库发号器 `next_id` 和历史 `app_state_snapshots` 的 `load/save` 读写抽取到 `SystemStateRepository`，`PostgresSnapshotRepository` 仅保留薄委托入口，并补充仓储边界回归测试。
+- persistence.py 大文件拆分继续收口：产品详情、产品版本、产品模块、产品 Git 仓库和相关系统读取 SQL 从 `PostgresSnapshotRepository` 下沉到 `ProductConfigReadRepository`，`persistence.py` 仅保留产品配置读取委托入口，并补充仓储边界回归测试。
+- 需求管理列表布局优化：扩大需求标题、产品、迭代版本、负责人和创建时间列宽，操作列收敛为“全链路 + 更多”并缩小固定宽度，详情页入口移入更多菜单，表格横向滚动宽度提升到 1600；前端测试和 `/delivery/requirements` 真实页面 smoke 通过。
+- persistence.py 大文件拆分继续收口：测试兼容层 `PersistentMemoryStore` 抽取到 `app.core.persistent_memory_store`，`app.core.persistence` 保留兼容 re-export 并继续收窄为 PostgreSQL snapshot repository 实现；后端 ruff 和 384 个 API 测试通过。
+- persistence.py 大文件拆分继续收口：生产 PostgreSQL 运行时容器 `PostgresRuntimeStore` 抽取到 `app.core.persistence_runtime`，`main.py` 直接从 runtime 模块装配；`app.core.persistence` 保留兼容 re-export 和 snapshot repository 实现，后端 ruff 和 384 个 API 测试通过。
+- persistence.py 大文件拆分继续收口：snapshot payload/load/save、集合合并、上下文清理、counter 同步和恢复链路 helper 抽取到 `app.core.persistence_payloads`，`persistence.py` 从 4383 行收敛到约 2286 行并继续聚焦运行时 store 与 PostgreSQL repository 实现；后端 ruff 和 384 个 API 测试通过。
+- persistence.py 大文件拆分继续收口：集合字段常量、`SnapshotRepository` 和各领域仓储 Protocol 抽取到 `app.core.persistence_contracts`，`persistence.py` 继续聚焦 payload helper、运行时 store 和 PostgreSQL repository 实现，并复用仓储边界、router 边界和 DB-first 列表 read model 回归测试。
+- 后端大文件拆分继续收口：`main.py` 删除剩余 repository/source-store/save legacy helper，当前收敛为 FastAPI 装配、运行时构建、middleware、异常处理和 router 注册入口；任务工作流 repository source context 下沉到 `app.services.task_workflow_context`，且 PostgreSQL source context 不再继承 `MemoryStore`。
+- Web 页面 smoke 脚本在 headless Chrome 验证通过后清理临时 profile 目录时改为容错重试，避免 macOS 下临时目录尚未完全释放导致验证成功但命令以 `ENOTEMPTY` 非 0 退出。
+- persistence.py 大文件拆分继续推进：生命周期上下文 edge/risk 和首页看板快照保存/写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.lifecycle_dashboard.LifecycleDashboardReadRepository`，`PostgresSnapshotRepository` 仅保留生命周期/看板写入委托入口，并补充生命周期/看板写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：采集运行和待归属队列保存、单记录保存和写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.operational_collection.OperationalCollectionReadRepository`，`PostgresSnapshotRepository` 仅保留采集/归属写入委托入口和审计回调，并补充采集运行/待归属写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：用户反馈、用户使用指标、迭代建议和迭代决策保存/写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.user_insights.UserInsightReadRepository`，`PostgresSnapshotRepository` 仅保留用户洞察写入委托入口和审计/需求跨域回调，并补充用户洞察写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：GitLab daily、Jenkins release 和线上日志指标保存、单记录保存和写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.devops.DevopsReadRepository`，`PostgresSnapshotRepository` 仅保留 DevOps 写入委托入口和审计回调，并补充 DevOps 指标写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：知识文档、知识 chunk、知识沉淀保存/删除、引用清理和写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.knowledge.KnowledgeReadRepository`，`PostgresSnapshotRepository` 仅保留知识写入委托入口和审计/模型日志回调，并补充知识写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：Bug 保存、单记录保存/删除、重复缺陷引用清理和 `bugs` 写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.bugs.BugReadRepository`，`PostgresSnapshotRepository` 仅保留 Bug 写入委托入口，并补充 Bug 写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：Graph Run、Graph Checkpoint 和 Human Review 运行态保存/upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.tasks.TaskReadRepository`，`PostgresSnapshotRepository` 仅保留任务运行态写入委托入口，并补充任务运行态写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：AI 任务主表保存和 `ai_tasks` 写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.tasks.TaskReadRepository`，`PostgresSnapshotRepository` 仅保留任务写入委托入口和 Review/Graph 跨域事务回调，并补充 AI 任务写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：需求台账保存、单记录保存/删除和 `requirements` 写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.requirements.RequirementReadRepository`，`PostgresSnapshotRepository` 仅保留需求写入委托入口和跨域事务回调，并补充需求写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：产品、迭代版本、产品模块、产品 Git 仓库和相关系统写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.product_config.ProductConfigReadRepository`，`PostgresSnapshotRepository` 仅保留产品配置写入委托入口和审计回调，并补充产品配置写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：审计事件保存和 `audit_events` 写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.audit.AuditReadRepository`，`PostgresSnapshotRepository` 仅保留审计写入委托入口和跨域审计回调，并补充审计写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：GitLab MR / GitHub PR 兼容快照和代码评审报告写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.git_review.GitReviewReadRepository`，`PostgresSnapshotRepository` 仅保留 Git review 写入委托入口和审计回调，并补充 Git review 写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：模拟 Issue 写回的行转换和 `mock_issues` 写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.mock_writeback.MockWritebackReadRepository`，`PostgresSnapshotRepository` 仅保留写回写入委托入口和审计回调，并补充 mock writeback 写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：AI 助手会话和消息写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.assistant_chat.AssistantChatReadRepository`，`PostgresSnapshotRepository` 仅保留助手历史写入委托入口和跨域模型日志/审计回调，并补充助手写入仓储边界回归测试。
+- persistence.py 大文件拆分继续推进：模型网关配置和模型调用日志写入 SQL upsert 从 `PostgresSnapshotRepository` 下沉到 `app.core.repositories.model_gateway.ModelGatewayReadRepository`，`PostgresSnapshotRepository` 仅保留配置/日志写入委托入口和跨域模型日志薄委托，并补充模型网关写入仓储边界回归测试。
+- 测试文件拆分继续推进：将管理类列表 SQL read model 分页/筛选/排序防回退用例从超大的 `test_database_persistence.py` 迁移到 `test_management_list_read_models.py`，覆盖 DevOps、用户洞察、需求、Bug、产品和迭代版本列表。
+- 后端大文件拆分继续收口：删除 `main.py` 中已由 `ai_tasks`、`markdown_export`、`mock_writeback` 和代码评审相关 services 承接的任务工作流、Review 决策、Graph checkpoint、知识沉淀/Bug 建议生成和 Markdown 导出旧实现副本，`main.py` 收敛为 FastAPI 装配、基础依赖和少量兼容 helper，并复用任务/Review/Graph/模型网关/代码评审/DB-first 回归验证。
+- 后端大文件拆分继续收口：删除 `main.py` 中已由 `model_gateway` 和 `ai_tasks` services 承接的 OpenAI-compatible chat/embedding、模型调用日志、token 估算、Embedding 上下文和代码评审 executor 旧 helper 副本，保持模型网关、AI 任务启动和代码评审响应契约不变，并复用模型网关/代码评审/任务/DB-first 回归验证。
+- 后端大文件拆分继续收口：删除 `main.py` 中已由 `dashboard_metrics`、`devops_metrics` 和 `user_insights` services 承接的看板产品归属过滤、DevOps 统一列表和用户洞察统一列表投影旧 helper 副本，保持看板、DevOps 和用户洞察 API 响应契约不变，并复用看板/生命周期/用户洞察/DevOps 回归验证。
+- 后端大文件拆分继续收口：删除 `main.py` 中已由 `operational_records` service 承接的采集运行、待归属处理、GitLab/Jenkins/线上日志指标校验旧 helper 副本，保持 collectors、attribution、DevOps 明细列表/写入和 DB-first 契约不变，并复用采集/归属/DevOps/router 回归验证。
+- 后端大文件拆分继续收口：删除 `main.py` 中已由 `requirements` service 承接的需求全链路 payload、阶段实体聚合和时间线旧 helper 副本，保持 `GET /api/requirements/{id}/full-chain` 响应、任务读权限和 DB-first stale runtime 契约不变，并复用 requirements router/生命周期/持久化回归验证。
+- 后端大文件拆分继续收口：删除 `main.py` 中已由 `knowledge_documents`、`knowledge_search` 和 `knowledge_deposits` services 承接的知识索引/检索旧 helper 副本，保持知识文档、知识沉淀、知识检索、Embedding 兜底和 DB-first stale runtime 契约不变，并复用知识 router/治理/持久化回归验证。
+- 后端大文件拆分继续收口：删除 `main.py` 中已由 `lifecycle_context` service 承接的生命周期上下文旧 helper 副本，保留 `GET /api/lifecycle/context`、dashboard source rows、风险信号和审计产品过滤契约不变，并复用 lifecycle/router/stale runtime 回归验证。
+- persistence.py 大文件拆分继续推进：新增 `BrainAppReadRepository`，承接业务大脑配置恢复读取 SQL 查询，保持 `rd_brain` 只读配置、Brain App API 和 PostgreSQL 运行时契约不变，并补充业务大脑 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：扩展 `KnowledgeReadRepository`，承接知识文档、知识 chunk 和知识沉淀恢复读取 SQL 查询，保持知识恢复、知识列表/检索 read model 与 DB-first stale runtime 契约不变，并扩展知识 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：扩展 `BugReadRepository`，承接 Bug 恢复读取 SQL 查询，保持 Bug 恢复、Bug 管理列表 SQL read model、版本归属和 DB-first 兼容契约不变，并扩展 Bug read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：扩展 `TaskReadRepository`，承接 AI 任务、Graph Run、Graph Checkpoint 和 Human Review 恢复读取 SQL 查询，保持任务/Review/Graph 恢复、任务列表 SQL read model 和 DB-first 兼容契约不变，并扩展任务 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：扩展 `RequirementReadRepository`，承接需求台账恢复读取 SQL 查询，保持需求恢复、需求列表 SQL read model、负责人字段和 DB-first 兼容契约不变，并扩展需求 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：扩展 `ProductConfigReadRepository`，承接产品、迭代版本、产品模块、产品 Git 仓库和相关系统恢复读取 SQL 查询，保持产品配置恢复、产品/版本列表 SQL read model 和 DB-first 兼容契约不变，并扩展产品配置 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：扩展 `AssistantChatReadRepository`，承接 AI 助手会话和消息恢复读取 SQL 查询，保持用户级历史隔离、消息 references、会话列表和 DB-first 恢复契约不变，并扩展助手 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：扩展 `UserInsightReadRepository`，承接用户使用指标、用户反馈和迭代规划建议/决策恢复/列表 SQL 查询，统一用户洞察列表、看板 source rows 和助手上下文契约保持不变，并扩展用户洞察 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：扩展 `DevopsReadRepository`，承接 GitLab daily、Jenkins release 和线上日志原始指标恢复/列表 SQL 查询，统一运营列表、看板 source rows 和 DevOps 明细 API 契约保持不变，并扩展 DevOps read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：新增 `LifecycleDashboardReadRepository`，承接生命周期上下文 edge/risk、首页看板快照和 dashboard/lifecycle source rows 读取组装，保持 DB 派生看板、权限过滤、缓存刷新和慢查询保护契约不变，并补充 lifecycle/dashboard read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：新增 `MockWritebackReadRepository`，承接模拟 Issue 写回恢复读取 SQL 查询，保持幂等 key 聚合、Issue payload 投影、任务详情聚合和 DB-first 恢复契约不变，并补充 mock writeback read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：新增 `GitReviewReadRepository`，承接 GitLab MR / GitHub PR 兼容快照和代码评审报告恢复读取 SQL 查询，保持快照复用、报告确认归档、任务链接和恢复计数器契约不变，并补充 Git review read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：新增 `OperationalCollectionReadRepository`，承接采集运行和待归属队列恢复快照/列表 SQL 查询，保持列表筛选、排序、真实空集合和 DB-first stale runtime 响应契约不变，并补充运营采集 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：新增 `AuditReadRepository`，承接审计事件恢复快照和审计列表 SQL 查询，保持主体、操作者、事件类型、时间过滤、sequence 排序和 query/performance 响应契约不变，并补充审计 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：新增 `ModelGatewayReadRepository`，承接模型网关配置列表和模型调用日志列表 SQL 查询，保持配置脱敏、Embedding 配置字段、日志过滤排序响应契约不变，并补充模型网关 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：新增 `AssistantChatReadRepository`，承接 AI 助手会话列表和会话消息读取 SQL 查询，保持用户级历史隔离、消息排序和 references 响应契约不变，并补充助手历史 read model 仓储边界测试。
+- persistence.py 大文件拆分继续推进：新增 `KnowledgeReadRepository`，承接知识文档列表、知识沉淀列表/详情、可读向量 chunk 检查和知识 chunk 搜索 SQL 查询，`PostgresSnapshotRepository` 保留委托入口并补充知识 read model 仓储边界测试。
+- 后端大文件拆分继续收口：删除 `main.py` 中已迁往 `git_review`、`user_insights` 和 `lifecycle_context` service 的 GitHub/GitLab provider 读取、PR/MR 预览、diff 风险摘要、快照创建、用户洞察/迭代规划校验与生成、生命周期 repository/source read model 等遗留实现副本；对应 API 契约通过领域回归测试保持不变。
+- 生命周期上下文进一步脱离 `main.py` legacy helper：新增 `lifecycle_context` service，承接需求/任务/Review/代码评审/知识沉淀/Bug/DevOps/用户洞察/迭代建议的上下游追踪、动态缺失上下文、风险信号和 lifecycle edge/risk materialize，`lifecycle` router 补充整体防回退边界测试。
+- GitLab MR 与 GitHub PR 代码评审链路进一步脱离 `main.py` legacy helper：新增 `git_review` service，承接 GitLab/GitHub provider API 读取、PR/MR 预览、diff 文件树与风险摘要、快照大小/文件数/单文件限制校验、复用快照、审计事件和 repository 保存，`git_review` router 补充整体防回退边界测试。
+- 用户洞察与迭代规划进一步脱离 `main.py` legacy helper：`user_insights` service 承接使用指标列表/创建、用户反馈列表/创建/更新、迭代建议列表/生成/决策、状态机校验、产品/版本/模块/需求上下文校验、审计事件和 repository 保存，`user_insights` router 补充整体防回退边界测试。
+- DevOps 指标明细进一步脱离 `main.py` legacy helper：`operational_records` service 承接 GitLab 每日代码指标、Jenkins 发布记录和线上日志指标的列表查询、创建校验、产品/版本/模块/Git 仓库上下文校验、审计事件和 repository 保存，`devops_metrics` router 补充整体防回退边界测试。
+- 采集运行与待归属处理进一步脱离 `main.py` legacy helper：新增 `operational_records` service，承接 collector run 列表/创建/更新、pending attribution 列表/创建/解决、状态机校验、产品/模块/需求上下文校验、审计事件和 repository 保存，`collectors` 与 `attribution` router 补充防回退边界测试。
+- AI 任务创建进一步脱离 `main.py` legacy helper：`ai_tasks` service 承接技术方案、后续任务、发布准备、发布后分析和代码评审任务创建前置校验，补齐发布上下文/发布后上下文聚合、产品上下文快照、需求状态推进、`ai_task.created` 审计和 repository 保存；`tasks` router 现在整体不再回调 legacy main。
+- AI 任务批量重试进一步脱离 `main.py` legacy helper：`ai_tasks` service 直接复用 start service 恢复可重试失败任务，保留重复/不存在/不可重试 skipped、仍失败明细、批次 `ai_task.batch_retried` 审计和 repository 保存，`POST /api/ai-tasks/batch-retry` handler 补充防回退边界测试。
+- Review 决策进一步脱离 `main.py` legacy helper：`ai_tasks` service 承接审批、编辑后审批、驳回和补充信息请求的状态校验、任务状态推进、需求状态推进、自动 Bug 建议生成、知识沉淀、Graph checkpoint、Code Review 报告确认、审计事件和 repository 保存，四个 Review 决策 handler 补充防回退边界测试。
+- AI 任务启动业务逻辑下沉到 `ai_tasks` service：服务层承接启动/失败重试状态校验、模型网关调用失败写入、Code Review 执行器失败写入、Human Review 创建、Graph Run/Checkpoint 创建、Code Review 报告生成和 DB-first 保存；`main.py` 暂保留薄委托以兼容现有 opener 注入，后续可直接切换 `tasks` router。
+- AI 任务启动前置依赖继续拆分：模型网关任务调用、任务消息构造、JSON 输出解析、OpenAI-compatible chat 调用和 token/latency 日志生成下沉到 `model_gateway` service，`main.py` 暂保留薄委托并传入 opener 以兼容现有失败注入与重试测试。
+- AI 任务批量取消进一步脱离 `main.py` legacy helper：`ai_tasks` service 承接重复/不存在/终态 skipped 明细、逐任务取消、pending Review 取消、Graph Run 取消 checkpoint、逐任务审计、批次 `ai_task.batch_cancelled` 审计和 repository 保存，`POST /api/ai-tasks/batch-cancel` handler 补充防回退边界测试。
+- AI 任务状态写接口进一步脱离 `main.py` legacy helper：`ai_tasks` service 承接任务取消、补充信息提交、Graph Run 取消 checkpoint、pending Review 取消、`more_info_answers` 追加、审计事件和 DB-first 任务状态保存，`POST /api/ai-tasks/{task_id}/cancel` 与 `/more-info` handler 补充防回退边界测试。
+- Graph Run 与 Review 只读端点进一步脱离 `main.py` legacy helper：`ai_tasks` service 承接 Graph Run 列表、待确认 Review 列表、Review 详情、pending Review SQL 摘要读取和任务读权限过滤，`GET /api/graph-runs`、`/api/reviews/pending`、`/api/reviews/{review_id}` handler 补充防回退边界测试。
+- AI 任务详情进一步脱离 `main.py` legacy helper：`ai_tasks` service 承接任务工作流只读上下文、任务详情投影、Review/Graph Run/知识沉淀/Mock Issue 聚合和任务读权限校验，`GET /api/ai-tasks/{task_id}` handler 补充防回退边界测试。
+- 批量推进需求状态进一步脱离 `main.py` legacy helper：`requirements` service 承接目标状态校验、版本归属保护、重复/不存在/状态路径错误 skipped 明细、逐需求 `requirement.updated` 审计、批次 `requirement.batch_status_advanced` 审计和 repository 保存；`requirements` router 已整体不再回调 legacy main。
+- 批量排期需求进一步脱离 `main.py` legacy helper：`requirements` service 承接产品/版本校验、重复/不存在/跨产品/状态错误 skipped 明细、逐需求 `requirement.updated` 审计、批次 `requirement.batch_scheduled` 审计和 repository 保存，`batch-schedule` handler 补充防回退边界测试。
+- 批量分配需求负责人进一步脱离 `main.py` legacy helper：`requirements` service 承接负责人非空校验、重复/不存在/关闭或取消需求 skipped 明细、逐需求 `requirement.updated` 审计、批次审计和 repository 保存，`batch-assign-owner` handler 补充防回退边界测试。
+- 批量需求生成产品详细设计任务进一步脱离 `main.py` legacy helper：`requirements` service 承接产品校验、重复/不存在/跨产品/状态错误 skipped 明细、逐任务创建、批次审计和 repository 保存，`batch-generate-tasks` handler 补充防回退边界测试。
+- 单条需求生成产品详细设计任务进一步脱离 `main.py` legacy helper：`requirements` service 承接产品上下文快照、需求状态推进、AI task 创建、`ai_task.created` 审计事件和 requirement/task 同事务 repository 保存，`generate-task` handler 补充防回退边界测试。
+- 需求审批、驳回和关闭进一步脱离 `main.py` legacy helper：`requirements` service 承接待审批状态校验、驳回原因校验、关闭活跃任务保护、审计事件和 repository 精细保存，`approve/reject/close` handler 补充防回退边界测试。
+- 需求修改和删除进一步脱离 `main.py` legacy helper：`requirements` service 承接可编辑状态保护、产品/版本/模块校验、审计事件、repository 精细保存和删除，`PATCH/DELETE /api/requirements/{id}` handler 补充防回退边界测试。
+- 需求创建进一步脱离 `main.py` legacy helper：`requirements` service 承接写权限、产品/版本/模块校验、需求对象创建、审计事件和 repository 精细保存，`POST /api/requirements` handler 补充防回退边界测试。
+- 需求详情和需求全链路进一步脱离 `main.py` legacy helper：`requirements` service 承接任务工作流只读上下文、详情读取、链路实体聚合和时间线组装，`GET /api/requirements/{id}` 与 `/full-chain` handler 补充防回退边界测试。
+- 研发运营统一列表进一步脱离 `main.py` legacy helper：新增 `devops_metrics` service 承接 SQL read model 查询、GitLab 指标/Jenkins 发布/线上日志 fallback 拼装和 `query/performance` 观测元数据，`GET /api/devops/operational-metrics` handler 补充防回退边界测试。
+- 用户洞察统一列表进一步脱离 `main.py` legacy helper：新增 `user_insights` service 承接 SQL read model 查询、使用趋势/用户反馈/迭代建议 fallback 拼装和 `query/performance` 观测元数据，`GET /api/insights/items` handler 补充防回退边界测试。
+- AI 任务列表进一步脱离 `main.py` legacy helper：新增 `ai_tasks` service 承接任务 SQL read model 查询、角色读取范围、时间过滤、兼容 fallback 投影和 `query/performance` 观测元数据，`GET /api/ai-tasks` handler 补充防回退边界测试。
+- 需求列表进一步脱离 `main.py` legacy helper：新增 `requirements` service 承接 SQL read model 查询、兼容 fallback 投影和 `query/performance` 观测元数据，`GET /api/requirements` handler 补充防回退边界测试。
+- Bug 列表进一步脱离 `main.py` legacy helper：`bugs` service 承接 SQL read model 查询、兼容 fallback 投影和 `query/performance` 观测元数据，`bugs` router 现在整体不再回调 legacy main。
+- Bug 创建、批量更新、修改和删除进一步脱离 `main.py` legacy helper：新增 `bugs` service，写接口直接完成写权限、上下文校验、状态机、审计事件和 repository 精细保存，并补充 write handler 级防回退边界测试。
+- 知识文档更新、重建索引和删除进一步脱离 `main.py` legacy helper：`knowledge` router 的写接口直接调用 service 完成索引状态校验、chunk 重建、沉淀解除关联、审计事件和 repository 精细保存，并补充 write handler 级防回退边界测试。
+- 知识文档创建进一步脱离 `main.py` legacy helper：`knowledge` router 的创建 handler 直接调用 service 完成标题/内容/角色/产品校验、chunk 索引、模型日志、审计事件和 repository 精细保存，并补充 create handler 级防回退边界测试。
+- 知识沉淀采纳/驳回进一步脱离 `main.py` legacy helper：`knowledge_deposits` service 承接沉淀状态校验、采纳入库文档生成、chunk 重建、模型日志、审计事件和 repository 精细保存，并补充 decision handler 级防回退边界测试。
+- 知识搜索进一步脱离 `main.py` legacy helper：新增 `knowledge_search` service，`knowledge` router 的搜索 handler 直接完成 repository-first 候选查询、关键词兜底、向量兼容过滤、排序和响应投影；Embedding 查询调用补入 `model_gateway` service，并补充 handler 级防回退边界测试。
+- 知识沉淀候选列表进一步脱离 `main.py` legacy helper：新增 `knowledge_deposits` service，`knowledge` router 的沉淀候选列表 handler 直接完成 repository-first 读取和状态过滤，并补充 handler 级防回退边界测试。
+- 知识文档列表进一步脱离 `main.py` legacy helper：新增 `knowledge_documents` service，`knowledge` router 的列表 handler 直接完成 repository-first 读取、权限过滤、排序分页和 `query/performance` 观测元数据，并补充 handler 级防回退边界测试。
+- 模拟 Issue 写回进一步脱离 `main.py` legacy helper：新增 `mock_writeback` service，`writeback` router 直接完成完成态校验、幂等 key、Issue 生成、审计事件和 repository 精细保存，并补充防回退边界测试。
+- 审计事件列表进一步脱离 `main.py` legacy helper：新增 `audit_events` service，`audit` router 直接完成 repository-first 查询、兼容过滤、排序、分页和 `query/performance` 观测元数据，并补充防回退边界测试。
+- 代码评审报告读取进一步脱离 `main.py` legacy helper：新增 `code_review_report` service，`code_review_reports` router 直接完成任务上下文读取、任务读权限校验和报告关联校验，并补充防回退边界测试。
+- Markdown 导出进一步脱离 `main.py` legacy helper：新增 `task_workflow_context` 和 `markdown_export` service，`export` router 直接完成只读上下文投影、权限校验、完成态校验和 Markdown 渲染，并补充防回退边界测试。
+- Bug 管理批量处理完成后接入通用 `ManagementBatchResultModal`，与需求/任务批量操作一致展示批次号、更新数、跳过数和 skipped 明细，页面测试同步覆盖结果弹窗。
+- 需求管理列表行操作收敛为“全链路 / 详情页 / 更多”，降低固定操作列宽度并改善中等宽度页面裁切；需求批量推进状态新增迭代版本归属保护，进入交付链路状态前未排期需求返回 `REQUIREMENT_VERSION_REQUIRED` skipped 明细，文档和测试用例同步更新。
+- 需求管理批量排期、分配负责人、推进状态和生成任务完成后新增结果明细弹窗，展示批次号、成功数、跳过数和每条 skipped 的需求 ID/错误码/原因，避免批量操作只靠 toast 提示。
+- 任务管理批量取消和批量重试完成后新增结果明细弹窗，取消展示批次号、取消数和 skipped 明细，重试展示批次号、重试数、成功数、仍失败数、失败错误和 skipped 明细。
+- 需求管理新增多选“批量推进状态”入口，后端新增 `POST /api/requirements/batch-advance-status`，按研发流程前进路径逐条校验需求状态，返回 updated/skipped 明细，并记录 `requirement.batch_status_advanced` 与逐需求 `requirement.updated` 审计。
+- 需求管理新增多选“批量分配负责人”入口，后端新增 `POST /api/requirements/batch-assign-owner`，需求台账补充 `assignee` 字段，支持非关闭/非取消需求批量调整负责人并记录批次级与逐需求审计。
+- 任务管理新增多选“批量重试”入口，后端新增 `POST /api/ai-tasks/batch-retry`，支持 `model_gateway_failed` 和 `code_review_executor_failed` 失败任务复用原 task id 批量恢复，返回 retried/updated/skipped 明细，并记录 `ai_task.batch_retried` 与逐任务 `ai_task.retry_started` 审计。
+- AI 助手回答新增来源引用：服务端按用户问题从产品、迭代、需求、任务、Review、Bug、代码评审报告和知识沉淀 read context 生成 references，聊天响应和历史消息展示可跳转链接，并新增 `assistant_messages.metadata_json` 保存消息引用元数据。
+- 任务管理新增多选“批量取消”入口，后端新增 `POST /api/ai-tasks/batch-cancel`，支持未完成任务批量取消、终态/重复/不存在任务 skipped 明细，并记录 `ai_task.batch_cancelled` 与逐任务 `ai_task.cancelled` 审计。
+- 需求全链路详情新增“阶段明细”折叠区，按需求、迭代版本、AI 任务、Review、PR/代码评审、Bug、发布和知识沉淀分组展示实体清单，并提供跳转到对应管理页的链接。
+- 前端 `ManagementListPage` 统一表格兜底规范继续增强：未显式配置宽度的普通列默认 160px、操作列默认 220px 且右侧固定，减少角色、用户洞察、DevOps、任务和 Bug 等宽表页面挤压变形。
+- 新增 `scripts/release_smoke.sh` 固定发布 smoke 入口，默认执行 `scripts/production_readiness_check.py --rebuild --web-smoke`，将 Docker Compose 重建、API 生产就绪门禁和真实浏览器页面 smoke 固化为一条命令。
+- 核心管理列表性能观测新增列表级 P95 目标，`performance` 元数据返回 `p95_target_ms`，`requirements/ai_tasks/bugs` 目标 300ms、`user_insights` 目标 400ms、`devops_operational_metrics` 目标 500ms；超目标慢查询日志同步记录 `p95_target_ms`。
+- 研发运营统一列表 SQL read model 从 `persistence.py` 拆分到 `app.core.repositories.devops.DevopsReadRepository`，`PostgresSnapshotRepository` 仅保留 `list_operational_metric_items` 委托入口，并新增 repository 边界回归测试。
+- 用户洞察统一列表 SQL read model 从 `persistence.py` 拆分到 `app.core.repositories.user_insights.UserInsightReadRepository`，`PostgresSnapshotRepository` 仅保留 `list_user_insight_items` 委托入口，并新增 repository 边界回归测试。
+- Bug 管理 SQL read model 从 `persistence.py` 拆分到 `app.core.repositories.bugs.BugReadRepository`，`PostgresSnapshotRepository` 仅保留 `count_bug_summaries` 和 `list_bug_summaries` 委托入口，并新增 repository 边界回归测试。
+- AI 任务 SQL read model 和待 Review 摘要查询从 `persistence.py` 拆分到 `app.core.repositories.tasks.TaskReadRepository`，`PostgresSnapshotRepository` 仅保留任务列表 count/list 与待确认摘要委托入口，并新增 repository 边界回归测试。
+- 需求管理 SQL read model 从 `persistence.py` 拆分到 `app.core.repositories.requirements.RequirementReadRepository`，`PostgresSnapshotRepository` 仅保留 `count_requirement_summaries` 和 `list_requirement_summaries` 委托入口，并新增 repository 边界回归测试。
+- 新增 `scripts/web_page_smoke.mjs` 无额外 npm 依赖的真实浏览器页面 smoke：登录后注入前端认证态，打开团队看板、需求、迭代版本、Bug、任务、用户洞察、研发运营和角色管理等核心页面，检查非空渲染、登录跳转、框架错误覆盖层和 console/runtime error；生产就绪脚本新增 `--web-smoke` 和 `--web-smoke-command` 接入该门禁。
+- 管理主列表查询观测补齐 `query.name`，慢于阈值的列表请求会记录 `slow_list_query` 后端日志，包含列表名、耗时、阈值、返回条数、总数和生效查询条件。
+- 首页 IT 团队看板新增 PostgreSQL source rows 派生的短 TTL 只读缓存，响应回显 `metadata.dashboard_cache`，支持 `refresh=true` 强制刷新，并在超过阈值时记录 `slow_dashboard_query`。
+- 看板缓存逻辑从 `main.py` 拆分到 `app.services.dashboard_cache`，集中维护缓存 key、命中/过期判断、metadata 构造和慢查询日志，并新增 service 层单测。
+- 看板指标聚合逻辑从 `main.py` 拆分到 `app.services.dashboard_metrics`，集中维护 source rows 投影、产品/权限/时间窗口过滤、指标汇总和快照记录构造，并新增 service 层单测。
+- Bug 生命周期逻辑从 `main.py` 拆分到 `app.services.bug_lifecycle`，集中维护 Bug 来源、严重级别、状态机、初始状态和上下文校验，并新增 service 层单测覆盖状态流转和重复缺陷校验。
+- 迭代版本状态推进逻辑从 `main.py` 拆分到 `app.services.version_status`，集中维护版本阶段流转、需求状态同步影响计算和阻塞规则，并新增 service 层单测作为后续领域拆分样板。
+- API 通用依赖从 `main.py` 拆分到 `app.api.deps`，集中维护 `api_error`、`store`、当前用户 dependency 和角色校验，作为后续按域迁移 router 的共享入口。
+- AI 助手 API 从 `main.py` 迁移为独立 `app.api.routers.assistant`，继续保留 `/api/assistant/chat`、会话列表和会话消息原有契约，后续域 router 拆分可复用同一模式。
+- 首页 IT 团队看板 API 从 `main.py` 迁移为独立 `app.api.routers.dashboard` 并补充路由边界测试，确保 `/api/dashboard/it-team` 只有单一 router 归属，缓存、source rows 聚合和快照写入契约保持不变。
+- 认证与角色目录 API 从 `main.py` 迁移为独立 `app.api.routers.auth` 并补充路由边界测试，确保 `/api/auth/login`、`/api/auth/me`、`/api/auth/logout` 和 `/api/auth/roles` 只有单一 router 归属，登录、当前用户、退出和角色目录契约保持不变。
+- 平台状态 API 从 `main.py` 迁移为独立 `app.api.routers.platform`，`/health` 和 `/api/long-memory/status` 由 `app.services.platform_status` 构造健康检查、模型网关状态、DB-first 访问模式和 GBrain 脱敏状态，并补充单一路由归属测试。
+- 用户管理 API 从 `main.py` 迁移为独立 `app.api.routers.users` 并补充路由边界测试，确保 `GET/POST /api/users` 和 `PATCH/DELETE /api/users/{user_id}` 只有单一 router 归属，管理员权限、角色目录校验和用户仓储契约保持不变。
+- 产品主体 CRUD API 从 `main.py` 迁移为独立 `app.api.routers.products` 并补充路由边界测试，确保 `GET/POST /api/products` 和 `GET/PATCH/DELETE /api/products/{product_id}` 只有单一 router 归属，产品列表 SQL read model、查询观测、repository 写入和删除依赖校验契约保持不变。
+- 迭代版本 API 从 `main.py` 迁移为独立 `app.api.routers.product_versions` 并补充路由边界测试，确保 `GET /api/product-versions`、`GET/POST /api/products/{product_id}/versions`、`POST /api/product-versions/{version_id}/advance-status` 和 `PATCH/DELETE /api/product-versions/{version_id}` 只有单一 router 归属；产品主体和迭代版本 router 共用 `app.services.product_config_context` 维护产品配置 source rows、repository 上下文、审计和单记录写入/删除。
+- 产品模块 API 从 `main.py` 迁移为独立 `app.api.routers.product_modules` 并补充路由边界测试，确保 `GET/POST /api/products/{product_id}/modules` 和 `PATCH/DELETE /api/product-modules/{module_id}` 只有单一 router 归属；模块写入、删除依赖校验和审计继续复用 `app.services.product_config_context`。
+- 产品 Git 仓库 API 从 `main.py` 迁移为独立 `app.api.routers.product_git_repositories` 并补充路由边界测试，确保 `GET/POST /api/products/{product_id}/git-repositories` 和 `PATCH/DELETE /api/product-git-repositories/{repo_id}` 只有单一 router 归属；GitLab/GitHub provider 绑定校验、repository-first 读取、handler 级写入审计和凭据脱敏响应契约保持不变。
+- 相关系统 API 从 `main.py` 迁移为独立 `app.api.routers.related_systems` 并补充路由边界测试，确保 `GET/POST /api/system/related-systems` 和 `PATCH/DELETE /api/system/related-systems/{system_id}` 只有单一 router 归属；产品归属校验、全局编码唯一、repository-first 读取和 handler 级写入审计契约保持不变。
+- 模型网关配置与日志 API 从 `main.py` 迁移为独立 `app.api.routers.model_gateway` 并补充路由边界测试，确保 `GET/POST/PATCH/DELETE/POST(test) /api/system/model-gateway-configs` 和 `GET /api/model-gateway/logs` 只有单一 router 归属；配置脱敏、Chat/Embedding 测试、默认配置选择和 Embedding 运行时 helper 收口到 `app.services.model_gateway`。
+- 业务大脑只读 API 从 `main.py` 迁移为独立 `app.api.routers.brain_apps` 并补充路由边界测试，确保 `GET /api/brain-apps` 和 `GET /api/brain-apps/{brain_app_id}` 只有单一 router 归属；repository-first 读取和按 id/code 查找逻辑收口到 `app.services.brain_apps`。
+- GitLab MR / GitHub PR 预览、列表和快照 API 从 `main.py` 迁移为独立 `app.api.routers.git_review` 并补充路由边界测试，确保 GitLab MR 预览/快照、GitHub PR 列表/预览/快照只有单一 router 归属；原有只读访问、DB-first 审计写入、diff 快照复用和超限失败契约保持不变。
+- Bug 管理 API 从 `main.py` 迁移为独立 `app.api.routers.bugs` 并补充路由边界测试，确保 `GET/POST /api/bugs`、`POST /api/bugs/batch-update` 和 `PATCH/DELETE /api/bugs/{bug_id}` 只有单一 router 归属；登记、批量处理、状态机校验、SQL read model 列表、DB-first 写入和审计契约保持不变。
+- 需求交付 API 从 `main.py` 迁移为独立 `app.api.routers.requirements` 并补充路由边界测试，确保需求创建、列表、详情、全链路、审批/驳回/关闭、批量排期、批量生成任务和单条生成任务只有单一 router 归属；SQL read model 列表、DB-first 写入、状态校验和审计契约保持不变。
+- AI 任务与 Review API 入口从 `main.py` 迁移为独立 `app.api.routers.tasks` 并补充路由边界测试，确保任务列表/创建/详情/启动/取消/补充信息、Graph Run、待确认 Review 和 Review 决策只有单一 router 归属；任务 SQL read model、DB-first 写入、Graph/Review 状态机和审计契约保持不变。
+- AI 任务列表与创建 handler 本体从 `main.py` 下沉到 `app.api.routers.tasks`，保留任务 SQL read model、权限过滤、DB-first 创建、需求状态推进和审计写入契约，并新增架构边界回归防止回退。
+- 知识中心 API 从 `main.py` 迁移为独立 `app.api.routers.knowledge` 并补充路由边界测试，确保知识文档、索引重试、知识检索和知识沉淀审核端点只有单一 router 归属；权限过滤、索引状态、DB-first 写入和 repository-first 读取契约保持不变。
+- 研发运营指标 API 从 `main.py` 迁移为独立 `app.api.routers.devops_metrics` 并补充路由边界测试，确保统一运营列表、GitLab 每日指标、Jenkins 发布和线上日志指标端点只有单一 router 归属；运营统一列表继续使用 SQL/read model 分页排序筛选和查询观测元数据。
+- 用户洞察与迭代建议 API 从 `main.py` 迁移为独立 `app.api.routers.user_insights` 并补充路由边界测试，确保用户洞察统一列表、使用指标、用户反馈、迭代建议和建议决策端点只有单一 router 归属；用户洞察统一列表继续使用 SQL/read model 分页排序筛选和查询观测元数据。
+- 写回结果、代码评审报告和审计事件 API 从 `main.py` 迁移为独立 `app.api.routers.writeback`、`app.api.routers.code_review_reports` 和 `app.api.routers.audit` 并补充路由边界测试，确保模拟 Issue 幂等写入、代码评审报告读取和审计事件列表查询只有单一 router 归属。
+- Markdown 导出 API 从 `main.py` 迁移为独立 `app.api.routers.export` 并补充路由边界测试，确保完成任务导出、任务读取权限和 `text/markdown` 响应契约保持不变。
+- 采集运行、待归属处理和生命周期上下文 API 从 `main.py` 迁移为独立 `app.api.routers.collectors`、`app.api.routers.attribution` 和 `app.api.routers.lifecycle` 并补充路由边界测试；`main.py` 当前仅保留 FastAPI middleware/exception 基础入口，不再承载业务 `@app` 路由。
+- 产品配置 SQL read model 从 `app.core.persistence.PostgresSnapshotRepository` 抽取为独立 `app.core.repositories.product_config.ProductConfigReadRepository`，产品和迭代版本列表的数据库分页、筛选、排序契约保持不变，并新增 repository 边界测试防止回退。
+- 核心管理主列表响应新增 `query` 与 `performance` 元数据，记录生效筛选、分页、排序、接口耗时、当前页返回条数和总数，便于定位页面查询慢问题；列表排序/分页 helper 从 `main.py` 抽取到 `core/listing.py`，作为后端大文件拆分起点。
+- 发布就绪门禁脚本新增 `--rebuild`、`--web-base-url`，支持先重建 Docker Compose 栈，再检查 Web shell、需求/任务/Bug/用户洞察/研发运营核心列表、模型网关和 GitLab 只读链路。
+- 前端 `ManagementListPage` 新增统一表格兜底规范：默认固定布局、横向滚动、文本列省略和右侧固定操作列，减少管理页列宽变形。
+- 前端业务弹窗中的多行输入统一改为固定 `rows`，避免 Ant Design `TextArea autoSize` 在弹窗和测试布局下产生 `height: NaN` 警告，覆盖 AI 助手、产品配置、需求、迭代版本、Bug、知识和任务预览页面。
 - 需求全链路新增独立详情页 `/delivery/requirements/{requirement_id}/full-chain`，需求列表保留弹窗快查并提供“详情页”入口，弹窗和详情页共用阶段进度、时间线与 PR/MR 证据展示。
 - 需求全链路详情弹窗新增阶段进度视图，按需求、迭代版本、AI 任务、Review、PR/代码评审、Bug、发布和知识沉淀展示链路覆盖状态。
 - 需求管理新增多选“批量生成任务”入口，后端新增 `POST /api/requirements/batch-generate-tasks`，支持同产品已排期需求批量生成产品详细设计任务，返回 generated/skipped 明细并记录 `requirement.batch_tasks_generated` 与逐任务审计。
@@ -15,6 +245,8 @@
 - 需求全链路详情页的 PR/MR 快照区展示风险摘要、diff 文件树和 Review Checklist，用户可在同一弹窗查看需求到代码评审证据，不再跳转任务中心核对变更范围。
 - GitLab MR / GitHub PR 预览新增 diff 文件树、风险摘要和 Review Checklist，任务中心创建 Code Review 前展示变更范围、变更明细和检查项，代码评审报告问题定位兼容更多 file/path/line 字段。
 - AI 助手系统上下文增强，模型请求新增迭代进度、阻塞需求、待确认 Review、最近代码评审结论、Bug 分布和知识沉淀摘要，前端新增“阻塞与待确认”快捷问题。
+- AI 助手系统上下文、模型消息构造、模型响应解析和会话公开投影从 `main.py` 拆分到 `app.services.assistant_context`，为后续助手工具化查询和引用链接扩展提供独立服务边界，并新增 service 层单测。
+- AI 助手聊天工作流、会话读写、用户级历史隔离、模型日志/审计写入和错误边界从 `main.py` 拆分到 `app.services.assistant_chat`，`main.py` 仅保留薄 API 入口，并新增 service 层单测。
 - Bug 管理新增多选“批量处理”入口，后端新增 `POST /api/bugs/batch-update`，支持批量更新状态、严重级别或处理人，非法状态流转和重复 ID 返回 skipped 明细，并写入批次级与逐 Bug 审计。
 - 需求管理新增“全链路”详情入口，后端新增 `GET /api/requirements/{requirement_id}/full-chain`，一次聚合需求、迭代版本、AI 任务、Review、PR/MR 快照、代码评审、Bug、发布和知识沉淀时间线，减少跨页面跳转查看进度。
 - 用户洞察和研发运营主列表统一改为服务端聚合查询：新增 `/api/insights/items` 与 `/api/devops/operational-metrics`，支持 `page/page_size/sort_by/sort_order` 和页面查询条件，前端不再多接口拉全量后本地拼装分页。
@@ -37,6 +269,10 @@
 - DB-first 迁移补齐任务工作流 repository source rows 读取入口，PostgreSQL 运行时需求详情、AI 任务详情、Graph Run 列表、待确认 Review、Review 详情、模拟回写结果、Code Review 报告和 Markdown 导出不再通过 repository read snapshot 承载读取。
 
 ### Fixed
+- `/api/products` 和 `/api/product-versions` 在 PostgreSQL 运行时改为 SQL read model 查询，产品列表的当前版本/模块数投影、迭代版本所属产品投影、筛选、排序和分页均由数据库完成，不再为管理页加载全量集合后本地切片。
+- `/api/bugs` Bug 管理列表在 PostgreSQL 运行时改为 Bug SQL read model 查询，`module/product_id/severity/source/status/title/version/version_id` 筛选、排序和分页由数据库完成，不再为列表页加载全量 Bug 后本地切片。
+- `/api/requirements` 需求管理列表在 PostgreSQL 运行时改为需求台账 SQL read model 查询，`priority/product/product_id/status/title/version/version_id` 筛选、排序和分页由数据库完成，不再为列表页加载 task workflow source rows 后本地切片。
+- 前端 Web shell、登录页标题和菜单底部品牌名统一为 `Enterprise AI Brain`，避免旧 `AI Brain` 标识造成发布后页面未更新的误判。
 - 修复需求管理列表列宽未固定导致需求标题、创建时间和右侧操作列被压缩换行/截断的问题；需求表格现在使用固定布局、明确列宽、右侧固定操作列和横向滚动。
 - `/api/insights/items` 用户洞察统一列表在 PostgreSQL 运行时改为 SQL read model 聚合查询，筛选、排序和分页由数据库完成，并新增用户反馈、用户使用指标和迭代建议更新时间排序索引。
 - `/api/devops/operational-metrics` 研发运营统一列表在 PostgreSQL 运行时改为 SQL read model 聚合查询，筛选、排序和分页由数据库完成，并新增 GitLab 指标、Jenkins 发布和线上日志更新时间排序索引。

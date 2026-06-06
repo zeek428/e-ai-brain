@@ -237,6 +237,56 @@ def test_requirement_list_supports_server_pagination_sort_and_filters():
     assert invalid_sort.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
+def test_management_lists_include_query_observability_metadata():
+    app.state.store.reset()
+    headers = auth_headers()
+    product, version = create_product_and_version(headers)
+    client.post(
+        "/api/requirements",
+        json={
+            "content": "列表查询需要记录性能观测信息。",
+            "priority": "P1",
+            "product_id": product["id"],
+            "title": "查询观测需求",
+            "version_id": version["id"],
+        },
+        headers=headers,
+    )
+
+    requirements = client.get(
+        (
+            "/api/requirements?title=查询观测&product=rd-platform&version=v1"
+            "&page=1&page_size=1&sort_by=title&sort_order=asc"
+        ),
+        headers=headers,
+    ).json()["data"]
+    tasks = client.get(
+        "/api/ai-tasks?status=draft&page=1&page_size=10&sort_by=created_at&sort_order=desc",
+        headers=headers,
+    ).json()["data"]
+
+    assert requirements["query"] == {
+        "filters": {
+            "product": "rd-platform",
+            "title": "查询观测",
+            "version": "v1",
+        },
+        "name": "requirements",
+        "page": 1,
+        "page_size": 1,
+        "sort_by": "title",
+        "sort_order": "asc",
+    }
+    assert requirements["performance"]["result_count"] == 1
+    assert requirements["performance"]["total"] == 1
+    assert requirements["performance"]["duration_ms"] >= 0
+    assert requirements["performance"]["slow"] is False
+    assert requirements["performance"]["slow_threshold_ms"] > 0
+    assert tasks["query"]["filters"] == {"status": "draft"}
+    assert tasks["query"]["name"] == "ai_tasks"
+    assert tasks["performance"]["result_count"] == 0
+
+
 def test_product_versions_batch_list_returns_product_projection():
     app.state.store.reset()
     headers = auth_headers()

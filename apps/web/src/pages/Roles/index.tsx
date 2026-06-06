@@ -1,11 +1,16 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Descriptions, Modal, Space, Tag, Typography } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import type { ManagementListQuery } from '../../components/ManagementListPage';
 import type { UserRoleDefinition } from '../../data/roles';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
-import { fetchRoleDefinitions } from '../../services/aiBrain';
+import {
+  formatRemoteRowsError,
+  normalizeRemoteRowsError,
+  type RemoteRowsError,
+} from '../../hooks/useRemoteRows';
+import { fetchRoleDefinitionList, type RoleListQuery } from '../../services/aiBrain';
 
 type RoleManagementRow = UserRoleDefinition & {
   assignableText: string;
@@ -26,6 +31,12 @@ const CATEGORY_LABELS: Record<string, string> = {
   review: '评审角色',
   system: '系统角色',
   workspace: '工作台角色',
+};
+const CATEGORY_OPTIONS = Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ label, value }));
+const roleSortFieldMap: Record<string, string> = {
+  categoryText: 'category',
+  roleLabel: 'sort_order',
+  statusText: 'status',
 };
 
 const { Paragraph, Text } = Typography;
@@ -57,6 +68,10 @@ function renderRoleScopeSummary(row: RoleManagementRow) {
   );
 }
 
+function renderCountSummary(count: number, unit: string) {
+  return <Tag color={count > 0 ? 'blue' : 'default'}>{`${count} ${unit}`}</Tag>;
+}
+
 function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<RoleManagementRow>[] {
   return [
     {
@@ -75,7 +90,7 @@ function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<
     {
       dataIndex: 'businessRoleText',
       title: '业务角色',
-      width: 190,
+      width: 150,
       render: (_, row) => renderTagList(row.business_roles, 2),
     },
     {
@@ -87,14 +102,14 @@ function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<
     {
       dataIndex: 'menuScopeText',
       title: '可见入口',
-      width: 220,
-      render: (_, row) => renderTagList(row.menu_scope, 3),
+      width: 120,
+      render: (_, row) => renderCountSummary(row.menu_scope.length, '个入口'),
     },
     {
       dataIndex: 'permissionText',
       title: '权限点',
       width: 120,
-      render: (_, row) => <Tag color="blue">{row.permissions.length} 个权限点</Tag>,
+      render: (_, row) => renderCountSummary(row.permissions.length, '个权限点'),
     },
     {
       dataIndex: 'statusText',
@@ -119,7 +134,7 @@ function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<
       fixed: 'right',
       title: '操作',
       valueType: 'option',
-      width: 88,
+      width: 96,
       render: (_, row) => (
         <Button onClick={() => openDetail(row)} type="link">
           详情
@@ -144,13 +159,98 @@ function mapRoleRow(role: UserRoleDefinition): RoleManagementRow {
   };
 }
 
+function normalizeFilterText(value: unknown) {
+  return String(value ?? '').trim() || undefined;
+}
+
+function buildRoleListQuery(query: ManagementListQuery): RoleListQuery {
+  const filters = query.filters;
+  return {
+    businessRole: normalizeFilterText(filters.businessRoleText),
+    category: normalizeFilterText(filters.category),
+    menuScope: normalizeFilterText(filters.menuScopeText),
+    page: query.page,
+    pageSize: query.pageSize,
+    permission: normalizeFilterText(filters.permissionText),
+    role: normalizeFilterText(filters.roleLabel),
+    sortField: query.sortField ? roleSortFieldMap[query.sortField] ?? query.sortField : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(filters.status),
+  };
+}
+
 export default function RolesPage() {
   const [detailRole, setDetailRole] = useState<RoleManagementRow>();
-  const loadRoles = useCallback(async () => {
-    const definitions = await fetchRoleDefinitions();
-    return definitions.map(mapRoleRow);
-  }, []);
-  const { error, reload, rows: dataSource, status } = useRemoteRows(loadRoles);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'roleLabel',
+    sortOrder: 'ascend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: RoleManagementRow[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchRoleDefinitionList(buildRoleListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows.map(mapRoleRow),
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchRoleDefinitionList(buildRoleListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows.map(mapRoleRow),
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
   const columns = useMemo(() => buildColumns(setDetailRole), []);
 
   return (
@@ -158,13 +258,13 @@ export default function RolesPage() {
       <ManagementListPage<RoleManagementRow>
         breadcrumbGroup="系统管理"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={listState.rows}
         filters={[
           { label: '角色', name: 'roleLabel', type: 'text' },
           {
             label: '分类',
-            name: 'categoryText',
-            options: Object.values(CATEGORY_LABELS).map((label) => ({ label, value: label })),
+            name: 'category',
+            options: CATEGORY_OPTIONS,
             type: 'select',
           },
           { label: '业务角色', name: 'businessRoleText', type: 'text' },
@@ -172,20 +272,25 @@ export default function RolesPage() {
           { label: '权限点', name: 'permissionText', type: 'text' },
           {
             label: '状态',
-            name: 'statusText',
+            name: 'status',
             options: [
-              { label: '启用', value: '启用' },
-              { label: '停用', value: '停用' },
+              { label: '启用', value: 'active' },
+              { label: '停用', value: 'inactive' },
             ],
             type: 'select',
           },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error)}
         onReload={() => void reload()}
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="code"
         tableLayout="fixed"
-        tableScroll={{ x: 1160 }}
         tableTitle="角色定义"
         title="角色管理"
       />

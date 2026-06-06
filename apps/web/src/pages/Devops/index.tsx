@@ -1,5 +1,6 @@
 import { ProTable, type ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Form, Input, Modal, Radio, Select, Space } from 'antd';
+import type { TableProps } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
@@ -398,6 +399,9 @@ const operationalMetricSortFieldMap: Record<string, string> = {
   value: 'value',
 };
 
+const COLLECTOR_RUN_TABLE_SCROLL = { x: 1440 } satisfies TableProps<CollectorRunRecord>['scroll'];
+const PENDING_ATTRIBUTION_TABLE_SCROLL = { x: 1520 } satisfies TableProps<PendingAttributionItem>['scroll'];
+
 function normalizeFilterText(value: unknown) {
   return String(value ?? '').trim() || undefined;
 }
@@ -420,29 +424,38 @@ function buildOperationalMetricListQuery(query: ManagementListQuery): Operationa
 const columns: ProColumns<OperationalMetricRecord>[] = [
   {
     dataIndex: 'category',
+    ellipsis: true,
     sorter: true,
     title: '指标来源',
+    width: 140,
   },
   {
     dataIndex: 'name',
+    ellipsis: true,
     sorter: true,
     title: '指标名称',
+    width: 180,
   },
   {
     dataIndex: 'value',
+    ellipsis: true,
     sorter: true,
     title: '指标值',
+    width: 140,
   },
   {
     dataIndex: 'status',
     sorter: true,
     title: '状态',
     render: (_, row) => <StatusTag color={row.status === '-' ? 'default' : 'blue'} label={row.status} />,
+    width: 110,
   },
   {
     dataIndex: 'updatedAt',
+    ellipsis: true,
     sorter: true,
     title: '更新时间',
+    width: 160,
   },
 ];
 
@@ -820,24 +833,32 @@ export default function DevopsPage() {
     () => [
       {
         dataIndex: 'id',
+        ellipsis: true,
         search: false,
         title: '运行 ID',
+        width: 180,
       },
       {
         dataIndex: 'collectorType',
+        ellipsis: true,
         search: false,
         title: '采集类型',
         render: (_, row) => collectorTypeLabel(row.collectorType),
+        width: 180,
       },
       {
         dataIndex: 'sourceSystem',
+        ellipsis: true,
         search: false,
         title: '来源系统',
+        width: 130,
       },
       {
         dataIndex: 'productId',
+        ellipsis: true,
         search: false,
         title: '产品 ID',
+        width: 150,
       },
       {
         dataIndex: 'status',
@@ -846,28 +867,37 @@ export default function DevopsPage() {
         render: (_, row) => (
           <StatusTag color={collectorRunStatusColor(row.status)} label={row.status} />
         ),
+        width: 110,
       },
       {
         dataIndex: 'recordsImported',
         search: false,
         title: '导入记录数',
+        width: 120,
       },
       {
         dataIndex: 'startedAt',
+        ellipsis: true,
         search: false,
         title: '开始时间',
+        width: 170,
       },
       {
         dataIndex: 'finishedAt',
+        ellipsis: true,
         search: false,
         title: '结束时间',
+        width: 170,
       },
       {
         dataIndex: 'errorMessage',
+        ellipsis: true,
         search: false,
         title: '错误说明',
+        width: 180,
       },
       {
+        fixed: 'right',
         key: 'actions',
         search: false,
         title: '操作',
@@ -878,6 +908,7 @@ export default function DevopsPage() {
                 aria-label={`标记成功 ${row.id}`}
                 onClick={() => void updateCollectorRunStatus(row, 'succeeded')}
                 size="small"
+                type="link"
               >
                 标记成功
               </Button>
@@ -885,6 +916,7 @@ export default function DevopsPage() {
                 aria-label={`标记失败 ${row.id}`}
                 onClick={() => setCollectorRunFailureTarget(row)}
                 size="small"
+                type="link"
               >
                 标记失败
               </Button>
@@ -892,6 +924,7 @@ export default function DevopsPage() {
                 aria-label={`取消运行 ${row.id}`}
                 onClick={() => void updateCollectorRunStatus(row, 'cancelled')}
                 size="small"
+                type="link"
               >
                 取消运行
               </Button>
@@ -899,6 +932,7 @@ export default function DevopsPage() {
           ) : (
             '-'
           ),
+        width: 210,
       },
     ],
     [updateCollectorRunStatus],
@@ -908,48 +942,63 @@ export default function DevopsPage() {
     () => [
       {
         dataIndex: 'id',
+        ellipsis: true,
         search: false,
         title: '队列 ID',
+        width: 170,
       },
       {
         dataIndex: 'sourceType',
+        ellipsis: true,
         search: false,
         title: '来源类型',
         render: (_, row) => collectorTypeLabel(row.sourceType),
+        width: 170,
       },
       {
         dataIndex: 'sourceSystem',
+        ellipsis: true,
         search: false,
         title: '来源系统',
+        width: 130,
       },
       {
         dataIndex: 'rawSubjectId',
+        ellipsis: true,
         search: false,
         title: '原始主体 ID',
         render: (_, row) => row.rawSubjectId ?? '-',
+        width: 150,
       },
       {
         dataIndex: 'summary',
+        ellipsis: true,
         search: false,
         title: '摘要',
+        width: 300,
       },
       {
         dataIndex: 'suggestedProductId',
+        ellipsis: true,
         search: false,
         title: '建议产品',
         render: (_, row) => row.suggestedProductId ?? '-',
+        width: 140,
       },
       {
         dataIndex: 'suggestedModuleCode',
+        ellipsis: true,
         search: false,
         title: '建议模块',
         render: (_, row) => row.suggestedModuleCode ?? '-',
+        width: 120,
       },
       {
         dataIndex: 'confidence',
         search: false,
         title: '置信度',
         render: (_, row) => (row.confidence === undefined ? '-' : row.confidence.toFixed(2)),
+        width: 100,
       },
       {
         dataIndex: 'status',
@@ -958,13 +1007,17 @@ export default function DevopsPage() {
         render: (_, row) => (
           <StatusTag color={pendingAttributionStatusColor(row.status)} label={row.status} />
         ),
+        width: 110,
       },
       {
         dataIndex: 'createdAt',
+        ellipsis: true,
         search: false,
         title: '创建时间',
+        width: 170,
       },
       {
+        fixed: 'right',
         key: 'actions',
         search: false,
         title: '操作',
@@ -981,6 +1034,7 @@ export default function DevopsPage() {
           ) : (
             '-'
           ),
+        width: 110,
       },
     ],
     [openPendingAttributionResolve],
@@ -1058,6 +1112,8 @@ export default function DevopsPage() {
           }}
           rowKey="id"
           search={false}
+          scroll={COLLECTOR_RUN_TABLE_SCROLL}
+          tableLayout="fixed"
           toolBarRender={() => [
             <Button
               aria-label="登记采集运行"
@@ -1098,6 +1154,8 @@ export default function DevopsPage() {
           }}
           rowKey="id"
           search={false}
+          scroll={PENDING_ATTRIBUTION_TABLE_SCROLL}
+          tableLayout="fixed"
         />
       </div>
       <Modal

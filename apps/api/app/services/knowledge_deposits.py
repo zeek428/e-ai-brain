@@ -1,0 +1,493 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from app.api.deps import api_error
+from app.core.roles import ASSIGNABLE_ROLE_CODES
+from app.core.store import MemoryStore
+from app.core.trace import envelope
+from app.services.knowledge_documents import knowledge_document_chunks, knowledge_document_response
+from app.services.knowledge_indexing import (
+    build_knowledge_chunks,
+    knowledge_index_failed_result,
+    knowledge_text_indexed_result,
+    knowledge_vector_indexed_result,
+    replace_knowledge_chunks_result,
+    split_knowledge_content,
+)
+
+USER_ROLES = ASSIGNABLE_ROLE_CODES
+KNOWLEDGE_INDEX_STATUSES = {
+    "archived",
+    "importing",
+    "indexed",
+    "index_failed",
+    "pending_index",
+    "text_indexed",
+    "vector_indexed",
+}
+
+__all__ = [
+    "KNOWLEDGE_INDEX_STATUSES",
+    "KnowledgeRepositoryContext",
+    "apply_knowledge_document_to_memory",
+    "build_knowledge_chunks",
+    "create_knowledge_document_result",
+    "delete_knowledge_document_result",
+    "get_knowledge_deposit",
+    "get_knowledge_document",
+    "knowledge_deposit_list_response",
+    "knowledge_index_failed_result",
+    "knowledge_text_indexed_result",
+    "knowledge_vector_indexed_result",
+    "knowledge_write_store",
+    "patch_knowledge_document_result",
+    "replace_knowledge_chunks_result",
+    "retry_knowledge_document_index_result",
+    "save_knowledge_deposit_records",
+    "split_knowledge_content",
+]
+
+
+class KnowledgeRepositoryContext(MemoryStore):
+    def __init__(self, repository: Any) -> None:
+        super().__init__()
+        self.repository = repository
+
+    def new_id(self, prefix: str) -> str:
+        next_id = getattr(self.repository, "next_id", None)
+        if not callable(next_id):
+            return super().new_id(prefix)
+        allocated_id = next_id(prefix)
+        suffix = allocated_id.removeprefix(f"{prefix}_")
+        if suffix.isdigit():
+            self.counters[prefix] = max(self.counters.get(prefix, 0), int(suffix))
+        return allocated_id
+
+
+def knowledge_query_repository(current_store: Any) -> Any | None:
+    repository = getattr(current_store, "repository", None)
+    list_deposits = getattr(repository, "list_knowledge_deposits", None)
+    if callable(list_deposits):
+        return repository
+    return None
+
+
+def knowledge_deposit_list_response(
+    *,
+    current_store: Any,
+    status: str | None,
+    trace_id: str,
+) -> dict[str, Any]:
+    repository = knowledge_query_repository(current_store)
+    if repository is not None:
+        items = repository.list_knowledge_deposits(status=status)
+    else:
+        items = list(current_store.knowledge_deposits.values())
+        if status:
+            items = [item for item in items if item["status"] == status]
+    return envelope({"items": items, "total": len(items)}, trace_id)
+
+
+def knowledge_write_store(current_store: Any) -> Any:
+    repository = knowledge_query_repository(current_store)
+    if repository is None:
+        return current_store
+    source_store = KnowledgeRepositoryContext(repository)
+    load_knowledge = getattr(repository, "load_knowledge", None)
+    if callable(load_knowledge):
+        knowledge_payload = load_knowledge() or {}
+        source_store.knowledge_documents = payload_collection(
+            knowledge_payload,
+            "knowledge_documents",
+        )
+        source_store.knowledge_chunks = payload_collection(
+            knowledge_payload,
+            "knowledge_chunks",
+        )
+        source_store.knowledge_deposits = payload_collection(
+            knowledge_payload,
+            "knowledge_deposits",
+        )
+    load_model_gateway = getattr(repository, "load_model_gateway", None)
+    if callable(load_model_gateway):
+        model_gateway_payload = load_model_gateway() or {}
+        source_store.model_gateway_configs = payload_collection(
+            model_gateway_payload,
+            "model_gateway_configs",
+        )
+        source_store.model_gateway_logs = [
+            dict(item) for item in model_gateway_payload.get("model_gateway_logs", [])
+        ]
+    list_products = getattr(repository, "list_products", None)
+    if callable(list_products):
+        source_store.products = {
+            str(item["id"]): dict(item)
+            for item in list_products()
+            if item.get("id") is not None
+        }
+    return source_store
+
+
+def payload_collection(payload: dict[str, Any], key: str) -> dict[str, dict[str, Any]]:
+    return {
+        str(item_id): dict(item)
+        for item_id, item in (payload.get(key) or {}).items()
+        if isinstance(item, dict)
+    }
+
+
+def ensure_roles(roles: list[str]) -> None:
+    if not roles:
+        raise api_error(400, "VALIDATION_ERROR", "roles is required")
+    if len(set(roles)) != len(roles):
+        raise api_error(400, "VALIDATION_ERROR", "roles must be unique")
+    invalid_roles = sorted(set(roles) - USER_ROLES)
+    if invalid_roles:
+        raise api_error(400, "VALIDATION_ERROR", f"Unsupported roles: {', '.join(invalid_roles)}")
+
+
+def uses_repository_context(current_store: Any) -> bool:
+    return getattr(current_store, "repository", None) is not None
+
+
+def get_knowledge_deposit(current_store: Any, deposit_id: str) -> dict[str, Any] | None:
+    repository = getattr(current_store, "repository", None)
+    get_deposit = getattr(repository, "get_knowledge_deposit", None)
+    if callable(get_deposit):
+        return get_deposit(deposit_id)
+    return current_store.knowledge_deposits.get(deposit_id)
+
+
+def get_knowledge_document(current_store: Any, document_id: str) -> dict[str, Any] | None:
+    return current_store.knowledge_documents.get(document_id)
+
+
+def record_audit_event(
+    current_store: Any,
+    *,
+    actor_id: str,
+    event_type: str,
+    subject_id: str,
+    subject_type: str = "knowledge_deposit",
+) -> dict[str, Any]:
+    if not uses_repository_context(current_store):
+        return current_store.audit(
+            event_type=event_type,
+            actor_id=actor_id,
+            subject_type=subject_type,
+            subject_id=subject_id,
+        )
+    return {
+        "id": current_store.new_id("audit"),
+        "event_type": event_type,
+        "actor_id": actor_id,
+        "ai_task_id": None,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "payload": {},
+        "sequence": len(getattr(current_store, "audit_events", [])) + 1,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def save_knowledge_deposit_records(
+    current_store: Any,
+    *,
+    deposit: dict[str, Any],
+    audit_event: dict[str, Any] | None = None,
+    document: dict[str, Any] | None = None,
+    chunks: list[dict[str, Any]] | None = None,
+    model_logs: list[dict[str, Any]] | None = None,
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_records = getattr(repository, "save_knowledge_deposit_records", None)
+    if callable(save_records):
+        save_records(
+            deposit=deposit,
+            document=document,
+            chunks=chunks
+            if chunks is not None
+            else (
+                knowledge_document_chunks(current_store, document["id"])
+                if document is not None
+                else None
+            ),
+            audit_event=audit_event,
+            model_logs=model_logs,
+        )
+
+
+def save_knowledge_document_records(
+    current_store: Any,
+    *,
+    document: dict[str, Any],
+    chunks: list[dict[str, Any]] | None = None,
+    audit_event: dict[str, Any] | None = None,
+    model_logs: list[dict[str, Any]] | None = None,
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_records = getattr(repository, "save_knowledge_document_records", None)
+    if callable(save_records):
+        save_records(
+            document=document,
+            chunks=chunks
+            if chunks is not None
+            else knowledge_document_chunks(current_store, document["id"]),
+            audit_event=audit_event,
+            model_logs=model_logs,
+        )
+
+
+def delete_knowledge_document_records(
+    current_store: Any,
+    *,
+    document_id: str,
+    deposits: list[dict[str, Any]],
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    delete_records = getattr(repository, "delete_knowledge_document_records", None)
+    if callable(delete_records):
+        delete_records(document_id=document_id, deposits=deposits, audit_event=audit_event)
+
+
+def clear_knowledge_chunks(current_store: Any, document_id: str) -> None:
+    current_store.knowledge_chunks = {
+        chunk_id: chunk
+        for chunk_id, chunk in current_store.knowledge_chunks.items()
+        if chunk.get("document_id") != document_id
+    }
+
+
+def apply_knowledge_document_to_memory(
+    current_store: Any,
+    document: dict[str, Any],
+    chunks: list[dict[str, Any]],
+) -> None:
+    current_store.knowledge_documents[document["id"]] = document
+    clear_knowledge_chunks(current_store, document["id"])
+    for chunk in chunks:
+        current_store.knowledge_chunks[chunk["id"]] = chunk
+
+
+def ensure_non_blank(value: str | None, field: str) -> str:
+    if value is None or not value.strip():
+        raise api_error(400, "VALIDATION_ERROR", f"{field} is required")
+    return value.strip()
+
+
+def ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None:
+    if value is not None and value not in allowed_values:
+        raise api_error(400, "VALIDATION_ERROR", f"Unsupported {field}")
+
+
+def payload_updates(payload: Any) -> dict[str, Any]:
+    return payload.model_dump(exclude_unset=True)
+
+
+def create_knowledge_document_result(
+    *,
+    content: str,
+    current_store: Any,
+    doc_type: str,
+    permission_roles: list[str],
+    product_id: str | None,
+    tags: list[str],
+    title: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    title = ensure_non_blank(title, "title")
+    content = ensure_non_blank(content, "content")
+    if product_id is not None and product_id not in current_store.products:
+        raise api_error(404, "NOT_FOUND", "Product not found")
+    ensure_roles(permission_roles)
+    document_id = current_store.new_id("knowledge")
+    now = datetime.now(UTC).isoformat()
+    document = {
+        "id": document_id,
+        "title": title,
+        "content": content,
+        "doc_type": doc_type,
+        "product_id": product_id,
+        "permission_roles": permission_roles,
+        "tags": tags,
+        "index_status": "pending_index",
+        "index_error": None,
+        "vector_index_error": None,
+        "created_by": user["id"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    model_log_start_index = len(current_store.model_gateway_logs)
+    document, chunks = replace_knowledge_chunks_result(current_store, document)
+    if not uses_repository_context(current_store):
+        apply_knowledge_document_to_memory(current_store, document, chunks)
+    audit_event = record_audit_event(
+        current_store,
+        event_type="knowledge_document.created",
+        actor_id=user["id"],
+        subject_type="knowledge_document",
+        subject_id=document_id,
+    )
+    save_knowledge_document_records(
+        current_store,
+        document=document,
+        chunks=chunks,
+        audit_event=audit_event,
+        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+    )
+    return knowledge_document_response(current_store, document, chunks)
+
+
+def patch_knowledge_document_result(
+    *,
+    current_store: Any,
+    document_id: str,
+    payload: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    document = get_knowledge_document(current_store, document_id)
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    updates = payload_updates(payload)
+    if "title" in updates:
+        updates["title"] = ensure_non_blank(updates["title"], "title")
+    if "content" in updates:
+        updates["content"] = ensure_non_blank(updates["content"], "content")
+    if "permission_roles" in updates:
+        ensure_roles(updates["permission_roles"])
+    if "product_id" in updates and updates["product_id"] is not None:
+        if updates["product_id"] not in current_store.products:
+            raise api_error(404, "NOT_FOUND", "Product not found")
+    if "index_status" in updates:
+        ensure_enum(updates["index_status"], KNOWLEDGE_INDEX_STATUSES, "knowledge index status")
+    if "index_error" in updates and updates["index_error"] is not None:
+        updates["index_error"] = ensure_non_blank(updates["index_error"], "index_error")
+    document = {**document, **updates, "updated_at": datetime.now(UTC).isoformat()}
+    model_log_start_index = len(current_store.model_gateway_logs)
+    if updates.get("index_status") == "index_failed":
+        document, chunks = knowledge_index_failed_result(
+            document,
+            document.get("index_error") or "Knowledge indexing failed",
+        )
+    elif updates.get("index_status") in {"archived", "importing", "pending_index"}:
+        chunks = []
+        document["chunk_count"] = 0
+        document["index_error"] = None
+        document["vector_index_error"] = None
+    elif updates.get("index_status") == "text_indexed":
+        document, chunks = replace_knowledge_chunks_result(
+            current_store,
+            document,
+            attempt_vector=False,
+        )
+    elif updates.get("index_status") in {"indexed", "vector_indexed"} or {
+        "content",
+        "title",
+        "permission_roles",
+        "product_id",
+        "doc_type",
+        "tags",
+    }.intersection(updates):
+        document, chunks = replace_knowledge_chunks_result(current_store, document)
+    else:
+        chunks = knowledge_document_chunks(current_store, document_id)
+    if not uses_repository_context(current_store):
+        apply_knowledge_document_to_memory(current_store, document, chunks)
+    audit_event = record_audit_event(
+        current_store,
+        event_type="knowledge_document.updated",
+        actor_id=user["id"],
+        subject_type="knowledge_document",
+        subject_id=document_id,
+    )
+    save_knowledge_document_records(
+        current_store,
+        document=document,
+        chunks=chunks,
+        audit_event=audit_event,
+        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+    )
+    return knowledge_document_response(current_store, document, chunks)
+
+
+def retry_knowledge_document_index_result(
+    *,
+    current_store: Any,
+    document_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    document = get_knowledge_document(current_store, document_id)
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    if document.get("index_status") not in {"index_failed", "text_indexed"}:
+        raise api_error(
+            409,
+            "KNOWLEDGE_INDEX_STATE_INVALID",
+            "Knowledge document is not eligible for index retry",
+        )
+    document = {**document, "updated_at": datetime.now(UTC).isoformat()}
+    model_log_start_index = len(current_store.model_gateway_logs)
+    document, chunks = replace_knowledge_chunks_result(current_store, document)
+    if not uses_repository_context(current_store):
+        apply_knowledge_document_to_memory(current_store, document, chunks)
+    audit_event = record_audit_event(
+        current_store,
+        event_type="knowledge_document.index_retried",
+        actor_id=user["id"],
+        subject_type="knowledge_document",
+        subject_id=document_id,
+    )
+    save_knowledge_document_records(
+        current_store,
+        document=document,
+        chunks=chunks,
+        audit_event=audit_event,
+        model_logs=current_store.model_gateway_logs[model_log_start_index:],
+    )
+    return knowledge_document_response(current_store, document, chunks)
+
+
+def delete_knowledge_document_result(
+    *,
+    current_store: Any,
+    document_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    if get_knowledge_document(current_store, document_id) is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    affected_deposits = []
+    now = datetime.now(UTC).isoformat()
+    for deposit in current_store.knowledge_deposits.values():
+        if deposit.get("knowledge_document_id") == document_id:
+            affected_deposit = {
+                **deposit,
+                "knowledge_document_id": None,
+                "updated_at": now,
+            }
+            affected_deposits.append(affected_deposit)
+    if not uses_repository_context(current_store):
+        del current_store.knowledge_documents[document_id]
+        current_store.knowledge_chunks = {
+            chunk_id: chunk
+            for chunk_id, chunk in current_store.knowledge_chunks.items()
+            if chunk.get("document_id") != document_id
+        }
+        for deposit in affected_deposits:
+            current_store.knowledge_deposits[deposit["id"]] = deposit
+    audit_event = record_audit_event(
+        current_store,
+        event_type="knowledge_document.deleted",
+        actor_id=user["id"],
+        subject_type="knowledge_document",
+        subject_id=document_id,
+    )
+    delete_knowledge_document_records(
+        current_store,
+        document_id=document_id,
+        deposits=affected_deposits,
+        audit_event=audit_event,
+    )
+    return {"deleted": True, "id": document_id}

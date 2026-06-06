@@ -4,6 +4,7 @@ from urllib.error import URLError
 from fastapi.testclient import TestClient
 
 import app.main as main
+import app.services.model_gateway as model_gateway_service
 from app.main import app
 
 client = TestClient(app)
@@ -195,7 +196,7 @@ def test_active_model_gateway_config_calls_openai_compatible_chat_completion(mon
         )
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
     config = client.post(
         "/api/system/model-gateway-configs",
         json={
@@ -248,7 +249,7 @@ def test_model_gateway_failure_marks_task_failed_and_logs_error(monkeypatch):
     def fake_urlopen(_request, timeout):
         raise URLError("connection refused")
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
     client.post(
         "/api/system/model-gateway-configs",
         json={
@@ -320,7 +321,7 @@ def test_model_gateway_failed_task_can_be_started_again(monkeypatch):
             raise URLError("temporary upstream failure")
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
     client.post(
         "/api/system/model-gateway-configs",
         json={
@@ -438,6 +439,67 @@ def test_model_gateway_config_patch_rejects_unsupported_provider():
     assert unchanged["provider"] == "openai_compatible"
 
 
+def test_model_gateway_config_list_supports_server_pagination_sort_filters_and_observability():
+    headers = auth_headers()
+    app.state.store.reset()
+    client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "api_key": "sk-default",
+            "base_url": "https://llm-a.example.com/v1",
+            "default_chat_model": "gpt-a",
+            "default_embedding_model": "text-embedding-a",
+            "embedding_connection_mode": "reuse_chat",
+            "is_default": True,
+            "name": "A 默认模型网关",
+            "provider": "openai_compatible",
+            "status": "active",
+        },
+        headers=headers,
+    )
+    client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "api_key": "sk-secondary",
+            "base_url": "https://llm-b.example.com/v1",
+            "default_chat_model": "gpt-b",
+            "default_embedding_model": "text-embedding-b",
+            "embedding_connection_mode": "disabled",
+            "is_default": False,
+            "name": "B 停用模型网关",
+            "provider": "openai_compatible",
+            "status": "inactive",
+        },
+        headers=headers,
+    )
+
+    response = client.get(
+        "/api/system/model-gateway-configs"
+        "?page=1&page_size=1&status=active&is_default=true&sort_by=name&sort_order=desc",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["items"][0]["name"] == "A 默认模型网关"
+    assert body["page"] == 1
+    assert body["page_size"] == 1
+    assert body["total"] == 1
+    assert body["query"]["name"] == "model_gateway_configs"
+    assert body["query"]["filters"]["status"] == "active"
+    assert body["query"]["filters"]["is_default"] == "true"
+    assert body["performance"]["result_count"] == 1
+    assert body["performance"]["total"] == 1
+    assert body["performance"]["p95_target_ms"] == 300
+
+    invalid = client.get(
+        "/api/system/model-gateway-configs?page=1&page_size=10&sort_by=unsupported",
+        headers=headers,
+    )
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
 def test_model_gateway_config_test_checks_chat_and_embedding_without_persisting_key(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
@@ -489,7 +551,7 @@ def test_model_gateway_config_test_checks_chat_and_embedding_without_persisting_
             }
         )
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.model_gateway.urlopen", fake_urlopen)
 
     response = client.post(
         "/api/system/model-gateway-configs/test",
@@ -565,7 +627,7 @@ def test_model_gateway_config_test_allows_chat_only_without_embedding_model(monk
         calls.append({"timeout": timeout, "url": request.full_url})
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.model_gateway.urlopen", fake_urlopen)
 
     response = client.post(
         "/api/system/model-gateway-configs/test",
@@ -636,7 +698,7 @@ def test_model_gateway_config_test_allows_chat_only_with_partial_embedding_confi
         calls.append({"timeout": timeout, "url": request.full_url})
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.model_gateway.urlopen", fake_urlopen)
 
     response = client.post(
         "/api/system/model-gateway-configs/test",
@@ -698,7 +760,7 @@ def test_model_gateway_config_test_allows_custom_embedding_only_without_chat_key
         )
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.model_gateway.urlopen", fake_urlopen)
 
     response = client.post(
         "/api/system/model-gateway-configs/test",
@@ -785,7 +847,7 @@ def test_model_gateway_config_allows_embedding_disabled_for_chat_only_runtime(mo
         )
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
 
     config = client.post(
         "/api/system/model-gateway-configs",
@@ -858,7 +920,7 @@ def test_custom_embedding_connection_indexes_knowledge_and_records_vector_metada
         )
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
 
     config = client.post(
         "/api/system/model-gateway-configs",

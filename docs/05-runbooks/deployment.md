@@ -72,7 +72,30 @@ docker compose ps
 docker compose logs api
 ```
 
-### 4. 运行生产就绪门禁脚本
+### 4. 运行发布 Smoke 门禁脚本
+
+推荐使用固定入口，默认会重建本地 Docker Compose 栈并运行 API + Web 真实页面门禁：
+
+```bash
+READINESS_USERNAME=admin@example.com \
+READINESS_PASSWORD=admin123 \
+READINESS_GITLAB_REPOSITORY_ID=<repository_id> \
+READINESS_GITLAB_MR_IID=<mr_iid> \
+READINESS_REQUIREMENT_ID=<requirement_id> \
+READINESS_TECHNICAL_SOLUTION_TASK_ID=<technical_solution_task_id> \
+./scripts/release_smoke.sh
+```
+
+如需自定义地址或 Docker 路径，可通过环境变量覆盖：
+
+```bash
+READINESS_API_BASE_URL=http://localhost:8000 \
+READINESS_WEB_BASE_URL=http://localhost:5173 \
+READINESS_DOCKER_BIN=/Applications/Docker.app/Contents/Resources/bin/docker \
+./scripts/release_smoke.sh
+```
+
+底层仍可直接调用生产就绪门禁脚本：
 
 ```bash
 READINESS_API_BASE_URL=http://localhost:8000 \
@@ -83,10 +106,10 @@ READINESS_GITLAB_REPOSITORY_ID=<repository_id> \
 READINESS_GITLAB_MR_IID=<mr_iid> \
 READINESS_REQUIREMENT_ID=<requirement_id> \
 READINESS_TECHNICAL_SOLUTION_TASK_ID=<technical_solution_task_id> \
-./scripts/production_readiness_check.py
+./scripts/production_readiness_check.py --rebuild --web-smoke
 ```
 
-该脚本会依次验证 `docker compose config --quiet`、compose 中 `api/web/postgres/redis` 运行状态、`/health`、Redis `PONG`、PostgreSQL `pgcrypto`/`vector` 扩展、模型网关配置脱敏和 active/default 配置、GitLab MR preview 与 snapshot 只读链路。脚本任一检查失败即返回非 0；不得在失败时宣称环境可发布。
+`release_smoke.sh` 固定调用 `scripts/production_readiness_check.py --rebuild --web-smoke`。该脚本会先执行 `docker compose up -d --build`，随后验证 `docker compose config --quiet`、compose 中 `api/web/postgres/redis` 运行状态、`/health`、Redis `PONG`、PostgreSQL `pgcrypto`/`vector` 扩展、Web shell HTML、模型网关配置脱敏和 active/default 配置、需求/任务/Bug/用户洞察/研发运营核心列表、GitLab MR preview 与 snapshot 只读链路；并调用 `scripts/web_page_smoke.mjs`，通过真实 Chrome/Chromium 登录并打开 `/welcome`、需求、迭代版本、Bug、任务、用户洞察、研发运营和角色管理等核心页面，检查非空渲染、未跳回登录页、无框架错误覆盖层、无 console/runtime error，并监听浏览器网络响应，任一路由期间出现非 favicon 的 4xx/5xx 请求都会让该路由 smoke 失败。生产就绪门禁默认额外断言角色管理页出现“系统管理员”；其他页面可通过 `--expect-text ROUTE=TEXT` 增加关键内容断言，避免页面壳非空但核心数据未渲染的假阳性。脚本任一检查失败即返回非 0；不得在失败时宣称环境可发布。可通过 `READINESS_WEB_BASE_URL` 或 `--web-base-url` 指向非默认 Web 地址；如 Chrome 不在默认路径，设置 `READINESS_CHROME_PATH`。
 
 ### 5. 验证数据库与缓存
 
@@ -153,6 +176,7 @@ docker compose down
 - [ ] PostgreSQL 初始化包含 pgvector 扩展。
 - [ ] Redis 可连接。
 - [ ] API 日志无启动错误。
+- [ ] `./scripts/release_smoke.sh` 通过，核心页面真实浏览器 smoke 无空白页、无控制台错误。
 - [ ] 模型网关配置可查询，API Key 只返回 configured 标记，不返回明文或密钥片段。
 - [ ] 产品 Git 资源可绑定内部 GitLab 项目，凭据不在 API 响应或日志中出现。
 - [ ] MR preview 能返回标题、作者、分支、diff refs 和变更文件数。
@@ -178,4 +202,4 @@ docker compose down
 - 升级路径: 以 [项目级技术规格](../02-specs/enterprise-ai-brain/spec.md)、[API 文档](../02-specs/enterprise-ai-brain/api.md) 和本 runbook 为准。
 
 ---
-最后更新: 2026-05-29
+最后更新: 2026-06-05

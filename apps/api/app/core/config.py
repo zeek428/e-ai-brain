@@ -19,6 +19,8 @@ class Settings:
             "postgresql://ai_brain:password@localhost:5432/ai_brain",
         )
         self.database_pool_max_size = int(os.getenv("DATABASE_POOL_MAX_SIZE", "5"))
+        self.dashboard_cache_ttl_seconds = int(os.getenv("DASHBOARD_CACHE_TTL_SECONDS", "30"))
+        self.dashboard_slow_threshold_ms = int(os.getenv("DASHBOARD_SLOW_THRESHOLD_MS", "500"))
         self.persistence_mode = os.getenv("PERSISTENCE_MODE", "postgres").lower()
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.model_gateway_base_url = os.getenv("MODEL_GATEWAY_BASE_URL", "")

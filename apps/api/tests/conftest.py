@@ -9,6 +9,7 @@ os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("PERSISTENCE_MODE", "memory")
 
 import app.main as main
+import app.services.model_gateway as model_gateway_service
 
 
 @pytest.fixture(autouse=True)
@@ -219,6 +220,7 @@ def fake_openai_compatible_model_gateway(monkeypatch):
         )
 
     monkeypatch.setattr(main, "urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
     try:
         yield
     finally:

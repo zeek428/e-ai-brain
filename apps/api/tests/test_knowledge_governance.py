@@ -3,6 +3,7 @@ import json
 from fastapi.testclient import TestClient
 
 import app.main as main
+import app.services.model_gateway as model_gateway_service
 from app.main import app
 
 client = TestClient(app)
@@ -221,6 +222,7 @@ def test_knowledge_search_uses_model_gateway_embeddings_for_semantic_rank(monkey
         )
 
     monkeypatch.setattr(main, "urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
 
     target = client.post(
         "/api/knowledge/documents",
@@ -281,6 +283,7 @@ def test_knowledge_document_falls_back_to_text_index_when_embeddings_fail(monkey
         raise OSError("embedding upstream unavailable")
 
     monkeypatch.setattr(main, "urlopen", failing_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", failing_urlopen)
 
     document = client.post(
         "/api/knowledge/documents",
@@ -382,6 +385,7 @@ def test_knowledge_search_does_not_vector_compare_incompatible_embedding_metadat
         return FakeResponse()
 
     monkeypatch.setattr(main, "urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
 
     results = client.post(
         "/api/knowledge/search",
@@ -420,9 +424,32 @@ def test_knowledge_search_does_not_synthesize_chunks_when_index_rows_are_missing
     assert results == []
 
 
-def test_knowledge_index_failure_keeps_error_and_retry_rebuilds_chunks():
+def test_knowledge_index_failure_keeps_error_and_retry_rebuilds_chunks(monkeypatch):
     app.state.store.reset()
     admin_headers = auth_headers()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "data": [{"embedding": [1.0, *([0.0] * 1535)], "index": 0}],
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def successful_urlopen(_request, timeout):
+        _ = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(main, "urlopen", successful_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", successful_urlopen)
 
     document = client.post(
         "/api/knowledge/documents",
@@ -486,6 +513,7 @@ def test_knowledge_retry_upgrades_text_index_to_vector_index(monkeypatch):
         raise OSError("embedding upstream unavailable")
 
     monkeypatch.setattr(main, "urlopen", failing_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", failing_urlopen)
     document = client.post(
         "/api/knowledge/documents",
         json={
@@ -527,6 +555,7 @@ def test_knowledge_retry_upgrades_text_index_to_vector_index(monkeypatch):
         )
 
     monkeypatch.setattr(main, "urlopen", successful_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", successful_urlopen)
     retried = client.post(
         f"/api/knowledge/documents/{document['id']}/retry-index",
         headers=admin_headers,

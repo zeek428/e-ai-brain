@@ -2,6 +2,7 @@ import {
   ClockCircleOutlined,
   DatabaseOutlined,
   ExclamationCircleOutlined,
+  LinkOutlined,
   MessageOutlined,
   PlusOutlined,
   ProjectOutlined,
@@ -18,6 +19,7 @@ import {
   fetchAssistantConversations,
   type AssistantChatResponse,
   type AssistantConversationMessage,
+  type AssistantReference,
   type AssistantConversationSummary,
 } from '../../services/aiBrain';
 import { formatMutationError } from '../../utils/managementCrud';
@@ -28,6 +30,7 @@ const { TextArea } = Input;
 type ChatMessage = {
   content: string;
   id: string;
+  references?: AssistantReference[];
   role: 'assistant' | 'user';
 };
 
@@ -70,6 +73,21 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
       </div>
       <div className="assistant-bubble-content">
         <Text>{message.content}</Text>
+        {message.references?.length ? (
+          <div className="assistant-reference-list">
+            {message.references.map((reference) => (
+              <Button
+                href={reference.url}
+                icon={<LinkOutlined />}
+                key={`${reference.type}:${reference.id}`}
+                size="small"
+                type="link"
+              >
+                {reference.title}
+              </Button>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -118,6 +136,7 @@ export default function AssistantPage() {
           ? history.map((item: AssistantConversationMessage) => ({
               content: item.content,
               id: item.id,
+              references: item.references,
               role: item.role,
             }))
           : welcomeMessages,
@@ -131,6 +150,7 @@ export default function AssistantPage() {
               latencyMs: 0,
               messageId: latestAssistantMessage.id,
               model: latestAssistantMessage.model ?? '',
+              references: latestAssistantMessage.references,
               suggestions: latestAssistantMessage.suggestions,
             }
           : undefined,
@@ -168,6 +188,7 @@ export default function AssistantPage() {
         {
           content: response.content,
           id: response.messageId,
+          references: response.references,
           role: 'assistant',
         },
       ]);
@@ -289,7 +310,6 @@ export default function AssistantPage() {
           <div className="assistant-composer">
             <TextArea
               aria-label="发送给 AI 助手"
-              autoSize={{ maxRows: 5, minRows: 2 }}
               onChange={(event) => setInputValue(event.target.value)}
               onPressEnter={(event) => {
                 if (!event.shiftKey) {
@@ -298,6 +318,7 @@ export default function AssistantPage() {
                 }
               }}
               placeholder="输入问题"
+              rows={3}
               value={inputValue}
             />
             <Button

@@ -662,7 +662,7 @@ export default function IterationVersionsPage() {
               <Select options={advanceTargetOptions} />
             </Form.Item>
             <Form.Item label="推进原因" name="reason">
-              <Input.TextArea autoSize={{ minRows: 2 }} />
+              <Input.TextArea rows={2} />
             </Form.Item>
             <Form.Item name="force" valuePropName="checked">
               <Checkbox>允许带风险推进</Checkbox>
@@ -738,7 +738,7 @@ export default function IterationVersionsPage() {
           )}
           <Form<CollectRequirementsFormValues> form={collectForm} layout="vertical">
             <Form.Item label="归集原因" name="reason">
-              <Input.TextArea autoSize={{ minRows: 2 }} />
+              <Input.TextArea rows={2} />
             </Form.Item>
           </Form>
         </Space>

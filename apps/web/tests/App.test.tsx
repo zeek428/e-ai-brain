@@ -5,310 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { message, Modal, notification } from 'antd';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@ant-design/pro-components', async () => {
-  const React = await import('react');
-
-  function PageContainer({
-    breadcrumb,
-    children,
-    content,
-    extra,
-    title,
-  }: {
-    breadcrumb?: { items?: Array<{ title: React.ReactNode }> };
-    children?: React.ReactNode;
-    content?: React.ReactNode;
-    extra?: React.ReactNode;
-    title?: React.ReactNode;
-  }) {
-    return React.createElement(
-      'main',
-      null,
-      breadcrumb?.items?.length
-        ? React.createElement(
-            'nav',
-            { 'aria-label': '面包屑' },
-            breadcrumb.items.map((item) =>
-              React.createElement('span', { key: String(item.title) }, item.title),
-            ),
-          )
-        : null,
-      React.createElement('h1', null, title),
-      content ? React.createElement('p', null, content) : null,
-      extra,
-      children,
-    );
-  }
-
-  function ProCard({
-    children,
-    extra,
-    title,
-  }: {
-    children?: React.ReactNode;
-    extra?: React.ReactNode;
-    title?: React.ReactNode;
-  }) {
-    return React.createElement(
-      'section',
-      null,
-      title ? React.createElement('h2', null, title) : null,
-      extra,
-      children,
-    );
-  }
-
-  ProCard.Group = ({ children }: { children?: React.ReactNode }) =>
-    React.createElement('section', null, children);
-
-  function ProTable<Row extends { [key: string]: unknown }>({
-    columns,
-    dataSource,
-    headerTitle,
-    onReset,
-    onSubmit,
-    rowKey,
-    rowSelection,
-    scroll,
-    tableLayout,
-    toolBarRender,
-  }: {
-    columns: Array<{
-      dataIndex?: keyof Row;
-      hideInTable?: boolean;
-      key?: string;
-      render?: (value: unknown, row: Row) => React.ReactNode;
-      search?: false;
-      title: React.ReactNode;
-      valueEnum?: Record<string, { text: React.ReactNode }>;
-      valueType?: string;
-    }>;
-    dataSource: Row[];
-    headerTitle?: React.ReactNode;
-    onReset?: () => void;
-    onSubmit?: (values: Record<string, unknown>) => void;
-    rowKey: keyof Row;
-    rowSelection?: {
-      getCheckboxProps?: (record: Row) => { disabled?: boolean };
-      onChange?: (selectedRowKeys: React.Key[], selectedRows: Row[]) => void;
-      selectedRowKeys?: React.Key[];
-    };
-    scroll?: { x?: number | string | true };
-    tableLayout?: string;
-    toolBarRender?: () => React.ReactNode[];
-  }) {
-    const searchColumns = columns.filter((column) => column.search !== false);
-    const tableColumns = columns.filter((column) => !column.hideInTable);
-    const selectedKeys = new Set((rowSelection?.selectedRowKeys ?? []).map(String));
-    const toggleSelection = (row: Row, checked: boolean) => {
-      const rowId = String(row[rowKey]);
-      const nextKeys = checked
-        ? [...selectedKeys, rowId]
-        : [...selectedKeys].filter((selectedKey) => selectedKey !== rowId);
-      rowSelection?.onChange?.(
-        nextKeys,
-        dataSource.filter((item) => nextKeys.includes(String(item[rowKey]))),
-      );
-    };
-
-    return React.createElement(
-      'section',
-      null,
-      headerTitle ? React.createElement('h2', null, headerTitle) : null,
-      React.createElement(
-        'form',
-        {
-          'aria-label': '查询表格',
-          onReset: () => onReset?.(),
-          onSubmit: (event: React.FormEvent<HTMLFormElement>) => {
-            event.preventDefault();
-            const values: Record<string, unknown> = Object.fromEntries(new FormData(event.currentTarget));
-            Object.entries({ ...values }).forEach(([key, value]) => {
-              if (key.endsWith('__start')) {
-                const name = key.replace(/__start$/, '');
-                values[name] = [value, values[`${name}__end`] ?? ''];
-                delete values[key];
-                delete values[`${name}__end`];
-              }
-            });
-            onSubmit?.(values);
-          },
-        },
-        searchColumns.map((column) =>
-          React.createElement(
-            'label',
-            { key: String(column.dataIndex) },
-            column.title,
-            column.valueType === 'dateRange'
-              ? React.createElement(
-                  React.Fragment,
-                  null,
-                  React.createElement(
-                    'label',
-                    null,
-                    `${column.title} 开始`,
-                    React.createElement('input', {
-                      name: `${String(column.dataIndex)}__start`,
-                      type: 'date',
-                    }),
-                  ),
-                  React.createElement(
-                    'label',
-                    null,
-                    `${column.title} 结束`,
-                    React.createElement('input', {
-                      name: `${String(column.dataIndex)}__end`,
-                      type: 'date',
-                    }),
-                  ),
-                )
-              : column.valueType === 'select'
-                ? React.createElement(
-                    'select',
-                    { name: String(column.dataIndex) },
-                  React.createElement('option', { value: '' }, '全部'),
-                  Object.entries(column.valueEnum ?? {}).map(([value, option]) =>
-                    React.createElement('option', { key: value, value }, option.text),
-                  ),
-                )
-              : React.createElement('input', { name: String(column.dataIndex), type: 'text' }),
-          ),
-        ),
-        React.createElement('button', { type: 'submit' }, '查询'),
-        React.createElement('button', { type: 'reset' }, '重置'),
-      ),
-      toolBarRender?.(),
-      React.createElement(
-        'table',
-        {
-          'data-table-layout': tableLayout,
-          'data-table-scroll-x': scroll?.x === undefined ? undefined : String(scroll.x),
-        },
-        React.createElement(
-          'thead',
-          null,
-          React.createElement(
-            'tr',
-            null,
-            rowSelection ? React.createElement('th', { key: '__selection' }, '选择') : null,
-            tableColumns.map((column) =>
-              React.createElement('th', { key: String(column.key ?? column.dataIndex) }, column.title),
-            ),
-          ),
-        ),
-        React.createElement(
-          'tbody',
-          null,
-          dataSource.map((row) =>
-            React.createElement(
-              'tr',
-              { key: String(row[rowKey]) },
-              rowSelection
-                ? React.createElement(
-                    'td',
-                    { key: '__selection' },
-                    React.createElement('input', {
-                      'aria-label': `选择 ${String(row[rowKey])}`,
-                      checked: selectedKeys.has(String(row[rowKey])),
-                      disabled: rowSelection.getCheckboxProps?.(row).disabled,
-                      onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
-                        toggleSelection(row, event.currentTarget.checked),
-                      type: 'checkbox',
-                    }),
-                  )
-                : null,
-              tableColumns.map((column) =>
-                React.createElement(
-                  'td',
-                  { key: String(column.key ?? column.dataIndex ?? column.title) },
-                  column.render
-                    ? column.render(column.dataIndex ? row[column.dataIndex] : undefined, row)
-                    : String(column.dataIndex ? row[column.dataIndex] : ''),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  function StatisticCard({ statistic }: { statistic: Record<string, React.ReactNode> }) {
-    return React.createElement(
-      'section',
-      null,
-      statistic.prefix,
-      React.createElement('h3', null, statistic.title),
-      React.createElement('p', null, statistic.value),
-      React.createElement('p', null, statistic.description),
-    );
-  }
-
-  StatisticCard.Group = ({ children }: { children?: React.ReactNode }) =>
-    React.createElement('section', null, children);
-
-  function QueryFilter({
-    children,
-    'aria-label': ariaLabel,
-    onFinish,
-    onReset,
-  }: {
-    'aria-label'?: string;
-    children?: React.ReactNode;
-    onFinish?: (values: Record<string, FormDataEntryValue>) => void;
-    onReset?: () => void;
-  }) {
-    return React.createElement(
-      'form',
-      {
-        'aria-label': ariaLabel ?? '查询条件',
-        onReset: () => onReset?.(),
-        onSubmit: (event: React.FormEvent<HTMLFormElement>) => {
-          event.preventDefault();
-          onFinish?.(Object.fromEntries(new FormData(event.currentTarget)));
-        },
-      },
-      children,
-      React.createElement('button', { type: 'submit' }, '查询'),
-      React.createElement('button', { type: 'reset' }, '重置'),
-    );
-  }
-
-  function ProFormText({ label, name }: { label: React.ReactNode; name: string }) {
-    return React.createElement(
-      'label',
-      null,
-      label,
-      React.createElement('input', { name, type: 'text' }),
-    );
-  }
-
-  function ProFormSelect({
-    label,
-    name,
-    options = [],
-  }: {
-    label: React.ReactNode;
-    name: string;
-    options?: Array<{ label: string; value: string }>;
-  }) {
-    return React.createElement(
-      'label',
-      null,
-      label,
-      React.createElement(
-        'select',
-        { name },
-        React.createElement('option', { value: '' }, '全部'),
-        options.map((option) =>
-          React.createElement('option', { key: option.value, value: option.value }, option.label),
-        ),
-      ),
-    );
-  }
-
-  return { PageContainer, ProCard, ProFormSelect, ProFormText, ProTable, QueryFilter, StatisticCard };
-});
+import './proComponentsMock';
 
 import BugsPage from '../src/pages/Bugs';
 import AuditPage from '../src/pages/Audit';
@@ -322,7 +19,6 @@ import LoginPage from '../src/pages/Login';
 import ModelGatewayPage from '../src/pages/ModelGateway';
 import ProductsPage from '../src/pages/Products';
 import RequirementsPage from '../src/pages/Requirements';
-import RolesPage from '../src/pages/Roles';
 import UsersPage from '../src/pages/Users';
 import {
   approveManagementRequirement,
@@ -387,12 +83,6 @@ import {
 import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
 import TaskCenterPage from '../src/pages/TaskCenter';
 import { getInitialState } from '../src/app';
-
-function fillDatePicker(label: string, value: string) {
-  const input = screen.getByLabelText(label);
-  fireEvent.change(input, { target: { value } });
-  fireEvent.blur(input);
-}
 
 const roleCatalogEnvelope = {
   data: {
@@ -709,6 +399,75 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         );
       }
+      if (input === '/api/ai-tasks/batch-cancel' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              batch_id: 'ai_task_cancel_batch_001',
+              skipped: [
+                {
+                  code: 'TASK_STATE_INVALID',
+                  id: 'task_done',
+                  message: 'Task cannot be cancelled from current status',
+                },
+              ],
+              skipped_count: 1,
+              updated: [{ id: 'task_api', status: 'cancelled' }],
+              updated_count: 1,
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      if (input === '/api/ai-tasks/batch-retry' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              batch_id: 'ai_task_retry_batch_001',
+              retried: [
+                {
+                  current_step: 'interrupt_for_human_review',
+                  id: 'task_retry',
+                  review_id: 'review_retry',
+                  status: 'waiting_review',
+                },
+                {
+                  current_step: 'model_gateway_failed',
+                  error_code: 'MODEL_GATEWAY_FAILED',
+                  error_message: 'temporary upstream error',
+                  id: 'task_retry_still_failed',
+                  status: 'failed',
+                },
+              ],
+              retried_count: 2,
+              skipped: [
+                {
+                  code: 'TASK_NOT_RETRYABLE',
+                  id: 'task_completed',
+                  message: 'Task is not retryable',
+                },
+              ],
+              skipped_count: 1,
+              updated: [
+                {
+                  current_step: 'interrupt_for_human_review',
+                  id: 'task_retry',
+                  review_id: 'review_retry',
+                  status: 'waiting_review',
+                },
+              ],
+              updated_count: 1,
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
       expect(String(input).startsWith('/api/ai-tasks')).toBe(true);
       expect(String(input).startsWith('/api/ai-tasks/')).toBe(false);
       return new Response(
@@ -723,6 +482,16 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 status: 'waiting_review',
                 task_type: 'product_detail_design',
                 title: '接口任务',
+              },
+              {
+                created_by: 'user_admin',
+                current_step: 'model_gateway_failed',
+                id: 'task_retry',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: 'failed',
+                task_type: 'technical_solution',
+                title: '模型网关失败任务',
               },
               {
                 created_by: 'user_admin',
@@ -776,9 +545,55 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.queryByText('MVP-A 基础 + GitLab 输入闭环')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '运行 MVP 演示流程' })).not.toBeInTheDocument();
     expect(await screen.findByText('接口任务')).toBeInTheDocument();
+    expect(screen.getByText('模型网关失败任务')).toBeInTheDocument();
     expect(screen.getAllByText('产品详细设计')).not.toHaveLength(0);
+    expect(screen.getByRole('button', { name: '批量取消' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '批量重试' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 task_api' }));
+    expect(screen.getByRole('button', { name: '批量取消' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '批量取消' }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/ai-tasks/batch-cancel',
+        'POST',
+      ]),
+    );
+    const batchCancelCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/ai-tasks/batch-cancel' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(batchCancelCall?.[1]?.body))).toEqual({
+      reason: '任务管理批量取消',
+      task_ids: ['task_api'],
+    });
+    expect(await screen.findByRole('dialog', { name: '批量取消结果' })).toBeInTheDocument();
+    expect(screen.getByText('ai_task_cancel_batch_001')).toBeInTheDocument();
+    expect(screen.getByText('TASK_STATE_INVALID · Task cannot be cancelled from current status')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 task_retry' }));
+    expect(screen.getByRole('button', { name: '批量重试' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '批量重试' }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/ai-tasks/batch-retry',
+        'POST',
+      ]),
+    );
+    const batchRetryCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/ai-tasks/batch-retry' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(batchRetryCall?.[1]?.body))).toEqual({
+      reason: '任务管理批量重试',
+      task_ids: ['task_retry'],
+    });
+    expect(await screen.findByRole('dialog', { name: '批量重试结果' })).toBeInTheDocument();
+    expect(screen.getByText('ai_task_retry_batch_001')).toBeInTheDocument();
+    expect(screen.getByText('failed · model_gateway_failed · MODEL_GATEWAY_FAILED · temporary upstream error')).toBeInTheDocument();
+    expect(screen.getByText('TASK_NOT_RETRYABLE · Task is not retryable')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
     expect(screen.getByRole('button', { name: '待确认' })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: '操作' })).toHaveLength(4);
+    expect(screen.getAllByRole('button', { name: '操作' })).toHaveLength(5);
     expect(screen.queryByRole('button', { name: '确认输出' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '生成技术方案' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '导出 Markdown' })).not.toBeInTheDocument();
@@ -809,9 +624,22 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.click(screen.getAllByLabelText('Close')[0]);
     fireEvent.click(screen.getByRole('button', { name: '待确认' }));
     expect(await screen.findByText('接口任务输出摘要')).toBeInTheDocument();
+    const pendingReviewTable = screen
+      .getAllByRole('table')
+      .find((table) => table.getAttribute('data-table-scroll-x') === '1040');
+    expect(pendingReviewTable).toBeDefined();
+    expect(pendingReviewTable).toHaveAttribute('data-table-layout', 'fixed');
+    expect(pendingReviewTable).toHaveAttribute('data-table-scroll-x', '1040');
     expect(screen.getAllByText('确认编号')).not.toHaveLength(0);
+    expect(within(pendingReviewTable as HTMLElement).getByRole('columnheader', { name: '操作' })).toHaveAttribute(
+      'data-fixed',
+      'right',
+    );
     expect(screen.getByRole('button', { name: '确认通过' })).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+      '/api/reviews/pending',
+      'GET',
+    ]);
   });
 
   it('filters task center tasks by product and time range', async () => {
@@ -1582,6 +1410,34 @@ describe('AI Brain Ant Design Pro workbench', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (String(input).startsWith('/api/system/model-gateway-configs?') && init?.method === 'GET') {
+        expect(String(input)).toContain('page=1');
+        expect(String(input)).toContain('page_size=10');
+        expect(String(input)).toContain('sort_by=name');
+        expect(String(input)).toContain('sort_order=asc');
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                api_key_configured: true,
+                base_url: 'https://api.example.com/v1',
+                default_chat_model: 'gpt-4.1',
+                default_embedding_model: 'text-embedding-3-large',
+                id: 'model_config_default',
+                is_default: true,
+                max_retries: 1,
+                name: '默认模型网关',
+                provider: 'openai_compatible',
+                status: 'active',
+                timeout_seconds: 60,
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
       if (input === '/api/system/model-gateway-configs') {
         if (init?.method === 'POST') {
           expect(JSON.parse(String(init.body))).toMatchObject({
@@ -1612,26 +1468,6 @@ describe('AI Brain Ant Design Pro workbench', () => {
             },
           });
         }
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                api_key_configured: true,
-                base_url: 'https://api.example.com/v1',
-                default_chat_model: 'gpt-4.1',
-                default_embedding_model: 'text-embedding-3-large',
-                id: 'model_config_default',
-                is_default: true,
-                max_retries: 1,
-                name: '默认模型网关',
-                provider: 'openai_compatible',
-                status: 'active',
-                timeout_seconds: 60,
-              },
-            ],
-            total: 1,
-          },
-        });
       }
       if (input === '/api/system/model-gateway-configs/test') {
         expect(JSON.parse(String(init?.body))).toMatchObject({
@@ -1772,6 +1608,20 @@ describe('AI Brain Ant Design Pro workbench', () => {
               message: {
                 content: 'AI Brain 已完成 GitHub PR Review 支持，当前正在开发 AI 助手聊天界面。',
                 id: 'assistant_message_api',
+                references: [
+                  {
+                    id: 'requirement_084',
+                    title: 'AI 助手历史记录迭代',
+                    type: 'requirement',
+                    url: '/delivery/requirements?requirement_id=requirement_084',
+                  },
+                  {
+                    id: 'task_api',
+                    title: 'AI 助手前端任务',
+                    type: 'ai_task',
+                    url: '/tasks/management?task_id=task_api',
+                  },
+                ],
                 role: 'assistant',
               },
               model: 'codex-auto-review',
@@ -1785,6 +1635,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.stubGlobal('fetch', fetchMock);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     render(<AssistantPage />);
 
@@ -1792,7 +1643,9 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getAllByText('项目进展').length).toBeGreaterThan(0);
     expect(screen.getAllByText('阻塞与待确认').length).toBeGreaterThan(0);
     expect(screen.getAllByText('模型网关').length).toBeGreaterThan(0);
-    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    expect(assistantInput).toHaveAttribute('rows', '3');
+    fireEvent.change(assistantInput, {
       target: { value: 'AI Brain 项目现在开发到哪里了？' },
     });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
@@ -1801,12 +1654,23 @@ describe('AI Brain Ant Design Pro workbench', () => {
       await screen.findByText('AI Brain 已完成 GitHub PR Review 支持，当前正在开发 AI 助手聊天界面。'),
     ).toBeInTheDocument();
     expect(screen.getByText('查看任务中心')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /AI 助手历史记录迭代/ })).toHaveAttribute(
+      'href',
+      '/delivery/requirements?requirement_id=requirement_084',
+    );
+    expect(screen.getByRole('link', { name: /AI 助手前端任务/ })).toHaveAttribute(
+      'href',
+      '/tasks/management?task_id=task_api',
+    );
     expect(screen.getByText('codex-auto-review')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/assistant/conversations', 'GET'],
       ['/api/assistant/chat', 'POST'],
       ['/api/assistant/conversations', 'GET'],
     ]);
+    expect(
+      consoleErrorSpy.mock.calls.some((call) => String(call[0]).includes('NaN') && String(call[0]).includes('height')),
+    ).toBe(false);
   });
 
   it('loads current-user AI assistant conversations and opens historical messages', async () => {
@@ -1845,6 +1709,14 @@ describe('AI Brain Ant Design Pro workbench', () => {
                   content: '当前已经支持按用户保存聊天历史。',
                   id: 'assistant_message_reply',
                   model: 'codex-auto-review',
+                  references: [
+                    {
+                      id: 'conversation_requirement',
+                      title: '聊天历史需求',
+                      type: 'requirement',
+                      url: '/delivery/requirements?requirement_id=conversation_requirement',
+                    },
+                  ],
                   role: 'assistant',
                   suggestions: ['查看任务中心'],
                 },
@@ -1865,6 +1737,10 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.click(await screen.findByRole('button', { name: /AI Brain 现在开发到哪里了？/ }));
 
     expect(await screen.findByText('当前已经支持按用户保存聊天历史。')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /聊天历史需求/ })).toHaveAttribute(
+      'href',
+      '/delivery/requirements?requirement_id=conversation_requirement',
+    );
     expect(screen.getAllByText('AI Brain 现在开发到哪里了？').length).toBeGreaterThan(0);
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/assistant/conversations', 'GET'],
@@ -2420,1083 +2296,6 @@ describe('AI Brain Ant Design Pro workbench', () => {
     ).toBe(false);
   });
 
-  it('creates and triages real user feedback from the insights page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-    });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      const path = String(input);
-      if (path === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/product-versions?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/insights/user-feedback' && init?.method === 'POST') {
-        return jsonResponse({
-          data: {
-            content: '新反馈内容',
-            created_by: 'user_admin',
-            id: 'feedback_created',
-            product_id: 'product_api',
-            status: 'open',
-          },
-        });
-      }
-      if (input === '/api/insights/user-feedback/feedback_existing' && init?.method === 'PATCH') {
-        return jsonResponse({
-          data: {
-            content: '已有反馈内容',
-            id: 'feedback_existing',
-            product_id: 'product_api',
-            status: 'triaged',
-            triage_note: '已纳入优化池',
-          },
-        });
-      }
-      if (path.startsWith('/api/insights/items')) {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                category: '用户反馈',
-                created_by: 'user_admin',
-                id: 'feedback_existing',
-                product_id: 'product_api',
-                status: 'open',
-                summary: '已有反馈内容',
-                updated_at: '2026-06-01T08:00:00Z',
-              },
-            ],
-            page: 1,
-            page_size: 10,
-            total: 1,
-          },
-        });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<InsightsPage />);
-
-    expect(await screen.findByText('已有反馈内容')).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: '数据类型' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: '摘要' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: '操作' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '详情' }));
-    expect(await screen.findByRole('dialog', { name: '用户洞察详情' })).toBeInTheDocument();
-    expect(screen.getAllByText('已有反馈内容')).not.toHaveLength(0);
-    expect(screen.getByText('产品 ID')).toBeInTheDocument();
-    expect(screen.getByText('product_api')).toBeInTheDocument();
-    fireEvent.click(screen.getAllByLabelText('Close')[0]);
-    fireEvent.click(screen.getByRole('button', { name: '登记反馈' }));
-    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
-    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
-    fireEvent.change(screen.getByLabelText('反馈内容'), { target: { value: '新反馈内容' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/insights/user-feedback',
-        'POST',
-        JSON.stringify({
-          content: '新反馈内容',
-          feedback_type: 'improvement',
-          product_id: 'product_api',
-          source_channel: 'in_app',
-        }),
-      ]),
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: '处理反馈' }));
-    fireEvent.mouseDown(screen.getByLabelText('处理状态'));
-    fireEvent.click(await screen.findByRole('option', { name: '已分诊' }));
-    fireEvent.change(screen.getByLabelText('处理备注'), { target: { value: '已纳入优化池' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/insights/user-feedback/feedback_existing',
-        'PATCH',
-        JSON.stringify({
-          status: 'triaged',
-          triage_note: '已纳入优化池',
-        }),
-      ]),
-    );
-  });
-
-  it('sorts user insights by updated time across insight categories', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      const path = String(input);
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/product-versions?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (path.startsWith('/api/insights/items')) {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                category: '用户反馈',
-                created_by: 'user_admin',
-                id: 'feedback_new',
-                product_id: 'product_api',
-                status: 'open',
-                summary: '最新反馈',
-                updated_at: '2026-06-04T09:00:00Z',
-              },
-              {
-                category: '迭代建议',
-                created_by: 'user_admin',
-                id: 'suggestion_mid',
-                product_id: 'product_api',
-                status: 'suggested',
-                summary: '中间建议',
-                updated_at: '2026-06-03T08:00:00Z',
-              },
-              {
-                category: '使用趋势',
-                created_by: 'user_admin',
-                feature_code: 'old-usage',
-                id: 'usage_old',
-                product_id: 'product_api',
-                status: 'active',
-                summary: 'old-usage',
-                updated_at: '2026-06-01T08:00:00Z',
-              },
-            ],
-            page: 1,
-            page_size: 10,
-            total: 3,
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${String(input)}`);
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<InsightsPage />);
-
-    await screen.findByText('最新反馈');
-    const tableText = screen.getByRole('table').textContent ?? '';
-    expect(tableText.indexOf('最新反馈')).toBeLessThan(tableText.indexOf('中间建议'));
-    expect(tableText.indexOf('中间建议')).toBeLessThan(tableText.indexOf('old-usage'));
-  });
-
-  it('records real usage metrics from the insights page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-    });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      const path = String(input);
-      if (path === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      if (path === '/api/product-versions?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (path === '/api/insights/usage-metrics' && init?.method === 'POST') {
-        return jsonResponse({
-          data: {
-            active_users: 42,
-            feature_code: 'semantic-search',
-            id: 'usage_created',
-            product_id: 'product_api',
-            user_segment: 'rd',
-            window_start: '2026-06-01T00:00:00Z',
-          },
-        });
-      }
-      if (path === '/api/insights/usage-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<InsightsPage />);
-
-    await screen.findByRole('button', { name: '登记使用指标' });
-    fireEvent.click(screen.getByRole('button', { name: '登记使用指标' }));
-    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
-    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
-    fireEvent.change(screen.getByLabelText('模块编码'), { target: { value: 'search' } });
-    fireEvent.change(screen.getByLabelText('功能编码'), { target: { value: 'semantic-search' } });
-    fireEvent.change(screen.getByLabelText('用户分群'), { target: { value: 'rd' } });
-    fillDatePicker('窗口开始', '2026-06-01T00:00:00Z');
-    fillDatePicker('窗口结束', '2026-06-01T01:00:00Z');
-    fireEvent.change(screen.getByLabelText('活跃用户'), { target: { value: '42' } });
-    fireEvent.change(screen.getByLabelText('事件次数'), { target: { value: '120' } });
-    fireEvent.change(screen.getByLabelText('转化次数'), { target: { value: '15' } });
-    fireEvent.change(screen.getByLabelText('转化率'), { target: { value: '0.36' } });
-    fireEvent.change(screen.getByLabelText('平均时长秒'), { target: { value: '36.5' } });
-    fireEvent.change(screen.getByLabelText('跳出率'), { target: { value: '0.18' } });
-    fireEvent.change(screen.getByLabelText('错误次数'), { target: { value: '2' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/insights/usage-metrics',
-        'POST',
-        JSON.stringify({
-          active_users: 42,
-          avg_duration_seconds: 36.5,
-          bounce_rate: 0.18,
-          conversion_count: 15,
-          conversion_rate: 0.36,
-          error_count: 2,
-          event_count: 120,
-          feature_code: 'semantic-search',
-          module_code: 'search',
-          product_id: 'product_api',
-          source_channel: 'manual_import',
-          user_segment: 'rd',
-          window_end: '2026-06-01T01:00:00Z',
-          window_start: '2026-06-01T00:00:00Z',
-        }),
-      ]),
-    );
-  });
-
-  it('records real GitLab daily code metrics from the DevOps page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (input === '/api/devops/gitlab/daily-code-metrics' && init?.method === 'POST') {
-        return jsonResponse({
-          data: {
-            commit_count: 7,
-            id: 'gitlab_metric_created',
-            metric_date: '2026-06-01',
-            product_id: 'product_api',
-            repository_id: 'repo_api',
-            status: 'collected',
-          },
-        });
-      }
-      if (input === '/api/devops/gitlab/daily-code-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/devops/jenkins/releases') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/ops/online-log-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/product-versions?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/products/product_api/git-repositories?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                default_branch: 'main',
-                git_provider: 'gitlab',
-                id: 'repo_api',
-                name: '研发平台 API',
-                project_path: 'rd/platform-api',
-                status: 'active',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<DevopsPage />);
-
-    await screen.findByRole('button', { name: '登记 GitLab 指标' });
-    fireEvent.click(screen.getByRole('button', { name: '登记 GitLab 指标' }));
-    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
-    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
-    fireEvent.mouseDown(screen.getByLabelText('Git 仓库'));
-    fireEvent.click(await screen.findByRole('option', { name: '研发平台 API (rd/platform-api)' }));
-    fillDatePicker('指标日期', '2026-06-01');
-    fireEvent.change(screen.getByLabelText('提交数'), { target: { value: '7' } });
-    fireEvent.change(screen.getByLabelText('活跃作者数'), { target: { value: '4' } });
-    fireEvent.change(screen.getByLabelText('MR 数'), { target: { value: '2' } });
-    fireEvent.change(screen.getByLabelText('变更文件数'), { target: { value: '18' } });
-    fireEvent.change(screen.getByLabelText('新增行数'), { target: { value: '320' } });
-    fireEvent.change(screen.getByLabelText('删除行数'), { target: { value: '48' } });
-    fireEvent.change(screen.getByLabelText('质量评分'), { target: { value: '88.5' } });
-    fireEvent.change(screen.getByLabelText('风险数量'), { target: { value: '1' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/devops/gitlab/daily-code-metrics',
-        'POST',
-        JSON.stringify({
-          active_author_count: 4,
-          additions: 320,
-          changed_files: 18,
-          commit_count: 7,
-          deletions: 48,
-          merge_request_count: 2,
-          metric_date: '2026-06-01',
-          product_id: 'product_api',
-          quality_score: 88.5,
-          repository_id: 'repo_api',
-          risk_count: 1,
-          source_channel: 'manual_import',
-          status: 'collected',
-        }),
-      ]),
-    );
-  });
-
-  it('records real Jenkins release records from the DevOps page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (input === '/api/devops/jenkins/releases' && init?.method === 'POST') {
-        return jsonResponse({
-          data: {
-            build_id: 'build-20260601-17',
-            id: 'jenkins_release_created',
-            job_name: 'rd-platform-deploy',
-            product_id: 'product_release',
-            status: 'success',
-            version_id: 'version_release',
-          },
-        });
-      }
-      if (input === '/api/devops/gitlab/daily-code-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/devops/jenkins/releases') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/ops/online-log-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'release-platform', id: 'product_release', name: '发布平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/product-versions?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: 'v1.2.0',
-                id: 'version_release',
-                name: 'v1.2.0',
-                product_id: 'product_release',
-                status: 'active',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<DevopsPage />);
-
-    await screen.findByRole('button', { name: '登记 Jenkins 发布' });
-    fireEvent.click(screen.getByRole('button', { name: '登记 Jenkins 发布' }));
-    fireEvent.change(screen.getByLabelText('Jenkins Job'), { target: { value: 'rd-platform-deploy' } });
-    fireEvent.change(screen.getByLabelText('Build ID'), { target: { value: 'build-20260601-17' } });
-    fireEvent.change(screen.getByLabelText('Build 编号'), { target: { value: '17' } });
-    fireEvent.change(screen.getByLabelText('发布环境'), { target: { value: 'staging' } });
-    fireEvent.change(screen.getByLabelText('触发人'), { target: { value: 'jenkins-admin' } });
-    fireEvent.change(screen.getByLabelText('Commit SHA'), { target: { value: 'abc123def456' } });
-    fireEvent.change(screen.getByLabelText('耗时秒数'), { target: { value: '480' } });
-    fillDatePicker('开始时间', '2026-06-01T12:22:00Z');
-    fillDatePicker('部署时间', '2026-06-01T12:30:00Z');
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/devops/jenkins/releases',
-        'POST',
-        JSON.stringify({
-          build_id: 'build-20260601-17',
-          build_number: 17,
-          commit_sha: 'abc123def456',
-          deployed_at: '2026-06-01T12:30:00Z',
-          duration_seconds: 480,
-          environment: 'staging',
-          job_name: 'rd-platform-deploy',
-          product_id: 'product_release',
-          source_channel: 'manual_import',
-          started_at: '2026-06-01T12:22:00Z',
-          status: 'success',
-          trigger_actor: 'jenkins-admin',
-          version_id: 'version_release',
-        }),
-      ]),
-    );
-  });
-
-  it('records real online log metrics from the DevOps page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (input === '/api/ops/online-log-metrics' && init?.method === 'POST') {
-        return jsonResponse({
-          data: {
-            environment: 'prod',
-            id: 'online_log_metric_created',
-            product_id: 'product_ops',
-            status: 'collected',
-            window_start: '2026-06-01T00:00:00Z',
-          },
-        });
-      }
-      if (input === '/api/devops/gitlab/daily-code-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/devops/jenkins/releases') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/ops/online-log-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: 'ops-platform',
-                id: 'product_ops',
-                modules: [{ code: 'checkout', id: 'module_checkout', name: '结算模块', status: 'active' }],
-                name: '线上运营平台',
-                status: 'active',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/product-versions?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<DevopsPage />);
-
-    await screen.findByRole('button', { name: '登记线上日志' });
-    fireEvent.click(screen.getByRole('button', { name: '登记线上日志' }));
-    fireEvent.change(screen.getByLabelText('模块编码'), { target: { value: 'checkout' } });
-    fireEvent.change(screen.getByLabelText('运行环境'), { target: { value: 'prod' } });
-    fillDatePicker('窗口开始', '2026-06-01T00:00:00Z');
-    fillDatePicker('窗口结束', '2026-06-01T01:00:00Z');
-    fireEvent.change(screen.getByLabelText('请求数'), { target: { value: '2400' } });
-    fireEvent.change(screen.getByLabelText('错误数'), { target: { value: '12' } });
-    fireEvent.change(screen.getByLabelText('P95 延迟毫秒'), { target: { value: '318.5' } });
-    fireEvent.change(screen.getByLabelText('P99 延迟毫秒'), { target: { value: '640.25' } });
-    fireEvent.change(screen.getByLabelText('核心事件数'), { target: { value: '240' } });
-    fireEvent.change(screen.getByLabelText('Top Errors JSON'), {
-      target: { value: '[{"count":7,"message":"PaymentTimeout"}]' },
-    });
-    fireEvent.change(screen.getByLabelText('异常摘要'), {
-      target: { value: 'checkout error spike after release' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/ops/online-log-metrics',
-        'POST',
-        JSON.stringify({
-          anomaly_summary: 'checkout error spike after release',
-          core_event_count: 240,
-          environment: 'prod',
-          error_count: 12,
-          module_code: 'checkout',
-          p95_latency_ms: 318.5,
-          p99_latency_ms: 640.25,
-          product_id: 'product_ops',
-          request_count: 2400,
-          source_channel: 'manual_import',
-          status: 'collected',
-          top_errors: [{ count: 7, message: 'PaymentTimeout' }],
-          window_end: '2026-06-01T01:00:00Z',
-          window_start: '2026-06-01T00:00:00Z',
-        }),
-      ]),
-    );
-  });
-
-  it('loads real collector runs without placeholder rows from the DevOps page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === '/api/devops/gitlab/daily-code-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/devops/jenkins/releases') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/ops/online-log-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/collectors/runs') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<DevopsPage />);
-
-    await screen.findByText('采集运行记录');
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(
-        expect.arrayContaining(['/api/collectors/runs']),
-      ),
-    );
-    expect(screen.queryByText('collector_run_demo')).not.toBeInTheDocument();
-    expect(screen.queryByText('示例采集运行')).not.toBeInTheDocument();
-  });
-
-  it('loads real pending attribution items without placeholder rows from the DevOps page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === '/api/attribution/pending-items') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<DevopsPage />);
-
-    await screen.findByText('待归属数据队列');
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(
-        expect.arrayContaining(['/api/attribution/pending-items']),
-      ),
-    );
-    expect(screen.queryByText('pending_attr_demo')).not.toBeInTheDocument();
-    expect(screen.queryByText('示例待归属数据')).not.toBeInTheDocument();
-  });
-
-  it('resolves pending attribution items from the DevOps page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (
-        input === '/api/attribution/pending-items/pending_attr_001/resolve' &&
-        init?.method === 'POST'
-      ) {
-        return jsonResponse({
-          data: {
-            id: 'pending_attr_001',
-            resolved_product_id: 'product_api',
-            source_system: 'feedback-api',
-            source_type: 'user_feedback',
-            status: 'resolved',
-            summary: 'Cannot map module search-v2',
-          },
-        });
-      }
-      if (input === '/api/attribution/pending-items') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                confidence: 0.44,
-                created_at: '2026-06-02T05:30:00Z',
-                id: 'pending_attr_001',
-                raw_payload: { module_hint: 'search-v2' },
-                raw_subject_id: 'feedback-ext-42',
-                source_system: 'feedback-api',
-                source_type: 'user_feedback',
-                status: 'pending',
-                suggested_product_id: 'product_api',
-                summary: 'Cannot map module search-v2',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/product-versions?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/products/product_api/modules') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (String(input) === '/api/products' || String(input).startsWith('/api/products?')) {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/requirements') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<DevopsPage />);
-
-    expect(await screen.findByText('Cannot map module search-v2')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /归属处理 pending_attr_001/ }));
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/attribution/pending-items/pending_attr_001/resolve',
-        'POST',
-        JSON.stringify({
-          resolution_action: 'link_existing_context',
-          resolved_product_id: 'product_api',
-        }),
-      ]),
-    );
-  });
-
-  it('ignores pending attribution items from the DevOps page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (
-        input === '/api/attribution/pending-items/pending_attr_noise/resolve' &&
-        init?.method === 'POST'
-      ) {
-        return jsonResponse({
-          data: {
-            id: 'pending_attr_noise',
-            source_system: 'gitlab',
-            source_type: 'gitlab_daily_code_metric',
-            status: 'ignored',
-            summary: 'Unknown repository',
-          },
-        });
-      }
-      if (input === '/api/attribution/pending-items') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                confidence: null,
-                created_at: '2026-06-02T05:40:00Z',
-                id: 'pending_attr_noise',
-                raw_payload: { repository_path: 'unknown/repo' },
-                source_system: 'gitlab',
-                source_type: 'gitlab_daily_code_metric',
-                status: 'pending',
-                summary: 'Unknown repository',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (String(input) === '/api/products' || String(input).startsWith('/api/products?')) {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/requirements') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<DevopsPage />);
-
-    expect(await screen.findByText('Unknown repository')).toBeInTheDocument();
-    expect(screen.queryByText('0.00')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /归属处理 pending_attr_noise/ }));
-    fireEvent.click(await screen.findByLabelText('忽略为噪声'));
-    fireEvent.change(screen.getByLabelText('处理说明'), { target: { value: 'Test import noise' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/attribution/pending-items/pending_attr_noise/resolve',
-        'POST',
-        JSON.stringify({
-          resolution_action: 'ignore_as_noise',
-          resolution_note: 'Test import noise',
-        }),
-      ]),
-    );
-  });
-
-  it('creates real collector runs from the DevOps page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (input === '/api/collectors/runs' && init?.method === 'POST') {
-        return jsonResponse({
-          data: {
-            collector_type: 'gitlab_daily_code_metric',
-            id: 'collector_run_created',
-            payload_summary: { repository_path: 'rd/platform-api' },
-            product_id: 'product_api',
-            records_imported: 3,
-            source_system: 'gitlab',
-            started_at: '2026-06-01T08:00:00Z',
-            status: 'running',
-          },
-        });
-      }
-      if (input === '/api/collectors/runs') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/devops/gitlab/daily-code-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/devops/jenkins/releases') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/ops/online-log-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<DevopsPage />);
-
-    await screen.findByRole('button', { name: '登记采集运行' });
-    fireEvent.click(screen.getByRole('button', { name: '登记采集运行' }));
-    fireEvent.mouseDown(screen.getByLabelText('采集类型'));
-    fireEvent.click(await screen.findByRole('option', { name: 'GitLab 日代码指标' }));
-    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
-    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
-    fireEvent.change(screen.getByLabelText('来源系统'), { target: { value: 'gitlab' } });
-    fillDatePicker('开始时间', '2026-06-01T08:00:00Z');
-    fireEvent.change(screen.getByLabelText('导入记录数'), { target: { value: '3' } });
-    fireEvent.change(screen.getByLabelText('Payload 摘要 JSON'), {
-      target: { value: '{"repository_path":"rd/platform-api"}' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/collectors/runs',
-        'POST',
-        JSON.stringify({
-          collector_type: 'gitlab_daily_code_metric',
-          payload_summary: { repository_path: 'rd/platform-api' },
-          product_id: 'product_api',
-          records_imported: 3,
-          source_system: 'gitlab',
-          started_at: '2026-06-01T08:00:00Z',
-          status: 'running',
-        }),
-      ]),
-    );
-  });
-
-  it('completes running collector runs from the DevOps page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (input === '/api/collectors/runs/collector_run_001' && init?.method === 'PATCH') {
-        return jsonResponse({
-          data: {
-            collector_type: 'user_feedback',
-            id: 'collector_run_001',
-            product_id: 'product_api',
-            records_imported: 2,
-            source_system: 'feedback-api',
-            status: 'succeeded',
-          },
-        });
-      }
-      if (input === '/api/collectors/runs') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                collector_type: 'user_feedback',
-                id: 'collector_run_001',
-                product_id: 'product_api',
-                records_imported: 2,
-                source_system: 'feedback-api',
-                started_at: '2026-06-01T08:00:00Z',
-                status: 'running',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/devops/gitlab/daily-code-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/devops/jenkins/releases') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/ops/online-log-metrics') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<DevopsPage />);
-
-    await screen.findByText('collector_run_001');
-    fireEvent.click(screen.getByRole('button', { name: /标记成功/ }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/collectors/runs/collector_run_001',
-        'PATCH',
-        JSON.stringify({ status: 'succeeded' }),
-      ]),
-    );
-  });
-
-  it('generates and decides real iteration suggestions from the insights page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      const path = String(input);
-      if (input === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [{ code: 'rd-platform', id: 'product_api', name: '研发平台', status: 'active' }],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/product-versions?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: '2026Q3',
-                id: 'version_api',
-                name: '2026 Q3',
-                product_id: 'product_api',
-                status: 'planning',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (input === '/api/planning/iteration-suggestions' && init?.method === 'POST') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                id: 'suggestion_generated',
-                planning_cycle: '2026Q3',
-                priority: 'P1',
-                product_id: 'product_api',
-                status: 'suggested',
-                title: '新迭代建议',
-                updated_at: '2026-06-01T08:30:00Z',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (
-        input === '/api/planning/iteration-suggestions/suggestion_existing/decide' &&
-        init?.method === 'POST'
-      ) {
-        return jsonResponse({
-          data: {
-            converted_requirement_id: 'requirement_from_suggestion',
-            decision: 'edited_accepted',
-            id: 'suggestion_existing',
-            status: 'converted_to_requirement',
-            title: '优化知识检索',
-          },
-        });
-      }
-      if (path.startsWith('/api/insights/items')) {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                category: '迭代建议',
-                confidence_level: 'medium',
-                id: 'suggestion_existing',
-                planning_cycle: '2026Q3',
-                priority: 'P1',
-                product_id: 'product_api',
-                status: 'suggested',
-                summary: '优化知识检索',
-                updated_at: '2026-06-01T08:00:00Z',
-              },
-            ],
-            page: 1,
-            page_size: 10,
-            total: 1,
-          },
-        });
-      }
-      return jsonResponse({ data: { items: [], total: 0 } });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<InsightsPage />);
-
-    expect(await screen.findByText('优化知识检索')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '生成迭代建议' }));
-    fireEvent.mouseDown(screen.getByLabelText('所属产品'));
-    fireEvent.click(await screen.findByRole('option', { name: '研发平台' }));
-    fireEvent.mouseDown(screen.getByLabelText('目标版本'));
-    fireEvent.click(await screen.findByRole('option', { name: '2026 Q3' }));
-    fireEvent.change(screen.getByLabelText('规划周期'), { target: { value: '2026Q3' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/planning/iteration-suggestions',
-        'POST',
-        JSON.stringify({
-          constraints: { max_suggestions: 10 },
-          planning_cycle: '2026Q3',
-          product_id: 'product_api',
-          version_id: 'version_api',
-        }),
-      ]),
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: '确认建议' }));
-    fireEvent.change(screen.getByLabelText('确认备注'), { target: { value: '进入下阶段' } });
-    fireEvent.click(screen.getByLabelText('转为正式需求'));
-    fireEvent.change(await screen.findByLabelText('需求标题'), { target: { value: '优化知识检索体验' } });
-    fireEvent.change(screen.getByLabelText('需求范围'), { target: { value: '优先处理检索召回与排序' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/planning/iteration-suggestions/suggestion_existing/decide',
-        'POST',
-        JSON.stringify({
-          comment: '进入下阶段',
-          convert_to_requirement: true,
-          decision: 'edited_accepted',
-          edited_scope: '优先处理检索召回与排序',
-          edited_title: '优化知识检索体验',
-        }),
-      ]),
-    );
-  });
-
   it('renders management modules as query filters with table lists', async () => {
     const { rerender } = render(<ProductsPage />);
 
@@ -4018,6 +2817,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     fireEvent.change(screen.getByLabelText('系统负责团队'), {
       target: { value: 'Business Platform' },
     });
+    expect(screen.getByLabelText('描述')).toHaveAttribute('rows', '3');
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
@@ -4426,6 +3226,73 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path === '/api/requirements/batch-assign-owner' && method === 'POST') {
+        return jsonResponse({
+          data: {
+            assignee: 'rd_owner@example.com',
+            batch_id: 'requirement_owner_batch_001',
+            skipped: [],
+            skipped_count: 0,
+            updated: [],
+            updated_count: 2,
+          },
+        });
+      }
+      if (path === '/api/requirements/batch-advance-status' && method === 'POST') {
+        return jsonResponse({
+          data: {
+            batch_id: 'requirement_status_batch_001',
+            skipped: [
+              {
+                code: 'REQUIREMENT_VERSION_REQUIRED',
+                id: 'requirement_pool',
+                message: 'Requirement must be scheduled to a version before advancing to this status',
+              },
+            ],
+            skipped_count: 1,
+            target_status: 'ready_for_dev',
+            updated: [],
+            updated_count: 1,
+          },
+        });
+      }
+      if (path.includes('version_id=version_assistant_history') || path.includes('page_size=100')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '按用户级别保存 AI 助手会话。',
+                created_at: '2026-06-04T07:41:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_084',
+                priority: 'P0',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_ai_brain',
+                product_name: 'AI Brain',
+                status: 'testing',
+                title: 'AI 助手历史记录',
+                version_id: 'version_assistant_history',
+                version_name: '2026-06 AI 助手历史记录迭代',
+              },
+              {
+                content: '补充消息引用。',
+                created_at: '2026-06-04T07:20:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_082',
+                priority: 'P1',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_ai_brain',
+                product_name: 'AI Brain',
+                status: 'ready_for_release',
+                title: 'AI 助手消息引用',
+                version_id: 'version_assistant_history',
+                version_name: '2026-06 AI 助手历史记录迭代',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
       return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -4435,7 +3302,15 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     await screen.findByText('归集需求一');
     expect(screen.getByRole('table')).toHaveAttribute('data-table-layout', 'fixed');
-    expect(screen.getByRole('table')).toHaveAttribute('data-table-scroll-x', '1640');
+    expect(screen.getByRole('table')).toHaveAttribute('data-table-scroll-x', '1600');
+    expect(screen.getByRole('columnheader', { name: '需求标题' })).toHaveAttribute(
+      'data-width',
+      '260',
+    );
+    expect(screen.getByRole('columnheader', { name: '操作' })).toHaveAttribute(
+      'data-width',
+      '164',
+    );
     expect(screen.getByText('创建时间')).toBeInTheDocument();
     expect(screen.getByText('2026-06-04 08:00')).toBeInTheDocument();
     expect(screen.getByText('2026-06-04 08:10')).toBeInTheDocument();
@@ -4451,13 +3326,75 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_pool' }));
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_planned' }));
+    fireEvent.click(screen.getByRole('button', { name: '批量分配负责人' }));
+
+    expect(await screen.findByText('已选择 2 条需求')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('负责人'), {
+      target: { value: 'rd_owner@example.com' },
+    });
+    const assignReasonInput = screen.getByLabelText('分配原因');
+    expect(assignReasonInput).toHaveAttribute('rows', '2');
+    fireEvent.change(assignReasonInput, {
+      target: { value: '统一交给研发负责人推进' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '确认分配' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/requirements/batch-assign-owner',
+        'POST',
+      ]),
+    );
+    const assignCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/requirements/batch-assign-owner' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(assignCall?.[1]?.body))).toEqual({
+      assignee: 'rd_owner@example.com',
+      reason: '统一交给研发负责人推进',
+      requirement_ids: ['requirement_pool', 'requirement_planned'],
+    });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_pool' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_planned' }));
+    fireEvent.click(screen.getByRole('button', { name: '批量推进状态' }));
+
+    expect(await screen.findByText('仅支持按研发流程向前推进，终态、重复或不符合路径的需求会由后端跳过。')).toBeInTheDocument();
+    const advanceReasonInput = screen.getByLabelText('推进原因');
+    expect(advanceReasonInput).toHaveAttribute('rows', '2');
+    fireEvent.change(advanceReasonInput, {
+      target: { value: '统一推进到待开发' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '确认推进' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/requirements/batch-advance-status',
+        'POST',
+      ]),
+    );
+    const advanceCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/requirements/batch-advance-status' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(advanceCall?.[1]?.body))).toEqual({
+      reason: '统一推进到待开发',
+      requirement_ids: ['requirement_pool', 'requirement_planned'],
+      target_status: 'ready_for_dev',
+    });
+    expect(await screen.findByRole('dialog', { name: '批量推进状态结果' })).toBeInTheDocument();
+    expect(screen.getByText('REQUIREMENT_VERSION_REQUIRED · Requirement must be scheduled to a version before advancing to this status')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_pool' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 requirement_planned' }));
     fireEvent.click(screen.getByRole('button', { name: /批量排期/ }));
 
     expect(await screen.findByText('已选择 2 条需求')).toBeInTheDocument();
     fireEvent.mouseDown(screen.getByLabelText('目标版本'));
     expect(screen.queryByRole('option', { name: 'archived · 归档版本' })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole('option', { name: '2026-06 · 2026-06' }));
-    fireEvent.change(screen.getByLabelText('归集原因'), {
+    const scheduleReasonInput = screen.getByLabelText('归集原因');
+    expect(scheduleReasonInput).toHaveAttribute('rows', '2');
+    fireEvent.change(scheduleReasonInput, {
       target: { value: '纳入 2026-06 迭代' },
     });
     fireEvent.click(screen.getByRole('button', { name: '确认归集' }));
@@ -4514,6 +3451,43 @@ describe('AI Brain Ant Design Pro workbench', () => {
         });
       }
       if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        if (path.includes('version_id=version_assistant_history') || path.includes('page_size=100')) {
+          return jsonResponse({
+            data: {
+              items: [
+                {
+                  content: '按用户级别保存 AI 助手会话。',
+                  created_at: '2026-06-04T07:41:00+00:00',
+                  created_by: 'user_admin',
+                  id: 'requirement_084',
+                  priority: 'P0',
+                  product_code: 'AI-BRAIN',
+                  product_id: 'product_ai_brain',
+                  product_name: 'AI Brain',
+                  status: 'testing',
+                  title: 'AI 助手历史记录',
+                  version_id: 'version_assistant_history',
+                  version_name: '2026-06 AI 助手历史记录迭代',
+                },
+                {
+                  content: '补充 AI 助手引用链接。',
+                  created_at: '2026-06-04T07:30:00+00:00',
+                  created_by: 'user_admin',
+                  id: 'requirement_083',
+                  priority: 'P1',
+                  product_code: 'AI-BRAIN',
+                  product_id: 'product_ai_brain',
+                  product_name: 'AI Brain',
+                  status: 'developing',
+                  title: 'AI 助手引用链接',
+                  version_id: 'version_assistant_history',
+                  version_name: '2026-06 AI 助手历史记录迭代',
+                },
+              ],
+              total: 2,
+            },
+          });
+        }
         return jsonResponse({
           data: {
             items: [
@@ -4646,6 +3620,43 @@ describe('AI Brain Ant Design Pro workbench', () => {
         });
       }
       if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        if (path.includes('version_id=version_assistant_history') || path.includes('page_size=100')) {
+          return jsonResponse({
+            data: {
+              items: [
+                {
+                  content: '按用户级别保存 AI 助手会话。',
+                  created_at: '2026-06-04T07:41:00+00:00',
+                  created_by: 'user_admin',
+                  id: 'requirement_084',
+                  priority: 'P0',
+                  product_code: 'AI-BRAIN',
+                  product_id: 'product_ai_brain',
+                  product_name: 'AI Brain',
+                  status: 'testing',
+                  title: 'AI 助手历史记录',
+                  version_id: 'version_assistant_history',
+                  version_name: '2026-06 AI 助手历史记录迭代',
+                },
+                {
+                  content: '补充 AI 助手引用链接。',
+                  created_at: '2026-06-04T07:30:00+00:00',
+                  created_by: 'user_admin',
+                  id: 'requirement_083',
+                  priority: 'P1',
+                  product_code: 'AI-BRAIN',
+                  product_id: 'product_ai_brain',
+                  product_name: 'AI Brain',
+                  status: 'developing',
+                  title: 'AI 助手引用链接',
+                  version_id: 'version_assistant_history',
+                  version_name: '2026-06 AI 助手历史记录迭代',
+                },
+              ],
+              total: 2,
+            },
+          });
+        }
         return jsonResponse({
           data: {
             items: [
@@ -4798,6 +3809,46 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (
+        path === '/api/requirements?version_id=version_assistant_history&page=1&page_size=100&sort_by=created_at&sort_order=desc' ||
+        path.includes('page_size=100')
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '按用户级别保存 AI 助手会话。',
+                created_at: '2026-06-04T07:41:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_084',
+                priority: 'P0',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_ai_brain',
+                product_name: 'AI Brain',
+                status: 'testing',
+                title: 'AI 助手历史记录',
+                version_id: 'version_assistant_history',
+                version_name: '2026-06 AI 助手历史记录迭代',
+              },
+              {
+                content: '补充消息引用。',
+                created_at: '2026-06-04T07:20:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_082',
+                priority: 'P1',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_ai_brain',
+                product_name: 'AI Brain',
+                status: 'ready_for_release',
+                title: 'AI 助手消息引用',
+                version_id: 'version_assistant_history',
+                version_name: '2026-06 AI 助手历史记录迭代',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
       return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -4813,7 +3864,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getByText('AI 任务：产品详细设计：AI 助手历史记录')).toBeInTheDocument();
     expect(screen.getByText('代码评审：report_history')).toBeInTheDocument();
     expect(screen.getByText('PR/MR 证据')).toBeInTheDocument();
-    expect(screen.getByText(/中风险 · 2 文件 · \+10\/-1/)).toBeInTheDocument();
+    expect(screen.getAllByText(/中风险 · 2 文件 · \+10\/-1/).length).toBeGreaterThan(0);
     expect(screen.getByText(/apps · 2 文件 · \+10\/-1/)).toBeInTheDocument();
     expect(screen.getByText('确认用户级历史记录隔离测试覆盖')).toBeInTheDocument();
     expect(screen.getByText('1 个 AI 任务')).toBeInTheDocument();
@@ -4833,7 +3884,74 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(within(stageProgress).getByText('开发中 · 2026-06-assistant-history')).toBeInTheDocument();
     expect(within(stageProgress).getByText('1 快照 / 1 报告')).toBeInTheDocument();
     expect(within(stageProgress).getByRole('list', { name: '阶段进度清单' })).toBeInTheDocument();
+    const stageDetails = screen.getByLabelText('全链路阶段明细');
+    expect(within(stageDetails).getByText('阶段明细')).toBeInTheDocument();
+    expect(within(stageDetails).getByText('产品详细设计：AI 助手历史记录')).toBeInTheDocument();
+    expect(within(stageDetails).getByText('聊天记录未按用户隔离')).toBeInTheDocument();
+    expect(within(stageDetails).getByText('Review 结论：补充用户级隔离测试。')).toBeInTheDocument();
+    expect(within(stageDetails).getByRole('link', { name: '查看任务 task_design' })).toHaveAttribute(
+      'href',
+      '/tasks/management?task_id=task_design',
+    );
+    expect(within(stageDetails).getByRole('link', { name: '查看 Bug bug_history' })).toHaveAttribute(
+      'href',
+      '/delivery/bugs?bug_id=bug_history',
+    );
+    const versionComparison = await screen.findByLabelText('版本内需求对比');
+    await within(versionComparison).findByText('当前版本共 2 条需求，当前需求 requirement_084');
+    expect(within(versionComparison).getByText('AI 助手引用链接')).toBeInTheDocument();
+    expect(within(versionComparison).getByText('测试中 1')).toBeInTheDocument();
+    expect(within(versionComparison).getByText('开发中 1')).toBeInTheDocument();
+    const createObjectURL = vi.fn(() => 'blob:full-chain-report');
+    const revokeObjectURL = vi.fn();
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const blobParts: BlobPart[][] = [];
+    class MockBlob {
+      readonly parts: BlobPart[];
+      readonly type?: string;
+
+      constructor(parts: BlobPart[], options?: BlobPropertyBag) {
+        this.parts = parts;
+        this.type = options?.type;
+        blobParts.push(parts);
+      }
+    }
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    vi.stubGlobal('Blob', MockBlob as unknown as typeof Blob);
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    fireEvent.click(screen.getByRole('button', { name: '导出链路报告' }));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:full-chain-report');
+    const reportText = blobParts[0].map(String).join('');
+    expect(reportText).toContain('# 需求全链路报告：AI 助手历史记录');
+    expect(reportText).toContain('- Bug：1');
+    expect(reportText).toContain('Review 结论：补充用户级隔离测试。');
+    if (originalCreateObjectURL) {
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreateObjectURL });
+    } else {
+      Reflect.deleteProperty(URL, 'createObjectURL');
+    }
+    if (originalRevokeObjectURL) {
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectURL });
+    } else {
+      Reflect.deleteProperty(URL, 'revokeObjectURL');
+    }
+    const timelineSection = screen.getByLabelText('全链路时间线');
+    expect(within(timelineSection).getByText('3 / 3 个事件')).toBeInTheDocument();
+    fireEvent.mouseDown(within(timelineSection).getByLabelText('时间线类型筛选'));
+    const codeReviewOptions = await screen.findAllByText('代码评审');
+    fireEvent.click(codeReviewOptions[codeReviewOptions.length - 1]);
+    expect(within(timelineSection).getByText('1 / 3 个事件')).toBeInTheDocument();
+    expect(within(timelineSection).getByText('代码评审：report_history')).toBeInTheDocument();
+    expect(within(timelineSection).queryByText('需求：AI 助手历史记录')).not.toBeInTheDocument();
+    expect(within(timelineSection).queryByText('AI 任务：产品详细设计：AI 助手历史记录')).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/requirements/requirement_084/full-chain');
+    expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
+      '/api/requirements?version_id=version_assistant_history&page=1&page_size=100&sort_by=created_at&sort_order=desc',
+    );
   });
 
   it('opens a requirement full-chain detail page directly from the route', async () => {
@@ -4963,6 +4081,43 @@ describe('AI Brain Ant Design Pro workbench', () => {
           },
         });
       }
+      if (path.includes('version_id=version_assistant_history') || path.includes('page_size=100')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                content: '按用户级别保存 AI 助手会话。',
+                created_at: '2026-06-04T07:41:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_084',
+                priority: 'P0',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_ai_brain',
+                product_name: 'AI Brain',
+                status: 'testing',
+                title: 'AI 助手历史记录',
+                version_id: 'version_assistant_history',
+                version_name: '2026-06 AI 助手历史记录迭代',
+              },
+              {
+                content: '补充消息引用。',
+                created_at: '2026-06-04T07:20:00+00:00',
+                created_by: 'user_admin',
+                id: 'requirement_082',
+                priority: 'P1',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_ai_brain',
+                product_name: 'AI Brain',
+                status: 'ready_for_release',
+                title: 'AI 助手消息引用',
+                version_id: 'version_assistant_history',
+                version_name: '2026-06 AI 助手历史记录迭代',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
       return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
     });
     window.history.pushState({}, '', '/delivery/requirements/requirement_084/full-chain');
@@ -4976,10 +4131,22 @@ describe('AI Brain Ant Design Pro workbench', () => {
     const stageProgress = screen.getByLabelText('全链路阶段进度');
     expect(stageProgress).toBeInTheDocument();
     expect(within(stageProgress).getByRole('list', { name: '阶段进度清单' })).toBeInTheDocument();
+    const stageDetails = screen.getByLabelText('全链路阶段明细');
+    expect(within(stageDetails).getByText('阶段明细')).toBeInTheDocument();
+    expect(within(stageDetails).getByRole('link', { name: '查看代码评审 report_history' })).toHaveAttribute(
+      'href',
+      '/tasks/management?code_review_report_id=report_history',
+    );
+    const versionComparison = await screen.findByLabelText('版本内需求对比');
+    await within(versionComparison).findByText('当前版本共 2 条需求，当前需求 requirement_084');
+    expect(within(versionComparison).getByText('AI 助手消息引用')).toBeInTheDocument();
     expect(screen.getByText('PR/MR 证据')).toBeInTheDocument();
     expect(screen.getByText('确认用户级历史记录隔离测试覆盖')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '返回需求管理' })).toHaveAttribute('href', '/delivery/requirements');
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/requirements/requirement_084/full-chain');
+    expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
+      '/api/requirements?version_id=version_assistant_history&page=1&page_size=100&sort_by=created_at&sort_order=desc',
+    );
   });
 
   it('collects demand pool requirements from the iteration version page', async () => {
@@ -5490,7 +4657,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
       if (path === '/api/auth/roles') {
         return jsonResponse(roleCatalogEnvelope);
       }
-      if (path === '/api/users') {
+      if (path === '/api/users' || path.startsWith('/api/users?')) {
         return jsonResponse({
           data: {
             items: [
@@ -5502,6 +4669,8 @@ describe('AI Brain Ant Design Pro workbench', () => {
                 username: 'viewer@example.com',
               },
             ],
+            page: 1,
+            page_size: 10,
             total: 1,
           },
         });
@@ -5519,8 +4688,22 @@ describe('AI Brain Ant Design Pro workbench', () => {
 
     rerender(<RequirementsPage />);
     expect(screen.getByRole('button', { name: /新增需求/ })).toBeInTheDocument();
-    expect(await screen.findAllByRole('button', { name: /编辑/ })).not.toHaveLength(0);
-    expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
+    expect(await screen.findAllByRole('button', { name: /全链路/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /更多/ })).not.toHaveLength(0);
+    expect(screen.queryByRole('link', { name: /详情页/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('table')).toHaveAttribute('data-table-scroll-x', '1600');
+    expect(screen.getByRole('columnheader', { name: '需求标题' })).toHaveAttribute(
+      'data-width',
+      '260',
+    );
+    expect(screen.getByRole('columnheader', { name: '迭代版本' })).toHaveAttribute(
+      'data-width',
+      '240',
+    );
+    expect(screen.getByRole('columnheader', { name: '操作' })).toHaveAttribute(
+      'data-width',
+      '164',
+    );
 
     rerender(<BugsPage />);
     expect(screen.getByRole('button', { name: /登记 Bug/ })).toBeInTheDocument();
@@ -5538,480 +4721,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(screen.getAllByRole('button', { name: /删除/ })).not.toHaveLength(0);
   });
 
-  it('edits bug lifecycle evidence and duplicate merge fields from backend data', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      const path = String(input);
-      const method = init?.method ?? 'GET';
-      if (path === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: 'API-PRODUCT',
-                id: 'product_api',
-                name: '接口产品',
-                owner_team: 'API Team',
-                status: 'active',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (
-        path === '/api/product-versions' ||
-        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
-      ) {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: 'v1',
-                id: 'version_api',
-                name: 'v1',
-                product_id: 'product_api',
-                status: 'active',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if ((path === '/api/bugs' || path.startsWith('/api/bugs?')) && method === 'GET') {
-        const isVersionFiltered = path.includes('version=v1+MVP') || path.includes('version=v1%20MVP');
-        const items = [
-          {
-            assignee: 'qa@example.com',
-            created_at: '2026-06-04T08:00:00+00:00',
-            description: '支付链路失败',
-            duplicate_of_bug_id: 'bug_target',
-            evidence: { log_id: 'log-1' },
-            id: 'bug_main',
-            module_code: 'checkout',
-            product_id: 'product_api',
-            reproduce_steps: ['打开支付页', '点击支付'],
-            severity: 'major',
-            source: 'manual_test',
-            status: 'closed',
-            title: '支付失败',
-            version_id: 'version_api',
-            version_name: 'v1 MVP',
-          },
-          {
-            assignee: 'rd@example.com',
-            created_at: '2026-06-04T08:10:00+00:00',
-            description: '同类支付问题',
-            id: 'bug_target',
-            module_code: 'checkout',
-            product_id: 'product_api',
-            reproduce_steps: [],
-            severity: 'minor',
-            source: 'ai_auto_test',
-            status: 'triaged',
-            title: '支付重复问题',
-            version_id: 'version_regression',
-            version_name: 'v2 回归',
-          },
-        ];
-        return jsonResponse({
-          data: {
-            items: isVersionFiltered ? items.slice(0, 1) : items,
-            total: isVersionFiltered ? 1 : 2,
-          },
-        });
-      }
-      if (path === '/api/bugs/bug_main' && method === 'PATCH') {
-        return jsonResponse({ data: { id: 'bug_main' } });
-      }
-      throw new Error(`Unexpected fetch call: ${path} ${method}`);
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
 
-    render(<BugsPage />);
-
-    expect(await screen.findByText('支付失败')).toBeInTheDocument();
-    expect(screen.getByText('创建时间')).toBeInTheDocument();
-    expect(screen.getByText('2026-06-04 08:00')).toBeInTheDocument();
-    expect(screen.getByText('2026-06-04 08:10')).toBeInTheDocument();
-    expect(screen.getByText('v1 MVP')).toBeInTheDocument();
-    expect(screen.getByText('v2 回归')).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText('迭代版本'), { target: { value: 'v1 MVP' } });
-    fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));
-
-    await waitFor(() => expect(screen.queryByText('支付重复问题')).not.toBeInTheDocument());
-    expect(screen.getByText('支付失败')).toBeInTheDocument();
-
-    fireEvent.reset(screen.getByRole('form', { name: '查询表格' }));
-    expect(await screen.findByText('支付重复问题')).toBeInTheDocument();
-
-    const bugRow = screen.getByText('支付失败').closest('tr');
-    expect(bugRow).not.toBeNull();
-    fireEvent.click(within(bugRow as HTMLElement).getByRole('button', { name: /编辑/ }));
-
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByLabelText('复现步骤')).toHaveValue('打开支付页\n点击支付');
-    expect(within(dialog).getByLabelText('证据 JSON')).toHaveValue(
-      JSON.stringify({ log_id: 'log-1' }, null, 2),
-    );
-    expect(within(dialog).getByLabelText('重复归并')).toBeInTheDocument();
-
-    fireEvent.change(within(dialog).getByLabelText('复现步骤'), {
-      target: { value: '打开支付页\n点击支付\n查看错误提示' },
-    });
-    fireEvent.change(within(dialog).getByLabelText('证据 JSON'), {
-      target: { value: JSON.stringify({ log_id: 'log-2', screenshot: 'pay-fail.png' }, null, 2) },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: /保\s*存/ }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/bugs/bug_main',
-        'PATCH',
-        JSON.stringify({
-          assignee: 'qa@example.com',
-          description: '支付链路失败',
-          duplicate_of_bug_id: 'bug_target',
-          evidence: { log_id: 'log-2', screenshot: 'pay-fail.png' },
-          reproduce_steps: ['打开支付页', '点击支付', '查看错误提示'],
-          severity: 'major',
-          status: 'closed',
-          title: '支付失败',
-        }),
-      ]),
-    );
-  });
-
-  it('batch updates selected bugs from the bug management page', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const bugRows = [
-      {
-        assignee: 'user_admin',
-        created_at: '2026-06-04T09:00:00+00:00',
-        description: '批量处理第一条',
-        id: 'bug_batch_one',
-        module_code: 'delivery',
-        product_id: 'product_api',
-        reproduce_steps: [],
-        severity: 'minor',
-        source: 'manual_test',
-        status: 'open',
-        title: '批量 Bug 一',
-        version_id: 'version_api',
-        version_name: 'v1 MVP',
-      },
-      {
-        assignee: 'user_admin',
-        created_at: '2026-06-04T09:10:00+00:00',
-        description: '批量处理第二条',
-        id: 'bug_batch_two',
-        module_code: 'delivery',
-        product_id: 'product_api',
-        reproduce_steps: [],
-        severity: 'major',
-        source: 'manual_test',
-        status: 'needs_info',
-        title: '批量 Bug 二',
-        version_id: 'version_api',
-        version_name: 'v1 MVP',
-      },
-    ];
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      const path = String(input);
-      const method = init?.method ?? 'GET';
-      if (path === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: 'API-PRODUCT',
-                id: 'product_api',
-                name: '接口产品',
-                owner_team: 'API Team',
-                status: 'active',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (
-        path === '/api/product-versions' ||
-        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
-      ) {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: 'v1',
-                id: 'version_api',
-                name: 'v1 MVP',
-                product_id: 'product_api',
-                status: 'active',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if ((path === '/api/bugs' || path.startsWith('/api/bugs?')) && method === 'GET') {
-        return jsonResponse({
-          data: {
-            items: bugRows,
-            page: 1,
-            page_size: 10,
-            total: bugRows.length,
-          },
-        });
-      }
-      if (path === '/api/bugs/batch-update' && method === 'POST') {
-        return jsonResponse({
-          data: {
-            batch_id: 'bug_batch_001',
-            skipped: [
-              {
-                code: 'BUG_STATE_INVALID',
-                id: 'bug_closed',
-                message: 'Bug cannot move to requested status',
-              },
-            ],
-            skipped_count: 1,
-            updated: bugRows.map((bug) => ({
-              ...bug,
-              assignee: 'qa@example.com',
-              severity: 'major',
-              status: 'triaged',
-            })),
-            updated_count: 2,
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${path} ${method}`);
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<BugsPage />);
-
-    expect(await screen.findByText('批量 Bug 一')).toBeInTheDocument();
-    expect(screen.getByText('批量 Bug 二')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 bug_batch_one' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 bug_batch_two' }));
-    fireEvent.click(screen.getByRole('button', { name: /批量处理/ }));
-
-    const dialog = await screen.findByRole('dialog', { name: /批量处理 Bug/ });
-    expect(within(dialog).getByLabelText('状态')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('严重级别')).toBeInTheDocument();
-    fireEvent.change(within(dialog).getByLabelText('处理人'), {
-      target: { value: 'qa@example.com' },
-    });
-    fireEvent.change(within(dialog).getByLabelText('处理说明'), {
-      target: { value: '批量分诊给 QA' },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: /批量处理/ }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
-        '/api/bugs/batch-update',
-        'POST',
-      ]),
-    );
-    const batchCall = fetchMock.mock.calls.find(
-      ([path, init]) => path === '/api/bugs/batch-update' && init?.method === 'POST',
-    );
-    expect(JSON.parse(String(batchCall?.[1]?.body))).toEqual({
-      assignee: 'qa@example.com',
-      bug_ids: ['bug_batch_one', 'bug_batch_two'],
-      reason: '批量分诊给 QA',
-    });
-  });
-
-  it('allows selecting a testing iteration version when registering a bug', async () => {
-    const jsonResponse = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      const path = String(input);
-      const method = init?.method ?? 'GET';
-      if (path === '/api/products?active_only=true') {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: 'AI-BRAIN',
-                id: 'product_ai_brain',
-                name: 'AI Brain',
-                status: 'active',
-              },
-            ],
-            total: 1,
-          },
-        });
-      }
-      if (
-        path === '/api/product-versions' ||
-        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
-      ) {
-        return jsonResponse({
-          data: {
-            items: [
-              {
-                code: '2026-06',
-                id: 'version_testing',
-                name: '2026-06 测试迭代',
-                product_id: 'product_ai_brain',
-                status: 'testing',
-              },
-              {
-                code: '2026-05',
-                id: 'version_archived',
-                name: '2026-05 历史归档',
-                product_id: 'product_ai_brain',
-                status: 'archived',
-              },
-            ],
-            total: 2,
-          },
-        });
-      }
-      if (path === '/api/product-versions?active_only=true') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if ((path === '/api/bugs' || path.startsWith('/api/bugs?')) && method === 'GET') {
-        return jsonResponse({ data: { items: [], total: 0 } });
-      }
-      if (path === '/api/bugs' && method === 'POST') {
-        return jsonResponse({ data: { id: 'bug_testing' } });
-      }
-      throw new Error(`Unexpected fetch call: ${path} ${method}`);
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<BugsPage />);
-
-    fireEvent.click(await screen.findByRole('button', { name: /登记 Bug/ }));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.change(within(dialog).getByLabelText('Bug 标题'), {
-      target: { value: '测试版本 Bug' },
-    });
-    fireEvent.mouseDown(within(dialog).getByLabelText('目标版本'));
-
-    expect(await screen.findByRole('option', { name: '2026-06 · 2026-06 测试迭代' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: '2026-05 · 2026-05 历史归档' })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('option', { name: '2026-06 · 2026-06 测试迭代' }));
-    fireEvent.change(within(dialog).getByLabelText('描述'), {
-      target: { value: '测试中版本登记 Bug 应能选择目标版本。' },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: /保\s*存/ }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toContainEqual([
-        '/api/bugs',
-        'POST',
-        JSON.stringify({
-          description: '测试中版本登记 Bug 应能选择目标版本。',
-          evidence: {},
-          product_id: 'product_ai_brain',
-          reproduce_steps: [],
-          severity: 'major',
-          source: 'manual_test',
-          title: '测试版本 Bug',
-          version_id: 'version_testing',
-        }),
-      ]),
-    );
-  });
-
-  it('uses explicitly defined role options in the user management modal', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      if (String(input) === '/api/auth/roles') {
-        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-        return new Response(JSON.stringify(roleCatalogEnvelope), {
-          headers: { 'Content-Type': 'application/json' },
-          status: 200,
-        });
-      }
-      expect(String(input)).toBe('/api/users');
-      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      return new Response(
-        JSON.stringify({
-          data: {
-            items: [],
-            total: 0,
-          },
-        }),
-        {
-          headers: { 'Content-Type': 'application/json' },
-          status: 200,
-        },
-      );
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<UsersPage />);
-
-    fireEvent.click(screen.getByRole('button', { name: /新增用户/ }));
-
-    expect(await screen.findByText(/查看者/)).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('admin, product_owner, rd_owner')).not.toBeInTheDocument();
-  });
-
-  it('renders system role management from the backend role catalog', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      expect(String(input)).toBe('/api/auth/roles');
-      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      return new Response(JSON.stringify(roleCatalogEnvelope), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200,
-      });
-    });
-    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(<RolesPage />);
-
-    expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('系统管理');
-    expect(await screen.findByText('角色定义')).toBeInTheDocument();
-    expect(screen.getByText('系统管理员')).toBeInTheDocument();
-    expect(screen.getByText('admin')).toBeInTheDocument();
-    expect(screen.getByText('查看者')).toBeInTheDocument();
-    expect(screen.getByText('viewer')).toBeInTheDocument();
-    expect(screen.getByText('平台管理员')).toBeInTheDocument();
-    expect(screen.getByText('只读参与者')).toBeInTheDocument();
-    expect(screen.getAllByText('系统管理').length).toBeGreaterThan(0);
-    expect(screen.getByText('授权业务列表')).toBeInTheDocument();
-    expect(screen.getAllByText('1 个权限点')).toHaveLength(2);
-    expect(screen.getByText('职责与范围')).toBeInTheDocument();
-    expect(screen.queryByText('负责用户、角色、模型网关、审计与系统级配置管理。')).not.toBeInTheDocument();
-    expect(screen.queryByText('全平台。')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
-
-    expect(await screen.findByRole('dialog', { name: '角色详情 · 系统管理员' })).toBeInTheDocument();
-    expect(screen.getByText('负责用户、角色、模型网关、审计与系统级配置管理。')).toBeInTheDocument();
-    expect(screen.getByText('全平台。')).toBeInTheDocument();
-    expect(screen.getByText('系统治理。')).toBeInTheDocument();
-    expect(screen.getByText('维护用户和角色。')).toBeInTheDocument();
-    expect(screen.getByText('不能代替业务负责人做最终产品决策。')).toBeInTheDocument();
-    expect(screen.getByText('system.users.manage')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /新增角色|删除/ })).not.toBeInTheDocument();
-  });
 
   it('hydrates management tables from backend API list endpoints when available', async () => {
     const jsonResponse = (body: unknown) =>
@@ -6772,6 +5482,14 @@ describe('AI Brain Ant Design Pro workbench', () => {
             message: {
               content: '当前已进入 AI 助手迭代开发。',
               id: 'assistant_message_api',
+              references: [
+                {
+                  id: 'requirement_api',
+                  title: 'AI 助手迭代需求',
+                  type: 'requirement',
+                  url: '/delivery/requirements?requirement_id=requirement_api',
+                },
+              ],
               role: 'assistant',
             },
             model: 'codex-auto-review',
@@ -6795,6 +5513,14 @@ describe('AI Brain Ant Design Pro workbench', () => {
       conversationId: 'conversation_api',
       content: '当前已进入 AI 助手迭代开发。',
       model: 'codex-auto-review',
+      references: [
+        {
+          id: 'requirement_api',
+          title: 'AI 助手迭代需求',
+          type: 'requirement',
+          url: '/delivery/requirements?requirement_id=requirement_api',
+        },
+      ],
       suggestions: ['查看任务中心'],
     });
   });
@@ -6842,6 +5568,14 @@ describe('AI Brain Ant Design Pro workbench', () => {
                   created_at: '2026-06-03T09:01:00+00:00',
                   id: 'assistant_message_api',
                   model: 'codex-auto-review',
+                  references: [
+                    {
+                      id: 'task_api',
+                      title: 'AI 助手任务',
+                      type: 'ai_task',
+                      url: '/tasks/management?task_id=task_api',
+                    },
+                  ],
                   role: 'assistant',
                   suggestions: ['查看任务中心'],
                 },
@@ -6875,6 +5609,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
         id: 'assistant_message_user',
         model: undefined,
         productId: 'product_118',
+        references: [],
         role: 'user',
         suggestions: [],
       },
@@ -6884,6 +5619,14 @@ describe('AI Brain Ant Design Pro workbench', () => {
         id: 'assistant_message_api',
         model: 'codex-auto-review',
         productId: undefined,
+        references: [
+          {
+            id: 'task_api',
+            title: 'AI 助手任务',
+            type: 'ai_task',
+            url: '/tasks/management?task_id=task_api',
+          },
+        ],
         role: 'assistant',
         suggestions: ['查看任务中心'],
       },

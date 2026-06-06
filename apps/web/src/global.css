@@ -107,6 +107,32 @@ body {
   gap: 8px;
 }
 
+.management-batch-result-list {
+  overflow: hidden;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.management-batch-result-list-title,
+.management-batch-result-item {
+  padding: 10px 12px;
+}
+
+.management-batch-result-list-title {
+  border-bottom: 1px solid #f0f0f0;
+  background: #fafafa;
+  font-weight: 600;
+}
+
+.management-batch-result-item + .management-batch-result-item {
+  border-top: 1px solid #f0f0f0;
+}
+
+.management-batch-result-item span {
+  overflow-wrap: anywhere;
+}
+
 .task-code-review-form .ant-form-item {
   margin-bottom: 12px;
 }
@@ -157,11 +183,16 @@ body {
 }
 
 .requirement-list-actions {
+  max-width: 100%;
   white-space: nowrap;
 }
 
 .requirement-list-actions .ant-btn {
   padding-inline: 4px;
+}
+
+.requirement-list-primary-action {
+  max-width: 84px;
 }
 
 .requirement-full-chain-summary {
@@ -393,6 +424,61 @@ body {
   text-overflow: ellipsis;
 }
 
+.management-table-cell {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.management-list-table .ant-pro-table-list-toolbar-container {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.management-list-table .ant-pro-table-list-toolbar-left {
+  min-width: 160px;
+}
+
+.management-list-table .ant-pro-table-list-toolbar-right {
+  min-width: 0;
+}
+
+.management-list-table .ant-pro-table-list-toolbar-setting-items,
+.management-list-table .ant-pro-table-list-toolbar-right,
+.management-list-table .ant-pro-table-list-toolbar-right > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.management-list-table .ant-table-cell {
+  overflow-wrap: anywhere;
+}
+
+.management-list-table .ant-table-cell-fix-right {
+  white-space: nowrap;
+}
+
+.management-table-cell .ant-space {
+  max-width: 100%;
+}
+
+.management-table-cell .ant-space-item,
+.management-table-cell .ant-typography,
+.management-table-cell .ant-tag {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.management-table-cell .ant-typography,
+.management-table-cell .ant-tag {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
 .assistant-history-button-text span:last-child {
   color: #6b7280;
   font-size: 12px;
@@ -473,6 +559,24 @@ body {
   background: #ffffff;
   line-height: 1.7;
   white-space: pre-wrap;
+}
+
+.assistant-reference-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  white-space: normal;
+}
+
+.assistant-reference-list .ant-btn {
+  max-width: 220px;
+  padding-inline: 0;
+}
+
+.assistant-reference-list .ant-btn > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .assistant-bubble-user .assistant-bubble-content .ant-typography {

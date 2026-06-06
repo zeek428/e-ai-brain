@@ -647,7 +647,7 @@ export default function KnowledgePage() {
             </Form.Item>
           ) : null}
           <Form.Item label="内容" name="content" rules={[{ required: true, message: '请输入知识内容' }]}>
-            <Input.TextArea autoSize={{ minRows: 5 }} />
+            <Input.TextArea rows={5} />
           </Form.Item>
         </Form>
       </Modal>
@@ -659,7 +659,7 @@ export default function KnowledgePage() {
       >
         <Form<RejectDepositFormValues> form={rejectDepositForm} layout="vertical">
           <Form.Item label="拒绝原因" name="reason" rules={[{ required: true, message: '请输入拒绝原因' }]}>
-            <Input.TextArea autoSize={{ minRows: 3 }} />
+            <Input.TextArea rows={3} />
           </Form.Item>
         </Form>
       </Modal>

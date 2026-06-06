@@ -1,4 +1,4 @@
-from app import main as main_module
+from app.services import git_review as git_review_service
 
 
 def install_real_gitlab_api_stub(monkeypatch):
@@ -40,7 +40,7 @@ def install_real_gitlab_api_stub(monkeypatch):
             }
         raise AssertionError(f"Unexpected GitLab API path: {path}")
 
-    monkeypatch.setattr(main_module, "_gitlab_request_json", fake_gitlab_request_json)
+    monkeypatch.setattr(git_review_service, "gitlab_request_json", fake_gitlab_request_json)
     return calls
 
 
@@ -83,5 +83,5 @@ def install_real_github_api_stub(monkeypatch):
             ]
         raise AssertionError(f"Unexpected GitHub API path: {path}")
 
-    monkeypatch.setattr(main_module, "_github_request_json", fake_github_request_json)
+    monkeypatch.setattr(git_review_service, "github_request_json", fake_github_request_json)
     return calls

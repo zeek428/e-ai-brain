@@ -2,7 +2,10 @@ import json
 
 from fastapi.testclient import TestClient
 
+import app.api.routers.assistant as assistant_router
 import app.main as main
+import app.services.git_review as git_review_service
+import app.services.model_gateway as model_gateway_service
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.security import hash_password
 from app.core.store import MemoryStore
@@ -2676,7 +2679,7 @@ def test_start_task_call_failure_and_retry_write_failed_logs_without_request_per
     def fail_urlopen(_request, timeout):
         raise OSError("connection refused")
 
-    monkeypatch.setattr(main, "urlopen", fail_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fail_urlopen)
     use_rebuilt_store_without_request_persist()
     app.state.user_repository = MemoryUserRepository.seeded()
 
@@ -3410,88 +3413,6 @@ def test_knowledge_routes_write_repository_without_request_persist():
         app.state.user_repository = original_users
 
 
-def test_knowledge_document_list_uses_repository_when_runtime_store_is_stale():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-    repository = FakeSnapshotRepository()
-    repository.knowledge_payload = {
-        "knowledge_chunks": {
-            "knowledge_repo_admin_chunk_001": {
-                "content": "repository keyword chunk",
-                "document_id": "knowledge_repo_admin",
-                "id": "knowledge_repo_admin_chunk_001",
-            },
-            "knowledge_repo_admin_chunk_002": {
-                "content": "second chunk",
-                "document_id": "knowledge_repo_admin",
-                "id": "knowledge_repo_admin_chunk_002",
-            },
-            "knowledge_repo_reviewer_chunk_001": {
-                "content": "reviewer chunk",
-                "document_id": "knowledge_repo_reviewer",
-                "id": "knowledge_repo_reviewer_chunk_001",
-            },
-        },
-        "knowledge_deposits": {},
-        "knowledge_documents": {
-            "knowledge_repo_admin": {
-                "content": "repository keyword content",
-                "created_by": "user_admin",
-                "doc_type": "system",
-                "id": "knowledge_repo_admin",
-                "index_error": None,
-                "index_status": "text_indexed",
-                "permission_roles": ["admin"],
-                "tags": ["db-first"],
-                "title": "Repository 知识文档",
-                "vector_index_error": "Embedding gateway is disabled",
-            },
-            "knowledge_repo_reviewer": {
-                "content": "reviewer only content",
-                "created_by": "user_reviewer",
-                "doc_type": "manual",
-                "id": "knowledge_repo_reviewer",
-                "index_error": "人工失败",
-                "index_status": "index_failed",
-                "permission_roles": ["reviewer"],
-                "tags": [],
-                "title": "Reviewer 知识文档",
-                "vector_index_error": None,
-            },
-        },
-    }
-    stale_store = PersistentMemoryStore.from_repository(repository)
-    stale_store.knowledge_documents = {}
-    stale_store.knowledge_chunks = {}
-    app.state.store = stale_store
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        admin_response = client.get(
-            "/api/knowledge/documents?keyword=repository%20keyword&doc_type=system"
-            "&index_status=text_indexed",
-            headers=auth_headers(),
-        )
-        assert admin_response.status_code == 200
-        admin_items = admin_response.json()["data"]["items"]
-        assert [item["id"] for item in admin_items] == ["knowledge_repo_admin"]
-        assert admin_items[0]["chunk_count"] == 2
-        assert admin_items[0]["vector_index_error"] == "Embedding gateway is disabled"
-
-        reviewer_response = client.get(
-            "/api/knowledge/documents",
-            headers=auth_headers("reviewer@example.com", "reviewer123"),
-        )
-        assert reviewer_response.status_code == 200
-        reviewer_items = reviewer_response.json()["data"]["items"]
-        assert [item["id"] for item in reviewer_items] == ["knowledge_repo_reviewer"]
-        assert reviewer_items[0]["chunk_count"] == 1
-        assert reviewer_items[0]["index_error"] == "人工失败"
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
 def test_assistant_chat_writes_repository_without_request_persist(monkeypatch):
     original_store = app.state.store
     original_users = app.state.user_repository
@@ -3557,7 +3478,7 @@ def test_assistant_chat_writes_repository_without_request_persist(monkeypatch):
 
     use_empty_postgres_runtime_store()
     app.state.user_repository = MemoryUserRepository.seeded()
-    monkeypatch.setattr(main, "urlopen", successful_urlopen)
+    monkeypatch.setattr(assistant_router, "urlopen", successful_urlopen)
 
     try:
         headers = auth_headers()
@@ -3602,7 +3523,7 @@ def test_assistant_chat_writes_repository_without_request_persist(monkeypatch):
         def failing_urlopen(_request, timeout):
             raise OSError("assistant gateway unavailable")
 
-        monkeypatch.setattr(main, "urlopen", failing_urlopen)
+        monkeypatch.setattr(assistant_router, "urlopen", failing_urlopen)
         failed = client.post(
             "/api/assistant/chat",
             json={"message": "触发失败日志"},
@@ -3830,8 +3751,8 @@ def test_gitlab_snapshot_writes_repository_without_request_persist(monkeypatch):
     use_empty_postgres_runtime_store()
     app.state.user_repository = MemoryUserRepository.seeded()
     monkeypatch.setattr(
-        main,
-        "_gitlab_preview",
+        git_review_service,
+        "gitlab_preview",
         lambda _repository, _mr_iid: preview_with_files(
             [{"additions": 3, "deletions": 1, "path": "apps/api/app/main.py"}]
         ),
@@ -3871,8 +3792,8 @@ def test_gitlab_snapshot_writes_repository_without_request_persist(monkeypatch):
         assert list(repository.gitlab_review_payload["gitlab_mr_snapshots"]) == [snapshot["id"]]
 
         monkeypatch.setattr(
-            main,
-            "_gitlab_preview",
+            git_review_service,
+            "gitlab_preview",
             lambda _repository, _mr_iid: preview_with_files(
                 [
                     {"additions": 1, "deletions": 0, "path": f"file_{index}.py"}
@@ -3992,8 +3913,8 @@ def test_github_list_and_preview_audits_write_repository_without_request_persist
             "writeback_allowed": False,
         }
 
-    monkeypatch.setattr(main, "_github_pull_requests", github_pull_requests)
-    monkeypatch.setattr(main, "_github_preview", github_preview)
+    monkeypatch.setattr(git_review_service, "github_pull_requests", github_pull_requests)
+    monkeypatch.setattr(git_review_service, "github_preview", github_preview)
 
     try:
         headers = auth_headers()
@@ -4281,6 +4202,7 @@ def test_lifecycle_and_dashboard_use_repository_source_rows_when_runtime_store_i
     stale_store.ai_tasks = {}
     app.state.store = stale_store
     app.state.user_repository = MemoryUserRepository.seeded()
+    app.state.dashboard_cache = {}
 
     try:
         headers = auth_headers()
@@ -4290,8 +4212,25 @@ def test_lifecycle_and_dashboard_use_repository_source_rows_when_runtime_store_i
         ).json()["data"]
         assert dashboard["summary"]["requirements"] == 1
         assert dashboard["summary"]["ai_tasks"] == 1
+        assert dashboard["metadata"]["dashboard_cache"]["cache_hit"] is False
         assert repository.dashboard_source_row_reads == 1
         assert repository.dashboard_snapshot_direct_writes
+
+        cached_dashboard = client.get(
+            "/api/dashboard/it-team?product_id=product_read_model",
+            headers=headers,
+        ).json()["data"]
+        assert cached_dashboard["summary"]["requirements"] == 1
+        assert cached_dashboard["metadata"]["dashboard_cache"]["cache_hit"] is True
+        assert repository.dashboard_source_row_reads == 1
+
+        refreshed_dashboard = client.get(
+            "/api/dashboard/it-team?product_id=product_read_model&refresh=true",
+            headers=headers,
+        ).json()["data"]
+        assert refreshed_dashboard["summary"]["ai_tasks"] == 1
+        assert refreshed_dashboard["metadata"]["dashboard_cache"]["cache_hit"] is False
+        assert repository.dashboard_source_row_reads == 2
 
         lifecycle = client.get(
             "/api/lifecycle/context"
@@ -5378,69 +5317,6 @@ def test_structured_knowledge_and_audit_restore_and_sync_counters():
     assert rebuilt_store.new_id("audit") == "audit_008"
 
 
-def test_audit_event_list_uses_repository_when_runtime_store_is_stale():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-    repository = FakeSnapshotRepository()
-    repository.audit_events_payload = {
-        "audit_events": [
-            {
-                "actor_id": "user_admin",
-                "ai_task_id": "task_audit_read",
-                "created_at": "2026-06-03T08:00:00+00:00",
-                "event_type": "requirement.created",
-                "id": "audit_repo_001",
-                "payload": {"source": "repository"},
-                "sequence": 1,
-                "subject_id": "requirement_audit_read",
-                "subject_type": "requirement",
-            },
-            {
-                "actor_id": "user_admin",
-                "ai_task_id": "task_audit_read",
-                "created_at": "2026-06-03T09:00:00+00:00",
-                "event_type": "requirement.created",
-                "id": "audit_repo_002",
-                "payload": {"source": "repository"},
-                "sequence": 2,
-                "subject_id": "requirement_audit_read",
-                "subject_type": "requirement",
-            },
-            {
-                "actor_id": "user_reviewer",
-                "created_at": "2026-06-03T10:00:00+00:00",
-                "event_type": "review.approved",
-                "id": "audit_repo_003",
-                "payload": {},
-                "sequence": 3,
-                "subject_id": "review_audit_read",
-                "subject_type": "review",
-            },
-        ]
-    }
-    stale_store = PersistentMemoryStore.from_repository(repository)
-    stale_store.audit_events = []
-    app.state.store = stale_store
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        response = client.get(
-            "/api/audit/events?actor_id=user_admin&event_type=requirement.created"
-            "&ai_task_id=task_audit_read&subject_type=requirement"
-            "&subject_id=requirement_audit_read"
-            "&created_from=2026-06-03T08:30:00%2B00:00"
-            "&created_to=2026-06-03T09:30:00%2B00:00",
-            headers=auth_headers(),
-        )
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert [event["id"] for event in data["items"]] == ["audit_repo_002"]
-        assert data["items"][0]["payload"] == {"source": "repository"}
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
 def test_product_config_api_writes_fine_grained_repository_payload():
     original_store = app.state.store
     original_users = app.state.user_repository
@@ -5975,7 +5851,9 @@ def test_bug_api_writes_repository_without_request_persist():
             f"/api/bugs?product_id={product['id']}",
             headers=headers,
         ).json()["data"]
-        assert empty_list == {"items": [], "total": 0}
+        assert empty_list["items"] == []
+        assert empty_list["total"] == 0
+        assert empty_list["performance"]["result_count"] == 0
         assert [
             event["event_type"] for event in repository.audit_events_payload["audit_events"]
         ].count("bug.created") == 2
@@ -6613,168 +6491,6 @@ def test_insight_planning_routes_write_repository_without_request_persist():
             "iteration_suggestion.decided",
         ]:
             assert event_type in event_types
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
-def test_operational_metrics_use_repository_read_model_for_sql_pagination():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-
-    class ReadModelOnlyOperationalRepository(FakeSnapshotRepository):
-        def __init__(self) -> None:
-            super().__init__()
-            self.operational_metric_reads: list[dict] = []
-
-        def list_gitlab_daily_code_metrics(self, **_kwargs):  # type: ignore[no-untyped-def]
-            raise AssertionError("operational metrics should not load all GitLab metrics")
-
-        def list_jenkins_release_records(self, **_kwargs):  # type: ignore[no-untyped-def]
-            raise AssertionError("operational metrics should not load all Jenkins releases")
-
-        def list_online_log_metrics(self, **_kwargs):  # type: ignore[no-untyped-def]
-            raise AssertionError("operational metrics should not load all online logs")
-
-        def list_operational_metric_items(self, **kwargs):  # type: ignore[no-untyped-def]
-            self.operational_metric_reads.append(dict(kwargs))
-            return {
-                "items": [
-                    {
-                        "build_id": "build-read-model",
-                        "category": "Jenkins 发布",
-                        "id": "jenkins_release_read_model",
-                        "name": "enterprise-ai-brain-deploy",
-                        "product_id": "product_read_model",
-                        "status": "success",
-                        "updated_at": "2026-06-05T09:30:00+00:00",
-                        "value": "build-read-model",
-                        "version_id": "version_read_model",
-                    }
-                ],
-                "page": 1,
-                "page_size": 1,
-                "total": 2,
-            }
-
-    repository = ReadModelOnlyOperationalRepository()
-    app.state.store = PostgresRuntimeStore(repository)
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        headers = auth_headers()
-        response = client.get(
-            (
-                "/api/devops/operational-metrics"
-                "?category=Jenkins 发布"
-                "&name=deploy"
-                "&status=success"
-                "&page=1&page_size=1"
-                "&sort_by=updated_at&sort_order=desc"
-            ),
-            headers=headers,
-        )
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert data["total"] == 2
-        assert data["page"] == 1
-        assert data["page_size"] == 1
-        assert data["items"][0]["id"] == "jenkins_release_read_model"
-        assert repository.operational_metric_reads == [
-            {
-                "category": "Jenkins 发布",
-                "name": "deploy",
-                "page": 1,
-                "page_size": 1,
-                "sort_by": "updated_at",
-                "sort_order": "desc",
-                "status": "success",
-            }
-        ]
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
-def test_insight_items_use_repository_read_model_for_sql_pagination():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-
-    class ReadModelOnlyInsightRepository(FakeSnapshotRepository):
-        def __init__(self) -> None:
-            super().__init__()
-            self.user_insight_item_reads: list[dict] = []
-
-        def list_user_usage_metrics(self, **_kwargs):  # type: ignore[no-untyped-def]
-            raise AssertionError("insight items should not load all usage metrics")
-
-        def list_user_feedback(self, **_kwargs):  # type: ignore[no-untyped-def]
-            raise AssertionError("insight items should not load all feedback rows")
-
-        def list_iteration_plan_suggestions(self, **_kwargs):  # type: ignore[no-untyped-def]
-            raise AssertionError("insight items should not load all iteration suggestions")
-
-        def list_user_insight_items(self, **kwargs):  # type: ignore[no-untyped-def]
-            self.user_insight_item_reads.append(dict(kwargs))
-            return {
-                "items": [
-                    {
-                        "category": "用户反馈",
-                        "confidence_level": "-",
-                        "converted_requirement_id": "-",
-                        "feature_code": "search",
-                        "feedback_type": "improvement",
-                        "id": "feedback_read_model",
-                        "module_code": "knowledge",
-                        "owner": "user_admin",
-                        "planning_cycle": "-",
-                        "priority": "-",
-                        "product_id": "product_read_model",
-                        "status": "open",
-                        "summary": "迭代版本筛选反馈",
-                        "updated_at": "2026-06-05T09:00:00+00:00",
-                        "version_id": "-",
-                    }
-                ],
-                "page": 1,
-                "page_size": 1,
-                "total": 3,
-            }
-
-    repository = ReadModelOnlyInsightRepository()
-    app.state.store = PostgresRuntimeStore(repository)
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        headers = auth_headers()
-        response = client.get(
-            (
-                "/api/insights/items"
-                "?category=用户反馈"
-                "&summary=迭代版本"
-                "&status=open"
-                "&page=1&page_size=1"
-                "&sort_by=updated_at&sort_order=desc"
-            ),
-            headers=headers,
-        )
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert data["total"] == 3
-        assert data["page"] == 1
-        assert data["page_size"] == 1
-        assert data["items"][0]["id"] == "feedback_read_model"
-        assert repository.user_insight_item_reads == [
-            {
-                "category": "用户反馈",
-                "page": 1,
-                "page_size": 1,
-                "sort_by": "updated_at",
-                "sort_order": "desc",
-                "status": "open",
-                "summary": "迭代版本",
-            }
-        ]
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users
@@ -7560,232 +7276,6 @@ def test_model_gateway_config_api_writes_fine_grained_repository_payload():
         ).json()["data"]
         assert deleted == {"deleted": True, "id": config["id"]}
         assert config["id"] not in repository.model_gateway_payload["model_gateway_configs"]
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
-def test_knowledge_deposit_list_uses_repository_when_runtime_store_is_stale():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-    repository = FakeSnapshotRepository()
-    repository.knowledge_payload = {
-        "knowledge_chunks": {},
-        "knowledge_deposits": {
-            "deposit_repo_pending": {
-                "ai_task_id": "task_repo_001",
-                "content": "待审核沉淀内容",
-                "created_at": "2026-06-03T08:00:00+00:00",
-                "deposit_type": "task_solution",
-                "id": "deposit_repo_pending",
-                "status": "pending",
-                "title": "Repository 待审核沉淀",
-            },
-            "deposit_repo_rejected": {
-                "ai_task_id": "task_repo_002",
-                "content": "已拒绝沉淀内容",
-                "created_at": "2026-06-03T09:00:00+00:00",
-                "deposit_type": "task_solution",
-                "id": "deposit_repo_rejected",
-                "rejection_reason": "内容重复",
-                "status": "rejected",
-                "title": "Repository 已拒绝沉淀",
-            },
-        },
-        "knowledge_documents": {},
-    }
-    app.state.store = PersistentMemoryStore.from_repository(repository)
-    app.state.store.knowledge_deposits = {}
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        headers = auth_headers()
-        pending = client.get(
-            "/api/knowledge/deposits?status=pending",
-            headers=headers,
-        ).json()["data"]
-        all_deposits = client.get("/api/knowledge/deposits", headers=headers).json()["data"]
-
-        assert [item["id"] for item in pending["items"]] == ["deposit_repo_pending"]
-        assert pending["total"] == 1
-        assert [item["id"] for item in all_deposits["items"]] == [
-            "deposit_repo_pending",
-            "deposit_repo_rejected",
-        ]
-        assert all_deposits["total"] == 2
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
-def test_knowledge_search_uses_repository_when_runtime_store_is_stale():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-    repository = FakeSnapshotRepository()
-    repository.knowledge_payload = {
-        "knowledge_chunks": {
-            "knowledge_repo_search_chunk_001": {
-                "chunk_index": 1,
-                "content": "repository-search-token 可通过结构表检索",
-                "document_id": "knowledge_repo_search",
-                "id": "knowledge_repo_search_chunk_001",
-                "metadata": {"doc_type": "system", "title": "Repository 检索文档"},
-                "permission_roles": ["admin"],
-                "permission_scope": {"roles": ["admin"]},
-            },
-            "knowledge_repo_review_chunk_001": {
-                "chunk_index": 1,
-                "content": "reviewer-only-token 不应对 admin 以外无权限用户泄露",
-                "document_id": "knowledge_repo_review",
-                "id": "knowledge_repo_review_chunk_001",
-                "metadata": {"doc_type": "manual", "title": "Reviewer 检索文档"},
-                "permission_roles": ["reviewer"],
-                "permission_scope": {"roles": ["reviewer"]},
-            },
-        },
-        "knowledge_deposits": {},
-        "knowledge_documents": {
-            "knowledge_repo_search": {
-                "content": "repository-search-token 可通过结构表检索",
-                "created_by": "user_admin",
-                "doc_type": "system",
-                "id": "knowledge_repo_search",
-                "index_status": "text_indexed",
-                "permission_roles": ["admin"],
-                "tags": ["db-first"],
-                "title": "Repository 检索文档",
-            },
-            "knowledge_repo_review": {
-                "content": "reviewer-only-token",
-                "created_by": "user_reviewer",
-                "doc_type": "manual",
-                "id": "knowledge_repo_review",
-                "index_status": "text_indexed",
-                "permission_roles": ["reviewer"],
-                "tags": [],
-                "title": "Reviewer 检索文档",
-            },
-        },
-    }
-    app.state.store = PersistentMemoryStore.from_repository(repository)
-    app.state.store.knowledge_documents = {}
-    app.state.store.knowledge_chunks = {}
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        headers = auth_headers()
-        results = client.post(
-            "/api/knowledge/search",
-            json={"query": "repository-search-token", "top_k": 5},
-            headers=headers,
-        ).json()["data"]["items"]
-        forbidden = client.post(
-            "/api/knowledge/search",
-            json={"query": "reviewer-only-token", "top_k": 5},
-            headers=headers,
-        ).json()["data"]["items"]
-
-        assert [item["chunk_id"] for item in results] == ["knowledge_repo_search_chunk_001"]
-        assert results[0]["retrieval_mode"] == "keyword"
-        assert forbidden == []
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
-def test_model_gateway_config_list_uses_repository_when_runtime_store_is_stale():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-    repository = FakeSnapshotRepository()
-    repository.model_gateway_payload = {
-        "model_gateway_configs": {
-            "model_gateway_config_read": {
-                "api_key": "sk-stale-runtime",
-                "base_url": "https://api.example.com/v1",
-                "default_chat_model": "gpt-read",
-                "default_embedding_model": "text-embedding-read",
-                "embedding_api_key": "sk-embedding-stale-runtime",
-                "embedding_base_url": "https://embedding.example.com/v1",
-                "embedding_connection_mode": "separate",
-                "embedding_dimension": 1536,
-                "id": "model_gateway_config_read",
-                "is_default": True,
-                "max_retries": 2,
-                "name": "Repository 模型网关",
-                "provider": "openai_compatible",
-                "status": "active",
-                "timeout_seconds": 30,
-            }
-        },
-        "model_gateway_logs": [],
-    }
-    stale_store = PersistentMemoryStore.from_repository(repository)
-    stale_store.model_gateway_configs = {}
-    app.state.store = stale_store
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        response = client.get("/api/system/model-gateway-configs", headers=auth_headers())
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert [item["id"] for item in data["items"]] == ["model_gateway_config_read"]
-        item = data["items"][0]
-        assert item["api_key_configured"] is True
-        assert item["embedding_api_key_configured"] is True
-        assert "api_key" not in item
-        assert "embedding_api_key" not in item
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
-def test_model_gateway_log_list_uses_repository_when_runtime_store_is_stale():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-    repository = FakeSnapshotRepository()
-    repository.model_gateway_payload = {
-        "model_gateway_configs": {},
-        "model_gateway_logs": [
-            {
-                "ai_task_id": "task_log_read",
-                "created_at": "2026-06-03T08:00:00+00:00",
-                "id": "model_log_repo_001",
-                "latency_ms": 12,
-                "model": "gpt-read",
-                "model_gateway_config_id": "model_gateway_config_read",
-                "provider": "openai_compatible",
-                "purpose": "assistant_chat",
-                "status": "succeeded",
-                "tokens": {"total_tokens": 8},
-            },
-            {
-                "ai_task_id": "task_other",
-                "created_at": "2026-06-03T09:00:00+00:00",
-                "error": "failed",
-                "id": "model_log_repo_002",
-                "latency_ms": 3,
-                "model": "gpt-read",
-                "provider": "openai_compatible",
-                "purpose": "task_generation",
-                "status": "failed",
-                "tokens": {},
-            },
-        ],
-    }
-    stale_store = PersistentMemoryStore.from_repository(repository)
-    stale_store.model_gateway_logs = []
-    app.state.store = stale_store
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        response = client.get(
-            "/api/model-gateway/logs?purpose=assistant_chat&status=succeeded",
-            headers=auth_headers(),
-        )
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert [item["id"] for item in data["items"]] == ["model_log_repo_001"]
-        assert data["items"][0]["tokens"] == {"total_tokens": 8}
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users

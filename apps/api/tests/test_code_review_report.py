@@ -3,6 +3,7 @@ import json
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
+import app.services.model_gateway as model_gateway_service
 from app.main import app, settings
 
 client = TestClient(app)
@@ -192,7 +193,7 @@ def test_code_review_task_uses_configured_executor_boundary(monkeypatch):
         raise AssertionError("code_review must use code_review_executor")
 
     monkeypatch.setattr(app.state, "code_review_executor", FakeCodeReviewExecutor(), raising=False)
-    monkeypatch.setattr("app.main.urlopen", fail_if_model_gateway_is_called)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fail_if_model_gateway_is_called)
 
     started = client.post(f"/api/ai-tasks/{task['id']}/start", headers=headers).json()["data"]
 
@@ -303,7 +304,7 @@ def test_model_gateway_code_review_normalizes_common_review_shape(monkeypatch):
         captured_payload.update(json.loads(request_body["messages"][1]["content"]))
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
     task = client.post(
         "/api/ai-tasks",
         json={
@@ -403,7 +404,7 @@ def test_code_review_executor_failure_uses_executor_error_code(monkeypatch):
     def fake_urlopen(_request, timeout):
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(model_gateway_service, "urlopen", fake_urlopen)
     client.post(
         "/api/system/model-gateway-configs",
         json={

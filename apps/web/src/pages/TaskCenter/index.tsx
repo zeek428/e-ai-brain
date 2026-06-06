@@ -15,8 +15,10 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { TableProps } from 'antd';
+import { type Key, useCallback, useEffect, useMemo, useState } from 'react';
 
+import { ManagementBatchResultModal, type ManagementBatchResult } from '../../components/ManagementBatchResultModal';
 import {
   ManagementListPage,
   StatusTag,
@@ -29,6 +31,8 @@ import {
 } from '../../hooks/useRemoteRows';
 import {
   approveTaskCenterReview,
+  batchCancelTaskCenterTasks,
+  batchRetryTaskCenterTasks,
   createAutomatedTestingTask,
   createCodeReviewTask,
   createDevelopmentPlanningTask,
@@ -73,6 +77,20 @@ const taskStatusLabels: Record<string, { color: string; label: string }> = {
   waiting_review: { color: 'gold', label: '待确认' },
   writing_back: { color: 'purple', label: '写回中' },
 };
+
+const taskBatchCancellableStatuses = new Set([
+  'draft',
+  'running',
+  'waiting_more_info',
+  'waiting_review',
+  'writing_back',
+]);
+
+const taskBatchRetryableFailureSteps = new Set([
+  'code_review_executor_failed',
+  'model_gateway_failed',
+]);
+const PENDING_REVIEW_TABLE_SCROLL = { x: 1040 } satisfies TableProps<TaskCenterReviewRecord>['scroll'];
 
 const taskTypeLabels: Record<string, string> = {
   automated_testing: '自动化测试',
@@ -312,6 +330,7 @@ export default function TaskCenterPage() {
     submitting: boolean;
     task: TaskCenterTaskRecord;
   }>();
+  const [taskBatchResult, setTaskBatchResult] = useState<ManagementBatchResult | null>(null);
   const [taskQuery, setTaskQuery] = useState<ManagementListQuery>({
     filters: {},
     page: 1,
@@ -326,6 +345,7 @@ export default function TaskCenterPage() {
     status: 'loading',
     total: 0,
   });
+  const [selectedTaskRowKeys, setSelectedTaskRowKeys] = useState<Key[]>([]);
   const {
     error: productOptionsError,
     rows: productOptions,
@@ -425,6 +445,27 @@ export default function TaskCenterPage() {
     await Promise.all([reloadTasks(), reloadReviews()]);
   }, [reloadReviews, reloadTasks]);
 
+  const selectedTasks = useMemo(
+    () => taskRowsState.rows.filter((row) => selectedTaskRowKeys.includes(row.id)),
+    [selectedTaskRowKeys, taskRowsState.rows],
+  );
+
+  const selectedBatchCancellableTasks = useMemo(
+    () => selectedTasks.filter((row) => taskBatchCancellableStatuses.has(row.status)),
+    [selectedTasks],
+  );
+
+  const selectedBatchRetryableTasks = useMemo(
+    () =>
+      selectedTasks.filter(
+        (row) =>
+          row.status === 'failed' &&
+          row.currentStep !== undefined &&
+          taskBatchRetryableFailureSteps.has(row.currentStep),
+      ),
+    [selectedTasks],
+  );
+
   const visibleReviewRows = useMemo(
     () =>
       reviewDialog?.task
@@ -442,6 +483,12 @@ export default function TaskCenterPage() {
   );
   const selectedActionTask = actionDialog?.task;
 
+  const showTaskBatchResult = useCallback((result: ManagementBatchResult) => {
+    setTaskBatchResult(result);
+    const skippedText = result.skipped.length ? `，跳过 ${result.skipped.length} 个` : '';
+    message.success(`${result.primaryLabel} ${result.primaryCount} 个任务${skippedText}`);
+  }, []);
+
   const openReviewDialog = useCallback((task?: TaskCenterTaskRecord) => {
     setReviewDialog({ task });
     void reloadReviews();
@@ -456,6 +503,75 @@ export default function TaskCenterPage() {
       message.error(formatMutationError(taskError));
     }
   }, [reloadTaskCenter]);
+
+  const handleBatchCancelTasks = useCallback(async () => {
+    if (!selectedBatchCancellableTasks.length) {
+      message.warning('请选择可取消的任务');
+      return;
+    }
+    try {
+      const result = await batchCancelTaskCenterTasks({
+        reason: '任务管理批量取消',
+        task_ids: selectedBatchCancellableTasks.map((task) => task.id),
+      });
+      showTaskBatchResult({
+        batchId: result.batchId,
+        primaryCount: result.updatedCount,
+        primaryLabel: '已取消',
+        skipped: result.skipped,
+        title: '批量取消结果',
+      });
+      setSelectedTaskRowKeys([]);
+      await reloadTaskCenter();
+    } catch (batchError) {
+      message.error(formatMutationError(batchError));
+    }
+  }, [reloadTaskCenter, selectedBatchCancellableTasks, showTaskBatchResult]);
+
+  const handleBatchRetryTasks = useCallback(async () => {
+    if (!selectedBatchRetryableTasks.length) {
+      message.warning('请选择可重试的失败任务');
+      return;
+    }
+    try {
+      const result = await batchRetryTaskCenterTasks({
+        reason: '任务管理批量重试',
+        task_ids: selectedBatchRetryableTasks.map((task) => task.id),
+      });
+      const failedRetryCount = Math.max(result.retriedCount - result.updatedCount, 0);
+      const updatedIds = new Set(result.updated.map((task) => task.id));
+      showTaskBatchResult({
+        batchId: result.batchId,
+        primaryCount: result.retriedCount,
+        primaryLabel: '已重试',
+        secondary: [
+          { label: '成功数', value: result.updatedCount },
+          { label: '仍失败数', value: failedRetryCount },
+        ],
+        sections: [
+          {
+            items: result.retried
+              .filter((task) => !updatedIds.has(task.id))
+              .map((task) => ({
+                id: task.id,
+                lines: [
+                  `${task.status} · ${task.current_step ?? '-'} · ${task.error_code ?? '-'} · ${
+                    task.error_message ?? '-'
+                  }`,
+                ],
+              })),
+            title: '仍失败明细',
+          },
+        ],
+        skipped: result.skipped,
+        title: '批量重试结果',
+      });
+      setSelectedTaskRowKeys([]);
+      await reloadTaskCenter();
+    } catch (batchError) {
+      message.error(formatMutationError(batchError));
+    }
+  }, [reloadTaskCenter, selectedBatchRetryableTasks, showTaskBatchResult]);
 
   const handleApproveReview = useCallback(async (review: TaskCenterReviewRecord) => {
     try {
@@ -822,6 +938,19 @@ export default function TaskCenterPage() {
       });
     }
 
+    if (
+      selectedActionTask.status === 'failed' &&
+      selectedActionTask.currentStep !== undefined &&
+      taskBatchRetryableFailureSteps.has(selectedActionTask.currentStep)
+    ) {
+      actions.push({
+        key: 'retry',
+        label: '重试任务',
+        onClick: closeAndRun(() => handleStartTask(selectedActionTask)),
+        type: 'primary',
+      });
+    }
+
     if (selectedActionTask.status === 'waiting_review') {
       actions.push({
         key: 'review',
@@ -997,22 +1126,30 @@ export default function TaskCenterPage() {
     () => [
       {
         dataIndex: 'id',
+        ellipsis: true,
         title: '确认编号',
+        width: 180,
       },
       {
         dataIndex: 'stage',
+        ellipsis: true,
         title: '确认阶段',
+        width: 160,
       },
       {
         dataIndex: 'contentSummary',
+        ellipsis: true,
         title: 'AI 输出摘要',
+        width: 300,
       },
       {
         dataIndex: 'status',
         title: '状态',
         render: (_, row) => <Tag color="gold">{row.status}</Tag>,
+        width: 120,
       },
       {
+        fixed: 'right',
         key: 'actions',
         title: '操作',
         valueType: 'option',
@@ -1032,6 +1169,7 @@ export default function TaskCenterPage() {
             </Button>
           </Space>
         ),
+        width: 280,
       },
     ],
     [handleApproveReview, openEditApproveDialog, openRejectReviewDialog, openRequestMoreInfoDialog],
@@ -1091,9 +1229,37 @@ export default function TaskCenterPage() {
           total: taskRowsState.total,
         }}
         rowKey="id"
+        rowSelection={{
+          getCheckboxProps: (row) => ({
+            disabled:
+              !taskBatchCancellableStatuses.has(row.status) &&
+              !(
+                row.status === 'failed' &&
+                row.currentStep !== undefined &&
+                taskBatchRetryableFailureSteps.has(row.currentStep)
+              ),
+          }),
+          onChange: (keys) => setSelectedTaskRowKeys(keys),
+          selectedRowKeys: selectedTaskRowKeys,
+        }}
         tableTitle="任务列表"
         title="任务管理"
         toolbarActions={[
+          <Button
+            disabled={!selectedBatchRetryableTasks.length}
+            key="batch-retry"
+            onClick={() => void handleBatchRetryTasks()}
+          >
+            批量重试
+          </Button>,
+          <Button
+            danger
+            disabled={!selectedBatchCancellableTasks.length}
+            key="batch-cancel"
+            onClick={() => void handleBatchCancelTasks()}
+          >
+            批量取消
+          </Button>,
           <Button key="pending-reviews" onClick={() => openReviewDialog()}>
             待确认
           </Button>,
@@ -1108,11 +1274,17 @@ export default function TaskCenterPage() {
         width={760}
       >
         <Input.TextArea
-          autoSize={{ maxRows: 22, minRows: 12 }}
           readOnly
+          rows={12}
           value={markdownPreview?.content}
         />
       </Modal>
+
+      <ManagementBatchResultModal
+        onClose={() => setTaskBatchResult(null)}
+        result={taskBatchResult}
+        width={760}
+      />
 
       <Modal
         footer={null}
@@ -1132,6 +1304,8 @@ export default function TaskCenterPage() {
           pagination={false}
           rowKey="id"
           search={false}
+          scroll={PENDING_REVIEW_TABLE_SCROLL}
+          tableLayout="fixed"
         />
         {visibleReviewRows.length === 0 && reviewsStatus === 'ready' ? (
           <Text type="secondary">当前没有待确认项。</Text>
@@ -1309,8 +1483,8 @@ export default function TaskCenterPage() {
               </Descriptions.Item>
             </Descriptions>
             <Input.TextArea
-              autoSize={{ maxRows: 16, minRows: 8 }}
               readOnly
+              rows={8}
               value={formatJsonPreview(taskDetailDialog.detail.outputJson)}
             />
           </Space>
@@ -1499,8 +1673,8 @@ export default function TaskCenterPage() {
             <Space orientation="vertical" size={8} style={{ width: '100%' }}>
               <Text strong>变更文件明细</Text>
               <Input.TextArea
-                autoSize={{ maxRows: 8, minRows: 3 }}
                 readOnly
+                rows={3}
                 value={codeReviewDraft.preview.changedFilesSummary
                   .map(formatChangedFileSummary)
                   .join('\n')}
@@ -1511,8 +1685,8 @@ export default function TaskCenterPage() {
             <Space orientation="vertical" size={8} style={{ width: '100%' }}>
               <Text strong>Review Checklist</Text>
               <Input.TextArea
-                autoSize={{ maxRows: 8, minRows: 3 }}
                 readOnly
+                rows={3}
                 value={codeReviewDraft.preview.reviewChecklist
                   .map((item, index) => `${index + 1}. ${item}`)
                   .join('\n')}
@@ -1547,8 +1721,8 @@ export default function TaskCenterPage() {
             </Descriptions>
             <Paragraph>{codeReviewReport.report.summary}</Paragraph>
             <Input.TextArea
-              autoSize={{ maxRows: 14, minRows: 6 }}
               readOnly
+              rows={6}
               value={
                 codeReviewReport.report.findings.length
                   ? codeReviewReport.report.findings.map(formatFinding).join('\n\n')

@@ -3,6 +3,7 @@ from urllib.error import HTTPError
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
+import app.services.git_review as git_review_service
 from app.main import app
 
 client = TestClient(app)
@@ -146,7 +147,7 @@ def test_gitlab_mr_preview_maps_gitlab_404_to_documented_error(monkeypatch):
             None,
         )
 
-    monkeypatch.setattr("app.main.urlopen", missing_gitlab_mr)
+    monkeypatch.setattr(git_review_service, "urlopen", missing_gitlab_mr)
 
     response = client.get(
         f"/api/devops/gitlab/merge-requests/{repository['id']}/404/preview",
@@ -338,7 +339,7 @@ def test_gitlab_snapshot_records_audit_when_diff_exceeds_limit(monkeypatch):
             "writeback_allowed": False,
         }
 
-    monkeypatch.setattr("app.main._gitlab_preview", oversized_preview)
+    monkeypatch.setattr(git_review_service, "gitlab_preview", oversized_preview)
 
     response = client.post(
         f"/api/devops/gitlab/merge-requests/{context['repository_id']}/99/snapshot",
@@ -393,7 +394,7 @@ def test_gitlab_snapshot_rejects_changed_file_count_over_limit(monkeypatch):
             "writeback_allowed": False,
         }
 
-    monkeypatch.setattr("app.main._gitlab_preview", too_many_files_preview)
+    monkeypatch.setattr(git_review_service, "gitlab_preview", too_many_files_preview)
 
     response = client.post(
         f"/api/devops/gitlab/merge-requests/{context['repository_id']}/100/snapshot",
@@ -449,7 +450,7 @@ def test_gitlab_snapshot_rejects_single_file_diff_over_limit(monkeypatch):
             "writeback_allowed": False,
         }
 
-    monkeypatch.setattr("app.main._gitlab_preview", oversized_file_preview)
+    monkeypatch.setattr(git_review_service, "gitlab_preview", oversized_file_preview)
 
     response = client.post(
         f"/api/devops/gitlab/merge-requests/{context['repository_id']}/101/snapshot",

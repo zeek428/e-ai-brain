@@ -3,6 +3,10 @@ import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Popconfirm, Select, Space, message } from 'antd';
 import { type Key, useCallback, useEffect, useMemo, useState } from 'react';
 
+import {
+  ManagementBatchResultModal,
+  type ManagementBatchResult,
+} from '../../components/ManagementBatchResultModal';
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import type { BugRecord } from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
@@ -152,6 +156,7 @@ export default function BugsPage() {
   const [form] = Form.useForm<BugFormValues>();
   const [batchForm] = Form.useForm<BugBatchFormValues>();
   const [editingBug, setEditingBug] = useState<BugRecord | null>(null);
+  const [batchResult, setBatchResult] = useState<ManagementBatchResult | null>(null);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [isBatchSaving, setIsBatchSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -412,6 +417,13 @@ export default function BugsPage() {
       }
       setIsBatchSaving(true);
       const result = await batchUpdateManagementBugs(payload);
+      setBatchResult({
+        batchId: result.batchId,
+        primaryCount: result.updatedCount,
+        primaryLabel: '更新数',
+        skipped: result.skipped,
+        title: 'Bug 批量处理结果',
+      });
       message.success(`Bug 批量处理完成：更新 ${result.updatedCount} 条，跳过 ${result.skippedCount} 条`);
       setSelectedRowKeys([]);
       setIsBatchModalOpen(false);
@@ -578,6 +590,7 @@ export default function BugsPage() {
         title="Bug 管理"
         toolbarActions={toolbarActions}
       />
+      <ManagementBatchResultModal onClose={() => setBatchResult(null)} result={batchResult} />
       <Modal
         cancelText="取消"
         confirmLoading={isBatchSaving}
@@ -622,7 +635,7 @@ export default function BugsPage() {
             <Input placeholder="可选，例如 qa@example.com" />
           </Form.Item>
           <Form.Item label="处理说明" name="reason">
-            <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="可选，写入批量审计" />
+            <Input.TextArea placeholder="可选，写入批量审计" rows={2} />
           </Form.Item>
         </Form>
       </Modal>
@@ -727,13 +740,13 @@ export default function BugsPage() {
             <Input />
           </Form.Item>
           <Form.Item label="描述" name="description" rules={[{ required: true, message: '请输入 Bug 描述' }]}>
-            <Input.TextArea autoSize={{ minRows: 4 }} />
+            <Input.TextArea rows={4} />
           </Form.Item>
           <Form.Item label="复现步骤" name="reproduce_steps_text">
-            <Input.TextArea autoSize={{ minRows: 3 }} />
+            <Input.TextArea rows={3} />
           </Form.Item>
           <Form.Item label="证据 JSON" name="evidence_json" rules={[evidenceJsonRule()]}>
-            <Input.TextArea autoSize={{ minRows: 3 }} />
+            <Input.TextArea rows={3} />
           </Form.Item>
         </Form>
       </Modal>

@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
-from app.main import _save_audit_event, app
+from app.main import app
+from app.services.requirements import save_audit_event
 
 client = TestClient(app)
 
@@ -26,7 +27,7 @@ def test_single_batch_audit_is_appended_without_replacing_existing_repository_ev
     repository = FakeAuditRepository()
     audit_event = {"event_type": "requirement.batch_scheduled", "id": "audit_new"}
 
-    _save_audit_event(FakeRepositoryStore(repository), audit_event)
+    save_audit_event(FakeRepositoryStore(repository), audit_event)
 
     assert repository.appended == [audit_event]
     assert repository.save_called is False
@@ -191,6 +192,165 @@ def test_batch_schedule_rejects_archived_target_version():
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "PRODUCT_VERSION_ARCHIVED"
+
+
+def test_batch_assign_owner_updates_requirements_and_records_audit():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "batch-owner-product")
+    requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "负责人待分配")["id"],
+    )
+    closed_requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "已关闭需求")["id"],
+    )
+    client.post(f"/api/requirements/{closed_requirement['id']}/close", headers=headers)
+
+    response = client.post(
+        "/api/requirements/batch-assign-owner",
+        json={
+            "assignee": "rd_owner@example.com",
+            "reason": "批量归口给研发负责人",
+            "requirement_ids": [
+                requirement["id"],
+                closed_requirement["id"],
+                requirement["id"],
+                "requirement_missing",
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["batch_id"].startswith("requirement_owner_batch_")
+    assert data["assignee"] == "rd_owner@example.com"
+    assert data["updated_count"] == 1
+    assert data["skipped_count"] == 3
+    assert data["updated"][0]["id"] == requirement["id"]
+    assert data["updated"][0]["assignee"] == "rd_owner@example.com"
+    assert data["skipped"] == [
+        {
+            "code": "REQUIREMENT_STATE_INVALID",
+            "id": closed_requirement["id"],
+            "message": "Closed or cancelled requirements cannot be assigned",
+        },
+        {
+            "code": "DUPLICATE_REQUIREMENT",
+            "id": requirement["id"],
+            "message": "Requirement was already included in this batch",
+        },
+        {
+            "code": "NOT_FOUND",
+            "id": "requirement_missing",
+            "message": "Requirement not found",
+        },
+    ]
+
+    detail = client.get(f"/api/requirements/{requirement['id']}", headers=headers).json()["data"]
+    assert detail["assignee"] == "rd_owner@example.com"
+    batch_audits = client.get(
+        f"/api/audit/events?subject_type=requirement_owner_batch&subject_id={data['batch_id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert [event["event_type"] for event in batch_audits] == [
+        "requirement.batch_owner_assigned"
+    ]
+    requirement_audits = client.get(
+        f"/api/audit/events?event_type=requirement.updated&subject_id={requirement['id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert requirement_audits[0]["payload"]["operation"] == "batch_assign_owner"
+
+
+def test_batch_advance_status_updates_valid_requirements_and_records_audit():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "batch-status-product")
+    version = create_version(headers, product["id"], "batch-status-v1")
+    requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "待开发需求", version["id"])["id"],
+    )
+    unscheduled_requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "未排期需求")["id"],
+    )
+    accepted_requirement = approve_requirement(
+        headers,
+        create_requirement(headers, product["id"], "已验收需求")["id"],
+    )
+    client.patch(
+        f"/api/requirements/{accepted_requirement['id']}",
+        json={"version_id": None},
+        headers=headers,
+    )
+    app.state.store.requirements[accepted_requirement["id"]]["status"] = "accepted"
+
+    response = client.post(
+        "/api/requirements/batch-advance-status",
+        json={
+            "reason": "批量推进到待开发",
+            "requirement_ids": [
+                requirement["id"],
+                unscheduled_requirement["id"],
+                accepted_requirement["id"],
+                requirement["id"],
+                "requirement_missing",
+            ],
+            "target_status": "ready_for_dev",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["batch_id"].startswith("requirement_status_batch_")
+    assert data["target_status"] == "ready_for_dev"
+    assert data["updated_count"] == 1
+    assert data["skipped_count"] == 4
+    assert data["updated"][0]["id"] == requirement["id"]
+    assert data["updated"][0]["status"] == "ready_for_dev"
+    assert data["skipped"] == [
+        {
+            "code": "REQUIREMENT_VERSION_REQUIRED",
+            "id": unscheduled_requirement["id"],
+            "message": "Requirement must be scheduled to a version before advancing to this status",
+        },
+        {
+            "code": "REQUIREMENT_STATE_INVALID",
+            "id": accepted_requirement["id"],
+            "message": "Requirement cannot be advanced to target status",
+        },
+        {
+            "code": "DUPLICATE_REQUIREMENT",
+            "id": requirement["id"],
+            "message": "Requirement was already included in this batch",
+        },
+        {
+            "code": "NOT_FOUND",
+            "id": "requirement_missing",
+            "message": "Requirement not found",
+        },
+    ]
+
+    detail = client.get(f"/api/requirements/{requirement['id']}", headers=headers).json()["data"]
+    assert detail["status"] == "ready_for_dev"
+    batch_audits = client.get(
+        f"/api/audit/events?subject_type=requirement_status_batch&subject_id={data['batch_id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert [event["event_type"] for event in batch_audits] == [
+        "requirement.batch_status_advanced"
+    ]
+    requirement_audits = client.get(
+        f"/api/audit/events?event_type=requirement.updated&subject_id={requirement['id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert requirement_audits[0]["payload"]["operation"] == "batch_advance_status"
+    assert requirement_audits[0]["payload"]["to_status"] == "ready_for_dev"
 
 
 def test_batch_generate_tasks_creates_tasks_for_planned_requirements_and_records_audit():

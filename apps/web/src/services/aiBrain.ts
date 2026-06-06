@@ -93,7 +93,15 @@ export type AssistantChatResponse = {
   latencyMs: number;
   messageId: string;
   model: string;
+  references: AssistantReference[];
   suggestions: string[];
+};
+
+export type AssistantReference = {
+  id: string;
+  title: string;
+  type: string;
+  url: string;
 };
 
 export type AssistantConversationSummary = {
@@ -113,6 +121,7 @@ export type AssistantConversationMessage = {
   model?: string;
   productId?: string;
   role: 'assistant' | 'user';
+  references: AssistantReference[];
   suggestions: string[];
 };
 
@@ -122,9 +131,11 @@ type AssistantChatApiResponse = {
   message: {
     content?: string;
     id?: string;
+    references?: AssistantReference[];
     role?: string;
   };
   model?: string;
+  references?: AssistantReference[];
   suggestions?: string[];
 };
 
@@ -145,6 +156,7 @@ type AssistantMessageApiRecord = {
   model?: string;
   product_id?: string;
   role?: string;
+  references?: AssistantReference[];
   suggestions?: string[];
 };
 
@@ -228,6 +240,7 @@ export type RequirementFullChainRecord = {
 export type TaskCenterTaskRecord = {
   createdAt: string;
   createdAtValue?: string;
+  currentStep?: string;
   id: string;
   label: string;
   owner: string;
@@ -267,6 +280,7 @@ export type RequirementListQuery = RemoteListQuery & {
   status?: string;
   title?: string;
   version?: string;
+  versionId?: string;
 };
 
 export type ProductListQuery = RemoteListQuery & {
@@ -333,6 +347,32 @@ export type UserInsightListQuery = RemoteListQuery & {
   summary?: string;
 };
 
+export type UserListQuery = RemoteListQuery & {
+  displayName?: string;
+  role?: string;
+  status?: string;
+  username?: string;
+};
+
+export type RoleListQuery = RemoteListQuery & {
+  businessRole?: string;
+  category?: string;
+  menuScope?: string;
+  permission?: string;
+  role?: string;
+  status?: string;
+};
+
+export type ModelGatewayConfigListQuery = RemoteListQuery & {
+  defaultChatModel?: string;
+  defaultEmbeddingModel?: string;
+  embeddingConnectionMode?: string;
+  isDefault?: string;
+  name?: string;
+  provider?: string;
+  status?: string;
+};
+
 export type RemoteListResult<Row> = {
   page: number;
   pageSize: number;
@@ -345,6 +385,71 @@ export type TaskCenterTaskListResult = {
   pageSize: number;
   rows: TaskCenterTaskRecord[];
   total: number;
+};
+
+export type TaskBatchCancelPayload = {
+  reason?: string;
+  task_ids: string[];
+};
+
+export type TaskBatchRetryPayload = {
+  reason?: string;
+  task_ids: string[];
+};
+
+type TaskBatchSkippedItem = {
+  code: string;
+  id: string;
+  message: string;
+};
+
+type TaskBatchRetriedItem = {
+  current_step?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  id: string;
+  review_id?: string | null;
+  status: string;
+};
+
+type TaskBatchCancelResponse = {
+  batch_id: string;
+  reason?: string | null;
+  skipped: TaskBatchSkippedItem[];
+  skipped_count: number;
+  updated: Array<{ id: string; status: string }>;
+  updated_count: number;
+};
+
+type TaskBatchRetryResponse = {
+  batch_id: string;
+  reason?: string | null;
+  retried: TaskBatchRetriedItem[];
+  retried_count: number;
+  skipped: TaskBatchSkippedItem[];
+  skipped_count: number;
+  updated: TaskBatchRetriedItem[];
+  updated_count: number;
+};
+
+export type TaskBatchCancelResult = {
+  batchId: string;
+  reason?: string | null;
+  skipped: TaskBatchSkippedItem[];
+  skippedCount: number;
+  updated: Array<{ id: string; status: string }>;
+  updatedCount: number;
+};
+
+export type TaskBatchRetryResult = {
+  batchId: string;
+  reason?: string | null;
+  retried: TaskBatchRetriedItem[];
+  retriedCount: number;
+  skipped: TaskBatchSkippedItem[];
+  skippedCount: number;
+  updated: TaskBatchRetriedItem[];
+  updatedCount: number;
 };
 
 export type TaskCenterTaskDetailRecord = TaskCenterTaskRecord & {
@@ -675,6 +780,15 @@ export type DashboardUsageMetricSummary = {
   metricCount: number;
 };
 
+export type DashboardCacheMetadata = {
+  cacheEnabled: boolean;
+  cacheHit: boolean;
+  durationMs: number;
+  generatedAt: string;
+  slow: boolean;
+  ttlSeconds: number;
+};
+
 export type LifecycleRelationRecord = {
   relationType: string;
   subjectId: string;
@@ -706,6 +820,7 @@ export type LifecycleContextRecord = {
 
 export type ItTeamDashboard = {
   bugStatusCounts: DashboardStatusCount[];
+  cacheMetadata: DashboardCacheMetadata;
   gitlabDailySummary: DashboardGitLabSummary;
   iterationSuggestionStatusCounts: DashboardStatusCount[];
   jenkinsReleaseStatusCounts: DashboardStatusCount[];
@@ -936,6 +1051,58 @@ export type RequirementBatchScheduleResult = {
   versionId: string;
 };
 
+export type RequirementBatchAssignOwnerPayload = {
+  assignee: string;
+  reason?: string;
+  requirement_ids: string[];
+};
+
+type RequirementBatchAssignOwnerResponse = {
+  assignee: string;
+  batch_id: string;
+  reason?: string | null;
+  skipped: RequirementBatchSkippedItem[];
+  skipped_count: number;
+  updated: RequirementListItem[];
+  updated_count: number;
+};
+
+export type RequirementBatchAssignOwnerResult = {
+  assignee: string;
+  batchId: string;
+  reason?: string | null;
+  skipped: RequirementBatchSkippedItem[];
+  skippedCount: number;
+  updated: RequirementRecord[];
+  updatedCount: number;
+};
+
+export type RequirementBatchAdvanceStatusPayload = {
+  reason?: string;
+  requirement_ids: string[];
+  target_status: string;
+};
+
+type RequirementBatchAdvanceStatusResponse = {
+  batch_id: string;
+  reason?: string | null;
+  skipped: RequirementBatchSkippedItem[];
+  skipped_count: number;
+  target_status: string;
+  updated: RequirementListItem[];
+  updated_count: number;
+};
+
+export type RequirementBatchAdvanceStatusResult = {
+  batchId: string;
+  reason?: string | null;
+  skipped: RequirementBatchSkippedItem[];
+  skippedCount: number;
+  targetStatus: RequirementRecord['status'];
+  updated: RequirementRecord[];
+  updatedCount: number;
+};
+
 export type RequirementBatchGenerateTasksPayload = {
   product_id: string;
   reason?: string;
@@ -1123,6 +1290,7 @@ export type ModelGatewayConfigTestResult = {
 };
 
 type RequirementListItem = {
+  assignee?: string | null;
   content?: string;
   created_at?: string;
   created_by?: string;
@@ -1252,6 +1420,7 @@ type BugListItem = {
 type TaskListItem = {
   created_at?: string;
   created_by?: string;
+  current_step?: string | null;
   id: string;
   product_id?: string;
   product_name?: string | null;
@@ -1435,6 +1604,16 @@ type DashboardResponse = {
   jenkins_release_status_counts?: Array<{ count?: number; status?: string }>;
   latest_high_severity_bugs?: FlexibleListItem[];
   latest_tasks?: FlexibleListItem[];
+  metadata?: {
+    dashboard_cache?: Partial<{
+      cache_enabled: boolean;
+      cache_hit: boolean;
+      duration_ms: number;
+      generated_at: string;
+      slow: boolean;
+      ttl_seconds: number;
+    }>;
+  };
   online_log_summary?: Partial<{
     error_count: number;
     error_rate: number;
@@ -1560,6 +1739,7 @@ export async function chatWithAssistant(
     latencyMs: Number(response.latency_ms ?? 0),
     messageId: response.message.id ?? response.conversation_id,
     model: response.model ?? '',
+    references: response.message.references ?? response.references ?? [],
     suggestions: response.suggestions ?? [],
   };
 }
@@ -1601,6 +1781,7 @@ export async function fetchAssistantConversationMessages(
     id: item.id ?? conversationId,
     model: item.model,
     productId: item.product_id,
+    references: item.references ?? [],
     role: item.role === 'user' ? 'user' : 'assistant',
     suggestions: item.suggestions ?? [],
   }));
@@ -1926,7 +2107,7 @@ function mapDashboardStatusCounts(
 }
 
 export async function fetchItTeamDashboard(
-  params: { productId?: string; timeRange?: string } = {},
+  params: { forceRefresh?: boolean; productId?: string; timeRange?: string } = {},
 ): Promise<ItTeamDashboard> {
   const token = requireAccessToken();
   const query = new URLSearchParams();
@@ -1936,16 +2117,28 @@ export async function fetchItTeamDashboard(
   if (params.timeRange) {
     query.set('time_range', params.timeRange);
   }
+  if (params.forceRefresh) {
+    query.set('refresh', 'true');
+  }
   const path = query.toString()
     ? `/api/dashboard/it-team?${query.toString()}`
     : '/api/dashboard/it-team';
   const dashboard = await apiRequest<DashboardResponse>(path, { token });
   const summary = dashboard.summary ?? {};
   const gitlabDailySummary = dashboard.gitlab_daily_summary ?? {};
+  const dashboardCache = dashboard.metadata?.dashboard_cache ?? {};
   const onlineLogSummary = dashboard.online_log_summary ?? {};
   const usageMetricSummary = dashboard.usage_metric_summary ?? {};
   return {
     bugStatusCounts: mapDashboardStatusCounts(dashboard.bug_status_counts),
+    cacheMetadata: {
+      cacheEnabled: Boolean(dashboardCache.cache_enabled),
+      cacheHit: Boolean(dashboardCache.cache_hit),
+      durationMs: normalizeDashboardCount(dashboardCache.duration_ms),
+      generatedAt: formatUnknownValue(dashboardCache.generated_at),
+      slow: Boolean(dashboardCache.slow),
+      ttlSeconds: normalizeDashboardCount(dashboardCache.ttl_seconds),
+    },
     gitlabDailySummary: {
       averageQualityScore: normalizeDashboardCount(gitlabDailySummary.average_quality_score),
       changedFiles: normalizeDashboardCount(gitlabDailySummary.changed_files),
@@ -2517,6 +2710,31 @@ export async function fetchRoleDefinitions(): Promise<UserRoleDefinition[]> {
   return roles.items.map(mapRoleDefinition);
 }
 
+export async function fetchRoleDefinitionList(
+  query: RoleListQuery = {},
+): Promise<RemoteListResult<UserRoleDefinition>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'business_role', query.businessRole);
+  appendQueryParam(params, 'category', query.category);
+  appendQueryParam(params, 'menu_scope', query.menuScope);
+  appendQueryParam(params, 'permission', query.permission);
+  appendQueryParam(params, 'role', query.role);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const roles = await apiRequest<ListResponse<RoleDefinitionListItem>>(
+    queryString ? `/api/auth/roles?${queryString}` : '/api/auth/roles',
+    { token },
+  );
+  return {
+    page: roles.page ?? query.page ?? 1,
+    pageSize: roles.page_size ?? query.pageSize ?? 10,
+    rows: roles.items.map(mapRoleDefinition),
+    total: roles.total,
+  };
+}
+
 export async function fetchManagementUsers(
   roleDefinitions: UserRoleDefinition[] = [],
 ): Promise<UserRecord[]> {
@@ -2534,6 +2752,41 @@ export async function fetchManagementUsers(
       username: user.username,
     };
   });
+}
+
+export async function fetchManagementUserList(
+  roleDefinitions: UserRoleDefinition[] = [],
+  query: UserListQuery = {},
+): Promise<RemoteListResult<UserRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'display_name', query.displayName);
+  appendQueryParam(params, 'role', query.role);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'username', query.username);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const users = await apiRequest<ListResponse<UserListItem>>(
+    queryString ? `/api/users?${queryString}` : '/api/users',
+    { token },
+  );
+
+  return {
+    page: users.page ?? query.page ?? 1,
+    pageSize: users.page_size ?? query.pageSize ?? 10,
+    rows: users.items.map((user) => {
+      const roles = user.roles ?? [];
+      return {
+        displayName: user.display_name,
+        id: user.id,
+        roles,
+        rolesText: formatUserRoles(roles, roleDefinitions),
+        status: user.status === 'inactive' ? 'inactive' : 'active',
+        username: user.username,
+      };
+    }),
+    total: users.total,
+  };
 }
 
 export async function createManagementUser(payload: UserMutationPayload) {
@@ -2585,6 +2838,32 @@ function mapModelGatewayConfig(config: ModelGatewayConfigListItem): ModelGateway
     provider: config.provider ?? '-',
     status: normalizeModelGatewayStatus(config.status),
     timeoutSeconds: config.timeout_seconds ?? 0,
+  };
+}
+
+export async function fetchModelGatewayConfigList(
+  query: ModelGatewayConfigListQuery = {},
+): Promise<RemoteListResult<ModelGatewayConfigRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'default_chat_model', query.defaultChatModel);
+  appendQueryParam(params, 'default_embedding_model', query.defaultEmbeddingModel);
+  appendQueryParam(params, 'embedding_connection_mode', query.embeddingConnectionMode);
+  appendQueryParam(params, 'is_default', query.isDefault);
+  appendQueryParam(params, 'name', query.name);
+  appendQueryParam(params, 'provider', query.provider);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const configs = await apiRequest<ListResponse<ModelGatewayConfigListItem>>(
+    queryString ? `/api/system/model-gateway-configs?${queryString}` : '/api/system/model-gateway-configs',
+    { token },
+  );
+  return {
+    page: configs.page ?? query.page ?? 1,
+    pageSize: configs.page_size ?? query.pageSize ?? 10,
+    rows: configs.items.map(mapModelGatewayConfig),
+    total: configs.total,
   };
 }
 
@@ -2645,7 +2924,7 @@ function mapRequirementRecord(requirement: RequirementListItem): RequirementReco
     content: requirement.content,
     id: requirement.id,
     moduleCode: requirement.module_code ?? undefined,
-    owner: requirement.created_by ?? '-',
+    owner: requirement.assignee ?? requirement.created_by ?? '-',
     priority: normalizePriority(requirement.priority),
     product: requirement.product_code ?? requirement.product_name ?? requirement.product_id,
     productId: requirement.product_id,
@@ -2664,6 +2943,7 @@ function mapTaskRecord(task: TaskListItem): TaskCenterTaskRecord {
   return {
     createdAt: formatListDate(task.created_at ?? task.updated_at),
     createdAtValue: task.created_at ?? task.updated_at,
+    currentStep: task.current_step ?? undefined,
     id: task.id,
     label: task.title ?? task.task_type ?? task.id,
     owner: task.created_by ?? '-',
@@ -2774,6 +3054,7 @@ export async function fetchManagementRequirementList(
   appendQueryParam(params, 'status', query.status);
   appendQueryParam(params, 'title', query.title);
   appendQueryParam(params, 'version', query.version);
+  appendQueryParam(params, 'version_id', query.versionId);
   appendRemoteListParams(params, query);
   const queryString = params.toString();
   const requirements = await apiRequest<ListResponse<RequirementListItem>>(
@@ -2843,6 +3124,52 @@ export async function batchScheduleRequirements(
     updated: result.updated.map(mapRequirementRecord),
     updatedCount: result.updated_count,
     versionId: result.version_id,
+  };
+}
+
+export async function batchAssignRequirementOwner(
+  payload: RequirementBatchAssignOwnerPayload,
+): Promise<RequirementBatchAssignOwnerResult> {
+  const token = requireAccessToken();
+  const result = await apiRequest<RequirementBatchAssignOwnerResponse>(
+    '/api/requirements/batch-assign-owner',
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return {
+    assignee: result.assignee,
+    batchId: result.batch_id,
+    reason: result.reason,
+    skipped: result.skipped,
+    skippedCount: result.skipped_count,
+    updated: result.updated.map(mapRequirementRecord),
+    updatedCount: result.updated_count,
+  };
+}
+
+export async function batchAdvanceRequirementStatus(
+  payload: RequirementBatchAdvanceStatusPayload,
+): Promise<RequirementBatchAdvanceStatusResult> {
+  const token = requireAccessToken();
+  const result = await apiRequest<RequirementBatchAdvanceStatusResponse>(
+    '/api/requirements/batch-advance-status',
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return {
+    batchId: result.batch_id,
+    reason: result.reason,
+    skipped: result.skipped,
+    skippedCount: result.skipped_count,
+    targetStatus: normalizeRequirementStatus(result.target_status),
+    updated: result.updated.map(mapRequirementRecord),
+    updatedCount: result.updated_count,
   };
 }
 
@@ -3330,6 +3657,46 @@ export async function startTaskCenterTask(taskId: string) {
     method: 'POST',
     token,
   });
+}
+
+export async function batchCancelTaskCenterTasks(
+  payload: TaskBatchCancelPayload,
+): Promise<TaskBatchCancelResult> {
+  const token = requireAccessToken();
+  const result = await apiRequest<TaskBatchCancelResponse>('/api/ai-tasks/batch-cancel', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+  return {
+    batchId: result.batch_id,
+    reason: result.reason,
+    skipped: result.skipped,
+    skippedCount: result.skipped_count,
+    updated: result.updated,
+    updatedCount: result.updated_count,
+  };
+}
+
+export async function batchRetryTaskCenterTasks(
+  payload: TaskBatchRetryPayload,
+): Promise<TaskBatchRetryResult> {
+  const token = requireAccessToken();
+  const result = await apiRequest<TaskBatchRetryResponse>('/api/ai-tasks/batch-retry', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+  return {
+    batchId: result.batch_id,
+    reason: result.reason,
+    retried: result.retried,
+    retriedCount: result.retried_count,
+    skipped: result.skipped,
+    skippedCount: result.skipped_count,
+    updated: result.updated,
+    updatedCount: result.updated_count,
+  };
 }
 
 export async function fetchTaskCenterPendingReviews(): Promise<TaskCenterReviewRecord[]> {

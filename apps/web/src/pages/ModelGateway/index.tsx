@@ -16,17 +16,23 @@ import {
   Switch,
   message,
 } from 'antd';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
+import type { ManagementListQuery } from '../../components/ManagementListPage';
 import type { ModelGatewayConfigRecord } from '../../data/management';
-import { formatRemoteRowsError, useRemoteRows } from '../../hooks/useRemoteRows';
+import {
+  formatRemoteRowsError,
+  normalizeRemoteRowsError,
+  type RemoteRowsError,
+} from '../../hooks/useRemoteRows';
 import {
   createModelGatewayConfig,
   deleteModelGatewayConfig,
-  fetchModelGatewayConfigs,
+  fetchModelGatewayConfigList,
   testModelGatewayConfig,
   updateModelGatewayConfig,
+  type ModelGatewayConfigListQuery,
   type ModelGatewayConfigTestResult,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -79,6 +85,43 @@ const embeddingModeLabels: Record<ModelGatewayFormValues['embedding_connection_m
   reuse_chat: '复用 Chat',
 };
 
+const modelGatewaySortFieldMap: Record<string, string> = {
+  baseUrl: 'base_url',
+  defaultChatModel: 'default_chat_model',
+  defaultEmbeddingModel: 'default_embedding_model',
+  embeddingConnectionMode: 'embedding_connection_mode',
+  id: 'id',
+  isDefault: 'is_default',
+  name: 'name',
+  provider: 'provider',
+  status: 'status',
+};
+
+function normalizeFilterText(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function buildModelGatewayListQuery(query: ManagementListQuery): ModelGatewayConfigListQuery {
+  const filters = query.filters ?? {};
+  return {
+    defaultChatModel: normalizeFilterText(filters.defaultChatModel),
+    defaultEmbeddingModel: normalizeFilterText(filters.defaultEmbeddingModel),
+    embeddingConnectionMode: normalizeFilterText(filters.embeddingConnectionMode),
+    isDefault: normalizeFilterText(filters.isDefault),
+    name: normalizeFilterText(filters.name),
+    page: query.page,
+    pageSize: query.pageSize,
+    provider: normalizeFilterText(filters.provider),
+    sortField: query.sortField ? (modelGatewaySortFieldMap[query.sortField] ?? query.sortField) : undefined,
+    sortOrder: query.sortOrder,
+    status: normalizeFilterText(filters.status),
+  };
+}
+
 function formatTestStatus(result: ModelGatewayConfigTestResult['chat'] | ModelGatewayConfigTestResult['embedding']) {
   if (result.status === 'skipped') {
     return '跳过';
@@ -94,12 +137,77 @@ export default function ModelGatewayPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<ModelGatewayConfigTestResult | null>(null);
-  const {
-    error,
-    reload,
-    rows: dataSource,
-    status,
-  } = useRemoteRows(fetchModelGatewayConfigs);
+  const [listQuery, setListQuery] = useState<ManagementListQuery>({
+    filters: {},
+    page: 1,
+    pageSize: 10,
+    sortField: 'name',
+    sortOrder: 'ascend',
+  });
+  const [listState, setListState] = useState<{
+    error?: RemoteRowsError;
+    page: number;
+    pageSize: number;
+    rows: ModelGatewayConfigRecord[];
+    status: 'error' | 'loading' | 'ready';
+    total: number;
+  }>({
+    page: 1,
+    pageSize: 10,
+    rows: [],
+    status: 'loading',
+    total: 0,
+  });
+  const reload = useCallback(async () => {
+    setListState((current) => ({ ...current, status: 'loading' }));
+    try {
+      const result = await fetchModelGatewayConfigList(buildModelGatewayListQuery(listQuery));
+      setListState({
+        page: result.page,
+        pageSize: result.pageSize,
+        rows: result.rows,
+        status: 'ready',
+        total: result.total,
+      });
+    } catch (loadError: unknown) {
+      setListState((current) => ({
+        ...current,
+        error: normalizeRemoteRowsError(loadError),
+        rows: [],
+        status: 'error',
+      }));
+    }
+  }, [listQuery]);
+  useEffect(() => {
+    let isCurrent = true;
+    setListState((current) => ({ ...current, status: 'loading' }));
+    fetchModelGatewayConfigList(buildModelGatewayListQuery(listQuery))
+      .then((result) => {
+        if (isCurrent) {
+          setListState({
+            page: result.page,
+            pageSize: result.pageSize,
+            rows: result.rows,
+            status: 'ready',
+            total: result.total,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (isCurrent) {
+          setListState((current) => ({
+            ...current,
+            error: normalizeRemoteRowsError(loadError),
+            rows: [],
+            status: 'error',
+          }));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [listQuery]);
+  const dataSource = listState.rows;
 
   const openCreateModal = () => {
     setEditingConfig(null);
@@ -313,12 +421,23 @@ export default function ModelGatewayPage() {
         filters={[
           { label: '配置名称', name: 'name', type: 'text' },
           { label: 'Provider', name: 'provider', type: 'text' },
+          { label: 'Chat 模型', name: 'defaultChatModel', type: 'text' },
           {
             label: '状态',
             name: 'status',
             options: [
               { label: '启用', value: 'active' },
               { label: '停用', value: 'inactive' },
+            ],
+            type: 'select',
+          },
+          {
+            label: 'Embedding 连接',
+            name: 'embeddingConnectionMode',
+            options: [
+              { label: '禁用', value: 'disabled' },
+              { label: '复用 Chat', value: 'reuse_chat' },
+              { label: '单独配置', value: 'custom' },
             ],
             type: 'select',
           },
@@ -332,12 +451,19 @@ export default function ModelGatewayPage() {
             type: 'select',
           },
         ]}
-        loading={status === 'loading'}
-        notice={formatRemoteRowsError(error)}
+        loading={listState.status === 'loading'}
+        notice={formatRemoteRowsError(listState.error)}
         onPrimaryAction={openCreateModal}
         onReload={() => void reload()}
         primaryAction="新增配置"
+        remote={{
+          onChange: setListQuery,
+          page: listState.page,
+          pageSize: listState.pageSize,
+          total: listState.total,
+        }}
         rowKey="id"
+        tableLayout="fixed"
         tableTitle="模型网关配置"
         title="模型网关"
       />

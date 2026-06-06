@@ -194,7 +194,11 @@ def test_review_detail_cancel_task_and_knowledge_document_list_contracts():
     ).json()["data"]
     assert cancelled["status"] == "cancelled"
 
-    second_context = create_draft_task(headers)
+    second_context = create_draft_task(
+        headers,
+        product_code="rd-platform-batch-cancel-2",
+        reset_store=False,
+    )
     started = client.post(
         f"/api/ai-tasks/{second_context['task_id']}/start",
         headers=headers,
@@ -213,6 +217,138 @@ def test_review_detail_cancel_task_and_knowledge_document_list_contracts():
     ).json()["data"]
     documents = client.get("/api/knowledge/documents", headers=headers).json()["data"]
     assert [item["id"] for item in documents["items"]] == [document["id"]]
+
+
+def test_ai_task_batch_cancel_updates_valid_tasks_and_skips_terminal_tasks():
+    headers = auth_headers()
+    first_context = create_draft_task(headers)
+    second_context = create_draft_task(
+        headers,
+        product_code="rd-platform-batch-cancel-2",
+        reset_store=False,
+    )
+    started = client.post(
+        f"/api/ai-tasks/{second_context['task_id']}/start",
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        f"/api/reviews/{started['review_id']}/approve",
+        json={"version": 1},
+        headers=headers,
+    )
+
+    result = client.post(
+        "/api/ai-tasks/batch-cancel",
+        json={
+            "reason": "批量取消过期任务",
+            "task_ids": [
+                first_context["task_id"],
+                second_context["task_id"],
+                first_context["task_id"],
+                "task_missing",
+            ],
+        },
+        headers=headers,
+    ).json()["data"]
+
+    assert result["updated_count"] == 1
+    assert result["skipped_count"] == 3
+    assert result["updated"] == [{"id": first_context["task_id"], "status": "cancelled"}]
+    assert result["skipped"] == [
+        {
+            "code": "TASK_STATE_INVALID",
+            "id": second_context["task_id"],
+            "message": "Task cannot be cancelled from current status",
+        },
+        {
+            "code": "DUPLICATE_TASK",
+            "id": first_context["task_id"],
+            "message": "Task was already included in this batch",
+        },
+        {
+            "code": "NOT_FOUND",
+            "id": "task_missing",
+            "message": "AI task not found",
+        },
+    ]
+    assert client.get(
+        f"/api/ai-tasks/{first_context['task_id']}",
+        headers=headers,
+    ).json()["data"]["status"] == "cancelled"
+    assert client.get(
+        f"/api/ai-tasks/{second_context['task_id']}",
+        headers=headers,
+    ).json()["data"]["status"] == "completed"
+
+
+def test_ai_task_batch_retry_restarts_retryable_failed_tasks_and_skips_invalid_items():
+    headers = auth_headers()
+    retry_context = create_draft_task(headers)
+    terminal_context = create_draft_task(
+        headers,
+        product_code="rd-platform-batch-retry-2",
+        reset_store=False,
+    )
+    started = client.post(
+        f"/api/ai-tasks/{terminal_context['task_id']}/start",
+        headers=headers,
+    ).json()["data"]
+    client.post(
+        f"/api/reviews/{started['review_id']}/approve",
+        json={"version": 1},
+        headers=headers,
+    )
+    retry_task = app.state.store.ai_tasks[retry_context["task_id"]]
+    retry_task["status"] = "failed"
+    retry_task["current_step"] = "model_gateway_failed"
+
+    result = client.post(
+        "/api/ai-tasks/batch-retry",
+        json={
+            "reason": "批量重试模型网关失败任务",
+            "task_ids": [
+                retry_context["task_id"],
+                terminal_context["task_id"],
+                retry_context["task_id"],
+                "task_missing",
+            ],
+        },
+        headers=headers,
+    ).json()["data"]
+
+    assert result["retried_count"] == 1
+    assert result["updated_count"] == 1
+    assert result["skipped_count"] == 3
+    assert result["updated"][0]["id"] == retry_context["task_id"]
+    assert result["updated"][0]["status"] == "waiting_review"
+    assert result["updated"][0]["review_id"].startswith("review_")
+    assert result["skipped"] == [
+        {
+            "code": "TASK_STATE_INVALID",
+            "id": terminal_context["task_id"],
+            "message": "Task cannot be retried from current status",
+        },
+        {
+            "code": "DUPLICATE_TASK",
+            "id": retry_context["task_id"],
+            "message": "Task was already included in this batch",
+        },
+        {
+            "code": "NOT_FOUND",
+            "id": "task_missing",
+            "message": "AI task not found",
+        },
+    ]
+    retry_detail = client.get(
+        f"/api/ai-tasks/{retry_context['task_id']}",
+        headers=headers,
+    ).json()["data"]
+    assert retry_detail["status"] == "waiting_review"
+    audit_events = client.get(
+        f"/api/audit/events?ai_task_id={retry_context['task_id']}",
+        headers=headers,
+    ).json()["data"]["items"]
+    assert "ai_task.retry_started" in [event["event_type"] for event in audit_events]
 
 
 def test_knowledge_document_list_supports_server_pagination_sort_and_filters():

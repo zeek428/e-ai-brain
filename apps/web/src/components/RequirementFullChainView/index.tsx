@@ -1,6 +1,8 @@
-import { Descriptions, Space, Tag, Timeline, Typography } from 'antd';
+import { Button, Collapse, Descriptions, Select, Space, Tag, Timeline, Typography } from 'antd';
+import { useMemo, useState } from 'react';
 
 import { StatusTag } from '../ManagementListPage';
+import type { RequirementRecord } from '../../data/management';
 import type { RequirementFullChainRecord } from '../../services/aiBrain';
 
 const fullChainTypeLabels: Record<string, string> = {
@@ -61,7 +63,7 @@ const iterationVersionStatusLabels: Record<string, { color: string; label: strin
   testing: { color: 'purple', label: '测试中' },
 };
 
-const { Text } = Typography;
+const { Link, Text } = Typography;
 
 function fullChainTypeLabel(type: string) {
   return fullChainTypeLabels[type] ?? type;
@@ -186,23 +188,347 @@ function formatSnapshotRisk(snapshot: RequirementFullChainRecord['gitSnapshots']
   }/-${summary.totalDeletions ?? 0} · ${largestFile}`;
 }
 
-export function RequirementFullChainView({ fullChain }: { fullChain: RequirementFullChainRecord }) {
+function markdownValue(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return '-';
+  }
+  return String(value).replaceAll('|', '\\|').replace(/\r?\n/g, ' ');
+}
+
+function markdownList<T>(items: T[], renderItem: (item: T) => string) {
+  if (!items.length) {
+    return '- 暂无关联记录';
+  }
+  return items.map(renderItem).join('\n');
+}
+
+function buildFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
+  const requirementStatus = formatRequirementStatus(fullChain.requirement.status);
+  const iterationVersion = fullChain.iterationVersion;
+  const productName = `${fullChain.product?.code ?? fullChain.requirement.product}${
+    fullChain.product?.name ? ` · ${fullChain.product.name}` : ''
+  }`;
+  const versionName = iterationVersion
+    ? `${iterationVersion.code ?? iterationVersion.id} · ${iterationVersion.name ?? iterationVersion.id} · ${formatIterationVersionStatus(
+        iterationVersion.status,
+      )}`
+    : '未排期';
+
+  return [
+    `# 需求全链路报告：${fullChain.requirement.title}`,
+    '',
+    `生成时间：${new Date().toISOString()}`,
+    '',
+    '## 链路摘要',
+    '',
+    `- 需求：${fullChain.requirement.title} (${fullChain.requirement.id})`,
+    `- 状态：${requirementStatus}`,
+    `- 产品：${productName}`,
+    `- 迭代版本：${versionName}`,
+    `- AI 任务：${fullChain.summary.aiTasks}`,
+    `- Review：${fullChain.summary.reviews}`,
+    `- PR/MR 快照：${fullChain.summary.gitSnapshots}`,
+    `- 代码评审：${fullChain.summary.codeReviewReports}`,
+    `- Bug：${fullChain.summary.bugs}`,
+    `- 发布记录：${fullChain.summary.jenkinsReleases}`,
+    `- 知识沉淀：${fullChain.summary.knowledgeDeposits}`,
+    '',
+    '## 阶段明细',
+    '',
+    '### AI 任务',
+    markdownList(
+      fullChain.aiTasks,
+      (task) => `- ${task.label} (${task.id}) · ${taskTypeLabels[task.type] ?? task.type} · ${task.status}`,
+    ),
+    '',
+    '### Review',
+    markdownList(
+      fullChain.reviews,
+      (review) => `- ${review.aiTaskId ? `${review.aiTaskId} · ` : ''}${review.id} · ${review.status} · ${review.createdAt}`,
+    ),
+    '',
+    '### PR/MR 快照',
+    markdownList(
+      fullChain.gitSnapshots,
+      (snapshot) => `- ${snapshot.id} · MR/PR ${snapshot.mrIid} · ${formatSnapshotRisk(snapshot)}`,
+    ),
+    '',
+    '### 代码评审',
+    markdownList(
+      fullChain.codeReviewReports,
+      (report) => `- ${report.summary || `代码评审：${report.id}`} (${report.id}) · ${report.status} · ${formatRiskLevel(report.riskLevel)}风险`,
+    ),
+    '',
+    '### Bug',
+    markdownList(fullChain.bugs, (bug) => `- ${bug.title} (${bug.id}) · ${bug.severity} · ${bug.status}`),
+    '',
+    '### 发布记录',
+    markdownList(
+      fullChain.jenkinsReleases,
+      (release) =>
+        `- ${release.jobName ? `${release.jobName} · ` : ''}${release.buildId ?? release.id} (${release.id}) · ${release.status}`,
+    ),
+    '',
+    '### 知识沉淀',
+    markdownList(
+      fullChain.knowledgeDeposits,
+      (deposit) => `- ${deposit.title} (${deposit.id}) · ${deposit.status}`,
+    ),
+    '',
+    '## 时间线',
+    '',
+    '| 时间 | 类型 | 标题 | 状态 | 关联对象 |',
+    '| --- | --- | --- | --- | --- |',
+    ...fullChain.timeline.map(
+      (item) =>
+        `| ${markdownValue(item.occurredAt)} | ${markdownValue(fullChainTypeLabel(item.type))} | ${markdownValue(
+          item.title,
+        )} | ${markdownValue(item.status)} | ${markdownValue(item.subjectId)} |`,
+    ),
+    '',
+  ].join('\n');
+}
+
+function downloadFullChainMarkdownReport(fullChain: RequirementFullChainRecord) {
+  const report = buildFullChainMarkdownReport(fullChain);
+  const blob = new Blob([report], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `requirement-full-chain-${fullChain.requirement.id}.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildVersionRequirementStats(requirements: RequirementRecord[]) {
+  return requirements.reduce<Record<string, number>>((stats, requirement) => {
+    stats[requirement.status] = (stats[requirement.status] ?? 0) + 1;
+    return stats;
+  }, {});
+}
+
+function withQuery(path: string, key: string, value: string) {
+  return `${path}?${key}=${encodeURIComponent(value)}`;
+}
+
+function renderEntityDetail({
+  href,
+  linkLabel,
+  meta,
+  title,
+}: {
+  href: string;
+  linkLabel: string;
+  meta: string;
+  title: string;
+}) {
+  return (
+    <Space key={`${href}-${title}`} orientation="vertical" size={2}>
+      <Text>{title}</Text>
+      <Space size={8} wrap>
+        <Text type="secondary">{meta}</Text>
+        <Link href={href}>{linkLabel}</Link>
+      </Space>
+    </Space>
+  );
+}
+
+function renderEmptyStage() {
+  return <Text type="secondary">暂无关联记录</Text>;
+}
+
+function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
+  const requirement = fullChain.requirement;
+  const iterationVersion = fullChain.iterationVersion;
+  const items = [
+    {
+      children: renderEntityDetail({
+        href: withQuery('/delivery/requirements', 'requirement_id', requirement.id),
+        linkLabel: `查看需求 ${requirement.id}`,
+        meta: `${formatRequirementStatus(requirement.status)} · ${requirement.createdAt}`,
+        title: requirement.title,
+      }),
+      key: 'requirement',
+      label: '需求',
+    },
+    {
+      children: iterationVersion
+        ? renderEntityDetail({
+            href: withQuery('/delivery/versions', 'version_id', iterationVersion.id),
+            linkLabel: `查看迭代 ${iterationVersion.id}`,
+            meta: `${formatIterationVersionStatus(iterationVersion.status)} · ${iterationVersion.id}`,
+            title: iterationVersion.name ?? iterationVersion.code ?? iterationVersion.id,
+          })
+        : renderEmptyStage(),
+      key: 'iteration_version',
+      label: '迭代版本',
+    },
+    {
+      children: fullChain.aiTasks.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.aiTasks.map((task) =>
+            renderEntityDetail({
+              href: withQuery('/tasks/management', 'task_id', task.id),
+              linkLabel: `查看任务 ${task.id}`,
+              meta: `${taskTypeLabels[task.type] ?? task.type} · ${task.status} · ${task.createdAt}`,
+              title: task.label,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'ai_tasks',
+      label: `AI 任务 (${fullChain.aiTasks.length})`,
+    },
+    {
+      children: fullChain.reviews.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.reviews.map((review) =>
+            renderEntityDetail({
+              href: withQuery('/tasks/management', 'review_id', review.id),
+              linkLabel: `查看 Review ${review.id}`,
+              meta: `${review.status} · ${review.createdAt}`,
+              title: review.aiTaskId ? `人工确认：${review.aiTaskId}` : `人工确认：${review.id}`,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'reviews',
+      label: `Review (${fullChain.reviews.length})`,
+    },
+    {
+      children: fullChain.gitSnapshots.length || fullChain.codeReviewReports.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.gitSnapshots.map((snapshot) =>
+            renderEntityDetail({
+              href: withQuery('/tasks/management', 'git_snapshot_id', snapshot.id),
+              linkLabel: `查看快照 ${snapshot.id}`,
+              meta: `MR/PR ${snapshot.mrIid} · ${formatSnapshotRisk(snapshot)}`,
+              title: `PR/MR 快照：${snapshot.id}`,
+            }),
+          )}
+          {fullChain.codeReviewReports.map((report) =>
+            renderEntityDetail({
+              href: withQuery('/tasks/management', 'code_review_report_id', report.id),
+              linkLabel: `查看代码评审 ${report.id}`,
+              meta: `${report.status} · ${formatRiskLevel(report.riskLevel)}风险`,
+              title: report.summary || `代码评审：${report.id}`,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'code_review',
+      label: `PR/代码评审 (${fullChain.gitSnapshots.length + fullChain.codeReviewReports.length})`,
+    },
+    {
+      children: fullChain.bugs.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.bugs.map((bug) =>
+            renderEntityDetail({
+              href: withQuery('/delivery/bugs', 'bug_id', bug.id),
+              linkLabel: `查看 Bug ${bug.id}`,
+              meta: `${bug.severity} · ${bug.status} · ${bug.createdAt}`,
+              title: bug.title,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'bugs',
+      label: `Bug (${fullChain.bugs.length})`,
+    },
+    {
+      children: fullChain.jenkinsReleases.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.jenkinsReleases.map((release) =>
+            renderEntityDetail({
+              href: withQuery('/governance/devops', 'release_id', release.id),
+              linkLabel: `查看发布 ${release.id}`,
+              meta: `${release.status} · ${release.createdAt}`,
+              title: release.jobName ? `${release.jobName} · ${release.buildId ?? release.id}` : release.id,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'jenkins_releases',
+      label: `发布 (${fullChain.jenkinsReleases.length})`,
+    },
+    {
+      children: fullChain.knowledgeDeposits.length ? (
+        <Space orientation="vertical" size={10}>
+          {fullChain.knowledgeDeposits.map((deposit) =>
+            renderEntityDetail({
+              href: withQuery('/knowledge/documents', 'deposit_id', deposit.id),
+              linkLabel: `查看知识沉淀 ${deposit.id}`,
+              meta: `${deposit.status} · ${deposit.id}`,
+              title: deposit.title,
+            }),
+          )}
+        </Space>
+      ) : (
+        renderEmptyStage()
+      ),
+      key: 'knowledge_deposits',
+      label: `知识沉淀 (${fullChain.knowledgeDeposits.length})`,
+    },
+  ];
+  return items;
+}
+
+export function RequirementFullChainView({
+  fullChain,
+  versionRequirements = [],
+}: {
+  fullChain: RequirementFullChainRecord;
+  versionRequirements?: RequirementRecord[];
+}) {
+  const [timelineTypeFilters, setTimelineTypeFilters] = useState<string[]>([]);
   const stageItems = buildFullChainStageItems(fullChain);
   const firstPendingIndex = stageItems.findIndex((item) => item.status === 'wait');
   const requirementStatus = requirementStatusLabels[fullChain.requirement.status];
+  const versionRequirementStats = useMemo(
+    () => buildVersionRequirementStats(versionRequirements),
+    [versionRequirements],
+  );
+  const timelineTypeOptions = useMemo(
+    () =>
+      Array.from(new Set(fullChain.timeline.map((item) => item.type))).map((type) => ({
+        label: fullChainTypeLabel(type),
+        value: type,
+      })),
+    [fullChain.timeline],
+  );
+  const visibleTimeline = timelineTypeFilters.length
+    ? fullChain.timeline.filter((item) => timelineTypeFilters.includes(item.type))
+    : fullChain.timeline;
 
   return (
     <Space className="requirement-full-chain-view" orientation="vertical" size={16} style={{ width: '100%' }}>
       <section aria-label="需求链路摘要" className="requirement-full-chain-summary">
         <div className="requirement-full-chain-summary-label">需求</div>
         <div className="requirement-full-chain-summary-value requirement-full-chain-summary-wide">
-          <Space size={8} wrap>
-            <Text strong>{fullChain.requirement.title}</Text>
-            <Tag>{fullChain.requirement.id}</Tag>
-            <StatusTag
-              color={requirementStatus?.color ?? 'default'}
-              label={requirementStatus?.label ?? fullChain.requirement.status}
-            />
+          <Space align="center" size={8} wrap>
+            <Space size={8} wrap>
+              <Text strong>{fullChain.requirement.title}</Text>
+              <Tag>{fullChain.requirement.id}</Tag>
+              <StatusTag
+                color={requirementStatus?.color ?? 'default'}
+                label={requirementStatus?.label ?? fullChain.requirement.status}
+              />
+            </Space>
+            <Button onClick={() => downloadFullChainMarkdownReport(fullChain)} size="small">
+              导出链路报告
+            </Button>
           </Space>
         </div>
         <div className="requirement-full-chain-summary-label">产品</div>
@@ -294,25 +620,112 @@ export function RequirementFullChainView({ fullChain }: { fullChain: Requirement
           </div>
         </Space>
       </section>
-      <Timeline
-        items={fullChain.timeline.map((item) => ({
-          content: (
-            <Space orientation="vertical" size={2}>
-              <Space size={8} wrap>
-                <Tag color={fullChainTypeColors[item.type] ?? 'default'}>
-                  {fullChainTypeLabel(item.type)}
-                </Tag>
-                <Text strong>{item.title}</Text>
-                {renderTimelineStatusTag(item.type, item.status)}
-              </Space>
+      <section aria-label="全链路阶段明细">
+        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+          <Text strong>阶段明细</Text>
+          <Collapse
+            defaultActiveKey={[
+              'requirement',
+              'iteration_version',
+              'ai_tasks',
+              'reviews',
+              'code_review',
+              'bugs',
+              'jenkins_releases',
+              'knowledge_deposits',
+            ]}
+            items={buildStageDetailItems(fullChain)}
+            size="small"
+          />
+        </Space>
+      </section>
+      {versionRequirements.length ? (
+        <section aria-label="版本内需求对比">
+          <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+            <Space align="center" size={8} wrap>
+              <Text strong>版本内需求对比</Text>
               <Text type="secondary">
-                {item.occurredAt} · {item.subjectId}
+                当前版本共 {versionRequirements.length} 条需求，当前需求 {fullChain.requirement.id}
               </Text>
             </Space>
-          ),
-          color: fullChainTypeColors[item.type] ?? 'blue',
-        }))}
-      />
+            <Space size={[4, 4]} wrap>
+              {Object.entries(versionRequirementStats).map(([status, count]) => {
+                const statusLabel = requirementStatusLabels[status];
+                return (
+                  <StatusTag
+                    key={status}
+                    color={statusLabel?.color ?? 'default'}
+                    label={`${statusLabel?.label ?? status} ${count}`}
+                  />
+                );
+              })}
+            </Space>
+            <Descriptions bordered column={1} size="small">
+              {versionRequirements.slice(0, 8).map((requirement) => {
+                const statusLabel = requirementStatusLabels[requirement.status];
+                return (
+                  <Descriptions.Item
+                    key={requirement.id}
+                    label={requirement.id === fullChain.requirement.id ? '当前需求' : requirement.id}
+                  >
+                    <Space size={8} wrap>
+                      <Text strong={requirement.id === fullChain.requirement.id}>{requirement.title}</Text>
+                      <StatusTag
+                        color={statusLabel?.color ?? 'default'}
+                        label={statusLabel?.label ?? requirement.status}
+                      />
+                      <Tag>{requirement.priority}</Tag>
+                    </Space>
+                  </Descriptions.Item>
+                );
+              })}
+            </Descriptions>
+          </Space>
+        </section>
+      ) : null}
+      <section aria-label="全链路时间线">
+        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+          <Space align="center" size={12} wrap>
+            <Text strong>时间线</Text>
+            <Select
+              allowClear
+              aria-label="时间线类型筛选"
+              mode="multiple"
+              onChange={setTimelineTypeFilters}
+              options={timelineTypeOptions}
+              placeholder="按类型筛选"
+              style={{ minWidth: 260 }}
+              value={timelineTypeFilters}
+            />
+            <Text type="secondary">
+              {visibleTimeline.length} / {fullChain.timeline.length} 个事件
+            </Text>
+          </Space>
+          {visibleTimeline.length ? (
+            <Timeline
+              items={visibleTimeline.map((item) => ({
+                content: (
+                  <Space orientation="vertical" size={2}>
+                    <Space size={8} wrap>
+                      <Tag color={fullChainTypeColors[item.type] ?? 'default'}>
+                        {fullChainTypeLabel(item.type)}
+                      </Tag>
+                      <Text strong>{item.title}</Text>
+                      {renderTimelineStatusTag(item.type, item.status)}
+                    </Space>
+                    <Text type="secondary">
+                      {item.occurredAt} · {item.subjectId}
+                    </Text>
+                  </Space>
+                ),
+                color: fullChainTypeColors[item.type] ?? 'blue',
+              }))}
+            />
+          ) : (
+            renderEmptyStage()
+          )}
+        </Space>
+      </section>
       {fullChain.aiTasks.length ? (
         <Descriptions bordered column={2} size="small" title="AI 任务明细">
           {fullChain.aiTasks.map((task) => (

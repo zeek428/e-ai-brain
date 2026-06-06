@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS assistant_messages (
   product_id text,
   model text,
   suggestions jsonb NOT NULL DEFAULT '[]'::jsonb,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );

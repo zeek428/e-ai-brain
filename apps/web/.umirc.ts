@@ -23,5 +23,5 @@ export default defineConfig({
   },
   request: {},
   routes,
-  title: 'AI Brain',
+  title: 'Enterprise AI Brain',
 });

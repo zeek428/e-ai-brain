@@ -83,7 +83,7 @@ export const layout = ({ initialState }: { initialState?: InitialState }) => ({
   menu: {
     locale: false,
   },
-  menuFooterRender: () => <span className="menu-footer">AI Brain v1</span>,
+  menuFooterRender: () => <span className="menu-footer">Enterprise AI Brain v1</span>,
   navTheme: 'light',
   onPageChange: () => {
     redirectToLoginIfNeeded();

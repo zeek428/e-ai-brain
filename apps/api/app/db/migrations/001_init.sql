@@ -351,6 +351,7 @@ CREATE TABLE IF NOT EXISTS assistant_messages (
   product_id text,
   model text,
   suggestions jsonb NOT NULL DEFAULT '[]'::jsonb,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -365,6 +366,7 @@ CREATE TABLE IF NOT EXISTS requirements (
   description text NOT NULL,
   priority text NOT NULL DEFAULT 'P1',
   status text NOT NULL DEFAULT 'submitted',
+  assignee text,
   created_by text NOT NULL,
   approval_comment text,
   rejection_reason text,

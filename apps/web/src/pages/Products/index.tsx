@@ -765,7 +765,7 @@ export default function ProductsPage() {
             <Input />
           </Form.Item>
           <Form.Item label="描述" name="description">
-            <Input.TextArea autoSize={{ minRows: 3 }} />
+            <Input.TextArea rows={3} />
           </Form.Item>
           <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
             <Select
@@ -986,7 +986,7 @@ export default function ProductsPage() {
                 <Input />
               </Form.Item>
               <Form.Item label="描述" name="description">
-                <Input.TextArea autoSize={{ minRows: 3 }} />
+                <Input.TextArea rows={3} />
               </Form.Item>
               <Form.Item label="状态" name="status" rules={[{ required: true, message: '请选择状态' }]}>
                 <Select

@@ -5,6 +5,7 @@ from time import sleep
 from typing import Any
 
 from app.core.db import DatabaseConnectionPool
+from app.core.listing import list_text_matches, sort_list_items
 from app.core.security import hash_password
 
 ADMIN_PASSWORD_HASH = (
@@ -52,6 +53,42 @@ class MemoryUserRepository:
 
     def list_users(self) -> list[dict[str, Any]]:
         return [self._public_user(user) for user in self.users.values()]
+
+    def list_user_summaries(
+        self,
+        *,
+        display_name: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+        role: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "desc",
+        status: str | None = None,
+        username: str | None = None,
+    ) -> dict[str, Any]:
+        items = [
+            item
+            for item in self.list_users()
+            if list_text_matches(item, username, ("username",))
+            and list_text_matches(item, display_name, ("display_name",))
+            and (not status or item.get("status") == status)
+            and (not role or role in item.get("roles", []))
+        ]
+        sorted_items = sort_list_items(
+            items,
+            allowed_fields={"created_at", "display_name", "id", "status", "username"},
+            default_sort_by="username",
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        start = (page - 1) * page_size
+        end = start + page_size
+        return {
+            "items": sorted_items[start:end],
+            "page": page,
+            "page_size": page_size,
+            "total": len(sorted_items),
+        }
 
     def create_user(
         self,
@@ -177,6 +214,89 @@ class PostgresUserRepository:
             }
             for user_id, email, display_name, roles, status in rows
         ]
+
+    def list_user_summaries(
+        self,
+        *,
+        display_name: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+        role: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "desc",
+        status: str | None = None,
+        username: str | None = None,
+    ) -> dict[str, Any]:
+        sort_columns = {
+            "created_at": "created_at",
+            "display_name": "display_name",
+            "id": "id",
+            "status": "status",
+            "username": "email",
+        }
+        resolved_sort_by = sort_columns.get(sort_by or "created_at")
+        if resolved_sort_by is None:
+            from app.core.listing import api_validation_error
+
+            raise api_validation_error("Unsupported sort_by")
+        if sort_order not in {"asc", "desc"}:
+            from app.core.listing import api_validation_error
+
+            raise api_validation_error("Unsupported sort_order")
+
+        filters: list[str] = []
+        values: list[Any] = []
+        if username:
+            filters.append("email ILIKE %s")
+            values.append(f"%{username}%")
+        if display_name:
+            filters.append("display_name ILIKE %s")
+            values.append(f"%{display_name}%")
+        if status:
+            filters.append("status = %s")
+            values.append(status)
+        if role:
+            filters.append("roles ? %s")
+            values.append(role)
+        where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
+        offset = max(page - 1, 0) * page_size
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT count(*)
+                    FROM users
+                    {where_sql}
+                    """,
+                    values,
+                )
+                total = int(cursor.fetchone()[0])
+                cursor.execute(
+                    f"""
+                    SELECT id, email, display_name, roles, status
+                    FROM users
+                    {where_sql}
+                    ORDER BY {resolved_sort_by} {sort_order.upper()}, email ASC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*values, page_size, offset],
+                )
+                rows = cursor.fetchall()
+        return {
+            "items": [
+                {
+                    "display_name": display_name_value,
+                    "id": user_id,
+                    "roles": list(roles),
+                    "status": status_value,
+                    "username": email,
+                }
+                for user_id, email, display_name_value, roles, status_value in rows
+            ],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+        }
 
     def create_user(
         self,

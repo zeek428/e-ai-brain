@@ -7,7 +7,9 @@ import app.main as main
 from app.core.config import Settings
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.store import MemoryStore
-from app.main import _tcp_endpoint_from_url, app
+from app.main import app
+from app.services.platform_status import runtime_data_access_mode, tcp_endpoint_from_url
+from app.services.task_workflow_context import task_workflow_read_store, task_workflow_source_store
 
 client = TestClient(app)
 
@@ -54,7 +56,7 @@ def test_repository_read_model_store_does_not_restore_snapshot_payload():
 
     runtime_store = PostgresRuntimeStore(SnapshotRestoreForbiddenRepository())
 
-    assert main._repository_read_model_store(runtime_store) is runtime_store
+    assert task_workflow_read_store(runtime_store) is runtime_store
 
 
 def test_repository_source_context_is_not_memory_store():
@@ -66,7 +68,7 @@ def test_repository_source_context_is_not_memory_store():
             self.counter += 1
             return f"{prefix}_{self.counter:03d}"
 
-    context = main._task_workflow_source_store({}, repository=SourceRowsRepository())
+    context = task_workflow_source_store({}, repository=SourceRowsRepository())
 
     assert not isinstance(context, MemoryStore)
     assert context.new_id("task") == "task_001"
@@ -83,7 +85,7 @@ def test_repository_source_context_is_not_memory_store():
 def test_postgres_runtime_reports_db_first_migration_mode(monkeypatch):
     monkeypatch.setattr(main.settings, "persistence_mode", "postgres")
 
-    assert main._runtime_data_access_mode() == "db_first_migration"
+    assert runtime_data_access_mode(main.settings) == "db_first_migration"
 
 
 def test_health_includes_dependencies_and_trace_id(monkeypatch):
@@ -129,12 +131,12 @@ def test_health_uses_persisted_default_model_gateway_config(monkeypatch):
 
 
 def test_health_dependency_endpoint_parsing_supports_docker_service_names():
-    assert _tcp_endpoint_from_url(
+    assert tcp_endpoint_from_url(
         "postgresql://ai_brain:password@postgres:5432/ai_brain",
         "127.0.0.1",
         5432,
     ) == ("postgres", 5432)
-    assert _tcp_endpoint_from_url("redis://redis:6379/0", "127.0.0.1", 6379) == (
+    assert tcp_endpoint_from_url("redis://redis:6379/0", "127.0.0.1", 6379) == (
         "redis",
         6379,
     )
@@ -357,6 +359,118 @@ def test_role_catalog_defines_supported_mvp_roles():
     assert duplicate_role.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
+def test_role_catalog_supports_server_pagination_sort_filters_and_observability():
+    headers = auth_headers()
+
+    response = client.get(
+        "/api/auth/roles?category=delivery&business_role=产品负责人"
+        "&page=1&page_size=1&sort_by=sort_order&sort_order=asc",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["page"] == 1
+    assert body["page_size"] == 1
+    assert body["total"] == 1
+    assert body["items"][0]["code"] == "product_owner"
+    assert body["query"]["name"] == "roles"
+    assert body["query"]["filters"] == {
+        "business_role": "产品负责人",
+        "category": "delivery",
+    }
+    assert body["performance"]["p95_target_ms"] == 300
+    assert body["performance"]["result_count"] == 1
+
+    unsupported = client.get(
+        "/api/auth/roles?page=1&page_size=10&sort_by=unsupported",
+        headers=headers,
+    )
+    assert unsupported.status_code == 400
+    assert unsupported.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
+def test_user_list_supports_server_pagination_sort_filters_and_observability():
+    headers = auth_headers()
+    for username, display_name, status in [
+        ("server-list-a@example.com", "Server List Alpha", "active"),
+        ("server-list-b@example.com", "Server List Beta", "inactive"),
+    ]:
+        created = client.post(
+            "/api/users",
+            headers=headers,
+            json={
+                "display_name": display_name,
+                "password": "password123",
+                "roles": ["viewer"],
+                "status": status,
+                "username": username,
+            },
+        )
+        if created.status_code not in {200, 409}:
+            raise AssertionError(created.text)
+
+    response = client.get(
+        "/api/users?display_name=Server%20List&role=viewer&status=inactive"
+        "&page=1&page_size=1&sort_by=username&sort_order=desc",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["page"] == 1
+    assert body["page_size"] == 1
+    assert body["total"] >= 1
+    assert body["items"][0]["username"] == "server-list-b@example.com"
+    assert body["query"]["name"] == "users"
+    assert body["query"]["filters"] == {
+        "display_name": "Server List",
+        "role": "viewer",
+        "status": "inactive",
+    }
+    assert body["performance"]["p95_target_ms"] == 300
+    assert body["performance"]["result_count"] == 1
+
+    unsupported = client.get("/api/users?page=1&page_size=10&sort_by=unsupported", headers=headers)
+    assert unsupported.status_code == 400
+    assert unsupported.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
+def test_core_management_lists_expose_explicit_p95_targets():
+    headers = auth_headers()
+    cases = [
+        ("/api/products?page=1&page_size=1&sort_by=display_order&sort_order=asc", "products", 300),
+        (
+            "/api/product-versions?page=1&page_size=1&sort_by=code&sort_order=asc",
+            "product_versions",
+            300,
+        ),
+        (
+            "/api/knowledge/documents?page=1&page_size=1&sort_by=created_at&sort_order=desc",
+            "knowledge_documents",
+            400,
+        ),
+        (
+            "/api/audit/events?page=1&page_size=1&sort_by=created_at&sort_order=desc",
+            "audit_events",
+            500,
+        ),
+    ]
+
+    for path, list_name, p95_target_ms in cases:
+        response = client.get(path, headers=headers)
+
+        assert response.status_code == 200, response.text
+        body = response.json()["data"]
+        assert body["query"]["name"] == list_name
+        assert body["query"]["page"] == 1
+        assert body["query"]["page_size"] == 1
+        assert body["performance"]["p95_target_ms"] == p95_target_ms
+        assert "duration_ms" in body["performance"]
+        assert "result_count" in body["performance"]
+        assert "total" in body["performance"]
+
+
 def test_initial_migration_defines_core_mvp_tables():
     migration = Path("app/db/migrations/001_init.sql").read_text()
 
@@ -386,6 +500,18 @@ def test_migrations_define_db_first_id_counters():
     assert "CREATE TABLE IF NOT EXISTS id_counters" in migrations
     assert "prefix text PRIMARY KEY" in migrations
     assert "next_value integer NOT NULL DEFAULT 1" in migrations
+
+
+def test_postgres_repository_patches_additive_schema_gaps_for_existing_volumes():
+    source = Path("app/core/persistence.py").read_text()
+
+    assert "_ensure_schema_compatibility" in source
+    assert "ensure_schema_compatibility: bool = False" in source
+    assert "ADD COLUMN IF NOT EXISTS assignee text" in source
+    assert "idx_requirements_assignee" in source
+
+    main_source = Path("app/main.py").read_text()
+    assert "ensure_schema_compatibility=not _is_test_env()" in main_source
 
 
 def test_all_structured_tables_define_created_and_updated_timestamps():

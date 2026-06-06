@@ -57,7 +57,7 @@ export default function LoginPage() {
     <main className="login-shell">
       <Card className="login-card">
         <div className="login-heading">
-          <Typography.Title level={1}>AI Brain</Typography.Title>
+          <Typography.Title level={1}>Enterprise AI Brain</Typography.Title>
           <Typography.Text>开发环境登录</Typography.Text>
         </div>
         {error ? <Alert message={error} showIcon type="error" /> : null}

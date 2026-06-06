@@ -2,6 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
+import app.api.routers.assistant as assistant_router
 from app.main import app
 
 client = TestClient(app)
@@ -61,7 +62,7 @@ def test_ai_assistant_chat_uses_model_gateway_without_logging_prompt_or_answer(m
         )
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
 
     response = client.post(
         "/api/assistant/chat",
@@ -219,7 +220,7 @@ def test_ai_assistant_chat_includes_ai_brain_system_progress_context(monkeypatch
         captured_messages.extend(request_body["messages"])
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
 
     response = client.post(
         "/api/assistant/chat",
@@ -284,7 +285,7 @@ def test_ai_assistant_chat_persists_user_scoped_conversation_history(monkeypatch
         del timeout
         return FakeResponse()
 
-    monkeypatch.setattr("app.main.urlopen", fake_urlopen)
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
 
     response = client.post(
         "/api/assistant/chat",
