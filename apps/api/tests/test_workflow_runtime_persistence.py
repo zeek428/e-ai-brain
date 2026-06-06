@@ -1,6 +1,7 @@
-from test_database_persistence import FakeSnapshotRepository
+from test_database_persistence import FakeSnapshotRepository, app, auth_headers, client
 
 from app.core.persistence import PersistentMemoryStore
+from app.core.users import MemoryUserRepository
 
 
 def test_workflow_runtime_is_persisted_through_fine_grained_repository_payload():
@@ -225,3 +226,50 @@ def test_orphan_snapshot_workflow_runtime_is_ignored_after_structured_task_migra
         "human_reviews": {},
     }
     assert rebuilt_store.new_id("review") == "review_001"
+
+
+def test_pending_reviews_route_uses_direct_repository_query():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    repository.ai_tasks_payload = {
+        "ai_tasks": {
+            "task_perf_001": {
+                "id": "task_perf_001",
+                "brain_app_id": "rd_brain",
+                "current_step": "human_review",
+                "created_by": "user_admin",
+                "product_id": "product_perf",
+                "requirement_id": "req_perf",
+                "status": "waiting_review",
+                "task_type": "product_detail_design",
+                "title": "任务管理查询性能优化",
+            }
+        }
+    }
+    repository.workflow_runtime_payload = {
+        "graph_checkpoints": {},
+        "graph_runs": {},
+        "human_reviews": {
+            "review_perf_001": {
+                "ai_task_id": "task_perf_001",
+                "content": {"summary": "性能优化确认"},
+                "id": "review_perf_001",
+                "stage": "human_review",
+                "status": "pending",
+                "version": 1,
+            }
+        },
+    }
+    app.state.store = PersistentMemoryStore.from_repository(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        pending = client.get("/api/reviews/pending", headers=headers).json()["data"]
+
+        assert [item["id"] for item in pending["items"]] == ["review_perf_001"]
+        assert repository.task_workflow_source_row_reads == 0
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端待确认 Review 查询测试继续拆分：待确认 Review repository direct query 回归迁移到 `test_workflow_runtime_persistence.py`，和 workflow runtime 持久化用例按领域维护。
 - 后端需求任务 API 写入测试继续拆分：需求 API、AI 任务生成 API 和任务启动/Review 更新的结构化写入回归迁移到 `test_requirement_task_persistence.py`，和需求任务持久化用例按领域维护。
 - 后端产品配置 API 写入测试继续拆分：产品、版本、模块和 Git 仓库 API 结构化写入回归迁移到 `test_product_config_persistence.py`，和产品配置持久化用例按领域维护。
 - 后端知识与审计持久化测试继续拆分：知识文档、知识分块、知识沉淀和审计事件结构化持久化与恢复计数器回归迁移到独立 `test_knowledge_audit_persistence.py`。
