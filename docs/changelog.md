@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端 Git review API 持久化测试继续拆分：GitLab MR 快照 API DB-first 写入和 GitHub PR 列表/预览审计回归迁移到 `test_git_review_artifacts_persistence.py`，和 Git review artifact 用例按领域维护。
 - 后端 AI 助手聊天持久化测试继续拆分：AI 助手聊天 DB-first 写入和用户级历史 stale runtime 读取回归迁移到 `test_assistant_chat_persistence.py`，和 assistant chat 用例按领域维护。
 - 后端知识 API 持久化测试继续拆分：知识文档创建/修改/检索/重试索引、知识沉淀采纳/拒绝和审计回归迁移到 `test_knowledge_audit_persistence.py`，和知识审计用例按领域维护。
 - 后端 Mock Issue 写回 API 持久化测试继续拆分：Mock Issue 写回 API DB-first 写入、幂等结果恢复和审计回归迁移到 `test_mock_writeback_persistence.py`，和 mock writeback 用例按领域维护。
