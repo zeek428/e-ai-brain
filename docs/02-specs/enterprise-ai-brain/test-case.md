@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.349 |
+| 功能版本 | v1.1.350 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.350 | 2026-06-07 | 后端持久化测试拆分继续推进：将 Graph Run、Graph Checkpoint 和 Human Review workflow runtime 结构化持久化、空结构表忽略历史快照和孤儿运行态清理回归迁移到独立 test_workflow_runtime_persistence.py | Codex |
 | v1.1.349 | 2026-06-07 | 后端持久化测试拆分继续推进：将需求与 AI 任务结构化持久化、空结构表忽略历史快照和孤儿任务清理回归迁移到独立 test_requirement_task_persistence.py | Codex |
 | v1.1.348 | 2026-06-07 | 后端持久化测试拆分继续推进：将产品配置结构化持久化、空结构表忽略历史快照和孤儿需求清理回归迁移到独立 test_product_config_persistence.py | Codex |
 | v1.1.347 | 2026-06-07 | 后端持久化测试拆分继续推进：将生命周期上下文与团队看板快照持久化、DB-first handler 写入和 repository source rows/cache 回归迁移到独立 test_lifecycle_dashboard_persistence.py | Codex |
