@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端 Git review artifact 持久化测试继续拆分：GitLab/GitHub Review 快照与代码评审报告结构化持久化、恢复计数器和陈旧引用清理回归迁移到独立 `test_git_review_artifacts_persistence.py`。
 - 后端模型网关持久化测试继续拆分：模型网关配置/日志结构化持久化、恢复计数器和配置 API 写入回归迁移到独立 `test_model_gateway_persistence.py`。
 - 后端用户仓储测试继续拆分：用户仓储登录和用户管理 API 回归迁移到独立 `test_user_repository_auth.py`，避免继续堆在 `test_database_persistence.py` 中。
 - 后端持久化测试继续拆分：迭代建议和迭代决策的结构化持久化用例迁移到独立 `test_iteration_planning_persistence.py`，让迭代规划持久化回归按领域维护。
