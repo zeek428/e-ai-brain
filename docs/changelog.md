@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 模型网关页面测试继续拆分：配置新增/编辑、仅 Chat 测试、密钥不回显和编辑不覆盖密钥回归迁移到独立 `ModelGatewayPage.test.tsx`，继续降低 `App.test.tsx` 页面级用例负担。
 - Code Review 报告弹窗新增“查看需求全链路”入口，可从任务中心报告直接跳转到对应需求 full-chain 详情页，补齐 Review 报告到需求全链路的闭环追踪。
 - 知识中心页面测试继续拆分：沉淀审核、权限检索来源展示和索引失败重试回归迁移到独立 `KnowledgePage.test.tsx`，降低 `App.test.tsx` 的知识域页面负担。
 - 需求全链路页面测试继续拆分：独立详情页直达路由、返回入口、版本内对比和共享展示组件回归迁移到 `RequirementFullChainPage.test.tsx`，减少 `App.test.tsx` 页面级用例聚集。
