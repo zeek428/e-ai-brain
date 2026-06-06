@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.332 |
+| 功能版本 | v1.1.333 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.333 | 2026-06-06 | 前端测试拆分继续推进：将管理 CRUD、任务创建、GitLab MR 预览/快照、Code Review 报告和批量排期 service 契约迁移到独立 ManagementCrudServices.test.ts | Codex |
 | v1.1.332 | 2026-06-06 | 前端测试拆分继续推进：将 MVP-C mock issue 写回、知识沉淀列表/审批/驳回和知识检索 service 契约迁移到独立 KnowledgeWritebackServices.test.ts | Codex |
 | v1.1.331 | 2026-06-06 | 前端测试拆分继续推进：将 Review 补充信息、编辑确认、驳回和任务补充信息提交 service 契约迁移到独立 ReviewServices.test.ts | Codex |
 | v1.1.330 | 2026-06-06 | 前端测试拆分继续推进：将模型网关配置 CRUD、Chat-only 连接测试和密钥脱敏 service 契约迁移到独立 ModelGatewayServices.test.ts | Codex |
