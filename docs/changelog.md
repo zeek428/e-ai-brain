@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端持久化测试继续拆分：待归属数据 `pending_attribution` 的结构化持久化和陈旧上下文清理用例迁移到独立 `test_pending_attribution_persistence.py`，继续降低 `test_database_persistence.py` 巨型文件压力。
 - 需求交付页面测试继续拆分：需求管理批量排期、批量生成任务和全链路弹窗回归迁移到独立 `RequirementsPage.test.tsx`，迭代版本归集需求、版本需求查看和状态推进影响预览回归迁移到独立 `IterationVersionsPage.test.tsx`。
 - 任务中心页面测试继续拆分：列表加载、产品/时间筛选、批量重试/取消、Review 决策、任务操作弹窗、Mock Issue 写回和补充信息回归迁移到独立 `TaskCenterPage.test.tsx`，让 `App.test.tsx` 继续收敛为跨模块 smoke。
 - 产品配置页面测试继续拆分：筛选、错误态、版本、模块、Git 资源、相关系统维护和 GitHub provider 编辑保存回归迁移到独立 `ProductsPage.test.tsx`，继续降低 `App.test.tsx` 页面域负担。
