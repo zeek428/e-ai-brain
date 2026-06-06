@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- Review 前端测试继续拆分：补充信息请求、任务补充信息提交、编辑确认和驳回 service 契约迁移到独立 `ReviewServices.test.ts`，减少 `App.test.tsx` 对纯 API 映射的承载。
 - 模型网关前端测试继续拆分：配置 CRUD、Chat-only 连接测试和密钥脱敏 service 契约迁移到独立 `ModelGatewayServices.test.ts`，页面交互回归继续保留在 `ModelGatewayPage.test.tsx`。
 - 前端 service 契约测试继续拆分：团队看板 product/time-range 查询、active 产品筛选和 GitHub PR preview/snapshot 映射迁移到独立 `DashboardServices.test.ts` 与 `GitReviewServices.test.ts`，让 `App.test.tsx` 继续收敛为页面级 smoke。
 - 产品配置前端测试继续拆分：产品版本、模块、Git 仓库和相关系统 service API 映射，以及 Git 凭据不回显回归迁移到独立 `ProductServices.test.ts`，减少 `App.test.tsx` 对接口契约用例的承载。

@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.330 |
+| 功能版本 | v1.1.331 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.331 | 2026-06-06 | 前端测试拆分继续推进：将 Review 补充信息、编辑确认、驳回和任务补充信息提交 service 契约迁移到独立 ReviewServices.test.ts | Codex |
 | v1.1.330 | 2026-06-06 | 前端测试拆分继续推进：将模型网关配置 CRUD、Chat-only 连接测试和密钥脱敏 service 契约迁移到独立 ModelGatewayServices.test.ts | Codex |
 | v1.1.329 | 2026-06-06 | 前端测试拆分继续推进：将团队看板 product/time-range 查询、active 产品筛选和 GitHub PR preview/snapshot service 契约迁移到独立 DashboardServices.test.ts 与 GitReviewServices.test.ts | Codex |
 | v1.1.328 | 2026-06-06 | 前端测试拆分继续推进：将产品版本/模块/Git 仓库/相关系统 service 契约与 Git 凭据脱敏回归迁移到独立 ProductServices.test.ts | Codex |
