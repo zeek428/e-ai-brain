@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 产品配置前端测试继续拆分：产品版本、模块、Git 仓库和相关系统 service API 映射，以及 Git 凭据不回显回归迁移到独立 `ProductServices.test.ts`，减少 `App.test.tsx` 对接口契约用例的承载。
 - 模型网关页面测试继续拆分：配置新增/编辑、仅 Chat 测试、密钥不回显和编辑不覆盖密钥回归迁移到独立 `ModelGatewayPage.test.tsx`，继续降低 `App.test.tsx` 页面级用例负担。
 - Code Review 报告弹窗新增“查看需求全链路”入口，可从任务中心报告直接跳转到对应需求 full-chain 详情页，补齐 Review 报告到需求全链路的闭环追踪。
 - 知识中心页面测试继续拆分：沉淀审核、权限检索来源展示和索引失败重试回归迁移到独立 `KnowledgePage.test.tsx`，降低 `App.test.tsx` 的知识域页面负担。
