@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.359 |
+| 功能版本 | v1.1.360 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.360 | 2026-06-07 | 后端持久化测试拆分继续推进：将任务启动失败/重试、Review 审批/编辑审批/驳回/补充信息、任务取消和补充信息提交回归迁移到 test_workflow_runtime_persistence.py，和 workflow runtime 用例按领域维护 | Codex |
 | v1.1.359 | 2026-06-07 | 后端持久化测试拆分继续推进：将需求 API DB-first 写入、任务生成、Postgres runtime source rows、任务启动 Review/Graph 写入和后续任务创建回归迁移到 test_requirement_task_persistence.py，和需求任务用例按领域维护 | Codex |
 | v1.1.358 | 2026-06-07 | 后端持久化测试拆分继续推进：将产品配置 API DB-first 写入、stale runtime 读取和 Postgres runtime source rows 回归迁移到 test_product_config_persistence.py，和产品配置用例按领域维护 | Codex |
 | v1.1.357 | 2026-06-07 | 后端持久化测试拆分继续推进：将用户洞察指标、用户反馈、迭代建议生成/决策转需求和 stale runtime 列表读取回归迁移到 test_insight_planning_api_persistence.py，和 insight planning API 用例按领域维护 | Codex |
