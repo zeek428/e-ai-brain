@@ -4023,45 +4023,6 @@ def test_repository_read_snapshot_get_does_not_persist_stale_runtime_store():
         app.state.user_repository = original_users
 
 
-def test_knowledge_api_writes_fine_grained_repository_and_audit_payload():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-    repository = FakeSnapshotRepository()
-    app.state.store = PersistentMemoryStore.from_repository(repository)
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        headers = auth_headers()
-        document = client.post(
-            "/api/knowledge/documents",
-            json={
-                "content": "知识文档必须从结构表恢复",
-                "doc_type": "manual",
-                "permission_roles": ["admin", "knowledge_owner"],
-                "tags": ["db"],
-                "title": "知识结构表 API 验证",
-            },
-            headers=headers,
-        ).json()["data"]
-
-        assert repository.knowledge_payload is not None
-        persisted = repository.knowledge_payload["knowledge_documents"][document["id"]]
-        assert persisted["title"] == "知识结构表 API 验证"
-        assert persisted["permission_roles"] == ["admin", "knowledge_owner"]
-        chunk_items = list(repository.knowledge_payload["knowledge_chunks"].values())
-        assert [chunk["document_id"] for chunk in chunk_items] == [document["id"]]
-        assert chunk_items[0]["content"] == "知识文档必须从结构表恢复"
-
-        assert repository.audit_events_payload is not None
-        assert repository.audit_events_payload["audit_events"][-1]["event_type"] == (
-            "knowledge_document.created"
-        )
-        assert repository.audit_events_payload["audit_events"][-1]["subject_id"] == document["id"]
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
 def test_operational_lists_use_repository_when_runtime_store_is_stale():
     original_store = app.state.store
     original_users = app.state.user_repository

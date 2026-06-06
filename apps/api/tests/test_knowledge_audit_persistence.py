@@ -1,6 +1,7 @@
-from test_database_persistence import FakeSnapshotRepository
+from test_database_persistence import FakeSnapshotRepository, app, auth_headers, client
 
 from app.core.persistence import PersistentMemoryStore
+from app.core.users import MemoryUserRepository
 
 
 def test_knowledge_and_audit_are_persisted_through_fine_grained_repository_payload():
@@ -160,3 +161,42 @@ def test_structured_knowledge_and_audit_restore_and_sync_counters():
     assert rebuilt_store.new_id("knowledge") == "knowledge_010"
     assert rebuilt_store.new_id("deposit") == "deposit_005"
     assert rebuilt_store.new_id("audit") == "audit_008"
+
+
+def test_knowledge_api_writes_fine_grained_repository_and_audit_payload():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    app.state.store = PersistentMemoryStore.from_repository(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        document = client.post(
+            "/api/knowledge/documents",
+            json={
+                "content": "知识文档必须从结构表恢复",
+                "doc_type": "manual",
+                "permission_roles": ["admin", "knowledge_owner"],
+                "tags": ["db"],
+                "title": "知识结构表 API 验证",
+            },
+            headers=headers,
+        ).json()["data"]
+
+        assert repository.knowledge_payload is not None
+        persisted = repository.knowledge_payload["knowledge_documents"][document["id"]]
+        assert persisted["title"] == "知识结构表 API 验证"
+        assert persisted["permission_roles"] == ["admin", "knowledge_owner"]
+        chunk_items = list(repository.knowledge_payload["knowledge_chunks"].values())
+        assert [chunk["document_id"] for chunk in chunk_items] == [document["id"]]
+        assert chunk_items[0]["content"] == "知识文档必须从结构表恢复"
+
+        assert repository.audit_events_payload is not None
+        assert repository.audit_events_payload["audit_events"][-1]["event_type"] == (
+            "knowledge_document.created"
+        )
+        assert repository.audit_events_payload["audit_events"][-1]["subject_id"] == document["id"]
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
