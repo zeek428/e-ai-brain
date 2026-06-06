@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.365 |
+| 功能版本 | v1.1.366 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.366 | 2026-06-07 | 前端页面测试拆分继续推进：将首页 IT 团队看板、运营明细入口和产品/时间筛选回归迁移到独立 DashboardPage.test.tsx，App.test.tsx 继续收敛为少量跨管理模块 smoke | Codex |
 | v1.1.365 | 2026-06-07 | 后端持久化测试拆分继续推进：将 PersistentMemoryStore 仓储边界和 repository read path 余量回归迁移到 test_persistence_repository_boundaries.py 与 test_repository_read_paths.py，test_database_persistence.py 收敛为共享 FakeRepository/fixture | Codex |
 | v1.1.364 | 2026-06-07 | 后端持久化测试拆分继续推进：将 GitLab MR 快照 API DB-first 写入和 GitHub PR 列表/预览审计回归迁移到 test_git_review_artifacts_persistence.py，和 Git review artifact 用例按领域维护 | Codex |
 | v1.1.363 | 2026-06-07 | 后端持久化测试拆分继续推进：将 AI 助手聊天 DB-first 写入和用户级历史 stale runtime 读取回归迁移到 test_assistant_chat_persistence.py，和 assistant chat 用例按领域维护 | Codex |
