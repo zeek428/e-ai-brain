@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.346 |
+| 功能版本 | v1.1.347 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.347 | 2026-06-07 | 后端持久化测试拆分继续推进：将生命周期上下文与团队看板快照持久化、DB-first handler 写入和 repository source rows/cache 回归迁移到独立 test_lifecycle_dashboard_persistence.py | Codex |
 | v1.1.346 | 2026-06-07 | 后端持久化测试拆分继续推进：将 Bug 结构化持久化、Bug API DB-first 写入和 stale runtime 列表读取回归迁移到独立 test_bug_persistence.py | Codex |
 | v1.1.345 | 2026-06-06 | 后端持久化测试拆分继续推进：将 Mock Issue 写回结构化持久化、恢复计数器和陈旧任务引用清理回归迁移到独立 test_mock_writeback_persistence.py | Codex |
 | v1.1.344 | 2026-06-06 | 后端持久化测试拆分继续推进：将 GitLab/GitHub Review 快照与代码评审报告结构化持久化、恢复计数器和陈旧引用清理回归迁移到独立 test_git_review_artifacts_persistence.py | Codex |
