@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.345 |
+| 功能版本 | v1.1.346 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.346 | 2026-06-07 | 后端持久化测试拆分继续推进：将 Bug 结构化持久化、Bug API DB-first 写入和 stale runtime 列表读取回归迁移到独立 test_bug_persistence.py | Codex |
 | v1.1.345 | 2026-06-06 | 后端持久化测试拆分继续推进：将 Mock Issue 写回结构化持久化、恢复计数器和陈旧任务引用清理回归迁移到独立 test_mock_writeback_persistence.py | Codex |
 | v1.1.344 | 2026-06-06 | 后端持久化测试拆分继续推进：将 GitLab/GitHub Review 快照与代码评审报告结构化持久化、恢复计数器和陈旧引用清理回归迁移到独立 test_git_review_artifacts_persistence.py | Codex |
 | v1.1.343 | 2026-06-06 | 后端持久化测试拆分继续推进：将模型网关配置/日志结构化持久化、恢复计数器和配置 API 写入回归迁移到独立 test_model_gateway_persistence.py | Codex |

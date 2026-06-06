@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端 Bug 持久化测试继续拆分：Bug 结构化持久化、Bug API DB-first 写入和 stale runtime 列表读取回归迁移到独立 `test_bug_persistence.py`。
 - 后端 Mock Issue 写回持久化测试继续拆分：Mock Issue 写回结构化持久化、恢复计数器和陈旧任务引用清理回归迁移到独立 `test_mock_writeback_persistence.py`。
 - 后端 Git review artifact 持久化测试继续拆分：GitLab/GitHub Review 快照与代码评审报告结构化持久化、恢复计数器和陈旧引用清理回归迁移到独立 `test_git_review_artifacts_persistence.py`。
 - 后端模型网关持久化测试继续拆分：模型网关配置/日志结构化持久化、恢复计数器和配置 API 写入回归迁移到独立 `test_model_gateway_persistence.py`。
