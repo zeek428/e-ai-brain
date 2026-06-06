@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 任务中心页面测试继续拆分：列表加载、产品/时间筛选、批量重试/取消、Review 决策、任务操作弹窗、Mock Issue 写回和补充信息回归迁移到独立 `TaskCenterPage.test.tsx`，让 `App.test.tsx` 继续收敛为跨模块 smoke。
 - 产品配置页面测试继续拆分：筛选、错误态、版本、模块、Git 资源、相关系统维护和 GitHub provider 编辑保存回归迁移到独立 `ProductsPage.test.tsx`，继续降低 `App.test.tsx` 页面域负担。
 - 鉴权与路由前端测试继续拆分：Umi 路由注册、登录、鉴权初始化、auth state 事件、过期 token 清理和登出跳转回归迁移到独立 `AuthFlow.test.tsx`。
 - 管理 CRUD 前端测试继续拆分：产品/需求/Bug/知识/用户 CRUD、AI 任务创建、GitLab MR 预览/快照、Code Review 报告和批量排期 service 契约迁移到独立 `ManagementCrudServices.test.ts`。
