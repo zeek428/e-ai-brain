@@ -9,6 +9,7 @@
 
 ### Added
 - Code Review 报告弹窗新增“查看需求全链路”入口，可从任务中心报告直接跳转到对应需求 full-chain 详情页，补齐 Review 报告到需求全链路的闭环追踪。
+- 后端测试拆分继续推进：AI 助手会话/消息结构化持久化与恢复计数器用例迁移到独立 `test_assistant_chat_persistence.py`，减少 `test_database_persistence.py` 巨型文件压力。
 - AI 助手页面测试继续拆分：聊天页面、引用链接、用户级会话历史和助手 service 映射用例迁移到独立 `AssistantPage.test.tsx`，让 `App.test.tsx` 回到更轻的工作台 smoke 角色。
 - 任务中心页面测试继续拆分：Code Review 报告全链路跳转用例迁移到独立 `TaskCenterPage.test.tsx`，减少 `App.test.tsx` 继续承载新增页面级用例的压力。
 - GitHub PR / GitLab MR 代码 Review 闭环增强：预览响应新增权限诊断，快照响应新增上一快照引用、diff 新增/修改/删除对比和复用标记；任务中心创建 Code Review 后展示快照对比结果，便于 PR 刷新/重试和权限配置排查。
