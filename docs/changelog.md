@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端 Mock Issue 写回 API 持久化测试继续拆分：Mock Issue 写回 API DB-first 写入、幂等结果恢复和审计回归迁移到 `test_mock_writeback_persistence.py`，和 mock writeback 用例按领域维护。
 - 后端 workflow runtime API 持久化测试继续拆分：任务启动失败/重试、Review 审批/编辑审批/驳回/补充信息、任务取消和补充信息提交回归迁移到 `test_workflow_runtime_persistence.py`，和 workflow runtime 用例按领域维护。
 - 后端需求任务 API 持久化测试继续拆分：需求 API DB-first 写入、任务生成、Postgres runtime source rows、任务启动 Review/Graph 写入和后续任务创建回归迁移到 `test_requirement_task_persistence.py`，和需求任务用例按领域维护。
 - 后端产品配置 API 持久化测试继续拆分：产品配置 API DB-first 写入、stale runtime 读取和 Postgres runtime source rows 回归迁移到 `test_product_config_persistence.py`，和产品配置用例按领域维护。
