@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 产品配置页面测试继续拆分：筛选、错误态、版本、模块、Git 资源、相关系统维护和 GitHub provider 编辑保存回归迁移到独立 `ProductsPage.test.tsx`，继续降低 `App.test.tsx` 页面域负担。
 - 鉴权与路由前端测试继续拆分：Umi 路由注册、登录、鉴权初始化、auth state 事件、过期 token 清理和登出跳转回归迁移到独立 `AuthFlow.test.tsx`。
 - 管理 CRUD 前端测试继续拆分：产品/需求/Bug/知识/用户 CRUD、AI 任务创建、GitLab MR 预览/快照、Code Review 报告和批量排期 service 契约迁移到独立 `ManagementCrudServices.test.ts`。
 - 知识沉淀与写回前端测试继续拆分：MVP-C mock issue 写回、知识沉淀列表/审批/驳回和知识检索 service 契约迁移到独立 `KnowledgeWritebackServices.test.ts`。

@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.334 |
+| 功能版本 | v1.1.335 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.335 | 2026-06-06 | 前端页面测试拆分继续推进：将产品配置页筛选、错误态、版本/模块/Git 资源/相关系统维护和 GitHub provider 编辑保存回归迁移到独立 ProductsPage.test.tsx | Codex |
 | v1.1.334 | 2026-06-06 | 前端测试拆分继续推进：将 Umi 路由注册、登录、鉴权初始化、auth state 事件、过期 token 清理和登出跳转回归迁移到独立 AuthFlow.test.tsx | Codex |
 | v1.1.333 | 2026-06-06 | 前端测试拆分继续推进：将管理 CRUD、任务创建、GitLab MR 预览/快照、Code Review 报告和批量排期 service 契约迁移到独立 ManagementCrudServices.test.ts | Codex |
 | v1.1.332 | 2026-06-06 | 前端测试拆分继续推进：将 MVP-C mock issue 写回、知识沉淀列表/审批/驳回和知识检索 service 契约迁移到独立 KnowledgeWritebackServices.test.ts | Codex |
