@@ -83,7 +83,7 @@ VALUES
     '["创建并启动研发 AI 任务，推进技术方案闭环。", "确认技术方案和研发侧人工 Review。", "处理 Bug、沉淀研发知识并维护研发执行上下文。"]'::jsonb,
     '授权产品下的 AI 任务、技术方案、GitLab 只读快照、Bug 和研发知识。',
     '技术方案确认、研发任务推进、Bug 处理和研发知识沉淀决策。',
-    '["任务管理", "Bug 管理", "知识中心", "研发运营看板", "首页 IT 团队看板"]'::jsonb,
+    '["任务管理", "Bug 管理", "知识中心", "日志监控", "首页 IT 团队看板"]'::jsonb,
     '["不能维护系统用户、角色或模型网关密钥。", "产品优先级和迭代采纳仍由产品负责人确认。"]'::jsonb,
     '["task.create", "task.execute", "review.decide", "gitlab.read", "knowledge.manage", "bug.manage", "workspace.read", "workspace.write"]'::jsonb,
     true,

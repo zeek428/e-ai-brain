@@ -106,7 +106,7 @@ const routes = [
       },
       {
         path: '/governance/devops',
-        name: '研发运营看板',
+        name: '日志监控',
         icon: 'BarChartOutlined',
         component: './Devops',
       },

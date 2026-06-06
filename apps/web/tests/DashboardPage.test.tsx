@@ -171,7 +171,7 @@ describe('Dashboard page', () => {
       'href',
       '/delivery/bugs',
     );
-    expect(screen.getByRole('link', { name: /运营明细/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /日志明细/ })).toHaveAttribute(
       'href',
       '/governance/devops',
     );
@@ -183,7 +183,7 @@ describe('Dashboard page', () => {
     expect(screen.queryByText('GitLab/Jenkins/线上日志真实运营采集属于后续增强。')).not.toBeInTheDocument();
     expect(screen.queryByText('待接入')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('运营治理');
-    expect(screen.getByText('研发运营指标')).toBeInTheDocument();
+    expect(screen.getByText('日志监控指标')).toBeInTheDocument();
     expect(screen.getByText('GitLab 指标')).toBeInTheDocument();
     await waitFor(() => {
       const paths = fetchMock.mock.calls.map(([path]) => String(path));
@@ -343,7 +343,7 @@ describe('Dashboard page', () => {
     );
     expect(await screen.findByText('研发平台筛选任务')).toBeInTheDocument();
     expect(screen.getAllByText('2')).not.toHaveLength(0);
-    expect(screen.getByRole('link', { name: /运营明细/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /日志明细/ })).toHaveAttribute(
       'href',
       '/governance/devops?product_id=product_api&time_range=7d',
     );

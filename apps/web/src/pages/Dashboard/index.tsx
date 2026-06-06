@@ -491,7 +491,7 @@ export default function DashboardPage() {
           </div>
         </section>
         <section className="dashboard-panel">
-          <Title level={4}>研发运营</Title>
+          <Title level={4}>日志监控</Title>
           <MetricSummary
             items={[
               { label: 'GitLab 指标', value: dashboard?.gitlabDailySummary.metricCount ?? 0 },
@@ -505,7 +505,7 @@ export default function DashboardPage() {
           <StatusCountList counts={dashboard?.jenkinsReleaseStatusCounts ?? []} />
           <div className="dashboard-panel-actions">
             <Button href={drilldownUrl('/governance/devops')} icon={<BarChartOutlined />} size="small">
-              运营明细
+              日志明细
             </Button>
           </div>
         </section>

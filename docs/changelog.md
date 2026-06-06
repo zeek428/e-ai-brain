@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 日志监控页面收敛：原研发运营看板更名为“日志监控”，页面只保留 GitLab 指标、Jenkins 发布和线上日志指标的列表与登记入口。
 - 用户洞察新增用户反馈转需求闭环：反馈可从列表快速转成正式需求，需求保留 `source=user_feedback`，反馈同步归属产品、关联需求和 `linked` 状态；需求管理新增需求来源字段、列表展示、筛选和排序。
 - Code Review 报告闭环增强：报告响应新增只读 Markdown `writeback_template`，任务中心报告弹窗展示 Review 结论回写模板，便于人工复制到 GitLab MR / GitHub PR 评论区，同时保持系统不自动远端回写。
 - AI 助手工具化查询增强：聊天前由后端 read-model 工具生成需求/任务进展、待确认 Review、代码评审、迭代、Bug 和模型网关 `tool_results`，模型请求优先携带工具结果，聊天响应与历史消息持久化工具结果和可跳转引用链接。
@@ -74,6 +75,7 @@
 - 前端管理列表统一表格规范增强：`ManagementListPage` 默认固定布局、按显示列宽自动计算横向滚动宽度、默认长文本省略和操作列右固定；角色页入口/权限以数量摘要展示并在详情查看；DevOps 采集运行/待归属子表补齐固定列宽、横向滚动和操作列固定。
 
 ### Fixed
+- 日志监控页面移除“采集运行记录”和“待归属数据队列”两个功能区，不再请求 `/api/collectors/runs` 与 `/api/attribution/pending-items`；首页下钻、菜单和角色入口同步使用“日志监控”命名。
 - 用户洞察产品上下文下拉补齐分页：登记反馈和转需求加载 active 产品时请求更大 page size，避免默认分页截断导致看不到 Enterprise AI Brain / AI Brain 产品；用户洞察页面移除“登记使用指标”和“生成迭代建议”两个低价值主按钮。
 - Bug 登记所属产品下拉补齐产品上下文分页：Bug 表单加载产品/版本上下文时请求 `page_size=100`，避免默认 10 条产品截断导致看不到 AI Brain；新增 Bug 默认优先选择 `AI-BRAIN` 产品，便于本系统真实测试用例登记。
 - PostgreSQL 旧库兼容验收补齐：`PostgresSnapshotRepository` 启动时执行安全 additive schema patch，补齐历史本地 volume 缺失的 `requirements.assignee` 字段和索引，避免需求列表与首页看板 SQL read model 在旧库上返回 500；真实页面 smoke 复验 8 个核心路由通过。

@@ -77,7 +77,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "不能维护系统用户、角色或模型网关密钥。",
             "产品优先级和迭代采纳仍由产品负责人确认。",
         ],
-        "menu_scope": ["任务管理", "Bug 管理", "知识中心", "研发运营看板", "首页 IT 团队看板"],
+        "menu_scope": ["任务管理", "Bug 管理", "知识中心", "日志监控", "首页 IT 团队看板"],
         "name": "研发负责人",
         "permissions": [
             "task.create",
