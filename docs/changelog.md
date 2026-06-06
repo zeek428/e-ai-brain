@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 后端产品配置持久化测试继续拆分：产品配置结构化持久化、空结构表忽略历史快照和孤儿需求清理回归迁移到独立 `test_product_config_persistence.py`。
 - 后端生命周期/团队看板持久化测试继续拆分：生命周期上下文与团队看板快照持久化、DB-first handler 写入和 repository source rows/cache 回归迁移到独立 `test_lifecycle_dashboard_persistence.py`。
 - 后端 Bug 持久化测试继续拆分：Bug 结构化持久化、Bug API DB-first 写入和 stale runtime 列表读取回归迁移到独立 `test_bug_persistence.py`。
 - 后端 Mock Issue 写回持久化测试继续拆分：Mock Issue 写回结构化持久化、恢复计数器和陈旧任务引用清理回归迁移到独立 `test_mock_writeback_persistence.py`。
