@@ -357,3 +357,110 @@ def test_model_gateway_log_list_uses_repository_when_runtime_store_is_stale():
         assert data["items"][0]["tokens"] == {"total_tokens": 8}
     finally:
         _restore_store(original_store, original_users)
+
+
+def test_business_state_survives_store_rebuild_from_database_snapshot():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    app.state.store = PersistentMemoryStore.from_repository(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        product = client.post(
+            "/api/products",
+            json={"code": "REAL-DB", "name": "真实数据库产品"},
+            headers=headers,
+        ).json()["data"]
+
+        app.state.store = PersistentMemoryStore.from_repository(repository)
+
+        products = client.get("/api/products", headers=headers).json()["data"]["items"]
+        assert [item["id"] for item in products] == [product["id"]]
+        assert products[0]["code"] == "REAL-DB"
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_repository_read_snapshot_get_does_not_persist_stale_runtime_store():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    now = "2026-06-03T12:30:00+00:00"
+    repository.product_config_payload = {
+        "product_git_repositories": {},
+        "product_modules": {},
+        "product_versions": {},
+        "products": {
+            "product_read_get": {
+                "code": "READ-GET",
+                "created_at": now,
+                "id": "product_read_get",
+                "name": "GET 读模型产品",
+                "status": "active",
+                "updated_at": now,
+            }
+        },
+        "related_systems": {},
+    }
+    repository.requirements_payload = {
+        "requirements": {
+            "requirement_read_get": {
+                "content": "GET 读接口不能把过期运行时 store 持久化回 repository。",
+                "created_at": now,
+                "created_by": "user_admin",
+                "id": "requirement_read_get",
+                "priority": "P1",
+                "product_id": "product_read_get",
+                "status": "ready_for_dev",
+                "task_ids": ["task_read_get"],
+                "title": "GET 读模型不回写过期 store",
+                "updated_at": now,
+            }
+        }
+    }
+    repository.ai_tasks_payload = {
+        "ai_tasks": {
+            "task_read_get": {
+                "created_at": now,
+                "created_by": "user_admin",
+                "current_step": "complete_archive",
+                "graph_run_ids": [],
+                "id": "task_read_get",
+                "input_json": {},
+                "output_json": {},
+                "product_context": {},
+                "product_id": "product_read_get",
+                "requirement_id": "requirement_read_get",
+                "requirement_snapshot": {"id": "requirement_read_get"},
+                "review_ids": [],
+                "status": "completed",
+                "task_type": "product_detail_design",
+                "title": "GET 读模型任务",
+                "updated_at": now,
+            }
+        }
+    }
+
+    headers = auth_headers()
+    stale_store = PersistentMemoryStore.from_repository(repository)
+    stale_store.requirements = {}
+    stale_store.ai_tasks = {}
+    app.state.store = stale_store
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        dashboard = client.get(
+            "/api/dashboard/it-team?product_id=product_read_get",
+            headers=headers,
+        ).json()["data"]
+        assert dashboard["summary"]["requirements"] == 1
+        assert repository.dashboard_source_row_reads == 1
+        assert repository.dashboard_snapshot_direct_writes
+        assert "requirement_read_get" in repository.requirements_payload["requirements"]
+        assert "task_read_get" in repository.ai_tasks_payload["ai_tasks"]
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users

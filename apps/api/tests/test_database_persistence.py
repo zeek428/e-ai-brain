@@ -1,8 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.core.persistence import PersistentMemoryStore
 from app.core.store import MemoryStore
-from app.core.users import MemoryUserRepository
 from app.main import app
 
 client = TestClient(app)
@@ -1540,89 +1538,10 @@ class FakeSnapshotRepository:
         self.dashboard_snapshot_direct_writes.append(snapshot["id"])
 
 
-class FakeDbFirstIdRepository(FakeSnapshotRepository):
-    def __init__(self) -> None:
-        super().__init__()
-        self.allocated_prefixes: list[str] = []
-
-    def next_id(self, prefix: str) -> str:
-        self.allocated_prefixes.append(prefix)
-        return f"{prefix}_101"
-
-
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
-
-
-def test_persistent_store_delegates_new_ids_to_repository_when_available():
-    repository = FakeDbFirstIdRepository()
-    store = PersistentMemoryStore.from_repository(repository)
-
-    assert store.new_id("requirement") == "requirement_101"
-    assert repository.allocated_prefixes == ["requirement"]
-    assert store.counters["requirement"] == 101
-
-
-def test_persistent_store_does_not_restore_business_state_from_app_snapshot_payload():
-    repository = FakeSnapshotRepository()
-    repository.payload = {
-        "ai_tasks": {
-            "task_snapshot_only": {
-                "id": "task_snapshot_only",
-                "product_id": "product_snapshot_only",
-                "requirement_id": "requirement_snapshot_only",
-                "status": "completed",
-                "task_type": "product_detail_design",
-                "title": "旧快照任务",
-            }
-        },
-        "products": {
-            "product_snapshot_only": {
-                "code": "SNAPSHOT-ONLY",
-                "id": "product_snapshot_only",
-                "name": "旧快照产品",
-                "status": "active",
-            }
-        },
-        "requirements": {
-            "requirement_snapshot_only": {
-                "content": "旧 app_state_snapshots 中的需求不能作为生产恢复源。",
-                "created_by": "user_admin",
-                "id": "requirement_snapshot_only",
-                "priority": "P1",
-                "product_id": "product_snapshot_only",
-                "status": "ready_for_dev",
-                "task_ids": ["task_snapshot_only"],
-                "title": "旧快照需求",
-            }
-        },
-    }
-
-    store = PersistentMemoryStore.from_repository(repository)
-
-    assert "product_snapshot_only" not in store.products
-    assert "requirement_snapshot_only" not in store.requirements
-    assert "task_snapshot_only" not in store.ai_tasks
-
-
-def test_persistent_store_persist_does_not_write_app_snapshot_payload():
-    repository = FakeSnapshotRepository()
-    store = PersistentMemoryStore.from_repository(repository)
-    store.products["product_no_snapshot"] = {
-        "code": "NO-SNAPSHOT",
-        "id": "product_no_snapshot",
-        "name": "不写 app_state 快照",
-        "status": "active",
-    }
-
-    store.persist()
-
-    assert repository.payload is None
-    assert repository.product_config_payload["products"]["product_no_snapshot"]["code"] == (
-        "NO-SNAPSHOT"
-    )
 
 
 def gitlab_review_context_payload() -> dict:
@@ -1754,110 +1673,3 @@ def mock_writeback_context_payload() -> dict:
             }
         },
     }
-
-
-def test_business_state_survives_store_rebuild_from_database_snapshot():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-    repository = FakeSnapshotRepository()
-    app.state.store = PersistentMemoryStore.from_repository(repository)
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        headers = auth_headers()
-        product = client.post(
-            "/api/products",
-            json={"code": "REAL-DB", "name": "真实数据库产品"},
-            headers=headers,
-        ).json()["data"]
-
-        app.state.store = PersistentMemoryStore.from_repository(repository)
-
-        products = client.get("/api/products", headers=headers).json()["data"]["items"]
-        assert [item["id"] for item in products] == [product["id"]]
-        assert products[0]["code"] == "REAL-DB"
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users
-
-
-def test_repository_read_snapshot_get_does_not_persist_stale_runtime_store():
-    original_store = app.state.store
-    original_users = app.state.user_repository
-    repository = FakeSnapshotRepository()
-    now = "2026-06-03T12:30:00+00:00"
-    repository.product_config_payload = {
-        "product_git_repositories": {},
-        "product_modules": {},
-        "product_versions": {},
-        "products": {
-            "product_read_get": {
-                "code": "READ-GET",
-                "created_at": now,
-                "id": "product_read_get",
-                "name": "GET 读模型产品",
-                "status": "active",
-                "updated_at": now,
-            }
-        },
-        "related_systems": {},
-    }
-    repository.requirements_payload = {
-        "requirements": {
-            "requirement_read_get": {
-                "content": "GET 读接口不能把过期运行时 store 持久化回 repository。",
-                "created_at": now,
-                "created_by": "user_admin",
-                "id": "requirement_read_get",
-                "priority": "P1",
-                "product_id": "product_read_get",
-                "status": "ready_for_dev",
-                "task_ids": ["task_read_get"],
-                "title": "GET 读模型不回写过期 store",
-                "updated_at": now,
-            }
-        }
-    }
-    repository.ai_tasks_payload = {
-        "ai_tasks": {
-            "task_read_get": {
-                "created_at": now,
-                "created_by": "user_admin",
-                "current_step": "complete_archive",
-                "graph_run_ids": [],
-                "id": "task_read_get",
-                "input_json": {},
-                "output_json": {},
-                "product_context": {},
-                "product_id": "product_read_get",
-                "requirement_id": "requirement_read_get",
-                "requirement_snapshot": {"id": "requirement_read_get"},
-                "review_ids": [],
-                "status": "completed",
-                "task_type": "product_detail_design",
-                "title": "GET 读模型任务",
-                "updated_at": now,
-            }
-        }
-    }
-
-    headers = auth_headers()
-    stale_store = PersistentMemoryStore.from_repository(repository)
-    stale_store.requirements = {}
-    stale_store.ai_tasks = {}
-    app.state.store = stale_store
-    app.state.user_repository = MemoryUserRepository.seeded()
-
-    try:
-        dashboard = client.get(
-            "/api/dashboard/it-team?product_id=product_read_get",
-            headers=headers,
-        ).json()["data"]
-        assert dashboard["summary"]["requirements"] == 1
-        assert repository.dashboard_source_row_reads == 1
-        assert repository.dashboard_snapshot_direct_writes
-        assert "requirement_read_get" in repository.requirements_payload["requirements"]
-        assert "task_read_get" in repository.ai_tasks_payload["ai_tasks"]
-    finally:
-        app.state.store = original_store
-        app.state.user_repository = original_users

@@ -1,4 +1,4 @@
-from app.core.persistence import PostgresSnapshotRepository
+from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
 from app.core.repositories.assistant_chat import AssistantChatReadRepository
 from app.core.repositories.audit import AuditReadRepository
 from app.core.repositories.brain_apps import BrainAppReadRepository
@@ -16,6 +16,7 @@ from app.core.repositories.system_state import SystemStateRepository
 from app.core.repositories.table_maintenance import TableMaintenanceRepository
 from app.core.repositories.tasks import TaskReadRepository
 from app.core.repositories.user_insights import UserInsightReadRepository
+from tests.test_database_persistence import FakeSnapshotRepository
 
 
 def test_postgres_system_state_delegates_to_domain_repository(monkeypatch):
@@ -2302,3 +2303,82 @@ def test_postgres_lifecycle_dashboard_writes_delegate_to_domain_repository(monke
             {"cursor": cursor, "items": dashboard_payload["dashboard_metric_snapshots"]},
         ),
     ]
+
+
+class FakeDbFirstIdRepository(FakeSnapshotRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.allocated_prefixes: list[str] = []
+
+    def next_id(self, prefix: str) -> str:
+        self.allocated_prefixes.append(prefix)
+        return f"{prefix}_101"
+
+
+def test_persistent_store_delegates_new_ids_to_repository_when_available():
+    repository = FakeDbFirstIdRepository()
+    store = PersistentMemoryStore.from_repository(repository)
+
+    assert store.new_id("requirement") == "requirement_101"
+    assert repository.allocated_prefixes == ["requirement"]
+    assert store.counters["requirement"] == 101
+
+
+def test_persistent_store_does_not_restore_business_state_from_app_snapshot_payload():
+    repository = FakeSnapshotRepository()
+    repository.payload = {
+        "ai_tasks": {
+            "task_snapshot_only": {
+                "id": "task_snapshot_only",
+                "product_id": "product_snapshot_only",
+                "requirement_id": "requirement_snapshot_only",
+                "status": "completed",
+                "task_type": "product_detail_design",
+                "title": "旧快照任务",
+            }
+        },
+        "products": {
+            "product_snapshot_only": {
+                "code": "SNAPSHOT-ONLY",
+                "id": "product_snapshot_only",
+                "name": "旧快照产品",
+                "status": "active",
+            }
+        },
+        "requirements": {
+            "requirement_snapshot_only": {
+                "content": "旧 app_state_snapshots 中的需求不能作为生产恢复源。",
+                "created_by": "user_admin",
+                "id": "requirement_snapshot_only",
+                "priority": "P1",
+                "product_id": "product_snapshot_only",
+                "status": "ready_for_dev",
+                "task_ids": ["task_snapshot_only"],
+                "title": "旧快照需求",
+            }
+        },
+    }
+
+    store = PersistentMemoryStore.from_repository(repository)
+
+    assert "product_snapshot_only" not in store.products
+    assert "requirement_snapshot_only" not in store.requirements
+    assert "task_snapshot_only" not in store.ai_tasks
+
+
+def test_persistent_store_persist_does_not_write_app_snapshot_payload():
+    repository = FakeSnapshotRepository()
+    store = PersistentMemoryStore.from_repository(repository)
+    store.products["product_no_snapshot"] = {
+        "code": "NO-SNAPSHOT",
+        "id": "product_no_snapshot",
+        "name": "不写 app_state 快照",
+        "status": "active",
+    }
+
+    store.persist()
+
+    assert repository.payload is None
+    assert repository.product_config_payload["products"]["product_no_snapshot"]["code"] == (
+        "NO-SNAPSHOT"
+    )
