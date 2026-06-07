@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.210 |
+| 功能版本 | v1.1.213 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,9 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.213 | 2026-06-07 | RBAC API 演进说明补充菜单权限：目标态新增菜单资源目录和角色菜单授权接口，`/api/auth/me` 返回 `menu_tree` 供左侧导航按授权渲染 | Codex |
+| v1.1.212 | 2026-06-07 | RBAC API 演进说明补充研发交付扩展预置角色，后续角色目录将包含开发工程师、测试负责人、测试人员和发布负责人等系统模板 | Codex |
+| v1.1.211 | 2026-06-07 | 补充系统权限管理 RBAC 重设计的 API 演进说明，明确 `/api/auth/roles` 作为兼容角色目录保留，目标角色治理接口迁移到 `/api/system/roles`、`/api/system/permissions` 和用户授权接口 | Codex |
 | v1.1.210 | 2026-06-07 | 研发运营页面更名为日志监控，前端只保留 GitLab、Jenkins 和线上日志指标入口；采集运行和待归属数据 API 保留为历史兼容能力但不再作为当前页面功能入口 | Codex |
 | v1.1.209 | 2026-06-07 | 需求 API 新增 `source` 来源字段与筛选排序；用户反馈新增转需求接口，转需求后同步反馈关联需求和 `linked` 状态 | Codex |
 | v1.1.208 | 2026-06-07 | Code Review 报告响应新增只读 `writeback_template`，提供可人工复制到 GitLab MR / GitHub PR 评论区的 Markdown 结论模板；系统仍不自动回写远端 | Codex |
@@ -339,10 +342,10 @@ curl -X POST http://localhost:8000/api/auth/login \
 | 创建和启动 AI 任务、确认技术方案 | rd_owner |
 | 创建 GitLab MR / GitHub PR 预览和 diff 快照、创建 code_review 任务、确认 Review 报告 | reviewer 或 rd_owner |
 | 审核知识沉淀 | knowledge_owner 或 rd_owner |
-| 登记、分派、验证或关闭 Bug | product_owner、rd_owner 或 admin；tester 角色按后续真实测试组织模型扩展 |
+| 登记、分派、验证或关闭 Bug | 当前实现为 product_owner、rd_owner 或 admin；RBAC 目标态由 tester/test_owner 按产品、版本或模块范围承接 |
 | 维护产品、相关系统、模型网关配置、用户账号 | admin |
 
-MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 为主；Bug 登记和状态更新先复用 `product_owner`、`rd_owner`、`admin`，`tester`、发布负责人和 IT 管理者写权限按后续真实组织模型扩展。接口鉴权还需要结合产品归属、任务参与关系和主体权限。
+MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowledge_owner`、`viewer` 为主；当前实现中 Bug 登记和状态更新先复用 `product_owner`、`rd_owner`、`admin`。RBAC 目标态会新增 `developer`、`test_owner`、`tester`、`release_owner` 等研发交付扩展预置角色，其中测试人员负责授权范围内的人工测试 Bug 登记和修复验证，测试负责人负责自动化测试确认和质量门禁。接口鉴权还需要结合产品归属、任务参与关系和主体权限。
 
 | 角色 code | 中文名称 | 主要职责 | 数据范围 | 决策范围 |
 |-----------|----------|----------|----------|----------|
@@ -634,6 +637,8 @@ GET /api/auth/roles
 ```
 
 该接口返回当前 MVP 可分配的系统角色目录，供用户管理页面、知识权限选择、权限说明和外部集成统一引用。`POST /api/users`、`PATCH /api/users/{user_id}` 和知识 `permission_roles` 字段只能使用该目录中的 `code`。
+
+v1.2 目标态按 [RBAC 重设计](rbac-redesign.md) 演进：`GET /api/auth/roles` 作为 active/assignable 角色目录兼容接口保留；角色治理、权限点目录、角色权限矩阵、角色菜单授权、角色数据范围和用户授权管理迁移到 `/api/system/roles`、`/api/system/permissions`、`/api/system/menus`、`/api/users/{user_id}/roles`、`/api/users/{user_id}/permissions` 与 `/api/users/{user_id}/scopes`。`/api/auth/me` 目标态返回 `menu_tree` 和 `route_permissions`，前端左侧菜单按 `menu_tree` 渲染。业务接口后续应校验权限点和数据范围，不再直接依赖角色 code，也不能把菜单隐藏作为安全边界。目标角色目录除 MVP 六个兼容角色外，还应提供 `developer`、`test_owner`、`tester`、`release_owner` 等研发交付扩展预置角色模板。
 
 响应：
 
