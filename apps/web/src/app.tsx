@@ -44,7 +44,7 @@ export async function getInitialState(): Promise<InitialState> {
 }
 
 export const layout = ({ initialState }: { initialState?: InitialState }) => ({
-  actionsRender: () => [<span className="layout-action" key="phase">研发大脑 MVP</span>],
+  actionsRender: () => [<span className="layout-action" key="phase">IT研发大脑</span>],
   avatarProps: {
     icon: <UserOutlined />,
     render: (_props: unknown, dom: ReactNode) => (
