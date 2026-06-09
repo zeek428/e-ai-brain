@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.213 |
+| 功能版本 | v1.1.215 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.215 | 2026-06-07 | RBAC API 演进说明确认外部身份绑定：SSO 用户必须映射到系统 users.id，目标态新增 external identity 绑定接口，未绑定身份不授予默认权限 | Codex |
+| v1.1.214 | 2026-06-07 | RBAC API 演进说明确认组织/部门、产品成员和知识空间：目标态新增部门、产品成员和知识空间接口，产品范围由产品管理页成员配置，知识检索按知识空间授权过滤 | Codex |
 | v1.1.213 | 2026-06-07 | RBAC API 演进说明补充菜单权限：目标态新增菜单资源目录和角色菜单授权接口，`/api/auth/me` 返回 `menu_tree` 供左侧导航按授权渲染 | Codex |
 | v1.1.212 | 2026-06-07 | RBAC API 演进说明补充研发交付扩展预置角色，后续角色目录将包含开发工程师、测试负责人、测试人员和发布负责人等系统模板 | Codex |
 | v1.1.211 | 2026-06-07 | 补充系统权限管理 RBAC 重设计的 API 演进说明，明确 `/api/auth/roles` 作为兼容角色目录保留，目标角色治理接口迁移到 `/api/system/roles`、`/api/system/permissions` 和用户授权接口 | Codex |
@@ -638,7 +640,7 @@ GET /api/auth/roles
 
 该接口返回当前 MVP 可分配的系统角色目录，供用户管理页面、知识权限选择、权限说明和外部集成统一引用。`POST /api/users`、`PATCH /api/users/{user_id}` 和知识 `permission_roles` 字段只能使用该目录中的 `code`。
 
-v1.2 目标态按 [RBAC 重设计](rbac-redesign.md) 演进：`GET /api/auth/roles` 作为 active/assignable 角色目录兼容接口保留；角色治理、权限点目录、角色权限矩阵、角色菜单授权、角色数据范围和用户授权管理迁移到 `/api/system/roles`、`/api/system/permissions`、`/api/system/menus`、`/api/users/{user_id}/roles`、`/api/users/{user_id}/permissions` 与 `/api/users/{user_id}/scopes`。`/api/auth/me` 目标态返回 `menu_tree` 和 `route_permissions`，前端左侧菜单按 `menu_tree` 渲染。业务接口后续应校验权限点和数据范围，不再直接依赖角色 code，也不能把菜单隐藏作为安全边界。目标角色目录除 MVP 六个兼容角色外，还应提供 `developer`、`test_owner`、`tester`、`release_owner` 等研发交付扩展预置角色模板。
+v1.2 目标态按 [RBAC 重设计](rbac-redesign.md) 演进：`GET /api/auth/roles` 作为 active/assignable 角色目录兼容接口保留；角色治理、权限点目录、角色权限矩阵、角色菜单授权、角色数据范围和用户授权管理迁移到 `/api/system/roles`、`/api/system/permissions`、`/api/system/menus`、`/api/users/{user_id}/roles`、`/api/users/{user_id}/permissions` 与 `/api/users/{user_id}/scopes`。组织/部门通过 `/api/system/departments` 管理，外部身份通过 `/api/system/external-identities` 绑定到系统 `users.id`，产品成员通过 `/api/products/{product_id}/members` 在产品管理页维护，知识空间通过 `/api/knowledge/spaces` 管理并作为知识检索权限边界。`/api/auth/me` 目标态返回 `menu_tree` 和 `route_permissions`，前端左侧菜单按 `menu_tree` 渲染。业务接口后续应校验权限点和数据范围，不再直接依赖角色 code，也不能把菜单隐藏作为安全边界；未绑定系统用户 ID 的 SSO 身份不得获得默认角色、部门或范围。目标角色目录除 MVP 六个兼容角色外，还应提供 `developer`、`test_owner`、`tester`、`release_owner` 等研发交付扩展预置角色模板。
 
 响应：
 

@@ -30,13 +30,17 @@
 - 统一权限判断入口：业务接口校验权限点，不再直接硬编码业务角色 code。
 - 保留系统预置角色，支持管理员基于预置角色复制出企业自定义角色。
 - 支持菜单权限、操作权限和数据范围权限组合，避免仅靠前端隐藏入口。
+- 引入组织/部门维度，用户必须可归属到部门，部门可作为数据范围和人员治理边界。
+- 产品管理页支持维护产品成员和成员角色，产品负责人、研发负责人等产品范围由产品成员配置承载。
+- 引入独立知识空间实体，知识空间聚合产品研发知识、文档资料和权限边界。
 - 支持角色授权、撤销、权限变更和数据范围变更的审计追踪。
 - 保持 DB-first 架构：角色、权限、用户授权和数据范围均以 PostgreSQL 结构表为事实源。
 
 ## 非目标
 
 - 不引入 ABAC 规则引擎或脚本化策略语言；v1.2 只在 RBAC 基础上增加受控的数据范围授权。
-- 不做组织架构、部门、岗位、审批流和 SSO/LDAP 同步；这些可在 RBAC 稳定后扩展。
+- 不做复杂岗位体系、授权审批流或从 SSO/LDAP 自动同步权限；SSO 只作为外部身份来源，必须映射到系统用户后才能参与授权。
+- 高危权限变更不引入双人审批流，统一由系统管理员配置并写入审计。
 - 不允许普通管理员修改系统保留权限点的 code、语义或高危系统角色保护规则。
 - 不用前端菜单隐藏替代后端权限判断。
 
@@ -56,9 +60,13 @@
 | 对象 | 说明 |
 |------|------|
 | 用户 User | 登录主体，仍由 `users` 表管理账号、密码、状态和显示名。 |
+| 外部身份 ExternalIdentity | SSO/OIDC/LDAP 等外部身份与本系统 `users.id` 的绑定关系。 |
+| 部门 Department | 组织/部门树节点，承载人员归属和部门级授权范围。 |
 | 角色 Role | 一组权限点和默认数据范围的集合，可为系统预置或管理员自定义。 |
 | 权限点 Permission | 稳定的动作能力，例如 `system.users.manage`、`requirement.approve`、`knowledge.search`。 |
 | 菜单 Menu | 左侧导航和页面入口资源，例如系统管理、角色管理、任务中心、Bug 管理。 |
+| 产品成员 ProductMember | 产品管理页维护的产品协作成员和产品内职责，例如产品负责人、研发负责人、测试负责人。 |
+| 知识空间 KnowledgeSpace | 独立知识权限边界，聚合产品研发知识、文档资料、沉淀内容和检索授权。 |
 | 用户角色 UserRole | 用户和角色的授权关系，记录授权人、有效期、状态和撤销信息。 |
 | 数据范围 ScopeGrant | 角色或用户在产品、版本、模块、知识空间等资源上的授权边界。 |
 | 权限快照 PermissionSnapshot | 登录和请求期间派生的有效权限点与范围集合，不作为写入事实源。 |
@@ -68,14 +76,16 @@
 | 分类 | 示例权限点 | 说明 |
 |------|------------|------|
 | `system` | `system.users.manage`、`system.roles.read`、`system.roles.manage`、`system.model_gateway.manage` | 系统管理与平台配置。 |
+| `organization` | `org.read`、`org.department.manage`、`org.member.manage` | 组织部门和人员归属维护。 |
 | `product` | `product.read`、`product.manage`、`product.scope.manage` | 产品主数据与产品授权范围维护。 |
+| `product_member` | `product.member.read`、`product.member.manage` | 产品管理页成员维护、产品内角色和成员范围配置。 |
 | `requirement` | `requirement.read`、`requirement.create`、`requirement.approve`、`requirement.task_generate` | 需求台账与任务生成。 |
 | `task` | `task.read`、`task.create`、`task.execute`、`task.cancel`、`task.retry` | AI 任务生命周期。 |
 | `review` | `review.read`、`review.decide` | 人工确认点。 |
 | `bug` | `bug.read`、`bug.manage` | Bug 管理。 |
 | `testing` | `test.read`、`test.case.manage`、`test.execution.manage`、`test.bug.verify` | 测试计划、测试执行、自动化测试结果确认和 Bug 验证。 |
 | `release` | `release.read`、`release.readiness.manage`、`release.decide` | 发布评估、发布确认和上线后分析。 |
-| `knowledge` | `knowledge.read`、`knowledge.search`、`knowledge.manage`、`knowledge.deposit.decide` | 知识文档、检索和沉淀。 |
+| `knowledge` | `knowledge.read`、`knowledge.search`、`knowledge.manage`、`knowledge.deposit.decide`、`knowledge_space.manage` | 知识空间、知识文档、检索和沉淀。 |
 | `devops` | `devops.read`、`devops.metrics.manage` | GitLab、Jenkins、线上日志指标。 |
 | `insight` | `insight.read`、`insight.feedback.manage`、`planning.decide` | 用户洞察、反馈和迭代建议。 |
 | `audit` | `audit.read` | 审计查询。 |
@@ -90,21 +100,55 @@ RBAC 只回答“用户能做什么动作”，数据范围回答“用户能在
 | scope_type | scope_id | 说明 |
 |------------|----------|------|
 | `global` | `*` | 全平台范围，仅系统管理、高级审计和平台级看板使用。 |
+| `department` | `departments.id` | 部门范围，覆盖部门成员和部门归属产品、知识空间或统计视图。 |
 | `product` | `products.id` | 产品范围，约束需求、任务、Bug、DevOps、用户洞察和看板数据。 |
 | `version` | `product_versions.id` | 迭代版本范围，继承所属产品但可进一步收窄。 |
 | `module` | `product_modules.id` | 模块范围，约束 Bug、日志、需求模块和知识上下文。 |
-| `knowledge_space` | `knowledge_documents.product_id` 或后续知识空间 ID | 知识文档和检索范围。 |
+| `knowledge_space` | `knowledge_spaces.id` | 独立知识空间范围，约束知识文档、知识沉淀、研发资料和检索。 |
 | `review_assignment` | `human_reviews.assignee_id` 或任务评审人字段 | 评审负责人只访问分配给自己的 Review。 |
 | `self` | 当前用户 ID | AI 助手历史、个人会话等用户级数据。 |
 
 范围匹配规则：
 
 1. `global:*` 覆盖所有资源。
-2. `product:{id}` 覆盖该产品下需求、任务、Bug、指标、反馈、迭代建议、知识文档和看板摘要。
-3. `version:{id}` 只覆盖该版本及其关联需求、任务、Bug、发布记录。
-4. `module:{id}` 只覆盖该模块及其关联 Bug、日志指标和需求模块字段。
-5. `review_assignment:self` 只覆盖分配给当前用户的待确认 Review 和对应任务上下文。
-6. 多角色授权取并集；显式撤销或停用角色立即从有效权限快照中移除。
+2. `department:{id}` 覆盖该部门成员以及明确归属该部门的产品、知识空间或部门级统计视图；是否包含子部门由 `include_children` 范围属性控制。
+3. `product:{id}` 覆盖该产品下需求、任务、Bug、指标、反馈、迭代建议、知识文档和看板摘要。
+4. `version:{id}` 只覆盖该版本及其关联需求、任务、Bug、发布记录。
+5. `module:{id}` 只覆盖该模块及其关联 Bug、日志指标和需求模块字段。
+6. `knowledge_space:{id}` 覆盖该知识空间下文档、chunk、沉淀候选、研发资料和检索结果；知识空间可关联一个或多个产品，但权限以知识空间授权为准。
+7. `review_assignment:self` 只覆盖分配给当前用户的待确认 Review 和对应任务上下文。
+8. 多角色授权取并集；显式撤销或停用角色立即从有效权限快照中移除。
+
+### 组织、产品成员和知识空间
+
+组织/部门、产品成员和知识空间是 RBAC 目标态的三个显式配置维度。
+
+**组织/部门**
+
+- 系统管理提供部门树维护，部门支持父子层级、启停状态和负责人字段。
+- 用户必须可以归属到一个主部门，并可选加入多个兼职部门；部门归属用于默认数据范围、人员筛选和后续 SSO 映射。
+- 部门范围授权可用于管理本部门成员、查看部门关联产品或知识空间摘要，但不能自动获得产品写权限；产品写权限仍由产品成员或显式产品范围授权控制。
+
+**产品成员**
+
+- 产品负责人、研发负责人、测试负责人、测试人员、开发工程师、发布负责人等产品范围，优先由产品管理页的产品成员配置维护。
+- 产品管理页可为产品添加成员、设置产品内职责、限制到版本或模块，并写入产品成员审计。
+- 系统管理员仍可配置全局角色和紧急授权，但日常产品范围授权以产品成员关系为准。
+- 产品成员关系可派生 `product`、`version` 或 `module` 范围，供 `AuthorizationService` 合并到用户权限快照。
+
+**知识空间**
+
+- 知识空间是独立实体，不再仅依附产品或文档角色数组。
+- 知识空间可包含产品研发资料、PRD/设计/技术方案/测试/发布文档、任务沉淀、外部文档引用和检索配置。
+- 知识空间可关联一个或多个产品、部门和维护人；知识检索必须先按知识空间授权过滤，再做关键词或向量排序。
+- 知识文档必须归属知识空间；可选再绑定产品、版本、模块作为上下文标签。
+
+**外部 SSO 身份**
+
+- 外部 SSO 用户必须先映射到本系统 `users.id`，系统权限计算只接受内部用户 ID。
+- SSO 登录成功后，后端使用 provider、subject、email 或企业工号查找 `external_identities` 绑定记录；未绑定到 active 系统用户时，不授予默认角色和默认范围。
+- 用户的部门、角色、产品成员、知识空间成员和补充范围仍以系统内表为准；SSO 不直接下发 RBAC 权限。
+- 可允许系统管理员预先绑定外部身份，也可支持首次登录进入“待绑定/无权限”状态，由管理员完成用户映射。
 
 ### 菜单权限与左侧导航
 
@@ -145,6 +189,9 @@ RBAC 只回答“用户能做什么动作”，数据范围回答“用户能在
 
 | 表 | 用途 | 关键字段 |
 |----|------|----------|
+| `departments` | 组织/部门树 | `id`、`code`、`name`、`parent_id`、`leader_user_id`、`status`、`sort_order`、`created_at`、`updated_at` |
+| `external_identities` | 外部身份到系统用户映射 | `id`、`provider`、`external_subject`、`external_email`、`user_id`、`status`、`last_login_at`、`created_at`、`updated_at` |
+| `user_departments` | 用户部门归属 | `user_id`、`department_id`、`is_primary`、`position_title`、`status`、`joined_at`、`created_at`、`updated_at` |
 | `permissions` | 权限点字典 | `code`、`name`、`category`、`description`、`risk_level`、`is_system`、`status`、`created_at`、`updated_at` |
 | `menu_resources` | 菜单和路由资源字典 | `code`、`name`、`path`、`parent_code`、`menu_type`、`icon`、`sort_order`、`required_permissions`、`is_system`、`status`、`created_at`、`updated_at` |
 | `roles` | 角色主表 | `id`、`code`、`name`、`description`、`category`、`is_system`、`is_assignable`、`status`、`sort_order`、`created_by`、`updated_by`、`created_at`、`updated_at` |
@@ -153,23 +200,32 @@ RBAC 只回答“用户能做什么动作”，数据范围回答“用户能在
 | `user_roles` | 用户-角色关系 | `user_id`、`role_id`、`granted_by`、`grant_reason`、`effective_from`、`expires_at`、`status`、`revoked_by`、`revoked_at`、`created_at`、`updated_at` |
 | `role_scope_grants` | 角色默认数据范围 | `role_id`、`scope_type`、`scope_id`、`access_level`、`granted_by`、`created_at`、`updated_at` |
 | `user_scope_grants` | 用户补充数据范围 | `user_id`、`scope_type`、`scope_id`、`access_level`、`granted_by`、`expires_at`、`status`、`created_at`、`updated_at` |
+| `product_members` | 产品成员和产品内职责 | `product_id`、`user_id`、`member_role`、`scope_type`、`scope_id`、`status`、`granted_by`、`created_at`、`updated_at` |
+| `knowledge_spaces` | 独立知识空间 | `id`、`code`、`name`、`description`、`owner_user_id`、`department_id`、`status`、`created_at`、`updated_at` |
+| `knowledge_space_products` | 知识空间关联产品 | `knowledge_space_id`、`product_id`、`created_at`、`updated_at` |
+| `knowledge_space_members` | 知识空间成员授权 | `knowledge_space_id`、`user_id`、`space_role`、`status`、`granted_by`、`created_at`、`updated_at` |
 | `role_change_events` | 角色配置变更历史 | `role_id`、`event_type`、`before_payload`、`after_payload`、`actor_id`、`trace_id`、`created_at` |
 
 兼容调整：
 
 - `role_definitions` 保留为迁移兼容视图或同步表，后续由 `roles + role_permissions` 派生，不再作为角色事实源。
 - `users.roles` 在迁移期保留并由 `user_roles` 反向同步；完成迁移后降级为兼容读字段，新增授权不再直接写 JSON 数组。
-- `knowledge_documents.permission_roles` 在迁移期继续支持，新增知识权限应逐步改为 `scope_type=knowledge_space/product` 的范围授权，避免知识检索依赖角色 code。
+- `knowledge_documents.permission_roles` 在迁移期继续支持；新增知识权限改由 `knowledge_spaces`、`knowledge_space_members` 和 `scope_type=knowledge_space` 承载，避免知识检索依赖角色 code。
+- `knowledge_documents` 新增 `knowledge_space_id`，知识文档必须归属知识空间；`product_id/version_id/module_id` 仅作为上下文标签。
 
 ### 索引和约束
 
 - `permissions.code` 唯一，系统权限点 `is_system=true` 不允许删除，只允许停用非核心权限点。
+- `external_identities(provider, external_subject)` 唯一；同一 active 外部身份只能绑定一个 active 系统用户。
+- `departments.code` 唯一；同一父部门下部门名称不重复；一个用户只能有一个 active 主部门。
 - `roles.code` 唯一，系统预置角色 `is_system=true` 不允许删除，只允许调整 `is_assignable` 和展示字段；高危权限的授予需要审计。
 - `role_permissions(role_id, permission_code)` 唯一。
 - `menu_resources.code` 唯一；系统菜单 `is_system=true` 不允许删除，只允许停用或调整展示字段。
 - `role_menu_grants(role_id, menu_code)` 唯一。
 - `user_roles(user_id, role_id, status)` 至少保证同一用户同一 active 角色不重复。
 - `role_scope_grants(role_id, scope_type, scope_id, access_level)` 唯一。
+- `product_members(product_id, user_id, member_role, scope_type, scope_id)` 唯一，避免同一产品职责重复授权。
+- `knowledge_spaces.code` 唯一；`knowledge_space_products(knowledge_space_id, product_id)` 唯一；`knowledge_space_members(knowledge_space_id, user_id, space_role)` 唯一。
 - 所有新增结构表必须包含 `created_at` 和 `updated_at` 标准时间字段，满足现有迁移门禁要求。
 
 ## 后端授权设计
@@ -191,11 +247,17 @@ require_permissions(user, {"task.create"}, scope=ProductScope(product_id))
 服务层统一通过 `AuthorizationService` 派生当前用户有效授权：
 
 1. 读取 active 用户。
-2. 读取 active 且未过期的 `user_roles`。
-3. 合并 active 角色的 `role_permissions`。
-4. 合并角色范围和用户补充范围。
-5. 加入 `self` 范围和被分配 Review 范围。
-6. 返回 request-scoped `PermissionSnapshot`。
+2. 如果请求来自 SSO，先确认外部身份已绑定到该 active 系统用户 ID。
+3. 读取 active 且未过期的 `user_roles`。
+4. 合并 active 角色的 `role_permissions`。
+5. 合并角色范围和用户补充范围。
+6. 读取用户部门归属，合并显式部门范围。
+7. 读取产品成员关系，按产品内职责派生产品、版本或模块范围。
+8. 读取知识空间成员关系，派生知识空间范围。
+9. 加入 `self` 范围和被分配 Review 范围。
+10. 返回 request-scoped `PermissionSnapshot`。
+
+SSO 登录流程不得根据外部用户的 email、部门名或 SSO group 直接创建角色授权；这些信息只能作为管理员绑定或后续同步建议的输入。未绑定系统用户 ID 的外部身份应返回明确错误或进入无权限待绑定状态。
 
 `PermissionSnapshot` 只在请求期间缓存，不能写回为事实源。缓存 key 必须包含 `user_id`、用户更新时间、角色授权更新时间或短 TTL，避免角色变更后长时间不生效。
 
@@ -247,6 +309,25 @@ require_permissions(user, {"task.create"}, scope=ProductScope(product_id))
 
 `GET /api/auth/roles` 作为兼容接口保留，短期返回 active 且 assignable 的角色目录；新角色管理页使用 `/api/system/roles`。
 
+### 组织与部门
+
+| 方法 | 路径 | 权限点 | 说明 |
+|------|------|--------|------|
+| GET | `/api/system/departments` | `org.read` | 查询部门树和 active 部门目录。 |
+| POST | `/api/system/departments` | `org.department.manage` | 创建部门。 |
+| PATCH | `/api/system/departments/{department_id}` | `org.department.manage` | 更新部门名称、父级、负责人、状态和排序。 |
+| GET | `/api/system/departments/{department_id}/members` | `org.read` | 查询部门成员。 |
+| PUT | `/api/system/departments/{department_id}/members` | `org.member.manage` | 维护部门成员和主/兼职归属。 |
+
+### 外部身份绑定
+
+| 方法 | 路径 | 权限点 | 说明 |
+|------|------|--------|------|
+| GET | `/api/system/external-identities` | `system.users.manage` | 查询外部身份绑定记录。 |
+| POST | `/api/system/external-identities` | `system.users.manage` | 将外部身份绑定到系统用户 ID。 |
+| PATCH | `/api/system/external-identities/{identity_id}` | `system.users.manage` | 更新绑定状态或重新绑定系统用户。 |
+| DELETE | `/api/system/external-identities/{identity_id}` | `system.users.manage` | 解除外部身份绑定。 |
+
 ### 权限点目录
 
 | 方法 | 路径 | 权限点 | 说明 |
@@ -262,6 +343,28 @@ require_permissions(user, {"task.create"}, scope=ProductScope(product_id))
 | GET | `/api/system/menus/matrix` | `system.roles.read` | 返回角色 x 菜单矩阵，供角色菜单授权和差异查看。 |
 
 权限点由迁移脚本和代码定义同步，不提供普通页面创建权限点。新增权限点属于开发和发布流程，不属于运行时配置。
+
+### 产品成员
+
+| 方法 | 路径 | 权限点 | 说明 |
+|------|------|--------|------|
+| GET | `/api/products/{product_id}/members` | `product.member.read` | 查询产品成员、产品内职责和成员范围。 |
+| PUT | `/api/products/{product_id}/members` | `product.member.manage` | 在产品管理页整体维护产品成员；可限制到产品、版本或模块范围。 |
+
+产品成员配置是产品负责人、研发负责人、测试负责人、测试人员、开发工程师和发布负责人获得产品范围的默认来源。保存后写入 `product_members`，并可由 `AuthorizationService` 派生到用户权限快照。
+
+### 知识空间
+
+| 方法 | 路径 | 权限点 | 说明 |
+|------|------|--------|------|
+| GET | `/api/knowledge/spaces` | `knowledge.read` | 查询用户有权访问的知识空间。 |
+| POST | `/api/knowledge/spaces` | `knowledge_space.manage` | 创建知识空间。 |
+| GET | `/api/knowledge/spaces/{space_id}` | `knowledge.read` | 查询知识空间详情、关联产品、成员和文档摘要。 |
+| PATCH | `/api/knowledge/spaces/{space_id}` | `knowledge_space.manage` | 更新知识空间基础信息、归属部门、负责人和状态。 |
+| PUT | `/api/knowledge/spaces/{space_id}/products` | `knowledge_space.manage` | 维护知识空间关联产品。 |
+| PUT | `/api/knowledge/spaces/{space_id}/members` | `knowledge_space.manage` | 维护知识空间成员和空间内角色。 |
+
+知识文档创建和知识沉淀采纳时必须指定 `knowledge_space_id` 或从任务/产品上下文推导默认知识空间；检索先按知识空间授权过滤，再按文档、产品、版本、模块标签筛选。
 
 ### 用户授权
 
@@ -368,6 +471,13 @@ v1.2 预置以下开发相关角色，解决测试、开发、发布职责被 `r
 | `user.roles_updated` | 修改用户角色授权。 |
 | `user.role_revoked` | 撤销用户角色。 |
 | `user.scopes_updated` | 修改用户补充范围。 |
+| `department.created` / `department.updated` | 创建或更新部门。 |
+| `department.members_updated` | 维护部门成员归属。 |
+| `external_identity.bound` / `external_identity.unbound` | 绑定或解绑外部身份与系统用户。 |
+| `product.members_updated` | 产品管理页维护产品成员和产品内职责。 |
+| `knowledge_space.created` / `knowledge_space.updated` | 创建或更新知识空间。 |
+| `knowledge_space.members_updated` | 维护知识空间成员授权。 |
+| `knowledge_space.products_updated` | 维护知识空间关联产品。 |
 
 审计 payload 至少包含 `actor_id`、目标角色或用户、变更前后摘要、权限点增删、菜单增删、范围增删、授权原因、trace_id。不得在审计中保存密码、token 或模型密钥。
 
@@ -389,6 +499,10 @@ v1.2 预置以下开发相关角色，解决测试、开发、发布职责被 `r
 - 迁移测试：旧 `role_definitions` 和 `users.roles` 能正确展开到新 RBAC 表，迁移可重复执行。
 - 权限目录测试：权限点 code、分类、风险等级、系统标记和状态完整。
 - 菜单目录测试：菜单 code、父子关系、路由路径、菜单类型、所需权限点和状态完整。
+- 部门归属测试：用户主部门唯一，部门范围可派生有效权限，停用部门成员后权限失效。
+- 外部身份测试：SSO 身份未绑定系统用户时不能获得角色和范围；绑定 active 系统用户后按内部用户授权计算权限。
+- 产品成员测试：产品管理页维护成员后，用户获得对应产品、版本或模块范围；移除成员后范围失效。
+- 知识空间测试：知识文档必须归属知识空间，检索先按知识空间授权过滤，再按产品/版本/模块标签筛选。
 - 预置角色测试：MVP 六角色和 `developer`、`test_owner`、`tester`、`release_owner` 均可查询、复制和分配，且系统预置角色不可删除。
 - 角色 CRUD 测试：创建、复制、编辑、停用、启用、权限替换、范围替换和保护规则。
 - 菜单授权测试：角色菜单保存后，授权用户登录返回正确 `menu_tree`；撤销角色、停用角色或停用菜单后不再返回。
@@ -406,6 +520,8 @@ v1.2 预置以下开发相关角色，解决测试、开发、发布职责被 `r
 - 真实网页 smoke：登录管理员，打开 `/system/roles`，验证非空渲染、可见预置角色、自定义角色创建/复制入口和无 console/runtime error。
 
 ## 分阶段落地
+
+评审完成后，开发执行计划已落到 [RBAC Redesign Implementation Plan](../../superpowers/plans/2026-06-09-rbac-redesign-implementation.md)。该计划按数据库和种子、授权快照、系统 RBAC API、角色治理 UI、部门与产品成员、知识空间、业务接口迁移、兼容收口八个任务推进，每个任务都有测试命令和提交边界。
 
 ### Phase 1：模型和兼容读
 
@@ -436,13 +552,15 @@ v1.2 预置以下开发相关角色，解决测试、开发、发布职责被 `r
 - 知识权限从 `permission_roles` 迁移到产品/知识空间范围授权。
 - 删除业务代码中的角色 code 硬编码，仅保留系统预置角色种子。
 
-## 开放问题
+## 已确认决策与待定项
 
-1. 是否需要在 v1.2 同时引入组织/部门维度，还是先用产品范围承载团队边界？
-2. 产品负责人和研发负责人的产品范围由系统管理员配置，还是由产品管理页的产品成员配置？
-3. 知识权限是否需要独立“知识空间”实体，还是继续以产品归属和文档范围承载？
-4. 高危权限变更是否需要双人审批？本设计先要求二次确认和审计，不包含审批流。
-5. 外部 SSO 用户进入后，默认角色和范围如何映射？本设计暂不包含 SSO。
+| 编号 | 决策 | 状态 |
+|------|------|------|
+| D1 | v1.2 引入组织/部门维度，人员必须可归属部门；部门可作为授权范围、人员治理和后续 SSO 映射基础。 | 已确认 |
+| D2 | 产品负责人、研发负责人、测试负责人、开发工程师、测试人员和发布负责人等产品范围由产品管理页的产品成员配置维护。 | 已确认 |
+| D3 | 知识权限引入独立知识空间实体，知识空间包含产品研发和文档相关信息，并作为知识检索权限边界。 | 已确认 |
+| D4 | 高危权限变更不引入双人审批流，统一由系统管理员配置；系统通过二次确认、高危提示和审计留痕控制风险。 | 已确认 |
+| D5 | 外部 SSO 用户必须映射到本系统 `users.id`；未绑定系统用户 ID 时不授予默认角色、部门或范围。 | 已确认 |
 
 ## 验收标准
 
@@ -450,6 +568,9 @@ v1.2 预置以下开发相关角色，解决测试、开发、发布职责被 `r
 - 系统预置六个 MVP 兼容角色迁移后仍能满足当前页面和接口权限回归。
 - 系统预置开发工程师、测试负责人、测试人员和发布负责人角色，测试人员可登记/验证授权范围内 Bug，但不能执行需求审批、技术方案确认或发布确认。
 - 角色可以配置功能菜单；角色授权给用户后，用户登录返回 `menu_tree`，前端左侧菜单按 `menu_tree` 展示。
+- 系统支持组织/部门树和人员部门归属；用户有效权限可解释其部门、角色、产品成员和知识空间来源。
+- 产品管理页可以维护产品成员和产品内职责，并将产品、版本或模块范围派生给成员。
+- 知识空间作为独立实体承载产品研发资料和文档权限，知识检索不得返回无知识空间授权内容。
 - 后端业务接口能够基于权限点和数据范围拒绝越权访问。
 - 角色、权限和用户授权变更均可在审计中追踪。
 - 角色管理页面不再只是只读目录，而是可执行角色治理的系统管理入口。
