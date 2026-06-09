@@ -40,6 +40,24 @@ const timeRangeOptions = [
   { label: '近 30 天', value: '30d' },
 ];
 
+const formatDashboardGeneratedAt = (value?: string) => {
+  if (!value || value === '-') {
+    return '-';
+  }
+  const isoMatch = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]} ${isoMatch[2]}`;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  const pad = (part: number) => part.toString().padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
 const statusLabels: Record<string, { color: string; label: string }> = {
   accepted: { color: 'green', label: '已验收' },
   approved: { color: 'green', label: '已审批' },
@@ -315,23 +333,14 @@ export default function DashboardPage() {
     };
   }, []);
 
+  const generatedAtText = formatDashboardGeneratedAt(dashboard?.cacheMetadata.generatedAt);
+
   return (
     <PageContainer title={false}>
       <div className="dashboard-header">
         <div>
           <Title level={3}>IT 团队看板</Title>
-          <Text type="secondary">
-            真实数据窗口：{dashboard?.timeRange ?? '-'}
-            {dashboard?.cacheMetadata.generatedAt && dashboard.cacheMetadata.generatedAt !== '-' ? (
-              <>
-                {' · '}生成时间：{dashboard.cacheMetadata.generatedAt}
-                {' · '}
-                {dashboard.cacheMetadata.cacheHit ? '缓存命中' : '实时刷新'}
-                {' · '}
-                {dashboard.cacheMetadata.durationMs}ms
-              </>
-            ) : null}
-          </Text>
+          <Text type="secondary">生成时间：{generatedAtText}</Text>
         </div>
         <div className="dashboard-actions">
           <select

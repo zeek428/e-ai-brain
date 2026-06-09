@@ -63,6 +63,14 @@ describe('Dashboard page', () => {
                 title: '首页严重 Bug',
               },
             ],
+            metadata: {
+              dashboard_cache: {
+                cache_enabled: true,
+                cache_hit: false,
+                duration_ms: 57,
+                generated_at: '2026-06-09T10:14:34.058724+00:00',
+              },
+            },
             online_log_summary: {
               error_count: 4,
               error_rate: 0.02,
@@ -154,6 +162,10 @@ describe('Dashboard page', () => {
     expect(screen.queryByText('欢迎使用 AI Brain')).not.toBeInTheDocument();
     expect(screen.queryByText('从左侧菜单进入任务中心、需求交付、产品资产和运营治理。')).not.toBeInTheDocument();
     expect(await screen.findByText('IT 团队看板')).toBeInTheDocument();
+    expect(screen.getByText('生成时间：2026-06-09 10:14:34')).toBeInTheDocument();
+    expect(screen.queryByText(/真实数据窗口/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/实时刷新/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/57ms/)).not.toBeInTheDocument();
     expect(screen.getByText('需求总数')).toBeInTheDocument();
     expect(screen.getByText('5')).toBeInTheDocument();
     expect(screen.getByText('首页看板任务')).toBeInTheDocument();
