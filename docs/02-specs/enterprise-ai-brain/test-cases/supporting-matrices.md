@@ -41,6 +41,7 @@
 | TC-AIBRAIN-AUDIT-API-006 | GET /api/audit/events?ai_task_id={id} | 按任务查询 | 返回 items，最多 120 条；响应包含查询和性能观测元数据，audit router 不回调 legacy main。 |
 | TC-AIBRAIN-AUDIT-API-013 | GET /api/audit/events?subject_type={type}&subject_id={id} | 按主体查询 | 返回指定主体的审计事件；支持服务端筛选、排序、分页和非法排序字段校验。 |
 | TC-AIBRAIN-CONFIG-API-008D | POST /api/product-versions/{version_id}/advance-status | 版本状态推进 | 支持 preview_only 影响预览；确认推进后按版本阶段同步需求状态；阻塞项返回稳定错误码；普通 PATCH 改状态返回 `PRODUCT_VERSION_STATUS_ADVANCE_REQUIRED`。 |
+| TC-AIBRAIN-CONFIG-FUNC-008E | GET/POST/PATCH/DELETE /api/product-versions/{version_id}/branch-configs | 迭代版本代码分支配置 | 同一版本可维护多个代码库分支；同一版本同一仓库只允许一条配置；仓库必须属于同产品；分支配置写入 `product_version_branch_configs` 并记录审计。 |
 | TC-AIBRAIN-REQ-API-011E | POST /api/requirements/batch-schedule | 多需求批量排期 | 同产品 `approved/planned` 需求更新为目标迭代版本并进入 `planned`；不合规需求返回 skipped；写入 `requirement.batch_scheduled` 和逐需求 `requirement.updated` 审计。 |
 | TC-AIBRAIN-REQ-API-011F | POST /api/requirements/batch-generate-tasks | 多需求批量生成任务 | 同产品 `planned` 需求各生成 draft 产品详细设计任务并进入 `designing`；不合规需求返回 skipped；写入 `requirement.batch_tasks_generated` 和逐任务 `ai_task.created` 审计；需求批量任务端点由 `app.api.routers.requirements` 单一路由注册。 |
 | TC-AIBRAIN-REQ-API-011G | POST /api/requirements/batch-assign-owner | 多需求批量分配负责人 | 非关闭/非取消需求更新 `assignee` 且状态不变化；关闭、取消、重复和不存在需求返回 skipped；写入 `requirement.batch_owner_assigned` 和逐条 `requirement.updated` 审计；端点由 `app.api.routers.requirements` 单一路由注册。 |

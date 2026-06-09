@@ -52,6 +52,22 @@ export type ProductGitRepositoryRecord = {
   status: 'active' | 'inactive';
 };
 
+export type ProductVersionBranchConfigRecord = {
+  baseBranch: string;
+  branchStatus: 'active' | 'archived' | 'merged' | 'not_created' | 'released' | 'testing';
+  creationSource: 'ai_task' | 'github_sync' | 'gitlab_sync' | 'manual';
+  description?: string | null;
+  id: string;
+  productId: string;
+  repositoryDefaultBranch?: string | null;
+  repositoryId: string;
+  repositoryName?: string | null;
+  repositoryPath?: string | null;
+  repositoryProvider?: string | null;
+  versionId: string;
+  workingBranch: string;
+};
+
 export type ProductRelatedSystemRecord = {
   code: string;
   description?: string | null;

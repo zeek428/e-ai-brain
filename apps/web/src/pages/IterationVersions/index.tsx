@@ -1,22 +1,41 @@
-import { ArrowRightOutlined, CalendarOutlined, DeleteOutlined, EditOutlined, EyeOutlined } from '@ant-design/icons';
+import {
+  ArrowRightOutlined,
+  CalendarOutlined,
+  CodeOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  EyeOutlined,
+} from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Alert, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
-import type { ProductContextOption, ProductVersionRecord, RequirementRecord } from '../../data/management';
+import type {
+  ProductContextOption,
+  ProductGitRepositoryRecord,
+  ProductVersionBranchConfigRecord,
+  ProductVersionRecord,
+  RequirementRecord,
+} from '../../data/management';
 import { formatRemoteRowsError, normalizeRemoteRowsError, useRemoteRows, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   advanceProductVersionStatus,
   batchScheduleRequirements,
   createProductVersion,
+  createProductVersionBranchConfig,
+  deleteProductVersionBranchConfig,
   deleteProductVersion,
   fetchDeliveryIterationVersionList,
   fetchManagementRequirements,
   fetchProductContextOptions,
+  fetchProductGitRepositoryRecords,
+  fetchProductVersionBranchConfigs,
   type ProductVersionAdvanceStatusResult,
+  type ProductVersionBranchConfigMutationPayload,
   type ProductVersionListQuery,
+  updateProductVersionBranchConfig,
   updateProductVersion,
 } from '../../services/aiBrain';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
@@ -39,6 +58,15 @@ type AdvanceVersionFormValues = {
   force?: boolean;
   reason?: string;
   target_status: ProductVersionRecord['status'];
+};
+
+type BranchConfigFormValues = {
+  base_branch?: string;
+  branch_status: ProductVersionBranchConfigRecord['branchStatus'];
+  creation_source: ProductVersionBranchConfigRecord['creationSource'];
+  description?: string;
+  repository_id: string;
+  working_branch: string;
 };
 
 const versionStatusLabels: Record<ProductVersionRecord['status'], { color: string; label: string }> = {
@@ -74,6 +102,20 @@ const versionStatusAdvanceTargets: Partial<Record<ProductVersionRecord['status']
   planning: 'active',
   testing: 'released',
 };
+const branchStatusLabels: Record<ProductVersionBranchConfigRecord['branchStatus'], { color: string; label: string }> = {
+  active: { color: 'blue', label: '开发中' },
+  archived: { color: 'default', label: '已归档' },
+  merged: { color: 'green', label: '已合并' },
+  not_created: { color: 'default', label: '未创建' },
+  released: { color: 'green', label: '已发布' },
+  testing: { color: 'purple', label: '测试中' },
+};
+const branchCreationSourceLabels: Record<ProductVersionBranchConfigRecord['creationSource'], string> = {
+  ai_task: 'AI 任务生成',
+  github_sync: 'GitHub 同步',
+  gitlab_sync: 'GitLab 同步',
+  manual: '手工登记',
+};
 
 const versionStatusOptions = [
   { label: '规划中', value: 'planning' },
@@ -85,6 +127,14 @@ const versionStatusOptions = [
 const versionCreateStatusOptions = versionStatusOptions.filter((option) =>
   ['active', 'planning'].includes(option.value),
 );
+const branchStatusOptions = Object.entries(branchStatusLabels).map(([value, item]) => ({
+  label: item.label,
+  value,
+}));
+const branchCreationSourceOptions = Object.entries(branchCreationSourceLabels).map(([value, label]) => ({
+  label,
+  value,
+}));
 const versionSortFieldMap: Record<string, string> = {
   code: 'code',
   name: 'name',
@@ -113,18 +163,25 @@ function buildVersionListQuery(query: ManagementListQuery): ProductVersionListQu
 
 export default function IterationVersionsPage() {
   const [form] = Form.useForm<IterationVersionFormValues>();
+  const [branchForm] = Form.useForm<BranchConfigFormValues>();
   const [collectForm] = Form.useForm<CollectRequirementsFormValues>();
   const [advanceForm] = Form.useForm<AdvanceVersionFormValues>();
   const [editingVersion, setEditingVersion] = useState<ProductVersionRecord | null>(null);
   const [collectingVersion, setCollectingVersion] = useState<ProductVersionRecord | null>(null);
   const [advancingVersion, setAdvancingVersion] = useState<ProductVersionRecord | null>(null);
   const [viewingVersion, setViewingVersion] = useState<ProductVersionRecord | null>(null);
+  const [branchConfigVersion, setBranchConfigVersion] = useState<ProductVersionRecord | null>(null);
+  const [editingBranchConfig, setEditingBranchConfig] = useState<ProductVersionBranchConfigRecord | null>(null);
   const [advancePreview, setAdvancePreview] = useState<ProductVersionAdvanceStatusResult | null>(null);
+  const [branchConfigs, setBranchConfigs] = useState<ProductVersionBranchConfigRecord[]>([]);
+  const [branchRepositories, setBranchRepositories] = useState<ProductGitRepositoryRecord[]>([]);
   const [collectRequirementIds, setCollectRequirementIds] = useState<string[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAdvancePreviewLoading, setIsAdvancePreviewLoading] = useState(false);
   const [isAdvanceSaving, setIsAdvanceSaving] = useState(false);
   const [isCollectSaving, setIsCollectSaving] = useState(false);
+  const [isBranchConfigLoading, setIsBranchConfigLoading] = useState(false);
+  const [isBranchConfigSaving, setIsBranchConfigSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
@@ -242,6 +299,107 @@ export default function IterationVersionsPage() {
       ? [{ label: versionStatusLabels[nextStatus].label, value: nextStatus }]
       : [];
   }, [advancingVersion]);
+  const branchRepositoryOptions = useMemo(
+    () =>
+      branchRepositories.map((repository) => ({
+        label: `${repository.name} · ${repository.provider} · ${repository.projectPath ?? repository.remoteUrl}`,
+        value: repository.id,
+      })),
+    [branchRepositories],
+  );
+
+  const loadBranchConfigs = useCallback(async (version: ProductVersionRecord) => {
+    if (!version.productId) {
+      message.error('版本缺少所属产品，无法维护代码分支');
+      return;
+    }
+    setIsBranchConfigLoading(true);
+    try {
+      const [repositories, configs] = await Promise.all([
+        fetchProductGitRepositoryRecords(version.productId),
+        fetchProductVersionBranchConfigs(version.id),
+      ]);
+      const activeRepositories = repositories.filter((repository) => repository.status === 'active');
+      setBranchRepositories(activeRepositories);
+      setBranchConfigs(configs);
+      if (activeRepositories.length === 1) {
+        branchForm.setFieldsValue({
+          base_branch: activeRepositories[0].defaultBranch,
+          repository_id: activeRepositories[0].id,
+        });
+      }
+    } catch (loadError) {
+      message.error(formatMutationError(loadError));
+      setBranchRepositories([]);
+      setBranchConfigs([]);
+    } finally {
+      setIsBranchConfigLoading(false);
+    }
+  }, [branchForm]);
+
+  const openBranchConfigModal = useCallback((row: ProductVersionRecord) => {
+    setBranchConfigVersion(row);
+    setEditingBranchConfig(null);
+    branchForm.resetFields();
+    void loadBranchConfigs(row);
+  }, [branchForm, loadBranchConfigs]);
+
+  const openEditBranchConfig = useCallback((row: ProductVersionBranchConfigRecord) => {
+    setEditingBranchConfig(row);
+    branchForm.setFieldsValue({
+      base_branch: row.baseBranch,
+      branch_status: row.branchStatus,
+      creation_source: row.creationSource,
+      description: row.description ?? undefined,
+      repository_id: row.repositoryId,
+      working_branch: row.workingBranch,
+    });
+  }, [branchForm]);
+
+  const handleSaveBranchConfig = async () => {
+    if (!branchConfigVersion) {
+      return;
+    }
+    const values = await branchForm.validateFields();
+    const payload: ProductVersionBranchConfigMutationPayload = {
+      base_branch: trimText(values.base_branch),
+      branch_status: values.branch_status,
+      creation_source: values.creation_source,
+      description: trimText(values.description),
+      repository_id: values.repository_id,
+      working_branch: values.working_branch.trim(),
+    };
+    setIsBranchConfigSaving(true);
+    try {
+      if (editingBranchConfig) {
+        await updateProductVersionBranchConfig(editingBranchConfig.id, payload);
+        message.success('代码分支已更新');
+      } else {
+        await createProductVersionBranchConfig(branchConfigVersion.id, payload);
+        message.success('代码分支已保存');
+      }
+      setEditingBranchConfig(null);
+      branchForm.resetFields();
+      await loadBranchConfigs(branchConfigVersion);
+    } catch (saveError) {
+      message.error(formatMutationError(saveError));
+    } finally {
+      setIsBranchConfigSaving(false);
+    }
+  };
+
+  const handleDeleteBranchConfig = useCallback(async (row: ProductVersionBranchConfigRecord) => {
+    if (!branchConfigVersion) {
+      return;
+    }
+    try {
+      await deleteProductVersionBranchConfig(row.id);
+      message.success('代码分支已删除');
+      await loadBranchConfigs(branchConfigVersion);
+    } catch (deleteError) {
+      message.error(formatMutationError(deleteError));
+    }
+  }, [branchConfigVersion, loadBranchConfigs]);
 
   const openCreateModal = () => {
     setEditingVersion(null);
@@ -485,6 +643,9 @@ export default function IterationVersionsPage() {
             >
               推进状态
             </Button>
+            <Button icon={<CodeOutlined />} onClick={() => openBranchConfigModal(row)} type="link">
+              代码分支
+            </Button>
             <Button
               disabled={!collectableVersionStatuses.has(row.status)}
               icon={<CalendarOutlined />}
@@ -502,7 +663,7 @@ export default function IterationVersionsPage() {
         ),
       },
     ],
-    [handleDelete, openAdvanceModal, openCollectModal, openEditModal],
+    [handleDelete, openAdvanceModal, openBranchConfigModal, openCollectModal, openEditModal],
   );
 
   return (
@@ -537,6 +698,128 @@ export default function IterationVersionsPage() {
         tableTitle="迭代版本列表"
         title="迭代版本"
       />
+      <Modal
+        destroyOnHidden
+        footer={null}
+        onCancel={() => {
+          setBranchConfigVersion(null);
+          setEditingBranchConfig(null);
+          setBranchConfigs([]);
+          setBranchRepositories([]);
+        }}
+        open={Boolean(branchConfigVersion)}
+        title={branchConfigVersion ? `代码分支 · ${branchConfigVersion.code}` : '代码分支'}
+        width={980}
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            title={
+              branchConfigVersion
+                ? `${branchConfigVersion.productName ?? branchConfigVersion.productId} · ${
+                    branchConfigVersion.name
+                  }`
+                : '请选择迭代版本'
+            }
+            description="迭代版本维护版本级代码分支，开发任务和 PR/Review 继承该分支上下文。"
+            type="info"
+          />
+          <Form<BranchConfigFormValues>
+            form={branchForm}
+            layout="vertical"
+            onValuesChange={(changedValues) => {
+              if ('repository_id' in changedValues && !editingBranchConfig) {
+                const repository = branchRepositories.find((item) => item.id === changedValues.repository_id);
+                if (repository) {
+                  branchForm.setFieldValue('base_branch', repository.defaultBranch);
+                }
+              }
+            }}
+          >
+            <Form.Item label="关联代码库" name="repository_id" rules={[{ required: true, message: '请选择代码库' }]}>
+              <Select
+                disabled={Boolean(editingBranchConfig)}
+                loading={isBranchConfigLoading}
+                optionFilterProp="label"
+                options={branchRepositoryOptions}
+                placeholder="请选择代码库"
+                showSearch
+              />
+            </Form.Item>
+            <Form.Item label="基准分支" name="base_branch">
+              <Input placeholder="main / master" />
+            </Form.Item>
+            <Form.Item label="开发分支" name="working_branch" rules={[{ required: true, message: '请输入开发分支' }]}>
+              <Input placeholder="release/2026-06 或 feature/version-code" />
+            </Form.Item>
+            <Form.Item label="分支状态" name="branch_status" initialValue="not_created">
+              <Select options={branchStatusOptions} />
+            </Form.Item>
+            <Form.Item label="创建来源" name="creation_source" initialValue="manual">
+              <Select options={branchCreationSourceOptions} />
+            </Form.Item>
+            <Form.Item label="说明" name="description">
+              <Input.TextArea rows={2} />
+            </Form.Item>
+            <Space>
+              <Button loading={isBranchConfigSaving} onClick={() => void handleSaveBranchConfig()} type="primary">
+                {editingBranchConfig ? '保存分支' : '新增分支'}
+              </Button>
+              {editingBranchConfig ? (
+                <Button
+                  onClick={() => {
+                    setEditingBranchConfig(null);
+                    branchForm.resetFields();
+                  }}
+                >
+                  取消编辑
+                </Button>
+              ) : null}
+            </Space>
+          </Form>
+          <Table<ProductVersionBranchConfigRecord>
+            columns={[
+              { dataIndex: 'repositoryName', title: '代码库' },
+              { dataIndex: 'baseBranch', title: '基准分支' },
+              { dataIndex: 'workingBranch', title: '开发分支' },
+              {
+                dataIndex: 'branchStatus',
+                render: (_, row) => {
+                  const statusLabel = branchStatusLabels[row.branchStatus];
+                  return <StatusTag color={statusLabel.color} label={statusLabel.label} />;
+                },
+                title: '状态',
+              },
+              {
+                dataIndex: 'creationSource',
+                render: (_, row) => branchCreationSourceLabels[row.creationSource],
+                title: '来源',
+              },
+              {
+                key: 'actions',
+                render: (_, row) => (
+                  <Space size={4}>
+                    <Button icon={<EditOutlined />} onClick={() => openEditBranchConfig(row)} type="link">
+                      编辑
+                    </Button>
+                    <Popconfirm okText="删除" onConfirm={() => handleDeleteBranchConfig(row)} title="删除该分支配置？">
+                      <Button danger icon={<DeleteOutlined />} type="link">
+                        删除
+                      </Button>
+                    </Popconfirm>
+                  </Space>
+                ),
+                title: '操作',
+              },
+            ]}
+            dataSource={branchConfigs}
+            loading={isBranchConfigLoading}
+            locale={{ emptyText: '当前版本暂无代码分支配置' }}
+            pagination={false}
+            rowKey="id"
+            size="small"
+          />
+        </Space>
+      </Modal>
       <Modal
         destroyOnHidden
         footer={null}

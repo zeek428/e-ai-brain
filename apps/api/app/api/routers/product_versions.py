@@ -32,6 +32,16 @@ from app.services.version_status import (
 
 router = APIRouter(tags=["product_versions"])
 
+BRANCH_CONFIG_STATUSES = {
+    "not_created",
+    "active",
+    "testing",
+    "merged",
+    "released",
+    "archived",
+}
+BRANCH_CONFIG_CREATION_SOURCES = {"manual", "ai_task", "github_sync", "gitlab_sync"}
+
 
 class ProductVersionRequest(BaseModel):
     code: str | None = None
@@ -56,6 +66,74 @@ class ProductVersionAdvanceStatusRequest(BaseModel):
     reason: str | None = None
     force: bool = False
     preview_only: bool = False
+
+
+class ProductVersionBranchConfigRequest(BaseModel):
+    repository_id: str
+    base_branch: str | None = None
+    working_branch: str
+    branch_status: str = "not_created"
+    creation_source: str = "manual"
+    description: str | None = None
+
+
+class ProductVersionBranchConfigPatchRequest(BaseModel):
+    base_branch: str | None = None
+    working_branch: str | None = None
+    branch_status: str | None = None
+    creation_source: str | None = None
+    description: str | None = None
+
+
+def _public_branch_config(
+    branch_config: dict[str, Any],
+    current_store: Any,
+) -> dict[str, Any]:
+    repository = current_store.product_git_repositories.get(branch_config["repository_id"], {})
+    return {
+        **branch_config,
+        "repository_default_branch": branch_config.get("repository_default_branch")
+        or repository.get("default_branch"),
+        "repository_name": branch_config.get("repository_name") or repository.get("name"),
+        "repository_path": branch_config.get("repository_path") or repository.get("project_path"),
+        "repository_provider": branch_config.get("repository_provider")
+        or repository.get("git_provider"),
+    }
+
+
+def _list_branch_configs(
+    current_store: Any,
+    version_id: str,
+) -> list[dict[str, Any]]:
+    repository = product_config_query_repository(current_store)
+    if repository is not None:
+        list_branch_configs = getattr(repository, "list_product_version_branch_configs", None)
+        if callable(list_branch_configs):
+            return list_branch_configs(version_id)
+    items = [
+        _public_branch_config(item, current_store)
+        for item in current_store.product_version_branch_configs.values()
+        if item["version_id"] == version_id
+    ]
+    items.sort(key=lambda item: (item.get("repository_name") or "", item["working_branch"]))
+    return items
+
+
+def _ensure_branch_config_repository(
+    current_store: Any,
+    version: dict[str, Any],
+    repository_id: str,
+) -> dict[str, Any]:
+    repository = current_store.product_git_repositories.get(repository_id)
+    if repository is None:
+        raise api_error(404, "NOT_FOUND", "Product Git repository not found")
+    if repository["product_id"] != version["product_id"]:
+        raise api_error(
+            400,
+            "VERSION_BRANCH_REPOSITORY_PRODUCT_MISMATCH",
+            "Repository must belong to the same product as the version",
+        )
+    return repository
 
 
 @router.get("/api/product-versions")
@@ -112,6 +190,151 @@ def list_product_versions(
     ]
     items.sort(key=lambda item: item["code"])
     return list_payload(items, trace_id=get_trace_id(request), active_only=active_only)
+
+
+@router.get("/api/product-versions/{version_id}/branch-configs")
+def list_product_version_branch_configs(
+    version_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"product_owner", "rd_owner"})
+    current_store = product_config_write_store(store(request))
+    version = current_store.product_versions.get(version_id)
+    if version is None:
+        raise api_error(404, "NOT_FOUND", "Product version not found")
+    items = _list_branch_configs(current_store, version_id)
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@router.post("/api/product-versions/{version_id}/branch-configs")
+def create_product_version_branch_config(
+    version_id: str,
+    request: Request,
+    payload: ProductVersionBranchConfigRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"product_owner", "rd_owner"})
+    current_store = product_config_write_store(store(request))
+    version = current_store.product_versions.get(version_id)
+    if version is None:
+        raise api_error(404, "NOT_FOUND", "Product version not found")
+    repository = _ensure_branch_config_repository(current_store, version, payload.repository_id)
+    working_branch = ensure_non_blank(payload.working_branch, "working_branch")
+    base_branch = ensure_non_blank(
+        payload.base_branch or repository.get("default_branch") or "main",
+        "base_branch",
+    )
+    ensure_enum(payload.branch_status, BRANCH_CONFIG_STATUSES, "branch status")
+    ensure_enum(payload.creation_source, BRANCH_CONFIG_CREATION_SOURCES, "creation source")
+    for item in current_store.product_version_branch_configs.values():
+        if item["version_id"] == version_id and item["repository_id"] == payload.repository_id:
+            raise api_error(
+                409,
+                "VERSION_BRANCH_REPOSITORY_EXISTS",
+                "Branch config for this repository already exists in the version",
+            )
+    branch_config_id = current_store.new_id("version_branch")
+    branch_config = {
+        "base_branch": base_branch,
+        "branch_status": payload.branch_status,
+        "creation_source": payload.creation_source,
+        "description": payload.description,
+        "id": branch_config_id,
+        "product_id": version["product_id"],
+        "repository_id": payload.repository_id,
+        "version_id": version_id,
+        "working_branch": working_branch,
+    }
+    if not uses_repository_context(current_store):
+        current_store.product_version_branch_configs[branch_config_id] = branch_config
+    audit_event = record_audit_event(
+        current_store,
+        event_type="product_version_branch_config.created",
+        actor_id=user["id"],
+        subject_type="product_version_branch_config",
+        subject_id=branch_config_id,
+        payload={
+            "product_id": version["product_id"],
+            "repository_id": payload.repository_id,
+            "version_id": version_id,
+        },
+    )
+    save_product_config_record(
+        current_store,
+        "product_version_branch_configs",
+        branch_config,
+        audit_event=audit_event,
+    )
+    return envelope(_public_branch_config(branch_config, current_store), get_trace_id(request))
+
+
+@router.patch("/api/product-version-branch-configs/{branch_config_id}")
+def patch_product_version_branch_config(
+    branch_config_id: str,
+    request: Request,
+    payload: ProductVersionBranchConfigPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"product_owner", "rd_owner"})
+    current_store = product_config_write_store(store(request))
+    branch_config = current_store.product_version_branch_configs.get(branch_config_id)
+    if branch_config is None:
+        raise api_error(404, "NOT_FOUND", "Product version branch config not found")
+    updates = payload_updates(payload)
+    if "working_branch" in updates:
+        updates["working_branch"] = ensure_non_blank(updates["working_branch"], "working_branch")
+    if "base_branch" in updates:
+        updates["base_branch"] = ensure_non_blank(updates["base_branch"], "base_branch")
+    if "branch_status" in updates:
+        ensure_enum(updates["branch_status"], BRANCH_CONFIG_STATUSES, "branch status")
+    if "creation_source" in updates:
+        ensure_enum(updates["creation_source"], BRANCH_CONFIG_CREATION_SOURCES, "creation source")
+    branch_config = {**branch_config, **updates}
+    if not uses_repository_context(current_store):
+        current_store.product_version_branch_configs[branch_config_id] = branch_config
+    audit_event = record_audit_event(
+        current_store,
+        event_type="product_version_branch_config.updated",
+        actor_id=user["id"],
+        subject_type="product_version_branch_config",
+        subject_id=branch_config_id,
+    )
+    save_product_config_record(
+        current_store,
+        "product_version_branch_configs",
+        branch_config,
+        audit_event=audit_event,
+    )
+    return envelope(_public_branch_config(branch_config, current_store), get_trace_id(request))
+
+
+@router.delete("/api/product-version-branch-configs/{branch_config_id}")
+def delete_product_version_branch_config(
+    branch_config_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"product_owner", "rd_owner"})
+    current_store = product_config_write_store(store(request))
+    if branch_config_id not in current_store.product_version_branch_configs:
+        raise api_error(404, "NOT_FOUND", "Product version branch config not found")
+    if not uses_repository_context(current_store):
+        del current_store.product_version_branch_configs[branch_config_id]
+    audit_event = record_audit_event(
+        current_store,
+        event_type="product_version_branch_config.deleted",
+        actor_id=user["id"],
+        subject_type="product_version_branch_config",
+        subject_id=branch_config_id,
+    )
+    delete_product_config_record(
+        current_store,
+        "product_version_branch_configs",
+        branch_config_id,
+        audit_event=audit_event,
+    )
+    return envelope({"deleted": True, "id": branch_config_id}, get_trace_id(request))
 
 
 @router.post("/api/products/{product_id}/versions")
@@ -342,6 +565,10 @@ def delete_product_version(
         any(item["version_id"] == version_id for item in current_store.requirements.values())
         or any(item.get("version_id") == version_id for item in current_store.ai_tasks.values())
         or any(item.get("version_id") == version_id for item in current_store.bugs.values())
+        or any(
+            item.get("version_id") == version_id
+            for item in current_store.product_version_branch_configs.values()
+        )
     ):
         raise api_error(409, "RESOURCE_IN_USE", "Product version still has related records")
     if not uses_repository_context(current_store):

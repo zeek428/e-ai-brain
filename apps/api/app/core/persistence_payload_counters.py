@@ -28,6 +28,7 @@ def _sync_product_config_counters(payload: dict[str, Any]) -> None:
     for prefix, field in [
         ("product", "products"),
         ("version", "product_versions"),
+        ("version_branch", "product_version_branch_configs"),
         ("module", "product_modules"),
         ("repo", "product_git_repositories"),
         ("system", "related_systems"),

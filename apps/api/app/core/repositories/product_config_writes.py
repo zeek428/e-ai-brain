@@ -7,6 +7,7 @@ from typing import Any
 PRODUCT_CONFIG_TABLES = {
     "product_git_repositories": "product_git_repositories",
     "product_modules": "product_modules",
+    "product_version_branch_configs": "product_version_branch_configs",
     "product_versions": "product_versions",
     "products": "products",
     "related_systems": "related_systems",
@@ -28,6 +29,7 @@ class ProductConfigWriteRepository:
     def save_product_config(self, payload: dict[str, Any]) -> None:
         products = payload.get("products", {})
         versions = payload.get("product_versions", {})
+        branch_configs = payload.get("product_version_branch_configs", {})
         modules = payload.get("product_modules", {})
         repositories = payload.get("product_git_repositories", {})
         related_systems = payload.get("related_systems", {})
@@ -35,6 +37,11 @@ class ProductConfigWriteRepository:
             with connection.cursor() as cursor:
                 if self._delete_missing is not None:
                     self._delete_missing(cursor, "related_systems", related_systems)
+                    self._delete_missing(
+                        cursor,
+                        "product_version_branch_configs",
+                        branch_configs,
+                    )
                     self._delete_missing(cursor, "product_git_repositories", repositories)
                     self._delete_missing(cursor, "product_modules", modules)
                     self._delete_missing(cursor, "product_versions", versions)
@@ -43,6 +50,7 @@ class ProductConfigWriteRepository:
                 self.upsert_product_versions(cursor, versions)
                 self.upsert_product_modules(cursor, modules)
                 self.upsert_product_git_repositories(cursor, repositories)
+                self.upsert_product_version_branch_configs(cursor, branch_configs)
                 self.upsert_related_systems(cursor, related_systems)
 
     def save_product_config_record(
@@ -55,6 +63,7 @@ class ProductConfigWriteRepository:
         upsert_by_collection = {
             "product_git_repositories": self.upsert_product_git_repositories,
             "product_modules": self.upsert_product_modules,
+            "product_version_branch_configs": self.upsert_product_version_branch_configs,
             "product_versions": self.upsert_product_versions,
             "products": self.upsert_products,
             "related_systems": self.upsert_related_systems,
@@ -217,6 +226,43 @@ class ProductConfigWriteRepository:
                     repository.get("default_branch", "main"),
                     repository.get("root_path", "/"),
                     repository.get("status", "active"),
+                ),
+            )
+
+    def upsert_product_version_branch_configs(
+        self,
+        cursor,
+        branch_configs: dict[str, dict[str, Any]],
+    ) -> None:
+        for branch_config in branch_configs.values():
+            cursor.execute(
+                """
+                INSERT INTO product_version_branch_configs (
+                  id, product_id, version_id, repository_id, base_branch, working_branch,
+                  branch_status, creation_source, description, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  version_id = EXCLUDED.version_id,
+                  repository_id = EXCLUDED.repository_id,
+                  base_branch = EXCLUDED.base_branch,
+                  working_branch = EXCLUDED.working_branch,
+                  branch_status = EXCLUDED.branch_status,
+                  creation_source = EXCLUDED.creation_source,
+                  description = EXCLUDED.description,
+                  updated_at = now()
+                """,
+                (
+                    branch_config["id"],
+                    branch_config["product_id"],
+                    branch_config["version_id"],
+                    branch_config["repository_id"],
+                    branch_config.get("base_branch", "main"),
+                    branch_config["working_branch"],
+                    branch_config.get("branch_status", "not_created"),
+                    branch_config.get("creation_source", "manual"),
+                    branch_config.get("description"),
                 ),
             )
 

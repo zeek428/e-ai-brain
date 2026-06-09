@@ -181,6 +181,9 @@ class PostgresSnapshotRepository:
             active_only=active_only,
         )
 
+    def list_product_version_branch_configs(self, version_id: str) -> list[dict[str, Any]]:
+        return self._product_config_read_repository.list_product_version_branch_configs(version_id)
+
     def list_related_systems(
         self,
         *,
@@ -421,6 +424,9 @@ class PostgresSnapshotRepository:
             ),
             "product_modules": list(
                 (product_config_payload.get("product_modules") or {}).values()
+            ),
+            "product_version_branch_configs": list(
+                (product_config_payload.get("product_version_branch_configs") or {}).values()
             ),
             "product_versions": list(
                 (product_config_payload.get("product_versions") or {}).values()

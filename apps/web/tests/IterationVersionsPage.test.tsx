@@ -49,7 +49,7 @@ describe('IterationVersionsPage', () => {
           },
         });
       }
-      if (path === '/api/products?active_only=true') {
+      if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
             items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
@@ -57,7 +57,10 @@ describe('IterationVersionsPage', () => {
           },
         });
       }
-      if (path === '/api/product-versions?active_only=true') {
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
         return jsonResponse({
           data: {
             items: [
@@ -174,7 +177,7 @@ describe('IterationVersionsPage', () => {
           },
         });
       }
-      if (path === '/api/products?active_only=true') {
+      if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
             items: [{ code: 'API-PRODUCT', id: 'product_api', name: 'AI Brain', status: 'active' }],
@@ -182,7 +185,10 @@ describe('IterationVersionsPage', () => {
           },
         });
       }
-      if (path === '/api/product-versions?active_only=true') {
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
         return jsonResponse({
           data: {
             items: [],
@@ -248,6 +254,131 @@ describe('IterationVersionsPage', () => {
     expect(screen.queryByText('其他版本需求')).not.toBeInTheDocument();
   });
 
+  it('manages version branch configs from the iteration version row', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (
+        path === '/api/product-versions' ||
+        (path.startsWith('/api/product-versions?') && !path.includes('active_only=true'))
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: '2026-09',
+                id: 'version_branch',
+                name: '分支配置迭代',
+                product_code: 'AI-BRAIN',
+                product_id: 'product_api',
+                product_name: 'AI Brain',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'AI-BRAIN', id: 'product_api', name: 'AI Brain', status: 'active' }],
+            total: 1,
+          },
+        });
+      }
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/products/product_api/git-repositories' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                default_branch: 'main',
+                git_provider: 'github',
+                id: 'repo_web',
+                name: 'AI Brain Web',
+                project_path: 'zeek428/e-ai-brain',
+                remote_url: 'git@github.com:zeek428/e-ai-brain.git',
+                repo_type: 'code',
+                root_path: '/',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (path === '/api/product-versions/version_branch/branch-configs' && method === 'GET') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/product-versions/version_branch/branch-configs' && method === 'POST') {
+        return jsonResponse({
+          data: {
+            base_branch: 'main',
+            branch_status: 'active',
+            creation_source: 'manual',
+            id: 'version_branch_config_001',
+            product_id: 'product_api',
+            repository_id: 'repo_web',
+            repository_name: 'AI Brain Web',
+            version_id: 'version_branch',
+            working_branch: 'release/2026-09',
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<IterationVersionsPage />);
+
+    const [versionRowText] = await screen.findAllByText('2026-09');
+    fireEvent.click(
+      within(versionRowText.closest('tr') as HTMLElement).getByRole('button', {
+        name: /代码分支/,
+      }),
+    );
+
+    expect(await screen.findByText('代码分支 · 2026-09')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('main')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('开发分支'), {
+      target: { value: 'release/2026-09' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '新增分支' }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/product-versions/version_branch/branch-configs',
+        'POST',
+      ]),
+    );
+    const createCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/product-versions/version_branch/branch-configs' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
+      base_branch: 'main',
+      branch_status: 'not_created',
+      creation_source: 'manual',
+      repository_id: 'repo_web',
+      working_branch: 'release/2026-09',
+    });
+  });
+
   it('advances iteration version status with synchronized requirement impact preview', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -279,7 +410,7 @@ describe('IterationVersionsPage', () => {
           },
         });
       }
-      if (path === '/api/products?active_only=true') {
+      if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
             items: [{ code: 'API-PRODUCT', id: 'product_api', name: '接口产品', status: 'active' }],
@@ -287,7 +418,10 @@ describe('IterationVersionsPage', () => {
           },
         });
       }
-      if (path === '/api/product-versions?active_only=true') {
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if ((path === '/api/requirements' || path.startsWith('/api/requirements?')) && method === 'GET') {

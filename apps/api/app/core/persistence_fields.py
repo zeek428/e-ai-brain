@@ -7,6 +7,7 @@ BRAIN_APP_FIELDS = [
 PRODUCT_CONFIG_FIELDS = [
     "products",
     "product_versions",
+    "product_version_branch_configs",
     "product_modules",
     "product_git_repositories",
     "related_systems",

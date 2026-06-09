@@ -133,6 +133,34 @@ def test_product_config_supports_list_patch_and_active_filters():
     assert "credential_ref" not in repositories["items"][0]
     assert repositories["items"][0]["credential_ref_configured"] is True
 
+    branch_config = client.post(
+        f"/api/product-versions/{version['id']}/branch-configs",
+        json={
+            "base_branch": "main",
+            "branch_status": "active",
+            "creation_source": "manual",
+            "repository_id": repository["id"],
+            "working_branch": "release/2026-v1",
+        },
+        headers=headers,
+    ).json()["data"]
+    assert branch_config["product_id"] == product["id"]
+    assert branch_config["version_id"] == version["id"]
+    assert branch_config["repository_id"] == repository["id"]
+    assert branch_config["repository_name"] == "ai-brain-api"
+    assert branch_config["working_branch"] == "release/2026-v1"
+    branch_configs = client.get(
+        f"/api/product-versions/{version['id']}/branch-configs",
+        headers=headers,
+    ).json()["data"]
+    assert [item["id"] for item in branch_configs["items"]] == [branch_config["id"]]
+    patched_branch_config = client.patch(
+        f"/api/product-version-branch-configs/{branch_config['id']}",
+        json={"branch_status": "testing"},
+        headers=headers,
+    ).json()["data"]
+    assert patched_branch_config["branch_status"] == "testing"
+
     patched_repository = client.patch(
         f"/api/product-git-repositories/{repository['id']}",
         json={"status": "inactive"},

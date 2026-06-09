@@ -22,6 +22,7 @@ TASK_WORKFLOW_COLLECTION_KEYS = {
     "online_log_metrics": "online_log_metrics",
     "product_git_repositories": "product_git_repositories",
     "product_modules": "product_modules",
+    "product_version_branch_configs": "product_version_branch_configs",
     "product_versions": "product_versions",
     "products": "products",
     "related_systems": "related_systems",
@@ -37,6 +38,7 @@ class TaskWorkflowSourceStore:
         self.brain_apps: dict[str, dict[str, Any]] = default_brain_apps()
         self.products: dict[str, dict[str, Any]] = {}
         self.product_versions: dict[str, dict[str, Any]] = {}
+        self.product_version_branch_configs: dict[str, dict[str, Any]] = {}
         self.product_modules: dict[str, dict[str, Any]] = {}
         self.product_git_repositories: dict[str, dict[str, Any]] = {}
         self.related_systems: dict[str, dict[str, Any]] = {}

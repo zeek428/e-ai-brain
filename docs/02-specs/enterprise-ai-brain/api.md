@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.216 |
+| 功能版本 | v1.1.217 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.217 | 2026-06-09 | 迭代版本新增代码分支配置 API，支持按版本维护多代码库基准分支、开发分支、状态和创建来源 | Codex |
 | v1.1.216 | 2026-06-09 | Task 3 新增最小可用系统 RBAC API：权限点/菜单/角色治理、用户角色/范围授权和用户有效权限查询；角色变更写入 `role_change_events` 与 `audit_events` | Codex |
 | v1.1.215 | 2026-06-07 | RBAC API 演进说明确认外部身份绑定：SSO 用户必须映射到系统 users.id，目标态新增 external identity 绑定接口，未绑定身份不授予默认权限 | Codex |
 | v1.1.214 | 2026-06-07 | RBAC API 演进说明确认组织/部门、产品成员和知识空间：目标态新增部门、产品成员和知识空间接口，产品范围由产品管理页成员配置，知识检索按知识空间授权过滤 | Codex |
@@ -417,6 +418,10 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Product Version | PATCH | `/api/product-versions/{version_id}` | 更新产品迭代版本非状态字段；状态变更必须走推进接口。 |
 | Product Version | POST | `/api/product-versions/{version_id}/advance-status` | 预览或推进迭代版本状态，并同步符合条件的需求状态。 |
 | Product Version | DELETE | `/api/product-versions/{version_id}` | 删除未被需求、AI 任务或 Bug 占用的产品迭代版本。 |
+| Product Version Branch | GET | `/api/product-versions/{version_id}/branch-configs` | 查询指定迭代版本的代码分支配置。 |
+| Product Version Branch | POST | `/api/product-versions/{version_id}/branch-configs` | 为指定迭代版本新增代码分支配置。 |
+| Product Version Branch | PATCH | `/api/product-version-branch-configs/{branch_config_id}` | 更新版本代码分支的基准分支、开发分支、状态、来源或说明。 |
+| Product Version Branch | DELETE | `/api/product-version-branch-configs/{branch_config_id}` | 删除版本代码分支配置。 |
 | Product Module | GET | `/api/products/{product_id}/modules` | 产品模块列表。 |
 | Product Module | POST | `/api/products/{product_id}/modules` | 创建产品模块。 |
 | Product Module | PATCH | `/api/product-modules/{module_id}` | 更新产品模块。 |
@@ -801,6 +806,10 @@ POST /api/products/{product_id}/versions
 PATCH /api/product-versions/{version_id}
 POST /api/product-versions/{version_id}/advance-status
 DELETE /api/product-versions/{version_id}
+GET /api/product-versions/{version_id}/branch-configs
+POST /api/product-versions/{version_id}/branch-configs
+PATCH /api/product-version-branch-configs/{branch_config_id}
+DELETE /api/product-version-branch-configs/{branch_config_id}
 POST /api/products/{product_id}/modules
 PATCH /api/product-modules/{module_id}
 DELETE /api/product-modules/{module_id}
@@ -902,6 +911,48 @@ POST /api/product-versions/version_001/advance-status
 - `testing -> released`：`testing/ready_for_release` 需求同步推进到 `released`；仍处于设计、开发、评审等未完成状态的需求必须先延期、取消或关闭，`force=true` 不绕过发布阻塞。
 - `released -> archived`：归档仅作为历史管理动作；`released/accepted/deferred/cancelled/closed/rejected` 需求保持不变，未完成需求作为归档风险项。
 - 成功推进记录 `product_version.status_advanced` 审计事件；每条被同步推进的需求另记录 `requirement.updated`，payload 包含版本状态来源、目标、原因和需求状态来源/目标。
+
+迭代版本代码分支请求：
+
+```http
+POST /api/product-versions/version_001/branch-configs
+```
+
+```json
+{
+  "repository_id": "repo_001",
+  "base_branch": "main",
+  "working_branch": "release/2026-06",
+  "branch_status": "active",
+  "creation_source": "manual",
+  "description": "2026-06 版本前后端共用开发分支"
+}
+```
+
+响应会返回仓库展示投影：
+
+```json
+{
+  "data": {
+    "id": "version_branch_001",
+    "product_id": "product_001",
+    "version_id": "version_001",
+    "repository_id": "repo_001",
+    "repository_name": "AI Brain Web",
+    "repository_provider": "github",
+    "repository_path": "zeek428/e-ai-brain",
+    "repository_default_branch": "main",
+    "base_branch": "main",
+    "working_branch": "release/2026-06",
+    "branch_status": "active",
+    "creation_source": "manual",
+    "description": "2026-06 版本前后端共用开发分支"
+  },
+  "trace_id": "trace_xxx"
+}
+```
+
+`repository_id` 必须指向同产品 Git 资源；同一 `version_id + repository_id` 只能存在一条配置。`branch_status` 可取 `not_created / active / testing / merged / released / archived`，`creation_source` 可取 `manual / ai_task / github_sync / gitlab_sync`。
 
 ### 平台配置
 
@@ -3150,6 +3201,8 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | PRODUCT_VERSION_STATUS_ADVANCE_REQUIRED | 迭代版本状态变更必须走状态推进接口，不能通过普通 PATCH 修改。 |
 | PRODUCT_VERSION_STATUS_BLOCKED | 迭代版本推进存在阻塞需求，必须处理阻塞项或在允许的阶段强制推进。 |
 | PRODUCT_VERSION_STATUS_INVALID | 迭代版本状态或推进路径非法。 |
+| VERSION_BRANCH_REPOSITORY_EXISTS | 同一迭代版本和代码库已经存在分支配置。 |
+| VERSION_BRANCH_REPOSITORY_PRODUCT_MISMATCH | 分支配置选择的代码库与迭代版本不属于同一产品。 |
 | REQUIREMENT_STATE_INVALID | 当前需求状态不允许该操作。 |
 | TASK_STATE_INVALID | 当前任务状态不允许该操作。 |
 | TECHNICAL_SOLUTION_NOT_CONFIRMED | 研发扩展任务缺少同需求、同产品版本下已完成技术方案。 |

@@ -93,6 +93,22 @@ def test_product_version_endpoints_are_owned_by_product_versions_router():
         "POST",
     )
     assert advance_status_route.endpoint.__module__ == expected_module
+    assert _route_for(
+        "/api/product-versions/{version_id}/branch-configs",
+        "GET",
+    ).endpoint.__module__ == expected_module
+    assert _route_for(
+        "/api/product-versions/{version_id}/branch-configs",
+        "POST",
+    ).endpoint.__module__ == expected_module
+    assert _route_for(
+        "/api/product-version-branch-configs/{branch_config_id}",
+        "PATCH",
+    ).endpoint.__module__ == expected_module
+    assert _route_for(
+        "/api/product-version-branch-configs/{branch_config_id}",
+        "DELETE",
+    ).endpoint.__module__ == expected_module
     assert _route_for("/api/product-versions/{version_id}", "PATCH").endpoint.__module__ == (
         expected_module
     )

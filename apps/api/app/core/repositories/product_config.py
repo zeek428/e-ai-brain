@@ -31,10 +31,12 @@ class ProductConfigReadRepository:
                 versions = self._load_product_versions(cursor)
                 modules = self._load_product_modules(cursor)
                 repositories = self._load_product_git_repositories(cursor)
+                branch_configs = self._load_product_version_branch_configs(cursor)
                 related_systems = self._load_related_systems(cursor)
         return {
             "product_git_repositories": repositories,
             "product_modules": modules,
+            "product_version_branch_configs": branch_configs,
             "product_versions": versions,
             "products": products,
             "related_systems": related_systems,
@@ -178,6 +180,26 @@ class ProductConfigReadRepository:
                     for row in cursor.fetchall()
                 ]
 
+    def list_product_version_branch_configs(self, version_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT b.id, b.product_id, b.version_id, b.repository_id, b.base_branch,
+                           b.working_branch, b.branch_status, b.creation_source, b.description,
+                           r.name, r.git_provider, r.project_path, r.default_branch
+                    FROM product_version_branch_configs b
+                    JOIN product_git_repositories r ON r.id = b.repository_id
+                    WHERE b.version_id = %s
+                    ORDER BY r.name, b.working_branch
+                    """,
+                    (version_id,),
+                )
+                return [
+                    _row_to_product_version_branch_config(row)
+                    for row in cursor.fetchall()
+                ]
+
     def list_related_systems(
         self,
         *,
@@ -262,6 +284,13 @@ class ProductConfigReadRepository:
         repositories: dict[str, dict[str, Any]],
     ) -> None:
         self._write_repository.upsert_product_git_repositories(cursor, repositories)
+
+    def upsert_product_version_branch_configs(
+        self,
+        cursor,
+        branch_configs: dict[str, dict[str, Any]],
+    ) -> None:
+        self._write_repository.upsert_product_version_branch_configs(cursor, branch_configs)
 
     def upsert_related_systems(
         self,
@@ -359,6 +388,22 @@ class ProductConfigReadRepository:
                 "root_path": row[10],
                 "status": row[11],
             }
+            for row in cursor.fetchall()
+        }
+
+    def _load_product_version_branch_configs(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT b.id, b.product_id, b.version_id, b.repository_id, b.base_branch,
+                   b.working_branch, b.branch_status, b.creation_source, b.description,
+                   r.name, r.git_provider, r.project_path, r.default_branch
+            FROM product_version_branch_configs b
+            JOIN product_git_repositories r ON r.id = b.repository_id
+            ORDER BY b.product_id, b.version_id, r.name
+            """
+        )
+        return {
+            row[0]: _row_to_product_version_branch_config(row)
             for row in cursor.fetchall()
         }
 
@@ -505,3 +550,21 @@ class ProductConfigReadRepository:
             sort_by=sort_by,
             sort_order=sort_order,
         )
+
+
+def _row_to_product_version_branch_config(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "base_branch": row[4],
+        "branch_status": row[6],
+        "creation_source": row[7],
+        "description": row[8],
+        "id": row[0],
+        "product_id": row[1],
+        "repository_default_branch": row[12],
+        "repository_id": row[3],
+        "repository_name": row[9],
+        "repository_path": row[11],
+        "repository_provider": row[10],
+        "version_id": row[2],
+        "working_branch": row[5],
+    }

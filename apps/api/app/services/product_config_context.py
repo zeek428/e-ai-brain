@@ -16,6 +16,7 @@ class ProductConfigRequestContext:
         self.repository = repository
         self.products: dict[str, dict[str, Any]] = {}
         self.product_versions: dict[str, dict[str, Any]] = {}
+        self.product_version_branch_configs: dict[str, dict[str, Any]] = {}
         self.product_modules: dict[str, dict[str, Any]] = {}
         self.product_git_repositories: dict[str, dict[str, Any]] = {}
         self.related_systems: dict[str, dict[str, Any]] = {}
@@ -114,6 +115,12 @@ def product_config_source_store(repository: Any) -> ProductConfigRequestContext:
         product_id = str(product["id"])
         for version in repository.list_product_versions(product_id, active_only=False):
             source_store.product_versions[str(version["id"])] = dict(version)
+            list_branch_configs = getattr(repository, "list_product_version_branch_configs", None)
+            if callable(list_branch_configs):
+                for branch_config in list_branch_configs(str(version["id"])):
+                    source_store.product_version_branch_configs[str(branch_config["id"])] = dict(
+                        branch_config
+                    )
         for module in repository.list_product_modules(product_id, active_only=False):
             source_store.product_modules[str(module["id"])] = dict(module)
         for git_repository in repository.list_product_git_repositories(

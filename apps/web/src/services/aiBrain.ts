@@ -8,6 +8,7 @@ import type {
   ProductModuleRecord,
   ProductRecord,
   ProductRelatedSystemRecord,
+  ProductVersionBranchConfigRecord,
   ProductVersionOption,
   ProductVersionRecord,
   RequirementRecord,
@@ -1303,6 +1304,15 @@ export type ProductGitRepositoryMutationPayload = {
   status?: string;
 };
 
+export type ProductVersionBranchConfigMutationPayload = {
+  base_branch?: string;
+  branch_status?: string;
+  creation_source?: string;
+  description?: string;
+  repository_id: string;
+  working_branch: string;
+};
+
 export type ProductRelatedSystemMutationPayload = {
   code?: string;
   description?: string;
@@ -1556,6 +1566,22 @@ type ProductGitRepositoryListItem = {
   repo_type?: string;
   root_path?: string;
   status?: string;
+};
+
+type ProductVersionBranchConfigListItem = {
+  base_branch?: string;
+  branch_status?: string;
+  creation_source?: string;
+  description?: string | null;
+  id: string;
+  product_id: string;
+  repository_default_branch?: string | null;
+  repository_id: string;
+  repository_name?: string | null;
+  repository_path?: string | null;
+  repository_provider?: string | null;
+  version_id: string;
+  working_branch?: string;
 };
 
 type ModelGatewayConfigListItem = {
@@ -2588,6 +2614,40 @@ function mapProductGitRepositoryRecord(
   };
 }
 
+function normalizeProductVersionBranchStatus(
+  status?: string,
+): ProductVersionBranchConfigRecord['branchStatus'] {
+  const allowed = new Set(['active', 'archived', 'merged', 'not_created', 'released', 'testing']);
+  return allowed.has(status ?? '') ? (status as ProductVersionBranchConfigRecord['branchStatus']) : 'not_created';
+}
+
+function normalizeProductVersionBranchCreationSource(
+  source?: string,
+): ProductVersionBranchConfigRecord['creationSource'] {
+  const allowed = new Set(['ai_task', 'github_sync', 'gitlab_sync', 'manual']);
+  return allowed.has(source ?? '') ? (source as ProductVersionBranchConfigRecord['creationSource']) : 'manual';
+}
+
+function mapProductVersionBranchConfigRecord(
+  branchConfig: ProductVersionBranchConfigListItem,
+): ProductVersionBranchConfigRecord {
+  return {
+    baseBranch: branchConfig.base_branch ?? branchConfig.repository_default_branch ?? 'main',
+    branchStatus: normalizeProductVersionBranchStatus(branchConfig.branch_status),
+    creationSource: normalizeProductVersionBranchCreationSource(branchConfig.creation_source),
+    description: branchConfig.description,
+    id: branchConfig.id,
+    productId: branchConfig.product_id,
+    repositoryDefaultBranch: branchConfig.repository_default_branch,
+    repositoryId: branchConfig.repository_id,
+    repositoryName: branchConfig.repository_name,
+    repositoryPath: branchConfig.repository_path,
+    repositoryProvider: branchConfig.repository_provider,
+    versionId: branchConfig.version_id,
+    workingBranch: branchConfig.working_branch ?? '-',
+  };
+}
+
 export async function fetchProductVersions(productId: string): Promise<ProductVersionRecord[]> {
   const token = requireAccessToken();
   const versions = await apiRequest<ListResponse<ProductVersionListItem>>(
@@ -2685,6 +2745,60 @@ export async function deleteProductVersion(versionId: string) {
     method: 'DELETE',
     token,
   });
+}
+
+export async function fetchProductVersionBranchConfigs(
+  versionId: string,
+): Promise<ProductVersionBranchConfigRecord[]> {
+  const token = requireAccessToken();
+  const branchConfigs = await apiRequest<ListResponse<ProductVersionBranchConfigListItem>>(
+    `/api/product-versions/${versionId}/branch-configs`,
+    { token },
+  );
+  return branchConfigs.items.map(mapProductVersionBranchConfigRecord);
+}
+
+export async function createProductVersionBranchConfig(
+  versionId: string,
+  payload: ProductVersionBranchConfigMutationPayload,
+): Promise<ProductVersionBranchConfigRecord> {
+  const token = requireAccessToken();
+  const branchConfig = await apiRequest<ProductVersionBranchConfigListItem>(
+    `/api/product-versions/${versionId}/branch-configs`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return mapProductVersionBranchConfigRecord(branchConfig);
+}
+
+export async function updateProductVersionBranchConfig(
+  branchConfigId: string,
+  payload: Partial<ProductVersionBranchConfigMutationPayload>,
+): Promise<ProductVersionBranchConfigRecord> {
+  const token = requireAccessToken();
+  const branchConfig = await apiRequest<ProductVersionBranchConfigListItem>(
+    `/api/product-version-branch-configs/${branchConfigId}`,
+    {
+      body: payload,
+      method: 'PATCH',
+      token,
+    },
+  );
+  return mapProductVersionBranchConfigRecord(branchConfig);
+}
+
+export async function deleteProductVersionBranchConfig(branchConfigId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(
+    `/api/product-version-branch-configs/${branchConfigId}`,
+    {
+      method: 'DELETE',
+      token,
+    },
+  );
 }
 
 export async function fetchProductModules(productId: string): Promise<ProductModuleRecord[]> {

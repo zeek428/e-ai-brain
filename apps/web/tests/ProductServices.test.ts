@@ -51,6 +51,26 @@ describe('product service API mappings', () => {
           },
         });
       }
+      if (path === '/api/product-versions/version_api/branch-configs' && method === 'GET') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                base_branch: 'main',
+                branch_status: 'active',
+                creation_source: 'manual',
+                id: 'version_branch_api',
+                product_id: 'product_api',
+                repository_id: 'repo_api',
+                repository_name: '代码仓库',
+                version_id: 'version_api',
+                working_branch: 'release/v1',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
       if (path === '/api/system/related-systems?product_id=product_api' && method === 'GET') {
         return jsonResponse({
           data: {
@@ -98,6 +118,14 @@ describe('product service API mappings', () => {
     });
     await callService('updateProductGitRepository', 'repo_api', { default_branch: 'develop' });
     await callService('deleteProductGitRepository', 'repo_api');
+    const branchConfigs = await callService('fetchProductVersionBranchConfigs', 'version_api');
+    await callService('createProductVersionBranchConfig', 'version_api', {
+      branch_status: 'active',
+      repository_id: 'repo_api',
+      working_branch: 'release/v1',
+    });
+    await callService('updateProductVersionBranchConfig', 'version_branch_api', { branch_status: 'testing' });
+    await callService('deleteProductVersionBranchConfig', 'version_branch_api');
     const relatedSystems = await callService('fetchProductRelatedSystems', 'product_api');
     await callService('createProductRelatedSystem', 'product_api', {
       code: 'crm',
@@ -117,6 +145,14 @@ describe('product service API mappings', () => {
       }),
     ]);
     expect(JSON.stringify(gitRepositories)).not.toContain('env:GITLAB_READONLY_TOKEN');
+    expect(branchConfigs).toEqual([
+      expect.objectContaining({
+        branchStatus: 'active',
+        id: 'version_branch_api',
+        repositoryName: '代码仓库',
+        workingBranch: 'release/v1',
+      }),
+    ]);
     expect(relatedSystems).toEqual([
       expect.objectContaining({
         code: 'billing',
@@ -138,6 +174,10 @@ describe('product service API mappings', () => {
       ['/api/products/product_api/git-repositories', 'POST'],
       ['/api/product-git-repositories/repo_api', 'PATCH'],
       ['/api/product-git-repositories/repo_api', 'DELETE'],
+      ['/api/product-versions/version_api/branch-configs', 'GET'],
+      ['/api/product-versions/version_api/branch-configs', 'POST'],
+      ['/api/product-version-branch-configs/version_branch_api', 'PATCH'],
+      ['/api/product-version-branch-configs/version_branch_api', 'DELETE'],
       ['/api/system/related-systems?product_id=product_api', 'GET'],
       ['/api/system/related-systems', 'POST'],
       ['/api/system/related-systems/related_system_api', 'PATCH'],
