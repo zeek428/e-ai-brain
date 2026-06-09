@@ -479,6 +479,46 @@ body {
   vertical-align: bottom;
 }
 
+.role-grant-config {
+  display: grid;
+  gap: 12px;
+  max-height: 60vh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.role-grant-menu {
+  padding: 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.role-grant-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.role-grant-permissions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  padding-left: 24px;
+}
+
+.role-grant-permissions .ant-checkbox-wrapper {
+  min-width: 0;
+  margin-inline-start: 0;
+}
+
+.role-grant-permissions .ant-checkbox + span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .assistant-history-button-text span:last-child {
   color: #6b7280;
   font-size: 12px;
@@ -672,6 +712,16 @@ body {
 
   .dashboard-grid {
     grid-template-columns: 1fr;
+  }
+
+  .role-grant-menu-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .role-grant-permissions {
+    grid-template-columns: 1fr;
+    padding-left: 0;
   }
 
   .assistant-workspace {

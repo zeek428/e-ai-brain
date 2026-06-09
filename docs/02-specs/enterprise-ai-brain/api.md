@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.215 |
+| 功能版本 | v1.1.216 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.216 | 2026-06-09 | Task 3 新增最小可用系统 RBAC API：权限点/菜单/角色治理、用户角色/范围授权和用户有效权限查询；角色变更写入 `role_change_events` 与 `audit_events` | Codex |
 | v1.1.215 | 2026-06-07 | RBAC API 演进说明确认外部身份绑定：SSO 用户必须映射到系统 users.id，目标态新增 external identity 绑定接口，未绑定身份不授予默认权限 | Codex |
 | v1.1.214 | 2026-06-07 | RBAC API 演进说明确认组织/部门、产品成员和知识空间：目标态新增部门、产品成员和知识空间接口，产品范围由产品管理页成员配置，知识检索按知识空间授权过滤 | Codex |
 | v1.1.213 | 2026-06-07 | RBAC API 演进说明补充菜单权限：目标态新增菜单资源目录和角色菜单授权接口，`/api/auth/me` 返回 `menu_tree` 供左侧导航按授权渲染 | Codex |
@@ -389,6 +390,21 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | User | POST | `/api/users` | 管理员创建用户。 |
 | User | PATCH | `/api/users/{user_id}` | 管理员更新用户姓名、角色、状态或密码。 |
 | User | DELETE | `/api/users/{user_id}` | 管理员删除非当前登录用户；PostgreSQL 模式下从用户表移除该账号。 |
+| User Authorization | GET | `/api/users/{user_id}/permissions` | 查询用户有效角色、权限点、菜单和数据范围。 |
+| User Authorization | PUT | `/api/users/{user_id}/roles` | 系统管理员维护用户角色授权。 |
+| User Authorization | PUT | `/api/users/{user_id}/scopes` | 系统管理员维护用户直接数据范围授权。 |
+| System RBAC | GET | `/api/system/permissions` | 查询权限点目录。 |
+| System RBAC | GET | `/api/system/menus` | 查询菜单资源目录。 |
+| System RBAC | GET | `/api/system/roles` | 查询系统角色列表。 |
+| System RBAC | POST | `/api/system/roles` | 创建非系统角色。 |
+| System RBAC | POST | `/api/system/roles/{role_id}/copy` | 从现有角色复制角色、权限、菜单和范围。 |
+| System RBAC | GET | `/api/system/roles/{role_id}` | 查询角色详情。 |
+| System RBAC | PATCH | `/api/system/roles/{role_id}` | 更新角色基础信息。 |
+| System RBAC | POST | `/api/system/roles/{role_id}/disable` | 停用非系统角色；系统角色返回 `SYSTEM_ROLE_PROTECTED`。 |
+| System RBAC | POST | `/api/system/roles/{role_id}/enable` | 启用角色。 |
+| System RBAC | PUT | `/api/system/roles/{role_id}/permissions` | 替换角色权限点授权。 |
+| System RBAC | PUT | `/api/system/roles/{role_id}/menus` | 替换角色菜单授权。 |
+| System RBAC | PUT | `/api/system/roles/{role_id}/scopes` | 替换角色数据范围授权。 |
 | Brain App | GET | `/api/brain-apps` | 业务大脑列表。 |
 | Brain App | GET | `/api/brain-apps/{brain_app_id}` | 业务大脑详情。 |
 | Product | GET | `/api/products` | 产品列表。 |
@@ -641,6 +657,51 @@ GET /api/auth/roles
 该接口返回当前 MVP 可分配的系统角色目录，供用户管理页面、知识权限选择、权限说明和外部集成统一引用。`POST /api/users`、`PATCH /api/users/{user_id}` 和知识 `permission_roles` 字段只能使用该目录中的 `code`。
 
 v1.2 目标态按 [RBAC 重设计](rbac-redesign.md) 演进：`GET /api/auth/roles` 作为 active/assignable 角色目录兼容接口保留；角色治理、权限点目录、角色权限矩阵、角色菜单授权、角色数据范围和用户授权管理迁移到 `/api/system/roles`、`/api/system/permissions`、`/api/system/menus`、`/api/users/{user_id}/roles`、`/api/users/{user_id}/permissions` 与 `/api/users/{user_id}/scopes`。组织/部门通过 `/api/system/departments` 管理，外部身份通过 `/api/system/external-identities` 绑定到系统 `users.id`，产品成员通过 `/api/products/{product_id}/members` 在产品管理页维护，知识空间通过 `/api/knowledge/spaces` 管理并作为知识检索权限边界。`/api/auth/me` 目标态返回 `menu_tree` 和 `route_permissions`，前端左侧菜单按 `menu_tree` 渲染。业务接口后续应校验权限点和数据范围，不再直接依赖角色 code，也不能把菜单隐藏作为安全边界；未绑定系统用户 ID 的 SSO 身份不得获得默认角色、部门或范围。目标角色目录除 MVP 六个兼容角色外，还应提供 `developer`、`test_owner`、`tester`、`release_owner` 等研发交付扩展预置角色模板。
+
+### 系统 RBAC API
+
+Task 3 提供最小可用角色治理接口，用于系统管理员维护角色、角色权限点、角色菜单、角色数据范围以及用户授权。所有 `/api/system/roles*`、`/api/system/permissions` 和 `/api/system/menus` 写/读入口要求当前用户具备 `system.roles.manage`；`/api/users/{user_id}/permissions`、`/api/users/{user_id}/roles` 和 `/api/users/{user_id}/scopes` 要求 `system.users.manage`。非授权用户返回 `403 FORBIDDEN`。系统角色（尤其 `admin`）当前不可停用，角色变更写入 `role_change_events` 和 `audit_events`。`admin` 是内置超级管理员角色：有效权限和可见菜单运行时按所有 active 权限点与菜单资源动态展开，不依赖角色权限/菜单配置，角色页无需额外维护 admin 的权限矩阵。
+
+角色详情响应统一返回：
+
+```json
+{
+  "id": "role_delivery_operator",
+  "code": "delivery_operator",
+  "name": "Delivery Operator",
+  "description": "Can operate delivery queues.",
+  "category": "delivery",
+  "is_system": false,
+  "is_assignable": true,
+  "status": "active",
+  "sort_order": 110,
+  "permission_codes": ["bug.read", "task.read"],
+  "menu_codes": ["task", "task.center"],
+  "scopes": [
+    {"scope_type": "product", "scope_id": "product_alpha", "access_level": "write"}
+  ]
+}
+```
+
+请求体约定：
+
+- `POST /api/system/roles`：`code`、`name` 必填，`description`、`category`、`is_assignable`、`sort_order` 可选。
+- `POST /api/system/roles/{role_id}/copy`：`code` 必填，`name`、`description` 可选，权限、菜单和范围从源角色复制。
+- `PATCH /api/system/roles/{role_id}`：可更新 `name`、`description`、`category`、`is_assignable`、`sort_order`。
+- `PUT /api/system/roles/{role_id}/permissions`：`{"permission_codes": ["task.read"]}`，整体替换角色权限。
+- `PUT /api/system/roles/{role_id}/menus`：`{"menu_codes": ["task", "task.center"]}`，整体替换角色菜单授权。
+- `PUT /api/system/roles/{role_id}/scopes` 与 `PUT /api/users/{user_id}/scopes`：`{"scopes": [{"scope_type": "product", "scope_id": "product_alpha", "access_level": "write"}]}`，整体替换范围授权。
+- `PUT /api/users/{user_id}/roles`：`{"role_codes": ["developer"]}`，整体替换用户角色授权。
+
+新增错误码：
+
+| 错误码 | HTTP | 说明 |
+|------|------|------|
+| `ROLE_CODE_EXISTS` | 409 | 角色 `code` 已存在。 |
+| `SYSTEM_ROLE_PROTECTED` | 409 | 系统角色不可执行当前破坏性操作，当前主要用于拒绝停用系统角色。 |
+| `UNSUPPORTED_PERMISSION` | 400 | 请求包含不存在或不可用的权限点。 |
+| `UNSUPPORTED_MENU` | 400 | 请求包含不存在或不可用的菜单资源。 |
+| `INVALID_SCOPE` | 400 | 数据范围类型、范围 ID 或访问级别非法。 |
 
 响应：
 

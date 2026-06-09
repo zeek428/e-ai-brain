@@ -62,7 +62,7 @@
 - Modify: `docs/02-specs/enterprise-ai-brain/spec.md`
 - Modify: `docs/changelog.md`
 
-- [ ] **Step 1: Write migration-seed tests**
+- [x] **Step 1: Write migration-seed tests**
 
 Add tests in `apps/api/tests/test_rbac_foundation.py` that assert the SQL migration declares all reviewed tables and required seed codes. The first implementation can inspect the migration text, matching the existing lightweight migration tests in this repo.
 
@@ -127,7 +127,7 @@ def test_rbac_migration_seeds_reviewed_role_and_permission_codes():
         assert f"'{permission_code}'" in sql
 ```
 
-- [ ] **Step 2: Run the failing tests**
+- [x] **Step 2: Run the failing tests**
 
 Run:
 
@@ -138,7 +138,7 @@ uv run pytest tests/test_rbac_foundation.py -q
 
 Expected: fail because `031_rbac_foundation.sql` and the seed constants do not exist yet.
 
-- [ ] **Step 3: Create the migration**
+- [x] **Step 3: Create the migration**
 
 Create `apps/api/app/db/migrations/031_rbac_foundation.sql` with:
 
@@ -187,11 +187,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_departments_primary
 
 Continue the same file with the remaining tables from `rbac-redesign.md`, explicit unique constraints for role/permission/menu codes, and repeatable `INSERT ... ON CONFLICT DO UPDATE` seeds for permissions, menus, and the ten system role templates. Backfill existing `users.roles` into `user_roles` using `jsonb_array_elements_text(roles)`.
 
-- [ ] **Step 4: Extend role templates**
+- [x] **Step 4: Extend role templates**
 
 Add `developer`, `test_owner`, `tester`, and `release_owner` to `ROLE_DEFINITIONS` in `apps/api/app/core/roles.py`. Keep their `permissions` and `menu_scope` aligned with `031_rbac_foundation.sql`.
 
-- [ ] **Step 5: Run migration foundation tests**
+- [x] **Step 5: Run migration foundation tests**
 
 Run:
 
@@ -203,7 +203,9 @@ uv run ruff check app tests
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
+
+Superseded 2026-06-09 by the consolidated RBAC implementation commit after full backend, frontend, browser, code, and documentation verification.
 
 ```bash
 git add apps/api/app/db/migrations/031_rbac_foundation.sql apps/api/app/core/roles.py apps/api/tests/test_rbac_foundation.py docs/02-specs/enterprise-ai-brain/spec.md docs/changelog.md
@@ -221,7 +223,7 @@ git commit -m "feat: add rbac foundation schema"
 - Test: `apps/api/tests/test_rbac_foundation.py`
 - Test: `apps/api/tests/test_api_contract_completion.py`
 
-- [ ] **Step 1: Write snapshot tests**
+- [x] **Step 1: Write snapshot tests**
 
 Add tests proving that a user receives permissions, scopes, and menu tree from role grants while legacy `roles` stays available.
 
@@ -265,7 +267,7 @@ def test_build_menu_tree_adds_parent_chain_for_authorized_page():
     ]
 ```
 
-- [ ] **Step 2: Run the failing tests**
+- [x] **Step 2: Run the failing tests**
 
 ```bash
 cd apps/api
@@ -274,7 +276,7 @@ uv run pytest tests/test_rbac_foundation.py::test_authorization_snapshot_keeps_l
 
 Expected: fail because `app.core.authorization` does not exist.
 
-- [ ] **Step 3: Implement `AuthorizationSnapshot` helpers**
+- [x] **Step 3: Implement `AuthorizationSnapshot` helpers**
 
 Create `apps/api/app/core/authorization.py` with a frozen dataclass and pure functions:
 
@@ -332,7 +334,7 @@ def build_menu_tree(*, granted_codes: set[str], resources: list[dict[str, Any]],
     return [build_node(item) for item in roots]
 ```
 
-- [ ] **Step 4: Add dependencies**
+- [x] **Step 4: Add dependencies**
 
 In `apps/api/app/api/deps.py`, add permission dependencies while keeping `require_roles` working:
 
@@ -347,7 +349,7 @@ def require_permissions(user: dict[str, Any], required_permissions: set[str]) ->
 
 Use this helper in new RBAC endpoints first. Do not migrate existing business endpoints in this task.
 
-- [ ] **Step 5: Enrich `/api/auth/me`**
+- [x] **Step 5: Enrich `/api/auth/me`**
 
 Modify `apps/api/app/api/routers/auth.py` so `/api/auth/me` returns:
 
@@ -366,7 +368,7 @@ Modify `apps/api/app/api/routers/auth.py` so `/api/auth/me` returns:
 
 In this task it is acceptable for local memory tests to derive permissions from `ROLE_DEFINITIONS`; PostgreSQL runtime must prefer the new authorization repository when present.
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 ```bash
 cd apps/api
@@ -376,7 +378,9 @@ uv run ruff check app tests
 
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
+
+Superseded 2026-06-09 by the consolidated RBAC implementation commit after full backend, frontend, browser, code, and documentation verification.
 
 ```bash
 git add apps/api/app/core/authorization.py apps/api/app/core/repositories/authorization.py apps/api/app/api/deps.py apps/api/app/api/routers/auth.py apps/api/app/main.py apps/api/tests/test_rbac_foundation.py apps/api/tests/test_api_contract_completion.py
@@ -393,7 +397,7 @@ git commit -m "feat: add authorization snapshot"
 - Modify: `docs/02-specs/enterprise-ai-brain/api.md`
 - Modify: `docs/changelog.md`
 
-- [ ] **Step 1: Write API tests**
+- [x] **Step 1: Write API tests**
 
 Add tests for the minimum role governance loop:
 
@@ -431,7 +435,7 @@ Also cover:
 - role menu grants return updated `menu_codes`;
 - every mutating call writes `role_change_events` and `audit_events`.
 
-- [ ] **Step 2: Run the failing tests**
+- [x] **Step 2: Run the failing tests**
 
 ```bash
 cd apps/api
@@ -440,7 +444,7 @@ uv run pytest tests/test_rbac_system_api.py -q
 
 Expected: fail because `/api/system/roles` does not exist.
 
-- [ ] **Step 3: Implement `system_rbac` router**
+- [x] **Step 3: Implement `system_rbac` router**
 
 Implement these endpoints with `require_permissions(user, {"system.roles.manage"})` or `{"system.users.manage"}`:
 
@@ -462,7 +466,7 @@ Implement these endpoints with `require_permissions(user, {"system.roles.manage"
 
 Keep response envelopes consistent with existing routers and include `trace_id`.
 
-- [ ] **Step 4: Register the router**
+- [x] **Step 4: Register the router**
 
 In `apps/api/app/main.py`, include the new router next to other API routers:
 
@@ -472,18 +476,17 @@ from app.api.routers import system_rbac
 app.include_router(system_rbac.router)
 ```
 
-- [ ] **Step 5: Document API contracts**
+- [x] **Step 5: Document API contracts**
 
 Update `docs/02-specs/enterprise-ai-brain/api.md` with request and response examples for role CRUD, permission list, menu list, and user grants. Add exact error codes:
 
 - `ROLE_CODE_EXISTS`
 - `SYSTEM_ROLE_PROTECTED`
-- `LAST_ADMIN_PERMISSION_PROTECTED`
 - `UNSUPPORTED_PERMISSION`
 - `UNSUPPORTED_MENU`
 - `INVALID_SCOPE`
 
-- [ ] **Step 6: Run backend API tests**
+- [x] **Step 6: Run backend API tests**
 
 ```bash
 cd apps/api
@@ -493,7 +496,9 @@ uv run ruff check app tests
 
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
+
+Superseded 2026-06-09 by the consolidated RBAC implementation commit after full backend, frontend, browser, code, and documentation verification.
 
 ```bash
 git add apps/api/app/api/routers/system_rbac.py apps/api/app/main.py apps/api/app/core/repositories/authorization.py apps/api/tests/test_rbac_system_api.py docs/02-specs/enterprise-ai-brain/api.md docs/changelog.md
@@ -510,7 +515,7 @@ git commit -m "feat: add rbac system APIs"
 - Test: `apps/web/tests/SystemManagementPages.test.tsx`
 - Test: `apps/web/tests/RbacSystemPages.test.tsx`
 
-- [ ] **Step 1: Write frontend tests**
+- [x] **Step 1: Write frontend tests**
 
 Add tests proving role management is no longer read-only and menu data from `/api/auth/me` drives the left navigation:
 
@@ -529,7 +534,7 @@ it('renders role create and menu grant controls from RBAC APIs', async () => {
 
 Add a route/menu test that mocks `/api/auth/me` with no `system.roles` menu and asserts the left menu does not show `角色管理`.
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 ```bash
 cd apps/web
@@ -538,7 +543,7 @@ npm test -- SystemManagementPages.test.tsx RbacSystemPages.test.tsx
 
 Expected: fail because the role page only has detail viewing and route menu is static.
 
-- [ ] **Step 3: Add RBAC service functions**
+- [x] **Step 3: Add RBAC service functions**
 
 In `apps/web/src/services/aiBrain.ts`, add typed service methods:
 
@@ -556,7 +561,7 @@ In `apps/web/src/services/aiBrain.ts`, add typed service methods:
 
 Use the existing `request` helper and response normalization style already used by `fetchRoleDefinitionList`.
 
-- [ ] **Step 4: Upgrade role page**
+- [x] **Step 4: Upgrade role page**
 
 Modify `apps/web/src/pages/Roles/index.tsx` to include:
 
@@ -566,11 +571,11 @@ Modify `apps/web/src/pages/Roles/index.tsx` to include:
 - disable/enable action with confirmation;
 - detail drawer explaining effective permissions and menus.
 
-- [ ] **Step 5: Use `menu_tree` for navigation**
+- [x] **Step 5: Use `menu_tree` for navigation**
 
 Add route `menuCode` metadata in `apps/web/config/routes.ts` and transform `/api/auth/me.menu_tree` into Ant Design Pro menu entries in `apps/web/src/app.tsx`. Preserve the existing route paths and hidden redirects.
 
-- [ ] **Step 6: Run frontend verification**
+- [x] **Step 6: Run frontend verification**
 
 ```bash
 cd apps/web
@@ -581,7 +586,9 @@ npm run build
 
 Expected: pass.
 
-- [ ] **Step 7: Browser smoke**
+- [x] **Step 7: Browser smoke**
+
+Verified 2026-06-09 with the PostgreSQL-backed API runtime and real web app at `http://localhost:8000` and `http://localhost:5173`. Logged in as `admin@example.com`, opened `/system/roles`, opened the `product_owner` role configuration modal, and confirmed menu-first checkbox configuration with menu-specific permissions. Logged in as `qa_product_owner@example.com`, confirmed the left menu hides system management, user management, role management, model gateway, log monitoring, and audit entries while keeping authorized product owner entries visible. A direct visit to `/system/roles` as product owner returned `FORBIDDEN` with an empty data table and no console/runtime errors.
 
 Start the real services with PostgreSQL runtime, log in as `admin@example.com`, and validate:
 
@@ -591,7 +598,9 @@ Start the real services with PostgreSQL runtime, log in as `admin@example.com`, 
 - disabling a custom role removes it from assignable options;
 - no relevant console/runtime errors appear.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
+
+Completed 2026-06-09 as part of the consolidated RBAC implementation after automated verification, browser validation, and code/document review.
 
 ```bash
 git add apps/web/src/services/aiBrain.ts apps/web/src/pages/Roles/index.tsx apps/web/config/routes.ts apps/web/src/app.tsx apps/web/tests/SystemManagementPages.test.tsx apps/web/tests/RbacSystemPages.test.tsx

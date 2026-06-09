@@ -1,18 +1,47 @@
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Descriptions, Modal, Space, Tag, Typography } from 'antd';
+import {
+  Button,
+  Checkbox,
+  Descriptions,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ManagementListQuery } from '../../components/ManagementListPage';
-import type { UserRoleDefinition } from '../../data/roles';
 import {
   formatRemoteRowsError,
   normalizeRemoteRowsError,
   type RemoteRowsError,
 } from '../../hooks/useRemoteRows';
-import { fetchRoleDefinitionList, type RoleListQuery } from '../../services/aiBrain';
+import {
+  copySystemRole,
+  createSystemRole,
+  fetchSystemMenus,
+  fetchSystemPermissions,
+  fetchSystemRoleList,
+  setSystemRoleStatus,
+  updateSystemRole,
+  updateSystemRoleMenus,
+  updateSystemRolePermissions,
+  updateSystemRoleScopes,
+  type MenuResourceRecord,
+  type PermissionRecord,
+  type RoleListQuery,
+  type ScopeGrant,
+  type SystemRoleRecord,
+} from '../../services/aiBrain';
 
-type RoleManagementRow = UserRoleDefinition & {
+type RoleManagementRow = SystemRoleRecord & {
   assignableText: string;
   businessRoleText: string;
   categoryText: string;
@@ -23,6 +52,19 @@ type RoleManagementRow = UserRoleDefinition & {
   responsibilityText: string;
   statusText: string;
 };
+
+type RoleFormValues = {
+  category: string;
+  code: string;
+  description?: string;
+  is_assignable?: boolean;
+  name: string;
+  sort_order?: number;
+};
+
+type GrantModal =
+  | { role: RoleManagementRow; type: 'grants' | 'scopes' }
+  | undefined;
 
 const CATEGORY_LABELS: Record<string, string> = {
   delivery: '交付角色',
@@ -72,7 +114,19 @@ function renderCountSummary(count: number, unit: string) {
   return <Tag color={count > 0 ? 'blue' : 'default'}>{`${count} ${unit}`}</Tag>;
 }
 
-function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<RoleManagementRow>[] {
+function buildColumns({
+  configureGrant,
+  copyRole,
+  editRole,
+  openDetail,
+  toggleStatus,
+}: {
+  configureGrant: (row: RoleManagementRow, type: 'grants' | 'scopes') => void;
+  copyRole: (row: RoleManagementRow) => void;
+  editRole: (row: RoleManagementRow) => void;
+  openDetail: (row: RoleManagementRow) => void;
+  toggleStatus: (row: RoleManagementRow) => void;
+}): ProColumns<RoleManagementRow>[] {
   return [
     {
       dataIndex: 'roleLabel',
@@ -134,25 +188,42 @@ function buildColumns(openDetail: (row: RoleManagementRow) => void): ProColumns<
       fixed: 'right',
       title: '操作',
       valueType: 'option',
-      width: 96,
+      width: 280,
       render: (_, row) => (
-        <Button onClick={() => openDetail(row)} type="link">
-          详情
-        </Button>
+        <Space size={0} wrap>
+          <Button onClick={() => openDetail(row)} type="link">
+            详情
+          </Button>
+          <Button onClick={() => editRole(row)} type="link">
+            编辑
+          </Button>
+          <Button onClick={() => copyRole(row)} type="link">
+            复制
+          </Button>
+          <Button onClick={() => configureGrant(row, 'grants')} type="link">
+            角色配置
+          </Button>
+          <Button onClick={() => configureGrant(row, 'scopes')} type="link">
+            范围
+          </Button>
+          <Button disabled={row.is_system && row.status === 'active'} onClick={() => toggleStatus(row)} type="link">
+            {row.status === 'active' ? '停用' : '启用'}
+          </Button>
+        </Space>
       ),
     },
   ];
 }
 
-function mapRoleRow(role: UserRoleDefinition): RoleManagementRow {
+function mapRoleRow(role: SystemRoleRecord): RoleManagementRow {
   return {
     ...role,
     assignableText: role.is_assignable ? '可分配' : '不可分配',
     businessRoleText: role.business_roles.join(', '),
     categoryText: CATEGORY_LABELS[role.category] ?? role.category,
     limitationText: role.limitations.join('；'),
-    menuScopeText: role.menu_scope.join(', '),
-    permissionText: role.permissions.join(', '),
+    menuScopeText: role.menu_codes.join(', '),
+    permissionText: role.permission_codes.join(', '),
     responsibilityText: role.responsibilities.join('；'),
     roleLabel: `${role.name} (${role.code})`,
     statusText: role.status === 'active' ? '启用' : '停用',
@@ -179,8 +250,62 @@ function buildRoleListQuery(query: ManagementListQuery): RoleListQuery {
   };
 }
 
+function toggleArrayValue(values: string[] | undefined, value: string, checked: boolean) {
+  const nextValues = new Set(values ?? []);
+  if (checked) {
+    nextValues.add(value);
+  } else {
+    nextValues.delete(value);
+  }
+  return [...nextValues];
+}
+
+function getMenuPermissionCodes(menu: MenuResourceRecord, permissions: PermissionRecord[]) {
+  const activePermissions = permissions.filter((permission) => permission.status !== 'inactive');
+  const requiredCodes = new Set(menu.required_permissions ?? []);
+  const prefix = `${menu.code}.`;
+  const prefixMatches = activePermissions
+    .filter((permission) => permission.code.startsWith(prefix))
+    .map((permission) => permission.code);
+
+  if (prefixMatches.length > 0) {
+    return [...new Set([...requiredCodes, ...prefixMatches])];
+  }
+
+  const requiredCategories = new Set(
+    activePermissions
+      .filter((permission) => requiredCodes.has(permission.code))
+      .map((permission) => permission.category)
+      .filter(Boolean),
+  );
+  const categoryMatches = activePermissions
+    .filter((permission) => permission.category && requiredCategories.has(permission.category))
+    .map((permission) => permission.code);
+
+  return [...new Set([...requiredCodes, ...categoryMatches])];
+}
+
 export default function RolesPage() {
   const [detailRole, setDetailRole] = useState<RoleManagementRow>();
+  const [editingRole, setEditingRole] = useState<RoleManagementRow>();
+  const [grantModal, setGrantModal] = useState<GrantModal>();
+  const [roleFormOpen, setRoleFormOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
+  const [menus, setMenus] = useState<MenuResourceRecord[]>([]);
+  const [roleForm] = Form.useForm<RoleFormValues>();
+  const [grantForm] = Form.useForm<{
+    menuCodes?: string[];
+    permissionCodes?: string[];
+    scopes?: ScopeGrant[];
+  }>();
+  const watchedGrantMenuCodes = Form.useWatch('menuCodes', grantForm);
+  const watchedGrantPermissionCodes = Form.useWatch('permissionCodes', grantForm);
+  const selectedGrantMenuCodes = useMemo(() => watchedGrantMenuCodes ?? [], [watchedGrantMenuCodes]);
+  const selectedGrantPermissionCodes = useMemo(
+    () => watchedGrantPermissionCodes ?? [],
+    [watchedGrantPermissionCodes],
+  );
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
     page: 1,
@@ -205,7 +330,7 @@ export default function RolesPage() {
   const reload = useCallback(async () => {
     setListState((current) => ({ ...current, status: 'loading' }));
     try {
-      const result = await fetchRoleDefinitionList(buildRoleListQuery(listQuery));
+      const result = await fetchSystemRoleList(buildRoleListQuery(listQuery));
       setListState({
         page: result.page,
         pageSize: result.pageSize,
@@ -225,7 +350,7 @@ export default function RolesPage() {
   useEffect(() => {
     let isCurrent = true;
     setListState((current) => ({ ...current, status: 'loading' }));
-    fetchRoleDefinitionList(buildRoleListQuery(listQuery))
+    fetchSystemRoleList(buildRoleListQuery(listQuery))
       .then((result) => {
         if (isCurrent) {
           setListState({
@@ -251,7 +376,198 @@ export default function RolesPage() {
       isCurrent = false;
     };
   }, [listQuery]);
-  const columns = useMemo(() => buildColumns(setDetailRole), []);
+  useEffect(() => {
+    let isCurrent = true;
+    Promise.all([fetchSystemPermissions(), fetchSystemMenus()])
+      .then(([permissionRows, menuRows]) => {
+        if (isCurrent) {
+          setPermissions(permissionRows);
+          setMenus(menuRows);
+        }
+      })
+      .catch(() => {
+        if (isCurrent) {
+          setPermissions([]);
+          setMenus([]);
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  const openCreateRole = useCallback(() => {
+    setEditingRole(undefined);
+    roleForm.resetFields();
+    roleForm.setFieldsValue({ category: 'workspace', is_assignable: true });
+    setRoleFormOpen(true);
+  }, [roleForm]);
+  const openEditRole = useCallback((row: RoleManagementRow) => {
+    setEditingRole(row);
+    roleForm.setFieldsValue({
+      category: row.category,
+      code: row.code,
+      description: row.description,
+      is_assignable: row.is_assignable,
+      name: row.name,
+      sort_order: row.sort_order,
+    });
+    setRoleFormOpen(true);
+  }, [roleForm]);
+  const openGrantModal = useCallback((row: RoleManagementRow, type: 'grants' | 'scopes') => {
+    setGrantModal({ role: row, type });
+    grantForm.setFieldsValue({
+      menuCodes: row.menu_codes,
+      permissionCodes: row.permission_codes,
+      scopes: row.scopes.length
+        ? row.scopes
+        : [{ access_level: 'read', scope_id: '', scope_type: 'product' }],
+    });
+  }, [grantForm]);
+  const submitRoleForm = async () => {
+    const values = await roleForm.validateFields();
+    setSubmitting(true);
+    try {
+      if (editingRole) {
+        await updateSystemRole(editingRole.id, values);
+        message.success('角色已更新');
+      } else {
+        await createSystemRole(values);
+        message.success('角色已创建');
+      }
+      setRoleFormOpen(false);
+      setEditingRole(undefined);
+      await reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '角色保存失败');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  const submitGrantForm = async () => {
+    if (!grantModal) {
+      return;
+    }
+    const values = await grantForm.validateFields();
+    setSubmitting(true);
+    try {
+      if (grantModal.type === 'grants') {
+        await updateSystemRoleMenus(grantModal.role.id, values.menuCodes ?? []);
+        await updateSystemRolePermissions(grantModal.role.id, values.permissionCodes ?? []);
+      } else {
+        await updateSystemRoleScopes(
+          grantModal.role.id,
+          (values.scopes ?? []).filter((scope) => scope.scope_type && scope.scope_id),
+        );
+      }
+      message.success('授权配置已更新');
+      setGrantModal(undefined);
+      await reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '授权配置保存失败');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  const toggleRoleStatus = useCallback(async (row: RoleManagementRow) => {
+    setSubmitting(true);
+    try {
+      await setSystemRoleStatus(row.id, row.status === 'active' ? 'inactive' : 'active');
+      message.success(row.status === 'active' ? '角色已停用' : '角色已启用');
+      await reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '角色状态更新失败');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [reload]);
+  const copyRole = useCallback(
+    (row: RoleManagementRow) => {
+      Modal.confirm({
+        content: `将复制 ${row.name} 的权限、菜单和范围配置。`,
+        onOk: async () => {
+          const suffix = new Date().getTime().toString().slice(-6);
+          try {
+            await copySystemRole(row.id, {
+              code: `${row.code}_copy_${suffix}`,
+              description: row.description,
+              name: `${row.name} 副本`,
+            });
+            message.success('角色已复制');
+            await reload();
+          } catch (error) {
+            message.error(error instanceof Error ? error.message : '角色复制失败');
+          }
+        },
+        title: '复制角色',
+      });
+    },
+    [reload],
+  );
+  const columns = useMemo(
+    () =>
+      buildColumns({
+        configureGrant: openGrantModal,
+        copyRole,
+        editRole: openEditRole,
+        openDetail: setDetailRole,
+        toggleStatus: toggleRoleStatus,
+      }),
+    [copyRole, openEditRole, openGrantModal, toggleRoleStatus],
+  );
+  const activeMenus = useMemo(
+    () =>
+      menus
+        .filter((menu) => menu.status !== 'inactive' && menu.menu_type !== 'hidden_page')
+        .sort((left, right) => (left.sort_order ?? 0) - (right.sort_order ?? 0)),
+    [menus],
+  );
+  const permissionByCode = useMemo(
+    () => new Map(permissions.map((permission) => [permission.code, permission])),
+    [permissions],
+  );
+  const menuPermissionCodesByMenu = useMemo(() => {
+    const entries = activeMenus.map((menu) => [menu.code, getMenuPermissionCodes(menu, permissions)] as const);
+    return new Map(entries);
+  }, [activeMenus, permissions]);
+  const mappedPermissionCodes = useMemo(
+    () => new Set([...menuPermissionCodesByMenu.values()].flat()),
+    [menuPermissionCodesByMenu],
+  );
+  const otherPermissions = useMemo(
+    () =>
+      permissions
+        .filter((permission) => permission.status !== 'inactive' && !mappedPermissionCodes.has(permission.code))
+        .sort((left, right) => left.code.localeCompare(right.code)),
+    [mappedPermissionCodes, permissions],
+  );
+  const updateGrantMenuSelection = useCallback(
+    (menu: MenuResourceRecord, checked: boolean) => {
+      const nextMenuCodes = toggleArrayValue(selectedGrantMenuCodes, menu.code, checked);
+      const relatedPermissionCodes = menuPermissionCodesByMenu.get(menu.code) ?? [];
+      const nextPermissionCodes = checked
+        ? selectedGrantPermissionCodes
+        : selectedGrantPermissionCodes.filter((code) => !relatedPermissionCodes.includes(code));
+      grantForm.setFieldsValue({
+        menuCodes: nextMenuCodes,
+        permissionCodes: nextPermissionCodes,
+      });
+    },
+    [grantForm, menuPermissionCodesByMenu, selectedGrantMenuCodes, selectedGrantPermissionCodes],
+  );
+  const updateGrantPermissionSelection = useCallback(
+    (menu: MenuResourceRecord | undefined, permissionCode: string, checked: boolean) => {
+      const nextPermissionCodes = toggleArrayValue(selectedGrantPermissionCodes, permissionCode, checked);
+      const nextMenuCodes = checked && menu
+        ? toggleArrayValue(selectedGrantMenuCodes, menu.code, true)
+        : selectedGrantMenuCodes;
+      grantForm.setFieldsValue({
+        menuCodes: nextMenuCodes,
+        permissionCodes: nextPermissionCodes,
+      });
+    },
+    [grantForm, selectedGrantMenuCodes, selectedGrantPermissionCodes],
+  );
 
   return (
     <>
@@ -282,7 +598,9 @@ export default function RolesPage() {
         ]}
         loading={listState.status === 'loading'}
         notice={formatRemoteRowsError(listState.error)}
+        onPrimaryAction={openCreateRole}
         onReload={() => void reload()}
+        primaryAction="新增角色"
         remote={{
           onChange: setListQuery,
           page: listState.page,
@@ -294,6 +612,176 @@ export default function RolesPage() {
         tableTitle="角色定义"
         title="角色管理"
       />
+      <Modal
+        confirmLoading={submitting}
+        destroyOnHidden
+        onCancel={() => setRoleFormOpen(false)}
+        onOk={() => void submitRoleForm()}
+        open={roleFormOpen}
+        title={editingRole ? `编辑角色 · ${editingRole.name}` : '新增角色'}
+        width={640}
+      >
+        <Form<RoleFormValues>
+          form={roleForm}
+          layout="vertical"
+          preserve={false}
+        >
+          <Form.Item
+            label="角色编码"
+            name="code"
+            rules={[{ required: true, message: '请输入角色编码' }]}
+          >
+            <Input disabled={Boolean(editingRole)} placeholder="frontend_reviewer" />
+          </Form.Item>
+          <Form.Item label="角色名称" name="name" rules={[{ required: true, message: '请输入角色名称' }]}>
+            <Input placeholder="前端评审" />
+          </Form.Item>
+          <Form.Item label="分类" name="category" rules={[{ required: true, message: '请选择分类' }]}>
+            <Select options={CATEGORY_OPTIONS} />
+          </Form.Item>
+          <Form.Item label="定位描述" name="description">
+            <Input.TextArea autoSize={{ minRows: 3, maxRows: 5 }} placeholder="说明该角色的职责边界" />
+          </Form.Item>
+          <Space align="start" size={24}>
+            <Form.Item label="可分配" name="is_assignable" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            <Form.Item label="排序" name="sort_order">
+              <InputNumber min={0} />
+            </Form.Item>
+          </Space>
+        </Form>
+      </Modal>
+      <Modal
+        confirmLoading={submitting}
+        destroyOnHidden
+        onCancel={() => setGrantModal(undefined)}
+        onOk={() => void submitGrantForm()}
+        open={Boolean(grantModal)}
+        title={
+          grantModal
+            ? `${grantModal.type === 'grants' ? '角色配置' : '配置范围'} · ${grantModal.role.name}`
+            : '授权配置'
+        }
+        width={880}
+      >
+        <Form form={grantForm} layout="vertical" preserve={false}>
+          {grantModal?.type === 'grants' ? (
+            <>
+              <Form.Item name="menuCodes" hidden>
+                <Select mode="multiple" />
+              </Form.Item>
+              <Form.Item name="permissionCodes" hidden>
+                <Select mode="multiple" />
+              </Form.Item>
+              <div className="role-grant-config">
+                {activeMenus.map((menu) => {
+                  const isMenuChecked = selectedGrantMenuCodes.includes(menu.code);
+                  const menuPermissionCodes = menuPermissionCodesByMenu.get(menu.code) ?? [];
+                  return (
+                    <section className="role-grant-menu" key={menu.code}>
+                      <div className="role-grant-menu-header">
+                        <Checkbox
+                          checked={isMenuChecked}
+                          onChange={(event) => updateGrantMenuSelection(menu, event.target.checked)}
+                        >
+                          <Text strong>{menu.name}</Text>
+                        </Checkbox>
+                        <Text type="secondary">{menu.path ?? menu.code}</Text>
+                      </div>
+                      <div className="role-grant-permissions">
+                        {menuPermissionCodes.length > 0 ? (
+                          menuPermissionCodes.map((permissionCode) => {
+                            const permission = permissionByCode.get(permissionCode);
+                            return (
+                              <Checkbox
+                                checked={selectedGrantPermissionCodes.includes(permissionCode)}
+                                disabled={!isMenuChecked}
+                                key={permissionCode}
+                                onChange={(event) =>
+                                  updateGrantPermissionSelection(menu, permissionCode, event.target.checked)
+                                }
+                              >
+                                {permission ? `${permission.name} (${permission.code})` : permissionCode}
+                              </Checkbox>
+                            );
+                          })
+                        ) : (
+                          <Text type="secondary">该菜单无独立操作权限</Text>
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
+                {otherPermissions.length > 0 ? (
+                  <section className="role-grant-menu">
+                    <div className="role-grant-menu-header">
+                      <Text strong>其他权限</Text>
+                      <Text type="secondary">未绑定到具体菜单的系统能力</Text>
+                    </div>
+                    <div className="role-grant-permissions">
+                      {otherPermissions.map((permission) => (
+                        <Checkbox
+                          checked={selectedGrantPermissionCodes.includes(permission.code)}
+                          key={permission.code}
+                          onChange={(event) =>
+                            updateGrantPermissionSelection(undefined, permission.code, event.target.checked)
+                          }
+                        >
+                          {permission.name} ({permission.code})
+                        </Checkbox>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+          {grantModal?.type === 'scopes' ? (
+            <Form.List name="scopes">
+              {(fields, { add, remove }) => (
+                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                  {fields.map((field) => (
+                    <Space align="baseline" key={field.key} wrap>
+                      <Form.Item {...field} label="范围类型" name={[field.name, 'scope_type']}>
+                        <Select
+                          options={[
+                            { label: '全局', value: 'global' },
+                            { label: '产品', value: 'product' },
+                            { label: '知识空间', value: 'knowledge_space' },
+                            { label: '部门', value: 'department' },
+                            { label: '评审任务', value: 'review_assignment' },
+                          ]}
+                          style={{ width: 150 }}
+                        />
+                      </Form.Item>
+                      <Form.Item {...field} label="范围 ID" name={[field.name, 'scope_id']}>
+                        <Input placeholder="* / product_001" style={{ width: 180 }} />
+                      </Form.Item>
+                      <Form.Item {...field} label="级别" name={[field.name, 'access_level']}>
+                        <Select
+                          options={[
+                            { label: '读取', value: 'read' },
+                            { label: '写入', value: 'write' },
+                            { label: '管理', value: 'admin' },
+                          ]}
+                          style={{ width: 120 }}
+                        />
+                      </Form.Item>
+                      <Button onClick={() => remove(field.name)} type="link">
+                        移除
+                      </Button>
+                    </Space>
+                  ))}
+                  <Button onClick={() => add({ access_level: 'read', scope_id: '', scope_type: 'product' })}>
+                    添加范围
+                  </Button>
+                </Space>
+              )}
+            </Form.List>
+          ) : null}
+        </Form>
+      </Modal>
       <Modal
         footer={null}
         onCancel={() => setDetailRole(undefined)}

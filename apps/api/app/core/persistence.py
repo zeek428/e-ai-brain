@@ -53,11 +53,33 @@ class PostgresSnapshotRepository:
                 )
                 cursor.execute(
                     """
+                    ALTER TABLE IF EXISTS requirements
+                      ADD COLUMN IF NOT EXISTS source text DEFAULT 'business_department'
+                    """
+                )
+                cursor.execute(
+                    """
+                    UPDATE requirements
+                    SET source = 'business_department'
+                    WHERE source IS NULL
+                    """
+                )
+                cursor.execute(
+                    """
+                    ALTER TABLE IF EXISTS requirements
+                      ALTER COLUMN source SET DEFAULT 'business_department',
+                      ALTER COLUMN source SET NOT NULL
+                    """
+                )
+                cursor.execute(
+                    """
                     DO $$
                     BEGIN
                       IF to_regclass('public.requirements') IS NOT NULL THEN
                         CREATE INDEX IF NOT EXISTS idx_requirements_assignee
                           ON requirements (assignee);
+                        CREATE INDEX IF NOT EXISTS idx_requirements_source_created
+                          ON requirements (source, created_at DESC);
                       END IF;
                     END $$;
                     """
@@ -230,6 +252,7 @@ class PostgresSnapshotRepository:
         priority: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        source: str | None = None,
         status: str | None = None,
         title: str | None = None,
         version: str | None = None,
@@ -239,6 +262,7 @@ class PostgresSnapshotRepository:
             priority=priority,
             product=product,
             product_id=product_id,
+            source=source,
             status=status,
             title=title,
             version=version,
@@ -251,6 +275,7 @@ class PostgresSnapshotRepository:
         priority: str | None = None,
         product: str | None = None,
         product_id: str | None = None,
+        source: str | None = None,
         status: str | None = None,
         title: str | None = None,
         version: str | None = None,
@@ -264,6 +289,7 @@ class PostgresSnapshotRepository:
             priority=priority,
             product=product,
             product_id=product_id,
+            source=source,
             status=status,
             title=title,
             version=version,

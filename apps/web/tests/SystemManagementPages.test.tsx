@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { message, Modal, notification } from 'antd';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,32 +11,28 @@ const roleCatalogEnvelope = {
   data: {
     items: [
       {
-        business_roles: ['平台管理员'],
+        id: 'role_admin',
         code: 'admin',
-        data_scope: '全平台。',
-        decision_scope: '系统治理。',
         description: '负责用户、角色、模型网关、审计与系统级配置管理。',
         is_assignable: true,
-        limitations: ['不能代替业务负责人做最终产品决策。'],
-        menu_scope: ['系统管理', '审计与运行'],
+        is_system: true,
+        menu_codes: ['system', 'system.roles', 'governance.audit'],
         name: '系统管理员',
-        permissions: ['system.users.manage'],
-        responsibilities: ['维护用户和角色。'],
+        permission_codes: ['system.roles.read', 'system.roles.manage', 'system.users.manage'],
+        scopes: [{ access_level: 'admin', scope_id: '*', scope_type: 'global' }],
         sort_order: 10,
         status: 'active',
       },
       {
-        business_roles: ['只读参与者'],
+        id: 'role_viewer',
         code: 'viewer',
-        data_scope: '授权范围内的数据。',
-        decision_scope: '无写入或审批决策权限。',
         description: '只能查看有权限访问的工作台数据、任务结果、知识和看板摘要。',
         is_assignable: true,
-        limitations: ['不能执行写操作、审批或配置变更。'],
-        menu_scope: ['首页 IT 团队看板', '授权业务列表'],
+        is_system: true,
+        menu_codes: ['workspace.dashboard'],
         name: '查看者',
-        permissions: ['workspace.read'],
-        responsibilities: ['查看授权范围内的业务数据。'],
+        permission_codes: ['workspace.read'],
+        scopes: [{ access_level: 'read', scope_id: 'self', scope_type: 'product' }],
         sort_order: 60,
         status: 'active',
       },
@@ -97,17 +93,65 @@ describe('system management pages', () => {
 
   it('renders system role management from the backend role catalog', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
-      expect(String(input)).toMatch(/^\/api\/auth\/roles\?/);
-      expect(String(input)).toContain('page=1');
-      expect(String(input)).toContain('page_size=10');
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (String(input) === '/api/system/permissions') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                { code: 'system.roles.manage', name: '角色管理', status: 'active' },
+                { code: 'system.roles.read', name: '查看角色', status: 'active' },
+                { code: 'system.users.manage', name: '用户管理', status: 'active' },
+                { code: 'workspace.read', name: '工作台读取', status: 'active' },
+              ],
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      if (String(input) === '/api/system/menus') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                { code: 'system', menu_type: 'group', name: '系统管理', path: '/system' },
+                {
+                  code: 'system.roles',
+                  menu_type: 'page',
+                  name: '角色管理',
+                  path: '/system/roles',
+                  required_permissions: ['system.roles.manage'],
+                },
+                {
+                  code: 'governance.audit',
+                  menu_type: 'page',
+                  name: '审计与运行',
+                  path: '/governance/audit',
+                  required_permissions: [],
+                },
+                {
+                  code: 'workspace.dashboard',
+                  menu_type: 'page',
+                  name: '团队看板',
+                  path: '/welcome',
+                  required_permissions: ['workspace.read'],
+                },
+              ],
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      expect(String(input)).toBe('/api/system/roles');
       return new Response(
         JSON.stringify({
-          data: {
-            ...roleCatalogEnvelope.data,
-            page: 1,
-            page_size: 10,
-          },
+          data: roleCatalogEnvelope.data,
         }),
         {
           headers: { 'Content-Type': 'application/json' },
@@ -126,25 +170,48 @@ describe('system management pages', () => {
     expect(screen.getByText('admin')).toBeInTheDocument();
     expect(screen.getByText('查看者')).toBeInTheDocument();
     expect(screen.getByText('viewer')).toBeInTheDocument();
-    expect(screen.getByText('平台管理员')).toBeInTheDocument();
-    expect(screen.getByText('只读参与者')).toBeInTheDocument();
     expect(screen.getAllByText('系统管理').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('2 个入口').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('1 个权限点')).toHaveLength(2);
+    expect(screen.getAllByText('3 个入口').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('3 个权限点').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('1 个权限点').length).toBeGreaterThan(0);
     expect(screen.getByText('职责与范围')).toBeInTheDocument();
     expect(screen.queryByText('负责用户、角色、模型网关、审计与系统级配置管理。')).not.toBeInTheDocument();
-    expect(screen.queryByText('全平台。')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新增角色' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '编辑' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: '复制' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: '角色配置' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: '权限' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '菜单' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '范围' }).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getAllByRole('button', { name: '角色配置' })[0]);
+
+    expect(await screen.findByRole('dialog', { name: '角色配置 · 系统管理员' })).toBeInTheDocument();
+    expect(screen.getByLabelText('角色管理')).toBeChecked();
+    expect(screen.getAllByLabelText(/查看角色/).some((item) => item instanceof HTMLInputElement && item.checked)).toBe(
+      true,
+    );
+    expect(
+      screen
+        .getAllByLabelText(/角色管理 \(system.roles.manage\)/)
+        .some((item) => item instanceof HTMLInputElement && item.checked),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByLabelText(/团队看板/)
+        .every((item) => item instanceof HTMLInputElement && !item.checked),
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '角色配置 · 系统管理员' })).not.toBeInTheDocument(),
+    );
 
     fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
 
     expect(await screen.findByRole('dialog', { name: '角色详情 · 系统管理员' })).toBeInTheDocument();
     expect(screen.getByText('负责用户、角色、模型网关、审计与系统级配置管理。')).toBeInTheDocument();
-    expect(screen.getByText('全平台。')).toBeInTheDocument();
-    expect(screen.getByText('系统治理。')).toBeInTheDocument();
-    expect(screen.getByText('维护用户和角色。')).toBeInTheDocument();
-    expect(screen.getByText('不能代替业务负责人做最终产品决策。')).toBeInTheDocument();
+    expect(screen.getByText('system.roles.manage')).toBeInTheDocument();
     expect(screen.getByText('system.users.manage')).toBeInTheDocument();
-    expect(screen.getByText('审计与运行')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /新增角色|删除/ })).not.toBeInTheDocument();
+    expect(screen.getByText('governance.audit')).toBeInTheDocument();
   });
 });

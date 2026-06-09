@@ -45,6 +45,29 @@ def test_user_management_endpoints_are_owned_by_users_router():
     assert _route_for("/api/users/{user_id}", "DELETE").endpoint.__module__ == expected_module
 
 
+def test_system_rbac_endpoints_are_owned_by_system_rbac_router():
+    expected_module = "app.api.routers.system_rbac"
+
+    for path, method in [
+        ("/api/system/permissions", "GET"),
+        ("/api/system/menus", "GET"),
+        ("/api/system/roles", "GET"),
+        ("/api/system/roles", "POST"),
+        ("/api/system/roles/{role_id}", "GET"),
+        ("/api/system/roles/{role_id}", "PATCH"),
+        ("/api/system/roles/{role_id}/copy", "POST"),
+        ("/api/system/roles/{role_id}/disable", "POST"),
+        ("/api/system/roles/{role_id}/enable", "POST"),
+        ("/api/system/roles/{role_id}/permissions", "PUT"),
+        ("/api/system/roles/{role_id}/menus", "PUT"),
+        ("/api/system/roles/{role_id}/scopes", "PUT"),
+        ("/api/users/{user_id}/permissions", "GET"),
+        ("/api/users/{user_id}/roles", "PUT"),
+        ("/api/users/{user_id}/scopes", "PUT"),
+    ]:
+        assert _route_for(path, method).endpoint.__module__ == expected_module
+
+
 def test_product_core_endpoints_are_owned_by_products_router():
     expected_module = "app.api.routers.products"
 

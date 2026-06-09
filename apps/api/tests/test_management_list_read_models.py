@@ -233,6 +233,7 @@ def test_requirement_list_uses_repository_read_model_for_sql_pagination():
             "priority": "P0",
             "product": "AI-BRAIN",
             "product_id": "product_read_model",
+            "source": None,
             "status": "testing",
             "title": "SQL",
             "version": "v1",

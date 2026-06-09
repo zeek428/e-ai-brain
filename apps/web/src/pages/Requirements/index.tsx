@@ -100,7 +100,6 @@ const batchAssignableStatuses = new Set<RequirementRecord['status']>([
   'submitted',
   'testing',
 ]);
-const batchSchedulableStatuses = new Set<RequirementRecord['status']>(['approved', 'planned']);
 const batchAdvanceTargetOptions: Array<{ label: string; value: RequirementRecord['status'] }> = [
   { label: '已排期', value: 'planned' },
   { label: '待开发', value: 'ready_for_dev' },

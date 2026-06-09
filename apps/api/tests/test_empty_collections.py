@@ -212,7 +212,7 @@ def test_dashboard_it_team_returns_real_mvp_aggregate_without_fake_rows():
     ).json()["data"]
 
     dashboard = client.get(
-        f"/api/dashboard/it-team?product_id={product['id']}&time_range=7d",
+        f"/api/dashboard/it-team?product_id={product['id']}&time_range=all",
         headers=headers,
     ).json()["data"]
 

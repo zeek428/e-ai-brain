@@ -267,7 +267,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     });
     const fetchMock = vi.fn<typeof fetch>((input) => {
       const path = String(input);
-      if (path === '/api/products?active_only=true') {
+      if (path === '/api/products?active_only=true' || path === '/api/products?active_only=true&page_size=100') {
         return activeProductsPromise;
       }
       if (path === '/api/product-versions' || path.startsWith('/api/product-versions?')) {
@@ -439,7 +439,7 @@ describe('AI Brain Ant Design Pro workbench', () => {
     expect(await screen.findAllByRole('button', { name: /全链路/ })).not.toHaveLength(0);
     expect(screen.getAllByRole('button', { name: /更多/ })).not.toHaveLength(0);
     expect(screen.queryByRole('link', { name: /详情页/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('table')).toHaveAttribute('data-table-scroll-x', '1600');
+    expect(screen.getByRole('table')).toHaveAttribute('data-table-scroll-x', '1720');
     expect(screen.getByRole('columnheader', { name: '需求标题' })).toHaveAttribute(
       'data-width',
       '260',

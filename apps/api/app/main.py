@@ -32,6 +32,7 @@ from app.api.routers.product_versions import router as product_versions_router
 from app.api.routers.products import router as products_router
 from app.api.routers.related_systems import router as related_systems_router
 from app.api.routers.requirements import router as requirements_router
+from app.api.routers.system_rbac import router as system_rbac_router
 from app.api.routers.tasks import router as tasks_router
 from app.api.routers.user_insights import router as user_insights_router
 from app.api.routers.users import router as users_router
@@ -39,6 +40,10 @@ from app.api.routers.writeback import router as writeback_router
 from app.core.config import get_settings
 from app.core.persistence import PostgresSnapshotRepository
 from app.core.persistence_runtime import PostgresRuntimeStore
+from app.core.repositories.authorization import (
+    CompatibilityAuthorizationRepository,
+    PostgresAuthorizationRepository,
+)
 from app.core.store import MemoryStore
 from app.core.trace import get_trace_id, new_trace_id
 from app.core.users import MemoryUserRepository, PostgresUserRepository
@@ -84,8 +89,23 @@ def build_user_repository() -> MemoryUserRepository | PostgresUserRepository:
     return MemoryUserRepository.seeded()
 
 
+def build_authorization_repository() -> (
+    CompatibilityAuthorizationRepository | PostgresAuthorizationRepository
+):
+    if settings.persistence_mode == "postgres":
+        return PostgresAuthorizationRepository(
+            settings.database_url,
+            pool_max_size=settings.database_pool_max_size,
+        )
+    _ensure_memory_mode_allowed()
+    if settings.persistence_mode != "memory":
+        raise RuntimeError(f"Unsupported PERSISTENCE_MODE={settings.persistence_mode}")
+    return CompatibilityAuthorizationRepository()
+
+
 app.state.store = build_store()
 app.state.user_repository = build_user_repository()
+app.state.authorization_repository = build_authorization_repository()
 app.state.code_review_executor = None
 app.state.dashboard_cache = {}
 app.add_middleware(
@@ -117,6 +137,7 @@ app.include_router(product_versions_router)
 app.include_router(products_router)
 app.include_router(related_systems_router)
 app.include_router(requirements_router)
+app.include_router(system_rbac_router)
 app.include_router(tasks_router)
 app.include_router(user_insights_router)
 app.include_router(users_router)

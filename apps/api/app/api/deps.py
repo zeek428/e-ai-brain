@@ -36,7 +36,17 @@ async def get_current_user(
     user = request.app.state.user_repository.get_by_username(str(payload.get("username", "")))
     if user is None:
         raise api_error(401, "UNAUTHORIZED", "User is inactive or missing")
-    return user
+    authorization_repository = getattr(request.app.state, "authorization_repository", None)
+    snapshot_method = getattr(authorization_repository, "snapshot_for_user", None)
+    if snapshot_method is None:
+        snapshot_method = getattr(authorization_repository, "get_snapshot_for_user", None)
+    if snapshot_method is None:
+        return user
+    snapshot = snapshot_method(user)
+    enriched_user = dict(user)
+    enriched_user["permissions"] = sorted(snapshot.permissions)
+    enriched_user["scope_summary"] = snapshot.scopes
+    return enriched_user
 
 
 CurrentUser = Depends(get_current_user)
@@ -47,3 +57,27 @@ def require_roles(user: dict[str, Any], allowed_roles: set[str]) -> None:
     if "admin" in user_roles or user_roles.intersection(allowed_roles):
         return
     raise api_error(403, "FORBIDDEN", "Role permission denied")
+
+
+def require_permissions(user: dict[str, Any], required_permissions: set[str]) -> None:
+    user_permissions = set(user.get("permissions") or [])
+    legacy_roles = set(user.get("roles") or [])
+    if (
+        "admin" in legacy_roles
+        or "system.admin" in user_permissions
+        or required_permissions.issubset(user_permissions)
+    ):
+        return
+    raise api_error(403, "FORBIDDEN", "Permission denied")
+
+
+def require_any_permission(user: dict[str, Any], required_permissions: set[str]) -> None:
+    user_permissions = set(user.get("permissions") or [])
+    legacy_roles = set(user.get("roles") or [])
+    if (
+        "admin" in legacy_roles
+        or "system.admin" in user_permissions
+        or user_permissions.intersection(required_permissions)
+    ):
+        return
+    raise api_error(403, "FORBIDDEN", "Permission denied")

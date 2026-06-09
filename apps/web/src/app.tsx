@@ -4,39 +4,94 @@ import type { ReactNode } from 'react';
 
 import { CurrentUserTitle } from './components/CurrentUserTitle';
 import { handleLogout, redirectToLoginIfNeeded } from './runtimeAuth';
-import { fetchCurrentUser, getStoredCurrentUser } from './services/aiBrain';
+import type { MenuTreeNode } from './services/aiBrain';
+import { fetchCurrentUser, getAccessToken, getStoredCurrentUser } from './services/aiBrain';
 import './global.css';
 
 type InitialState = {
   currentUser: {
+    isAuthenticated?: boolean;
+    menuTree?: MenuTreeNode[];
     name: string;
     role: string;
   };
 };
 
+type MenuRoute = {
+  hideInMenu?: boolean;
+  path?: string;
+  routes?: MenuRoute[];
+  [key: string]: unknown;
+};
+
+function collectAuthorizedMenuPaths(menuTree: MenuTreeNode[] | undefined) {
+  const paths = new Set<string>();
+  const visit = (node: MenuTreeNode) => {
+    if (node.path) {
+      paths.add(node.path);
+    }
+    node.children?.forEach(visit);
+  };
+  menuTree?.forEach(visit);
+  return paths;
+}
+
+function filterMenuDataByAuthorization(
+  menuData: MenuRoute[],
+  menuTree: MenuTreeNode[] | undefined,
+  isAuthenticated?: boolean,
+) {
+  if (!menuTree?.length) {
+    return isAuthenticated ? [] : menuData;
+  }
+  const authorizedPaths = collectAuthorizedMenuPaths(menuTree);
+  const filterRoute = (route: MenuRoute): MenuRoute | undefined => {
+    if (route.hideInMenu) {
+      return route;
+    }
+    const children = route.routes?.map(filterRoute).filter(Boolean) as MenuRoute[] | undefined;
+    const isAuthorized = route.path ? authorizedPaths.has(route.path) : false;
+    if (!isAuthorized && !children?.length) {
+      return undefined;
+    }
+    return {
+      ...route,
+      routes: children?.length ? children : route.routes,
+    };
+  };
+  return menuData.map(filterRoute).filter(Boolean) as MenuRoute[];
+}
+
 export async function getInitialState(): Promise<InitialState> {
+  if (getAccessToken()) {
+    try {
+      const currentUser = await fetchCurrentUser();
+      return {
+        currentUser: {
+          isAuthenticated: true,
+          menuTree: currentUser.menu_tree,
+          name: currentUser.display_name,
+          role: currentUser.roles.join(', ') || 'viewer',
+        },
+      };
+    } catch {
+      // Layout still renders a login-safe shell while route guards redirect anonymous users.
+    }
+  }
   const storedUser = getStoredCurrentUser();
   if (storedUser) {
     return {
       currentUser: {
+        isAuthenticated: true,
+        menuTree: storedUser.menu_tree,
         name: storedUser.display_name,
         role: storedUser.roles.join(', ') || 'viewer',
       },
     };
   }
-  try {
-    const currentUser = await fetchCurrentUser();
-    return {
-      currentUser: {
-        name: currentUser.display_name,
-        role: currentUser.roles.join(', ') || 'viewer',
-      },
-    };
-  } catch {
-    // Layout still renders a login-safe shell while route guards redirect anonymous users.
-  }
   return {
     currentUser: {
+      isAuthenticated: false,
       name: '未登录',
       role: 'anonymous',
     },
@@ -82,6 +137,14 @@ export const layout = ({ initialState }: { initialState?: InitialState }) => ({
   logo: <ClusterOutlined />,
   menu: {
     locale: false,
+  },
+  menuDataRender: (menuData: MenuRoute[]) => {
+    const storedUser = getStoredCurrentUser();
+    return filterMenuDataByAuthorization(
+      menuData,
+      storedUser?.menu_tree ?? initialState?.currentUser?.menuTree,
+      Boolean(storedUser) || initialState?.currentUser?.isAuthenticated,
+    );
   },
   menuFooterRender: () => <span className="menu-footer">Enterprise AI Brain v1</span>,
   navTheme: 'light',

@@ -268,12 +268,22 @@ def test_login_and_current_user_use_bearer_token():
     assert me_response.status_code == 200
     me_body = me_response.json()
     assert me_body["trace_id"].startswith("trace_")
-    assert me_body["data"] == {
+    assert {
+        "id": me_body["data"]["id"],
+        "username": me_body["data"]["username"],
+        "display_name": me_body["data"]["display_name"],
+        "roles": me_body["data"]["roles"],
+    } == {
         "id": "user_admin",
         "username": "admin@example.com",
         "display_name": "AI Brain Admin",
         "roles": ["admin"],
     }
+    assert "system.roles.manage" in me_body["data"]["permissions"]
+    assert me_body["data"]["scope_summary"]
+    assert me_body["data"]["menu_tree"]
+    assert "/system/departments" in me_body["data"]["route_permissions"]
+    assert "/system/roles" not in me_body["data"]["route_permissions"]
 
 
 def test_api_errors_include_trace_id_and_error_code():
@@ -304,15 +314,21 @@ def test_role_catalog_defines_supported_mvp_roles():
     assert response.status_code == 200
     body = response.json()
     assert body["trace_id"].startswith("trace_")
-    assert body["data"]["total"] == 6
+    assert body["data"]["total"] == 10
     roles = body["data"]["items"]
-    assert [role["code"] for role in roles] == [
+    assert [role["code"] for role in roles][:6] == [
         "admin",
         "product_owner",
         "rd_owner",
         "reviewer",
         "knowledge_owner",
         "viewer",
+    ]
+    assert [role["code"] for role in roles][6:] == [
+        "developer",
+        "test_owner",
+        "tester",
+        "release_owner",
     ]
     assert roles[0]["name"] == "系统管理员"
     assert "system.users.manage" in roles[0]["permissions"]
@@ -323,7 +339,7 @@ def test_role_catalog_defines_supported_mvp_roles():
     assert all(role["business_roles"] for role in roles)
     assert all(role["menu_scope"] for role in roles)
     assert all(role["limitations"] for role in roles)
-    assert [role["sort_order"] for role in roles] == [10, 20, 30, 40, 50, 60]
+    assert [role["sort_order"] for role in roles] == [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
     assert roles[0]["business_roles"] == ["平台管理员"]
     assert "系统管理" in roles[0]["menu_scope"]
     assert roles[1]["responsibilities"][1] == "审批需求并从已批准需求生成 AI 任务。"
@@ -373,6 +389,16 @@ def test_role_catalog_supports_server_pagination_sort_filters_and_observability(
     assert body["page"] == 1
     assert body["page_size"] == 1
     assert body["total"] == 1
+
+    testing_response = client.get(
+        "/api/auth/roles?category=testing&page=1&page_size=10",
+        headers=headers,
+    )
+    assert testing_response.status_code == 200
+    assert {
+        role["code"]
+        for role in testing_response.json()["data"]["items"]
+    } == {"test_owner", "tester"}
     assert body["items"][0]["code"] == "product_owner"
     assert body["query"]["name"] == "roles"
     assert body["query"]["filters"] == {

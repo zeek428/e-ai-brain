@@ -86,8 +86,54 @@ export type LoginResponse = {
 export type CurrentUserResponse = {
   display_name: string;
   id: string;
+  menu_tree?: MenuTreeNode[];
+  permissions?: string[];
+  route_permissions?: Record<string, string[]>;
   roles: string[];
+  scope_summary?: ScopeGrant[];
   username: string;
+};
+
+export type MenuTreeNode = {
+  children?: MenuTreeNode[];
+  code: string;
+  name: string;
+  path?: string | null;
+};
+
+export type ScopeGrant = {
+  access_level: string;
+  scope_id: string;
+  scope_type: string;
+};
+
+export type PermissionRecord = {
+  category?: string;
+  code: string;
+  description?: string;
+  is_system?: boolean;
+  name: string;
+  risk_level?: string;
+  status?: string;
+};
+
+export type MenuResourceRecord = {
+  code: string;
+  menu_type?: string;
+  name: string;
+  parent_code?: string | null;
+  path?: string | null;
+  required_permissions?: string[];
+  sort_order?: number;
+  status?: string;
+};
+
+export type SystemRoleRecord = UserRoleDefinition & {
+  id: string;
+  is_system: boolean;
+  menu_codes: string[];
+  permission_codes: string[];
+  scopes: ScopeGrant[];
 };
 
 export type AssistantChatResponse = {
@@ -1756,11 +1802,16 @@ type RoleDefinitionListItem = {
   decision_scope?: string;
   description?: string;
   is_assignable?: boolean;
+  is_system?: boolean;
   limitations?: string[];
+  menu_codes?: string[];
   menu_scope?: string[];
   name: string;
+  permission_codes?: string[];
   permissions?: string[];
   responsibilities?: string[];
+  scopes?: ScopeGrant[];
+  id?: string;
   sort_order?: number;
   status?: string;
 };
@@ -2842,12 +2893,24 @@ function mapRoleDefinition(role: RoleDefinitionListItem): UserRoleDefinition {
     description: role.description ?? '',
     is_assignable: role.is_assignable ?? true,
     limitations: role.limitations ?? [],
-    menu_scope: role.menu_scope ?? [],
+    menu_scope: role.menu_scope ?? role.menu_codes ?? [],
     name: role.name,
-    permissions: role.permissions ?? [],
+    permissions: role.permissions ?? role.permission_codes ?? [],
     responsibilities: role.responsibilities ?? [],
     sort_order: role.sort_order ?? 0,
     status: role.status ?? 'active',
+  };
+}
+
+function mapSystemRole(role: RoleDefinitionListItem): SystemRoleRecord {
+  const roleDefinition = mapRoleDefinition(role);
+  return {
+    ...roleDefinition,
+    id: role.id ?? role.code,
+    is_system: role.is_system ?? false,
+    menu_codes: role.menu_codes ?? role.menu_scope ?? [],
+    permission_codes: role.permission_codes ?? role.permissions ?? [],
+    scopes: role.scopes ?? [],
   };
 }
 
@@ -2880,6 +2943,178 @@ export async function fetchRoleDefinitionList(
     rows: roles.items.map(mapRoleDefinition),
     total: roles.total,
   };
+}
+
+function filterSystemRoles(rows: SystemRoleRecord[], query: RoleListQuery) {
+  const includes = (value: string | string[] | undefined, keyword?: string) => {
+    if (!keyword) {
+      return true;
+    }
+    const source = Array.isArray(value) ? value.join(', ') : value ?? '';
+    return source.toLowerCase().includes(keyword.toLowerCase());
+  };
+
+  return rows.filter(
+    (role) =>
+      includes(`${role.name} ${role.code}`, query.role) &&
+      includes(role.category, query.category) &&
+      includes(role.menu_codes, query.menuScope) &&
+      includes(role.permission_codes, query.permission) &&
+      includes(role.status, query.status) &&
+      includes(role.business_roles, query.businessRole),
+  );
+}
+
+function sortSystemRoles(rows: SystemRoleRecord[], query: RoleListQuery) {
+  const sortField = query.sortField;
+  if (!sortField || !query.sortOrder) {
+    return rows;
+  }
+  const direction = query.sortOrder === 'descend' ? -1 : 1;
+  return [...rows].sort((left, right) => {
+    const leftValue = String(left[sortField as keyof SystemRoleRecord] ?? '');
+    const rightValue = String(right[sortField as keyof SystemRoleRecord] ?? '');
+    return leftValue.localeCompare(rightValue, 'zh-Hans-CN') * direction;
+  });
+}
+
+export async function fetchSystemPermissions(): Promise<PermissionRecord[]> {
+  const token = requireAccessToken();
+  const permissions = await apiRequest<{ items: PermissionRecord[] }>('/api/system/permissions', {
+    token,
+  });
+  return permissions.items;
+}
+
+export async function fetchSystemMenus(): Promise<MenuResourceRecord[]> {
+  const token = requireAccessToken();
+  const menus = await apiRequest<{ items: MenuResourceRecord[] }>('/api/system/menus', { token });
+  return menus.items;
+}
+
+export async function fetchSystemRoleList(
+  query: RoleListQuery = {},
+): Promise<RemoteListResult<SystemRoleRecord>> {
+  const token = requireAccessToken();
+  const roles = await apiRequest<{ items: RoleDefinitionListItem[] }>('/api/system/roles', {
+    token,
+  });
+  const filteredRows = filterSystemRoles(roles.items.map(mapSystemRole), query);
+  const sortedRows = sortSystemRoles(filteredRows, query);
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 10;
+  const start = (page - 1) * pageSize;
+  return {
+    page,
+    pageSize,
+    rows: sortedRows.slice(start, start + pageSize),
+    total: sortedRows.length,
+  };
+}
+
+export async function createSystemRole(payload: {
+  category: string;
+  code: string;
+  description?: string;
+  is_assignable?: boolean;
+  name: string;
+  sort_order?: number;
+}): Promise<SystemRoleRecord> {
+  const token = requireAccessToken();
+  const role = await apiRequest<RoleDefinitionListItem>('/api/system/roles', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+  return mapSystemRole(role);
+}
+
+export async function updateSystemRole(
+  roleId: string,
+  payload: {
+    category?: string;
+    description?: string;
+    is_assignable?: boolean;
+    name?: string;
+    sort_order?: number;
+  },
+): Promise<SystemRoleRecord> {
+  const token = requireAccessToken();
+  const role = await apiRequest<RoleDefinitionListItem>(`/api/system/roles/${roleId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+  return mapSystemRole(role);
+}
+
+export async function copySystemRole(
+  roleId: string,
+  payload: {
+    code: string;
+    description?: string;
+    name?: string;
+  },
+): Promise<SystemRoleRecord> {
+  const token = requireAccessToken();
+  const role = await apiRequest<RoleDefinitionListItem>(`/api/system/roles/${roleId}/copy`, {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+  return mapSystemRole(role);
+}
+
+export async function setSystemRoleStatus(
+  roleId: string,
+  status: 'active' | 'inactive',
+): Promise<SystemRoleRecord> {
+  const token = requireAccessToken();
+  const action = status === 'active' ? 'enable' : 'disable';
+  const role = await apiRequest<RoleDefinitionListItem>(`/api/system/roles/${roleId}/${action}`, {
+    method: 'POST',
+    token,
+  });
+  return mapSystemRole(role);
+}
+
+export async function updateSystemRolePermissions(
+  roleId: string,
+  permissionCodes: string[],
+): Promise<SystemRoleRecord> {
+  const token = requireAccessToken();
+  const role = await apiRequest<RoleDefinitionListItem>(`/api/system/roles/${roleId}/permissions`, {
+    body: { permission_codes: permissionCodes },
+    method: 'PUT',
+    token,
+  });
+  return mapSystemRole(role);
+}
+
+export async function updateSystemRoleMenus(
+  roleId: string,
+  menuCodes: string[],
+): Promise<SystemRoleRecord> {
+  const token = requireAccessToken();
+  const role = await apiRequest<RoleDefinitionListItem>(`/api/system/roles/${roleId}/menus`, {
+    body: { menu_codes: menuCodes },
+    method: 'PUT',
+    token,
+  });
+  return mapSystemRole(role);
+}
+
+export async function updateSystemRoleScopes(
+  roleId: string,
+  scopes: ScopeGrant[],
+): Promise<SystemRoleRecord> {
+  const token = requireAccessToken();
+  const role = await apiRequest<RoleDefinitionListItem>(`/api/system/roles/${roleId}/scopes`, {
+    body: { scopes },
+    method: 'PUT',
+    token,
+  });
+  return mapSystemRole(role);
 }
 
 export async function fetchManagementUsers(

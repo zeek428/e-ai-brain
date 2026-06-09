@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import './proComponentsMock';
 
-import { getInitialState } from '../src/app';
+import { getInitialState, layout } from '../src/app';
 import LoginPage from '../src/pages/Login';
 import { handleLogout, redirectToLoginIfNeeded } from '../src/runtimeAuth';
 import { AUTH_STATE_EVENT, clearAccessToken, saveCurrentUser } from '../src/services/aiBrain';
@@ -71,6 +71,24 @@ describe('AI Brain auth flow and routes', () => {
   it('logs in with the development account and redirects to the requested page', async () => {
     window.history.pushState({}, '', '/login?redirect=%2Fdelivery%2Fbugs');
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (input === '/api/auth/me') {
+        expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+        return new Response(
+          JSON.stringify({
+            data: {
+              display_name: 'AI Brain Admin',
+              id: 'user_admin',
+              menu_tree: [{ code: 'workspace.dashboard', name: '团队看板', path: '/welcome' }],
+              roles: ['admin'],
+              username: 'admin@example.com',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
       expect(input).toBe('/api/auth/login');
       expect(init?.method).toBe('POST');
       expect(JSON.parse(String(init?.body))).toEqual({
@@ -100,8 +118,9 @@ describe('AI Brain auth flow and routes', () => {
     render(<LoginPage />);
     fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(window.localStorage.getItem('ai_brain_access_token')).toBe('token-admin');
+    expect(window.localStorage.getItem('ai_brain_current_user')).toContain('menu_tree');
     expect(window.location.pathname).toBe('/delivery/bugs');
   });
 
@@ -115,6 +134,7 @@ describe('AI Brain auth flow and routes', () => {
           data: {
             display_name: '真实用户',
             id: 'user_real',
+            menu_tree: [{ code: 'workspace.dashboard', name: '团队看板', path: '/welcome' }],
             roles: ['product_owner', 'rd_owner'],
             username: 'real@example.com',
           },
@@ -129,11 +149,147 @@ describe('AI Brain auth flow and routes', () => {
 
     await expect(getInitialState()).resolves.toEqual({
       currentUser: {
+        isAuthenticated: true,
+        menuTree: [{ code: 'workspace.dashboard', name: '团队看板', path: '/welcome' }],
         name: '真实用户',
         role: 'product_owner, rd_owner',
       },
     });
     expect(window.localStorage.getItem('ai_brain_current_user')).toContain('real@example.com');
+  });
+
+  it('filters the left menu from the authorized menu tree returned by auth me', () => {
+    const menuConfig = layout({
+      initialState: {
+        currentUser: {
+          menuTree: [
+            {
+              children: [
+                {
+                  code: 'delivery.bugs',
+                  name: 'Bug 管理',
+                  path: '/delivery/bugs',
+                },
+              ],
+              code: 'delivery',
+              name: '需求交付',
+              path: '/delivery',
+            },
+          ],
+          isAuthenticated: true,
+          name: '测试用户',
+          role: 'tester',
+        },
+      },
+    });
+    const menuDataRender = menuConfig.menuDataRender as (routes: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
+    const filteredMenu = menuDataRender([
+      {
+        name: '需求交付',
+        path: '/delivery',
+        routes: [
+          { name: '需求管理', path: '/delivery/requirements' },
+          { name: 'Bug 管理', path: '/delivery/bugs' },
+        ],
+      },
+      {
+        name: '系统管理',
+        path: '/system',
+        routes: [{ name: '角色管理', path: '/system/roles' }],
+      },
+    ]);
+
+    expect(filteredMenu).toHaveLength(1);
+    expect(filteredMenu[0]).toMatchObject({
+      name: '需求交付',
+      routes: [{ name: 'Bug 管理', path: '/delivery/bugs' }],
+    });
+  });
+
+  it('uses the latest stored menu tree instead of stale initial state menus', () => {
+    saveCurrentUser({
+      display_name: '产品负责人',
+      id: 'user_produce',
+      menu_tree: [
+        {
+          children: [
+            {
+              code: 'product.products',
+              name: '产品管理',
+              path: '/assets/products',
+            },
+          ],
+          code: 'product.assets',
+          name: '产品资产',
+          path: '/assets',
+        },
+      ],
+      roles: ['product_owner'],
+      username: 'produce',
+    });
+    const menuConfig = layout({
+      initialState: {
+        currentUser: {
+          menuTree: [
+            {
+              children: [{ code: 'system.roles', name: '角色管理', path: '/system/roles' }],
+              code: 'system',
+              name: '系统管理',
+              path: '/system',
+            },
+          ],
+          isAuthenticated: true,
+          name: '系统管理员',
+          role: 'admin',
+        },
+      },
+    });
+    const menuDataRender = menuConfig.menuDataRender as (routes: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
+    const filteredMenu = menuDataRender([
+      {
+        name: '产品资产',
+        path: '/assets',
+        routes: [{ name: '产品管理', path: '/assets/products' }],
+      },
+      {
+        name: '系统管理',
+        path: '/system',
+        routes: [{ name: '角色管理', path: '/system/roles' }],
+      },
+    ]);
+
+    expect(filteredMenu).toHaveLength(1);
+    expect(filteredMenu[0]).toMatchObject({
+      name: '产品资产',
+      routes: [{ name: '产品管理', path: '/assets/products' }],
+    });
+  });
+
+  it('hides the left menu for authenticated users without granted menus', () => {
+    const menuConfig = layout({
+      initialState: {
+        currentUser: {
+          isAuthenticated: true,
+          menuTree: [],
+          name: '无菜单用户',
+          role: 'limited_user',
+        },
+      },
+    });
+    const menuDataRender = menuConfig.menuDataRender as (routes: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
+    const filteredMenu = menuDataRender([
+      {
+        name: '团队看板',
+        path: '/welcome',
+      },
+      {
+        name: '系统管理',
+        path: '/system',
+        routes: [{ name: '角色管理', path: '/system/roles' }],
+      },
+    ]);
+
+    expect(filteredMenu).toEqual([]);
   });
 
   it('notifies the layout when local auth state changes', () => {

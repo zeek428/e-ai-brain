@@ -528,7 +528,7 @@ export default function DashboardPage() {
             </Button>
           </div>
         </section>
-        <section className="dashboard-panel dashboard-panel-wide">
+        <section className="dashboard-panel">
           <Title level={4}>审计摘要</Title>
           <AuditList events={dashboard?.recentAuditEvents ?? []} />
           <div className="dashboard-panel-actions">

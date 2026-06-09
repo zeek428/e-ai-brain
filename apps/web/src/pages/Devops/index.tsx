@@ -1,6 +1,5 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, Modal, Select } from 'antd';
-import type { TableProps } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DateStringPicker } from '../../components/DateStringPicker';

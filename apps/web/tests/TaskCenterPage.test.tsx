@@ -24,11 +24,15 @@ describe('TaskCenterPage', () => {
         status: 200,
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/reviews/pending') {
+      if (path === '/api/reviews/pending') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (
+        path === '/api/products?active_only=true' ||
+        path === '/api/products?active_only=true&page_size=100'
+      ) {
         return jsonResponse({
           data: {
             items: [{ code: 'AI-BRAIN', id: 'product_api', name: 'AI Brain 产品' }],
@@ -425,11 +429,15 @@ describe('TaskCenterPage', () => {
         status: 200,
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      if (input === '/api/reviews/pending') {
+      if (path === '/api/reviews/pending') {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
-      if (input === '/api/products?active_only=true') {
+      if (
+        path === '/api/products?active_only=true' ||
+        path === '/api/products?active_only=true&page_size=100'
+      ) {
         return jsonResponse({
           data: {
             items: [{ code: 'aibrain', id: 'product_api', name: 'AI Brain 产品' }],
@@ -437,15 +445,17 @@ describe('TaskCenterPage', () => {
           },
         });
       }
-      if (input === '/api/product-versions?active_only=true') {
+      if (
+        path === '/api/product-versions?active_only=true' ||
+        path === '/api/product-versions?active_only=true&page_size=100'
+      ) {
         return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (
-        input === '/api/ai-tasks' ||
+        path === '/api/ai-tasks' ||
         (
-          typeof input === 'string' &&
-          input.startsWith('/api/ai-tasks?') &&
-          !input.includes('product_id=')
+          path.startsWith('/api/ai-tasks?') &&
+          !path.includes('product_id=')
         )
       ) {
         return jsonResponse({
@@ -490,9 +500,8 @@ describe('TaskCenterPage', () => {
         });
       }
       if (
-        typeof input === 'string' &&
-        input.startsWith('/api/ai-tasks?') &&
-        input.includes('product_id=product_api')
+        path.startsWith('/api/ai-tasks?') &&
+        path.includes('product_id=product_api')
       ) {
         return jsonResponse({
           data: {
@@ -515,7 +524,7 @@ describe('TaskCenterPage', () => {
           },
         });
       }
-      throw new Error(`Unexpected fetch call: ${String(input)}`);
+      throw new Error(`Unexpected fetch call: ${path}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.stubGlobal('fetch', fetchMock);

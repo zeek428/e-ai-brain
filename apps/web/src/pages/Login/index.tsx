@@ -41,6 +41,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(values.username, values.password);
+      await fetchCurrentUser();
       navigateTo(getRedirectPath());
     } catch (requestError) {
       if (requestError instanceof ApiRequestError) {

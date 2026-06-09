@@ -15,6 +15,23 @@ def auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_auth_me_includes_authorization_snapshot_fields():
+    response = client.get("/api/auth/me", headers=auth_headers())
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["roles"] == ["admin"]
+    assert "system.roles.manage" in data["permissions"]
+    assert data["permissions"] == sorted(data["permissions"])
+    assert {
+        "scope_type": "global",
+        "scope_id": "*",
+        "access_level": "admin",
+    } in data["scope_summary"]
+    assert data["menu_tree"]
+    assert data["route_permissions"]["/system/departments"] == ["org.department.manage"]
+
+
 def create_draft_task(
     headers: dict[str, str],
     *,

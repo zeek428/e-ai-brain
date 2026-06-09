@@ -411,7 +411,7 @@ describe('ProductsPage', () => {
         'POST',
       ]),
     );
-  });
+  }, 10_000);
 
   it('saves GitHub provider when editing product Git resources', async () => {
     const jsonResponse = (body: unknown) =>

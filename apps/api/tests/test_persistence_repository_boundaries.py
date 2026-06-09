@@ -311,18 +311,24 @@ def test_postgres_requirement_read_models_delegate_to_domain_repository(monkeypa
     )
 
     assert repository.load_requirements()[0]["source"] == "load_requirements"
-    assert repository.count_requirement_summaries(status="planned") == 7
-    assert repository.list_requirement_summaries(product_id="product_001")[0]["source"] == (
-        "list_requirement_summaries"
-    )
+    assert repository.count_requirement_summaries(
+        source="user_feedback",
+        status="planned",
+    ) == 7
+    assert repository.list_requirement_summaries(
+        product_id="product_001",
+        source="product_planning",
+    )[0]["source"] == "list_requirement_summaries"
 
     assert [name for name, _ in calls] == [
         "load_requirements",
         "count_requirement_summaries",
         "list_requirement_summaries",
     ]
+    assert calls[1][1]["source"] == "user_feedback"
     assert calls[1][1]["status"] == "planned"
     assert calls[2][1]["product_id"] == "product_001"
+    assert calls[2][1]["source"] == "product_planning"
     assert calls[2][1]["sort_by"] == "created_at"
     assert calls[2][1]["sort_order"] == "desc"
 
