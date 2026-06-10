@@ -3,11 +3,28 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.api.deps import api_error, require_roles
+from app.services.dynamic_parameters import (
+    dynamic_time_parameters,
+    resolve_dynamic_parameter_value,
+)
 from app.services.iteration_planning import create_iteration_suggestions_response
 from app.services.operational_records import record_audit_event, save_single_repository_record
+from app.services.plugins import (
+    ensure_active_plugin_action,
+    invoke_plugin_action_response,
+    json_path_value,
+    records_imported_from_mapping,
+    resolve_plugin_snapshot,
+)
 from app.services.skill_packages import load_skill_package_snapshot, store_skill_package
+from app.services.user_feedback import (
+    USER_FEEDBACK_SENTIMENTS,
+    USER_FEEDBACK_TYPES,
+    create_user_feedback_response,
+)
 
 AI_SKILL_STATUSES = {"active", "draft", "disabled"}
 AI_AGENT_STATUSES = {"active", "disabled"}
@@ -20,7 +37,9 @@ SCHEDULED_JOB_TYPES = {
     "online_log_ai_analysis",
     "online_log_metric_collect",
     "pending_attribution_retry",
+    "plugin_action_invoke",
     "user_feedback_collect",
+    "user_feedback_insight_extract",
     "user_usage_metric_collect",
 }
 SCHEDULED_JOB_EXECUTION_MODES = {"ai_assisted", "ai_generated", "deterministic"}
@@ -42,6 +61,28 @@ def ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None
 
 def require_admin(user: dict[str, Any]) -> None:
     require_roles(user, {"admin"})
+
+
+def scheduled_job_timezone(job: dict[str, Any]) -> ZoneInfo:
+    timezone_name = str(job.get("timezone") or "UTC")
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        raise api_error(400, "VALIDATION_ERROR", f"Unsupported timezone: {timezone_name}") from None
+
+
+def resolve_plugin_input_mapping(
+    mapping: dict[str, Any],
+    job: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    return resolve_dynamic_parameter_value(
+        mapping,
+        dynamic_time_parameters(now=now, timezone=scheduled_job_timezone(job)),
+        now=now,
+        timezone=scheduled_job_timezone(job),
+    )
 
 
 def uses_repository_context(current_store: Any) -> bool:
@@ -547,7 +588,16 @@ def validate_job_refs(current_store: Any, payload: Any) -> tuple[str | None, lis
     agent_id = payload.agent_id
     skill_ids = list(payload.skill_ids)
     model_gateway_config_id = payload.model_gateway_config_id
-    if payload.execution_mode in {"ai_assisted", "ai_generated"}:
+    plugin_backed_ai_job = (
+        payload.job_type == "user_feedback_insight_extract"
+        and getattr(payload, "plugin_action_id", None) is not None
+    )
+    if plugin_backed_ai_job and model_gateway_config_id is not None:
+        model_gateway_config_id = ensure_active_model_gateway(
+            current_store,
+            model_gateway_config_id,
+        )
+    if payload.execution_mode in {"ai_assisted", "ai_generated"} and not plugin_backed_ai_job:
         if agent_id is None:
             raise api_error(400, "AI_AGENT_REQUIRED", "AI job requires agent_id")
         agent = current_store.ai_agents.get(agent_id)
@@ -563,6 +613,31 @@ def validate_job_refs(current_store: Any, payload: Any) -> tuple[str | None, lis
             model_gateway_config_id or agent.get("model_gateway_config_id"),
         )
     return agent_id, skill_ids, model_gateway_config_id
+
+
+def validate_plugin_refs(current_store: Any, payload: Any) -> tuple[str | None, str | None]:
+    action_id = getattr(payload, "plugin_action_id", None)
+    connection_id = getattr(payload, "plugin_connection_id", None)
+    if action_id is None:
+        if connection_id is not None:
+            raise api_error(
+                400,
+                "PLUGIN_ACTION_REQUIRED",
+                "plugin_connection_id requires plugin_action_id",
+            )
+        if getattr(payload, "job_type", None) == "user_feedback_insight_extract":
+            raise api_error(
+                400,
+                "PLUGIN_ACTION_REQUIRED",
+                "user_feedback_insight_extract requires plugin_action_id",
+            )
+        return None, None
+    _, connection, _ = ensure_active_plugin_action(
+        current_store,
+        action_id,
+        connection_id=connection_id,
+    )
+    return action_id, connection["id"]
 
 
 def list_scheduled_jobs_response(
@@ -601,6 +676,7 @@ def create_scheduled_job_response(
 ) -> dict[str, Any]:
     require_admin(user)
     agent_id, skill_ids, model_gateway_config_id = validate_job_refs(current_store, payload)
+    plugin_action_id, plugin_connection_id = validate_plugin_refs(current_store, payload)
     now = datetime.now(UTC).isoformat()
     job_id = current_store.new_id("scheduled_job")
     job = {
@@ -623,6 +699,10 @@ def create_scheduled_job_response(
         "model_gateway_config_id": model_gateway_config_id,
         "name": ensure_non_blank(payload.name, "name"),
         "next_run_at": next_run_at(payload),
+        "plugin_action_id": plugin_action_id,
+        "plugin_connection_id": plugin_connection_id,
+        "plugin_input_mapping": payload.plugin_input_mapping,
+        "plugin_output_mapping": payload.plugin_output_mapping,
         "product_id": payload.product_id,
         "schedule_type": payload.schedule_type,
         "skill_ids": skill_ids,
@@ -665,6 +745,7 @@ def patch_scheduled_job_response(
     updates = payload.model_dump(exclude_unset=True)
     draft = SimpleNamespace(**{**job, **updates})
     agent_id, skill_ids, model_gateway_config_id = validate_job_refs(current_store, draft)
+    plugin_action_id, plugin_connection_id = validate_plugin_refs(current_store, draft)
     if "name" in updates:
         updates["name"] = ensure_non_blank(updates["name"], "name")
     if "source_system" in updates:
@@ -672,6 +753,8 @@ def patch_scheduled_job_response(
     updates["agent_id"] = agent_id
     updates["skill_ids"] = skill_ids
     updates["model_gateway_config_id"] = model_gateway_config_id
+    updates["plugin_action_id"] = plugin_action_id
+    updates["plugin_connection_id"] = plugin_connection_id
     if {"schedule_type", "interval_seconds", "cron_expression"} & updates.keys():
         updates["next_run_at"] = next_run_at(draft)
     if "enabled" in updates:
@@ -716,6 +799,16 @@ def resolve_ai_snapshots(current_store: Any, job: dict[str, Any]) -> dict[str, A
         "resolved_skill_snapshots": snapshot(current_store, skills),
         "tool_policy_snapshot": snapshot(current_store, (agent or {}).get("tool_policy") or {}),
     }
+
+
+def resolve_job_snapshots(current_store: Any, job: dict[str, Any]) -> dict[str, Any]:
+    snapshots = resolve_ai_snapshots(current_store, job)
+    snapshots["resolved_plugin_snapshot"] = resolve_plugin_snapshot(
+        current_store,
+        action_id=job.get("plugin_action_id"),
+        connection_id=job.get("plugin_connection_id"),
+    )
+    return snapshots
 
 
 def create_collector_run_for_job(
@@ -834,6 +927,84 @@ def run_iteration_plan_job(
     return summary, result["total"]
 
 
+def normalized_insight_enum(value: Any, allowed_values: set[str], fallback: str) -> str:
+    if isinstance(value, str) and value in allowed_values:
+        return value
+    return fallback
+
+
+def run_user_feedback_insight_extract_job(
+    current_store: Any,
+    *,
+    job: dict[str, Any],
+    plugin_summary: dict[str, Any],
+    user: dict[str, Any],
+) -> tuple[dict[str, Any], int]:
+    mapping = job.get("plugin_output_mapping") or {}
+    response_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
+    insights = json_path_value(response_json, str(mapping.get("insights_path") or "$.insights"))
+    if insights is None:
+        insights = []
+    if not isinstance(insights, list):
+        raise api_error(400, "PLUGIN_RESULT_INVALID", "Mapped insights result must be a list")
+
+    created_ids: list[str] = []
+    skipped = 0
+    for insight in insights:
+        if not isinstance(insight, dict) or not str(insight.get("content") or "").strip():
+            skipped += 1
+            continue
+        product_id = insight.get("product_id") or job.get("product_id")
+        if not isinstance(product_id, str) or not product_id:
+            skipped += 1
+            continue
+        feature_code = insight.get("feature_code")
+        module_code = insight.get("module_code")
+        related_requirement_id = insight.get("related_requirement_id")
+        payload = SimpleNamespace(
+            content=str(insight["content"]),
+            feature_code=feature_code if isinstance(feature_code, str) else None,
+            feedback_type=normalized_insight_enum(
+                insight.get("feedback_type"),
+                USER_FEEDBACK_TYPES,
+                "improvement",
+            ),
+            module_code=module_code if isinstance(module_code, str) else None,
+            product_id=product_id,
+            related_requirement_id=related_requirement_id
+            if isinstance(related_requirement_id, str)
+            else None,
+            satisfaction_score=insight.get("satisfaction_score")
+            if isinstance(insight.get("satisfaction_score"), int)
+            else None,
+            sentiment=normalized_insight_enum(
+                insight.get("sentiment"),
+                USER_FEEDBACK_SENTIMENTS,
+                "neutral",
+            ),
+            source_channel=str(insight.get("source_channel") or "maxcompute_weekly_ai"),
+            tags=insight.get("tags") if isinstance(insight.get("tags"), list) else [],
+        )
+        created = create_user_feedback_response(
+            current_store=current_store,
+            payload=payload,
+            user=user,
+        )
+        created_ids.append(created["id"])
+
+    summary = {
+        "insight_ids": created_ids,
+        "insights_created": len(created_ids),
+        "plugin": plugin_summary,
+        "skipped_insights": skipped,
+        "source_row_count": records_imported_from_mapping(
+            plugin_summary.get("response_summary") or {},
+            {"records_imported_path": mapping.get("records_imported_path")},
+        ),
+    }
+    return summary, len(created_ids)
+
+
 def run_scheduled_job_response(
     *,
     current_store: Any,
@@ -853,7 +1024,7 @@ def run_scheduled_job_response(
         raise api_error(409, "SCHEDULED_JOB_DISABLED", "Scheduled job is disabled")
     run_id = current_store.new_id("scheduled_job_run")
     now = datetime.now(UTC).isoformat()
-    snapshots = resolve_ai_snapshots(current_store, job)
+    snapshots = resolve_job_snapshots(current_store, job)
     run = {
         **snapshots,
         "collector_run_id": None,
@@ -863,6 +1034,7 @@ def run_scheduled_job_response(
         "error_message": None,
         "finished_at": None,
         "id": run_id,
+        "plugin_invocation_log_id": None,
         "records_imported": 0,
         "result_summary": {},
         "scheduled_for": now,
@@ -881,15 +1053,69 @@ def run_scheduled_job_response(
         user=user,
     )
     run["collector_run_id"] = collector_run["id"]
+    persist_record(
+        current_store,
+        "save_scheduled_job_run_record",
+        run,
+    )
     try:
+        plugin_summary = None
+        plugin_records_imported = 0
+        if job.get("plugin_action_id"):
+            resolved_plugin_input_mapping = resolve_plugin_input_mapping(
+                job.get("plugin_input_mapping") or {},
+                job,
+            )
+            plugin_log = invoke_plugin_action_response(
+                action_id=job["plugin_action_id"],
+                connection_id=job.get("plugin_connection_id"),
+                current_store=current_store,
+                input_payload={
+                    "config": job.get("config_json") or {},
+                    "input_mapping": resolved_plugin_input_mapping,
+                    "job_id": job["id"],
+                    "product_id": job.get("product_id"),
+                    "timezone": job.get("timezone") or "UTC",
+                },
+                scheduled_job_id=job_id,
+                scheduled_job_run_id=run_id,
+                trigger_type=trigger_type,
+                user=user,
+            )
+            plugin_summary = {
+                "invocation_log_id": plugin_log["id"],
+                "response_summary": plugin_log.get("response_summary") or {},
+                "status": plugin_log["status"],
+            }
+            plugin_records_imported = records_imported_from_mapping(
+                plugin_log.get("response_summary") or {},
+                job.get("plugin_output_mapping") or {},
+            )
+            run["plugin_invocation_log_id"] = plugin_log["id"]
         if job["job_type"] == "iteration_plan_suggestion_generate":
             result_summary, records_imported = run_iteration_plan_job(
                 current_store,
                 job=job,
                 user=user,
             )
+            if plugin_summary is not None:
+                result_summary = {**result_summary, "plugin": plugin_summary}
+                records_imported += plugin_records_imported
+        elif job["job_type"] == "plugin_action_invoke" and plugin_summary is not None:
+            result_summary = {"plugin": plugin_summary}
+            records_imported = plugin_records_imported
+        elif job["job_type"] == "user_feedback_insight_extract" and plugin_summary is not None:
+            result_summary, records_imported = run_user_feedback_insight_extract_job(
+                current_store,
+                job=job,
+                plugin_summary=plugin_summary,
+                user=user,
+            )
         else:
-            result_summary, records_imported = {"message": "No handler implemented"}, 0
+            result_summary = {"message": "No handler implemented"}
+            if plugin_summary is not None:
+                result_summary["plugin"] = plugin_summary
+            records_imported = plugin_records_imported
         status = "succeeded"
         error_code = None
         error_message = None
@@ -927,7 +1153,6 @@ def run_scheduled_job_response(
         "last_success_at": finished_at if status == "succeeded" else job.get("last_success_at"),
         "updated_at": finished_at,
     }
-    current_store.scheduled_jobs[job_id] = job_update
     current_store.scheduled_jobs[job_id] = job_update
     persist_record(
         current_store,

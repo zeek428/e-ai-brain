@@ -107,7 +107,9 @@ class ScheduledAiJobReadRepository:
                            execution_mode, agent_id, skill_ids, model_gateway_config_id,
                            config_json, max_retry_count, timeout_seconds, lock_ttl_seconds,
                            status, next_run_at, last_run_at, last_success_at, last_failure_at,
-                           last_error_message, created_by, created_at, updated_at
+                           last_error_message, created_by, created_at, updated_at,
+                           plugin_action_id, plugin_connection_id, plugin_input_mapping,
+                           plugin_output_mapping
                     FROM scheduled_jobs
                     {where}
                     ORDER BY next_run_at DESC NULLS LAST, id DESC
@@ -143,7 +145,8 @@ class ScheduledAiJobReadRepository:
                            error_code, error_message, config_snapshot,
                            resolved_agent_snapshot, resolved_skill_snapshots,
                            resolved_prompt_snapshot, tool_policy_snapshot, result_summary,
-                           created_at, updated_at
+                           created_at, updated_at, resolved_plugin_snapshot,
+                           plugin_invocation_log_id
                     FROM scheduled_job_runs
                     {where}
                     ORDER BY started_at DESC NULLS LAST, id DESC
@@ -285,7 +288,9 @@ class ScheduledAiJobReadRepository:
                   agent_id, skill_ids, model_gateway_config_id, config_json,
                   max_retry_count, timeout_seconds, lock_ttl_seconds, status,
                   next_run_at, last_run_at, last_success_at, last_failure_at,
-                  last_error_message, created_by, created_at, updated_at
+                  last_error_message, created_by, created_at, updated_at,
+                  plugin_action_id, plugin_connection_id, plugin_input_mapping,
+                  plugin_output_mapping
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
@@ -294,7 +299,7 @@ class ScheduledAiJobReadRepository:
                   %s, %s, %s, %s,
                   %s::timestamptz, %s::timestamptz, %s::timestamptz,
                   %s::timestamptz, %s, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), %s, %s, %s::jsonb, %s::jsonb
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   name = EXCLUDED.name,
@@ -320,6 +325,10 @@ class ScheduledAiJobReadRepository:
                   last_success_at = EXCLUDED.last_success_at,
                   last_failure_at = EXCLUDED.last_failure_at,
                   last_error_message = EXCLUDED.last_error_message,
+                  plugin_action_id = EXCLUDED.plugin_action_id,
+                  plugin_connection_id = EXCLUDED.plugin_connection_id,
+                  plugin_input_mapping = EXCLUDED.plugin_input_mapping,
+                  plugin_output_mapping = EXCLUDED.plugin_output_mapping,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -350,6 +359,10 @@ class ScheduledAiJobReadRepository:
                     job.get("created_by"),
                     job.get("created_at"),
                     job.get("updated_at") or job.get("created_at"),
+                    job.get("plugin_action_id"),
+                    job.get("plugin_connection_id"),
+                    _json(job.get("plugin_input_mapping"), {}),
+                    _json(job.get("plugin_output_mapping"), {}),
                 ),
             )
 
@@ -362,7 +375,8 @@ class ScheduledAiJobReadRepository:
                   scheduled_for, started_at, finished_at, records_imported,
                   error_code, error_message, config_snapshot, resolved_agent_snapshot,
                   resolved_skill_snapshots, resolved_prompt_snapshot, tool_policy_snapshot,
-                  result_summary, created_at, updated_at
+                  result_summary, created_at, updated_at, resolved_plugin_snapshot,
+                  plugin_invocation_log_id
                 )
                 VALUES (
                   %s, %s, %s, %s, %s,
@@ -370,7 +384,7 @@ class ScheduledAiJobReadRepository:
                   %s, %s, %s::jsonb, %s::jsonb,
                   %s::jsonb, %s::jsonb, %s::jsonb,
                   %s::jsonb, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), %s::jsonb, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   scheduled_job_id = EXCLUDED.scheduled_job_id,
@@ -389,6 +403,8 @@ class ScheduledAiJobReadRepository:
                   resolved_prompt_snapshot = EXCLUDED.resolved_prompt_snapshot,
                   tool_policy_snapshot = EXCLUDED.tool_policy_snapshot,
                   result_summary = EXCLUDED.result_summary,
+                  resolved_plugin_snapshot = EXCLUDED.resolved_plugin_snapshot,
+                  plugin_invocation_log_id = EXCLUDED.plugin_invocation_log_id,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -411,6 +427,8 @@ class ScheduledAiJobReadRepository:
                     _json(run.get("result_summary"), {}),
                     run.get("created_at"),
                     run.get("updated_at") or run.get("created_at"),
+                    _json(run.get("resolved_plugin_snapshot"), {}),
+                    run.get("plugin_invocation_log_id"),
                 ),
             )
 
@@ -502,6 +520,10 @@ class ScheduledAiJobReadRepository:
             "created_by": row[24],
             "created_at": row[25].isoformat() if row[25] else None,
             "updated_at": row[26].isoformat() if row[26] else None,
+            "plugin_action_id": row[27],
+            "plugin_connection_id": row[28],
+            "plugin_input_mapping": row[29] or {},
+            "plugin_output_mapping": row[30] or {},
         }
 
     def _run_from_row(self, row: Any) -> dict[str, Any]:
@@ -525,4 +547,6 @@ class ScheduledAiJobReadRepository:
             "result_summary": row[16] or {},
             "created_at": row[17].isoformat() if row[17] else None,
             "updated_at": row[18].isoformat() if row[18] else None,
+            "resolved_plugin_snapshot": row[19] or {},
+            "plugin_invocation_log_id": row[20],
         }

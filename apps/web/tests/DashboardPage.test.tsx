@@ -200,7 +200,7 @@ describe('Dashboard page', () => {
     await waitFor(() => {
       const paths = fetchMock.mock.calls.map(([path]) => String(path));
       expect(paths.some((path) => path.startsWith('/api/devops/operational-metrics'))).toBe(true);
-      expect(paths).toEqual(expect.arrayContaining(['/api/products?active_only=true']));
+      expect(paths).toEqual(expect.arrayContaining(['/api/products?active_only=true&page_size=100']));
     });
 
     rerender(<InsightsPage />);
@@ -225,7 +225,7 @@ describe('Dashboard page', () => {
         status: 200,
       });
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === '/api/products?active_only=true') {
+      if (input === '/api/products?active_only=true&page_size=100') {
         return jsonResponse({
           data: {
             items: [
@@ -334,7 +334,7 @@ describe('Dashboard page', () => {
 
     expect(await screen.findByText('IT 团队看板')).toBeInTheDocument();
     await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/products?active_only=true'),
+      expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/products?active_only=true&page_size=100'),
     );
     fireEvent.change(await screen.findByLabelText('产品筛选'), {
       target: { value: 'product_api' },

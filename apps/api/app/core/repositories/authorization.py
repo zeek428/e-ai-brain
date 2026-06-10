@@ -256,6 +256,16 @@ COMPATIBILITY_MENU_RESOURCES: list[dict[str, Any]] = [
         "status": "active",
     },
     {
+        "code": "system.plugins",
+        "name": "插件管理",
+        "path": "/system/plugins",
+        "parent_code": "system",
+        "menu_type": "page",
+        "sort_order": 66,
+        "required_permissions": ["system.plugins.manage"],
+        "status": "active",
+    },
+    {
         "code": "org.departments",
         "name": "部门管理",
         "path": "/system/departments",
@@ -292,6 +302,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
         "system.model_gateway",
         "system.ai_capabilities",
         "system.scheduled_jobs",
+        "system.plugins",
         "org.departments",
     },
     "product_owner": {

@@ -2987,9 +2987,10 @@ export async function fetchRequirementProductContextOptions(): Promise<ProductCo
 
 export async function fetchActiveProductOptions(): Promise<ProductFilterOption[]> {
   const token = requireAccessToken();
-  const products = await apiRequest<ListResponse<ProductListItem>>('/api/products?active_only=true', {
-    token,
-  });
+  const products = await apiRequest<ListResponse<ProductListItem>>(
+    `/api/products?active_only=true&page_size=${PRODUCT_CONTEXT_PAGE_SIZE}`,
+    { token },
+  );
   return products.items.map((product) => ({
     code: product.code ?? product.id,
     id: product.id,
@@ -3471,6 +3472,10 @@ export type ScheduledJobRecord = {
   job_type: string;
   name: string;
   next_run_at?: string | null;
+  plugin_action_id?: string | null;
+  plugin_connection_id?: string | null;
+  plugin_input_mapping?: Record<string, unknown>;
+  plugin_output_mapping?: Record<string, unknown>;
   product_id?: string | null;
   schedule_type?: string;
   skill_ids?: string[];
@@ -3481,13 +3486,189 @@ export type ScheduledJobRunRecord = {
   collector_run_id?: string | null;
   error_message?: string | null;
   id: string;
+  plugin_invocation_log_id?: string | null;
   records_imported?: number;
   resolved_agent_snapshot?: Record<string, unknown>;
+  resolved_plugin_snapshot?: Record<string, unknown>;
   result_summary?: Record<string, unknown>;
   scheduled_job_id?: string;
   status: string;
   trigger_type?: string;
 };
+
+export type PluginRecord = {
+  category?: string;
+  code: string;
+  description?: string | null;
+  id: string;
+  name: string;
+  protocol: string;
+  risk_level?: string;
+  status: string;
+};
+
+export type PluginConnectionRecord = {
+  auth_config?: Record<string, unknown>;
+  auth_type?: string;
+  endpoint_url: string;
+  environment?: string;
+  id: string;
+  max_retries?: number;
+  name: string;
+  plugin_id: string;
+  status: string;
+  timeout_seconds?: number;
+};
+
+export type PluginConnectionTestResult = {
+  checked_at: string;
+  connection_id: string;
+  endpoint_url?: string;
+  environment?: string;
+  error_code?: string | null;
+  error_message?: string | null;
+  latency_ms: number;
+  mocked?: boolean;
+  plugin_id: string;
+  protocol: string;
+  status: string;
+};
+
+export type PluginActionRecord = {
+  action_type: string;
+  code: string;
+  connection_id?: string | null;
+  description?: string | null;
+  id: string;
+  input_schema?: Record<string, unknown>;
+  name: string;
+  output_schema?: Record<string, unknown>;
+  plugin_id: string;
+  request_config?: Record<string, unknown>;
+  requires_human_review?: boolean;
+  result_mapping?: Record<string, unknown>;
+  status: string;
+};
+
+export type PluginInvocationLogRecord = {
+  action_id: string;
+  connection_id?: string | null;
+  error_message?: string | null;
+  id: string;
+  latency_ms?: number;
+  plugin_id: string;
+  request_summary?: Record<string, unknown>;
+  response_summary?: Record<string, unknown>;
+  scheduled_job_id?: string | null;
+  scheduled_job_run_id?: string | null;
+  status: string;
+  trigger_type?: string;
+};
+
+export async function fetchPlugins(): Promise<PluginRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<PluginRecord>>('/api/system/plugins', { token });
+  return response.items;
+}
+
+export async function createPlugin(payload: Partial<PluginRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<PluginRecord>('/api/system/plugins', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updatePlugin(pluginId: string, payload: Partial<PluginRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<PluginRecord>(`/api/system/plugins/${pluginId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function fetchPluginConnections(
+  query: { pluginId?: string; status?: string } = {},
+): Promise<PluginConnectionRecord[]> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'plugin_id', query.pluginId);
+  appendQueryParam(params, 'status', query.status);
+  const queryString = params.toString();
+  const response = await apiRequest<ListResponse<PluginConnectionRecord>>(
+    queryString ? `/api/system/plugin-connections?${queryString}` : '/api/system/plugin-connections',
+    { token },
+  );
+  return response.items;
+}
+
+export async function createPluginConnection(payload: Partial<PluginConnectionRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<PluginConnectionRecord>('/api/system/plugin-connections', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function testPluginConnection(connectionId: string) {
+  const token = requireAccessToken();
+  return apiRequest<PluginConnectionTestResult>(`/api/system/plugin-connections/${connectionId}/test`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export async function fetchPluginActions(
+  query: { pluginId?: string; status?: string } = {},
+): Promise<PluginActionRecord[]> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'plugin_id', query.pluginId);
+  appendQueryParam(params, 'status', query.status);
+  const queryString = params.toString();
+  const response = await apiRequest<ListResponse<PluginActionRecord>>(
+    queryString ? `/api/system/plugin-actions?${queryString}` : '/api/system/plugin-actions',
+    { token },
+  );
+  return response.items;
+}
+
+export async function createPluginAction(payload: Partial<PluginActionRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<PluginActionRecord>('/api/system/plugin-actions', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function invokePluginAction(actionId: string, inputPayload: Record<string, unknown> = {}) {
+  const token = requireAccessToken();
+  return apiRequest<PluginInvocationLogRecord>(`/api/system/plugin-actions/${actionId}/invoke`, {
+    body: { input_payload: inputPayload, trigger_type: 'manual' },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function fetchPluginInvocationLogs(
+  query: { actionId?: string; scheduledJobId?: string; status?: string } = {},
+): Promise<PluginInvocationLogRecord[]> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'action_id', query.actionId);
+  appendQueryParam(params, 'scheduled_job_id', query.scheduledJobId);
+  appendQueryParam(params, 'status', query.status);
+  const queryString = params.toString();
+  const response = await apiRequest<ListResponse<PluginInvocationLogRecord>>(
+    queryString ? `/api/system/plugin-invocation-logs?${queryString}` : '/api/system/plugin-invocation-logs',
+    { token },
+  );
+  return response.items;
+}
 
 export async function fetchAiSkills(): Promise<AiSkillRecord[]> {
   const token = requireAccessToken();

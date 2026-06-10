@@ -105,7 +105,7 @@ describe('dashboard service API mappings', () => {
       });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
-      expect(input).toBe('/api/products?active_only=true');
+      expect(input).toBe('/api/products?active_only=true&page_size=100');
       return jsonResponse({
         data: {
           items: [

@@ -172,6 +172,41 @@
 
 ---
 
+### TC-AIBRAIN-PLUGIN-FUNC-032: 插件管理与定时任务插件调用
+
+| 项目 | 内容 |
+|------|------|
+| 用例编号 | TC-AIBRAIN-PLUGIN-FUNC-032 |
+| 用例名称 | 插件管理与定时任务插件调用 |
+| 优先级 | P1 |
+| 模块 | PLUGIN / SCHEDULER |
+| 创建人 | Codex |
+| 创建日期 | 2026-06-10 |
+
+**前置条件**:
+1. 当前用户为管理员；另准备 reviewer 或 viewer 用于越权验证。
+2. 系统已存在可用于测试的 HTTP 或 MCP HTTP 三方系统 endpoint；自动化测试可使用 `mock_response_json` 替代真实网络。
+
+**测试步骤**:
+| 步骤 | 操作 | 预期结果 |
+|------|------|----------|
+| 1 | 非管理员调用 `POST /api/system/plugins` | 返回 `FORBIDDEN`，不得写入插件配置。 |
+| 2 | 管理员创建 `integration_plugins`、`plugin_connections` 和 `plugin_actions` | 返回 active 插件、连接和动作；连接响应对 `secret_ref/token/api_key/password` 等字段脱敏；分别写入 `plugin.created`、`plugin_connection.created`、`plugin_action.created` 审计。 |
+| 3 | 管理员手动调用 `POST /api/system/plugin-actions/{action_id}/invoke` | 创建 `plugin_invocation_logs`，记录请求摘要、响应摘要、状态、耗时和 trace_id；日志不保存明文密钥。 |
+| 4 | 管理员创建 `job_type=plugin_action_invoke` 的定时作业并引用 `plugin_action_id` | 定时作业保存插件动作、可选连接覆盖、输入映射和输出映射；记录 `scheduled_job.created` 审计。 |
+| 5 | 手动触发该定时作业 | 运行实例保存 `resolved_plugin_snapshot`、`plugin_invocation_log_id`、`result_summary.plugin` 和 records_imported 映射结果；关联 collector run 和审计事件。 |
+| 6 | 选择“MaxCompute 每周用户反馈”动作模板，创建 `job_type=user_feedback_insight_extract` 定时作业并手动运行 | 页面生成 MCP 查询 JSON 且允许高级 JSON 编辑；运行实例从 `$.insights` 读取洞察，通过用户反馈 service 写入用户洞察表，`records_imported` 等于新增洞察数。 |
+| 7 | 插件协议为 `mcp_stdio` 时尝试执行 | 返回 `PLUGIN_PROTOCOL_UNSUPPORTED`，第一阶段不得执行未隔离的本地命令。 |
+
+**预期结果**:
+1. 插件管理负责“调哪个三方动作、用哪个连接、如何审计”，AI Skill 只负责消费插件返回数据进行语义分析。
+2. 插件连接密钥和调用日志均不得泄露明文凭据。
+3. 定时任务调用插件动作必须可追溯到作业定义、插件快照、调用日志和审计事件。
+
+**状态**: 基础自动化已覆盖插件/连接/动作 CRUD、密钥脱敏、审计、mock HTTP 插件调用、定时作业插件快照、调用日志，以及 MaxCompute 每周用户反馈洞察抽取。
+
+---
+
 ### TC-AIBRAIN-SCHED-FUNC-032: 定时 AI 作业运行、快照与失败处理
 
 | 项目 | 内容 |

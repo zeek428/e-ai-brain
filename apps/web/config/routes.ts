@@ -163,6 +163,12 @@ const routes = [
         icon: 'ClockCircleOutlined',
         component: './ScheduledJobs',
       },
+      {
+        path: '/system/plugins',
+        name: '插件管理',
+        icon: 'ApiOutlined',
+        component: './Plugins',
+      },
     ],
   },
   {

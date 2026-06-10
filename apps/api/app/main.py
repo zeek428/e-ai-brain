@@ -26,6 +26,7 @@ from app.api.routers.knowledge import router as knowledge_router
 from app.api.routers.lifecycle import router as lifecycle_router
 from app.api.routers.model_gateway import router as model_gateway_router
 from app.api.routers.platform import router as platform_router
+from app.api.routers.plugins import router as plugins_router
 from app.api.routers.product_git_repositories import router as product_git_repositories_router
 from app.api.routers.product_modules import router as product_modules_router
 from app.api.routers.product_versions import router as product_versions_router
@@ -132,6 +133,7 @@ app.include_router(knowledge_router)
 app.include_router(lifecycle_router)
 app.include_router(model_gateway_router)
 app.include_router(platform_router)
+app.include_router(plugins_router)
 app.include_router(product_git_repositories_router)
 app.include_router(product_modules_router)
 app.include_router(product_versions_router)

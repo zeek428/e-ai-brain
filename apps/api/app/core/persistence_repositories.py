@@ -13,6 +13,7 @@ from app.core.repositories.lifecycle_dashboard import LifecycleDashboardReadRepo
 from app.core.repositories.mock_writeback import MockWritebackReadRepository
 from app.core.repositories.model_gateway import ModelGatewayReadRepository
 from app.core.repositories.operational_collection import OperationalCollectionReadRepository
+from app.core.repositories.plugins import PluginReadRepository
 from app.core.repositories.product_config import ProductConfigReadRepository
 from app.core.repositories.requirements import RequirementReadRepository
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
@@ -102,6 +103,10 @@ def install_snapshot_repositories(repository: Any) -> None:
         upsert_audit_events=callbacks.upsert_audit_events,
     )
     repository._scheduled_ai_job_read_repository = ScheduledAiJobReadRepository(
+        repository._connect,
+        upsert_audit_events=callbacks.upsert_audit_events,
+    )
+    repository._plugin_read_repository = PluginReadRepository(
         repository._connect,
         upsert_audit_events=callbacks.upsert_audit_events,
     )

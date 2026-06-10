@@ -8,6 +8,11 @@
 ## [Unreleased]
 
 ### Added
+- 插件动作配置体验增强：新增动作默认用 Params/Headers 表格配置 HTTP 请求参数和请求头，参数值可选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量并在运行时解析，提交时生成 `request_config.query/headers`，高级 JSON 仅作为完整配置精修入口。
+- 插件连接配置增强：连接环境收敛为 `default/dev/test/staging/prod/sandbox` 受控枚举，认证配置默认按认证方式展示 Token/Header/Basic 字段并只把 JSON 作为高级修改入口，连接列表新增测试按钮和后端测试接口；定时作业插件输入映射新增动态时间 token 模板，运行时按作业时区解析。
+- 插件分类收敛为受控枚举：新增插件页面改为下拉选择，后端创建/更新插件拒绝自由文本分类，并在 API/技术规格中约定分类值。
+- MaxCompute 每周用户反馈洞察场景落地：插件动作页新增引导式模板，可自动生成 MCP 查询配置并保留高级 JSON 编辑；定时作业新增 `user_feedback_insight_extract`，可将插件返回的 AI 洞察写入用户反馈洞察表。
+- 插件管理第一阶段落地：新增系统插件、连接、动作和调用日志管理，支持 HTTP/MCP HTTP 协议配置、密钥配置脱敏、调用审计，并允许定时作业通过 `plugin_action_id` 调用插件动作和保存运行快照。
 - 定时系统作业与 AI 能力装配：PRD/API/技术规格/测试用例补充 Agent、Skill、定时作业、运行实例、AI 配置快照、collector run 关联、锁租约、失败重试和人工确认边界，并落地基础 API、菜单和页面入口。
 - AI 能力配置第一阶段落地：Agent 继续表单配置，Skill 支持 zip 文件包上传、本地存储、checksum/manifest 持久化，并在定时 AI 作业运行时加载本地 Skill 文件内容写入快照。
 - 迭代版本新增代码分支配置：版本页提供“代码分支”入口，可按同产品多个 GitHub/GitLab 代码库维护基准分支、开发分支、状态和创建来源；后端新增 `product_version_branch_configs` 结构表和对应 API，并纳入产品配置 DB-first 读写与审计。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from time import sleep
 from typing import Any
 
@@ -84,9 +85,22 @@ class PostgresSnapshotRepository:
                     END $$;
                     """
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "036_integration_plugins.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
+
+    def _apply_additive_migration(self, cursor: Any, filename: str) -> None:
+        migration_path = Path(__file__).resolve().parents[1] / "db" / "migrations" / filename
+        if not migration_path.exists():
+            return
+        for statement in migration_path.read_text(encoding="utf-8").split(";"):
+            sql = statement.strip()
+            if sql:
+                cursor.execute(sql)
 
     def load(self) -> dict[str, Any] | None:
         return self._system_state_repository.load_snapshot()
@@ -913,6 +927,51 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def list_plugins(
+        self,
+        *,
+        protocol: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_plugins(protocol=protocol, status=status)
+
+    def list_plugin_connections(
+        self,
+        *,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_plugin_connections(
+            plugin_id=plugin_id,
+            status=status,
+        )
+
+    def list_plugin_actions(
+        self,
+        *,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_plugin_actions(
+            plugin_id=plugin_id,
+            status=status,
+        )
+
+    def list_plugin_invocation_logs(
+        self,
+        *,
+        action_id: str | None = None,
+        scheduled_job_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_plugin_invocation_logs(
+            action_id=action_id,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+        )
+
     def list_model_gateway_logs(
         self,
         *,
@@ -1323,6 +1382,47 @@ class PostgresSnapshotRepository:
     ) -> None:
         self._scheduled_ai_job_read_repository.save_scheduled_job_run_record(
             run,
+            audit_event=audit_event,
+        )
+
+    def save_plugin_record(
+        self,
+        plugin: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.save_plugin_record(plugin, audit_event=audit_event)
+
+    def save_plugin_connection_record(
+        self,
+        connection: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.save_plugin_connection_record(
+            connection,
+            audit_event=audit_event,
+        )
+
+    def save_plugin_action_record(
+        self,
+        action: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.save_plugin_action_record(
+            action,
+            audit_event=audit_event,
+        )
+
+    def save_plugin_invocation_log_record(
+        self,
+        log: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.save_plugin_invocation_log_record(
+            log,
             audit_event=audit_event,
         )
 
