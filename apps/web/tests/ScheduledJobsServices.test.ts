@@ -9,6 +9,8 @@ import {
   fetchScheduledJobRuns,
   fetchScheduledJobs,
   runScheduledJob,
+  updateAiAgent,
+  updateAiSkill,
   uploadAiSkillPackage,
 } from '../src/services/aiBrain';
 
@@ -46,6 +48,10 @@ describe('scheduled AI job service mappings', () => {
         );
         return jsonResponse({ data: { id: 'skill_001', status: 'active' } });
       }
+      if (input === '/api/system/ai-skills/skill_001' && init?.method === 'PATCH') {
+        expect(init.body).toBe(JSON.stringify({ status: 'disabled' }));
+        return jsonResponse({ data: { id: 'skill_001', status: 'disabled' } });
+      }
       if (
         input ===
           '/api/system/ai-skills/upload?code=packaged_iteration_planning&name=%E6%96%87%E4%BB%B6%E5%8C%85%E8%BF%AD%E4%BB%A3%E8%A7%84%E5%88%92&version=1.0.0&status=active&risk_level=high&requires_human_review=true' &&
@@ -76,6 +82,10 @@ describe('scheduled AI job service mappings', () => {
       }
       if (input === '/api/system/ai-agents' && init?.method === 'POST') {
         return jsonResponse({ data: { id: 'agent_001', status: 'active' } });
+      }
+      if (input === '/api/system/ai-agents/agent_001' && init?.method === 'PATCH') {
+        expect(init.body).toBe(JSON.stringify({ status: 'disabled' }));
+        return jsonResponse({ data: { id: 'agent_001', status: 'disabled' } });
       }
       if (input === '/api/system/scheduled-jobs' && init?.method === 'GET') {
         return jsonResponse({
@@ -113,6 +123,10 @@ describe('scheduled AI job service mappings', () => {
         status: 'active',
       }),
     ).resolves.toMatchObject({ id: 'skill_001' });
+    await expect(updateAiSkill('skill_001', { status: 'disabled' })).resolves.toMatchObject({
+      id: 'skill_001',
+      status: 'disabled',
+    });
     await expect(
       uploadAiSkillPackage(new File(['zip-bytes'], 'skill.zip', { type: 'application/zip' }), {
         code: 'packaged_iteration_planning',
@@ -126,6 +140,10 @@ describe('scheduled AI job service mappings', () => {
     await expect(fetchAiAgents()).resolves.toEqual([expect.objectContaining({ id: 'agent_001' })]);
     await expect(createAiAgent({ code: 'iteration_planner', name: '迭代规划 Agent', system_prompt: 'x' })).resolves.toMatchObject({
       id: 'agent_001',
+    });
+    await expect(updateAiAgent('agent_001', { status: 'disabled' })).resolves.toMatchObject({
+      id: 'agent_001',
+      status: 'disabled',
     });
     await expect(fetchScheduledJobs()).resolves.toEqual([expect.objectContaining({ id: 'scheduled_job_001' })]);
     await expect(

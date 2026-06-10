@@ -9,6 +9,8 @@ import {
   createAiSkill,
   fetchAiAgents,
   fetchAiSkills,
+  updateAiAgent,
+  updateAiSkill,
   uploadAiSkillPackage,
   type AiAgentRecord,
   type AiSkillRecord,
@@ -53,6 +55,8 @@ export default function AiCapabilitiesPage() {
   const [skillPackageModalOpen, setSkillPackageModalOpen] = useState(false);
   const [skillPackageFiles, setSkillPackageFiles] = useState<UploadFile[]>([]);
   const [agentModalOpen, setAgentModalOpen] = useState(false);
+  const [editingSkill, setEditingSkill] = useState<AiSkillRecord>();
+  const [editingAgent, setEditingAgent] = useState<AiAgentRecord>();
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -71,12 +75,74 @@ export default function AiCapabilitiesPage() {
     void reload();
   }, [reload]);
 
+  const openCreateSkill = () => {
+    setEditingSkill(undefined);
+    skillForm.resetFields();
+    skillForm.setFieldsValue({
+      requires_human_review: false,
+      risk_level: 'medium',
+      status: 'active',
+      version: '1.0.0',
+    });
+    setSkillModalOpen(true);
+  };
+
+  const openEditSkill = (record: AiSkillRecord) => {
+    setEditingSkill(record);
+    skillForm.setFieldsValue({
+      code: record.code,
+      name: record.name,
+      prompt_template: record.prompt_template ?? '',
+      requires_human_review: Boolean(record.requires_human_review),
+      risk_level: record.risk_level ?? 'medium',
+      status: record.status,
+      version: record.version ?? '1.0.0',
+    });
+    setSkillModalOpen(true);
+  };
+
+  const closeSkillModal = () => {
+    setSkillModalOpen(false);
+    setEditingSkill(undefined);
+    skillForm.resetFields();
+  };
+
+  const openCreateAgent = () => {
+    setEditingAgent(undefined);
+    agentForm.resetFields();
+    agentForm.setFieldsValue({ status: 'active' });
+    setAgentModalOpen(true);
+  };
+
+  const openEditAgent = (record: AiAgentRecord) => {
+    setEditingAgent(record);
+    agentForm.setFieldsValue({
+      code: record.code,
+      default_skill_ids: Array.isArray(record.default_skill_ids) ? record.default_skill_ids.join(', ') : '',
+      model_gateway_config_id: record.model_gateway_config_id ?? '',
+      name: record.name,
+      status: record.status,
+      system_prompt: record.system_prompt ?? '',
+    });
+    setAgentModalOpen(true);
+  };
+
+  const closeAgentModal = () => {
+    setAgentModalOpen(false);
+    setEditingAgent(undefined);
+    agentForm.resetFields();
+  };
+
   const submitSkill = async () => {
     const values = await skillForm.validateFields();
-    await createAiSkill(values);
-    message.success('Skill 已创建');
-    setSkillModalOpen(false);
-    skillForm.resetFields();
+    if (editingSkill) {
+      await updateAiSkill(editingSkill.id, values);
+      message.success('Skill 已更新');
+    } else {
+      await createAiSkill(values);
+      message.success('Skill 已创建');
+    }
+    closeSkillModal();
     await reload();
   };
 
@@ -104,15 +170,20 @@ export default function AiCapabilitiesPage() {
 
   const submitAgent = async () => {
     const values = await agentForm.validateFields();
-    await createAiAgent({
+    const payload = {
       ...values,
       default_skill_ids: values.default_skill_ids
         ? values.default_skill_ids.split(',').map((item) => item.trim()).filter(Boolean)
         : [],
-    });
-    message.success('Agent 已创建');
-    setAgentModalOpen(false);
-    agentForm.resetFields();
+    };
+    if (editingAgent) {
+      await updateAiAgent(editingAgent.id, payload);
+      message.success('Agent 已更新');
+    } else {
+      await createAiAgent(payload);
+      message.success('Agent 已创建');
+    }
+    closeAgentModal();
     await reload();
   };
 
@@ -130,7 +201,7 @@ export default function AiCapabilitiesPage() {
                 dataSource={agents}
                 tableLayout="fixed"
                 title={() => (
-                  <Button icon={<PlusOutlined />} type="primary" onClick={() => setAgentModalOpen(true)}>
+                  <Button icon={<PlusOutlined />} type="primary" onClick={openCreateAgent}>
                     新增 Agent
                   </Button>
                 )}
@@ -150,6 +221,15 @@ export default function AiCapabilitiesPage() {
                     width: 120,
                     render: (value) => <Tag color={value === 'active' ? 'green' : 'default'}>{String(value)}</Tag>,
                   },
+                  {
+                    title: '操作',
+                    width: 96,
+                    render: (_, record) => (
+                      <Button type="link" onClick={() => openEditAgent(record)}>
+                        编辑
+                      </Button>
+                    ),
+                  },
                 ]}
               />
             ),
@@ -165,7 +245,7 @@ export default function AiCapabilitiesPage() {
                 tableLayout="fixed"
                 title={() => (
                   <Space>
-                    <Button icon={<PlusOutlined />} type="primary" onClick={() => setSkillModalOpen(true)}>
+                    <Button icon={<PlusOutlined />} type="primary" onClick={openCreateSkill}>
                       新增 Skill
                     </Button>
                     <Button onClick={() => setSkillPackageModalOpen(true)}>上传 Skill 包</Button>
@@ -193,6 +273,15 @@ export default function AiCapabilitiesPage() {
                     width: 120,
                     render: (value) => <Tag color={value === 'active' ? 'green' : 'default'}>{String(value)}</Tag>,
                   },
+                  {
+                    title: '操作',
+                    width: 96,
+                    render: (_, record) => (
+                      <Button type="link" onClick={() => openEditSkill(record)}>
+                        编辑
+                      </Button>
+                    ),
+                  },
                 ]}
               />
             ),
@@ -200,7 +289,13 @@ export default function AiCapabilitiesPage() {
         ]}
       />
 
-      <Modal open={skillModalOpen} title="新增 Skill" onCancel={() => setSkillModalOpen(false)} onOk={submitSkill}>
+      <Modal
+        open={skillModalOpen}
+        title={editingSkill ? '编辑 Skill' : '新增 Skill'}
+        okText="保存"
+        onCancel={closeSkillModal}
+        onOk={submitSkill}
+      >
         <Form form={skillForm} layout="vertical" initialValues={{ requires_human_review: false, risk_level: 'medium', status: 'active', version: '1.0.0' }}>
           <Form.Item label="名称" name="name" rules={[{ required: true }]}>
             <Input />
@@ -278,7 +373,13 @@ export default function AiCapabilitiesPage() {
         </Form>
       </Modal>
 
-      <Modal open={agentModalOpen} title="新增 Agent" onCancel={() => setAgentModalOpen(false)} onOk={submitAgent}>
+      <Modal
+        open={agentModalOpen}
+        title={editingAgent ? '编辑 Agent' : '新增 Agent'}
+        okText="保存"
+        onCancel={closeAgentModal}
+        onOk={submitAgent}
+      >
         <Form form={agentForm} layout="vertical" initialValues={{ status: 'active' }}>
           <Form.Item label="名称" name="name" rules={[{ required: true }]}>
             <Input />
@@ -291,6 +392,9 @@ export default function AiCapabilitiesPage() {
           </Form.Item>
           <Form.Item label="默认 Skill IDs" name="default_skill_ids">
             <Input placeholder="多个 ID 用英文逗号分隔" />
+          </Form.Item>
+          <Form.Item label="状态" name="status">
+            <Input />
           </Form.Item>
           <Form.Item label="系统提示词" name="system_prompt" rules={[{ required: true }]}>
             <Input.TextArea rows={4} />
