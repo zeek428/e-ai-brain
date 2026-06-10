@@ -1,6 +1,6 @@
 import { PlusOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Space, Table, Tabs, Tag, Switch, Upload, message } from 'antd';
+import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Switch, Upload, message } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -42,6 +42,29 @@ type AgentFormValues = {
   name: string;
   status: string;
   system_prompt: string;
+};
+
+const SKILL_STATUS_OPTIONS = [
+  { label: '启用', value: 'active' },
+  { label: '草稿', value: 'draft' },
+  { label: '停用', value: 'disabled' },
+];
+
+const AGENT_STATUS_OPTIONS = [
+  { label: '启用', value: 'active' },
+  { label: '停用', value: 'disabled' },
+];
+
+const STATUS_LABELS: Record<string, string> = {
+  active: '启用',
+  disabled: '停用',
+  draft: '草稿',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  active: 'green',
+  disabled: 'default',
+  draft: 'gold',
 };
 
 export default function AiCapabilitiesPage() {
@@ -187,6 +210,23 @@ export default function AiCapabilitiesPage() {
     await reload();
   };
 
+  const disableSkill = async (record: AiSkillRecord) => {
+    await updateAiSkill(record.id, { status: 'disabled' });
+    message.success('Skill 已删除');
+    await reload();
+  };
+
+  const disableAgent = async (record: AiAgentRecord) => {
+    await updateAiAgent(record.id, { status: 'disabled' });
+    message.success('Agent 已删除');
+    await reload();
+  };
+
+  const renderStatusTag = (value: unknown) => {
+    const status = String(value ?? '');
+    return <Tag color={STATUS_COLORS[status] ?? 'default'}>{STATUS_LABELS[status] ?? status}</Tag>;
+  };
+
   return (
     <PageContainer title="AI 能力配置">
       <Tabs
@@ -219,15 +259,28 @@ export default function AiCapabilitiesPage() {
                     dataIndex: 'status',
                     title: '状态',
                     width: 120,
-                    render: (value) => <Tag color={value === 'active' ? 'green' : 'default'}>{String(value)}</Tag>,
+                    render: renderStatusTag,
                   },
                   {
                     title: '操作',
-                    width: 96,
+                    width: 144,
                     render: (_, record) => (
-                      <Button type="link" onClick={() => openEditAgent(record)}>
-                        编辑
-                      </Button>
+                      <Space size={4}>
+                        <Button type="link" onClick={() => openEditAgent(record)}>
+                          编辑
+                        </Button>
+                        <Popconfirm
+                          title="确认删除该 Agent？"
+                          description="删除后状态将变为停用，已有运行记录不会被移除。"
+                          okText="删除"
+                          cancelText="取消"
+                          onConfirm={() => disableAgent(record)}
+                        >
+                          <Button danger disabled={record.status === 'disabled'} type="link">
+                            删除
+                          </Button>
+                        </Popconfirm>
+                      </Space>
                     ),
                   },
                 ]}
@@ -271,15 +324,28 @@ export default function AiCapabilitiesPage() {
                     dataIndex: 'status',
                     title: '状态',
                     width: 120,
-                    render: (value) => <Tag color={value === 'active' ? 'green' : 'default'}>{String(value)}</Tag>,
+                    render: renderStatusTag,
                   },
                   {
                     title: '操作',
-                    width: 96,
+                    width: 144,
                     render: (_, record) => (
-                      <Button type="link" onClick={() => openEditSkill(record)}>
-                        编辑
-                      </Button>
+                      <Space size={4}>
+                        <Button type="link" onClick={() => openEditSkill(record)}>
+                          编辑
+                        </Button>
+                        <Popconfirm
+                          title="确认删除该 Skill？"
+                          description="删除后状态将变为停用，已有运行记录不会被移除。"
+                          okText="删除"
+                          cancelText="取消"
+                          onConfirm={() => disableSkill(record)}
+                        >
+                          <Button danger disabled={record.status === 'disabled'} type="link">
+                            删除
+                          </Button>
+                        </Popconfirm>
+                      </Space>
                     ),
                   },
                 ]}
@@ -317,7 +383,7 @@ export default function AiCapabilitiesPage() {
               <Input />
             </Form.Item>
             <Form.Item label="状态" name="status">
-              <Input />
+              <Select options={SKILL_STATUS_OPTIONS} />
             </Form.Item>
           </Space>
         </Form>
@@ -367,7 +433,7 @@ export default function AiCapabilitiesPage() {
               <Input />
             </Form.Item>
             <Form.Item label="状态" name="status">
-              <Input />
+              <Select options={SKILL_STATUS_OPTIONS} />
             </Form.Item>
           </Space>
         </Form>
@@ -394,7 +460,7 @@ export default function AiCapabilitiesPage() {
             <Input placeholder="多个 ID 用英文逗号分隔" />
           </Form.Item>
           <Form.Item label="状态" name="status">
-            <Input />
+            <Select options={AGENT_STATUS_OPTIONS} />
           </Form.Item>
           <Form.Item label="系统提示词" name="system_prompt" rules={[{ required: true }]}>
             <Input.TextArea rows={4} />

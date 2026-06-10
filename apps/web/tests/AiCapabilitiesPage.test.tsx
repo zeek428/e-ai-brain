@@ -93,7 +93,7 @@ describe('AI capabilities page', () => {
     const agentDialog = await screen.findByRole('dialog', { name: '编辑 Agent' });
     expect(within(agentDialog).getByLabelText('名称')).toHaveValue('洞察 Agent');
     expect(within(agentDialog).getByLabelText('默认 Skill IDs')).toHaveValue('skill_001');
-    fireEvent.change(within(agentDialog).getByLabelText('状态'), { target: { value: 'disabled' } });
+    expect(within(agentDialog).getByText('启用')).toBeInTheDocument();
     fireEvent.click(within(agentDialog).getByRole('button', { name: /保\s*存/ }));
 
     await waitFor(() =>
@@ -102,7 +102,7 @@ describe('AI capabilities page', () => {
           code: 'insight_agent',
           default_skill_ids: ['skill_001'],
           name: '洞察 Agent',
-          status: 'disabled',
+          status: 'active',
           system_prompt: '分析用户反馈',
         }),
       ]),
@@ -123,7 +123,7 @@ describe('AI capabilities page', () => {
     const skillDialog = await screen.findByRole('dialog', { name: '编辑 Skill' });
     expect(within(skillDialog).getByLabelText('名称')).toHaveValue('用户洞察采集');
     expect(within(skillDialog).getByLabelText('Prompt 模板')).toHaveValue('采集用户反馈');
-    fireEvent.change(within(skillDialog).getByLabelText('状态'), { target: { value: 'disabled' } });
+    expect(within(skillDialog).getByText('启用')).toBeInTheDocument();
     fireEvent.click(within(skillDialog).getByRole('button', { name: /保\s*存/ }));
 
     await waitFor(() =>
@@ -132,10 +132,45 @@ describe('AI capabilities page', () => {
           code: 'user_insight_collect',
           name: '用户洞察采集',
           prompt_template: '采集用户反馈',
-          status: 'disabled',
+          status: 'active',
           version: '1.0.0',
         }),
       ]),
     );
+  });
+
+  it('deletes an existing Agent by disabling it', async () => {
+    const { agentPatchBodies } = installCapabilitiesFetchMock();
+
+    render(<AiCapabilitiesPage />);
+
+    expect(await screen.findByText('洞察 Agent')).toBeInTheDocument();
+    const agentRow = screen.getByText('洞察 Agent').closest('tr');
+    expect(agentRow).not.toBeNull();
+    fireEvent.click(within(agentRow as HTMLElement).getByRole('button', { name: '删除' }));
+    expect(await screen.findByText('确认删除该 Agent？')).toBeInTheDocument();
+    const agentConfirm = screen.getByText('确认删除该 Agent？').closest('.ant-popover');
+    expect(agentConfirm).not.toBeNull();
+    fireEvent.click(within(agentConfirm as HTMLElement).getByRole('button', { name: /删\s*除/ }));
+
+    await waitFor(() => expect(agentPatchBodies).toEqual([{ status: 'disabled' }]));
+  });
+
+  it('deletes an existing Skill by disabling it', async () => {
+    const { skillPatchBodies } = installCapabilitiesFetchMock();
+
+    render(<AiCapabilitiesPage />);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Skill 管理' }));
+    expect(await screen.findByText('用户洞察采集')).toBeInTheDocument();
+    const skillRow = screen.getByText('用户洞察采集').closest('tr');
+    expect(skillRow).not.toBeNull();
+    fireEvent.click(within(skillRow as HTMLElement).getByRole('button', { name: '删除' }));
+    expect(await screen.findByText('确认删除该 Skill？')).toBeInTheDocument();
+    const skillConfirm = screen.getByText('确认删除该 Skill？').closest('.ant-popover');
+    expect(skillConfirm).not.toBeNull();
+    fireEvent.click(within(skillConfirm as HTMLElement).getByRole('button', { name: /删\s*除/ }));
+
+    await waitFor(() => expect(skillPatchBodies).toEqual([{ status: 'disabled' }]));
   });
 });
