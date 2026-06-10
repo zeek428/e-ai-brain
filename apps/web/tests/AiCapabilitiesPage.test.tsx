@@ -54,6 +54,30 @@ function installCapabilitiesFetchMock() {
         },
       });
     }
+    if (input === '/api/system/model-gateway-configs' && init?.method === 'GET') {
+      return jsonResponse({
+        data: {
+          items: [
+            {
+              api_key_configured: true,
+              base_url: 'https://model.example.com/v1',
+              default_chat_model: 'gpt-4.1-mini',
+              default_embedding_model: 'text-embedding-3-small',
+              embedding_api_key_configured: true,
+              embedding_connection_mode: 'reuse_chat',
+              id: 'gateway_default',
+              is_default: true,
+              max_retries: 1,
+              name: '默认模型网关',
+              provider: 'openai_compatible',
+              status: 'active',
+              timeout_seconds: 60,
+            },
+          ],
+          total: 1,
+        },
+      });
+    }
     if (input === '/api/system/ai-agents/agent_001' && init?.method === 'PATCH') {
       agentPatchBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'agent_001', status: 'disabled' } });
@@ -86,6 +110,7 @@ describe('AI capabilities page', () => {
     render(<AiCapabilitiesPage />);
 
     expect(await screen.findByText('洞察 Agent')).toBeInTheDocument();
+    expect(screen.getByText('默认模型网关 (gpt-4.1-mini)')).toBeInTheDocument();
     const agentRow = screen.getByText('洞察 Agent').closest('tr');
     expect(agentRow).not.toBeNull();
     fireEvent.click(within(agentRow as HTMLElement).getByRole('button', { name: '编辑' }));
@@ -93,6 +118,7 @@ describe('AI capabilities page', () => {
     const agentDialog = await screen.findByRole('dialog', { name: '编辑 Agent' });
     expect(within(agentDialog).getByLabelText('名称')).toHaveValue('洞察 Agent');
     expect(within(agentDialog).getByLabelText('默认 Skill IDs')).toHaveValue('skill_001');
+    expect(within(agentDialog).getByText('默认模型网关 / gpt-4.1-mini / 默认')).toBeInTheDocument();
     expect(within(agentDialog).getByText('启用')).toBeInTheDocument();
     fireEvent.click(within(agentDialog).getByRole('button', { name: /保\s*存/ }));
 

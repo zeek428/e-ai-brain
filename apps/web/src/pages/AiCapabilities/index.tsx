@@ -4,10 +4,12 @@ import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag
 import type { UploadFile } from 'antd/es/upload/interface';
 import { useCallback, useEffect, useState } from 'react';
 
+import type { ModelGatewayConfigRecord } from '../../data/management';
 import {
   createAiAgent,
   createAiSkill,
   fetchAiAgents,
+  fetchModelGatewayConfigs,
   fetchAiSkills,
   updateAiAgent,
   updateAiSkill,
@@ -80,13 +82,19 @@ export default function AiCapabilitiesPage() {
   const [agentModalOpen, setAgentModalOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState<AiSkillRecord>();
   const [editingAgent, setEditingAgent] = useState<AiAgentRecord>();
+  const [modelGatewayConfigs, setModelGatewayConfigs] = useState<ModelGatewayConfigRecord[]>([]);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextSkills, nextAgents] = await Promise.all([fetchAiSkills(), fetchAiAgents()]);
+      const [nextSkills, nextAgents, nextModelGatewayConfigs] = await Promise.all([
+        fetchAiSkills(),
+        fetchAiAgents(),
+        fetchModelGatewayConfigs(),
+      ]);
       setSkills(nextSkills);
       setAgents(nextAgents);
+      setModelGatewayConfigs(nextModelGatewayConfigs);
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'AI 能力配置加载失败');
     } finally {
@@ -198,6 +206,7 @@ export default function AiCapabilitiesPage() {
       default_skill_ids: values.default_skill_ids
         ? values.default_skill_ids.split(',').map((item) => item.trim()).filter(Boolean)
         : [],
+      model_gateway_config_id: values.model_gateway_config_id?.trim() || null,
     };
     if (editingAgent) {
       await updateAiAgent(editingAgent.id, payload);
@@ -227,6 +236,23 @@ export default function AiCapabilitiesPage() {
     return <Tag color={STATUS_COLORS[status] ?? 'default'}>{STATUS_LABELS[status] ?? status}</Tag>;
   };
 
+  const modelGatewayConfigName = (configId?: string | null) => {
+    if (!configId) {
+      return '-';
+    }
+    const config = modelGatewayConfigs.find((item) => item.id === configId);
+    return config ? `${config.name} (${config.defaultChatModel})` : configId;
+  };
+
+  const modelGatewayOptions = [
+    { label: '不指定', value: '' },
+    ...modelGatewayConfigs.map((config) => ({
+      disabled: config.status !== 'active',
+      label: `${config.name} / ${config.defaultChatModel}${config.isDefault ? ' / 默认' : ''}`,
+      value: config.id,
+    })),
+  ];
+
   return (
     <PageContainer title="AI 能力配置">
       <Tabs
@@ -248,7 +274,12 @@ export default function AiCapabilitiesPage() {
                 columns={[
                   { dataIndex: 'name', title: '名称', ellipsis: true },
                   { dataIndex: 'code', title: '编码', ellipsis: true },
-                  { dataIndex: 'model_gateway_config_id', title: '模型网关', ellipsis: true, render: (value) => value || '-' },
+                  {
+                    dataIndex: 'model_gateway_config_id',
+                    title: '模型网关',
+                    ellipsis: true,
+                    render: (value) => modelGatewayConfigName(value ? String(value) : undefined),
+                  },
                   {
                     dataIndex: 'default_skill_ids',
                     title: '默认 Skills',
@@ -453,8 +484,13 @@ export default function AiCapabilitiesPage() {
           <Form.Item label="编码" name="code" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item label="模型网关 ID" name="model_gateway_config_id">
-            <Input />
+          <Form.Item label="模型网关" name="model_gateway_config_id">
+            <Select
+              optionFilterProp="label"
+              options={modelGatewayOptions}
+              placeholder="选择模型网关"
+              showSearch
+            />
           </Form.Item>
           <Form.Item label="默认 Skill IDs" name="default_skill_ids">
             <Input placeholder="多个 ID 用英文逗号分隔" />
