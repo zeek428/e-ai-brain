@@ -21,11 +21,35 @@ KNOWLEDGE_INDEX_STATUSES = {
 KNOWLEDGE_DOCUMENT_SORT_FIELDS = {
     "created_at",
     "doc_type",
+    "folder_id",
     "id",
     "index_status",
+    "knowledge_space_id",
     "title",
     "updated_at",
 }
+
+
+def knowledge_repository_access_args(user: dict[str, Any]) -> dict[str, Any]:
+    roles = list(user.get("roles") or [])
+    global_access = "admin" in set(roles)
+    space_scope_ids: list[str] = []
+    for scope in user.get("scope_summary") or []:
+        if scope.get("scope_type") not in {"global", "knowledge_space"}:
+            continue
+        if scope.get("access_level") not in {"read", "write", "admin"}:
+            continue
+        scope_id = scope.get("scope_id")
+        if scope_id == "*":
+            global_access = True
+        elif scope.get("scope_type") == "knowledge_space" and scope_id:
+            space_scope_ids.append(str(scope_id))
+    return {
+        "global_knowledge_access": global_access,
+        "knowledge_space_scope_ids": sorted(set(space_scope_ids)),
+        "user_id": str(user["id"]) if user.get("id") is not None else None,
+        "user_roles": roles,
+    }
 
 
 def request_started_at(request: Request) -> float | None:
@@ -73,6 +97,11 @@ def knowledge_document_response(
         if chunks is not None
         else len(knowledge_document_chunks(current_store, document["id"]))
     )
+    folder_id = document.get("folder_id")
+    if folder_id:
+        folder = getattr(current_store, "knowledge_folders", {}).get(folder_id)
+        if folder is not None:
+            response["folder_path"] = folder.get("path") or folder.get("name")
     response["index_error"] = document.get("index_error")
     response["vector_index_error"] = document.get("vector_index_error")
     return response
@@ -84,6 +113,8 @@ def knowledge_document_list_response(
     doc_type: str | None,
     index_status: str | None,
     keyword: str | None,
+    folder_id: str | None = None,
+    knowledge_space_id: str | None = None,
     page: int | None,
     page_size: int | None,
     permission_role: str | None,
@@ -95,17 +126,29 @@ def knowledge_document_list_response(
     ensure_knowledge_index_status(index_status)
     repository = knowledge_query_repository(current_store)
     if repository is not None:
-        items = repository.list_knowledge_documents(
-            user_roles=list(user.get("roles", [])),
-            keyword=keyword,
-            doc_type=doc_type,
-            index_status=index_status,
-        )
+        try:
+            items = repository.list_knowledge_documents(
+                **knowledge_repository_access_args(user),
+                keyword=keyword,
+                doc_type=doc_type,
+                index_status=index_status,
+                folder_id=folder_id,
+                knowledge_space_id=knowledge_space_id,
+            )
+        except TypeError:
+            items = repository.list_knowledge_documents(
+                user_roles=list(user.get("roles", [])),
+                keyword=keyword,
+                doc_type=doc_type,
+                index_status=index_status,
+            )
     else:
         items = memory_knowledge_document_items(
             current_store=current_store,
             doc_type=doc_type,
+            folder_id=folder_id,
             index_status=index_status,
+            knowledge_space_id=knowledge_space_id,
             keyword=keyword,
             user=user,
         )
@@ -125,8 +168,10 @@ def knowledge_document_list_response(
         items,
         filters={
             "doc_type": doc_type,
+            "folder_id": folder_id,
             "index_status": index_status,
             "keyword": keyword,
+            "knowledge_space_id": knowledge_space_id,
             "permission_role": permission_role,
         },
         list_name="knowledge_documents",
@@ -144,14 +189,18 @@ def memory_knowledge_document_items(
     *,
     current_store: Any,
     doc_type: str | None,
+    folder_id: str | None,
     index_status: str | None,
+    knowledge_space_id: str | None,
     keyword: str | None,
     user: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    from app.services.knowledge_management import document_is_readable
+
     items = [
         document
         for document in current_store.knowledge_documents.values()
-        if user_can_read_roles(user, document["permission_roles"])
+        if document_is_readable(current_store, user, document)
     ]
     if keyword:
         normalized_keyword = keyword.lower()
@@ -162,6 +211,10 @@ def memory_knowledge_document_items(
         ]
     if doc_type:
         items = [item for item in items if item["doc_type"] == doc_type]
+    if knowledge_space_id:
+        items = [item for item in items if item.get("knowledge_space_id") == knowledge_space_id]
+    if folder_id:
+        items = [item for item in items if item.get("folder_id") == folder_id]
     if index_status:
         items = [item for item in items if item["index_status"] == index_status]
     return [knowledge_document_response(current_store, item) for item in items]

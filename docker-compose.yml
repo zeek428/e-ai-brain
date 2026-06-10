@@ -11,11 +11,18 @@ services:
       - .env
     environment:
       PERSISTENCE_MODE: postgres
+      OBJECT_STORAGE_PROVIDER: minio
+      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_BUCKET: ai-brain-knowledge
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-ai_brain_minio}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-ai_brain_minio_password}
+      OBJECT_STORAGE_SECURE: "false"
     ports:
       - "8000:8000"
     depends_on:
       - postgres
       - redis
+      - minio
 
   web:
     image: e-ai-brain-web
@@ -49,5 +56,19 @@ services:
     ports:
       - "6379:6379"
 
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: e-ai-brain-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ai_brain_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-ai_brain_minio_password}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
 volumes:
   postgres_data:
+  minio_data:

@@ -1228,7 +1228,17 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
         "load_knowledge",
         record_call(
             "load_knowledge",
-            {"knowledge_chunks": {}, "knowledge_deposits": {}, "knowledge_documents": {}},
+            {
+                "knowledge_assets": {},
+                "knowledge_chunk_sets": {},
+                "knowledge_chunks": {},
+                "knowledge_deposits": {},
+                "knowledge_documents": {},
+                "knowledge_folders": {},
+                "knowledge_import_jobs": {},
+                "knowledge_space_members": {},
+                "knowledge_spaces": {},
+            },
         ),
     )
     monkeypatch.setattr(
@@ -1258,9 +1268,15 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
     )
 
     assert repository.load_knowledge() == {
+        "knowledge_assets": {},
+        "knowledge_chunk_sets": {},
         "knowledge_chunks": {},
         "knowledge_deposits": {},
         "knowledge_documents": {},
+        "knowledge_folders": {},
+        "knowledge_import_jobs": {},
+        "knowledge_space_members": {},
+        "knowledge_spaces": {},
     }
     assert repository.list_knowledge_documents(
         user_roles=["rd_owner"],
@@ -1284,19 +1300,40 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
         ("load_knowledge", {}),
         (
             "list_knowledge_documents",
-            {
-                "doc_type": "prd",
-                "index_status": "indexed",
-                "keyword": "设计",
-                "user_roles": ["rd_owner"],
-            },
-        ),
+                {
+                    "doc_type": "prd",
+                    "folder_id": None,
+                    "global_knowledge_access": False,
+                    "index_status": "indexed",
+                    "keyword": "设计",
+                    "knowledge_space_id": None,
+                    "knowledge_space_scope_ids": None,
+                    "user_id": None,
+                    "user_roles": ["rd_owner"],
+                },
+            ),
         ("list_knowledge_deposits", {"status": "pending"}),
         ("get_knowledge_deposit", {"deposit_id": "deposit_001"}),
-        ("has_readable_vector_chunks", {"user_roles": ["admin"]}),
+        (
+            "has_readable_vector_chunks",
+            {
+                "global_knowledge_access": False,
+                "knowledge_space_id": None,
+                "knowledge_space_scope_ids": None,
+                "user_id": None,
+                "user_roles": ["admin"],
+            },
+        ),
         (
             "search_knowledge_chunks",
-            {"query": "AI Brain", "user_roles": ["product_owner"]},
+            {
+                "global_knowledge_access": False,
+                "knowledge_space_id": None,
+                "knowledge_space_scope_ids": None,
+                "query": "AI Brain",
+                "user_id": None,
+                "user_roles": ["product_owner"],
+            },
         ),
     ]
 

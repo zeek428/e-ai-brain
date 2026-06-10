@@ -89,6 +89,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "036_integration_plugins.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "037_knowledge_management_assets.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -460,15 +464,25 @@ class PostgresSnapshotRepository:
         self,
         *,
         user_roles: list[str],
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_scope_ids: list[str] | None = None,
         keyword: str | None = None,
         doc_type: str | None = None,
+        folder_id: str | None = None,
         index_status: str | None = None,
+        knowledge_space_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return self._knowledge_read_repository.list_knowledge_documents(
             user_roles=user_roles,
+            user_id=user_id,
+            global_knowledge_access=global_knowledge_access,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
             keyword=keyword,
             doc_type=doc_type,
+            folder_id=folder_id,
             index_status=index_status,
+            knowledge_space_id=knowledge_space_id,
         )
 
     def list_knowledge_deposits(
@@ -481,17 +495,39 @@ class PostgresSnapshotRepository:
     def get_knowledge_deposit(self, deposit_id: str) -> dict[str, Any] | None:
         return self._knowledge_read_repository.get_knowledge_deposit(deposit_id=deposit_id)
 
-    def has_readable_vector_chunks(self, *, user_roles: list[str]) -> bool:
-        return self._knowledge_read_repository.has_readable_vector_chunks(user_roles=user_roles)
+    def has_readable_vector_chunks(
+        self,
+        *,
+        user_roles: list[str],
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_id: str | None = None,
+        knowledge_space_scope_ids: list[str] | None = None,
+    ) -> bool:
+        return self._knowledge_read_repository.has_readable_vector_chunks(
+            user_roles=user_roles,
+            user_id=user_id,
+            global_knowledge_access=global_knowledge_access,
+            knowledge_space_id=knowledge_space_id,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
+        )
 
     def search_knowledge_chunks(
         self,
         *,
         user_roles: list[str],
+        user_id: str | None = None,
+        global_knowledge_access: bool = False,
+        knowledge_space_id: str | None = None,
+        knowledge_space_scope_ids: list[str] | None = None,
         query: str | None = None,
     ) -> list[dict[str, Any]]:
         return self._knowledge_read_repository.search_knowledge_chunks(
             user_roles=user_roles,
+            user_id=user_id,
+            global_knowledge_access=global_knowledge_access,
+            knowledge_space_id=knowledge_space_id,
+            knowledge_space_scope_ids=knowledge_space_scope_ids,
             query=query,
         )
 

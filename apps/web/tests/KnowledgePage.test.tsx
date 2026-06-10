@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { message, Modal, notification } from 'antd';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -62,6 +62,9 @@ describe('KnowledgePage', () => {
             total: 1,
           },
         });
+      }
+      if (input === '/api/knowledge/spaces') {
+        return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/knowledge/deposits?status=pending') {
         return jsonResponse({
@@ -143,6 +146,9 @@ describe('KnowledgePage', () => {
           },
         });
       }
+      if (input === '/api/knowledge/spaces') {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
       if (input === '/api/auth/roles') {
         return jsonResponse(roleCatalogEnvelope);
       }
@@ -182,6 +188,7 @@ describe('KnowledgePage', () => {
     expect(screen.getByText('manual · 需求评估规则')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path, init]) => [String(path).split('?')[0], init?.method ?? 'GET'])).toEqual([
       ['/api/auth/roles', 'GET'],
+      ['/api/knowledge/spaces', 'GET'],
       ['/api/knowledge/documents', 'GET'],
       ['/api/knowledge/search', 'POST'],
     ]);
@@ -213,6 +220,9 @@ describe('KnowledgePage', () => {
             total: 1,
           },
         });
+      }
+      if (input === '/api/knowledge/spaces') {
+        return jsonResponse({ data: { items: [], total: 0 } });
       }
       if (input === '/api/auth/roles') {
         return jsonResponse(roleCatalogEnvelope);
@@ -247,5 +257,137 @@ describe('KnowledgePage', () => {
       ]),
     );
     await waitFor(() => expect(screen.getAllByText('已索引').length).toBeGreaterThan(1));
+  });
+
+  it('uploads a document into a knowledge space folder', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (String(input) === '/api/knowledge/documents' || String(input).startsWith('/api/knowledge/documents?')) {
+        return jsonResponse({
+          data: {
+            items: [],
+            total: 0,
+          },
+        });
+      }
+      if (input === '/api/auth/roles') {
+        return jsonResponse(roleCatalogEnvelope);
+      }
+      if (input === '/api/knowledge/spaces') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                code: 'payment',
+                id: 'knowledge_space_payment',
+                name: '支付知识空间',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/spaces/knowledge_space_payment/folders' && init?.method === 'POST') {
+        expect(JSON.parse(String(init?.body))).toEqual({ name: '排障手册' });
+        return jsonResponse({
+          data: {
+            id: 'knowledge_folder_runbook',
+            knowledge_space_id: 'knowledge_space_payment',
+            name: '排障手册',
+            path: '排障手册',
+          },
+        });
+      }
+      if (input === '/api/knowledge/spaces/knowledge_space_payment/folders') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                id: 'knowledge_folder_runbook',
+                knowledge_space_id: 'knowledge_space_payment',
+                name: '排障手册',
+                path: '排障手册',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/documents/upload') {
+        expect(init?.method).toBe('POST');
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          doc_type: 'manual',
+          filename: 'payment-runbook.md',
+          folder_id: 'knowledge_folder_runbook',
+          knowledge_space_id: 'knowledge_space_payment',
+          mime_type: 'text/markdown',
+          tags: [],
+          title: 'payment-runbook',
+        });
+        expect(body.content_base64).toEqual(expect.any(String));
+        return jsonResponse({
+          data: {
+            asset: {
+              id: 'knowledge_asset_upload',
+            },
+            document: {
+              active_chunk_set_id: 'knowledge_chunk_set_upload',
+              folder_id: 'knowledge_folder_runbook',
+              id: 'knowledge_upload',
+              index_status: 'indexed',
+              knowledge_space_id: 'knowledge_space_payment',
+              source_asset_id: 'knowledge_asset_upload',
+              title: 'payment-runbook',
+            },
+            import_job: {
+              id: 'knowledge_import_job_upload',
+              status: 'completed',
+            },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<KnowledgePage />);
+
+    expect(await screen.findByText('知识中心')).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/knowledge/spaces', expect.any(Object)));
+
+    fireEvent.click(screen.getByRole('button', { name: '导入文档' }));
+    const documentModalTitle = await screen.findByText('导入知识文档');
+    const documentModal = documentModalTitle.closest('.ant-modal') as HTMLElement;
+    fireEvent.click(within(documentModal).getByRole('button', { name: /新建/ }));
+    const folderModalTitle = await screen.findByText('新建知识目录');
+    const folderModal = folderModalTitle.closest('.ant-modal') as HTMLElement;
+    const folderNameInput = folderModal.querySelector('input#name') as HTMLInputElement;
+    fireEvent.change(folderNameInput, { target: { value: '排障手册' } });
+    fireEvent.click(within(folderModal).getByRole('button', { name: /OK|确 定/ }));
+
+    expect(await screen.findByText('排障手册')).toBeInTheDocument();
+    const file = new File(['支付失败排查步骤'], 'payment-runbook.md', {
+      type: 'text/markdown',
+    });
+    fireEvent.change(within(documentModal).getByLabelText('选择知识文件'), {
+      target: { files: [file] },
+    });
+    expect(await screen.findByText('payment-runbook.md')).toBeInTheDocument();
+
+    fireEvent.click(within(documentModal).getByRole('button', { name: /OK|确 定/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
+        '/api/knowledge/documents/upload',
+        'POST',
+      ]),
+    );
   });
 });

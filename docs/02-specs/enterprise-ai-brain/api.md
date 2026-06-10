@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.220 |
+| 功能版本 | v1.1.221 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.221 | 2026-06-10 | 知识中心新增知识空间、空间成员、目录、MinIO/S3 资产上传、导入任务和 asset preview API 契约，检索和列表支持空间/目录过滤 | Codex |
 | v1.1.220 | 2026-06-10 | 补充 `user_feedback_insight_extract` 定时作业契约：可绑定 MaxCompute/MCP 插件动作，从 `insights_path` 映射读取洞察并写入用户反馈洞察表 | Codex |
 | v1.1.219 | 2026-06-10 | 新增插件管理 API：补充插件、连接、动作、调用日志、动作手动调用，以及定时作业引用插件动作的请求/响应字段 | Codex |
 | v1.1.218 | 2026-06-10 | 新增定时系统作业和 AI 能力配置目标 API：补充 Agent、Skill、定时作业、运行实例、手动触发、取消、AI 配置快照和审计契约 | Codex |
@@ -477,6 +478,13 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Review | POST | `/api/reviews/{review_id}/request-more-info` | 要求补充信息。 |
 | Knowledge | GET | `/api/knowledge/documents` | 知识文档列表。 |
 | Knowledge | POST | `/api/knowledge/documents` | 导入知识文档。 |
+| Knowledge | GET | `/api/knowledge/spaces` | 查询当前用户可访问的知识空间。 |
+| Knowledge | POST | `/api/knowledge/spaces` | 创建知识空间。 |
+| Knowledge | PUT | `/api/knowledge/spaces/{space_id}/members` | 维护知识空间成员。 |
+| Knowledge | GET | `/api/knowledge/spaces/{space_id}/folders` | 查询知识空间目录。 |
+| Knowledge | POST | `/api/knowledge/spaces/{space_id}/folders` | 创建知识空间目录。 |
+| Knowledge | POST | `/api/knowledge/documents/upload` | 上传文件到对象存储并创建知识文档、导入任务和 chunk set。 |
+| Knowledge | GET | `/api/knowledge/assets/{asset_id}/preview` | 鉴权后预览知识资产内容。 |
 | Knowledge | PATCH | `/api/knowledge/documents/{document_id}` | 更新知识文档元数据、内容、权限角色、标签或索引状态。 |
 | Knowledge | DELETE | `/api/knowledge/documents/{document_id}` | 删除知识文档。 |
 | Knowledge | POST | `/api/knowledge/documents/{document_id}/retry-index` | 重试失败知识文档索引。 |
@@ -2149,6 +2157,28 @@ POST /api/reviews/{review_id}/request-more-info
 
 ### 知识中心
 
+知识空间和目录：
+
+```http
+POST /api/knowledge/spaces
+```
+
+```json
+{
+  "code": "payment",
+  "name": "支付知识空间",
+  "description": "支付产品研发、排障和运营知识"
+}
+```
+
+```http
+PUT /api/knowledge/spaces/{space_id}/members
+GET /api/knowledge/spaces/{space_id}/folders
+POST /api/knowledge/spaces/{space_id}/folders
+```
+
+空间成员角色支持 `reader`、`contributor`、`maintainer` 和 `admin`。空间是知识访问边界；目录只承担空间内组织结构，不作为独立安全边界。
+
 导入文档：
 
 ```http
@@ -2160,16 +2190,39 @@ POST /api/knowledge/documents
   "title": "研发需求拆解模板",
   "doc_type": "system",
   "product_id": "product_001",
+  "knowledge_space_id": "knowledge_space_001",
+  "folder_id": "knowledge_folder_001",
   "content": "# 研发需求拆解模板...",
   "tags": ["研发流程", "任务拆解"],
   "permission_roles": ["rd_owner", "knowledge_owner"]
 }
 ```
 
+上传文件导入：
+
+```http
+POST /api/knowledge/documents/upload
+```
+
+```json
+{
+  "knowledge_space_id": "knowledge_space_001",
+  "folder_id": "knowledge_folder_001",
+  "title": "支付失败排查",
+  "filename": "payment-runbook.md",
+  "mime_type": "text/markdown",
+  "content_base64": "IyDmlK/ku5jlpLHotKUuLi4=",
+  "doc_type": "runbook",
+  "tags": ["payment", "runbook"]
+}
+```
+
+上传接口把原始文件写入配置的 S3-compatible 对象存储，默认私有化部署使用 MinIO；业务事实仍写入 PostgreSQL 的 `knowledge_documents`、`knowledge_assets`、`knowledge_import_jobs`、`knowledge_chunk_sets` 和 `knowledge_chunks`。响应返回 `document`、`asset` 和 `import_job`。对象预览必须通过 `GET /api/knowledge/assets/{asset_id}/preview` 鉴权代理，不向前端暴露永久对象存储 URL。
+
 查询文档：
 
 ```http
-GET /api/knowledge/documents?keyword=研发&doc_type=system&index_status=text_indexed
+GET /api/knowledge/documents?keyword=研发&knowledge_space_id=knowledge_space_001&folder_id=knowledge_folder_001&doc_type=system&index_status=text_indexed
 ```
 
 知识文档索引状态支持：`importing | pending_index | text_indexed | vector_indexed | indexed | index_failed | archived`，其中 `indexed` 为历史兼容状态。Embedding 不可用但文本 chunk 成功时进入 `text_indexed`，响应包含 `vector_index_error` 和兼容展示用 `index_error`；基础文本索引失败时进入 `index_failed`。
@@ -2191,7 +2244,8 @@ POST /api/knowledge/search
 ```json
 {
   "query": "需求评估规则",
-  "top_k": 5
+  "top_k": 5,
+  "knowledge_space_id": "knowledge_space_001"
 }
 ```
 
@@ -2210,8 +2264,12 @@ POST /api/knowledge/search
         "retrieval_mode": "vector",
         "score": 0.8421,
         "source": {
+          "asset_id": "knowledge_asset_001",
           "chunk_id": "doc_001_chunk_001",
+          "chunk_set_id": "knowledge_chunk_set_001",
           "doc_type": "manual",
+          "folder_id": "knowledge_folder_001",
+          "knowledge_space_id": "knowledge_space_001",
           "title": "研发需求拆解模板"
         }
       }
@@ -3321,6 +3379,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.221 | 2026-06-10 | 知识中心新增知识空间、目录、MinIO/S3 资产上传、导入任务、chunk set 和资产预览契约。 |
 | v1.1.97 | 2026-06-05 | 明确首页看板允许 PostgreSQL source rows + Python 聚合，管理主列表仍要求服务端分页、排序和筛选。 |
 | v1.1.93 | 2026-06-05 | 新增需求批量生成任务接口，支持同产品已排期需求批量生成产品详细设计任务并记录批次审计。 |
 | v1.1.92 | 2026-06-05 | 需求全链路详情中的 PR/MR 快照证据展示复用风险摘要、diff 文件树和 Review Checklist 字段。 |
@@ -3369,4 +3428,4 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | v1.0.0 | 2026-05-27 | 初始版本 |
 
 ---
-最后更新: 2026-06-05
+最后更新: 2026-06-10

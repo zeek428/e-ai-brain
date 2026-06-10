@@ -110,6 +110,30 @@ def knowledge_write_store(current_store: Any) -> Any:
             knowledge_payload,
             "knowledge_deposits",
         )
+        source_store.knowledge_spaces = payload_collection(
+            knowledge_payload,
+            "knowledge_spaces",
+        )
+        source_store.knowledge_space_members = payload_collection(
+            knowledge_payload,
+            "knowledge_space_members",
+        )
+        source_store.knowledge_folders = payload_collection(
+            knowledge_payload,
+            "knowledge_folders",
+        )
+        source_store.knowledge_assets = payload_collection(
+            knowledge_payload,
+            "knowledge_assets",
+        )
+        source_store.knowledge_import_jobs = payload_collection(
+            knowledge_payload,
+            "knowledge_import_jobs",
+        )
+        source_store.knowledge_chunk_sets = payload_collection(
+            knowledge_payload,
+            "knowledge_chunk_sets",
+        )
     load_model_gateway = getattr(repository, "load_model_gateway", None)
     if callable(load_model_gateway):
         model_gateway_payload = load_model_gateway() or {}
@@ -240,6 +264,29 @@ def save_knowledge_document_records(
         )
 
 
+def persist_knowledge_structure(
+    current_store: Any,
+    *,
+    document: dict[str, Any] | None = None,
+) -> None:
+    if not uses_repository_context(current_store):
+        return
+    if document is not None and not any(
+        document.get(field)
+        for field in (
+            "knowledge_space_id",
+            "folder_id",
+            "source_asset_id",
+            "parsed_asset_id",
+            "active_chunk_set_id",
+        )
+    ):
+        return
+    from app.services.knowledge_management import persist_knowledge_payload
+
+    persist_knowledge_payload(current_store)
+
+
 def delete_knowledge_document_records(
     current_store: Any,
     *,
@@ -292,6 +339,8 @@ def create_knowledge_document_result(
     content: str,
     current_store: Any,
     doc_type: str,
+    folder_id: str | None = None,
+    knowledge_space_id: str | None = None,
     permission_roles: list[str],
     product_id: str | None,
     tags: list[str],
@@ -302,14 +351,27 @@ def create_knowledge_document_result(
     content = ensure_non_blank(content, "content")
     if product_id is not None and product_id not in current_store.products:
         raise api_error(404, "NOT_FOUND", "Product not found")
+    if knowledge_space_id is not None:
+        from app.services.knowledge_management import ensure_space_access
+
+        ensure_space_access(current_store, user, space_id=knowledge_space_id, required="write")
+        if folder_id is not None:
+            folder = current_store.knowledge_folders.get(folder_id)
+            if folder is None or folder.get("knowledge_space_id") != knowledge_space_id:
+                raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
     ensure_roles(permission_roles)
     document_id = current_store.new_id("knowledge")
+    chunk_set_id = (
+        current_store.new_id("knowledge_chunk_set") if knowledge_space_id is not None else None
+    )
     now = datetime.now(UTC).isoformat()
     document = {
         "id": document_id,
         "title": title,
         "content": content,
         "doc_type": doc_type,
+        "folder_id": folder_id,
+        "knowledge_space_id": knowledge_space_id,
         "product_id": product_id,
         "permission_roles": permission_roles,
         "tags": tags,
@@ -320,8 +382,46 @@ def create_knowledge_document_result(
         "created_at": now,
         "updated_at": now,
     }
+    if knowledge_space_id is not None:
+        document["active_chunk_set_id"] = chunk_set_id
+        document["document_version"] = 1
+        document["permission_scope"] = {"knowledge_space_id": knowledge_space_id}
+        current_store.knowledge_chunk_sets[chunk_set_id] = {
+            "id": chunk_set_id,
+            "document_id": document_id,
+            "source_asset_id": None,
+            "parsed_asset_id": None,
+            "parser_engine": "manual_text",
+            "parser_version": "v1",
+            "chunk_strategy": "simple_text",
+            "embedding_model": None,
+            "embedding_dimension": None,
+            "status": "building",
+            "created_by": user["id"],
+            "created_at": now,
+            "updated_at": now,
+            "activated_at": None,
+        }
     model_log_start_index = len(current_store.model_gateway_logs)
     document, chunks = replace_knowledge_chunks_result(current_store, document)
+    if chunk_set_id is not None:
+        for chunk in chunks:
+            chunk["chunk_set_id"] = chunk_set_id
+            chunk.setdefault("metadata", {})["knowledge_space_id"] = knowledge_space_id
+            chunk["metadata"]["folder_id"] = folder_id
+            chunk["metadata"]["chunk_set_id"] = chunk_set_id
+        current_store.knowledge_chunk_sets[chunk_set_id] = {
+            **current_store.knowledge_chunk_sets[chunk_set_id],
+            "status": "active",
+            "embedding_model": chunks[0].get("metadata", {}).get("embedding_model")
+            if chunks
+            else None,
+            "embedding_dimension": chunks[0].get("metadata", {}).get("embedding_dimension")
+            if chunks
+            else None,
+            "activated_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
     if not uses_repository_context(current_store):
         apply_knowledge_document_to_memory(current_store, document, chunks)
     audit_event = record_audit_event(
@@ -338,6 +438,7 @@ def create_knowledge_document_result(
         audit_event=audit_event,
         model_logs=current_store.model_gateway_logs[model_log_start_index:],
     )
+    persist_knowledge_structure(current_store, document=document)
     return knowledge_document_response(current_store, document, chunks)
 
 
@@ -361,6 +462,16 @@ def patch_knowledge_document_result(
     if "product_id" in updates and updates["product_id"] is not None:
         if updates["product_id"] not in current_store.products:
             raise api_error(404, "NOT_FOUND", "Product not found")
+    target_space_id = updates.get("knowledge_space_id", document.get("knowledge_space_id"))
+    target_folder_id = updates.get("folder_id", document.get("folder_id"))
+    if target_space_id is not None:
+        from app.services.knowledge_management import ensure_space_access
+
+        ensure_space_access(current_store, user, space_id=target_space_id, required="write")
+        if target_folder_id is not None:
+            folder = current_store.knowledge_folders.get(target_folder_id)
+            if folder is None or folder.get("knowledge_space_id") != target_space_id:
+                raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
     if "index_status" in updates:
         ensure_enum(updates["index_status"], KNOWLEDGE_INDEX_STATUSES, "knowledge index status")
     if "index_error" in updates and updates["index_error"] is not None:
@@ -385,13 +496,57 @@ def patch_knowledge_document_result(
         )
     elif updates.get("index_status") in {"indexed", "vector_indexed"} or {
         "content",
+        "folder_id",
+        "knowledge_space_id",
         "title",
         "permission_roles",
         "product_id",
         "doc_type",
         "tags",
     }.intersection(updates):
+        if document.get("knowledge_space_id") and not document.get("active_chunk_set_id"):
+            document["active_chunk_set_id"] = current_store.new_id("knowledge_chunk_set")
+        chunk_set_id = document.get("active_chunk_set_id")
+        if chunk_set_id and chunk_set_id not in current_store.knowledge_chunk_sets:
+            current_store.knowledge_chunk_sets[chunk_set_id] = {
+                "id": chunk_set_id,
+                "document_id": document_id,
+                "source_asset_id": document.get("source_asset_id"),
+                "parsed_asset_id": document.get("parsed_asset_id"),
+                "parser_engine": document.get("parser_engine") or "manual_text",
+                "parser_version": "v1",
+                "chunk_strategy": document.get("chunk_strategy") or "simple_text",
+                "embedding_model": None,
+                "embedding_dimension": None,
+                "status": "building",
+                "created_by": user["id"],
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+                "activated_at": None,
+            }
         document, chunks = replace_knowledge_chunks_result(current_store, document)
+        if chunk_set_id:
+            for chunk in chunks:
+                chunk["chunk_set_id"] = chunk_set_id
+                chunk.setdefault("metadata", {})["knowledge_space_id"] = document.get(
+                    "knowledge_space_id"
+                )
+                chunk["metadata"]["folder_id"] = document.get("folder_id")
+                chunk["metadata"]["chunk_set_id"] = chunk_set_id
+            current_store.knowledge_chunk_sets[chunk_set_id] = {
+                **current_store.knowledge_chunk_sets[chunk_set_id],
+                "status": "active",
+                "embedding_model": chunks[0].get("metadata", {}).get("embedding_model")
+                if chunks
+                else None,
+                "embedding_dimension": chunks[0].get("metadata", {}).get(
+                    "embedding_dimension"
+                )
+                if chunks
+                else None,
+                "activated_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
     else:
         chunks = knowledge_document_chunks(current_store, document_id)
     if not uses_repository_context(current_store):
@@ -410,6 +565,7 @@ def patch_knowledge_document_result(
         audit_event=audit_event,
         model_logs=current_store.model_gateway_logs[model_log_start_index:],
     )
+    persist_knowledge_structure(current_store, document=document)
     return knowledge_document_response(current_store, document, chunks)
 
 
@@ -431,6 +587,30 @@ def retry_knowledge_document_index_result(
     document = {**document, "updated_at": datetime.now(UTC).isoformat()}
     model_log_start_index = len(current_store.model_gateway_logs)
     document, chunks = replace_knowledge_chunks_result(current_store, document)
+    chunk_set_id = document.get("active_chunk_set_id")
+    if chunk_set_id:
+        for chunk in chunks:
+            chunk["chunk_set_id"] = chunk_set_id
+            chunk.setdefault("metadata", {})["knowledge_space_id"] = document.get(
+                "knowledge_space_id"
+            )
+            chunk["metadata"]["folder_id"] = document.get("folder_id")
+            chunk["metadata"]["chunk_set_id"] = chunk_set_id
+        if chunk_set_id in current_store.knowledge_chunk_sets:
+            current_store.knowledge_chunk_sets[chunk_set_id] = {
+                **current_store.knowledge_chunk_sets[chunk_set_id],
+                "status": "active",
+                "embedding_model": chunks[0].get("metadata", {}).get("embedding_model")
+                if chunks
+                else None,
+                "embedding_dimension": chunks[0].get("metadata", {}).get(
+                    "embedding_dimension"
+                )
+                if chunks
+                else None,
+                "activated_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
     if not uses_repository_context(current_store):
         apply_knowledge_document_to_memory(current_store, document, chunks)
     audit_event = record_audit_event(
@@ -447,6 +627,7 @@ def retry_knowledge_document_index_result(
         audit_event=audit_event,
         model_logs=current_store.model_gateway_logs[model_log_start_index:],
     )
+    persist_knowledge_structure(current_store, document=document)
     return knowledge_document_response(current_store, document, chunks)
 
 

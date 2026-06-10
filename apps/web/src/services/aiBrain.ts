@@ -374,7 +374,9 @@ export type ProductVersionListQuery = RemoteListQuery & {
 
 export type KnowledgeListQuery = RemoteListQuery & {
   documentType?: string;
+  folderId?: string;
   keyword?: string;
+  knowledgeSpaceId?: string;
   ownerRole?: string;
   status?: string;
 };
@@ -1047,6 +1049,32 @@ export type KnowledgeSearchResultRecord = {
   title: string;
 };
 
+export type KnowledgeSpaceRecord = {
+  code: string;
+  description?: string;
+  id: string;
+  name: string;
+};
+
+export type KnowledgeFolderRecord = {
+  id: string;
+  knowledgeSpaceId: string;
+  name: string;
+  parentFolderId?: string | null;
+  path: string;
+};
+
+export type KnowledgeDocumentUploadPayload = {
+  content_base64: string;
+  doc_type?: string;
+  filename: string;
+  folder_id?: string;
+  knowledge_space_id: string;
+  mime_type?: string;
+  tags?: string[];
+  title: string;
+};
+
 export type ProductFilterOption = {
   code: string;
   id: string;
@@ -1343,8 +1371,10 @@ export type BugMutationPayload = {
 export type KnowledgeDocumentMutationPayload = {
   content?: string;
   doc_type?: string;
+  folder_id?: string | null;
   index_error?: string | null;
   index_status?: string;
+  knowledge_space_id?: string | null;
   permission_roles?: string[];
   tags?: string[];
   title?: string;
@@ -1418,17 +1448,37 @@ type RequirementListItem = {
 };
 
 type KnowledgeDocumentListItem = {
+  active_chunk_set_id?: string | null;
   content?: string;
   created_at?: string;
   doc_type?: string;
+  folder_id?: string | null;
+  folder_path?: string | null;
   id: string;
   index_error?: string | null;
   index_status?: string;
+  knowledge_space_id?: string | null;
   permission_roles?: string[];
+  source_asset_id?: string | null;
   tags?: string[];
   title: string;
   updated_at?: string;
   vector_index_error?: string | null;
+};
+
+type KnowledgeSpaceListItem = {
+  code: string;
+  description?: string;
+  id: string;
+  name: string;
+};
+
+type KnowledgeFolderListItem = {
+  id: string;
+  knowledge_space_id: string;
+  name: string;
+  parent_folder_id?: string | null;
+  path?: string;
 };
 
 type AuditEventListItem = {
@@ -1722,8 +1772,12 @@ type KnowledgeSearchResultItem = {
   document_id: string;
   retrieval_mode?: string;
   source?: {
+    asset_id?: string;
     chunk_id?: string;
+    chunk_set_id?: string;
     doc_type?: string;
+    folder_id?: string;
+    knowledge_space_id?: string;
     title?: string;
   };
   title?: string;
@@ -4141,12 +4195,17 @@ export async function fetchManagementKnowledge(): Promise<KnowledgeRecord[]> {
 
 function mapKnowledgeRecord(document: KnowledgeDocumentListItem): KnowledgeRecord {
   return {
+    activeChunkSetId: document.active_chunk_set_id ?? undefined,
     content: document.content,
     documentType: document.doc_type ?? '-',
+    folderId: document.folder_id ?? undefined,
+    folderPath: document.folder_path ?? undefined,
     id: document.id,
     indexError: document.index_error,
+    knowledgeSpaceId: document.knowledge_space_id ?? undefined,
     ownerRole: document.permission_roles?.join(', ') || '-',
     permissionRoles: document.permission_roles,
+    sourceAssetId: document.source_asset_id ?? undefined,
     status: normalizeKnowledgeStatus(document.index_status),
     tags: document.tags,
     title: document.title,
@@ -4162,6 +4221,8 @@ export async function fetchManagementKnowledgeList(
   const params = new URLSearchParams();
   appendQueryParam(params, 'keyword', query.keyword);
   appendQueryParam(params, 'doc_type', query.documentType);
+  appendQueryParam(params, 'knowledge_space_id', query.knowledgeSpaceId);
+  appendQueryParam(params, 'folder_id', query.folderId);
   appendQueryParam(params, 'permission_role', query.ownerRole);
   appendQueryParam(params, 'index_status', query.status);
   appendRemoteListParams(params, query);
@@ -4177,6 +4238,81 @@ export async function fetchManagementKnowledgeList(
     rows: documents.items.map(mapKnowledgeRecord),
     total: documents.total,
   };
+}
+
+function mapKnowledgeSpace(item: KnowledgeSpaceListItem): KnowledgeSpaceRecord {
+  return {
+    code: item.code,
+    description: item.description,
+    id: item.id,
+    name: item.name,
+  };
+}
+
+function mapKnowledgeFolder(item: KnowledgeFolderListItem): KnowledgeFolderRecord {
+  return {
+    id: item.id,
+    knowledgeSpaceId: item.knowledge_space_id,
+    name: item.name,
+    parentFolderId: item.parent_folder_id,
+    path: item.path ?? item.name,
+  };
+}
+
+export async function fetchKnowledgeSpaces(): Promise<KnowledgeSpaceRecord[]> {
+  const token = requireAccessToken();
+  const spaces = await apiRequest<ListResponse<KnowledgeSpaceListItem>>('/api/knowledge/spaces', {
+    token,
+  });
+  return spaces.items.map(mapKnowledgeSpace);
+}
+
+export async function createKnowledgeSpace(payload: {
+  code: string;
+  description?: string;
+  name: string;
+}): Promise<KnowledgeSpaceRecord> {
+  const token = requireAccessToken();
+  const space = await apiRequest<KnowledgeSpaceListItem>('/api/knowledge/spaces', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+  return mapKnowledgeSpace(space);
+}
+
+export async function fetchKnowledgeFolders(spaceId: string): Promise<KnowledgeFolderRecord[]> {
+  const token = requireAccessToken();
+  const folders = await apiRequest<ListResponse<KnowledgeFolderListItem>>(
+    `/api/knowledge/spaces/${spaceId}/folders`,
+    { token },
+  );
+  return folders.items.map(mapKnowledgeFolder);
+}
+
+export async function createKnowledgeFolder(
+  spaceId: string,
+  payload: { name: string; parent_folder_id?: string },
+): Promise<KnowledgeFolderRecord> {
+  const token = requireAccessToken();
+  const folder = await apiRequest<KnowledgeFolderListItem>(
+    `/api/knowledge/spaces/${spaceId}/folders`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+  return mapKnowledgeFolder(folder);
+}
+
+export async function uploadKnowledgeDocument(payload: KnowledgeDocumentUploadPayload) {
+  const token = requireAccessToken();
+  return apiRequest<{ document: KnowledgeDocumentListItem }>('/api/knowledge/documents/upload', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
 }
 
 export async function createManagementKnowledgeDocument(payload: KnowledgeDocumentMutationPayload) {
@@ -5126,12 +5262,14 @@ function mapKnowledgeSearchResult(item: KnowledgeSearchResultItem, index: number
 export async function fetchKnowledgeSearchResults(
   query: string,
   topK = 5,
+  knowledgeSpaceId?: string,
 ): Promise<KnowledgeSearchResultRecord[]> {
   const token = requireAccessToken();
   const results = await apiRequest<ListResponse<KnowledgeSearchResultItem>>(
     '/api/knowledge/search',
     {
       body: {
+        knowledge_space_id: knowledgeSpaceId,
         query,
         top_k: topK,
       },

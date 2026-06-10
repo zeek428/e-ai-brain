@@ -147,12 +147,17 @@ export type BugRecord = {
 };
 
 export type KnowledgeRecord = {
+  activeChunkSetId?: string;
   content?: string;
   documentType: string;
+  folderId?: string;
+  folderPath?: string;
   id: string;
   indexError?: string | null;
+  knowledgeSpaceId?: string;
   ownerRole: string;
   permissionRoles?: string[];
+  sourceAssetId?: string;
   status:
     | 'archived'
     | 'importing'

@@ -43,6 +43,12 @@ class KnowledgeWriteRepository:
         self._upsert_model_gateway_logs = upsert_model_gateway_logs
 
     def save_knowledge(self, payload: dict[str, Any]) -> None:
+        spaces = payload.get("knowledge_spaces", {})
+        space_members = payload.get("knowledge_space_members", {})
+        folders = payload.get("knowledge_folders", {})
+        assets = payload.get("knowledge_assets", {})
+        import_jobs = payload.get("knowledge_import_jobs", {})
+        chunk_sets = payload.get("knowledge_chunk_sets", {})
         documents = payload.get("knowledge_documents", {})
         chunks = self.clean_knowledge_chunk_references(
             documents,
@@ -52,6 +58,7 @@ class KnowledgeWriteRepository:
             documents,
             payload.get("knowledge_deposits", {}),
         )
+        audit_events = payload.get("audit_events") or []
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self.clear_dangling_knowledge_deposit_documents(cursor, documents)
@@ -59,10 +66,29 @@ class KnowledgeWriteRepository:
                 if self._delete_missing is not None:
                     self._delete_missing(cursor, "knowledge_deposits", deposits)
                     self._delete_missing(cursor, "knowledge_chunks", chunks)
+                    self._delete_missing(cursor, "knowledge_import_jobs", import_jobs)
+                    self._delete_missing(cursor, "knowledge_chunk_sets", chunk_sets)
+                    self._delete_missing(cursor, "knowledge_assets", assets)
                     self._delete_missing(cursor, "knowledge_documents", documents)
+                    self._delete_missing(cursor, "knowledge_folders", folders)
+                    self.delete_missing_knowledge_space_members(cursor, space_members)
+                    self._delete_missing(cursor, "knowledge_spaces", spaces)
+                self.upsert_knowledge_spaces(cursor, spaces)
+                self.upsert_knowledge_space_members(cursor, space_members)
+                self.upsert_knowledge_folders(cursor, folders)
                 self.upsert_knowledge_documents(cursor, documents)
+                self.upsert_knowledge_assets(cursor, assets)
+                self.upsert_knowledge_chunk_sets(cursor, chunk_sets)
                 self.upsert_knowledge_chunks(cursor, chunks)
+                self.upsert_knowledge_import_jobs(cursor, import_jobs)
                 self.upsert_knowledge_deposits(cursor, deposits)
+                if audit_events and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(
+                        cursor,
+                        list(audit_events.values())
+                        if isinstance(audit_events, dict)
+                        else list(audit_events),
+                    )
 
     def save_knowledge_document_records(
         self,
@@ -208,12 +234,14 @@ class KnowledgeWriteRepository:
                 INSERT INTO knowledge_documents (
                   id, brain_app_id, product_id, version_id, title, content, source_type,
                   doc_type, permission_scope, permission_roles, index_status, index_error,
-                  vector_index_error, tags, created_by, created_at, updated_at
+                  vector_index_error, tags, created_by, created_at, updated_at,
+                  knowledge_space_id, folder_id, source_asset_id, parsed_asset_id,
+                  active_chunk_set_id, parser_engine, chunk_strategy, document_version
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s,
                   %s, %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   brain_app_id = EXCLUDED.brain_app_id,
@@ -230,6 +258,14 @@ class KnowledgeWriteRepository:
                   vector_index_error = EXCLUDED.vector_index_error,
                   tags = EXCLUDED.tags,
                   created_by = EXCLUDED.created_by,
+                  knowledge_space_id = EXCLUDED.knowledge_space_id,
+                  folder_id = EXCLUDED.folder_id,
+                  source_asset_id = EXCLUDED.source_asset_id,
+                  parsed_asset_id = EXCLUDED.parsed_asset_id,
+                  active_chunk_set_id = EXCLUDED.active_chunk_set_id,
+                  parser_engine = EXCLUDED.parser_engine,
+                  chunk_strategy = EXCLUDED.chunk_strategy,
+                  document_version = EXCLUDED.document_version,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -250,6 +286,14 @@ class KnowledgeWriteRepository:
                     document["created_by"],
                     created_at,
                     updated_at,
+                    document.get("knowledge_space_id"),
+                    document.get("folder_id"),
+                    document.get("source_asset_id"),
+                    document.get("parsed_asset_id"),
+                    document.get("active_chunk_set_id"),
+                    document.get("parser_engine"),
+                    document.get("chunk_strategy"),
+                    document.get("document_version", 1),
                 ),
             )
 
@@ -268,11 +312,13 @@ class KnowledgeWriteRepository:
                 """
                 INSERT INTO knowledge_chunks (
                   id, document_id, chunk_index, content, embedding, metadata,
-                  permission_scope, created_at, updated_at
+                  permission_scope, created_at, updated_at, chunk_set_id,
+                  parent_chunk_id, content_hash
                 )
                 VALUES (
                   %s, %s, %s, %s, %s::vector, %s::jsonb, %s::jsonb,
-                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
+                  %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   document_id = EXCLUDED.document_id,
@@ -281,6 +327,9 @@ class KnowledgeWriteRepository:
                   embedding = EXCLUDED.embedding,
                   metadata = EXCLUDED.metadata,
                   permission_scope = EXCLUDED.permission_scope,
+                  chunk_set_id = EXCLUDED.chunk_set_id,
+                  parent_chunk_id = EXCLUDED.parent_chunk_id,
+                  content_hash = EXCLUDED.content_hash,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -291,6 +340,307 @@ class KnowledgeWriteRepository:
                     _vector_sql_literal(chunk.get("embedding")),
                     json.dumps(chunk.get("metadata", {}), ensure_ascii=False),
                     json.dumps(permission_scope, ensure_ascii=False),
+                    created_at,
+                    updated_at,
+                    chunk.get("chunk_set_id"),
+                    chunk.get("parent_chunk_id"),
+                    chunk.get("content_hash"),
+                ),
+            )
+
+    def delete_missing_knowledge_space_members(
+        self,
+        cursor,
+        members: dict[str, dict[str, Any]],
+    ) -> None:
+        if not members:
+            cursor.execute("DELETE FROM knowledge_space_members")
+            return
+        keys = [
+            (
+                member["knowledge_space_id"],
+                member["user_id"],
+                member.get("space_role", "reader"),
+            )
+            for member in members.values()
+        ]
+        placeholders = ", ".join(["(%s, %s, %s)"] * len(keys))
+        params = [value for key in keys for value in key]
+        cursor.execute(
+            f"""
+            DELETE FROM knowledge_space_members
+            WHERE (knowledge_space_id, user_id, space_role) NOT IN ({placeholders})
+            """,  # noqa: S608
+            tuple(params),
+        )
+
+    def upsert_knowledge_spaces(
+        self,
+        cursor,
+        spaces: dict[str, dict[str, Any]],
+    ) -> None:
+        for space in spaces.values():
+            created_at = space.get("created_at")
+            updated_at = space.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO knowledge_spaces (
+                  id, code, name, description, owner_user_id, department_id, status,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  code = EXCLUDED.code,
+                  name = EXCLUDED.name,
+                  description = EXCLUDED.description,
+                  owner_user_id = EXCLUDED.owner_user_id,
+                  department_id = EXCLUDED.department_id,
+                  status = EXCLUDED.status,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    space["id"],
+                    space["code"],
+                    space["name"],
+                    space.get("description", ""),
+                    space.get("owner_user_id"),
+                    space.get("department_id"),
+                    space.get("status", "active"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def upsert_knowledge_space_members(
+        self,
+        cursor,
+        members: dict[str, dict[str, Any]],
+    ) -> None:
+        for member in members.values():
+            created_at = member.get("created_at")
+            updated_at = member.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO knowledge_space_members (
+                  knowledge_space_id, user_id, space_role, status, granted_by,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (knowledge_space_id, user_id, space_role) DO UPDATE SET
+                  status = EXCLUDED.status,
+                  granted_by = EXCLUDED.granted_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    member["knowledge_space_id"],
+                    member["user_id"],
+                    member.get("space_role", "reader"),
+                    member.get("status", "active"),
+                    member.get("granted_by"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def upsert_knowledge_folders(
+        self,
+        cursor,
+        folders: dict[str, dict[str, Any]],
+    ) -> None:
+        for folder in folders.values():
+            created_at = folder.get("created_at")
+            updated_at = folder.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO knowledge_folders (
+                  id, knowledge_space_id, parent_folder_id, name, status, sort_order,
+                  created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  knowledge_space_id = EXCLUDED.knowledge_space_id,
+                  parent_folder_id = EXCLUDED.parent_folder_id,
+                  name = EXCLUDED.name,
+                  status = EXCLUDED.status,
+                  sort_order = EXCLUDED.sort_order,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    folder["id"],
+                    folder["knowledge_space_id"],
+                    folder.get("parent_folder_id"),
+                    folder["name"],
+                    folder.get("status", "active"),
+                    folder.get("sort_order", 0),
+                    folder.get("created_by"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def upsert_knowledge_assets(
+        self,
+        cursor,
+        assets: dict[str, dict[str, Any]],
+    ) -> None:
+        for asset in assets.values():
+            created_at = asset.get("created_at")
+            updated_at = asset.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO knowledge_assets (
+                  id, knowledge_space_id, document_id, asset_type, storage_provider,
+                  bucket, object_key, content_hash, filename, mime_type, size_bytes,
+                  metadata, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  knowledge_space_id = EXCLUDED.knowledge_space_id,
+                  document_id = EXCLUDED.document_id,
+                  asset_type = EXCLUDED.asset_type,
+                  storage_provider = EXCLUDED.storage_provider,
+                  bucket = EXCLUDED.bucket,
+                  object_key = EXCLUDED.object_key,
+                  content_hash = EXCLUDED.content_hash,
+                  filename = EXCLUDED.filename,
+                  mime_type = EXCLUDED.mime_type,
+                  size_bytes = EXCLUDED.size_bytes,
+                  metadata = EXCLUDED.metadata,
+                  created_by = EXCLUDED.created_by,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    asset["id"],
+                    asset["knowledge_space_id"],
+                    asset.get("document_id"),
+                    asset.get("asset_type", "original"),
+                    asset.get("storage_provider", "minio"),
+                    asset["bucket"],
+                    asset["object_key"],
+                    asset["content_hash"],
+                    asset.get("filename", ""),
+                    asset.get("mime_type", "application/octet-stream"),
+                    asset.get("size_bytes", 0),
+                    json.dumps(asset.get("metadata", {}), ensure_ascii=False),
+                    asset["created_by"],
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def upsert_knowledge_chunk_sets(
+        self,
+        cursor,
+        chunk_sets: dict[str, dict[str, Any]],
+    ) -> None:
+        for chunk_set in chunk_sets.values():
+            created_at = chunk_set.get("created_at")
+            updated_at = chunk_set.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO knowledge_chunk_sets (
+                  id, document_id, source_asset_id, parsed_asset_id, parser_engine,
+                  parser_version, chunk_strategy, embedding_model, embedding_dimension,
+                  status, created_by, activated_at, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  %s::timestamptz, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  document_id = EXCLUDED.document_id,
+                  source_asset_id = EXCLUDED.source_asset_id,
+                  parsed_asset_id = EXCLUDED.parsed_asset_id,
+                  parser_engine = EXCLUDED.parser_engine,
+                  parser_version = EXCLUDED.parser_version,
+                  chunk_strategy = EXCLUDED.chunk_strategy,
+                  embedding_model = EXCLUDED.embedding_model,
+                  embedding_dimension = EXCLUDED.embedding_dimension,
+                  status = EXCLUDED.status,
+                  created_by = EXCLUDED.created_by,
+                  activated_at = EXCLUDED.activated_at,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    chunk_set["id"],
+                    chunk_set["document_id"],
+                    chunk_set.get("source_asset_id"),
+                    chunk_set.get("parsed_asset_id"),
+                    chunk_set.get("parser_engine", "plain_text"),
+                    chunk_set.get("parser_version", "v1"),
+                    chunk_set.get("chunk_strategy", "simple_text"),
+                    chunk_set.get("embedding_model"),
+                    chunk_set.get("embedding_dimension"),
+                    chunk_set.get("status", "building"),
+                    chunk_set["created_by"],
+                    chunk_set.get("activated_at"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def upsert_knowledge_import_jobs(
+        self,
+        cursor,
+        import_jobs: dict[str, dict[str, Any]],
+    ) -> None:
+        for import_job in import_jobs.values():
+            created_at = import_job.get("created_at")
+            updated_at = import_job.get("updated_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO knowledge_import_jobs (
+                  id, document_id, source_asset_id, parser_engine, chunk_strategy,
+                  status, progress, error_code, error_message, created_by, started_at,
+                  finished_at, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  %s::timestamptz, %s::timestamptz,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  document_id = EXCLUDED.document_id,
+                  source_asset_id = EXCLUDED.source_asset_id,
+                  parser_engine = EXCLUDED.parser_engine,
+                  chunk_strategy = EXCLUDED.chunk_strategy,
+                  status = EXCLUDED.status,
+                  progress = EXCLUDED.progress,
+                  error_code = EXCLUDED.error_code,
+                  error_message = EXCLUDED.error_message,
+                  created_by = EXCLUDED.created_by,
+                  started_at = EXCLUDED.started_at,
+                  finished_at = EXCLUDED.finished_at,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    import_job["id"],
+                    import_job["document_id"],
+                    import_job.get("source_asset_id"),
+                    import_job.get("parser_engine", "plain_text"),
+                    import_job.get("chunk_strategy", "simple_text"),
+                    import_job.get("status", "uploaded"),
+                    import_job.get("progress", 0),
+                    import_job.get("error_code"),
+                    import_job.get("error_message"),
+                    import_job["created_by"],
+                    import_job.get("started_at"),
+                    import_job.get("finished_at"),
                     created_at,
                     updated_at,
                 ),

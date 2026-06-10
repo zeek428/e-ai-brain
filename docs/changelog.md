@@ -8,6 +8,8 @@
 ## [Unreleased]
 
 ### Added
+- 知识管理第一阶段落地：新增知识空间、空间成员、空间目录、MinIO/S3-compatible 对象存储抽象、知识资产、导入任务、chunk set、文件上传和资产预览能力；知识列表与检索支持空间/目录过滤并按空间成员权限隔离。
+- 知识管理升级设计文档：明确知识库按知识空间、目录、文档、MinIO/S3 资产、chunk/embedding 分层管理，吸收 KnowFlow 的解析任务、父子分块和治理思路，同时保持 PostgreSQL 作为业务事实源。
 - 插件动作配置体验增强：新增动作默认用 Params/Headers 表格配置 HTTP 请求参数和请求头，参数值可选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量并在运行时解析，提交时生成 `request_config.query/headers`，高级 JSON 仅作为完整配置精修入口。
 - 插件连接配置增强：连接环境收敛为 `default/dev/test/staging/prod/sandbox` 受控枚举，认证配置默认按认证方式展示 Token/Header/Basic 字段并只把 JSON 作为高级修改入口，连接列表新增测试按钮和后端测试接口；定时作业插件输入映射新增动态时间 token 模板，运行时按作业时区解析。
 - 插件分类收敛为受控枚举：新增插件页面改为下拉选择，后端创建/更新插件拒绝自由文本分类，并在 API/技术规格中约定分类值。

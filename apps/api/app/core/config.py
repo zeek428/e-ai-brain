@@ -23,6 +23,20 @@ class Settings:
         self.dashboard_slow_threshold_ms = int(os.getenv("DASHBOARD_SLOW_THRESHOLD_MS", "500"))
         self.persistence_mode = os.getenv("PERSISTENCE_MODE", "postgres").lower()
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        self.object_storage_provider = os.getenv("OBJECT_STORAGE_PROVIDER", "local").lower()
+        self.object_storage_local_dir = os.getenv(
+            "OBJECT_STORAGE_LOCAL_DIR",
+            "/tmp/e-ai-brain-object-storage",
+        )
+        self.object_storage_bucket = os.getenv("OBJECT_STORAGE_BUCKET", "ai-brain-knowledge")
+        self.object_storage_endpoint = os.getenv("OBJECT_STORAGE_ENDPOINT", "")
+        self.object_storage_access_key = os.getenv("OBJECT_STORAGE_ACCESS_KEY", "")
+        self.object_storage_secret_key = os.getenv("OBJECT_STORAGE_SECRET_KEY", "")
+        self.object_storage_secure = os.getenv("OBJECT_STORAGE_SECURE", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         self.model_gateway_base_url = os.getenv("MODEL_GATEWAY_BASE_URL", "")
         self.model_gateway_api_key = os.getenv("MODEL_GATEWAY_API_KEY", "")
         self.model_gateway_default_chat_model = os.getenv(
