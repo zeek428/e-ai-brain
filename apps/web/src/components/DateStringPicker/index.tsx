@@ -85,8 +85,12 @@ export function DateStringPicker({
   ...restProps
 }: DateStringPickerProps) {
   const handleBlur = (event: FocusEvent<HTMLElement>) => {
-    const rawValue = 'value' in event.target ? String(event.target.value) : '';
-    onChange?.(mode === 'dateTime' ? normalizeDateTime(rawValue) : normalizeDateOnly(rawValue));
+    if ('value' in event.target) {
+      const rawValue = String(event.target.value).trim();
+      if (rawValue) {
+        onChange?.(mode === 'dateTime' ? normalizeDateTime(rawValue) : normalizeDateOnly(rawValue));
+      }
+    }
     onBlur?.(event);
   };
 
