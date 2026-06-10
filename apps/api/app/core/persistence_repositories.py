@@ -15,6 +15,7 @@ from app.core.repositories.model_gateway import ModelGatewayReadRepository
 from app.core.repositories.operational_collection import OperationalCollectionReadRepository
 from app.core.repositories.product_config import ProductConfigReadRepository
 from app.core.repositories.requirements import RequirementReadRepository
+from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.repositories.system_state import SystemStateRepository
 from app.core.repositories.table_maintenance import TableMaintenanceRepository
 from app.core.repositories.tasks import TaskReadRepository
@@ -98,6 +99,10 @@ def install_snapshot_repositories(repository: Any) -> None:
     repository._operational_collection_read_repository = OperationalCollectionReadRepository(
         repository._connect,
         delete_missing=callbacks.delete_missing,
+        upsert_audit_events=callbacks.upsert_audit_events,
+    )
+    repository._scheduled_ai_job_read_repository = ScheduledAiJobReadRepository(
+        repository._connect,
         upsert_audit_events=callbacks.upsert_audit_events,
     )
     repository._assistant_chat_read_repository = AssistantChatReadRepository(

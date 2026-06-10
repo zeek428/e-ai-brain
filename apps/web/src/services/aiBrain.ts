@@ -3415,6 +3415,223 @@ export async function deleteModelGatewayConfig(configId: string) {
   );
 }
 
+export type AiSkillRecord = {
+  allowed_tools?: string[];
+  code: string;
+  id: string;
+  manifest?: Record<string, unknown>;
+  name: string;
+  package_checksum?: string | null;
+  package_entry?: string | null;
+  package_files?: string[];
+  package_size_bytes?: number;
+  package_uri?: string | null;
+  prompt_template?: string;
+  requires_human_review?: boolean;
+  risk_level?: string;
+  source_type?: string;
+  status: string;
+  version?: string;
+};
+
+export type AiSkillPackageUploadOptions = {
+  code: string;
+  name: string;
+  requiresHumanReview?: boolean;
+  riskLevel?: string;
+  status?: string;
+  version?: string;
+};
+
+async function readUploadFileBytes(file: File): Promise<ArrayBuffer> {
+  if (typeof file.arrayBuffer === 'function') {
+    return file.arrayBuffer();
+  }
+  return new Response(file).arrayBuffer();
+}
+
+export type AiAgentRecord = {
+  brain_app_id?: string;
+  code: string;
+  default_skill_ids?: string[];
+  id: string;
+  model_gateway_config_id?: string | null;
+  name: string;
+  status: string;
+  system_prompt?: string;
+  tool_policy?: Record<string, unknown>;
+};
+
+export type ScheduledJobRecord = {
+  agent_id?: string | null;
+  config_json?: Record<string, unknown>;
+  enabled?: boolean;
+  execution_mode?: string;
+  id: string;
+  job_type: string;
+  name: string;
+  next_run_at?: string | null;
+  product_id?: string | null;
+  schedule_type?: string;
+  skill_ids?: string[];
+  status?: string;
+};
+
+export type ScheduledJobRunRecord = {
+  collector_run_id?: string | null;
+  error_message?: string | null;
+  id: string;
+  records_imported?: number;
+  resolved_agent_snapshot?: Record<string, unknown>;
+  result_summary?: Record<string, unknown>;
+  scheduled_job_id?: string;
+  status: string;
+  trigger_type?: string;
+};
+
+export async function fetchAiSkills(): Promise<AiSkillRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<AiSkillRecord>>('/api/system/ai-skills', {
+    token,
+  });
+  return response.items;
+}
+
+export async function createAiSkill(payload: Partial<AiSkillRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<AiSkillRecord>('/api/system/ai-skills', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function uploadAiSkillPackage(
+  file: File,
+  options: AiSkillPackageUploadOptions,
+) {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'code', options.code);
+  appendQueryParam(params, 'name', options.name);
+  appendQueryParam(params, 'version', options.version ?? '1.0.0');
+  appendQueryParam(params, 'status', options.status ?? 'active');
+  appendQueryParam(params, 'risk_level', options.riskLevel ?? 'medium');
+  appendQueryParam(
+    params,
+    'requires_human_review',
+    options.requiresHumanReview ? 'true' : 'false',
+  );
+  const response = await fetch(`${API_BASE_URL}/api/system/ai-skills/upload?${params}`, {
+    body: await readUploadFileBytes(file),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/zip',
+    },
+    method: 'POST',
+  });
+  if (!response.ok) {
+    let payload: ApiErrorPayload | undefined;
+    try {
+      payload = (await response.json()) as ApiErrorPayload;
+    } catch {
+      payload = undefined;
+    }
+    throw new ApiRequestError({
+      code: payload?.detail?.code,
+      message: payload?.detail?.message ?? `API request failed: ${response.status}`,
+      status: response.status,
+      traceId: payload?.detail?.trace_id,
+    });
+  }
+  const payload = (await response.json()) as ApiEnvelope<AiSkillRecord>;
+  return payload.data;
+}
+
+export async function updateAiSkill(skillId: string, payload: Partial<AiSkillRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<AiSkillRecord>(`/api/system/ai-skills/${skillId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function fetchAiAgents(): Promise<AiAgentRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<AiAgentRecord>>('/api/system/ai-agents', {
+    token,
+  });
+  return response.items;
+}
+
+export async function createAiAgent(payload: Partial<AiAgentRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<AiAgentRecord>('/api/system/ai-agents', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateAiAgent(agentId: string, payload: Partial<AiAgentRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<AiAgentRecord>(`/api/system/ai-agents/${agentId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function fetchScheduledJobs(): Promise<ScheduledJobRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<ScheduledJobRecord>>('/api/system/scheduled-jobs', {
+    token,
+  });
+  return response.items;
+}
+
+export async function createScheduledJob(payload: Partial<ScheduledJobRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<ScheduledJobRecord>('/api/system/scheduled-jobs', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateScheduledJob(jobId: string, payload: Partial<ScheduledJobRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<ScheduledJobRecord>(`/api/system/scheduled-jobs/${jobId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function runScheduledJob(jobId: string) {
+  const token = requireAccessToken();
+  return apiRequest<ScheduledJobRunRecord>(`/api/system/scheduled-jobs/${jobId}/run`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export async function fetchScheduledJobRuns(
+  query: { scheduledJobId?: string; status?: string } = {},
+): Promise<ScheduledJobRunRecord[]> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'scheduled_job_id', query.scheduledJobId);
+  appendQueryParam(params, 'status', query.status);
+  const queryString = params.toString();
+  const response = await apiRequest<ListResponse<ScheduledJobRunRecord>>(
+    queryString ? `/api/system/scheduled-job-runs?${queryString}` : '/api/system/scheduled-job-runs',
+    { token },
+  );
+  return response.items;
+}
+
 function mapRequirementRecord(requirement: RequirementListItem): RequirementRecord {
   return {
     content: requirement.content,

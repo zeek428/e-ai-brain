@@ -867,6 +867,52 @@ class PostgresSnapshotRepository:
     def list_model_gateway_configs(self) -> list[dict[str, Any]]:
         return self._model_gateway_read_repository.list_model_gateway_configs()
 
+    def list_ai_skills(
+        self,
+        *,
+        code: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._scheduled_ai_job_read_repository.list_ai_skills(
+            code=code,
+            status=status,
+        )
+
+    def list_ai_agents(
+        self,
+        *,
+        brain_app_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._scheduled_ai_job_read_repository.list_ai_agents(
+            brain_app_id=brain_app_id,
+            status=status,
+        )
+
+    def list_scheduled_jobs(
+        self,
+        *,
+        enabled: bool | None = None,
+        job_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._scheduled_ai_job_read_repository.list_scheduled_jobs(
+            enabled=enabled,
+            job_type=job_type,
+            status=status,
+        )
+
+    def list_scheduled_job_runs(
+        self,
+        *,
+        scheduled_job_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._scheduled_ai_job_read_repository.list_scheduled_job_runs(
+            scheduled_job_id=scheduled_job_id,
+            status=status,
+        )
+
     def list_model_gateway_logs(
         self,
         *,
@@ -1233,6 +1279,50 @@ class PostgresSnapshotRepository:
     ) -> None:
         self._operational_collection_read_repository.save_collector_run_record(
             record,
+            audit_event=audit_event,
+        )
+
+    def save_ai_skill_record(
+        self,
+        skill: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._scheduled_ai_job_read_repository.save_ai_skill_record(
+            skill,
+            audit_event=audit_event,
+        )
+
+    def save_ai_agent_record(
+        self,
+        agent: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._scheduled_ai_job_read_repository.save_ai_agent_record(
+            agent,
+            audit_event=audit_event,
+        )
+
+    def save_scheduled_job_record(
+        self,
+        job: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._scheduled_ai_job_read_repository.save_scheduled_job_record(
+            job,
+            audit_event=audit_event,
+        )
+
+    def save_scheduled_job_run_record(
+        self,
+        run: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._scheduled_ai_job_read_repository.save_scheduled_job_run_record(
+            run,
             audit_event=audit_event,
         )
 

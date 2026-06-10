@@ -8,6 +8,8 @@
 ## [Unreleased]
 
 ### Added
+- 定时系统作业与 AI 能力装配：PRD/API/技术规格/测试用例补充 Agent、Skill、定时作业、运行实例、AI 配置快照、collector run 关联、锁租约、失败重试和人工确认边界，并落地基础 API、菜单和页面入口。
+- AI 能力配置第一阶段落地：Agent 继续表单配置，Skill 支持 zip 文件包上传、本地存储、checksum/manifest 持久化，并在定时 AI 作业运行时加载本地 Skill 文件内容写入快照。
 - 迭代版本新增代码分支配置：版本页提供“代码分支”入口，可按同产品多个 GitHub/GitLab 代码库维护基准分支、开发分支、状态和创建来源；后端新增 `product_version_branch_configs` 结构表和对应 API，并纳入产品配置 DB-first 读写与审计。
 - Task 4 角色治理 UI 和动态菜单落地：角色管理页接入 `/api/system/roles`、权限点、菜单和范围授权接口，支持新增、复制、编辑、启停、权限/菜单/范围配置；前端布局根据 `/api/auth/me.menu_tree` 过滤左侧导航。
 - Task 3 系统 RBAC API 落地：新增权限点、菜单、角色治理、用户角色/范围授权和用户有效权限查询接口，角色变更同步写入 `role_change_events` 与 `audit_events`。

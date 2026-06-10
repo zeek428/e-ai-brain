@@ -23,6 +23,8 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "system.roles.manage",
             "system.users.manage",
             "system.model_gateway.manage",
+            "system.ai_capabilities.manage",
+            "system.scheduled_jobs.manage",
             "audit.read",
             "workspace.read",
             "workspace.write",

@@ -68,6 +68,27 @@ def test_system_rbac_endpoints_are_owned_by_system_rbac_router():
         assert _route_for(path, method).endpoint.__module__ == expected_module
 
 
+def test_scheduled_ai_job_endpoints_are_owned_by_scheduled_jobs_router():
+    expected_module = "app.api.routers.scheduled_jobs"
+
+    for path, method in [
+        ("/api/system/ai-skills", "GET"),
+        ("/api/system/ai-skills", "POST"),
+        ("/api/system/ai-skills/upload", "POST"),
+        ("/api/system/ai-skills/{skill_id}", "PATCH"),
+        ("/api/system/ai-agents", "GET"),
+        ("/api/system/ai-agents", "POST"),
+        ("/api/system/ai-agents/{agent_id}", "PATCH"),
+        ("/api/system/scheduled-jobs", "GET"),
+        ("/api/system/scheduled-jobs", "POST"),
+        ("/api/system/scheduled-jobs/{job_id}", "PATCH"),
+        ("/api/system/scheduled-jobs/{job_id}/run", "POST"),
+        ("/api/system/scheduled-job-runs", "GET"),
+        ("/api/system/scheduled-job-runs/{run_id}/cancel", "POST"),
+    ]:
+        assert _route_for(path, method).endpoint.__module__ == expected_module
+
+
 def test_product_core_endpoints_are_owned_by_products_router():
     expected_module = "app.api.routers.products"
 

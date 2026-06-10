@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.217 |
+| 功能版本 | v1.1.218 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.218 | 2026-06-10 | 新增定时系统作业和 AI 能力配置目标 API：补充 Agent、Skill、定时作业、运行实例、手动触发、取消、AI 配置快照和审计契约 | Codex |
 | v1.1.217 | 2026-06-09 | 迭代版本新增代码分支配置 API，支持按版本维护多代码库基准分支、开发分支、状态和创建来源 | Codex |
 | v1.1.216 | 2026-06-09 | Task 3 新增最小可用系统 RBAC API：权限点/菜单/角色治理、用户角色/范围授权和用户有效权限查询；角色变更写入 `role_change_events` 与 `audit_events` | Codex |
 | v1.1.215 | 2026-06-07 | RBAC API 演进说明确认外部身份绑定：SSO 用户必须映射到系统 users.id，目标态新增 external identity 绑定接口，未绑定身份不授予默认权限 | Codex |
@@ -491,6 +492,19 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Collectors | GET | `/api/collectors/runs` | 查询 DevOps/洞察采集运行记录。 |
 | Collectors | POST | `/api/collectors/runs` | 登记一次真实采集或导入运行。 |
 | Collectors | PATCH | `/api/collectors/runs/{run_id}` | 更新采集运行状态、导入数量、错误说明或摘要。 |
+| AI Capability | GET | `/api/system/ai-skills` | 查询 Skill 配置列表。 |
+| AI Capability | POST | `/api/system/ai-skills` | 创建 Skill 配置。 |
+| AI Capability | POST | `/api/system/ai-skills/upload` | 上传 zip Skill 文件包，服务端校验后保存本地文件并创建 package 类型 Skill。 |
+| AI Capability | PATCH | `/api/system/ai-skills/{skill_id}` | 更新 Skill Prompt、Schema、工具策略或启停状态。 |
+| AI Capability | GET | `/api/system/ai-agents` | 查询 Agent 配置列表。 |
+| AI Capability | POST | `/api/system/ai-agents` | 创建 Agent 配置。 |
+| AI Capability | PATCH | `/api/system/ai-agents/{agent_id}` | 更新 Agent 模型网关、默认 Skill、系统提示词、执行策略或启停状态。 |
+| Scheduler | GET | `/api/system/scheduled-jobs` | 查询定时系统作业定义。 |
+| Scheduler | POST | `/api/system/scheduled-jobs` | 创建采集、AI 分析、迭代建议或看板刷新作业。 |
+| Scheduler | PATCH | `/api/system/scheduled-jobs/{job_id}` | 更新作业计划、启停、AI 装配、重试和超时策略。 |
+| Scheduler | POST | `/api/system/scheduled-jobs/{job_id}/run` | 手动触发一次作业运行。 |
+| Scheduler | GET | `/api/system/scheduled-job-runs` | 查询定时作业运行实例、配置快照、collector run 关联和结果摘要。 |
+| Scheduler | POST | `/api/system/scheduled-job-runs/{run_id}/cancel` | 取消仍处于 queued/running 的运行实例。 |
 | Attribution | GET | `/api/attribution/pending-items` | 查询待归属数据队列。 |
 | Attribution | POST | `/api/attribution/pending-items` | 登记无法映射产品、模块、需求或导入主体的真实数据。 |
 | Attribution | POST | `/api/attribution/pending-items/{item_id}/resolve` | 将待归属项归属到已有上下文或忽略为噪声。 |
@@ -2502,6 +2516,62 @@ Content-Type: application/json
 ```
 
 `collector_type` 只允许 `gitlab_daily_code_metric`、`jenkins_release`、`online_log_metric`、`user_usage_metric`、`user_feedback`、`iteration_plan_suggestion`；`status` 只允许 `running`、`succeeded`、`failed`、`cancelled`。`product_id` 如传入必须指向 active 产品；`source_system` 必须非空；`records_imported` 不得为负数；`failed` 必须提供非空 `error_message`；`succeeded / failed / cancelled` 为终态，不得再转回 `running` 或其他状态。创建和更新分别写入 `collector_run.created` 与 `collector_run.updated` 审计事件。采集运行记录只记录采集尝试和结果，不自动写入 GitLab/Jenkins/线上日志/用户使用/用户反馈/迭代建议业务数据。
+
+AI 能力配置：
+
+```http
+GET /api/system/ai-skills?status=active&code=iteration_planning
+GET /api/system/ai-agents?brain_app_id=rd_brain&status=active
+POST /api/system/ai-skills
+POST /api/system/ai-skills/upload?code=iteration_planning&name=迭代规划&version=1.0.0
+PATCH /api/system/ai-skills/skill_001
+POST /api/system/ai-agents
+PATCH /api/system/ai-agents/agent_001
+```
+
+Skill 配置至少包含 `code`、`name`、`version`、`input_schema`、`output_schema`、`prompt_template`、`allowed_tools`、`required_context`、`risk_level`、`requires_human_review` 和 `status`。`POST /api/system/ai-skills/upload` 用于上传 zip Skill 文件包，body 为 `application/zip` 原始二进制，query 参数提供 `code`、`name`、`version`、`status`、`risk_level` 和 `requires_human_review`；服务端校验 `skill.yaml` / `SKILL.md`、文件类型白名单、路径安全、包大小和 checksum，响应返回 `source_type=package`、`package_uri`、`package_checksum`、`package_entry`、`package_files`、`package_size_bytes` 和 `manifest`。Agent 配置至少包含 `code`、`name`、`brain_app_id`、`model_gateway_config_id`、`system_prompt`、`default_skill_ids`、`execution_policy`、`tool_policy` 和 `status`；第一阶段 Agent 只支持表单配置，不上传 Agent 文件包。只有管理员可创建和修改 Agent/Skill；响应不得包含模型密钥、外部系统 token 或凭据明文。配置创建、修改、启用、停用和包上传分别写入 `ai_skill.created` / `ai_skill.updated` / `ai_skill.package_uploaded` / `ai_agent.created` / `ai_agent.updated` 审计事件。
+
+定时系统作业：
+
+```http
+GET /api/system/scheduled-jobs?job_type=iteration_plan_suggestion_generate&enabled=true
+POST /api/system/scheduled-jobs
+PATCH /api/system/scheduled-jobs/scheduled_job_001
+POST /api/system/scheduled-jobs/scheduled_job_001/run
+GET /api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_001&status=failed
+POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
+```
+
+创建定时作业示例：
+
+```json
+{
+  "name": "每周生成 AI 迭代规划建议",
+  "job_type": "iteration_plan_suggestion_generate",
+  "enabled": true,
+  "schedule_type": "cron",
+  "cron_expression": "0 9 * * MON",
+  "timezone": "Asia/Shanghai",
+  "product_id": "product_001",
+  "source_system": "ai-brain",
+  "execution_mode": "ai_generated",
+  "agent_id": "agent_iteration_planner",
+  "skill_ids": ["skill_usage_analysis", "skill_feedback_summary", "skill_iteration_planning"],
+  "model_gateway_config_id": "model_gateway_config_001",
+  "config_json": {
+    "planning_cycle": "weekly",
+    "evidence_window_days": 14,
+    "min_evidence_count": 3
+  },
+  "max_retry_count": 2,
+  "timeout_seconds": 600,
+  "lock_ttl_seconds": 900
+}
+```
+
+`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`。AI 作业必须引用 active Agent 和 active Skills；指定 `model_gateway_config_id` 时覆盖 Agent 默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发和取消必须写入审计。
+
+运行实例响应必须包含 `scheduled_job_id`、`collector_run_id`、`trigger_type`、`scheduled_for`、`status`、`started_at`、`finished_at`、`records_imported`、`error_code`、`error_message`、`result_summary`、`config_snapshot`、`resolved_agent_snapshot`、`resolved_skill_snapshots`、`resolved_prompt_snapshot` 和 `tool_policy_snapshot`。模型日志仍只记录 provider、model、purpose、tokens、latency、status 和错误元数据，不保存完整 prompt 或完整输出。`POST /run` 仅创建一次运行实例并进入 `queued/running`，不得直接返回伪造业务结果。
 
 待归属数据队列：
 

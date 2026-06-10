@@ -137,6 +137,77 @@
 
 ---
 
+### TC-AIBRAIN-SCHED-FUNC-031: AI 能力配置与定时作业装配
+
+| 项目 | 内容 |
+|------|------|
+| 用例编号 | TC-AIBRAIN-SCHED-FUNC-031 |
+| 用例名称 | AI 能力配置与定时作业装配 |
+| 优先级 | P1 |
+| 模块 | SCHEDULER / AI_CAPABILITY |
+| 创建人 | Codex |
+| 创建日期 | 2026-06-10 |
+
+**前置条件**:
+1. 系统已配置 active 模型网关。
+2. 当前用户为管理员；另准备产品负责人、研发负责人和 viewer 角色用于越权验证。
+3. 存在 active 产品、用户反馈、用户使用指标、Bug 或线上日志证据。
+
+**测试步骤**:
+| 步骤 | 操作 | 预期结果 |
+|------|------|----------|
+| 1 | 管理员调用 `POST /api/system/ai-skills` 创建 `iteration_planning` Skill | 写入 `ai_skills`，返回输入/输出 schema、允许工具、所需上下文、人工确认要求和 active 状态；不包含任何密钥。 |
+| 2 | 管理员调用 `POST /api/system/ai-skills/upload` 上传包含 `skill.yaml` 和 `SKILL.md` 的 zip Skill 包 | 写入 package 类型 Skill，返回 `package_uri`、`package_checksum`、`manifest`、`package_entry` 和文件清单；本地文件落盘，记录 `ai_skill.package_uploaded` 审计。 |
+| 3 | 管理员调用 `POST /api/system/ai-agents` 创建 `agent_iteration_planner`，绑定默认模型网关和上一步 Skill | 写入 `ai_agents`，返回默认 Skill、执行策略、工具策略和 active 状态；记录 `ai_agent.created` 审计。 |
+| 4 | 管理员调用 `POST /api/system/scheduled-jobs` 创建 `iteration_plan_suggestion_generate` 作业，设置 cron、Agent、Skill、execution_mode=`ai_generated` | 写入 `scheduled_jobs`，计算 `next_run_at`，记录作业配置和 `scheduled_job.created` 审计。 |
+| 5 | 产品负责人或 viewer 尝试创建/修改 Agent、Skill 或系统级定时作业 | 返回 `FORBIDDEN`，不得写入配置或审计成功事件。 |
+| 6 | 停用 Skill 后再次启用引用该 Skill 的定时作业 | 返回配置校验错误，提示引用的 Skill 不可用。 |
+
+**预期结果**:
+1. Agent/Skill 作为平台级配置独立维护，普通业务用户不能修改 Prompt、工具策略或模型网关。
+2. 定时 AI 作业只能引用 active Agent、active Skill 和 active 模型网关。
+3. 配置变更必须写审计，API 响应不泄露密钥、外部系统 token 或完整历史 prompt 输出。
+
+**状态**: 基础自动化已覆盖 Agent/Skill/定时作业配置、Skill 包上传、管理员写入和非管理员拒绝；周期 worker 自动扫描和抢锁调度另行补充集成用例。
+
+---
+
+### TC-AIBRAIN-SCHED-FUNC-032: 定时 AI 作业运行、快照与失败处理
+
+| 项目 | 内容 |
+|------|------|
+| 用例编号 | TC-AIBRAIN-SCHED-FUNC-032 |
+| 用例名称 | 定时 AI 作业运行、快照与失败处理 |
+| 优先级 | P1 |
+| 模块 | SCHEDULER / USER_INSIGHTS |
+| 创建人 | Codex |
+| 创建日期 | 2026-06-10 |
+
+**前置条件**:
+1. 已存在 active `iteration_plan_suggestion_generate` 定时作业，绑定 active Agent、Skill 和模型网关。
+2. 系统有可用于生成建议的真实用户反馈、Bug、用户使用或线上日志证据。
+3. scheduler worker 可运行；测试环境可通过手动触发替代真实时间等待。
+
+**测试步骤**:
+| 步骤 | 操作 | 预期结果 |
+|------|------|----------|
+| 1 | 调用 `POST /api/system/scheduled-jobs/{job_id}/run` 手动触发作业 | 创建 `scheduled_job_runs`，状态为 `queued` 或 `running`，生成关联 `collector_runs`，记录 trigger_type=`manual`。 |
+| 2 | worker 执行作业 | 运行实例保存 `config_snapshot`、`resolved_agent_snapshot`、`resolved_skill_snapshots`、`resolved_prompt_snapshot` 和 `tool_policy_snapshot`；package 类型 Skill 额外保存从本地文件加载出的 `package_snapshot.entry_content`；模型调用走模型网关并写模型日志元数据。 |
+| 3 | AI 输出通过 schema 校验 | 写入 `iteration_plan_suggestions` 候选建议和审计事件，运行状态变为 `succeeded`，collector run 同步为 `succeeded` 并记录 `records_imported`。 |
+| 4 | 产品负责人通过现有迭代建议确认接口采纳或驳回 | 只有确认后才可转正式需求；定时作业本身不得自动创建正式需求或变更迭代排期。 |
+| 5 | 模型网关失败或 Skill 输出 schema 不合法 | 运行状态变为 `failed`，记录 `error_code/error_message`，collector run 同步失败；不会写入伪造建议。 |
+| 6 | 配置 `max_retry_count>0` 后重试失败运行 | 系统创建新的运行实例，保留原失败历史，不覆盖旧 run；达到最大重试次数后停止自动重试。 |
+| 7 | 两个 worker 同时扫描同一 due job | 只有一个 worker 成功获得锁租约并创建有效 running 实例；另一个 worker 跳过或拿不到租约，不重复写业务数据。 |
+
+**预期结果**:
+1. 定时 AI 作业运行可追溯到作业定义、collector run、模型日志、AI 配置快照和最终候选业务结果。
+2. AI 生成类作业只生成建议或候选，不绕过人工确认。
+3. 失败、超时、取消和锁竞争都有明确状态和审计，不生成占位数据。
+
+**状态**: 基础自动化已覆盖手动触发、配置快照、本地 Skill 文件加载、collector run 关联和 AI 迭代建议生成；周期触发、重试退避和抢锁冲突另行补充集成用例。
+
+---
+
 ### TC-AIBRAIN-ATTRIBUTION-FUNC-024: 待归属数据队列登记与处理
 
 | 项目 | 内容 |
