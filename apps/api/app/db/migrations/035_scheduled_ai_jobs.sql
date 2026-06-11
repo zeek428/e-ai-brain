@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
   execution_mode text NOT NULL,
   agent_id text REFERENCES ai_agents(id) ON DELETE SET NULL,
   skill_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  knowledge_document_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
   model_gateway_config_id text REFERENCES model_gateway_configs(id) ON DELETE SET NULL,
   config_json jsonb NOT NULL DEFAULT '{}'::jsonb,
   max_retry_count integer NOT NULL DEFAULT 0,

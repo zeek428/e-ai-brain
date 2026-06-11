@@ -16,6 +16,12 @@ from app.services.dynamic_parameters import (
     resolve_dynamic_parameter_value,
 )
 from app.services.iteration_planning import create_iteration_suggestions_response
+from app.services.knowledge_documents import (
+    knowledge_document_chunks,
+    knowledge_query_repository,
+    knowledge_repository_access_args,
+)
+from app.services.knowledge_search import KNOWLEDGE_SEARCHABLE_STATUSES
 from app.services.model_gateway_config_context import (
     save_model_gateway_records,
 )
@@ -608,6 +614,89 @@ def payload_field(payload: Any, name: str, default: Any = None) -> Any:
     return getattr(payload, name, default)
 
 
+def normalized_knowledge_document_ids(value: Any) -> list[str]:
+    if value is None:
+        return []
+    ids = value if isinstance(value, list) else []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in ids:
+        if not isinstance(item, str):
+            raise api_error(400, "VALIDATION_ERROR", "knowledge_document_ids must be strings")
+        document_id = item.strip()
+        if not document_id:
+            continue
+        if document_id in seen:
+            continue
+        seen.add(document_id)
+        normalized.append(document_id)
+    return normalized
+
+
+def readable_knowledge_documents_by_id(
+    current_store: Any,
+    *,
+    document_ids: list[str],
+    user: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    if not document_ids:
+        return {}
+    requested = set(document_ids)
+    repository = knowledge_query_repository(current_store)
+    if repository is not None:
+        documents = repository.list_knowledge_documents(
+            **knowledge_repository_access_args(user),
+        )
+    else:
+        from app.services.knowledge_management import document_is_readable
+
+        documents = [
+            document
+            for document in current_store.knowledge_documents.values()
+            if document_is_readable(current_store, user, document)
+        ]
+    return {
+        document["id"]: dict(document)
+        for document in documents
+        if document.get("id") in requested
+    }
+
+
+def validate_knowledge_document_ids(
+    current_store: Any,
+    document_ids: list[str],
+    *,
+    user: dict[str, Any],
+) -> list[str]:
+    normalized = normalized_knowledge_document_ids(document_ids)
+    if not normalized:
+        return []
+    documents_by_id = readable_knowledge_documents_by_id(
+        current_store,
+        document_ids=normalized,
+        user=user,
+    )
+    missing = [document_id for document_id in normalized if document_id not in documents_by_id]
+    if missing:
+        raise api_error(
+            404,
+            "KNOWLEDGE_DOCUMENT_NOT_FOUND",
+            f"Knowledge document not found or not readable: {', '.join(missing)}",
+        )
+    unsearchable = [
+        document_id
+        for document_id in normalized
+        if documents_by_id[document_id].get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES
+    ]
+    if unsearchable:
+        raise api_error(
+            400,
+            "KNOWLEDGE_DOCUMENT_NOT_SEARCHABLE",
+            f"Knowledge document is not searchable: {', '.join(unsearchable)}",
+        )
+    return normalized
+
+
 def effective_scheduled_job_type(payload: Any) -> str:
     job_type = str(payload_field(payload, "job_type") or "")
     skill_ids = list(payload_field(payload, "skill_ids", []) or [])
@@ -745,6 +834,11 @@ def create_scheduled_job_response(
         execution_mode,
     ) = validate_job_refs(current_store, payload)
     plugin_action_id, plugin_connection_id = validate_plugin_refs(current_store, payload)
+    knowledge_document_ids = validate_knowledge_document_ids(
+        current_store,
+        payload.knowledge_document_ids,
+        user=user,
+    )
     now = datetime.now(UTC).isoformat()
     job_id = current_store.new_id("scheduled_job")
     job = {
@@ -758,6 +852,7 @@ def create_scheduled_job_response(
         "id": job_id,
         "interval_seconds": payload.interval_seconds,
         "job_type": job_type,
+        "knowledge_document_ids": knowledge_document_ids,
         "last_error_message": None,
         "last_failure_at": None,
         "last_run_at": None,
@@ -820,6 +915,11 @@ def patch_scheduled_job_response(
         execution_mode,
     ) = validate_job_refs(current_store, draft)
     plugin_action_id, plugin_connection_id = validate_plugin_refs(current_store, draft)
+    knowledge_document_ids = validate_knowledge_document_ids(
+        current_store,
+        payload_field(draft, "knowledge_document_ids", []),
+        user=user,
+    )
     if "name" in updates:
         updates["name"] = ensure_non_blank(updates["name"], "name")
     if "source_system" in updates:
@@ -828,6 +928,7 @@ def patch_scheduled_job_response(
     updates["skill_ids"] = skill_ids
     updates["model_gateway_config_id"] = model_gateway_config_id
     updates["job_type"] = job_type
+    updates["knowledge_document_ids"] = knowledge_document_ids
     updates["execution_mode"] = execution_mode
     updates["plugin_action_id"] = plugin_action_id
     updates["plugin_connection_id"] = plugin_connection_id
@@ -1081,6 +1182,72 @@ def selected_model_gateway_config(current_store: Any, job: dict[str, Any]) -> di
     return config
 
 
+def scheduled_job_knowledge_references(
+    current_store: Any,
+    *,
+    job: dict[str, Any],
+    user: dict[str, Any],
+    max_content_chars: int = 1200,
+    max_chunks: int = 8,
+) -> list[dict[str, Any]]:
+    document_ids = normalized_knowledge_document_ids(job.get("knowledge_document_ids") or [])
+    if not document_ids:
+        return []
+    document_order = {document_id: index for index, document_id in enumerate(document_ids)}
+    repository = knowledge_query_repository(current_store)
+    candidates: list[dict[str, Any]]
+    if repository is not None:
+        candidates = repository.search_knowledge_chunks(
+            **knowledge_repository_access_args(user),
+            query=None,
+        )
+    else:
+        documents_by_id = readable_knowledge_documents_by_id(
+            current_store,
+            document_ids=document_ids,
+            user=user,
+        )
+        candidates = []
+        for document_id in document_ids:
+            document = documents_by_id.get(document_id)
+            if document is None:
+                continue
+            if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
+                continue
+            for chunk in knowledge_document_chunks(current_store, document_id):
+                candidates.append({"chunk": chunk, "document": document})
+
+    references: list[dict[str, Any]] = []
+    for candidate in candidates:
+        document = candidate.get("document") or {}
+        chunk = candidate.get("chunk") or {}
+        document_id = document.get("id")
+        if document_id not in document_order:
+            continue
+        if chunk.get("metadata", {}).get("chunk_role") == "parent":
+            continue
+        content = str(chunk.get("content") or "").strip()
+        if not content:
+            continue
+        references.append(
+            {
+                "chunk_id": chunk.get("id"),
+                "chunk_index": chunk.get("chunk_index"),
+                "content": content[:max_content_chars],
+                "document_id": document_id,
+                "title": document.get("title"),
+            }
+        )
+    references.sort(
+        key=lambda item: (
+            document_order.get(str(item.get("document_id")), 999999),
+            int(item.get("chunk_index") or 0),
+            str(item.get("chunk_id") or ""),
+        )
+    )
+    return references[:max_chunks]
+
+
 def model_json_content(response_payload: dict[str, Any]) -> dict[str, Any]:
     content = response_payload["choices"][0]["message"]["content"]
     if isinstance(content, dict):
@@ -1106,6 +1273,7 @@ def scheduled_job_ai_messages(
     output_mapping: dict[str, Any],
     source_response_json: dict[str, Any],
     source_row_count: int,
+    knowledge_references: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     agent = current_store.ai_agents.get(job.get("agent_id")) if job.get("agent_id") else None
     skill_prompts = []
@@ -1151,6 +1319,8 @@ def scheduled_job_ai_messages(
         "source_row_count": source_row_count,
         "data_connection_response": source_response_json,
     }
+    if knowledge_references:
+        user_payload["knowledge_references"] = knowledge_references
     return [
         {"role": "system", "content": str(system_prompt)},
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False, sort_keys=True)},
@@ -1167,9 +1337,15 @@ def run_scheduled_job_ai_processing(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     config = selected_model_gateway_config(current_store, job)
+    knowledge_references = scheduled_job_knowledge_references(
+        current_store,
+        job=job,
+        user=user,
+    )
     messages = scheduled_job_ai_messages(
         current_store,
         job=job,
+        knowledge_references=knowledge_references,
         output_mapping=output_mapping,
         source_response_json=source_response_json,
         source_row_count=source_row_count,
@@ -1274,6 +1450,7 @@ def run_scheduled_job_ai_processing(
     )
     save_model_gateway_records(current_store, audit_event=audit_event)
     return {
+        "knowledge_references": knowledge_references,
         "model_gateway_config_id": config["id"],
         "model_log_id": model_log["id"],
         "model": config["default_chat_model"],
@@ -1457,6 +1634,7 @@ def run_user_feedback_insight_extract_job(
             "skill_processing": {
                 "input": {
                     "insights_path": str(mapping.get("insights_path") or "$.insights"),
+                    "knowledge_references": ai_processing.get("knowledge_references") or [],
                     "source_row_count": source_row_count,
                 },
                 "label": "Skill 处理后内容",

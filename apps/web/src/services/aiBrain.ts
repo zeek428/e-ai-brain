@@ -3664,6 +3664,7 @@ export type ScheduledJobRecord = {
   id: string;
   interval_seconds?: number | null;
   job_type: string;
+  knowledge_document_ids?: string[];
   model_gateway_config_id?: string | null;
   name: string;
   next_run_at?: string | null;

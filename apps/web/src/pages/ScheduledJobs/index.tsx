@@ -9,6 +9,7 @@ import {
   fetchActiveProductOptions,
   fetchAiAgents,
   fetchAiSkills,
+  fetchManagementKnowledge,
   fetchModelGatewayConfigs,
   fetchPluginActions,
   fetchPluginConnections,
@@ -25,6 +26,7 @@ import {
   type ScheduledJobRunRecord,
 } from '../../services/aiBrain';
 import type { ModelGatewayConfigRecord } from '../../data/management';
+import type { KnowledgeRecord } from '../../data/management';
 
 type ScheduledJobFormValues = {
   agent_id?: string;
@@ -33,6 +35,7 @@ type ScheduledJobFormValues = {
   execution_mode: string;
   interval_seconds?: number;
   job_type: string;
+  knowledge_document_ids?: string[];
   model_gateway_config_id?: string;
   name: string;
   plugin_action_id?: string;
@@ -163,6 +166,7 @@ export default function ScheduledJobsPage() {
   const [products, setProducts] = useState<ProductFilterOption[]>([]);
   const [agents, setAgents] = useState<AiAgentRecord[]>([]);
   const [skills, setSkills] = useState<AiSkillRecord[]>([]);
+  const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeRecord[]>([]);
   const [modelGatewayConfigs, setModelGatewayConfigs] = useState<ModelGatewayConfigRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -222,6 +226,7 @@ export default function ScheduledJobsPage() {
         nextProducts,
         nextAgents,
         nextSkills,
+        nextKnowledgeDocuments,
         nextModelGatewayConfigs,
       ] =
         await Promise.all([
@@ -232,6 +237,7 @@ export default function ScheduledJobsPage() {
           fetchActiveProductOptions(),
           fetchAiAgents(),
           fetchAiSkills(),
+          fetchManagementKnowledge(),
           fetchModelGatewayConfigs(),
         ]);
       setJobs(nextJobs);
@@ -241,6 +247,11 @@ export default function ScheduledJobsPage() {
       setProducts(nextProducts);
       setAgents(nextAgents.filter((agent) => agent.status === 'active'));
       setSkills(nextSkills.filter((skill) => skill.status === 'active'));
+      setKnowledgeDocuments(
+        nextKnowledgeDocuments.filter((document) =>
+          ['indexed', 'text_indexed', 'vector_indexed'].includes(document.status),
+        ),
+      );
       setModelGatewayConfigs(nextModelGatewayConfigs.filter((config) => config.status === 'active'));
     } catch (error) {
       message.error(error instanceof Error ? error.message : '定时作业加载失败');
@@ -276,6 +287,7 @@ export default function ScheduledJobsPage() {
       execution_mode: job.execution_mode ?? 'deterministic',
       interval_seconds: job.interval_seconds ?? undefined,
       job_type: job.job_type,
+      knowledge_document_ids: job.knowledge_document_ids ?? [],
       model_gateway_config_id: job.model_gateway_config_id ?? undefined,
       name: job.name,
       plugin_action_id: job.plugin_action_id ?? undefined,
@@ -300,6 +312,7 @@ export default function ScheduledJobsPage() {
       ...values,
       plugin_input_mapping: editingJob?.plugin_input_mapping ?? {},
       plugin_output_mapping: editingJob?.plugin_output_mapping ?? {},
+      knowledge_document_ids: values.knowledge_document_ids ?? [],
       skill_ids: values.skill_ids ?? [],
     };
     if (editingJob) {
@@ -691,6 +704,19 @@ export default function ScheduledJobsPage() {
               options={skills.map((skill) => ({
                 label: `${skill.name} (${skill.code})`,
                 value: skill.id,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item label="知识引用" name="knowledge_document_ids">
+            <Select
+              allowClear
+              mode="multiple"
+              optionFilterProp="label"
+              placeholder="请选择知识文档"
+              showSearch
+              options={knowledgeDocuments.map((document) => ({
+                label: `${document.title} (${document.documentType})`,
+                value: document.id,
               }))}
             />
           </Form.Item>

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 定时作业新增可选知识引用：作业可配置 `knowledge_document_ids`，运行时在调用模型网关前按权限读取可检索知识 chunk，并以 `knowledge_references` 注入 Agent/Skill 上下文；运行结果详情在 Skill 节点展示引用知识输入。
 - 定时作业配置和执行链路校正：作业表单按“数据连接 -> AI 模型 -> Agent -> Skills -> 结果动作”配置，隐藏时间参数、连接输入参数和输出覆盖 JSON；`user_feedback_insight_extract` 运行时必须先取数，再通过模型网关按 Agent/Skill 处理为结构化 JSON，最后执行结果动作写入。
 - 定时作业手动运行可观测性增强：点击运行后按钮进入执行中状态并禁用重复触发；运行结果详情顶部直接展示本次作业类型、执行模式、AI 模型、Agent 和 Skills，便于判断是否经过大模型处理。
 - 定时作业运行结果详情补齐三段核心节点：详情弹窗优先展示数据连接获取内容、经过 Skill 处理后的内容和结果动作反馈内容；运行摘要新增 `execution_nodes`，并在 Skill 节点展示模型调用、处理输入输出和 `model_log_id`。

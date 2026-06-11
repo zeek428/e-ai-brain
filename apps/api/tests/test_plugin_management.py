@@ -670,6 +670,21 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
         },
         headers=admin_headers,
     ).json()["data"]
+    knowledge = client.post(
+        "/api/knowledge/documents",
+        json={
+            "content": (
+                "支付页提交后无响应时，应优先排查订单幂等锁、"
+                "支付回调超时和前端按钮防重复提交状态。"
+            ),
+            "doc_type": "runbook",
+            "permission_roles": ["admin"],
+            "product_id": product["id"],
+            "tags": ["支付体验", "排障知识"],
+            "title": "支付页无响应排障知识",
+        },
+        headers=admin_headers,
+    ).json()["data"]
 
     model_calls: list[dict[str, object]] = []
 
@@ -803,6 +818,7 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
             "enabled": True,
             "execution_mode": "ai_generated",
             "job_type": "user_feedback_insight_extract",
+            "knowledge_document_ids": [knowledge["id"]],
             "model_gateway_config_id": model_gateway["id"],
             "name": "每周 MaxCompute 用户反馈洞察提取",
             "plugin_action_id": action["id"],
@@ -841,6 +857,9 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     model_body = json.loads(str(model_calls[0]["body"]))
     assert model_body["model"] == "scheduled-job-model"
     assert model_body["response_format"] == {"type": "json_object"}
+    user_payload = json.loads(model_body["messages"][1]["content"])
+    assert user_payload["knowledge_references"][0]["document_id"] == knowledge["id"]
+    assert "支付页提交后无响应" in user_payload["knowledge_references"][0]["content"]
     execution_nodes = run["result_summary"]["execution_nodes"]
     assert execution_nodes["data_connection"]["records_imported"] == 18
     assert execution_nodes["data_connection"]["input_mapping"]["time_field"] == "created_at"
@@ -849,6 +868,10 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     assert execution_nodes["data_connection"]["response_summary"]["json"]["row_count"] == 18
     assert execution_nodes["skill_processing"]["status"] == "succeeded"
     assert execution_nodes["skill_processing"]["model_gateway_called"] is True
+    assert (
+        execution_nodes["skill_processing"]["input"]["knowledge_references"][0]["document_id"]
+        == knowledge["id"]
+    )
     assert execution_nodes["skill_processing"]["model_log_id"].startswith("model_log_")
     assert execution_nodes["skill_processing"]["processing_mode"] == "model_gateway_json_transform"
     assert execution_nodes["skill_processing"]["output"]["candidate_count"] == 1

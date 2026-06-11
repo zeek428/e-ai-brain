@@ -227,6 +227,69 @@ def test_ai_skills_agents_and_scheduled_jobs_are_admin_managed():
     assert listed_after_delete["total"] == 0
 
 
+def test_scheduled_job_rejects_unsearchable_knowledge_reference():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    model_gateway = create_model_gateway(admin_headers)
+    product = create_product(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "feedback_insight",
+            "name": "反馈洞察",
+            "prompt_template": "结合知识文档提取用户反馈洞察",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "feedback_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈分析 Agent",
+            "status": "active",
+            "system_prompt": "你负责分析用户反馈。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    knowledge = client.post(
+        "/api/knowledge/documents",
+        json={
+            "content": "支付页无响应时优先排查回调超时。",
+            "doc_type": "runbook",
+            "permission_roles": ["admin"],
+            "product_id": product["id"],
+            "title": "支付排障知识",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    app.state.store.knowledge_documents[knowledge["id"]]["index_status"] = "pending_index"
+
+    response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "iteration_plan_suggestion_generate",
+            "knowledge_document_ids": [knowledge["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "每周带知识反馈洞察",
+            "product_id": product["id"],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+            "source_system": "ai-brain",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "KNOWLEDGE_DOCUMENT_NOT_SEARCHABLE"
+
+
 def test_user_feedback_collect_with_ai_pipeline_is_normalized_to_insight_extract():
     app.state.store.reset()
     admin_headers = auth_headers()

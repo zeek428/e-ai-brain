@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.285 |
+| 功能版本 | v1.1.286 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.286 | 2026-06-11 | 新增 AI 助手工作台升级整体方案：通过 `@` 显式引用知识库、业务对象、插件、AI 能力和定时任务，并在助理内生成可确认的配置/执行草案 | Codex |
 | v1.1.285 | 2026-06-11 | 定时作业配置和执行链路校正：表单按数据连接、AI 模型、Agent、Skills、结果动作排序，用户反馈洞察抽取必须经过模型网关处理后再执行结果动作 | Codex |
 | v1.1.284 | 2026-06-11 | 定时作业运行结果详情补齐三段核心节点：数据连接获取内容、Skill 处理内容、结果动作反馈内容，并在 Skill 节点展示模型调用状态 | Codex |
 | v1.1.283 | 2026-06-11 | 定时作业运行记录增强：列表提供运行结果详情入口，手动触发后展示本次结果摘要、插件调用、Skill/Prompt 快照、作业配置快照和错误信息 | Codex |
@@ -315,6 +316,12 @@
 ## 概述
 
 企业 AI 大脑平台 v1 系列采用基于 Ant Design Pro 模板的 React + TypeScript 前端、FastAPI 后端、LangGraph 工作流、PostgreSQL + pgvector 知识存储、Redis 缓存/队列、GBrain 长期记忆层和 OpenAI-compatible 模型网关，先以模块化单体跑通产品研发大脑从需求审批到产品详细设计、技术方案、GitLab MR / GitHub PR 代码 Review、人工确认、内部报告归档和知识沉淀的 MVP 闭环，并通过研发上下文图谱感知需求、设计、代码、测试、发布、线上反馈、用户使用和用户反馈之间的关联与风险。AI 助手工作台已接入模型网关 Chat 能力，聊天前由后端按用户问题生成 delivery progress、pending reviews、code review、iteration、bugs、model gateway 等确定性 read-model 工具结果，模型优先依据 `system_context.tool_results` 回答 AI Brain 产品配置、需求/任务进展、迭代、Git 仓库、代码评审和模型网关状态问题；助手服务同时生成产品、迭代、需求、任务、Review、Bug、代码评审和知识沉淀引用候选，回答消息持久化 `references` 与 `tool_results` 并在前端展示可跳转来源链接。GitLab 每日代码指标、Jenkins 发布记录、线上运行日志指标、用户反馈、用户使用指标、采集运行记录、待归属数据队列、基于反馈/Bug 的迭代规划建议、开发计划、自动化测试、发布上线评估、上线后分析基础闭环和生命周期 v1.2 真实证据扩展已进入当前实现；外部自动采集器和真实外部系统双向写回按后续阶段确认后推进。后续定时采集、AI 日志分析、AI 迭代建议和看板刷新统一通过 `scheduled_jobs` 调度定义、`scheduled_job_runs` 运行实例、`collector_runs` 采集台账和 `ai_agents` / `ai_skills` 能力装配完成，每次运行必须保存解析后的 Agent、Skill、模型网关、Prompt、输出 Schema、工具策略和上下文范围快照。
+
+## AI 助手工作台升级目标态
+
+AI 助手下一阶段升级为统一工作台，而不是只读问答页。目标态详见 [AI 助手工作台升级整体方案](assistant-workbench-upgrade-design.md)：用户可在输入框通过 `@` 显式引用产品、需求、AI 任务、Bug、知识空间/目录/文档/chunk、插件、插件动作、AI Agent/Skill、模型网关配置、定时作业和运行实例；后端必须先解析引用、校验权限、构造脱敏上下文，再进入模型网关调用或动作草案生成。知识库引入遵守显式范围、权限过滤和限量注入，完整知识正文不得写入模型日志。
+
+助理内的 AI 能力配置、插件管理配置和定时任务配置必须以“动作草案 -> 用户确认 -> 领域 service 执行”的方式实现。模型只能生成配置草案、差异摘要和建议，不能直接写 `ai_skills`、`ai_agents`、`integration_plugins`、`plugin_connections`、`plugin_actions`、`scheduled_jobs` 或触发外部调用。所有写配置、插件试运行、定时作业运行、删除/停用等高影响动作必须展示影响摘要并由具备权限的用户确认，确认后仍复用现有 service 校验、repository 写入、审计事件和运行快照。
 
 ## 设计决策
 
@@ -625,7 +632,7 @@ requirements ──< ai_tasks
 | user_usage_metrics | 用户使用指标 | 按 product_id、module_code、feature_code、user_segment、time_window 聚合活跃、访问、转化、停留、异常退出和低使用功能。 |
 | user_feedback | 用户反馈记录 | 记录来源渠道、反馈类型、满意度或情绪倾向、标签、关联产品模块、创建人、处理状态和可选关联需求；转需求后状态同步为 `linked`。 |
 | collector_runs | 采集运行记录 | 记录 collector_type、product_id、source_system、status、started_at、finished_at、records_imported、error_message 和 payload_summary；终态不可回到 running，failed 必须有错误说明。 |
-| scheduled_jobs | 定时系统作业定义 | 记录 job_type、schedule_type、cron_expression/interval_seconds、timezone、enabled、product_id、source_system、config_json、execution_mode、agent_id、skill_ids、model_gateway_config_id、plugin_action_id、plugin_connection_id、plugin_input_mapping、plugin_output_mapping、重试/超时/锁租约和 next_run_at；`plugin_connection_id` 在页面语义中作为数据连接，`skill_ids` 作为分析处理能力，`plugin_action_id` 作为结果动作；`plugin_input_mapping` 支持 `{{current_date}}`、`{{current_date-7}}`、`{{last_full_week.start}}` 等动态时间 token，运行时按作业 timezone 解析；前端默认以参数表格配置连接输入参数，JSON 只作为高级修改入口并支持表格/JSON 双向同步；`plugin_output_mapping` 仅作为作业级覆盖，留空时复用动作 `result_mapping`；列表必须提供编辑和删除入口，编辑回填现有调度、AI 装配和插件映射配置，删除写入 `scheduled_job.deleted` 审计。 |
+| scheduled_jobs | 定时系统作业定义 | 记录 job_type、schedule_type、cron_expression/interval_seconds、timezone、enabled、product_id、source_system、config_json、execution_mode、agent_id、skill_ids、knowledge_document_ids、model_gateway_config_id、plugin_action_id、plugin_connection_id、plugin_input_mapping、plugin_output_mapping、重试/超时/锁租约和 next_run_at；`plugin_connection_id` 在页面语义中作为数据连接，`skill_ids` 作为分析处理能力，`knowledge_document_ids` 作为可选知识引用，`plugin_action_id` 作为结果动作；`plugin_input_mapping` 支持 `{{current_date}}`、`{{current_date-7}}`、`{{last_full_week.start}}` 等动态时间 token，运行时按作业 timezone 解析；前端默认以参数表格配置连接输入参数，JSON 只作为高级修改入口并支持表格/JSON 双向同步；`plugin_output_mapping` 仅作为作业级覆盖，留空时复用动作 `result_mapping`；列表必须提供编辑和删除入口，编辑回填现有调度、AI 装配和插件映射配置，删除写入 `scheduled_job.deleted` 审计。 |
 | scheduled_job_runs | 定时系统作业运行实例 | 记录 scheduled_job_id、collector_run_id、触发方式、计划时间、运行状态、锁租约、导入数量、错误信息、result_summary、config_snapshot、resolved_agent_snapshot、resolved_skill_snapshots、resolved_prompt_snapshot、tool_policy_snapshot、resolved_plugin_snapshot 和 plugin_invocation_log_id。 |
 | pending_attribution_items | 待归属数据队列 | 记录 source_type、source_system、collector_run_id、raw_subject_id、summary、raw_payload、建议归属、confidence、status、resolution_action、resolved_*、created_by 和 resolved_by；pending / resolved / ignored 三态，处理不自动生成业务数据。 |
 | iteration_plan_suggestions | AI 迭代规划建议 | 记录规划周期、建议需求、推荐理由、证据链、业务价值、风险信号、依赖条件、预估研发投入、建议优先级和置信度。 |
@@ -1088,7 +1095,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 - `execution_mode` 分为 `deterministic`、`ai_assisted`、`ai_generated`：确定性作业可写真实指标；AI 辅助作业可写摘要、风险信号或看板派生结果；AI 生成作业只能写候选建议或待确认结果。
 - 调度 worker 每分钟或按配置 tick，查询 `enabled=true AND next_run_at <= now()` 的作业，并通过数据库行级更新设置 `lease_owner` / `lease_expires_at` 抢占执行权；锁过期后其他 worker 可接管，已创建的运行实例不得被覆盖。
 - 每次运行必须冻结 `config_snapshot`；AI 作业还必须冻结 Agent、Skill、模型网关、Prompt 模板、输出 Schema、工具策略和上下文范围快照，避免配置修改影响历史可追溯性。
-- `user_feedback_insight_extract` 必须绑定数据连接、AI 模型、Agent、Skills 和结果动作。运行顺序固定为：先通过数据连接/插件动作获取源数据，再通过平台模型网关按 Agent 系统提示和 Skill Prompt 将源数据处理为结果动作需要的结构化 JSON，最后根据动作 `result_mapping.write_target` 执行业务写入。当写入目标为 `user_feedback_insights` 时通过用户反馈 service 写入用户洞察表，`records_imported` 记录实际写入洞察数，源表行数只进入 `result_summary.source_row_count`。作业未配置 `plugin_output_mapping` 时复用动作 `result_mapping`。运行摘要必须通过 `result_summary.execution_nodes.skill_processing.model_gateway_called=true`、`model_log_id`、`processing_mode=model_gateway_json_transform` 和处理输入/输出如实记录 AI 处理节点。
+- `user_feedback_insight_extract` 必须绑定数据连接、AI 模型、Agent、Skills 和结果动作。运行顺序固定为：先通过数据连接/插件动作获取源数据；若配置 `knowledge_document_ids`，再按当前用户权限获取可检索知识 chunk 并注入 Skill 输入；随后通过平台模型网关按 Agent 系统提示、Skill Prompt 和知识引用将源数据处理为结果动作需要的结构化 JSON；最后根据动作 `result_mapping.write_target` 执行业务写入。当写入目标为 `user_feedback_insights` 时通过用户反馈 service 写入用户洞察表，`records_imported` 记录实际写入洞察数，源表行数只进入 `result_summary.source_row_count`。作业未配置 `plugin_output_mapping` 时复用动作 `result_mapping`。运行摘要必须通过 `result_summary.execution_nodes.skill_processing.model_gateway_called=true`、`model_log_id`、`processing_mode=model_gateway_json_transform`、`input.knowledge_references` 和处理输入/输出如实记录 AI 处理节点。
 - 运行状态为 `queued / running / succeeded / failed / skipped / cancelled`；失败可按 `max_retry_count` 生成新的运行实例，不能把失败实例改写成成功历史。
 - `scheduled_job_runs.collector_run_id` 关联 `collector_runs`，用于继续兼容现有采集台账、审计和运行排查；AI 纯分析类作业也应写 collector run 或等价审计摘要，以便统一追踪。
 

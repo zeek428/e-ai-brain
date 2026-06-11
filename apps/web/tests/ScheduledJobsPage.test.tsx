@@ -104,6 +104,25 @@ function installScheduledJobsFetchMock(
         },
       });
     }
+    if (input === '/api/knowledge/documents' && init?.method === 'GET') {
+      return jsonResponse({
+        data: {
+          items: [
+            {
+              content: '支付页提交后无响应时，优先排查订单幂等锁和支付回调超时。',
+              doc_type: 'runbook',
+              id: 'knowledge_payment_runbook',
+              index_status: 'text_indexed',
+              permission_roles: ['admin'],
+              tags: ['支付体验'],
+              title: '支付页无响应排障知识',
+              updated_at: '2026-06-11T10:00:00Z',
+            },
+          ],
+          total: 1,
+        },
+      });
+    }
     if (input === '/api/system/model-gateway-configs' && init?.method === 'GET') {
       return jsonResponse({
         data: {
@@ -158,6 +177,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('AI 模型')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Agent')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Skills')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('知识引用')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('结果动作')).toBeInTheDocument();
   });
 
@@ -170,6 +190,7 @@ describe('ScheduledJobsPage', () => {
           execution_mode: 'ai_generated',
           id: 'scheduled_job_weekly_feedback',
           job_type: 'user_feedback_insight_extract',
+          knowledge_document_ids: ['knowledge_payment_runbook'],
           model_gateway_config_id: 'model_gateway_scheduled_job',
           name: '每周用户反馈洞察',
           plugin_action_id: 'plugin_action_maxcompute',
@@ -204,6 +225,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('名称')).toHaveValue('每周用户反馈洞察');
     expect(within(dialog).queryByDisplayValue('week_start')).not.toBeInTheDocument();
     expect(within(dialog).getByText('定时作业模型 (scheduled-job-model)')).toBeInTheDocument();
+    expect(within(dialog).getByText('支付页无响应排障知识 (runbook)')).toBeInTheDocument();
 
     fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '每周用户反馈洞察 v2' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
@@ -211,6 +233,7 @@ describe('ScheduledJobsPage', () => {
       expect(jobUpdateBodies).toEqual([
         expect.objectContaining({
           name: '每周用户反馈洞察 v2',
+          knowledge_document_ids: ['knowledge_payment_runbook'],
           model_gateway_config_id: 'model_gateway_scheduled_job',
           plugin_input_mapping: {
             week_end: '{{last_full_week.end}}',

@@ -91,6 +91,7 @@ class ScheduledJobRequest(BaseModel):
     execution_mode: str = "deterministic"
     interval_seconds: int | None = None
     job_type: str
+    knowledge_document_ids: list[str] = Field(default_factory=list)
     lock_ttl_seconds: int = 900
     max_retry_count: int = 0
     model_gateway_config_id: str | None = None
@@ -115,6 +116,7 @@ class ScheduledJobPatchRequest(BaseModel):
     execution_mode: str | None = None
     interval_seconds: int | None = None
     job_type: str | None = None
+    knowledge_document_ids: list[str] | None = None
     lock_ttl_seconds: int | None = None
     max_retry_count: int | None = None
     model_gateway_config_id: str | None = None
