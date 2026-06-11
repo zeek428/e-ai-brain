@@ -107,6 +107,8 @@ type DeleteUsageGroup = {
 };
 
 const MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO = 'maxcompute_weekly_feedback';
+const GITHUB_CODE_INSPECTION_SCENARIO = 'github_code_inspection';
+const GITLAB_CODE_INSPECTION_SCENARIO = 'gitlab_code_inspection';
 const MAXCOMPUTE_DEFAULT_FIELDS =
   'feedback_id,user_id,product_id,module_code,feedback_type,content,sentiment,created_at';
 const MAXCOMPUTE_DEFAULT_RESULT_MAPPING = {
@@ -127,6 +129,12 @@ const CODE_INSPECTION_REPORT_DEFAULT_MAPPING = {
   summary_path: '$.summary',
   write_target: 'code_inspection_reports',
 };
+
+const actionScenarioOptions = [
+  { label: 'MaxCompute 每周用户反馈', value: MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO },
+  { label: 'GitHub 代码巡检', value: GITHUB_CODE_INSPECTION_SCENARIO },
+  { label: 'GitLab 代码巡检', value: GITLAB_CODE_INSPECTION_SCENARIO },
+];
 
 const requestMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((value) => ({
   label: value,
@@ -1250,31 +1258,71 @@ export default function PluginsPage() {
 
   const applyActionScenario = (scenario?: string) => {
     setActionScenario(scenario);
-    if (scenario !== MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO) {
+    const pluginByCode = (code: string) => plugins.find((plugin) => plugin.code === code);
+    const connectionForPlugin = (pluginId?: string) =>
+      pluginId ? connections.find((connection) => connection.plugin_id === pluginId)?.id : undefined;
+    if (scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO) {
+      const plugin = pluginByCode('aliyun_maxcompute');
+      const nextValues: Partial<ActionFormValues> = {
+        action_type: 'mcp_tool',
+        code: 'fetch_weekly_user_feedback',
+        connection_id: connectionForPlugin(plugin?.id) ?? (connections.length === 1 ? connections[0].id : undefined),
+        max_rows: 1000,
+        name: '获取本周用户反馈数据',
+        plugin_id: plugin?.id ?? (plugins.length === 1 ? plugins[0].id : undefined),
+        request_config: stableJson(
+          buildMaxComputeRequestConfig({
+            max_rows: 1000,
+            returned_fields: MAXCOMPUTE_DEFAULT_FIELDS,
+            table_name: 'ods_user_feedback',
+            time_field: 'created_at',
+          }),
+        ),
+        result_mapping: stableJson(MAXCOMPUTE_DEFAULT_RESULT_MAPPING),
+        returned_fields: MAXCOMPUTE_DEFAULT_FIELDS,
+        table_name: 'ods_user_feedback',
+        time_field: 'created_at',
+        ...resultMappingVisualFields(MAXCOMPUTE_DEFAULT_RESULT_MAPPING),
+      };
+      actionForm.setFieldsValue(nextValues);
       return;
     }
-    const nextValues: Partial<ActionFormValues> = {
-      action_type: 'mcp_tool',
-      code: 'fetch_weekly_user_feedback',
-      connection_id: connections.length === 1 ? connections[0].id : undefined,
-      max_rows: 1000,
-      name: '获取本周用户反馈数据',
-      plugin_id: plugins.length === 1 ? plugins[0].id : undefined,
-      request_config: stableJson(
-        buildMaxComputeRequestConfig({
-          max_rows: 1000,
-          returned_fields: MAXCOMPUTE_DEFAULT_FIELDS,
-          table_name: 'ods_user_feedback',
-          time_field: 'created_at',
+    if (scenario === GITHUB_CODE_INSPECTION_SCENARIO || scenario === GITLAB_CODE_INSPECTION_SCENARIO) {
+      const isGitHub = scenario === GITHUB_CODE_INSPECTION_SCENARIO;
+      const plugin = pluginByCode(isGitHub ? 'github' : 'gitlab');
+      const path = isGitHub
+        ? '/repos/{{owner}}/{{repo}}/code-scanning/alerts'
+        : '/api/{{api_version}}/projects/{{project_id}}/vulnerability_findings';
+      const paramRows: RequestParameterRow[] = isGitHub
+        ? [
+            { enabled: true, name: 'state', type: 'string', value: 'open' },
+            { enabled: true, name: 'per_page', type: 'number', value: '100' },
+          ]
+        : [
+            { enabled: true, name: 'state', type: 'string', value: 'detected' },
+            { enabled: true, name: 'report_type', type: 'string', value: 'sast,dependency_scanning,secret_detection' },
+            { enabled: true, name: 'per_page', type: 'number', value: '100' },
+          ];
+      const nextValues: Partial<ActionFormValues> = {
+        action_type: 'http_request',
+        code: isGitHub ? 'scan_github_code_inspection' : 'scan_gitlab_code_inspection',
+        connection_id: connectionForPlugin(plugin?.id),
+        header_rows: [],
+        method: 'GET',
+        name: isGitHub ? 'GitHub 代码巡检' : 'GitLab 代码巡检',
+        param_rows: paramRows,
+        path,
+        plugin_id: plugin?.id,
+        request_config: stableJson({
+          method: 'GET',
+          path,
+          query: rowsToRecord(paramRows),
         }),
-      ),
-      result_mapping: stableJson(MAXCOMPUTE_DEFAULT_RESULT_MAPPING),
-      returned_fields: MAXCOMPUTE_DEFAULT_FIELDS,
-      table_name: 'ods_user_feedback',
-      time_field: 'created_at',
-      ...resultMappingVisualFields(MAXCOMPUTE_DEFAULT_RESULT_MAPPING),
-    };
-    actionForm.setFieldsValue(nextValues);
+        result_mapping: stableJson(CODE_INSPECTION_REPORT_DEFAULT_MAPPING),
+        ...resultMappingVisualFields(CODE_INSPECTION_REPORT_DEFAULT_MAPPING),
+      };
+      actionForm.setFieldsValue(nextValues);
+    }
   };
 
   const applyWriteTargetDefaults = (writeTarget?: string) => {
@@ -2112,7 +2160,7 @@ export default function PluginsPage() {
             <Select
               allowClear
               onChange={applyActionScenario}
-              options={[{ label: 'MaxCompute 每周用户反馈', value: MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO }]}
+              options={actionScenarioOptions}
             />
           </Form.Item>
           <Form.Item label="插件" name="plugin_id" rules={[{ required: true }]}>

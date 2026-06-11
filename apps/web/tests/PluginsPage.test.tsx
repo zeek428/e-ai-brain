@@ -732,4 +732,74 @@ describe('PluginsPage', () => {
       ]),
     );
   });
+
+  it('creates official GitHub and GitLab code inspection actions from scene templates', async () => {
+    const { actionBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '新增动作' });
+    fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
+    fireEvent.click(await screen.findByText('GitHub 代码巡检'));
+
+    expect(within(dialog).getByText('代码巡检报告')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/repos/{{owner}}/{{repo}}/code-scanning/alerts');
+    expect(within(dialog).getByLabelText('Finding 列表 JSONPath')).toHaveValue('$.findings');
+    expect(within(dialog).getByDisplayValue('state')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('open')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() =>
+      expect(actionBodies).toEqual([
+        expect.objectContaining({
+          action_type: 'http_request',
+          code: 'scan_github_code_inspection',
+          name: 'GitHub 代码巡检',
+          plugin_id: 'plugin_standard_github',
+          request_config: expect.objectContaining({
+            method: 'GET',
+            path: '/repos/{{owner}}/{{repo}}/code-scanning/alerts',
+            query: expect.objectContaining({ state: 'open' }),
+          }),
+          result_mapping: expect.objectContaining({
+            findings_path: '$.findings',
+            write_target: 'code_inspection_reports',
+          }),
+        }),
+      ]),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
+    const nextDialog = await screen.findByRole('dialog', { name: '新增动作' });
+    fireEvent.mouseDown(within(nextDialog).getByLabelText('配置场景'));
+    fireEvent.click(await screen.findByText('GitLab 代码巡检'));
+
+    expect(within(nextDialog).getByLabelText('请求路径')).toHaveValue(
+      '/api/{{api_version}}/projects/{{project_id}}/vulnerability_findings',
+    );
+    fireEvent.click(within(nextDialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() =>
+      expect(actionBodies.at(-1)).toEqual(
+        expect.objectContaining({
+          action_type: 'http_request',
+          code: 'scan_gitlab_code_inspection',
+          name: 'GitLab 代码巡检',
+          plugin_id: 'plugin_standard_gitlab',
+          request_config: expect.objectContaining({
+            method: 'GET',
+            path: '/api/{{api_version}}/projects/{{project_id}}/vulnerability_findings',
+            query: expect.objectContaining({ state: 'detected' }),
+          }),
+          result_mapping: expect.objectContaining({
+            findings_path: '$.findings',
+            write_target: 'code_inspection_reports',
+          }),
+        }),
+      ),
+    );
+  });
 });

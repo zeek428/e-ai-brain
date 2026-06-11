@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.240 |
+| 功能版本 | v1.1.241 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.241 | 2026-06-12 | 插件动作页面补充 GitHub/GitLab 代码巡检场景模板，默认生成官方插件请求配置和代码巡检报告映射 | Codex |
 | v1.1.240 | 2026-06-12 | 定时作业运行记录补充复跑契约：前端可从运行记录基于 `scheduled_job_id` 复用作业运行接口并展示新运行详情 | Codex |
 | v1.1.239 | 2026-06-11 | 收紧 AI 类型定时作业 API 校验，补充运行详情三段节点和连接测试请求调试台响应展示要求 | Codex |
 | v1.1.238 | 2026-06-11 | 插件动作 `result_mapping.write_target` 补充 `code_inspection_reports`，页面提供代码巡检报告 JSONPath 可视化配置 | Codex |
@@ -555,7 +556,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-connections`, `/api/system/plugin-connections/{connection_id}` | 管理插件连接配置；`environment` 必须使用约定枚举 `default/dev/test/staging/prod/sandbox`；连接认证默认按 `none/bearer/api_key_header/basic` 展示 Token、Header 或 Basic 字段并生成 `auth_config`，JSON 仅作为高级修改入口；连接级公共 Params/Headers 默认通过表格维护并生成 `request_config.query/headers`，高级请求 JSON 仅作为精修入口；GitLab 连接通过 `api_key_header`、`PRIVATE-TOKEN`、`api_version/group_id/project_id` 维护平台参数，GitHub 连接通过 Bearer Token、`Accept`、`X-GitHub-Api-Version`、`owner/repo` 维护平台参数，邮箱连接通过邮件网关/API endpoint、`Authorization`、`Content-Type=application/json`、`mail_provider/default_from/default_to/subject_template` 维护通知参数；响应按管理员调试场景明文返回 `auth_config` 和 `request_config`，便于定位三方连接问题；编辑时若提交历史 `***` 占位，服务端仍保留原始密钥值，避免旧页面回填覆盖真实配置；删除连接前必须确认未被动作、定时作业或调用日志引用，否则返回 409。 |
 | Plugins | POST | `/api/system/plugin-connections/{connection_id}/test` | 测试插件连接 endpoint 可达性、认证和连接级 Params/Headers 配置，返回 `status/latency_ms/error_message/request_summary/response_summary/diagnostics[]` 等结构化结果并写入审计；`request_summary` 必须包含最终 `url/query/headers/header_sources/masked_placeholder_headers` 并明文展示实际请求值，前端以请求调试台展示最终请求 URL、Header 来源、完整请求 JSON 和远端响应信息；认证配置生成的同名认证 Header 优先于 Params/Headers 表格值；若最终请求仍包含 `***`，服务端应把它作为用户配置的明文值发出，同时在 `masked_placeholder_headers` 标记，便于判断是否误填；HTTP 400/500 等远端错误需在 `response_summary` 中保留状态码和响应片段。 |
 | Plugins | GET | `/api/system/plugin-system-variables` | 查询系统变量预览；支持 `timezone` 参数，返回 `{{current_date}}`、`{{current_date-7}}`、`{{last_full_week.start}}` 等表达式、说明和当前解析值。 |
-| Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-actions`, `/api/system/plugin-actions/{action_id}` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作新增和编辑默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口；页面必须支持可视化表格与 JSON 双向同步，并提供明文请求预览和结果写入目标；`result_mapping.write_target` 首批支持 `scheduled_job_result`、`user_feedback_insights` 与 `code_inspection_reports`；编辑时若提交历史 `***` 占位，服务端必须保留原始敏感值；删除动作前必须确认未被定时作业或调用日志引用，否则返回 409。 |
+| Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-actions`, `/api/system/plugin-actions/{action_id}` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作新增和编辑默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口；页面必须支持可视化表格与 JSON 双向同步，并提供明文请求预览和结果写入目标；`result_mapping.write_target` 首批支持 `scheduled_job_result`、`user_feedback_insights` 与 `code_inspection_reports`；页面场景模板至少包含 MaxCompute 每周用户反馈、GitHub 代码巡检和 GitLab 代码巡检，GitHub/GitLab 模板自动填充官方插件、HTTP 请求路径、默认 Params 和代码巡检报告 JSONPath 映射，提交时仍按普通 `POST /api/system/plugin-actions` 保存；编辑时若提交历史 `***` 占位，服务端必须保留原始敏感值；删除动作前必须确认未被定时作业或调用日志引用，否则返回 409。 |
 | Plugins | POST | `/api/system/plugin-actions/{action_id}/invoke` | 管理员手动调用一次插件动作并写入调用日志。 |
 | Plugins | POST | `/api/system/plugin-actions/{action_id}/trial` | 管理员试运行一次插件动作；可临时覆盖连接和输入 payload，返回 `request_preview/response_summary/mapping_hits/status/latency_ms/error_message`，不作为正式定时作业调用日志。 |
 | Plugins | GET | `/api/system/plugin-invocation-logs` | 查询插件动作调用日志。 |
