@@ -34,7 +34,7 @@ class PluginReadRepository:
                 cursor.execute(
                     f"""
                     SELECT id, code, name, description, protocol, category, risk_level,
-                           status, created_by, created_at, updated_at
+                           status, is_system, created_by, created_at, updated_at
                     FROM integration_plugins
                     {where}
                     ORDER BY code ASC, id ASC
@@ -202,11 +202,11 @@ class PluginReadRepository:
                 """
                 INSERT INTO integration_plugins (
                   id, code, name, description, protocol, category, risk_level,
-                  status, created_by, created_at, updated_at
+                  status, is_system, created_by, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s,
-                  %s, %s, COALESCE(%s::timestamptz, now()),
+                  %s, %s, %s, COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -217,6 +217,7 @@ class PluginReadRepository:
                   category = EXCLUDED.category,
                   risk_level = EXCLUDED.risk_level,
                   status = EXCLUDED.status,
+                  is_system = EXCLUDED.is_system,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -228,6 +229,7 @@ class PluginReadRepository:
                     plugin.get("category", "general"),
                     plugin.get("risk_level", "medium"),
                     plugin.get("status", "active"),
+                    plugin.get("is_system", False),
                     plugin.get("created_by"),
                     plugin.get("created_at"),
                     plugin.get("updated_at") or plugin.get("created_at"),
@@ -411,9 +413,10 @@ class PluginReadRepository:
             "category": row[5],
             "risk_level": row[6],
             "status": row[7],
-            "created_by": row[8],
-            "created_at": row[9].isoformat() if row[9] else None,
-            "updated_at": row[10].isoformat() if row[10] else None,
+            "is_system": bool(row[8]),
+            "created_by": row[9],
+            "created_at": row[10].isoformat() if row[10] else None,
+            "updated_at": row[11].isoformat() if row[11] else None,
         }
 
     def _connection_from_row(self, row: Any) -> dict[str, Any]:

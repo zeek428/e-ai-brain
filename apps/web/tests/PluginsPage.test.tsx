@@ -42,7 +42,7 @@ function pluginConnectionTestBody() {
   };
 }
 
-function installPluginsFetchMock(options: { deferConnectionTest?: boolean } = {}) {
+function installPluginsFetchMock(options: { deferConnectionTest?: boolean; includeOfficialPlugins?: boolean } = {}) {
   const actionBodies: unknown[] = [];
   const actionDeleteIds: string[] = [];
   const actionUpdateBodies: unknown[] = [];
@@ -63,20 +63,56 @@ function installPluginsFetchMock(options: { deferConnectionTest?: boolean } = {}
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
     if (input === '/api/system/plugins' && init?.method === 'GET') {
+      const pluginItems = [
+        {
+          category: 'data_warehouse',
+          code: 'aliyun_maxcompute',
+          id: 'plugin_maxcompute',
+          is_system: false,
+          name: '阿里云 MaxCompute',
+          protocol: 'mcp_http',
+          risk_level: 'high',
+          status: 'active',
+        },
+        ...(options.includeOfficialPlugins
+          ? [
+              {
+                category: 'devops',
+                code: 'gitlab',
+                id: 'plugin_standard_gitlab',
+                is_system: true,
+                name: 'GitLab',
+                protocol: 'http',
+                risk_level: 'medium',
+                status: 'active',
+              },
+              {
+                category: 'devops',
+                code: 'github',
+                id: 'plugin_standard_github',
+                is_system: true,
+                name: 'GitHub',
+                protocol: 'http',
+                risk_level: 'medium',
+                status: 'active',
+              },
+              {
+                category: 'collaboration',
+                code: 'email',
+                id: 'plugin_standard_email',
+                is_system: true,
+                name: '邮箱',
+                protocol: 'http',
+                risk_level: 'medium',
+                status: 'active',
+              },
+            ]
+          : []),
+      ];
       return jsonResponse({
         data: {
-          items: [
-            {
-              category: 'data_warehouse',
-              code: 'aliyun_maxcompute',
-              id: 'plugin_maxcompute',
-              name: '阿里云 MaxCompute',
-              protocol: 'mcp_http',
-              risk_level: 'high',
-              status: 'active',
-            },
-          ],
-          total: 1,
+          items: pluginItems,
+          total: pluginItems.length,
         },
       });
     }
@@ -374,6 +410,90 @@ describe('PluginsPage', () => {
     );
   });
 
+  it('locks official plugins while providing GitLab GitHub and email connection defaults', async () => {
+    const { connectionBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
+
+    render(<PluginsPage />);
+
+    expect(await screen.findByText('GitLab')).toBeInTheDocument();
+    expect(screen.getByText('GitHub')).toBeInTheDocument();
+    expect(screen.getByText('邮箱')).toBeInTheDocument();
+    expect(screen.getAllByText('官方标准').length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByRole('button', { name: '编辑插件 GitLab' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '删除插件 GitLab' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑插件 GitHub' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '删除插件 GitHub' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑插件 邮箱' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '删除插件 邮箱' })).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('tab', { name: '连接' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增连接' }));
+    let dialog = await screen.findByRole('dialog', { name: '新增连接' });
+    fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
+    fireEvent.click(await screen.findByText('GitLab (http)'));
+
+    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://gitlab.com');
+    expect(await within(dialog).findByLabelText('Header 名')).toHaveValue('PRIVATE-TOKEN');
+    expect(within(dialog).getByDisplayValue('api_version')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('v4')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('group_id')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('project_id')).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '生产 GitLab' } });
+    fireEvent.change(within(dialog).getByLabelText('Header 值/密钥引用'), {
+      target: { value: 'vault/gitlab/prod-token' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(connectionBodies.at(-1)).toEqual(
+        expect.objectContaining({
+          auth_config: {
+            header_name: 'PRIVATE-TOKEN',
+            secret_ref: 'vault/gitlab/prod-token',
+          },
+          auth_type: 'api_key_header',
+          endpoint_url: 'https://gitlab.com',
+          name: '生产 GitLab',
+          plugin_id: 'plugin_standard_gitlab',
+          request_config: {
+            query: {
+              api_version: 'v4',
+              group_id: '',
+              project_id: '',
+            },
+          },
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '新增连接' }));
+    dialog = await screen.findByRole('dialog', { name: '新增连接' });
+    fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
+    fireEvent.click(await screen.findByText('GitHub (http)'));
+
+    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://api.github.com');
+    expect(await within(dialog).findByLabelText('Token 引用')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('Accept')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('application/vnd.github+json')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('X-GitHub-Api-Version')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('2022-11-28')).toBeInTheDocument();
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
+    fireEvent.click(await screen.findByText('邮箱 (http)'));
+
+    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://mail-gateway.example.com/api/send');
+    expect(await within(dialog).findByLabelText('Header 名')).toHaveValue('Authorization');
+    expect(within(dialog).getByDisplayValue('Content-Type')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('application/json')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('mail_provider')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('enterprise_mail_gateway')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('default_from')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('default_to')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('subject_template')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('[AI Brain] {{job_name}} 执行结果')).toBeInTheDocument();
+  });
+
   it('can edit existing connections', async () => {
     const { connectionUpdateBodies } = installPluginsFetchMock();
 
@@ -508,6 +628,49 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByLabelText('源表行数 JSONPath')).toHaveValue('$.row_count');
     expect(within(dialog).getByLabelText('原始行列表 JSONPath')).toHaveValue('$.rows');
     expect(within(dialog).queryByLabelText('导入数量 JSONPath')).not.toBeInTheDocument();
+  });
+
+  it('offers code inspection reports as an action write target', async () => {
+    const { actionBodies } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '新增动作' });
+    fireEvent.mouseDown(within(dialog).getByLabelText('结果写入目标'));
+    fireEvent.click(await screen.findByText('代码巡检报告'));
+
+    expect(within(dialog).getByLabelText('Finding 列表 JSONPath')).toHaveValue('$.findings');
+    expect(within(dialog).getByLabelText('仓库 ID JSONPath')).toHaveValue('$.repository_id');
+    expect(within(dialog).getByLabelText('风险级别 JSONPath')).toHaveValue('$.risk_level');
+    expect(within(dialog).queryByLabelText('洞察列表 JSONPath')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('导入数量 JSONPath')).not.toBeInTheDocument();
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
+    fireEvent.click(await screen.findByText('阿里云 MaxCompute (mcp_http)'));
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '扫描仓库质量' } });
+    fireEvent.change(within(dialog).getByLabelText('编码'), { target: { value: 'scan_repository_quality' } });
+    fireEvent.change(within(dialog).getByLabelText('请求路径'), { target: { value: '/quality/scan' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() =>
+      expect(actionBodies).toEqual([
+        expect.objectContaining({
+          code: 'scan_repository_quality',
+          result_mapping: {
+            branch_path: '$.branch',
+            commit_sha_path: '$.commit_sha',
+            findings_path: '$.findings',
+            repository_id_path: '$.repository_id',
+            risk_level_path: '$.risk_level',
+            summary_path: '$.summary',
+            write_target: 'code_inspection_reports',
+          },
+        }),
+      ]),
+    );
   });
 
   it('creates a MaxCompute weekly feedback action from guided fields while allowing advanced JSON edits', async () => {

@@ -231,6 +231,133 @@ def test_plugin_category_must_use_predefined_values():
     assert "Unsupported category" in response.text
 
 
+def test_standard_plugins_are_seeded_and_immutable():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    response = client.get("/api/system/plugins", headers=admin_headers)
+    assert response.status_code == 200
+    plugins = response.json()["data"]["items"]
+    by_code = {plugin["code"]: plugin for plugin in plugins}
+    assert by_code["gitlab"]["is_system"] is True
+    assert by_code["gitlab"]["category"] == "devops"
+    assert by_code["gitlab"]["protocol"] == "http"
+    assert by_code["github"]["is_system"] is True
+    assert by_code["github"]["category"] == "devops"
+    assert by_code["github"]["protocol"] == "http"
+    assert by_code["email"]["is_system"] is True
+    assert by_code["email"]["category"] == "collaboration"
+    assert by_code["email"]["protocol"] == "http"
+
+    patch_response = client.patch(
+        f"/api/system/plugins/{by_code['gitlab']['id']}",
+        json={"name": "被修改的 GitLab"},
+        headers=admin_headers,
+    )
+    assert patch_response.status_code == 409
+    assert "官方标准插件" in patch_response.text
+
+    delete_response = client.delete(
+        f"/api/system/plugins/{by_code['github']['id']}",
+        headers=admin_headers,
+    )
+    assert delete_response.status_code == 409
+    assert "官方标准插件" in delete_response.text
+
+    email_patch_response = client.patch(
+        f"/api/system/plugins/{by_code['email']['id']}",
+        json={"name": "被修改的邮箱"},
+        headers=admin_headers,
+    )
+    assert email_patch_response.status_code == 409
+    assert "官方标准插件" in email_patch_response.text
+
+
+def test_standard_plugin_connections_store_platform_parameters():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugins = client.get("/api/system/plugins", headers=admin_headers).json()["data"]["items"]
+    by_code = {plugin["code"]: plugin for plugin in plugins}
+
+    gitlab_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {
+                "header_name": "PRIVATE-TOKEN",
+                "secret_ref": "vault/gitlab/prod-token",
+            },
+            "auth_type": "api_key_header",
+            "endpoint_url": "https://gitlab.example.com",
+            "environment": "prod",
+            "name": "生产 GitLab",
+            "plugin_id": by_code["gitlab"]["id"],
+            "request_config": {
+                "headers": {"X-GitLab-Instance": "corp"},
+                "query": {"api_version": "v4", "group_id": "rd-platform"},
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+    assert gitlab_connection.status_code == 200
+    assert gitlab_connection.json()["data"]["auth_config"]["header_name"] == "PRIVATE-TOKEN"
+    assert gitlab_connection.json()["data"]["request_config"]["query"]["api_version"] == "v4"
+    assert gitlab_connection.json()["data"]["request_config"]["query"]["group_id"] == "rd-platform"
+
+    github_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {"token_ref": "vault/github/prod-token"},
+            "auth_type": "bearer",
+            "endpoint_url": "https://api.github.com",
+            "environment": "prod",
+            "name": "生产 GitHub",
+            "plugin_id": by_code["github"]["id"],
+            "request_config": {
+                "headers": {"Accept": "application/vnd.github+json"},
+                "query": {"api_version": "2022-11-28", "owner": "acme"},
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+    assert github_connection.status_code == 200
+    assert github_connection.json()["data"]["auth_type"] == "bearer"
+    github_query = github_connection.json()["data"]["request_config"]["query"]
+    assert github_query["api_version"] == "2022-11-28"
+    assert github_connection.json()["data"]["request_config"]["query"]["owner"] == "acme"
+
+    email_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {
+                "header_name": "Authorization",
+                "secret_ref": "vault/email/prod-token",
+            },
+            "auth_type": "api_key_header",
+            "endpoint_url": "https://mail-gateway.example.com/api/send",
+            "environment": "prod",
+            "name": "生产邮件网关",
+            "plugin_id": by_code["email"]["id"],
+            "request_config": {
+                "headers": {"Content-Type": "application/json"},
+                "query": {
+                    "default_from": "noreply@example.com",
+                    "mail_provider": "enterprise_mail_gateway",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+    assert email_connection.status_code == 200
+    email_data = email_connection.json()["data"]
+    assert email_data["auth_type"] == "api_key_header"
+    assert email_data["auth_config"]["header_name"] == "Authorization"
+    assert email_data["request_config"]["headers"]["Content-Type"] == "application/json"
+    assert email_data["request_config"]["query"]["mail_provider"] == "enterprise_mail_gateway"
+
+
 def test_plugin_connection_environment_must_use_predefined_values():
     app.state.store.reset()
     admin_headers = auth_headers()

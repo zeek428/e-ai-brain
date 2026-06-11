@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.237 |
+| 功能版本 | v1.1.238 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.238 | 2026-06-11 | 插件动作 `result_mapping.write_target` 补充 `code_inspection_reports`，页面提供代码巡检报告 JSONPath 可视化配置 | Codex |
 | v1.1.237 | 2026-06-11 | 代码巡检 API 增加提交人维度、`committer` 筛选、产品范围读取控制、severity mapping、严重 finding Bug 去重和结果动作状态摘要 | Codex |
 | v1.1.236 | 2026-06-11 | 新增代码仓库巡检 API：`code_repository_inspection` 定时作业支持 `result_actions` 多结果动作，运行写入代码巡检报告、严重问题建 Bug 和通知记录，并提供运营治理代码巡检列表/详情接口 | Codex |
 | v1.1.235 | 2026-06-11 | 新增 AI 助手工作台升级目标 API：`@` 引用候选/解析、聊天显式引用、动作草案、确认执行和取消草案 | Codex |
@@ -34,6 +35,8 @@
 | v1.1.231 | 2026-06-11 | 增强插件连接测试诊断契约：返回最终 URL、query、headers、Header 来源、`***` 占位检测和远端响应摘要，认证配置里的同名认证 Header 优先于 Params/Headers 表格值 | Codex |
 | v1.1.230 | 2026-06-11 | 补充插件连接级请求配置契约：连接保存公共 `request_config.query/headers`，连接测试、动作预览和实际调用与动作配置合并 | Codex |
 | v1.1.229 | 2026-06-11 | 补充插件配置体验优化契约：连接测试返回诊断步骤，动作支持试运行和映射命中，系统变量提供预览接口，定时作业插件输入映射默认表格化且 JSON 作为高级入口 | Codex |
+| v1.1.233 | 2026-06-11 | 插件管理 API 补充 GitLab/GitHub 官方标准插件：列表返回 `is_system=true`，PATCH/DELETE 官方插件返回 409，连接维护平台参数 | Codex |
+| v1.1.234 | 2026-06-11 | 插件管理 API 补充邮箱官方标准插件：列表返回 `email` 官方插件，连接维护邮件网关/API 认证、Header 和默认邮件参数 | Codex |
 | v1.1.219 | 2026-06-10 | 新增插件管理 API：补充插件、连接、动作、调用日志、动作手动调用，以及定时作业引用插件动作的请求/响应字段 | Codex |
 | v1.1.218 | 2026-06-10 | 新增定时系统作业和 AI 能力配置目标 API：补充 Agent、Skill、定时作业、运行实例、手动触发、取消、AI 配置快照和审计契约 | Codex |
 | v1.1.217 | 2026-06-09 | 迭代版本新增代码分支配置 API，支持按版本维护多代码库基准分支、开发分支、状态和创建来源 | Codex |
@@ -543,14 +546,14 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | AI Capability | GET | `/api/system/ai-agents` | 查询 Agent 配置列表。 |
 | AI Capability | POST | `/api/system/ai-agents` | 创建 Agent 配置。 |
 | AI Capability | PATCH | `/api/system/ai-agents/{agent_id}` | 更新 Agent 模型网关、默认 Skill、系统提示词、执行策略或启停状态。 |
-| Plugins | GET | `/api/system/plugins` | 查询集成插件定义。 |
-| Plugins | POST | `/api/system/plugins` | 创建 HTTP/MCP 插件定义；`category` 必须使用约定枚举 `general/data_warehouse/devops/issue_tracking/observability/knowledge_base/collaboration/ai_service/business_system`。 |
-| Plugins | PATCH | `/api/system/plugins/{plugin_id}` | 更新插件名称、分类、协议、风险等级或状态；分类必须使用插件分类枚举，不允许自由文本。 |
-| Plugins | DELETE | `/api/system/plugins/{plugin_id}` | 删除未被使用的插件；若存在下级连接、动作、定时作业或调用日志引用，返回 `409 PLUGIN_RESOURCE_IN_USE` 并提示使用清单。 |
-| Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-connections`, `/api/system/plugin-connections/{connection_id}` | 管理插件连接配置；`environment` 必须使用约定枚举 `default/dev/test/staging/prod/sandbox`；连接认证默认按 `none/bearer/api_key_header/basic` 展示 Token、Header 或 Basic 字段并生成 `auth_config`，JSON 仅作为高级修改入口；连接级公共 Params/Headers 默认通过表格维护并生成 `request_config.query/headers`，高级请求 JSON 仅作为精修入口；响应按管理员调试场景明文返回 `auth_config` 和 `request_config`，便于定位三方连接问题；编辑时若提交历史 `***` 占位，服务端仍保留原始密钥值，避免旧页面回填覆盖真实配置；删除连接前必须确认未被动作、定时作业或调用日志引用，否则返回 409。 |
+| Plugins | GET | `/api/system/plugins` | 查询集成插件定义；系统会确保 `gitlab`、`github`、`email` 官方标准插件存在并返回 `is_system=true`。 |
+| Plugins | POST | `/api/system/plugins` | 创建自定义 HTTP/MCP 插件定义；`category` 必须使用约定枚举 `general/data_warehouse/devops/issue_tracking/observability/knowledge_base/collaboration/ai_service/business_system`，新建插件默认 `is_system=false`。 |
+| Plugins | PATCH | `/api/system/plugins/{plugin_id}` | 更新自定义插件名称、分类、协议、风险等级或状态；分类必须使用插件分类枚举，不允许自由文本；官方标准插件返回 `409 PLUGIN_STANDARD_PLUGIN_LOCKED`。 |
+| Plugins | DELETE | `/api/system/plugins/{plugin_id}` | 删除未被使用的自定义插件；官方标准插件返回 `409 PLUGIN_STANDARD_PLUGIN_LOCKED`；若存在下级连接、动作、定时作业或调用日志引用，返回 `409 PLUGIN_RESOURCE_IN_USE` 并提示使用清单。 |
+| Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-connections`, `/api/system/plugin-connections/{connection_id}` | 管理插件连接配置；`environment` 必须使用约定枚举 `default/dev/test/staging/prod/sandbox`；连接认证默认按 `none/bearer/api_key_header/basic` 展示 Token、Header 或 Basic 字段并生成 `auth_config`，JSON 仅作为高级修改入口；连接级公共 Params/Headers 默认通过表格维护并生成 `request_config.query/headers`，高级请求 JSON 仅作为精修入口；GitLab 连接通过 `api_key_header`、`PRIVATE-TOKEN`、`api_version/group_id/project_id` 维护平台参数，GitHub 连接通过 Bearer Token、`Accept`、`X-GitHub-Api-Version`、`owner/repo` 维护平台参数，邮箱连接通过邮件网关/API endpoint、`Authorization`、`Content-Type=application/json`、`mail_provider/default_from/default_to/subject_template` 维护通知参数；响应按管理员调试场景明文返回 `auth_config` 和 `request_config`，便于定位三方连接问题；编辑时若提交历史 `***` 占位，服务端仍保留原始密钥值，避免旧页面回填覆盖真实配置；删除连接前必须确认未被动作、定时作业或调用日志引用，否则返回 409。 |
 | Plugins | POST | `/api/system/plugin-connections/{connection_id}/test` | 测试插件连接 endpoint 可达性、认证和连接级 Params/Headers 配置，返回 `status/latency_ms/error_message/request_summary/response_summary/diagnostics[]` 等结构化结果并写入审计；`request_summary` 必须包含最终 `url/query/headers/header_sources/masked_placeholder_headers` 并明文展示实际请求值；认证配置生成的同名认证 Header 优先于 Params/Headers 表格值；若最终请求仍包含 `***`，服务端应把它作为用户配置的明文值发出，同时在 `masked_placeholder_headers` 标记，便于判断是否误填；HTTP 400/500 等远端错误需在 `response_summary` 中保留状态码和响应片段。 |
 | Plugins | GET | `/api/system/plugin-system-variables` | 查询系统变量预览；支持 `timezone` 参数，返回 `{{current_date}}`、`{{current_date-7}}`、`{{last_full_week.start}}` 等表达式、说明和当前解析值。 |
-| Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-actions`, `/api/system/plugin-actions/{action_id}` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作新增和编辑默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口；页面必须支持可视化表格与 JSON 双向同步，并提供明文请求预览和结果写入目标；`result_mapping.write_target` 首批支持 `scheduled_job_result` 与 `user_feedback_insights`；编辑时若提交历史 `***` 占位，服务端必须保留原始敏感值；删除动作前必须确认未被定时作业或调用日志引用，否则返回 409。 |
+| Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-actions`, `/api/system/plugin-actions/{action_id}` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作新增和编辑默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口；页面必须支持可视化表格与 JSON 双向同步，并提供明文请求预览和结果写入目标；`result_mapping.write_target` 首批支持 `scheduled_job_result`、`user_feedback_insights` 与 `code_inspection_reports`；编辑时若提交历史 `***` 占位，服务端必须保留原始敏感值；删除动作前必须确认未被定时作业或调用日志引用，否则返回 409。 |
 | Plugins | POST | `/api/system/plugin-actions/{action_id}/invoke` | 管理员手动调用一次插件动作并写入调用日志。 |
 | Plugins | POST | `/api/system/plugin-actions/{action_id}/trial` | 管理员试运行一次插件动作；可临时覆盖连接和输入 payload，返回 `request_preview/response_summary/mapping_hits/status/latency_ms/error_message`，不作为正式定时作业调用日志。 |
 | Plugins | GET | `/api/system/plugin-invocation-logs` | 查询插件动作调用日志。 |

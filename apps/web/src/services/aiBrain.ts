@@ -3715,6 +3715,7 @@ export type PluginRecord = {
   code: string;
   description?: string | null;
   id: string;
+  is_system?: boolean;
   name: string;
   protocol: string;
   risk_level?: string;

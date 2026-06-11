@@ -35,6 +35,50 @@ PLUGIN_ACTION_TYPES = {"http_request", "mcp_tool"}
 PLUGIN_CONNECTION_ENVIRONMENTS = {"default", "dev", "test", "staging", "prod", "sandbox"}
 PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
 MASKED_SECRET_PLACEHOLDER = "***"
+STANDARD_PLUGINS = [
+    {
+        "category": "devops",
+        "code": "gitlab",
+        "description": (
+            "官方标准 GitLab 插件，用于连接 GitLab API、读取项目、分支、"
+            "提交、MR 和代码质量数据。"
+        ),
+        "id": "plugin_standard_gitlab",
+        "is_system": True,
+        "name": "GitLab",
+        "protocol": "http",
+        "risk_level": "medium",
+        "status": "active",
+    },
+    {
+        "category": "devops",
+        "code": "github",
+        "description": (
+            "官方标准 GitHub 插件，用于连接 GitHub API、读取仓库、分支、"
+            "提交、PR 和代码质量数据。"
+        ),
+        "id": "plugin_standard_github",
+        "is_system": True,
+        "name": "GitHub",
+        "protocol": "http",
+        "risk_level": "medium",
+        "status": "active",
+    },
+    {
+        "category": "collaboration",
+        "code": "email",
+        "description": (
+            "官方标准邮箱插件，用于连接企业邮件网关或邮件 API，发送代码巡检、"
+            "定时作业和业务通知。"
+        ),
+        "id": "plugin_standard_email",
+        "is_system": True,
+        "name": "邮箱",
+        "protocol": "http",
+        "risk_level": "medium",
+        "status": "active",
+    },
+]
 
 
 def require_admin(user: dict[str, Any]) -> None:
@@ -174,6 +218,42 @@ def persist_record(
         record,
         audit_event=audit_event,
     )
+
+
+def ensure_standard_plugins(current_store: Any) -> None:
+    now = datetime.now(UTC).isoformat()
+    existing_by_code = {
+        str(plugin.get("code")): plugin
+        for plugin in current_store.integration_plugins.values()
+    }
+    for template in STANDARD_PLUGINS:
+        existing = existing_by_code.get(template["code"])
+        if existing and all(existing.get(key) == value for key, value in template.items()):
+            continue
+        plugin = {
+            **template,
+            "created_at": existing.get("created_at") if existing else now,
+            "created_by": existing.get("created_by") if existing else "system",
+            "updated_at": now,
+            **({"id": existing["id"]} if existing else {}),
+        }
+        current_store.integration_plugins[plugin["id"]] = plugin
+        if existing and existing.get("id") != plugin["id"]:
+            current_store.integration_plugins.pop(existing["id"], None)
+        persist_record(current_store, "save_plugin_record", plugin)
+
+
+def ensure_plugin_mutable(plugin: dict[str, Any]) -> None:
+    if plugin.get("is_system"):
+        message = (
+            f"插件「{plugin['name']}」是官方标准插件，不能修改或删除。"
+            "请在连接里维护 endpoint、认证和参数配置。"
+        )
+        raise api_error(
+            409,
+            "PLUGIN_STANDARD_PLUGIN_LOCKED",
+            message,
+        )
 
 
 def merge_masked_config(existing: Any, incoming: Any) -> Any:
@@ -390,6 +470,7 @@ def list_plugins_response(
     if status is not None:
         ensure_enum(status, PLUGIN_STATUSES, "status")
     sync_plugin_store(current_store, protocol=protocol, status=status)
+    ensure_standard_plugins(current_store)
     items = []
     for plugin in current_store.integration_plugins.values():
         if protocol is not None and plugin.get("protocol") != protocol:
@@ -408,6 +489,8 @@ def create_plugin_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
+    sync_plugin_store(current_store)
+    ensure_standard_plugins(current_store)
     ensure_enum(payload.category or "general", PLUGIN_CATEGORIES, "category")
     ensure_enum(payload.protocol, PLUGIN_PROTOCOLS, "protocol")
     ensure_enum(payload.status, PLUGIN_STATUSES, "status")
@@ -420,6 +503,7 @@ def create_plugin_response(
         "created_by": user["id"],
         "description": payload.description,
         "id": plugin_id,
+        "is_system": False,
         "name": ensure_non_blank(payload.name, "name"),
         "protocol": payload.protocol,
         "risk_level": payload.risk_level,
@@ -455,6 +539,7 @@ def patch_plugin_response(
     plugin = current_store.integration_plugins.get(plugin_id)
     if plugin is None:
         raise api_error(404, "NOT_FOUND", "Plugin not found")
+    ensure_plugin_mutable(plugin)
     updates = payload.model_dump(exclude_unset=True)
     if "protocol" in updates:
         ensure_enum(updates["protocol"], PLUGIN_PROTOCOLS, "protocol")
@@ -490,6 +575,7 @@ def delete_plugin_response(
     plugin = current_store.integration_plugins.get(plugin_id)
     if plugin is None:
         raise api_error(404, "NOT_FOUND", "Plugin not found")
+    ensure_plugin_mutable(plugin)
     ensure_not_used_for_delete(
         plugin_delete_usages(current_store, plugin_id),
         object_label=f"插件「{plugin['name']}」",
@@ -512,6 +598,7 @@ def delete_plugin_response(
 
 def ensure_active_plugin(current_store: Any, plugin_id: str) -> dict[str, Any]:
     sync_plugin_store(current_store)
+    ensure_standard_plugins(current_store)
     plugin = current_store.integration_plugins.get(plugin_id)
     if plugin is None:
         raise api_error(404, "NOT_FOUND", "Plugin not found")

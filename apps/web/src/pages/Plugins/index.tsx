@@ -63,9 +63,12 @@ type ConnectionFormValues = {
 
 type ActionFormValues = {
   action_type: string;
+  branch_path?: string;
   code: string;
+  commit_sha_path?: string;
   connection_id?: string;
   description?: string;
+  findings_path?: string;
   header_rows?: RequestParameterRow[];
   insights_path?: string;
   max_rows?: number;
@@ -77,11 +80,14 @@ type ActionFormValues = {
   request_config?: string;
   requires_human_review: boolean;
   records_imported_path?: string;
+  repository_id_path?: string;
   result_mapping?: string;
+  risk_level_path?: string;
   rows_path?: string;
   returned_fields?: string;
   scenario?: string;
   status: string;
+  summary_path?: string;
   table_name?: string;
   time_field?: string;
   write_target?: string;
@@ -112,6 +118,15 @@ const MAXCOMPUTE_DEFAULT_RESULT_MAPPING = {
 const SCHEDULED_JOB_RESULT_DEFAULT_MAPPING = {
   write_target: 'scheduled_job_result',
 };
+const CODE_INSPECTION_REPORT_DEFAULT_MAPPING = {
+  branch_path: '$.branch',
+  commit_sha_path: '$.commit_sha',
+  findings_path: '$.findings',
+  repository_id_path: '$.repository_id',
+  risk_level_path: '$.risk_level',
+  summary_path: '$.summary',
+  write_target: 'code_inspection_reports',
+};
 
 const requestMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((value) => ({
   label: value,
@@ -127,6 +142,7 @@ const requestParameterTypeOptions = [
 const resultWriteTargetOptions = [
   { label: '仅保存运行结果', value: 'scheduled_job_result' },
   { label: '用户洞察表', value: 'user_feedback_insights' },
+  { label: '代码巡检报告', value: 'code_inspection_reports' },
 ];
 
 const resultWriteTargetLabelByValue = new Map(
@@ -173,6 +189,64 @@ const connectionEnvironmentOptions = [
 const connectionEnvironmentLabelByValue = new Map(
   connectionEnvironmentOptions.map((option) => [option.value, option.label]),
 );
+
+const OFFICIAL_PLUGIN_LABEL = '官方标准';
+
+const standardConnectionDefaultsByPluginCode: Record<string, Partial<ConnectionFormValues>> = {
+  email: {
+    auth_type: 'api_key_header',
+    connection_header_rows: [
+      { enabled: true, name: 'Content-Type', type: 'string', value: 'application/json' },
+    ],
+    connection_param_rows: [
+      { enabled: true, name: 'mail_provider', type: 'string', value: 'enterprise_mail_gateway' },
+      { enabled: true, name: 'default_from', type: 'string', value: '' },
+      { enabled: true, name: 'default_to', type: 'string', value: '' },
+      { enabled: true, name: 'subject_template', type: 'string', value: '[AI Brain] {{job_name}} 执行结果' },
+    ],
+    endpoint_url: 'https://mail-gateway.example.com/api/send',
+    header_name: 'Authorization',
+  },
+  github: {
+    auth_type: 'bearer',
+    connection_header_rows: [
+      { enabled: true, name: 'Accept', type: 'string', value: 'application/vnd.github+json' },
+      { enabled: true, name: 'X-GitHub-Api-Version', type: 'string', value: '2022-11-28' },
+    ],
+    connection_param_rows: [
+      { enabled: true, name: 'owner', type: 'string', value: '' },
+      { enabled: true, name: 'repo', type: 'string', value: '' },
+    ],
+    endpoint_url: 'https://api.github.com',
+  },
+  gitlab: {
+    auth_type: 'api_key_header',
+    connection_header_rows: [],
+    connection_param_rows: [
+      { enabled: true, name: 'api_version', type: 'string', value: 'v4' },
+      { enabled: true, name: 'group_id', type: 'string', value: '' },
+      { enabled: true, name: 'project_id', type: 'string', value: '' },
+    ],
+    endpoint_url: 'https://gitlab.com',
+    header_name: 'PRIVATE-TOKEN',
+  },
+};
+
+function cloneRequestRows(rows?: RequestParameterRow[]) {
+  return rows?.map((row) => ({ ...row }));
+}
+
+function standardConnectionDefaults(plugin?: PluginRecord): Partial<ConnectionFormValues> | undefined {
+  const defaults = plugin ? standardConnectionDefaultsByPluginCode[plugin.code] : undefined;
+  if (!defaults) {
+    return undefined;
+  }
+  return {
+    ...defaults,
+    connection_header_rows: cloneRequestRows(defaults.connection_header_rows),
+    connection_param_rows: cloneRequestRows(defaults.connection_param_rows),
+  };
+}
 
 function stableJson(value: Record<string, unknown>): string {
   return JSON.stringify(value, null, 2);
@@ -421,6 +495,9 @@ function defaultResultMappingForWriteTarget(writeTarget?: string): Record<string
   if (writeTarget === 'user_feedback_insights') {
     return { ...MAXCOMPUTE_DEFAULT_RESULT_MAPPING };
   }
+  if (writeTarget === 'code_inspection_reports') {
+    return { ...CODE_INSPECTION_REPORT_DEFAULT_MAPPING };
+  }
   return { ...SCHEDULED_JOB_RESULT_DEFAULT_MAPPING };
 }
 
@@ -437,9 +514,15 @@ function stringMappingValue(resultMapping: Record<string, unknown>, key: string)
 
 function resultMappingVisualFields(resultMapping: Record<string, unknown>): Partial<ActionFormValues> {
   return {
+    branch_path: stringMappingValue(resultMapping, 'branch_path'),
+    commit_sha_path: stringMappingValue(resultMapping, 'commit_sha_path'),
+    findings_path: stringMappingValue(resultMapping, 'findings_path'),
     insights_path: stringMappingValue(resultMapping, 'insights_path'),
     records_imported_path: stringMappingValue(resultMapping, 'records_imported_path'),
+    repository_id_path: stringMappingValue(resultMapping, 'repository_id_path'),
+    risk_level_path: stringMappingValue(resultMapping, 'risk_level_path'),
     rows_path: stringMappingValue(resultMapping, 'rows_path'),
+    summary_path: stringMappingValue(resultMapping, 'summary_path'),
     write_target: writeTargetFromResultMapping(resultMapping),
   };
 }
@@ -452,6 +535,19 @@ function buildVisualResultMapping(values: Partial<ActionFormValues>): Record<str
         insights_path: values.insights_path?.trim() || '$.insights',
         records_imported_path: values.records_imported_path?.trim() || '$.row_count',
         rows_path: values.rows_path?.trim() || '$.rows',
+      },
+      writeTarget,
+    );
+  }
+  if (writeTarget === 'code_inspection_reports') {
+    return mergeWriteTarget(
+      {
+        branch_path: values.branch_path?.trim() || '$.branch',
+        commit_sha_path: values.commit_sha_path?.trim() || '$.commit_sha',
+        findings_path: values.findings_path?.trim() || '$.findings',
+        repository_id_path: values.repository_id_path?.trim() || '$.repository_id',
+        risk_level_path: values.risk_level_path?.trim() || '$.risk_level',
+        summary_path: values.summary_path?.trim() || '$.summary',
       },
       writeTarget,
     );
@@ -681,6 +777,10 @@ export default function PluginsPage() {
   };
 
   const openEditPluginModal = (plugin: PluginRecord) => {
+    if (plugin.is_system) {
+      message.info('官方标准插件不能修改，请在连接里维护接入参数');
+      return;
+    }
     setEditingPlugin(plugin);
     pluginForm.resetFields();
     pluginForm.setFieldsValue({
@@ -790,6 +890,10 @@ export default function PluginsPage() {
   ];
 
   const confirmDeletePlugin = (plugin: PluginRecord) => {
+    if (plugin.is_system) {
+      message.info('官方标准插件不能删除，请在连接里维护接入参数');
+      return;
+    }
     const usageGroups = pluginDeleteUsageGroups(plugin);
     if (hasDeleteUsage(usageGroups)) {
       warnDeleteUsage(`插件「${plugin.name}」正在使用中`, usageGroups);
@@ -911,6 +1015,34 @@ export default function PluginsPage() {
     setAdvancedConnectionJsonOpen(false);
     setAdvancedConnectionRequestJsonOpen(false);
     connectionForm.resetFields();
+  };
+
+  const applyConnectionPluginDefaults = (pluginId: string) => {
+    const plugin = pluginById.get(pluginId);
+    const defaults = standardConnectionDefaults(plugin);
+    if (!defaults) {
+      return;
+    }
+    const nextValues: Partial<ConnectionFormValues> = {
+      header_name: undefined,
+      password_ref: undefined,
+      plugin_id: pluginId,
+      secret_ref: undefined,
+      token_ref: undefined,
+      username_ref: undefined,
+      ...defaults,
+    };
+    const mergedValues = {
+      ...connectionForm.getFieldsValue(),
+      ...nextValues,
+    };
+    if (advancedConnectionJsonOpen) {
+      nextValues.auth_config = stableJson(buildConnectionAuthConfig(mergedValues));
+    }
+    if (advancedConnectionRequestJsonOpen) {
+      nextValues.request_config = stableJson(buildConnectionRequestConfig(mergedValues));
+    }
+    connectionForm.setFieldsValue(nextValues);
   };
 
   const submitConnection = async () => {
@@ -1350,7 +1482,20 @@ export default function PluginsPage() {
                   </Button>,
                 ]}
                 columns={[
-                  { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
+                  {
+                    dataIndex: 'name',
+                    title: '名称',
+                    ellipsis: true,
+                    width: 240,
+                    render: (_, row) => (
+                      <Space wrap={false}>
+                        <Typography.Text ellipsis style={{ maxWidth: 150 }}>
+                          {row.name}
+                        </Typography.Text>
+                        {row.is_system ? <Tag color="blue">{OFFICIAL_PLUGIN_LABEL}</Tag> : null}
+                      </Space>
+                    ),
+                  },
                   { dataIndex: 'code', title: '编码', ellipsis: true, width: 200 },
                   { dataIndex: 'protocol', title: '协议', width: 120 },
                   {
@@ -1372,27 +1517,32 @@ export default function PluginsPage() {
                     title: '操作',
                     valueType: 'option',
                     width: 164,
-                    render: (_, row) => (
-                      <Space className="management-row-actions" size={0}>
-                        <Button
-                          aria-label={`编辑插件 ${row.name}`}
-                          icon={<EditOutlined />}
-                          onClick={() => openEditPluginModal(row)}
-                          type="link"
-                        >
-                          编辑
-                        </Button>
-                        <Button
-                          aria-label={`删除插件 ${row.name}`}
-                          danger
-                          icon={<DeleteOutlined />}
-                          onClick={() => confirmDeletePlugin(row)}
-                          type="link"
-                        >
-                          删除
-                        </Button>
-                      </Space>
-                    ),
+                    render: (_, row) => {
+                      if (row.is_system) {
+                        return <Tag color="blue">{OFFICIAL_PLUGIN_LABEL}</Tag>;
+                      }
+                      return (
+                        <Space className="management-row-actions" size={0}>
+                          <Button
+                            aria-label={`编辑插件 ${row.name}`}
+                            icon={<EditOutlined />}
+                            onClick={() => openEditPluginModal(row)}
+                            type="link"
+                          >
+                            编辑
+                          </Button>
+                          <Button
+                            aria-label={`删除插件 ${row.name}`}
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => confirmDeletePlugin(row)}
+                            type="link"
+                          >
+                            删除
+                          </Button>
+                        </Space>
+                      );
+                    },
                   },
                 ]}
               />
@@ -1715,7 +1865,7 @@ export default function PluginsPage() {
           }}
         >
           <Form.Item label="插件" name="plugin_id" rules={[{ required: true }]}>
-            <Select options={pluginOptions} />
+            <Select options={pluginOptions} onChange={applyConnectionPluginDefaults} />
           </Form.Item>
           <Form.Item label="名称" name="name" rules={[{ required: true }]}>
             <Input />
@@ -1882,8 +2032,10 @@ export default function PluginsPage() {
             <Select options={resultWriteTargetOptions} onChange={applyWriteTargetDefaults} />
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(previous, current) => previous.write_target !== current.write_target}>
-            {({ getFieldValue }) =>
-              getFieldValue('write_target') === 'user_feedback_insights' ? (
+            {({ getFieldValue }) => {
+              const writeTarget = getFieldValue('write_target');
+              if (writeTarget === 'user_feedback_insights') {
+                return (
                 <Space wrap>
                   <Form.Item
                     label="洞察列表 JSONPath"
@@ -1899,12 +2051,42 @@ export default function PluginsPage() {
                     <Input placeholder="$.rows" style={{ width: 220 }} />
                   </Form.Item>
                 </Space>
-              ) : (
+                );
+              }
+              if (writeTarget === 'code_inspection_reports') {
+                return (
+                  <Space wrap>
+                    <Form.Item
+                      label="Finding 列表 JSONPath"
+                      name="findings_path"
+                      rules={[{ required: true, message: '请输入 Finding 列表路径' }]}
+                    >
+                      <Input placeholder="$.findings" style={{ width: 220 }} />
+                    </Form.Item>
+                    <Form.Item label="仓库 ID JSONPath" name="repository_id_path">
+                      <Input placeholder="$.repository_id" style={{ width: 220 }} />
+                    </Form.Item>
+                    <Form.Item label="分支 JSONPath" name="branch_path">
+                      <Input placeholder="$.branch" style={{ width: 180 }} />
+                    </Form.Item>
+                    <Form.Item label="提交 SHA JSONPath" name="commit_sha_path">
+                      <Input placeholder="$.commit_sha" style={{ width: 220 }} />
+                    </Form.Item>
+                    <Form.Item label="风险级别 JSONPath" name="risk_level_path">
+                      <Input placeholder="$.risk_level" style={{ width: 180 }} />
+                    </Form.Item>
+                    <Form.Item label="摘要 JSONPath" name="summary_path">
+                      <Input placeholder="$.summary" style={{ width: 220 }} />
+                    </Form.Item>
+                  </Space>
+                );
+              }
+              return (
                 <Form.Item label="导入数量 JSONPath" name="records_imported_path">
                   <Input placeholder="$.row_count" />
                 </Form.Item>
-              )
-            }
+              );
+            }}
           </Form.Item>
           <Form.Item label="名称" name="name" rules={[{ required: true }]}>
             <Input />

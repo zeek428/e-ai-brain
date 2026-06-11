@@ -113,6 +113,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "042_code_inspection_committer_dimension.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "043_official_devops_plugins.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

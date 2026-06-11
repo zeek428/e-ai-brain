@@ -8,6 +8,9 @@
 ## [Unreleased]
 
 ### Added
+- 插件管理新增邮箱官方标准插件：系统自动种子化 `email` 插件并返回 `is_system=true`，页面不提供编辑/删除，连接表单可自动带出邮件网关/API endpoint、Authorization、Content-Type 和默认邮件参数。
+- 插件管理新增 GitLab/GitHub 官方标准插件：系统自动种子化 DevOps 标准插件并返回 `is_system=true`，页面显示官方标准标签且不提供编辑/删除，连接表单可自动带出 GitLab/GitHub endpoint、认证方式和平台 Params/Headers。
+- 插件动作新增“代码巡检报告”结果写入目标，新增动作/编辑动作时可通过可视化字段配置仓库 ID、分支、提交 SHA、风险级别、摘要和 finding 列表 JSONPath，高级 `result_mapping` 继续同步。
 - 代码巡检结果新增提交人维度：报告列表和详情展示提交人汇总，finding 保存提交人姓名、邮箱和用户名，支持按提交人筛选；严重 finding 自动建 Bug 增加 fingerprint 去重、severity mapping、产品范围读取控制和结果动作状态摘要。
 - 运营治理新增代码巡检闭环：定时作业支持 `code_repository_inspection` 和多 `result_actions`，可把仓库质量/安全/规范扫描结果写入代码巡检报告表、按严重级别自动创建 `code_inspection` 来源 Bug，并记录邮件/钉钉机器人通知反馈；新增运营治理 / 代码巡检页面查看报告、finding 和通知明细。
 - 产品和技术文档同步代码巡检闭环：PRD、技术规格、系统概览、API 和测试用例统一描述代码仓库巡检、多结果动作、代码巡检报告表、严重问题 Bug 派生和邮件/钉钉通知反馈。
