@@ -27,6 +27,9 @@ FastAPI 模块化单体
   ├─ knowledge：文档导入、chunk、检索和沉淀
   ├─ long_memory：GBrain 长期记忆、混合检索和知识图谱
   ├─ model_gateway：OpenAI-compatible 模型调用
+  ├─ plugin_management：插件、连接、动作和调用日志
+  ├─ scheduled_jobs：定时作业定义、运行实例和 AI/插件装配快照
+  ├─ code_inspection：周期性代码仓库巡检报告、finding、Bug 派生和通知反馈
   ├─ devops_metrics：GitLab、Jenkins 和线上日志指标采集
   ├─ gitlab_review：内部 GitLab MR 元信息、diff 快照和 Review 报告归档
   ├─ code_review_executor：可插拔代码 Review 执行器
@@ -58,6 +61,9 @@ FastAPI 模块化单体
 | knowledge | Markdown 导入、向量/关键词混合检索、权限过滤 | PostgreSQL + pgvector |
 | long_memory | 长期记忆、答案合成、知识图谱和多跳查询 | GBrain |
 | model_gateway | 聊天/embedding 模型统一入口 | OpenAI-compatible API |
+| plugin_management | 三方系统插件、连接、动作、请求配置、试运行和调用日志 | PostgreSQL + HTTP/MCP HTTP |
+| scheduled_jobs | 采集、AI 分析、插件动作调用、代码仓库巡检、迭代建议和看板刷新调度 | PostgreSQL + Redis/worker |
+| code_inspection | 定期扫描仓库质量、安全和规范问题，沉淀代码审查报告、finding 明细、严重问题 Bug 和通知反馈 | PostgreSQL + 插件扫描服务 |
 | devops_metrics | GitLab 提交与代码质量、Jenkins 发布、线上运行日志指标采集和归属映射 | PostgreSQL + 定时采集器 |
 | gitlab_review | 内部 GitLab MR 元信息、changes 只读读取、diff 快照、Review 报告归档和不回写 GitLab 约束 | GitLab API + PostgreSQL |
 | code_review_executor | 可插拔代码 Review 执行器，一期默认对接 Claude Code `code-review` skill | Claude Code skill adapter |
@@ -85,6 +91,7 @@ FastAPI 模块化单体
 → lifecycle_context 写入需求、任务、提交、Review、测试、Bug、发布、日志和知识之间的关系边
 → lifecycle_context 归集需求变更、设计缺口、代码质量、Review、测试、Bug、发布和线上异常风险信号
 → GitLab、Jenkins、线上日志通过真实登记/导入或定时采集映射产品归属
+→ 代码仓库巡检定时作业通过插件扫描质量/安全/规范 finding，写入代码审查表，严重问题派生 Bug，并记录邮件/钉钉机器人通知反馈
 → 用户使用数据和用户反馈定时采集并映射产品、模块、功能和用户群体
 → iteration_planning 结合需求池、Bug、线上日志、发布记录、用户使用和用户反馈生成迭代规划建议
 → AI 自动测试和人工测试登记 Bug，关联产品、任务、提交、发布或日志
@@ -103,6 +110,7 @@ FastAPI 模块化单体
 | AI 任务类型 | v1 MVP 覆盖产品详细设计、技术方案和内部 GitLab MR 代码 Review；后续扩展开发计划、自动化测试、发布评估和上线后分析，统一使用 task_type、状态机、人工确认和审计 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 全流程感知 | 需求、设计、代码、Review、测试、Bug、发布、线上日志、用户使用、用户反馈、迭代规划建议、知识和审计通过 lifecycle_context 串联，支持上下游追溯和风险定位 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 研发运营数据 | GitLab、Jenkins、线上日志、用户使用、用户反馈、迭代规划建议和 Bug 均按产品/版本/模块归属聚合，支撑首页 IT 团队看板 | [技术规格](../enterprise-ai-brain/spec.md) |
+| 代码仓库巡检 | 定时作业通过插件扫描仓库质量/安全/规范问题，结果进入代码审查表，严重问题可自动创建 `code_inspection` 来源 Bug，并记录邮件/钉钉机器人通知反馈 | [PRD](../../01-prd/enterprise-ai-brain/prd.md)、[技术规格](../enterprise-ai-brain/spec.md) 和 [API 文档](../enterprise-ai-brain/api.md) |
 | AI 编排 | LangGraph | [技术规格](../enterprise-ai-brain/spec.md) |
 | 数据存储 | PostgreSQL + pgvector + Redis | [技术规格](../enterprise-ai-brain/spec.md) |
 | 知识检索 | PostgreSQL + pgvector 权限过滤，GBrain 提供长期记忆、混合检索和知识图谱补充 | [技术规格](../enterprise-ai-brain/spec.md) |
