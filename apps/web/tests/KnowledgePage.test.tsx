@@ -322,6 +322,7 @@ describe('KnowledgePage', () => {
         expect(init?.method).toBe('POST');
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({
+          chunk_strategy: 'simple_text',
           doc_type: 'manual',
           filename: 'payment-runbook.md',
           folder_id: 'knowledge_folder_runbook',
@@ -337,17 +338,17 @@ describe('KnowledgePage', () => {
               id: 'knowledge_asset_upload',
             },
             document: {
-              active_chunk_set_id: 'knowledge_chunk_set_upload',
+              active_chunk_set_id: null,
               folder_id: 'knowledge_folder_runbook',
               id: 'knowledge_upload',
-              index_status: 'indexed',
+              index_status: 'importing',
               knowledge_space_id: 'knowledge_space_payment',
               source_asset_id: 'knowledge_asset_upload',
               title: 'payment-runbook',
             },
             import_job: {
               id: 'knowledge_import_job_upload',
-              status: 'completed',
+              status: 'queued',
             },
           },
         });
@@ -397,6 +398,7 @@ describe('KnowledgePage', () => {
         headers: { 'Content-Type': 'application/json' },
         status: 200,
       });
+    let importJobStatus = 'queued';
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (String(input) === '/api/knowledge/documents' || String(input).startsWith('/api/knowledge/documents?')) {
@@ -437,17 +439,29 @@ describe('KnowledgePage', () => {
             items: [
               {
                 asset_filename: 'ops-import.md',
-                chunk_strategy: 'simple_text',
+                chunk_strategy: 'parent_child',
                 document_id: 'knowledge_ops',
                 document_title: '导入任务排查',
                 folder_path: '导入任务',
                 id: 'knowledge_import_job_ops',
-                parser_engine: 'plain_text',
-                progress: 100,
-                status: 'completed',
+                parser_engine: 'markdown',
+                progress: importJobStatus === 'completed' ? 100 : 0,
+                status: importJobStatus,
               },
             ],
             total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/import-jobs/knowledge_import_job_ops/run') {
+        expect(init?.method).toBe('POST');
+        importJobStatus = 'completed';
+        return jsonResponse({
+          data: {
+            import_job: {
+              id: 'knowledge_import_job_ops',
+              status: 'completed',
+            },
           },
         });
       }
@@ -469,6 +483,56 @@ describe('KnowledgePage', () => {
           },
         });
       }
+      if (input === '/api/knowledge/documents/knowledge_ops/chunk-sets') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                chunk_count: 2,
+                chunk_strategy: 'parent_child',
+                id: 'knowledge_chunk_set_ops',
+                is_active: true,
+                parser_engine: 'markdown',
+                status: 'active',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/documents/knowledge_ops/chunks?chunk_set_id=knowledge_chunk_set_ops') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                chunk_index: 1,
+                chunk_set_id: 'knowledge_chunk_set_ops',
+                content: '# 导入任务',
+                id: 'chunk_parent',
+                metadata: { chunk_role: 'parent', heading: '导入任务' },
+              },
+              {
+                chunk_index: 2,
+                chunk_set_id: 'knowledge_chunk_set_ops',
+                content: 'ops-import 解析完成',
+                id: 'chunk_child',
+                metadata: { chunk_role: 'child', heading: '导入任务' },
+                parent_chunk_id: 'chunk_parent',
+                parent_content: '# 导入任务',
+              },
+            ],
+            total: 2,
+          },
+        });
+      }
+      if (input === '/api/knowledge/documents/batch-move') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          document_ids: ['knowledge_ops'],
+          folder_id: null,
+        });
+        return jsonResponse({ data: { skipped: [], updated: ['knowledge_ops'] } });
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -479,9 +543,16 @@ describe('KnowledgePage', () => {
     expect(await screen.findByText('导入任务排查')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '导入任务' }));
 
-    expect(await screen.findByText('plain_text')).toBeInTheDocument();
+    expect(await screen.findByText('markdown')).toBeInTheDocument();
     expect(screen.getByText('ops-import.md')).toBeInTheDocument();
-    expect(screen.getByText('100%')).toBeInTheDocument();
+    expect(screen.getByText('0%')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /运行/ }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
+        '/api/knowledge/import-jobs/knowledge_import_job_ops/run',
+        'POST',
+      ]),
+    );
 
     fireEvent.click(screen.getByRole('button', { name: '资产' }));
 
@@ -492,6 +563,22 @@ describe('KnowledgePage', () => {
       expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
         '/api/knowledge/documents/knowledge_ops/assets',
         'GET',
+      ]),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '分块' }));
+    expect(await screen.findByText('parent_child')).toBeInTheDocument();
+    expect(screen.getAllByText('父块').length).toBeGreaterThan(1);
+    expect(screen.getByText('子块')).toBeInTheDocument();
+    expect(screen.getByText('ops-import 解析完成')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 knowledge_ops' }));
+    fireEvent.click(screen.getByRole('button', { name: /批量移动/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /OK|确 定/ }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toContainEqual([
+        '/api/knowledge/documents/batch-move',
+        'POST',
       ]),
     );
   });

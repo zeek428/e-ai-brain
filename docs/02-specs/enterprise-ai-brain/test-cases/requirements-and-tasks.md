@@ -426,7 +426,7 @@
 | 项目 | 内容 |
 |------|------|
 | 用例编号 | TC-AIBRAIN-KNOWLEDGE-FUNC-012B |
-| 用例名称 | 知识空间目录和资产导入 |
+| 用例名称 | 知识空间目录、资产导入和分块版本治理 |
 | 优先级 | P0 |
 | 模块 | KNOWLEDGE |
 | 创建人 | Codex |
@@ -441,21 +441,26 @@
 |------|------|----------|
 | 1 | POST `/api/knowledge/spaces` 创建知识空间 | 返回空间 ID，记录空间创建审计。 |
 | 2 | POST `/api/knowledge/spaces/{space_id}/folders` 创建目录 | 返回目录 ID 和路径，目录归属空间。 |
-| 3 | POST `/api/knowledge/documents/upload` 上传 Markdown 文件 | 文件写入对象存储，结构表写入 `knowledge_assets`、`knowledge_import_jobs`、`knowledge_chunk_sets`、`knowledge_documents` 和 `knowledge_chunks`。 |
-| 4 | GET `/api/knowledge/documents?knowledge_space_id=...&folder_id=...` | 返回上传文档，包含 `source_asset_id`、`active_chunk_set_id` 和目录信息。 |
-| 5 | POST `/api/knowledge/search` 并传 `knowledge_space_id` | 只返回当前空间可读结果，source 包含 `asset_id`、`chunk_set_id`、`folder_id` 和 `knowledge_space_id`。 |
-| 6 | GET `/api/knowledge/documents/{document_id}/assets` | 只返回当前用户可读文档的资产，包含文件名、资产类型、MIME、大小和存储提供方。 |
-| 7 | GET `/api/knowledge/import-jobs?knowledge_space_id=...` | 只返回当前用户可读空间的导入任务，包含文档标题、源文件、目录、解析器、切片策略、进度和状态。 |
-| 8 | GET `/api/knowledge/assets/{asset_id}/preview` | 通过 API 鉴权返回文本预览，不暴露永久对象存储 URL。 |
-| 9 | 使用非空间成员重复列表、检索、资产、导入任务和预览 | 返回空结果或 403，不泄露空间文档、chunk、任务或资产内容。 |
+| 3 | POST `/api/knowledge/documents/upload` 上传 Markdown 文件，指定 `parser_engine=markdown`、`chunk_strategy=parent_child` | 文件写入对象存储，结构表写入 `knowledge_documents`、原始 `knowledge_assets` 和 queued `knowledge_import_jobs`；文档状态为 `importing`，暂不暴露 active chunk set。 |
+| 4 | POST `/api/knowledge/import-jobs/{job_id}/run` | 导入任务完成，生成独立 `parsed_markdown` 资产、新 `knowledge_chunk_sets` 和父子 `knowledge_chunks`；文档切换到 active chunk set。 |
+| 5 | GET `/api/knowledge/documents?knowledge_space_id=...&folder_id=...` | 返回上传文档，包含 `source_asset_id`、`parsed_asset_id`、`active_chunk_set_id` 和目录信息。 |
+| 6 | POST `/api/knowledge/search` 并传 `knowledge_space_id` | 只返回当前空间可读结果；父子分块时命中子块，source 包含 `asset_id`、`chunk_set_id`、`folder_id`、`knowledge_space_id`、`parent_chunk_id` 和 `parent_content`。 |
+| 7 | GET `/api/knowledge/documents/{document_id}/assets` | 只返回当前用户可读文档的原始资产和解析资产，包含文件名、资产类型、MIME、大小和存储提供方。 |
+| 8 | GET `/api/knowledge/import-jobs?knowledge_space_id=...` | 只返回当前用户可读空间的导入任务，包含文档标题、源文件、目录、解析器、切片策略、进度和状态。 |
+| 9 | GET `/api/knowledge/documents/{document_id}/chunk-sets` 与 GET `/api/knowledge/documents/{document_id}/chunks?chunk_set_id=...` | 可查看 active/archived chunk set 和父块/子块预览。 |
+| 10 | POST `/api/knowledge/documents/{document_id}/reparse` 后运行新导入任务，再 POST `/api/knowledge/documents/{document_id}/chunk-sets/{old_id}/activate` | 重解析成功生成新 chunk set，旧版本归档；激活旧版本可回滚 active chunk set。 |
+| 11 | 构造解析失败任务后 POST `/api/knowledge/import-jobs/{job_id}/retry`，再对 queued 任务 POST cancel | 失败任务重试回到 queued 且不重复创建文档；queued 任务可取消，已取消任务运行返回 `IMPORT_JOB_STATE_INVALID`。 |
+| 12 | PATCH `/api/knowledge/folders/{folder_id}` 与 POST `/api/knowledge/documents/batch-move` | 目录支持重命名、移动、排序、归档；文档批量移动返回 updated/skipped 明细并校验空间写权限。 |
+| 13 | GET `/api/knowledge/assets/{asset_id}/preview` | 通过 API 鉴权返回文本预览，不暴露永久对象存储 URL。 |
+| 14 | 使用非空间成员重复列表、检索、资产、导入任务、chunk set、chunk 预览和预览接口 | 返回空结果或 403，不泄露空间文档、chunk、任务或资产内容。 |
 
 **预期结果**:
 1. 知识空间是权限边界，目录是组织结构，资产存储只承载原始文件和解析产物。
 2. PostgreSQL 仍是业务事实源，MinIO/S3 仅作为对象存储层。
-3. 知识中心页面提供文档资产弹窗和导入任务弹窗，运营人员可查看导入处理结果。
-3. 前端知识中心支持空间筛选、目录选择、新建空间/目录和文件上传。
+3. 知识中心页面提供文档资产弹窗、导入任务弹窗、chunk 预览弹窗和批量移动入口，运营人员可查看导入处理结果并治理分块版本。
+4. 前端知识中心支持空间筛选、目录选择、新建空间/目录、文件上传、导入任务运行、chunk 预览和文档批量移动。
 
-**状态**: 已自动化覆盖。后端见 `apps/api/tests/test_knowledge_space_assets.py`、`apps/api/tests/test_knowledge_management_foundation.py` 和 `apps/api/tests/test_persistence_repository_boundaries.py`；前端见 `apps/web/tests/KnowledgePage.test.tsx`。
+**状态**: 已自动化覆盖。后端见 `apps/api/tests/test_knowledge_import_operations.py`、`apps/api/tests/test_knowledge_space_assets.py`、`apps/api/tests/test_knowledge_management_foundation.py` 和 `apps/api/tests/test_persistence_repository_boundaries.py`；前端见 `apps/web/tests/KnowledgePage.test.tsx`。
 
 ---
 

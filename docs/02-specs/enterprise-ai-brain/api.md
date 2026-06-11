@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.221 |
+| 功能版本 | v1.1.222 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.222 | 2026-06-11 | 知识导入任务补充 run/retry/cancel、重解析、chunk set 预览/激活、父子分块 source 和目录批量整理契约 | Codex |
 | v1.1.221 | 2026-06-10 | 知识中心新增知识空间、空间成员、目录、MinIO/S3 资产上传、导入任务和 asset preview API 契约，检索和列表支持空间/目录过滤 | Codex |
 | v1.1.220 | 2026-06-10 | 补充 `user_feedback_insight_extract` 定时作业契约：可绑定 MaxCompute/MCP 插件动作，从 `insights_path` 映射读取洞察并写入用户反馈洞察表 | Codex |
 | v1.1.219 | 2026-06-10 | 新增插件管理 API：补充插件、连接、动作、调用日志、动作手动调用，以及定时作业引用插件动作的请求/响应字段 | Codex |
@@ -483,13 +484,22 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Knowledge | PUT | `/api/knowledge/spaces/{space_id}/members` | 维护知识空间成员。 |
 | Knowledge | GET | `/api/knowledge/spaces/{space_id}/folders` | 查询知识空间目录。 |
 | Knowledge | POST | `/api/knowledge/spaces/{space_id}/folders` | 创建知识空间目录。 |
-| Knowledge | POST | `/api/knowledge/documents/upload` | 上传文件到对象存储并创建知识文档、导入任务和 chunk set。 |
+| Knowledge | PATCH | `/api/knowledge/folders/{folder_id}` | 重命名、移动、排序或归档目录。 |
+| Knowledge | POST | `/api/knowledge/documents/upload` | 上传文件到对象存储并创建知识文档、原始资产和 queued 导入任务。 |
 | Knowledge | GET | `/api/knowledge/documents/{document_id}/assets` | 按文档查询可访问知识资产。 |
 | Knowledge | GET | `/api/knowledge/assets/{asset_id}/preview` | 鉴权后预览知识资产内容。 |
 | Knowledge | GET | `/api/knowledge/import-jobs` | 查询可访问知识导入任务，支持按知识空间、文档和状态过滤。 |
+| Knowledge | POST | `/api/knowledge/import-jobs/{job_id}/run` | 运行 queued/failed 导入任务，生成解析资产、chunk set 和 chunk。 |
+| Knowledge | POST | `/api/knowledge/import-jobs/{job_id}/retry` | 重试 failed/cancelled 导入任务，不重复创建文档。 |
+| Knowledge | POST | `/api/knowledge/import-jobs/{job_id}/cancel` | 取消 queued/uploaded/failed 导入任务。 |
 | Knowledge | PATCH | `/api/knowledge/documents/{document_id}` | 更新知识文档元数据、内容、权限角色、标签或索引状态。 |
 | Knowledge | DELETE | `/api/knowledge/documents/{document_id}` | 删除知识文档。 |
 | Knowledge | POST | `/api/knowledge/documents/{document_id}/retry-index` | 重试失败知识文档索引。 |
+| Knowledge | GET | `/api/knowledge/documents/{document_id}/chunk-sets` | 查询文档分块版本，支持回滚前检查解析器、策略、状态和 chunk 数。 |
+| Knowledge | GET | `/api/knowledge/documents/{document_id}/chunks` | 预览指定 chunk set 的 chunk，返回父子关系和标题层级元数据。 |
+| Knowledge | POST | `/api/knowledge/documents/{document_id}/chunk-sets/{chunk_set_id}/activate` | 激活历史 chunk set 并归档其他版本。 |
+| Knowledge | POST | `/api/knowledge/documents/{document_id}/reparse` | 基于原始资产创建新的 queued 重解析任务。 |
+| Knowledge | POST | `/api/knowledge/documents/batch-move` | 批量移动知识文档目录，返回 updated/skipped 明细。 |
 | Knowledge | POST | `/api/knowledge/search` | 知识检索。 |
 | Knowledge | GET | `/api/knowledge/deposits` | 知识沉淀候选列表。 |
 | Knowledge | POST | `/api/knowledge/deposits/{deposit_id}/approve` | 采纳知识沉淀。 |
@@ -2177,9 +2187,10 @@ POST /api/knowledge/spaces
 PUT /api/knowledge/spaces/{space_id}/members
 GET /api/knowledge/spaces/{space_id}/folders
 POST /api/knowledge/spaces/{space_id}/folders
+PATCH /api/knowledge/folders/{folder_id}
 ```
 
-空间成员角色支持 `reader`、`contributor`、`maintainer` 和 `admin`。空间是知识访问边界；目录只承担空间内组织结构，不作为独立安全边界。
+空间成员角色支持 `reader`、`contributor`、`maintainer` 和 `admin`。空间是知识访问边界；目录只承担空间内组织结构，不作为独立安全边界。`PATCH /api/knowledge/folders/{folder_id}` 支持 `name`、`parent_folder_id`、`sort_order` 和 `status=active|archived`，移动目录时必须拒绝跨空间、移动到自身或移动到子孙目录。
 
 导入文档：
 
@@ -2215,11 +2226,35 @@ POST /api/knowledge/documents/upload
   "mime_type": "text/markdown",
   "content_base64": "IyDmlK/ku5jlpLHotKUuLi4=",
   "doc_type": "runbook",
-  "tags": ["payment", "runbook"]
+  "tags": ["payment", "runbook"],
+  "parser_engine": "markdown",
+  "chunk_strategy": "parent_child"
 }
 ```
 
-上传接口把原始文件写入配置的 S3-compatible 对象存储，默认私有化部署使用 MinIO；业务事实仍写入 PostgreSQL 的 `knowledge_documents`、`knowledge_assets`、`knowledge_import_jobs`、`knowledge_chunk_sets` 和 `knowledge_chunks`。响应返回 `document`、`asset` 和 `import_job`。文档资产通过 `GET /api/knowledge/documents/{document_id}/assets` 查询，导入任务通过 `GET /api/knowledge/import-jobs?knowledge_space_id=...&document_id=...&status=...` 查询，两者均先按知识空间或文档读权限过滤。对象预览必须通过 `GET /api/knowledge/assets/{asset_id}/preview` 鉴权代理，不向前端暴露永久对象存储 URL。
+上传接口把原始文件写入配置的 S3-compatible 对象存储，默认私有化部署使用 MinIO；业务事实写入 PostgreSQL 的 `knowledge_documents`、`knowledge_assets` 和 `knowledge_import_jobs`。上传成功后文档进入 `importing`，`active_chunk_set_id` 为空，导入任务进入 `queued`，不会在请求内同步生成 chunk set。响应返回 `document`、原始 `asset` 和 `import_job`。文档资产通过 `GET /api/knowledge/documents/{document_id}/assets` 查询，导入任务通过 `GET /api/knowledge/import-jobs?knowledge_space_id=...&document_id=...&status=...` 查询，两者均先按知识空间或文档读权限过滤。对象预览必须通过 `GET /api/knowledge/assets/{asset_id}/preview` 鉴权代理，不向前端暴露永久对象存储 URL。
+
+导入任务操作：
+
+```http
+POST /api/knowledge/import-jobs/{job_id}/run
+POST /api/knowledge/import-jobs/{job_id}/retry
+POST /api/knowledge/import-jobs/{job_id}/cancel
+```
+
+`run` 读取原始资产，按 `parser_engine` 生成独立 `parsed_markdown` 资产，再写入新的 `knowledge_chunk_sets` 和 `knowledge_chunks`；成功后切换文档 `active_chunk_set_id`，旧 active chunk set 归档。当前支持 `plain_text`、`markdown`、`pdf_text`、`ocr_json`、`table_json` 解析器和 `simple_text`、`parent_child` 分块策略。`retry` 只把 failed/cancelled 任务重置为 `queued`，不得重复创建文档或原始资产；`cancel` 只能取消 queued/uploaded/failed 任务，状态不允许时返回 `IMPORT_JOB_STATE_INVALID`。
+
+分块版本与重解析：
+
+```http
+GET /api/knowledge/documents/{document_id}/chunk-sets
+GET /api/knowledge/documents/{document_id}/chunks?chunk_set_id=knowledge_chunk_set_001
+POST /api/knowledge/documents/{document_id}/chunk-sets/{chunk_set_id}/activate
+POST /api/knowledge/documents/{document_id}/reparse
+POST /api/knowledge/documents/batch-move
+```
+
+`chunk-sets` 返回文档所有分块版本的解析器、分块策略、chunk 数、状态和激活时间；`chunks` 返回指定版本的 chunk 内容、`parent_chunk_id` 和 `metadata.chunk_role/heading/section_index`。`activate` 将历史版本设为 active 并归档同文档其他版本；`reparse` 基于原始资产创建新的 queued 导入任务，只有 run 成功后才切换 active。`batch-move` 接收 `document_ids` 与 `folder_id`，逐条校验写权限并返回 `updated` 和 `skipped`。
 
 查询文档：
 
@@ -2272,6 +2307,8 @@ POST /api/knowledge/search
           "doc_type": "manual",
           "folder_id": "knowledge_folder_001",
           "knowledge_space_id": "knowledge_space_001",
+          "parent_chunk_id": "doc_001_parent_001",
+          "parent_content": "# 研发需求拆解\n研发需求拆解应包含背景、业务目标...",
           "title": "研发需求拆解模板"
         }
       }
@@ -2282,7 +2319,7 @@ POST /api/knowledge/search
 }
 ```
 
-前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且 Embedding 网关可用时查询文本会生成 embedding，并只和 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 计算 cosine 相似度，返回 `score` 与 `retrieval_mode=vector`；不兼容、缺失或仅文本索引可用时按关键词检索返回 `retrieval_mode=keyword` 且 `score=null`。无结果时展示真实空状态，不回退到示例数据。
+前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且 Embedding 网关可用时查询文本会生成 embedding，并只和 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 计算 cosine 相似度，返回 `score` 与 `retrieval_mode=vector`；不兼容、缺失或仅文本索引可用时按关键词检索返回 `retrieval_mode=keyword` 且 `score=null`。启用 `parent_child` 时父块不作为直接命中结果返回，子块命中会在 `source.parent_chunk_id` 和 `source.parent_content` 中补充父块上下文。无结果时展示真实空状态，不回退到示例数据。
 
 知识沉淀：
 
@@ -3323,6 +3360,11 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | POST `/api/knowledge/documents` | 400 | VALIDATION_ERROR | 否 | 成功和失败均记录文档来源。 | 标出文件类型、大小或权限错误。 |
 | POST `/api/knowledge/search` | 400 | VALIDATION_ERROR | 否 | 可记录 query_hash，不记录原始敏感 query。 | 提示 query 或 top_k 无效。 |
 | POST `/api/knowledge/search` | 200 | 无 | 不适用 | 不记录完整 query，记录 result_count 和 latency。 | 无结果时显示空状态，不暗示系统错误。 |
+| POST `/api/knowledge/import-jobs/{job_id}/run` | 409 | IMPORT_JOB_STATE_INVALID | 否 | 记录状态冲突和当前任务状态。 | 刷新导入任务列表，只对 queued/failed 任务展示运行。 |
+| POST `/api/knowledge/import-jobs/{job_id}/retry` | 409 | IMPORT_JOB_STATE_INVALID | 否 | 记录状态冲突和当前任务状态。 | 只对 failed/cancelled 任务展示重试。 |
+| POST `/api/knowledge/import-jobs/{job_id}/cancel` | 409 | IMPORT_JOB_STATE_INVALID | 否 | 记录状态冲突和当前任务状态。 | 只对 queued/uploaded/failed 任务展示取消。 |
+| POST `/api/knowledge/documents/{document_id}/chunk-sets/{chunk_set_id}/activate` | 404/409 | NOT_FOUND / KNOWLEDGE_CHUNK_SET_STATE_INVALID | 否 | 记录激活失败和目标 chunk set。 | 刷新分块版本，只有同文档可用版本允许激活。 |
+| POST `/api/knowledge/documents/batch-move` | 403/404 | FORBIDDEN / NOT_FOUND | 否 | 成功必须记录批量移动审计；逐条跳过写入 skipped 明细。 | 展示移动成功数量和无权限/不存在跳过项。 |
 | POST `/api/knowledge/documents/{document_id}/retry-index` | 409 | KNOWLEDGE_INDEX_STATE_INVALID | 否 | 记录状态冲突。 | 刷新文档状态；只有索引失败时显示重试。 |
 | PATCH knowledge deposit review | 409 | KNOWLEDGE_DEPOSIT_STATE_INVALID | 否 | 记录重复审核或状态冲突。 | 刷新候选状态。 |
 | GET/POST model gateway configs | 403 | FORBIDDEN | 否 | 记录越权管理尝试。 | 提示需要 admin 权限。 |
@@ -3358,6 +3400,8 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | KNOWLEDGE_DEPOSIT_STATE_INVALID | 知识沉淀候选状态不允许该操作。 |
 | KNOWLEDGE_INDEX_FAILED | 知识文档索引失败。 |
 | KNOWLEDGE_INDEX_STATE_INVALID | 知识文档当前索引状态不允许重试。 |
+| IMPORT_JOB_STATE_INVALID | 知识导入任务当前状态不允许运行、重试或取消。 |
+| KNOWLEDGE_CHUNK_SET_STATE_INVALID | 知识分块版本状态不允许激活或回滚。 |
 | BUG_STATE_INVALID | 当前 Bug 状态不允许该操作。 |
 | COLLECTOR_RUN_STATE_INVALID | 当前采集运行终态不允许回退或切换状态。 |
 | PENDING_ATTRIBUTION_STATE_INVALID | 当前待归属项已经归属或忽略，不允许重复处理。 |
@@ -3381,6 +3425,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.222 | 2026-06-11 | 知识导入任务新增 run/retry/cancel、重解析、chunk set 预览/激活、父子分块 source 和目录批量整理契约。 |
 | v1.1.221 | 2026-06-10 | 知识中心新增知识空间、目录、MinIO/S3 资产上传、导入任务、chunk set 和资产预览契约。 |
 | v1.1.97 | 2026-06-05 | 明确首页看板允许 PostgreSQL source rows + Python 聚合，管理主列表仍要求服务端分页、排序和筛选。 |
 | v1.1.93 | 2026-06-05 | 新增需求批量生成任务接口，支持同产品已排期需求批量生成产品详细设计任务并记录批次审计。 |

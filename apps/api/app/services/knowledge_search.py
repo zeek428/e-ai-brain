@@ -224,9 +224,15 @@ def knowledge_search_items(
     query_embedding_context: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     items = []
+    chunk_content_by_id = {
+        candidate["chunk"]["id"]: candidate["chunk"]["content"]
+        for candidate in candidates
+    }
     for candidate in candidates:
         document = candidate["document"]
         chunk = candidate["chunk"]
+        if chunk.get("metadata", {}).get("chunk_role") == "parent":
+            continue
         haystack = f"{document['title']} {chunk['content']}".lower()
         embedding = chunk.get("embedding")
         score = None
@@ -245,6 +251,13 @@ def knowledge_search_items(
         elif query not in haystack:
             continue
         retrieval_mode = "vector" if score is not None else "keyword"
+        parent_chunk_id = chunk.get("parent_chunk_id")
+        parent_content = None
+        if parent_chunk_id:
+            parent_content = chunk_content_by_id.get(parent_chunk_id) or chunk.get(
+                "metadata",
+                {},
+            ).get("parent_content")
         items.append(
             {
                 "chunk_id": chunk["id"],
@@ -265,6 +278,8 @@ def knowledge_search_items(
                     or chunk.get("metadata", {}).get("folder_id"),
                     "knowledge_space_id": document.get("knowledge_space_id")
                     or chunk.get("metadata", {}).get("knowledge_space_id"),
+                    "parent_chunk_id": parent_chunk_id,
+                    "parent_content": parent_content,
                     "title": document["title"],
                 },
             }

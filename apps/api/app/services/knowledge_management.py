@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,7 +11,6 @@ from app.core.config import get_settings
 from app.services.knowledge_deposits import (
     apply_knowledge_document_to_memory,
     record_audit_event,
-    save_knowledge_document_records,
     uses_repository_context,
 )
 from app.services.knowledge_documents import knowledge_document_response
@@ -19,6 +19,10 @@ from app.services.object_storage import object_storage
 
 WRITE_SPACE_ROLES = {"admin", "contributor", "maintainer"}
 READ_SPACE_ROLES = WRITE_SPACE_ROLES | {"reader"}
+IMPORT_JOB_RUNNABLE_STATUSES = {"queued", "uploaded", "failed"}
+IMPORT_JOB_RETRYABLE_STATUSES = {"failed", "cancelled"}
+SUPPORTED_PARSER_ENGINES = {"plain_text", "markdown", "pdf_text", "ocr_json", "table_json"}
+SUPPORTED_CHUNK_STRATEGIES = {"simple_text", "parent_child"}
 
 
 def now_iso() -> str:
@@ -294,6 +298,72 @@ def create_knowledge_folder_result(
     return dict(folder)
 
 
+def folder_descendant_ids(current_store: Any, folder_id: str) -> set[str]:
+    descendants: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for folder in current_store.knowledge_folders.values():
+            parent_id = folder.get("parent_folder_id")
+            if parent_id == folder_id or parent_id in descendants:
+                if folder["id"] not in descendants:
+                    descendants.add(folder["id"])
+                    changed = True
+    return descendants
+
+
+def patch_knowledge_folder_result(
+    *,
+    current_store: Any,
+    folder_id: str,
+    name: str | None,
+    parent_folder_id: str | None,
+    parent_folder_id_set: bool,
+    sort_order: int | None,
+    status: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    folder = current_store.knowledge_folders.get(folder_id)
+    if folder is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
+    space_id = folder["knowledge_space_id"]
+    ensure_space_access(current_store, user, space_id=space_id, required="write")
+    if status is not None and status not in {"active", "archived"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported folder status")
+    if parent_folder_id_set and parent_folder_id is not None:
+        parent = current_store.knowledge_folders.get(parent_folder_id)
+        if parent is None or parent.get("knowledge_space_id") != space_id:
+            raise api_error(404, "NOT_FOUND", "Parent folder not found")
+        if parent_folder_id == folder_id or parent_folder_id in folder_descendant_ids(
+            current_store,
+            folder_id,
+        ):
+            raise api_error(409, "KNOWLEDGE_FOLDER_CYCLE", "Folder cannot be moved under itself")
+    updated = {
+        **folder,
+        "updated_at": now_iso(),
+    }
+    if name is not None:
+        updated["name"] = non_blank(name, "name")
+    if parent_folder_id_set:
+        updated["parent_folder_id"] = parent_folder_id
+    if sort_order is not None:
+        updated["sort_order"] = sort_order
+    if status is not None:
+        updated["status"] = status
+    updated["path"] = folder_path(current_store, updated)
+    current_store.knowledge_folders[folder_id] = updated
+    audit_event = record_audit_event(
+        current_store,
+        actor_id=user["id"],
+        event_type="knowledge_folder.updated",
+        subject_id=folder_id,
+        subject_type="knowledge_folder",
+    )
+    persist_knowledge_payload(current_store, audit_event=audit_event)
+    return dict(updated)
+
+
 def list_knowledge_folders_result(
     *,
     current_store: Any,
@@ -431,6 +501,7 @@ def decode_upload_content(content_base64: str) -> bytes:
 
 def create_asset_record(
     *,
+    asset_type: str = "original",
     content: bytes,
     current_store: Any,
     document_id: str,
@@ -442,7 +513,7 @@ def create_asset_record(
     settings = get_settings()
     digest = hashlib.sha256(content).hexdigest()
     asset_id = current_store.new_id("knowledge_asset")
-    object_key = f"knowledge/{space_id}/{document_id}/v1/original/{digest}/{filename}"
+    object_key = f"knowledge/{space_id}/{document_id}/v1/{asset_type}/{digest}/{filename}"
     storage = object_storage()
     stored = storage.put_bytes(
         bucket=settings.object_storage_bucket,
@@ -455,7 +526,7 @@ def create_asset_record(
         "id": asset_id,
         "knowledge_space_id": space_id,
         "document_id": document_id,
-        "asset_type": "original",
+        "asset_type": asset_type,
         "storage_provider": storage.provider,
         "bucket": stored.bucket,
         "object_key": stored.object_key,
@@ -472,6 +543,113 @@ def create_asset_record(
     return asset
 
 
+def normalize_parser_engine(parser_engine: str | None, mime_type: str | None) -> str:
+    if parser_engine:
+        normalized = parser_engine.strip()
+    elif mime_type in {"text/markdown", "text/x-markdown"}:
+        normalized = "markdown"
+    elif mime_type == "application/pdf":
+        normalized = "pdf_text"
+    else:
+        normalized = "plain_text"
+    if normalized not in SUPPORTED_PARSER_ENGINES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported parser_engine")
+    return normalized
+
+
+def normalize_chunk_strategy(chunk_strategy: str | None) -> str:
+    normalized = (chunk_strategy or "simple_text").strip()
+    if normalized not in SUPPORTED_CHUNK_STRATEGIES:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported chunk_strategy")
+    return normalized
+
+
+def parse_asset_content(
+    *,
+    content: bytes,
+    filename: str,
+    mime_type: str,
+    parser_engine: str,
+) -> dict[str, Any]:
+    text = content.decode("utf-8", errors="replace").strip()
+    if parser_engine == "plain_text":
+        if not text:
+            raise ValueError("NO_INDEXABLE_CONTENT")
+        return {
+            "asset_type": "parsed_markdown",
+            "content": text,
+            "filename": f"{filename}.parsed.md",
+            "mime_type": "text/markdown",
+            "metadata": {"parser_engine": parser_engine},
+        }
+    if parser_engine == "markdown":
+        if not text:
+            raise ValueError("NO_INDEXABLE_CONTENT")
+        return {
+            "asset_type": "parsed_markdown",
+            "content": text,
+            "filename": f"{filename}.parsed.md",
+            "mime_type": "text/markdown",
+            "metadata": {"parser_engine": parser_engine, "structure": "markdown"},
+        }
+    if parser_engine == "pdf_text":
+        printable = "".join(char if char.isprintable() or char.isspace() else " " for char in text)
+        normalized = "\n".join(line.strip() for line in printable.splitlines() if line.strip())
+        if not normalized:
+            raise ValueError("PDF_TEXT_EMPTY")
+        return {
+            "asset_type": "parsed_markdown",
+            "content": normalized,
+            "filename": f"{filename}.parsed.md",
+            "mime_type": "text/markdown",
+            "metadata": {"parser_engine": parser_engine, "source_mime_type": mime_type},
+        }
+    if parser_engine == "ocr_json":
+        payload = json.loads(text)
+        pages = payload.get("pages") if isinstance(payload, dict) else None
+        if isinstance(pages, list):
+            page_texts = [
+                f"Page {index}: {str(page.get('text', '')).strip()}"
+                for index, page in enumerate(pages, start=1)
+                if isinstance(page, dict) and str(page.get("text", "")).strip()
+            ]
+            parsed_text = "\n\n".join(page_texts)
+        else:
+            parsed_text = str(payload.get("text", "")).strip() if isinstance(payload, dict) else ""
+        if not parsed_text:
+            raise ValueError("OCR_TEXT_EMPTY")
+        return {
+            "asset_type": "parsed_markdown",
+            "content": parsed_text,
+            "filename": f"{filename}.ocr.md",
+            "mime_type": "text/markdown",
+            "metadata": {"parser_engine": parser_engine, "source_asset_type": "ocr_json"},
+        }
+    if parser_engine == "table_json":
+        payload = json.loads(text)
+        rows = payload if isinstance(payload, list) else payload.get("rows", [])
+        if not rows:
+            raise ValueError("TABLE_EMPTY")
+        columns = sorted({key for row in rows if isinstance(row, dict) for key in row})
+        if not columns:
+            raise ValueError("TABLE_EMPTY")
+        header = "| " + " | ".join(columns) + " |"
+        divider = "| " + " | ".join(["---"] * len(columns)) + " |"
+        body = [
+            "| " + " | ".join(str(row.get(column, "")) for column in columns) + " |"
+            for row in rows
+            if isinstance(row, dict)
+        ]
+        return {
+            "asset_type": "parsed_markdown",
+            "content": "\n".join([header, divider, *body]),
+            "filename": f"{filename}.table.md",
+            "mime_type": "text/markdown",
+            "metadata": {"parser_engine": parser_engine, "source_asset_type": "table_json"},
+        }
+    raise ValueError("UNSUPPORTED_PARSER")
+
+
 def upload_knowledge_document_result(
     *,
     content_base64: str,
@@ -481,6 +659,8 @@ def upload_knowledge_document_result(
     folder_id: str | None,
     knowledge_space_id: str,
     mime_type: str,
+    parser_engine: str | None = None,
+    chunk_strategy: str | None = None,
     tags: list[str],
     title: str,
     user: dict[str, Any],
@@ -491,17 +671,18 @@ def upload_knowledge_document_result(
         if folder is None or folder.get("knowledge_space_id") != knowledge_space_id:
             raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
     content = decode_upload_content(content_base64)
-    text_content = content.decode("utf-8", errors="replace").strip()
-    if not text_content:
+    if not content:
         raise api_error(400, "VALIDATION_ERROR", "uploaded content is empty")
+    normalized_parser = normalize_parser_engine(parser_engine, mime_type)
+    normalized_chunk_strategy = normalize_chunk_strategy(chunk_strategy)
+    preview_content = content.decode("utf-8", errors="replace").strip()
 
     timestamp = now_iso()
     document_id = current_store.new_id("knowledge")
-    chunk_set_id = current_store.new_id("knowledge_chunk_set")
     document = {
         "id": document_id,
         "title": non_blank(title, "title"),
-        "content": text_content,
+        "content": preview_content,
         "source_type": "upload",
         "doc_type": doc_type or "manual",
         "product_id": None,
@@ -510,14 +691,16 @@ def upload_knowledge_document_result(
         "permission_roles": ["admin"],
         "permission_scope": {"knowledge_space_id": knowledge_space_id},
         "tags": tags,
-        "index_status": "pending_index",
+        "index_status": "importing",
         "index_error": None,
         "vector_index_error": None,
         "created_by": user["id"],
         "created_at": timestamp,
         "updated_at": timestamp,
         "document_version": 1,
-        "active_chunk_set_id": chunk_set_id,
+        "active_chunk_set_id": None,
+        "parser_engine": normalized_parser,
+        "chunk_strategy": normalized_chunk_strategy,
     }
     asset = create_asset_record(
         content=content,
@@ -529,76 +712,26 @@ def upload_knowledge_document_result(
         user=user,
     )
     document["source_asset_id"] = asset["id"]
-    document["parsed_asset_id"] = asset["id"]
-    chunk_set = {
-        "id": chunk_set_id,
-        "document_id": document_id,
-        "source_asset_id": asset["id"],
-        "parsed_asset_id": asset["id"],
-        "parser_engine": "plain_text",
-        "parser_version": "v1",
-        "chunk_strategy": "simple_text",
-        "embedding_model": None,
-        "embedding_dimension": None,
-        "status": "building",
-        "created_by": user["id"],
-        "created_at": timestamp,
-        "updated_at": timestamp,
-        "activated_at": None,
-    }
-    current_store.knowledge_chunk_sets[chunk_set_id] = chunk_set
     import_job = {
         "id": current_store.new_id("knowledge_import_job"),
         "document_id": document_id,
         "source_asset_id": asset["id"],
-        "parser_engine": "plain_text",
-        "chunk_strategy": "simple_text",
-        "status": "parsing",
-        "progress": 40,
+        "parser_engine": normalized_parser,
+        "chunk_strategy": normalized_chunk_strategy,
+        "status": "queued",
+        "progress": 0,
         "error_code": None,
         "error_message": None,
         "created_by": user["id"],
-        "started_at": timestamp,
+        "started_at": None,
         "finished_at": None,
         "created_at": timestamp,
         "updated_at": timestamp,
     }
     current_store.knowledge_import_jobs[import_job["id"]] = import_job
 
-    model_log_start_index = len(current_store.model_gateway_logs)
-    document, chunks = replace_knowledge_chunks_result(current_store, document)
-    for chunk in chunks:
-        chunk["chunk_set_id"] = chunk_set_id
-        chunk.setdefault("metadata", {})["knowledge_space_id"] = knowledge_space_id
-        chunk["metadata"]["folder_id"] = folder_id
-        chunk["metadata"]["source_asset_id"] = asset["id"]
-        chunk["metadata"]["chunk_set_id"] = chunk_set_id
-    chunk_set = {
-        **chunk_set,
-        "status": "active",
-        "embedding_model": (
-            chunks[0].get("metadata", {}).get("embedding_model") if chunks else None
-        ),
-        "embedding_dimension": (
-            chunks[0].get("metadata", {}).get("embedding_dimension") if chunks else None
-        ),
-        "activated_at": now_iso(),
-        "updated_at": now_iso(),
-    }
-    current_store.knowledge_chunk_sets[chunk_set_id] = chunk_set
-    import_job = {
-        **import_job,
-        "status": "completed" if document["index_status"] != "index_failed" else "failed",
-        "progress": 100 if document["index_status"] != "index_failed" else 80,
-        "error_code": document.get("index_error"),
-        "error_message": document.get("index_error"),
-        "finished_at": now_iso(),
-        "updated_at": now_iso(),
-    }
-    current_store.knowledge_import_jobs[import_job["id"]] = import_job
-
     if not uses_repository_context(current_store):
-        apply_knowledge_document_to_memory(current_store, document, chunks)
+        current_store.knowledge_documents[document_id] = document
     audit_event = record_audit_event(
         current_store,
         actor_id=user["id"],
@@ -606,19 +739,616 @@ def upload_knowledge_document_result(
         subject_id=document_id,
         subject_type="knowledge_document",
     )
-    save_knowledge_document_records(
-        current_store,
-        audit_event=audit_event,
-        chunks=chunks,
-        document=document,
-        model_logs=current_store.model_gateway_logs[model_log_start_index:],
-    )
-    persist_knowledge_payload(current_store)
+    current_store.knowledge_documents[document_id] = document
+    persist_knowledge_payload(current_store, audit_event=audit_event)
     return {
         "asset": dict(asset),
-        "document": knowledge_document_response(current_store, document, chunks),
+        "document": knowledge_document_response(current_store, document, []),
         "import_job": dict(import_job),
     }
+
+
+def _space_id_for_document_or_asset(
+    current_store: Any,
+    *,
+    document: dict[str, Any],
+    source_asset: dict[str, Any] | None,
+) -> str | None:
+    return document.get("knowledge_space_id") or (
+        source_asset.get("knowledge_space_id") if source_asset is not None else None
+    )
+
+
+def _save_import_processing_state(
+    current_store: Any,
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    persist_knowledge_payload(current_store, audit_event=audit_event)
+
+
+def _mark_import_job_failed(
+    *,
+    current_store: Any,
+    document: dict[str, Any],
+    import_job: dict[str, Any],
+    error_code: str,
+    error_message: str,
+) -> dict[str, Any]:
+    timestamp = now_iso()
+    failed_job = {
+        **import_job,
+        "status": "failed",
+        "progress": 80,
+        "error_code": error_code,
+        "error_message": error_message,
+        "finished_at": timestamp,
+        "updated_at": timestamp,
+    }
+    current_store.knowledge_import_jobs[failed_job["id"]] = failed_job
+    failed_document = {
+        **document,
+        "index_status": "index_failed",
+        "index_error": error_message,
+        "updated_at": timestamp,
+    }
+    current_store.knowledge_documents[failed_document["id"]] = failed_document
+    return failed_job
+
+
+def run_knowledge_import_job_result(
+    *,
+    current_store: Any,
+    job_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    import_job = current_store.knowledge_import_jobs.get(job_id)
+    if import_job is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge import job not found")
+    document = current_store.knowledge_documents.get(import_job.get("document_id"))
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    source_asset = current_store.knowledge_assets.get(import_job.get("source_asset_id"))
+    space_id = _space_id_for_document_or_asset(
+        current_store,
+        document=document,
+        source_asset=source_asset,
+    )
+    if space_id:
+        ensure_space_access(current_store, user, space_id=space_id, required="write")
+    if import_job.get("status") not in IMPORT_JOB_RUNNABLE_STATUSES:
+        raise api_error(409, "IMPORT_JOB_STATE_INVALID", "Import job cannot be run")
+    if source_asset is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge source asset not found")
+
+    timestamp = now_iso()
+    running_job = {
+        **import_job,
+        "status": "parsing",
+        "progress": 20,
+        "started_at": import_job.get("started_at") or timestamp,
+        "finished_at": None,
+        "error_code": None,
+        "error_message": None,
+        "updated_at": timestamp,
+    }
+    current_store.knowledge_import_jobs[job_id] = running_job
+    document = {
+        **document,
+        "index_status": "importing",
+        "index_error": None,
+        "vector_index_error": None,
+        "updated_at": timestamp,
+    }
+    current_store.knowledge_documents[document["id"]] = document
+
+    try:
+        source_content = object_storage().get_bytes(
+            bucket=source_asset["bucket"],
+            object_key=source_asset["object_key"],
+        )
+        parsed = parse_asset_content(
+            content=source_content,
+            filename=source_asset.get("filename", document["id"]),
+            mime_type=source_asset.get("mime_type", "application/octet-stream"),
+            parser_engine=running_job.get("parser_engine", "plain_text"),
+        )
+        parsed_asset = create_asset_record(
+            asset_type=parsed["asset_type"],
+            content=parsed["content"].encode(),
+            current_store=current_store,
+            document_id=document["id"],
+            filename=parsed["filename"],
+            mime_type=parsed["mime_type"],
+            space_id=space_id or source_asset["knowledge_space_id"],
+            user=user,
+        )
+        parsed_asset["metadata"] = parsed.get("metadata", {})
+        current_store.knowledge_assets[parsed_asset["id"]] = parsed_asset
+        chunk_set_id = current_store.new_id("knowledge_chunk_set")
+        chunk_set = {
+            "id": chunk_set_id,
+            "document_id": document["id"],
+            "source_asset_id": source_asset["id"],
+            "parsed_asset_id": parsed_asset["id"],
+            "parser_engine": running_job.get("parser_engine", "plain_text"),
+            "parser_version": "v1",
+            "chunk_strategy": running_job.get("chunk_strategy", "simple_text"),
+            "embedding_model": None,
+            "embedding_dimension": None,
+            "status": "building",
+            "created_by": user["id"],
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "activated_at": None,
+        }
+        current_store.knowledge_chunk_sets[chunk_set_id] = chunk_set
+        indexing_document = {
+            **document,
+            "content": parsed["content"],
+            "parsed_asset_id": parsed_asset["id"],
+            "parser_engine": running_job.get("parser_engine", "plain_text"),
+            "chunk_strategy": running_job.get("chunk_strategy", "simple_text"),
+        }
+        _model_log_start_index = len(current_store.model_gateway_logs)
+        indexed_document, chunks = replace_knowledge_chunks_result(
+            current_store,
+            indexing_document,
+        )
+        chunk_id_map = {
+            chunk["id"]: f"{chunk_set_id}_chunk_{chunk['chunk_index']:03d}"
+            for chunk in chunks
+        }
+        for chunk in chunks:
+            old_parent_chunk_id = chunk.get("parent_chunk_id")
+            chunk["id"] = chunk_id_map[chunk["id"]]
+            if old_parent_chunk_id:
+                chunk["parent_chunk_id"] = chunk_id_map.get(
+                    old_parent_chunk_id,
+                    old_parent_chunk_id,
+                )
+            chunk["chunk_set_id"] = chunk_set_id
+            chunk.setdefault("metadata", {})["knowledge_space_id"] = document.get(
+                "knowledge_space_id",
+            )
+            chunk["metadata"]["folder_id"] = document.get("folder_id")
+            chunk["metadata"]["source_asset_id"] = source_asset["id"]
+            chunk["metadata"]["parsed_asset_id"] = parsed_asset["id"]
+            chunk["metadata"]["chunk_set_id"] = chunk_set_id
+        previous_active_id = document.get("active_chunk_set_id")
+        if previous_active_id and previous_active_id in current_store.knowledge_chunk_sets:
+            previous_active = current_store.knowledge_chunk_sets[previous_active_id]
+            current_store.knowledge_chunk_sets[previous_active_id] = {
+                **previous_active,
+                "status": "archived",
+                "updated_at": now_iso(),
+            }
+        chunk_set = {
+            **chunk_set,
+            "status": "active" if indexed_document["index_status"] != "index_failed" else "failed",
+            "embedding_model": (
+                chunks[0].get("metadata", {}).get("embedding_model") if chunks else None
+            ),
+            "embedding_dimension": (
+                chunks[0].get("metadata", {}).get("embedding_dimension") if chunks else None
+            ),
+            "activated_at": now_iso()
+            if indexed_document["index_status"] != "index_failed"
+            else None,
+            "updated_at": now_iso(),
+        }
+        current_store.knowledge_chunk_sets[chunk_set_id] = chunk_set
+        indexed_document = {
+            **indexed_document,
+            "active_chunk_set_id": chunk_set_id
+            if indexed_document["index_status"] != "index_failed"
+            else previous_active_id,
+            "source_asset_id": source_asset["id"],
+            "parsed_asset_id": parsed_asset["id"],
+            "updated_at": now_iso(),
+        }
+        current_store.knowledge_documents[indexed_document["id"]] = indexed_document
+        for chunk in chunks:
+            current_store.knowledge_chunks[chunk["id"]] = chunk
+        completed_job = {
+            **running_job,
+            "status": "completed"
+            if indexed_document["index_status"] != "index_failed"
+            else "failed",
+            "progress": 100 if indexed_document["index_status"] != "index_failed" else 80,
+            "error_code": indexed_document.get("index_error"),
+            "error_message": indexed_document.get("index_error"),
+            "finished_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        current_store.knowledge_import_jobs[job_id] = completed_job
+        if not uses_repository_context(current_store):
+            apply_knowledge_document_to_memory(current_store, indexed_document, chunks)
+        audit_event = record_audit_event(
+            current_store,
+            actor_id=user["id"],
+            event_type="knowledge_import_job.completed"
+            if completed_job["status"] == "completed"
+            else "knowledge_import_job.failed",
+            subject_id=job_id,
+            subject_type="knowledge_import_job",
+        )
+        _save_import_processing_state(current_store, audit_event=audit_event)
+        return {
+            "document": knowledge_document_response(current_store, indexed_document, chunks),
+            "import_job": import_job_response(current_store, completed_job),
+            "chunk_set": dict(chunk_set),
+            "parsed_asset": dict(parsed_asset),
+        }
+    except Exception as exc:  # noqa: BLE001
+        failed_job = _mark_import_job_failed(
+            current_store=current_store,
+            document=document,
+            import_job=running_job,
+            error_code=exc.__class__.__name__,
+            error_message=str(exc) or "Knowledge import failed",
+        )
+        audit_event = record_audit_event(
+            current_store,
+            actor_id=user["id"],
+            event_type="knowledge_import_job.failed",
+            subject_id=job_id,
+            subject_type="knowledge_import_job",
+        )
+        _save_import_processing_state(current_store, audit_event=audit_event)
+        failed_document = current_store.knowledge_documents[document["id"]]
+        return {
+            "document": knowledge_document_response(current_store, failed_document, []),
+            "import_job": import_job_response(current_store, failed_job),
+        }
+
+
+def retry_knowledge_import_job_result(
+    *,
+    current_store: Any,
+    job_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    import_job = current_store.knowledge_import_jobs.get(job_id)
+    if import_job is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge import job not found")
+    document = current_store.knowledge_documents.get(import_job.get("document_id"))
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    space_id = document.get("knowledge_space_id") or _import_job_space_id(
+        current_store=current_store,
+        import_job=import_job,
+    )
+    if space_id:
+        ensure_space_access(current_store, user, space_id=space_id, required="write")
+    if import_job.get("status") not in IMPORT_JOB_RETRYABLE_STATUSES:
+        raise api_error(409, "IMPORT_JOB_STATE_INVALID", "Import job cannot be retried")
+    retried_job = {
+        **import_job,
+        "status": "queued",
+        "progress": 0,
+        "error_code": None,
+        "error_message": None,
+        "started_at": None,
+        "finished_at": None,
+        "updated_at": now_iso(),
+    }
+    current_store.knowledge_import_jobs[job_id] = retried_job
+    document = {
+        **document,
+        "index_status": "importing",
+        "index_error": None,
+        "vector_index_error": None,
+        "updated_at": now_iso(),
+    }
+    current_store.knowledge_documents[document["id"]] = document
+    audit_event = record_audit_event(
+        current_store,
+        actor_id=user["id"],
+        event_type="knowledge_import_job.retried",
+        subject_id=job_id,
+        subject_type="knowledge_import_job",
+    )
+    _save_import_processing_state(current_store, audit_event=audit_event)
+    return {
+        "document": knowledge_document_response(current_store, document, []),
+        "import_job": import_job_response(current_store, retried_job),
+    }
+
+
+def cancel_knowledge_import_job_result(
+    *,
+    current_store: Any,
+    job_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    import_job = current_store.knowledge_import_jobs.get(job_id)
+    if import_job is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge import job not found")
+    document = current_store.knowledge_documents.get(import_job.get("document_id"))
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    space_id = document.get("knowledge_space_id")
+    if space_id:
+        ensure_space_access(current_store, user, space_id=space_id, required="write")
+    if import_job.get("status") not in {"queued", "uploaded", "failed"}:
+        raise api_error(409, "IMPORT_JOB_STATE_INVALID", "Import job cannot be cancelled")
+    cancelled_job = {
+        **import_job,
+        "status": "cancelled",
+        "progress": import_job.get("progress", 0),
+        "finished_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    current_store.knowledge_import_jobs[job_id] = cancelled_job
+    document = {
+        **document,
+        "index_status": (
+            "archived" if not document.get("active_chunk_set_id") else document["index_status"]
+        ),
+        "updated_at": now_iso(),
+    }
+    current_store.knowledge_documents[document["id"]] = document
+    audit_event = record_audit_event(
+        current_store,
+        actor_id=user["id"],
+        event_type="knowledge_import_job.cancelled",
+        subject_id=job_id,
+        subject_type="knowledge_import_job",
+    )
+    _save_import_processing_state(current_store, audit_event=audit_event)
+    return {
+        "document": knowledge_document_response(current_store, document, []),
+        "import_job": import_job_response(current_store, cancelled_job),
+    }
+
+
+def list_knowledge_chunk_sets_result(
+    *,
+    current_store: Any,
+    document_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    document = current_store.knowledge_documents.get(document_id)
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    if not document_is_readable(current_store, user, document):
+        raise api_error(403, "FORBIDDEN", "Knowledge document permission denied")
+    items = [
+        dict(chunk_set)
+        for chunk_set in current_store.knowledge_chunk_sets.values()
+        if chunk_set.get("document_id") == document_id
+    ]
+    active_id = document.get("active_chunk_set_id")
+    for item in items:
+        item["is_active"] = item["id"] == active_id
+        item["chunk_count"] = len(
+            [
+                chunk
+                for chunk in current_store.knowledge_chunks.values()
+                if chunk.get("chunk_set_id") == item["id"]
+            ]
+        )
+    items.sort(
+        key=lambda item: (
+            0 if item.get("is_active") else 1,
+            item.get("created_at", ""),
+            item["id"],
+        )
+    )
+    return {"document_id": document_id, "items": items, "total": len(items)}
+
+
+def list_knowledge_chunks_result(
+    *,
+    current_store: Any,
+    document_id: str,
+    chunk_set_id: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    document = current_store.knowledge_documents.get(document_id)
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    if not document_is_readable(current_store, user, document):
+        raise api_error(403, "FORBIDDEN", "Knowledge document permission denied")
+    target_chunk_set_id = chunk_set_id or document.get("active_chunk_set_id")
+    items = [
+        dict(chunk)
+        for chunk in current_store.knowledge_chunks.values()
+        if chunk.get("document_id") == document_id
+        and (target_chunk_set_id is None or chunk.get("chunk_set_id") == target_chunk_set_id)
+    ]
+    items.sort(key=lambda item: (item.get("chunk_index", 0), item["id"]))
+    parent_content_by_id = {item["id"]: item["content"] for item in items}
+    for item in items:
+        parent_id = item.get("parent_chunk_id")
+        if parent_id:
+            item["parent_content"] = parent_content_by_id.get(parent_id) or item.get(
+                "metadata",
+                {},
+            ).get("parent_content")
+    return {
+        "chunk_set_id": target_chunk_set_id,
+        "document_id": document_id,
+        "items": items,
+        "total": len(items),
+    }
+
+
+def activate_knowledge_chunk_set_result(
+    *,
+    current_store: Any,
+    document_id: str,
+    chunk_set_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    document = current_store.knowledge_documents.get(document_id)
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    space_id = document.get("knowledge_space_id")
+    if space_id:
+        ensure_space_access(current_store, user, space_id=space_id, required="write")
+    chunk_set = current_store.knowledge_chunk_sets.get(chunk_set_id)
+    if chunk_set is None or chunk_set.get("document_id") != document_id:
+        raise api_error(404, "NOT_FOUND", "Knowledge chunk set not found")
+    if chunk_set.get("status") not in {"active", "archived"}:
+        raise api_error(409, "CHUNK_SET_STATE_INVALID", "Knowledge chunk set cannot be activated")
+    for existing_id, existing in list(current_store.knowledge_chunk_sets.items()):
+        if existing.get("document_id") != document_id:
+            continue
+        current_store.knowledge_chunk_sets[existing_id] = {
+            **existing,
+            "status": "active" if existing_id == chunk_set_id else "archived",
+            "activated_at": (
+                now_iso() if existing_id == chunk_set_id else existing.get("activated_at")
+            ),
+            "updated_at": now_iso(),
+        }
+    updated_document = {
+        **document,
+        "active_chunk_set_id": chunk_set_id,
+        "parsed_asset_id": chunk_set.get("parsed_asset_id") or document.get("parsed_asset_id"),
+        "parser_engine": chunk_set.get("parser_engine"),
+        "chunk_strategy": chunk_set.get("chunk_strategy"),
+        "index_status": "text_indexed",
+        "updated_at": now_iso(),
+    }
+    current_store.knowledge_documents[document_id] = updated_document
+    chunks = [
+        chunk
+        for chunk in current_store.knowledge_chunks.values()
+        if chunk.get("document_id") == document_id and chunk.get("chunk_set_id") == chunk_set_id
+    ]
+    audit_event = record_audit_event(
+        current_store,
+        actor_id=user["id"],
+        event_type="knowledge_chunk_set.activated",
+        subject_id=chunk_set_id,
+        subject_type="knowledge_chunk_set",
+    )
+    _save_import_processing_state(current_store, audit_event=audit_event)
+    return {
+        "chunk_set": dict(current_store.knowledge_chunk_sets[chunk_set_id]),
+        "document": knowledge_document_response(current_store, updated_document, chunks),
+    }
+
+
+def reparse_knowledge_document_result(
+    *,
+    current_store: Any,
+    document_id: str,
+    parser_engine: str | None,
+    chunk_strategy: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    document = current_store.knowledge_documents.get(document_id)
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    space_id = document.get("knowledge_space_id")
+    if space_id:
+        ensure_space_access(current_store, user, space_id=space_id, required="write")
+    source_asset_id = document.get("source_asset_id")
+    if not source_asset_id or source_asset_id not in current_store.knowledge_assets:
+        raise api_error(404, "NOT_FOUND", "Knowledge source asset not found")
+    source_asset = current_store.knowledge_assets[source_asset_id]
+    normalized_parser = normalize_parser_engine(
+        parser_engine or document.get("parser_engine"),
+        source_asset.get("mime_type"),
+    )
+    normalized_strategy = normalize_chunk_strategy(chunk_strategy or document.get("chunk_strategy"))
+    timestamp = now_iso()
+    import_job = {
+        "id": current_store.new_id("knowledge_import_job"),
+        "document_id": document_id,
+        "source_asset_id": source_asset_id,
+        "parser_engine": normalized_parser,
+        "chunk_strategy": normalized_strategy,
+        "status": "queued",
+        "progress": 0,
+        "error_code": None,
+        "error_message": None,
+        "created_by": user["id"],
+        "started_at": None,
+        "finished_at": None,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    current_store.knowledge_import_jobs[import_job["id"]] = import_job
+    current_store.knowledge_documents[document_id] = {
+        **document,
+        "index_status": "importing",
+        "parser_engine": normalized_parser,
+        "chunk_strategy": normalized_strategy,
+        "updated_at": timestamp,
+    }
+    audit_event = record_audit_event(
+        current_store,
+        actor_id=user["id"],
+        event_type="knowledge_document.reparse_requested",
+        subject_id=document_id,
+        subject_type="knowledge_document",
+    )
+    _save_import_processing_state(current_store, audit_event=audit_event)
+    return {
+        "document": knowledge_document_response(
+            current_store,
+            current_store.knowledge_documents[document_id],
+            [],
+        ),
+        "import_job": import_job_response(current_store, import_job),
+    }
+
+
+def batch_move_knowledge_documents_result(
+    *,
+    current_store: Any,
+    document_ids: list[str],
+    folder_id: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    if not document_ids:
+        raise api_error(400, "VALIDATION_ERROR", "document_ids is required")
+    target_folder = None
+    if folder_id is not None:
+        target_folder = current_store.knowledge_folders.get(folder_id)
+        if target_folder is None or target_folder.get("status") == "archived":
+            raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
+        ensure_space_access(
+            current_store,
+            user,
+            space_id=target_folder["knowledge_space_id"],
+            required="write",
+        )
+    updated: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for document_id in document_ids:
+        document = current_store.knowledge_documents.get(document_id)
+        if document is None:
+            skipped.append({"id": document_id, "reason": "not_found"})
+            continue
+        space_id = document.get("knowledge_space_id")
+        if not space_id:
+            skipped.append({"id": document_id, "reason": "missing_space"})
+            continue
+        if target_folder is not None and target_folder.get("knowledge_space_id") != space_id:
+            skipped.append({"id": document_id, "reason": "folder_space_mismatch"})
+            continue
+        ensure_space_access(current_store, user, space_id=space_id, required="write")
+        current_store.knowledge_documents[document_id] = {
+            **document,
+            "folder_id": folder_id,
+            "updated_at": now_iso(),
+        }
+        updated.append(document_id)
+    audit_event = record_audit_event(
+        current_store,
+        actor_id=user["id"],
+        event_type="knowledge_document.batch_moved",
+        subject_id=",".join(updated) if updated else "none",
+        subject_type="knowledge_document",
+    )
+    _save_import_processing_state(current_store, audit_event=audit_event)
+    return {"folder_id": folder_id, "skipped": skipped, "updated": updated}
 
 
 def asset_preview_result(

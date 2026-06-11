@@ -4,16 +4,20 @@ import {
   EditOutlined,
   FileSearchOutlined,
   FolderAddOutlined,
+  FolderOpenOutlined,
+  NodeIndexOutlined,
+  PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
+  StopOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Typography, message } from 'antd';
 import type { FormInstance } from 'antd';
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, type Key, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
 import type { ManagementListQuery } from '../../components/ManagementListPage';
@@ -22,10 +26,15 @@ import { type UserRoleDefinition, toUserRoleOptions } from '../../data/roles';
 import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   approveKnowledgeDeposit,
+  activateKnowledgeChunkSet,
+  batchMoveKnowledgeDocuments,
+  cancelKnowledgeImportJob,
   createKnowledgeFolder,
   createKnowledgeSpace,
   createManagementKnowledgeDocument,
   deleteManagementKnowledgeDocument,
+  fetchKnowledgeChunks,
+  fetchKnowledgeChunkSets,
   fetchKnowledgeDeposits,
   fetchKnowledgeDocumentAssets,
   fetchKnowledgeFolders,
@@ -35,9 +44,15 @@ import {
   fetchManagementKnowledgeList,
   fetchRoleDefinitions,
   rejectKnowledgeDeposit,
+  reparseKnowledgeDocument,
+  retryKnowledgeImportJob,
   retryKnowledgeDocumentIndex,
+  runKnowledgeImportJob,
   updateManagementKnowledgeDocument,
+  updateKnowledgeFolder,
   uploadKnowledgeDocument,
+  type KnowledgeChunkRecord,
+  type KnowledgeChunkSetRecord,
   type KnowledgeFolderRecord,
   type KnowledgeAssetRecord,
   type KnowledgeImportJobRecord,
@@ -67,10 +82,12 @@ const depositStatusLabels: Record<string, { color: string; label: string }> = {
 };
 
 const importJobStatusLabels: Record<string, { color: string; label: string }> = {
+  cancelled: { color: 'default', label: '已取消' },
   completed: { color: 'green', label: '已完成' },
   failed: { color: 'red', label: '失败' },
   parsing: { color: 'blue', label: '解析中' },
   queued: { color: 'default', label: '排队中' },
+  uploaded: { color: 'default', label: '已上传' },
 };
 
 const assetTypeLabels: Record<string, string> = {
@@ -90,12 +107,14 @@ function formatAssetSize(sizeBytes: number) {
 }
 
 type KnowledgeFormValues = {
+  chunk_strategy?: string;
   content?: string;
   doc_type: string;
   folder_id?: string;
   index_status?: KnowledgeRecord['status'];
   knowledge_space_id?: string;
   permission_roles?: string[];
+  parser_engine?: string;
   tags?: string;
   title: string;
 };
@@ -108,6 +127,18 @@ type KnowledgeSpaceFormValues = {
 
 type KnowledgeFolderFormValues = {
   name: string;
+};
+
+type KnowledgeFolderEditFormValues = {
+  folder_id: string;
+  name?: string;
+  parent_folder_id?: string;
+  sort_order?: number;
+  status?: string;
+};
+
+type KnowledgeBatchMoveFormValues = {
+  folder_id?: string;
 };
 
 type RejectDepositFormValues = {
@@ -151,6 +182,8 @@ function buildKnowledgeListQuery(query: ManagementListQuery): KnowledgeListQuery
 export default function KnowledgePage() {
   const documentFormRef = useRef<FormInstance<KnowledgeFormValues>>(null);
   const documentSubmitRef = useRef<HTMLButtonElement>(null);
+  const batchMoveSubmitRef = useRef<HTMLButtonElement>(null);
+  const folderEditSubmitRef = useRef<HTMLButtonElement>(null);
   const folderSubmitRef = useRef<HTMLButtonElement>(null);
   const rejectDepositSubmitRef = useRef<HTMLButtonElement>(null);
   const spaceSubmitRef = useRef<HTMLButtonElement>(null);
@@ -160,8 +193,15 @@ export default function KnowledgePage() {
   const [depositsLoading, setDepositsLoading] = useState(false);
   const [importJobRows, setImportJobRows] = useState<KnowledgeImportJobRecord[]>([]);
   const [importJobsLoading, setImportJobsLoading] = useState(false);
+  const [chunkRows, setChunkRows] = useState<KnowledgeChunkRecord[]>([]);
+  const [chunkSetRows, setChunkSetRows] = useState<KnowledgeChunkSetRecord[]>([]);
+  const [chunksLoading, setChunksLoading] = useState(false);
+  const [chunkSetsLoading, setChunkSetsLoading] = useState(false);
   const [isAssetsModalOpen, setIsAssetsModalOpen] = useState(false);
+  const [isBatchMoveModalOpen, setIsBatchMoveModalOpen] = useState(false);
+  const [isChunksModalOpen, setIsChunksModalOpen] = useState(false);
   const [isDepositsModalOpen, setIsDepositsModalOpen] = useState(false);
+  const [isFolderEditModalOpen, setIsFolderEditModalOpen] = useState(false);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [isImportJobsModalOpen, setIsImportJobsModalOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -207,6 +247,8 @@ export default function KnowledgePage() {
     total: 0,
   });
   const [assetsDocument, setAssetsDocument] = useState<KnowledgeRecord | null>(null);
+  const [chunksDocument, setChunksDocument] = useState<KnowledgeRecord | null>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const roleOptions = useMemo(() => toUserRoleOptions(roleDefinitions), [roleDefinitions]);
   const spaceOptions = useMemo(
     () => spaces.map((space) => ({ label: `${space.name} (${space.code})`, value: space.id })),
@@ -325,8 +367,10 @@ export default function KnowledgePage() {
     setEditingDocument(null);
     setSelectedUploadFile(null);
     setDocumentInitialValues({
+      chunk_strategy: 'simple_text',
       doc_type: 'manual',
       knowledge_space_id: selectedSpaceId,
+      parser_engine: undefined,
       permission_roles: ['admin'],
     });
     setIsModalOpen(true);
@@ -411,6 +455,128 @@ export default function KnowledgePage() {
     }
   }, []);
 
+  const reloadChunks = useCallback(async (row: KnowledgeRecord, chunkSetId?: string) => {
+    setChunksLoading(true);
+    try {
+      const chunks = await fetchKnowledgeChunks(row.id, chunkSetId);
+      setChunkRows(chunks);
+    } catch (chunkError) {
+      setChunkRows([]);
+      message.error(formatMutationError(chunkError));
+    } finally {
+      setChunksLoading(false);
+    }
+  }, []);
+
+  const openChunksModal = useCallback(async (row: KnowledgeRecord) => {
+    setChunksDocument(row);
+    setChunkRows([]);
+    setChunkSetRows([]);
+    setIsChunksModalOpen(true);
+    setChunkSetsLoading(true);
+    try {
+      const chunkSets = await fetchKnowledgeChunkSets(row.id);
+      setChunkSetRows(chunkSets);
+      const activeChunkSet = chunkSets.find((item) => item.isActive);
+      await reloadChunks(row, activeChunkSet?.id);
+    } catch (chunkSetError) {
+      message.error(formatMutationError(chunkSetError));
+    } finally {
+      setChunkSetsLoading(false);
+    }
+  }, [reloadChunks]);
+
+  const handleImportJobAction = useCallback(async (
+    row: KnowledgeImportJobRecord,
+    action: 'cancel' | 'retry' | 'run',
+  ) => {
+    try {
+      if (action === 'run') {
+        await runKnowledgeImportJob(row.id);
+        message.success('导入任务已处理');
+      } else if (action === 'retry') {
+        await retryKnowledgeImportJob(row.id);
+        message.success('导入任务已重新入队');
+      } else {
+        await cancelKnowledgeImportJob(row.id);
+        message.success('导入任务已取消');
+      }
+      await Promise.all([reloadImportJobs(selectedSpaceId ?? spaces[0]?.id), reload()]);
+    } catch (jobError) {
+      message.error(formatMutationError(jobError));
+    }
+  }, [reload, reloadImportJobs, selectedSpaceId, spaces]);
+
+  const handleActivateChunkSet = useCallback(async (row: KnowledgeChunkSetRecord) => {
+    if (!chunksDocument) {
+      return;
+    }
+    try {
+      await activateKnowledgeChunkSet(chunksDocument.id, row.id);
+      message.success('分块版本已切换');
+      const nextChunkSets = await fetchKnowledgeChunkSets(chunksDocument.id);
+      setChunkSetRows(nextChunkSets);
+      await reloadChunks(chunksDocument, row.id);
+      await reload();
+    } catch (chunkSetError) {
+      message.error(formatMutationError(chunkSetError));
+    }
+  }, [chunksDocument, reload, reloadChunks]);
+
+  const handleReparseDocument = useCallback(async (row: KnowledgeRecord) => {
+    try {
+      await reparseKnowledgeDocument(row.id, {
+        chunk_strategy: 'parent_child',
+        parser_engine: 'markdown',
+      });
+      message.success('文档已重新入队解析');
+      await Promise.all([reloadImportJobs(selectedSpaceId ?? spaces[0]?.id), reload()]);
+    } catch (reparseError) {
+      message.error(formatMutationError(reparseError));
+    }
+  }, [reload, reloadImportJobs, selectedSpaceId, spaces]);
+
+  const handleEditFolder = async (values: KnowledgeFolderEditFormValues) => {
+    const folder = folders.find((item) => item.id === values.folder_id);
+    if (!folder) {
+      message.error('请选择知识目录');
+      return;
+    }
+    try {
+      await updateKnowledgeFolder(folder.id, {
+        name: values.name?.trim() || folder.name,
+        parent_folder_id: values.parent_folder_id ?? null,
+        sort_order: values.sort_order,
+        status: values.status,
+      });
+      const nextFolders = await fetchKnowledgeFolders(folder.knowledgeSpaceId);
+      setFolders(nextFolders);
+      setIsFolderEditModalOpen(false);
+      message.success('知识目录已更新');
+    } catch (folderError) {
+      message.error(formatMutationError(folderError));
+    }
+  };
+
+  const handleBatchMove = async (values: KnowledgeBatchMoveFormValues) => {
+    if (selectedRowKeys.length === 0) {
+      message.error('请选择要移动的知识文档');
+      return;
+    }
+    try {
+      const result = await batchMoveKnowledgeDocuments(
+        selectedRowKeys.map(String),
+        values.folder_id ?? null,
+      );
+      setSelectedRowKeys([]);
+      setIsBatchMoveModalOpen(false);
+      message.success(`已移动 ${result.updated.length} 条知识文档`);
+      await reload();
+    } catch (moveError) {
+      message.error(formatMutationError(moveError));
+    }
+  };
+
   const handleSave = async (values: KnowledgeFormValues) => {
     if (!editingDocument && !selectedUploadFile && !values.content?.trim()) {
       message.error('请输入知识内容或选择上传文件');
@@ -435,15 +601,17 @@ export default function KnowledgePage() {
       } else if (selectedUploadFile && values.knowledge_space_id) {
         await uploadKnowledgeDocument({
           content_base64: selectedUploadFile.contentBase64,
+          chunk_strategy: values.chunk_strategy,
           doc_type: values.doc_type.trim(),
           filename: selectedUploadFile.filename,
           folder_id: values.folder_id,
           knowledge_space_id: values.knowledge_space_id,
           mime_type: selectedUploadFile.mimeType,
+          parser_engine: values.parser_engine,
           tags: splitCommaText(values.tags),
           title: values.title.trim(),
         });
-        message.success('知识文件已上传并导入');
+        message.success('知识文件已上传，导入任务已入队');
       } else {
         await createManagementKnowledgeDocument(payload);
         message.success('知识文档已导入');
@@ -665,6 +833,104 @@ export default function KnowledgePage() {
         title: '失败原因',
         render: (_, row) => row.errorMessage ?? '-',
       },
+      {
+        key: 'actions',
+        title: '操作',
+        valueType: 'option',
+        render: (_, row) => (
+          <Space size={4}>
+            {['queued', 'failed'].includes(row.status) ? (
+              <Button icon={<PlayCircleOutlined />} onClick={() => void handleImportJobAction(row, 'run')} type="link">
+                运行
+              </Button>
+            ) : null}
+            {['failed', 'cancelled'].includes(row.status) ? (
+              <Button icon={<ReloadOutlined />} onClick={() => void handleImportJobAction(row, 'retry')} type="link">
+                重试
+              </Button>
+            ) : null}
+            {['queued', 'failed'].includes(row.status) ? (
+              <Button danger icon={<StopOutlined />} onClick={() => void handleImportJobAction(row, 'cancel')} type="link">
+                取消
+              </Button>
+            ) : null}
+          </Space>
+        ),
+      },
+    ],
+    [handleImportJobAction],
+  );
+
+  const chunkSetColumns = useMemo<ProColumns<KnowledgeChunkSetRecord>[]>(
+    () => [
+      {
+        dataIndex: 'id',
+        title: '分块版本',
+      },
+      {
+        dataIndex: 'parserEngine',
+        title: '解析器',
+      },
+      {
+        dataIndex: 'chunkStrategy',
+        title: '分块策略',
+      },
+      {
+        dataIndex: 'chunkCount',
+        title: 'chunk 数',
+      },
+      {
+        dataIndex: 'status',
+        title: '状态',
+        render: (_, row) => (row.isActive ? <StatusTag color="green" label="当前生效" /> : row.status),
+      },
+      {
+        key: 'actions',
+        title: '操作',
+        valueType: 'option',
+        render: (_, row) => (
+          <Space size={4}>
+            <Button onClick={() => chunksDocument && void reloadChunks(chunksDocument, row.id)} type="link">
+              预览
+            </Button>
+            {!row.isActive ? (
+              <Button onClick={() => void handleActivateChunkSet(row)} type="link">
+                切换
+              </Button>
+            ) : null}
+          </Space>
+        ),
+      },
+    ],
+    [chunksDocument, handleActivateChunkSet, reloadChunks],
+  );
+
+  const chunkColumns = useMemo<ProColumns<KnowledgeChunkRecord>[]>(
+    () => [
+      {
+        dataIndex: 'chunkIndex',
+        title: '#',
+        width: 64,
+      },
+      {
+        dataIndex: 'chunkRole',
+        title: '角色',
+        render: (_, row) => (row.chunkRole === 'parent' ? '父块' : row.chunkRole === 'child' ? '子块' : '普通块'),
+      },
+      {
+        dataIndex: 'heading',
+        title: '标题层级',
+        render: (_, row) => row.heading ?? '-',
+      },
+      {
+        dataIndex: 'content',
+        title: '内容',
+      },
+      {
+        dataIndex: 'parentChunkId',
+        title: '父块',
+        render: (_, row) => row.parentChunkId ?? '-',
+      },
     ],
     [],
   );
@@ -729,6 +995,12 @@ export default function KnowledgePage() {
             <Button aria-label="资产" icon={<FileSearchOutlined />} onClick={() => void openAssetsModal(row)} type="link">
               资产
             </Button>
+            <Button aria-label="分块" icon={<NodeIndexOutlined />} onClick={() => void openChunksModal(row)} type="link">
+              分块
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={() => void handleReparseDocument(row)} type="link">
+              重解析
+            </Button>
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
@@ -746,7 +1018,15 @@ export default function KnowledgePage() {
         ),
       },
     ],
-    [handleDelete, handleRetryIndex, openAssetsModal, openEditModal, spaceNameById],
+    [
+      handleDelete,
+      handleReparseDocument,
+      handleRetryIndex,
+      openAssetsModal,
+      openChunksModal,
+      openEditModal,
+      spaceNameById,
+    ],
   );
 
   const depositColumns = useMemo<ProColumns<KnowledgeDepositRecord>[]>(
@@ -883,6 +1163,10 @@ export default function KnowledgePage() {
           total: listState.total,
         }}
         rowKey="id"
+        rowSelection={{
+          onChange: (keys) => setSelectedRowKeys(keys),
+          selectedRowKeys,
+        }}
         tableTitle="知识列表"
         title="知识中心"
         toolbarActions={[
@@ -891,6 +1175,17 @@ export default function KnowledgePage() {
           </Button>,
           <Button aria-label="导入任务" icon={<DatabaseOutlined />} key="import-jobs" onClick={openImportJobsModal}>
             导入任务
+          </Button>,
+          <Button icon={<FolderOpenOutlined />} key="folder-edit" onClick={() => setIsFolderEditModalOpen(true)}>
+            目录整理
+          </Button>,
+          <Button
+            disabled={selectedRowKeys.length === 0}
+            icon={<FolderOpenOutlined />}
+            key="batch-move"
+            onClick={() => setIsBatchMoveModalOpen(true)}
+          >
+            批量移动
           </Button>,
           <Button aria-label="知识检索" icon={<SearchOutlined />} key="knowledge-search" onClick={openSearchModal}>
             知识检索
@@ -939,6 +1234,37 @@ export default function KnowledgePage() {
         {assetRows.length === 0 && !assetsLoading ? (
           <Text type="secondary">当前文档没有可查看资产。</Text>
         ) : null}
+      </Modal>
+      <Modal
+        footer={null}
+        onCancel={() => setIsChunksModalOpen(false)}
+        open={isChunksModalOpen}
+        title={chunksDocument ? `分块版本：${chunksDocument.title}` : '分块版本'}
+        width={1100}
+      >
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <ProTable<KnowledgeChunkSetRecord>
+            columns={chunkSetColumns}
+            dataSource={chunkSetRows}
+            loading={chunkSetsLoading}
+            options={false}
+            pagination={false}
+            rowKey="id"
+            search={false}
+          />
+          <ProTable<KnowledgeChunkRecord>
+            columns={chunkColumns}
+            dataSource={chunkRows}
+            loading={chunksLoading}
+            options={false}
+            pagination={false}
+            rowKey="id"
+            search={false}
+          />
+          {chunkRows.length === 0 && !chunksLoading ? (
+            <Text type="secondary">当前分块版本没有可预览 chunk。</Text>
+          ) : null}
+        </Space>
       </Modal>
       <Modal
         destroyOnHidden
@@ -1064,6 +1390,31 @@ export default function KnowledgePage() {
           <Form.Item label="类型" name="doc_type" rules={[{ required: true, message: '请输入知识类型' }]}>
             <Input placeholder="manual / PRD / Spec / Deposit" />
           </Form.Item>
+          {!editingDocument ? (
+            <>
+              <Form.Item label="解析器" name="parser_engine">
+                <Select
+                  options={[
+                    { label: '纯文本', value: 'plain_text' },
+                    { label: 'Markdown', value: 'markdown' },
+                    { label: 'PDF 文本', value: 'pdf_text' },
+                    { label: 'OCR JSON', value: 'ocr_json' },
+                    { label: '表格 JSON', value: 'table_json' },
+                  ]}
+                  placeholder="按文件类型自动选择"
+                />
+              </Form.Item>
+              <Form.Item label="分块策略" name="chunk_strategy">
+                <Select
+                  options={[
+                    { label: '简单文本', value: 'simple_text' },
+                    { label: '父子分块', value: 'parent_child' },
+                  ]}
+                  placeholder="简单文本"
+                />
+              </Form.Item>
+            </>
+          ) : null}
           <Form.Item label="权限角色" name="permission_roles" rules={[{ required: true, message: '请选择权限角色' }]}>
             <Select
               disabled={roleOptions.length === 0}
@@ -1157,6 +1508,60 @@ export default function KnowledgePage() {
             <Input />
           </Form.Item>
           <button ref={folderSubmitRef} style={{ display: 'none' }} type="submit" />
+        </Form>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        onCancel={() => setIsFolderEditModalOpen(false)}
+        onOk={() => folderEditSubmitRef.current?.click()}
+        open={isFolderEditModalOpen}
+        title="目录整理"
+      >
+        <Form<KnowledgeFolderEditFormValues>
+          layout="vertical"
+          onFinish={(values) => void handleEditFolder(values)}
+          preserve={false}
+        >
+          <Form.Item label="目录" name="folder_id" rules={[{ required: true, message: '请选择目录' }]}>
+            <Select options={folderOptions} />
+          </Form.Item>
+          <Form.Item label="目录名称" name="name">
+            <Input />
+          </Form.Item>
+          <Form.Item label="父目录" name="parent_folder_id">
+            <Select allowClear options={folderOptions} />
+          </Form.Item>
+          <Form.Item label="排序" name="sort_order">
+            <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item label="状态" name="status">
+            <Select
+              options={[
+                { label: '启用', value: 'active' },
+                { label: '归档', value: 'archived' },
+              ]}
+            />
+          </Form.Item>
+          <button ref={folderEditSubmitRef} style={{ display: 'none' }} type="submit" />
+        </Form>
+      </Modal>
+      <Modal
+        destroyOnHidden
+        onCancel={() => setIsBatchMoveModalOpen(false)}
+        onOk={() => batchMoveSubmitRef.current?.click()}
+        open={isBatchMoveModalOpen}
+        title="批量移动知识"
+      >
+        <Form<KnowledgeBatchMoveFormValues>
+          layout="vertical"
+          onFinish={(values) => void handleBatchMove(values)}
+          preserve={false}
+        >
+          <Form.Item label="目标目录" name="folder_id">
+            <Select allowClear options={folderOptions} placeholder="移动到空间根目录" />
+          </Form.Item>
+          <Text type="secondary">已选择 {selectedRowKeys.length} 条知识文档。</Text>
+          <button ref={batchMoveSubmitRef} style={{ display: 'none' }} type="submit" />
         </Form>
       </Modal>
       <Modal

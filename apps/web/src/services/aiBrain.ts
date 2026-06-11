@@ -1044,6 +1044,8 @@ export type KnowledgeSearchResultRecord = {
   content: string;
   documentId: string;
   id: string;
+  parentChunkId?: string;
+  parentContent?: string;
   retrievalMode?: 'keyword' | 'vector';
   sourceLabel: string;
   title: string;
@@ -1087,13 +1089,36 @@ export type KnowledgeImportJobRecord = {
   updatedAt?: string;
 };
 
+export type KnowledgeChunkSetRecord = {
+  activatedAt?: string;
+  chunkCount: number;
+  chunkStrategy: string;
+  id: string;
+  isActive: boolean;
+  parserEngine: string;
+  status: string;
+};
+
+export type KnowledgeChunkRecord = {
+  chunkIndex: number;
+  chunkRole?: string;
+  chunkSetId?: string;
+  content: string;
+  heading?: string;
+  id: string;
+  parentChunkId?: string;
+  parentContent?: string;
+};
+
 export type KnowledgeDocumentUploadPayload = {
+  chunk_strategy?: string;
   content_base64: string;
   doc_type?: string;
   filename: string;
   folder_id?: string;
   knowledge_space_id: string;
   mime_type?: string;
+  parser_engine?: string;
   tags?: string[];
   title: string;
 };
@@ -1527,6 +1552,29 @@ type KnowledgeImportJobListItem = {
   updated_at?: string;
 };
 
+type KnowledgeChunkSetListItem = {
+  activated_at?: string;
+  chunk_count?: number;
+  chunk_strategy?: string;
+  id: string;
+  is_active?: boolean;
+  parser_engine?: string;
+  status?: string;
+};
+
+type KnowledgeChunkListItem = {
+  chunk_index?: number;
+  chunk_set_id?: string;
+  content?: string;
+  id: string;
+  metadata?: {
+    chunk_role?: string;
+    heading?: string;
+  };
+  parent_chunk_id?: string;
+  parent_content?: string;
+};
+
 type AuditEventListItem = {
   actor_id?: string;
   ai_task_id?: string | null;
@@ -1824,6 +1872,8 @@ type KnowledgeSearchResultItem = {
     doc_type?: string;
     folder_id?: string;
     knowledge_space_id?: string;
+    parent_chunk_id?: string;
+    parent_content?: string;
     title?: string;
   };
   title?: string;
@@ -4332,6 +4382,31 @@ function mapKnowledgeImportJob(item: KnowledgeImportJobListItem): KnowledgeImpor
   };
 }
 
+function mapKnowledgeChunkSet(item: KnowledgeChunkSetListItem): KnowledgeChunkSetRecord {
+  return {
+    activatedAt: formatListDate(item.activated_at),
+    chunkCount: Number(item.chunk_count ?? 0),
+    chunkStrategy: item.chunk_strategy ?? '-',
+    id: item.id,
+    isActive: Boolean(item.is_active),
+    parserEngine: item.parser_engine ?? '-',
+    status: item.status ?? '-',
+  };
+}
+
+function mapKnowledgeChunk(item: KnowledgeChunkListItem): KnowledgeChunkRecord {
+  return {
+    chunkIndex: Number(item.chunk_index ?? 0),
+    chunkRole: item.metadata?.chunk_role,
+    chunkSetId: item.chunk_set_id,
+    content: item.content ?? '',
+    heading: item.metadata?.heading,
+    id: item.id,
+    parentChunkId: item.parent_chunk_id,
+    parentContent: item.parent_content,
+  };
+}
+
 export async function fetchKnowledgeSpaces(): Promise<KnowledgeSpaceRecord[]> {
   const token = requireAccessToken();
   const spaces = await apiRequest<ListResponse<KnowledgeSpaceListItem>>('/api/knowledge/spaces', {
@@ -4379,6 +4454,24 @@ export async function createKnowledgeFolder(
   return mapKnowledgeFolder(folder);
 }
 
+export async function updateKnowledgeFolder(
+  folderId: string,
+  payload: {
+    name?: string;
+    parent_folder_id?: string | null;
+    sort_order?: number;
+    status?: string;
+  },
+): Promise<KnowledgeFolderRecord> {
+  const token = requireAccessToken();
+  const folder = await apiRequest<KnowledgeFolderListItem>(`/api/knowledge/folders/${folderId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+  return mapKnowledgeFolder(folder);
+}
+
 export async function fetchKnowledgeDocumentAssets(
   documentId: string,
 ): Promise<KnowledgeAssetRecord[]> {
@@ -4404,6 +4497,87 @@ export async function fetchKnowledgeImportJobs(params: {
     { token },
   );
   return importJobs.items.map(mapKnowledgeImportJob);
+}
+
+export async function runKnowledgeImportJob(jobId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ import_job: KnowledgeImportJobListItem }>(
+    `/api/knowledge/import-jobs/${jobId}/run`,
+    { method: 'POST', token },
+  );
+}
+
+export async function retryKnowledgeImportJob(jobId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ import_job: KnowledgeImportJobListItem }>(
+    `/api/knowledge/import-jobs/${jobId}/retry`,
+    { method: 'POST', token },
+  );
+}
+
+export async function cancelKnowledgeImportJob(jobId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ import_job: KnowledgeImportJobListItem }>(
+    `/api/knowledge/import-jobs/${jobId}/cancel`,
+    { method: 'POST', token },
+  );
+}
+
+export async function fetchKnowledgeChunkSets(documentId: string): Promise<KnowledgeChunkSetRecord[]> {
+  const token = requireAccessToken();
+  const chunkSets = await apiRequest<ListResponse<KnowledgeChunkSetListItem>>(
+    `/api/knowledge/documents/${documentId}/chunk-sets`,
+    { token },
+  );
+  return chunkSets.items.map(mapKnowledgeChunkSet);
+}
+
+export async function fetchKnowledgeChunks(
+  documentId: string,
+  chunkSetId?: string,
+): Promise<KnowledgeChunkRecord[]> {
+  const token = requireAccessToken();
+  const query = new URLSearchParams();
+  appendQueryParam(query, 'chunk_set_id', chunkSetId);
+  const queryString = query.toString();
+  const chunks = await apiRequest<ListResponse<KnowledgeChunkListItem>>(
+    queryString
+      ? `/api/knowledge/documents/${documentId}/chunks?${queryString}`
+      : `/api/knowledge/documents/${documentId}/chunks`,
+    { token },
+  );
+  return chunks.items.map(mapKnowledgeChunk);
+}
+
+export async function activateKnowledgeChunkSet(documentId: string, chunkSetId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ document: KnowledgeDocumentListItem }>(
+    `/api/knowledge/documents/${documentId}/chunk-sets/${chunkSetId}/activate`,
+    { method: 'POST', token },
+  );
+}
+
+export async function reparseKnowledgeDocument(
+  documentId: string,
+  payload: { chunk_strategy?: string; parser_engine?: string },
+) {
+  const token = requireAccessToken();
+  return apiRequest<{ import_job: KnowledgeImportJobListItem }>(
+    `/api/knowledge/documents/${documentId}/reparse`,
+    { body: payload, method: 'POST', token },
+  );
+}
+
+export async function batchMoveKnowledgeDocuments(documentIds: string[], folderId?: string | null) {
+  const token = requireAccessToken();
+  return apiRequest<{ skipped: Array<{ id: string; reason: string }>; updated: string[] }>(
+    '/api/knowledge/documents/batch-move',
+    {
+      body: { document_ids: documentIds, folder_id: folderId ?? null },
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 export async function uploadKnowledgeDocument(payload: KnowledgeDocumentUploadPayload) {
@@ -5353,6 +5527,8 @@ function mapKnowledgeSearchResult(item: KnowledgeSearchResultItem, index: number
     content: item.content ?? '-',
     documentId: item.document_id,
     id: item.chunk_id ?? `${item.document_id}:${index}`,
+    parentChunkId: item.source?.parent_chunk_id,
+    parentContent: item.source?.parent_content,
     retrievalMode: item.retrieval_mode === 'vector' ? 'vector' : 'keyword',
     sourceLabel: sourceParts.length ? sourceParts.join(' · ') : '-',
     title: item.title ?? item.document_id,

@@ -87,10 +87,19 @@ def test_knowledge_space_folder_asset_upload_and_search_are_permission_filtered(
     assert document["knowledge_space_id"] == space["id"]
     assert document["folder_id"] == folder["id"]
     assert document["source_asset_id"].startswith("knowledge_asset_")
+    assert document["active_chunk_set_id"] is None
+    assert document["index_status"] == "importing"
+    assert upload_response.json()["data"]["asset"]["asset_type"] == "original"
+    assert upload_response.json()["data"]["import_job"]["status"] == "queued"
+
+    run_response = client.post(
+        f"/api/knowledge/import-jobs/{upload_response.json()['data']['import_job']['id']}/run",
+        headers=admin_headers,
+    )
+    assert run_response.status_code == 200
+    document = run_response.json()["data"]["document"]
     assert document["active_chunk_set_id"].startswith("knowledge_chunk_set_")
     assert document["index_status"] in {"text_indexed", "vector_indexed"}
-    assert upload_response.json()["data"]["asset"]["asset_type"] == "original"
-    assert upload_response.json()["data"]["import_job"]["status"] == "completed"
 
     viewer_documents = client.get(
         f"/api/knowledge/documents?knowledge_space_id={space['id']}",

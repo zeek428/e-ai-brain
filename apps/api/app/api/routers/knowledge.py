@@ -21,13 +21,22 @@ from app.services.knowledge_deposits import (
 )
 from app.services.knowledge_documents import knowledge_document_list_response
 from app.services.knowledge_management import (
+    activate_knowledge_chunk_set_result,
     asset_preview_result,
+    batch_move_knowledge_documents_result,
+    cancel_knowledge_import_job_result,
     create_knowledge_folder_result,
     create_knowledge_space_result,
+    list_knowledge_chunk_sets_result,
+    list_knowledge_chunks_result,
     list_knowledge_document_assets_result,
     list_knowledge_folders_result,
     list_knowledge_import_jobs_result,
     list_knowledge_spaces_result,
+    patch_knowledge_folder_result,
+    reparse_knowledge_document_result,
+    retry_knowledge_import_job_result,
+    run_knowledge_import_job_result,
     update_knowledge_space_members_result,
     upload_knowledge_document_result,
 )
@@ -86,6 +95,13 @@ class KnowledgeFolderRequest(BaseModel):
     parent_folder_id: str | None = None
 
 
+class KnowledgeFolderPatchRequest(BaseModel):
+    name: str | None = None
+    parent_folder_id: str | None = None
+    sort_order: int | None = None
+    status: str | None = None
+
+
 class KnowledgeDocumentUploadRequest(BaseModel):
     knowledge_space_id: str
     folder_id: str | None = None
@@ -94,7 +110,19 @@ class KnowledgeDocumentUploadRequest(BaseModel):
     content_base64: str
     mime_type: str = "application/octet-stream"
     doc_type: str = "manual"
+    parser_engine: str | None = None
+    chunk_strategy: str | None = None
     tags: list[str] = Field(default_factory=list)
+
+
+class KnowledgeDocumentReparseRequest(BaseModel):
+    parser_engine: str | None = None
+    chunk_strategy: str | None = None
+
+
+class KnowledgeDocumentsBatchMoveRequest(BaseModel):
+    document_ids: list[str] = Field(default_factory=list)
+    folder_id: str | None = None
 
 
 class KnowledgeDepositApproveRequest(BaseModel):
@@ -217,6 +245,26 @@ def create_knowledge_folder(
     return envelope(folder, get_trace_id(request))
 
 
+@router.patch("/api/knowledge/folders/{folder_id}")
+def patch_knowledge_folder(
+    folder_id: str,
+    request: Request,
+    payload: KnowledgeFolderPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    folder = patch_knowledge_folder_result(
+        current_store=knowledge_write_store(store(request)),
+        folder_id=folder_id,
+        name=payload.name,
+        parent_folder_id=payload.parent_folder_id,
+        parent_folder_id_set="parent_folder_id" in payload.model_fields_set,
+        sort_order=payload.sort_order,
+        status=payload.status,
+        user=user,
+    )
+    return envelope(folder, get_trace_id(request))
+
+
 @router.post("/api/knowledge/documents/upload")
 def upload_knowledge_document(
     request: Request,
@@ -231,6 +279,8 @@ def upload_knowledge_document(
         folder_id=payload.folder_id,
         knowledge_space_id=payload.knowledge_space_id,
         mime_type=payload.mime_type,
+        parser_engine=payload.parser_engine,
+        chunk_strategy=payload.chunk_strategy,
         tags=payload.tags,
         title=payload.title,
         user=user,
@@ -279,6 +329,126 @@ def list_knowledge_import_jobs(
         document_id=document_id,
         knowledge_space_id=knowledge_space_id,
         status=status,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/import-jobs/{job_id}/run")
+def run_knowledge_import_job(
+    job_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = run_knowledge_import_job_result(
+        current_store=knowledge_write_store(store(request)),
+        job_id=job_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/import-jobs/{job_id}/retry")
+def retry_knowledge_import_job(
+    job_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = retry_knowledge_import_job_result(
+        current_store=knowledge_write_store(store(request)),
+        job_id=job_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/import-jobs/{job_id}/cancel")
+def cancel_knowledge_import_job(
+    job_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = cancel_knowledge_import_job_result(
+        current_store=knowledge_write_store(store(request)),
+        job_id=job_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/knowledge/documents/{document_id}/chunk-sets")
+def list_knowledge_chunk_sets(
+    document_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_knowledge_chunk_sets_result(
+        current_store=knowledge_write_store(store(request)),
+        document_id=document_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/knowledge/documents/{document_id}/chunks")
+def list_knowledge_chunks(
+    document_id: str,
+    request: Request,
+    chunk_set_id: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_knowledge_chunks_result(
+        current_store=knowledge_write_store(store(request)),
+        chunk_set_id=chunk_set_id,
+        document_id=document_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/documents/{document_id}/chunk-sets/{chunk_set_id}/activate")
+def activate_knowledge_chunk_set(
+    document_id: str,
+    chunk_set_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = activate_knowledge_chunk_set_result(
+        current_store=knowledge_write_store(store(request)),
+        chunk_set_id=chunk_set_id,
+        document_id=document_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/documents/{document_id}/reparse")
+def reparse_knowledge_document(
+    document_id: str,
+    request: Request,
+    payload: KnowledgeDocumentReparseRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = reparse_knowledge_document_result(
+        current_store=knowledge_write_store(store(request)),
+        chunk_strategy=payload.chunk_strategy,
+        document_id=document_id,
+        parser_engine=payload.parser_engine,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/knowledge/documents/batch-move")
+def batch_move_knowledge_documents(
+    request: Request,
+    payload: KnowledgeDocumentsBatchMoveRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = batch_move_knowledge_documents_result(
+        current_store=knowledge_write_store(store(request)),
+        document_ids=payload.document_ids,
+        folder_id=payload.folder_id,
         user=user,
     )
     return envelope(result, get_trace_id(request))

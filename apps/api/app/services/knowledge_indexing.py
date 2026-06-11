@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -28,9 +29,86 @@ def split_knowledge_content(content: str) -> list[str]:
     return chunks
 
 
+def split_markdown_parent_child_content(content: str) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    current_heading = "文档"
+    current_lines: list[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("#"):
+            if current_lines:
+                sections.append(
+                    {"heading": current_heading, "body": "\n".join(current_lines).strip()}
+                )
+                current_lines = []
+            current_heading = line.lstrip("#").strip() or current_heading
+            current_lines.append(line)
+            continue
+        current_lines.append(line)
+    if current_lines:
+        sections.append({"heading": current_heading, "body": "\n".join(current_lines).strip()})
+    if not sections:
+        sections = [{"heading": "文档", "body": content.strip()}]
+
+    descriptors: list[dict[str, Any]] = []
+    for section_index, section in enumerate(sections, start=1):
+        body = section["body"].strip()
+        if not body:
+            continue
+        parent_local_id = f"parent-{section_index}"
+        descriptors.append(
+            {
+                "content": body,
+                "local_id": parent_local_id,
+                "metadata": {
+                    "chunk_role": "parent",
+                    "heading": section["heading"],
+                    "section_index": section_index,
+                },
+            }
+        )
+        child_parts = split_knowledge_content(body)
+        for child_index, child_content in enumerate(child_parts, start=1):
+            descriptors.append(
+                {
+                    "content": child_content,
+                    "local_id": f"child-{section_index}-{child_index}",
+                    "metadata": {
+                        "chunk_role": "child",
+                        "heading": section["heading"],
+                        "parent_content": body,
+                        "section_index": section_index,
+                    },
+                    "parent_local_id": parent_local_id,
+                }
+            )
+    return descriptors
+
+
+def split_knowledge_content_descriptors(
+    content: str,
+    *,
+    chunk_strategy: str = "simple_text",
+) -> list[dict[str, Any]]:
+    if chunk_strategy == "parent_child":
+        return split_markdown_parent_child_content(content)
+    return [
+        {
+            "content": chunk,
+            "local_id": f"chunk-{index}",
+            "metadata": {"chunk_role": "chunk"},
+        }
+        for index, chunk in enumerate(split_knowledge_content(content), start=1)
+    ]
+
+
+def chunk_descriptor_contents(chunks: list[dict[str, Any]]) -> list[str]:
+    return [str(chunk.get("content") or "") for chunk in chunks]
+
+
 def build_knowledge_chunks(
     document: dict[str, Any],
-    chunks: list[str],
+    chunks: list[str] | list[dict[str, Any]],
     *,
     embeddings: list[list[float]] | None = None,
     embedding_context: dict[str, Any] | None = None,
@@ -38,13 +116,25 @@ def build_knowledge_chunks(
     permission_roles = list(document.get("permission_roles", ["admin"]))
     now = datetime.now(UTC).isoformat()
     records: list[dict[str, Any]] = []
-    for chunk_index, content in enumerate(chunks, start=1):
+    normalized_chunks: list[dict[str, Any]] = [
+        {"content": chunk, "local_id": f"chunk-{index}", "metadata": {"chunk_role": "chunk"}}
+        if isinstance(chunk, str)
+        else chunk
+        for index, chunk in enumerate(chunks, start=1)
+    ]
+    local_id_to_chunk_id = {
+        chunk.get("local_id", f"chunk-{index}"): f"{document['id']}_chunk_{index:03d}"
+        for index, chunk in enumerate(normalized_chunks, start=1)
+    }
+    for chunk_index, chunk_descriptor in enumerate(normalized_chunks, start=1):
+        content = str(chunk_descriptor.get("content") or "")
         chunk_id = f"{document['id']}_chunk_{chunk_index:03d}"
         metadata = {
             "doc_type": document.get("doc_type", "manual"),
             "product_id": document.get("product_id"),
             "tags": list(document.get("tags", [])),
             "title": document["title"],
+            **dict(chunk_descriptor.get("metadata") or {}),
         }
         if embeddings is not None and embedding_context is not None:
             metadata.update(
@@ -57,8 +147,7 @@ def build_knowledge_chunks(
                     if value is not None
                 }
             )
-        records.append(
-            {
+        record = {
                 "chunk_index": chunk_index,
                 "content": content,
                 "document_id": document["id"],
@@ -69,8 +158,12 @@ def build_knowledge_chunks(
                 "permission_scope": {"roles": permission_roles},
                 "created_at": now,
                 "updated_at": now,
+                "content_hash": hashlib.sha256(content.encode()).hexdigest(),
             }
-        )
+        parent_local_id = chunk_descriptor.get("parent_local_id")
+        if parent_local_id:
+            record["parent_chunk_id"] = local_id_to_chunk_id.get(str(parent_local_id))
+        records.append(record)
     return records
 
 
@@ -88,7 +181,7 @@ def knowledge_index_failed_result(
 
 def knowledge_text_indexed_result(
     document: dict[str, Any],
-    chunks: list[str],
+    chunks: list[str] | list[dict[str, Any]],
     *,
     vector_error: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -103,7 +196,7 @@ def knowledge_text_indexed_result(
 
 def knowledge_vector_indexed_result(
     document: dict[str, Any],
-    chunks: list[str],
+    chunks: list[str] | list[dict[str, Any]],
     embeddings: list[list[float]],
     embedding_context: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -127,7 +220,10 @@ def replace_knowledge_chunks_result(
     *,
     attempt_vector: bool = True,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    chunks = split_knowledge_content(document["content"])
+    chunks = split_knowledge_content_descriptors(
+        document["content"],
+        chunk_strategy=document.get("chunk_strategy", "simple_text"),
+    )
     if not chunks:
         return knowledge_index_failed_result(document, "NO_INDEXABLE_CONTENT")
     if not attempt_vector:
@@ -135,7 +231,7 @@ def replace_knowledge_chunks_result(
     try:
         embeddings, embedding_context = call_model_gateway_embeddings_with_context(
             current_store,
-            chunks,
+            chunk_descriptor_contents(chunks),
         )
     except ModelGatewayConfigError as exc:
         return knowledge_text_indexed_result(document, chunks, vector_error=str(exc))

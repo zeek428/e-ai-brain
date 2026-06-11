@@ -12,7 +12,7 @@
 
 ## 背景
 
-当前知识中心已经支持知识文档导入、文本 chunk 重建、Embedding 可用时的向量索引、权限过滤检索、索引失败重试和知识沉淀审核。现有数据库已引入 `knowledge_spaces`、`knowledge_space_products`、`knowledge_space_members`、`knowledge_folders`、`knowledge_assets`、`knowledge_import_jobs` 和 `knowledge_chunk_sets`，页面已支持空间/目录筛选、文件上传、文档资产查看和导入任务查看；后续仍需继续完善目录移动、解析版本回滚、异步任务编排和检索质量评估。
+当前知识中心已经支持知识文档导入、文本 chunk 重建、Embedding 可用时的向量索引、权限过滤检索、索引失败重试和知识沉淀审核。现有数据库已引入 `knowledge_spaces`、`knowledge_space_products`、`knowledge_space_members`、`knowledge_folders`、`knowledge_assets`、`knowledge_import_jobs` 和 `knowledge_chunk_sets`；页面已支持空间/目录筛选、文件上传、文档资产查看、导入任务查看、chunk 预览、chunk set 切换、目录整理和文档批量移动。当前已具备导入任务排队、显式运行、失败重试、取消、原始资产与解析资产分离、Markdown 父子分块和父块上下文返回的 MVP 能力；后续仍需继续完善真实后台队列、外部 OCR/版面解析器、图片/表格结构化质量和检索质量评估。
 
 后续知识管理升级应吸收 KnowFlow 的生产级知识库经验，但不直接复制 KnowFlow/RAGFlow 的运行架构。KnowFlow 可参考的方向包括：文档解析任务化、多解析器适配、OCR/转换服务解耦、图文结构保留、父子分块、权限隔离和导入治理。AI Brain 的事实源仍保持 PostgreSQL，MinIO 作为 S3-compatible 对象存储实现，承载原始文件和解析产物。
 
@@ -124,17 +124,17 @@ knowledge/{space_id}/{document_id}/{document_version}/{asset_type}/{content_hash
 
 ### 导入任务
 
-建议新增 `knowledge_import_jobs` 管理文档处理生命周期。
+`knowledge_import_jobs` 管理文档处理生命周期。当前 MVP 上传接口先创建文档、原始资产和 `queued` 导入任务，导入任务由显式运行接口推进；目标生产态可替换为后台 worker 或消息队列，但 API 状态契约保持稳定。
 
 状态流：
 
 ```text
-uploaded -> converting -> parsing -> chunking -> embedding -> completed
-                                      -> failed
-                                      -> cancelled
+queued -> processing -> completed
+       -> failed
+       -> cancelled
 ```
 
-任务记录应包含 `document_id`、`source_asset_id`、`parser_engine`、`chunk_strategy`、`status`、`progress`、`error_code`、`error_message`、`started_at`、`finished_at` 和 `created_by`。
+任务记录应包含 `document_id`、`source_asset_id`、`parser_engine`、`chunk_strategy`、`status`、`progress`、`error_code`、`error_message`、`started_at`、`finished_at` 和 `created_by`。`failed` 和 `cancelled` 任务可通过 retry 回到 `queued`；不允许运行已完成或已取消任务。
 
 ### 分块版本
 
@@ -195,7 +195,14 @@ uploaded -> converting -> parsing -> chunking -> embedding -> completed
 | `GET` | `/api/knowledge/documents/{document_id}/assets` | 查询文档资产。 |
 | `GET` | `/api/knowledge/assets/{asset_id}/preview` | 鉴权后返回预览或短期签名 URL。 |
 | `GET` | `/api/knowledge/import-jobs` | 查询导入任务。 |
-| `POST` | `/api/knowledge/import-jobs/{job_id}/retry` | 重试导入任务。 |
+| `POST` | `/api/knowledge/import-jobs/{job_id}/run` | 运行 queued/failed 导入任务，生成解析资产、chunk set 和 chunk。 |
+| `POST` | `/api/knowledge/import-jobs/{job_id}/retry` | 将 failed/cancelled 导入任务重置为 queued，不重复创建文档。 |
+| `POST` | `/api/knowledge/import-jobs/{job_id}/cancel` | 取消 queued 或 failed 导入任务。 |
+| `GET` | `/api/knowledge/documents/{document_id}/chunk-sets` | 查询文档分块版本。 |
+| `GET` | `/api/knowledge/documents/{document_id}/chunks` | 查询指定 chunk set 的 chunk 预览。 |
+| `POST` | `/api/knowledge/documents/{document_id}/chunk-sets/{chunk_set_id}/activate` | 激活历史 chunk set，实现回滚。 |
+| `POST` | `/api/knowledge/documents/{document_id}/reparse` | 基于原始资产创建新的重解析任务。 |
+| `POST` | `/api/knowledge/documents/batch-move` | 批量移动文档目录。 |
 
 兼容接口：
 
@@ -238,16 +245,18 @@ uploaded -> converting -> parsing -> chunking -> embedding -> completed
 
 交付：
 
-1. `knowledge_import_jobs`。
-2. txt、md、pdf 基础文本解析。
-3. 解析 Markdown 资产写入 MinIO。
-4. 导入进度、失败原因、重试和 chunk 预览。
+1. `knowledge_import_jobs` 支持 queued、processing、completed、failed、cancelled 状态。
+2. txt、md、pdf 基础文本解析，OCR JSON 和表格 JSON 作为结构化适配输入。
+3. 原始资产和 `parsed_markdown` 解析资产分开写入 MinIO/S3-compatible 存储。
+4. 导入进度、失败原因、显式运行、取消、重试和 chunk 预览。
+5. chunk set 可查询、激活和回滚，重解析成功后归档旧版本。
 
 验收重点：
 
 1. 解析失败不丢原始文件。
 2. 重试不会重复创建同一文档或重复暴露旧 chunk。
 3. Embedding 不可用时仍可进入 `text_indexed`。
+4. 重解析失败不得切换 `active_chunk_set_id`。
 
 ### Phase 3: KnowFlow 风格解析增强
 
@@ -257,6 +266,12 @@ uploaded -> converting -> parsing -> chunking -> embedding -> completed
 2. Gotenberg、MinerU、PaddleOCR、DOTS 等外部解析器适配位。
 3. 标题分块、正则分块、父子分块。
 4. 图片、表格、页码和标题层级来源引用。
+
+当前实现状态：
+
+1. 已落地 `plain_text`、`markdown`、`pdf_text`、`ocr_json`、`table_json` 解析器枚举和基础转换。
+2. 已落地 `simple_text` 与 `parent_child` 分块策略，父子分块以 Markdown 标题为父块、段落为子块；检索只召回子块，并在 source 中返回 `parent_chunk_id` 与 `parent_content`。
+3. 外部 OCR、图片版面识别、真实 PDF 版式恢复和多模态检索尚未接入生产解析服务，应作为 Phase 3 后续增强继续推进。
 
 验收重点：
 
@@ -292,7 +307,7 @@ uploaded -> converting -> parsing -> chunking -> embedding -> completed
 | 架构边界 | 直接复制 KnowFlow/RAGFlow 会冲击 AI Brain 模块化单体和 DB-first 事实源。 | 只吸收解析器、导入任务、父子分块和治理思路；不引入 RAGFlow 作为知识底座。 |
 | 存储一致性 | MinIO 对象和 PostgreSQL 元数据可能出现半成功。 | PostgreSQL 作为业务事实源；对象 key 不可变；删除和清理采用数据库状态优先、异步清理对象。 |
 | 权限泄露 | 对象存储 URL 可能绕过知识权限。 | 所有访问先走 API 鉴权；只返回短期签名 URL 或代理流；检索前先做 SQL 权限过滤。 |
-| 范围过大 | OCR、多模态、父子分块和质量评测一次性交付风险高。 | 分四期实施，Phase 1 只落空间目录、MinIO 基础和兼容上传。 |
+| 范围过大 | OCR、多模态、父子分块和质量评测一次性交付风险高。 | 先落导入任务、解析资产、chunk set 和 Markdown 父子分块 MVP；真实 OCR/版面恢复和质量评测分期接入。 |
 | 兼容迁移 | 现有文档缺少 `knowledge_space_id`。 | 提供默认迁移空间和兼容 `permission_roles`，新文档逐步强制空间归属。 |
 | 用户体验 | 仅增加上传会把知识中心变成文件仓库。 | 前端以空间目录树、文档列表、资产预览、chunk 预览和导入任务共同组织。 |
 
