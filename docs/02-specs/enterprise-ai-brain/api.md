@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.238 |
+| 功能版本 | v1.1.239 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.239 | 2026-06-11 | 收紧 AI 类型定时作业 API 校验，补充运行详情三段节点和连接测试请求调试台响应展示要求 | Codex |
 | v1.1.238 | 2026-06-11 | 插件动作 `result_mapping.write_target` 补充 `code_inspection_reports`，页面提供代码巡检报告 JSONPath 可视化配置 | Codex |
 | v1.1.237 | 2026-06-11 | 代码巡检 API 增加提交人维度、`committer` 筛选、产品范围读取控制、severity mapping、严重 finding Bug 去重和结果动作状态摘要 | Codex |
 | v1.1.236 | 2026-06-11 | 新增代码仓库巡检 API：`code_repository_inspection` 定时作业支持 `result_actions` 多结果动作，运行写入代码巡检报告、严重问题建 Bug 和通知记录，并提供运营治理代码巡检列表/详情接口 | Codex |
@@ -551,7 +552,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | PATCH | `/api/system/plugins/{plugin_id}` | 更新自定义插件名称、分类、协议、风险等级或状态；分类必须使用插件分类枚举，不允许自由文本；官方标准插件返回 `409 PLUGIN_STANDARD_PLUGIN_LOCKED`。 |
 | Plugins | DELETE | `/api/system/plugins/{plugin_id}` | 删除未被使用的自定义插件；官方标准插件返回 `409 PLUGIN_STANDARD_PLUGIN_LOCKED`；若存在下级连接、动作、定时作业或调用日志引用，返回 `409 PLUGIN_RESOURCE_IN_USE` 并提示使用清单。 |
 | Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-connections`, `/api/system/plugin-connections/{connection_id}` | 管理插件连接配置；`environment` 必须使用约定枚举 `default/dev/test/staging/prod/sandbox`；连接认证默认按 `none/bearer/api_key_header/basic` 展示 Token、Header 或 Basic 字段并生成 `auth_config`，JSON 仅作为高级修改入口；连接级公共 Params/Headers 默认通过表格维护并生成 `request_config.query/headers`，高级请求 JSON 仅作为精修入口；GitLab 连接通过 `api_key_header`、`PRIVATE-TOKEN`、`api_version/group_id/project_id` 维护平台参数，GitHub 连接通过 Bearer Token、`Accept`、`X-GitHub-Api-Version`、`owner/repo` 维护平台参数，邮箱连接通过邮件网关/API endpoint、`Authorization`、`Content-Type=application/json`、`mail_provider/default_from/default_to/subject_template` 维护通知参数；响应按管理员调试场景明文返回 `auth_config` 和 `request_config`，便于定位三方连接问题；编辑时若提交历史 `***` 占位，服务端仍保留原始密钥值，避免旧页面回填覆盖真实配置；删除连接前必须确认未被动作、定时作业或调用日志引用，否则返回 409。 |
-| Plugins | POST | `/api/system/plugin-connections/{connection_id}/test` | 测试插件连接 endpoint 可达性、认证和连接级 Params/Headers 配置，返回 `status/latency_ms/error_message/request_summary/response_summary/diagnostics[]` 等结构化结果并写入审计；`request_summary` 必须包含最终 `url/query/headers/header_sources/masked_placeholder_headers` 并明文展示实际请求值；认证配置生成的同名认证 Header 优先于 Params/Headers 表格值；若最终请求仍包含 `***`，服务端应把它作为用户配置的明文值发出，同时在 `masked_placeholder_headers` 标记，便于判断是否误填；HTTP 400/500 等远端错误需在 `response_summary` 中保留状态码和响应片段。 |
+| Plugins | POST | `/api/system/plugin-connections/{connection_id}/test` | 测试插件连接 endpoint 可达性、认证和连接级 Params/Headers 配置，返回 `status/latency_ms/error_message/request_summary/response_summary/diagnostics[]` 等结构化结果并写入审计；`request_summary` 必须包含最终 `url/query/headers/header_sources/masked_placeholder_headers` 并明文展示实际请求值，前端以请求调试台展示最终请求 URL、Header 来源、完整请求 JSON 和远端响应信息；认证配置生成的同名认证 Header 优先于 Params/Headers 表格值；若最终请求仍包含 `***`，服务端应把它作为用户配置的明文值发出，同时在 `masked_placeholder_headers` 标记，便于判断是否误填；HTTP 400/500 等远端错误需在 `response_summary` 中保留状态码和响应片段。 |
 | Plugins | GET | `/api/system/plugin-system-variables` | 查询系统变量预览；支持 `timezone` 参数，返回 `{{current_date}}`、`{{current_date-7}}`、`{{last_full_week.start}}` 等表达式、说明和当前解析值。 |
 | Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-actions`, `/api/system/plugin-actions/{action_id}` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作新增和编辑默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口；页面必须支持可视化表格与 JSON 双向同步，并提供明文请求预览和结果写入目标；`result_mapping.write_target` 首批支持 `scheduled_job_result`、`user_feedback_insights` 与 `code_inspection_reports`；编辑时若提交历史 `***` 占位，服务端必须保留原始敏感值；删除动作前必须确认未被定时作业或调用日志引用，否则返回 409。 |
 | Plugins | POST | `/api/system/plugin-actions/{action_id}/invoke` | 管理员手动调用一次插件动作并写入调用日志。 |
@@ -2830,7 +2831,7 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 }
 ```
 
-`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`。`user_feedback_collect` 表示仅取数采集，不执行平台 Skill/大模型处理；若用户反馈作业同时配置插件动作、AI 模型、Agent 或 Skills，后端必须按兼容规则归一为 `user_feedback_insight_extract` 并使用 `ai_generated`，避免配置了 AI 链路却静默直通。平台内 AI 作业必须引用 active Agent 和 active Skills；当 `user_feedback_insight_extract` 绑定的插件动作已经封装 MCP/上游 AI 分析时，可先由插件输出结构化洞察，后续再按需要补充 Agent/Skill。`knowledge_document_ids` 为可选知识引用；配置后运行时必须先按当前用户权限读取可检索知识 chunk，并以 `knowledge_references` 注入 Agent/Skill 模型请求上下文。`result_actions` 为可选结果动作列表；`code_repository_inspection` 使用该字段按顺序执行 `write_code_inspection_report`、`create_bug_for_severe_findings`、`send_notification` 等动作。指定 `model_gateway_config_id` 时覆盖 Agent 默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发和取消必须写入审计。
+`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`。`user_feedback_collect` 表示仅取数采集，不执行平台 Skill/大模型处理；若用户反馈作业同时配置插件动作、AI 模型、Agent 或 Skills，后端必须按兼容规则归一为 `user_feedback_insight_extract` 并使用 `ai_generated`，避免配置了 AI 链路却静默直通。`iteration_plan_suggestion_generate`、`online_log_ai_analysis` 和 `user_feedback_insight_extract` 属于 AI 必选链路作业，服务端即使收到 `deterministic` 也必须按有效 `ai_generated` 校验并要求 active Agent、active Skills（可取 Agent 默认 Skill）和 active 模型网关（可取 Agent 默认模型网关或作业覆盖项）；缺失时分别返回 `AI_AGENT_REQUIRED`、`AI_SKILL_REQUIRED` 或 `MODEL_GATEWAY_CONFIG_REQUIRED`。`knowledge_document_ids` 为可选知识引用；配置后运行时必须先按当前用户权限读取可检索知识 chunk，并以 `knowledge_references` 注入 Agent/Skill 模型请求上下文。`result_actions` 为可选结果动作列表；`code_repository_inspection` 使用该字段按顺序执行 `write_code_inspection_report`、`create_bug_for_severe_findings`、`send_notification` 等动作。指定 `model_gateway_config_id` 时覆盖 Agent 默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发和取消必须写入审计。
 
 插件链路按“数据连接取数 -> Skill 分析处理 -> 结果动作写入”理解：作业定义中 `plugin_connection_id` 表示取数连接，`skill_ids` 表示处理能力，`plugin_action_id` 表示结果动作，`plugin_input_mapping` 表示运行时传给连接/动作的输入参数。`plugin_output_mapping` 是作业级覆盖项；为空时运行时复用结果动作的 `result_mapping`。插件输出映射第一阶段支持 `records_imported_path` 这类摘要字段映射和 `write_target` 写入目标，真实业务入库仍必须通过对应业务 service 完成。
 

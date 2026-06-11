@@ -305,9 +305,14 @@ describe('PluginsPage', () => {
     await waitFor(() =>
       expect(connectionTestCalls).toEqual(['/api/system/plugin-connections/connection_maxcompute_prod/test']),
     );
-    expect(await screen.findByText('完整请求信息')).toBeInTheDocument();
-    expect(screen.getByText(/ai-brain-maxcompute-mcp\.internal\/mcp\?start_pt=20260604/)).toBeInTheDocument();
-    expect(screen.getByText(/auth_config\.api_key_header/)).toBeInTheDocument();
+    expect(await screen.findByText('请求调试台')).toBeInTheDocument();
+    expect(screen.getByText('最终请求 URL')).toBeInTheDocument();
+    expect(screen.getByText('Header 来源')).toBeInTheDocument();
+    expect(screen.getByText('Authorization')).toBeInTheDocument();
+    expect(screen.getByText('auth_config.api_key_header')).toBeInTheDocument();
+    expect(screen.getByText('远端响应信息')).toBeInTheDocument();
+    expect(screen.getByText('完整请求 JSON')).toBeInTheDocument();
+    expect(screen.getAllByText(/ai-brain-maxcompute-mcp\.internal\/mcp\?start_pt=20260604/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: /OK|确\s*定|知道了/ }));
 
     fireEvent.click(screen.getByRole('button', { name: '新增连接' }));
@@ -383,7 +388,7 @@ describe('PluginsPage', () => {
 
     resolveConnectionTest();
 
-    expect(await screen.findByText('完整请求信息')).toBeInTheDocument();
+    expect(await screen.findByText('请求调试台')).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '测试连接 生产 MaxCompute 项目' })).toBeInTheDocument(),
     );

@@ -354,9 +354,13 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
-    expect(within(dialog).getByText('数据连接获取内容')).toBeInTheDocument();
-    expect(within(dialog).getByText('经过 Skill 处理后的内容')).toBeInTheDocument();
-    expect(within(dialog).getByText('结果动作反馈内容')).toBeInTheDocument();
+    expect(within(dialog).getByText('三段式执行链路')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('succeeded');
+    expect(within(dialog).getByLabelText('流程节点 经过 Skill 处理后的内容')).toHaveTextContent('已调用');
+    expect(within(dialog).getByLabelText('流程节点 结果动作反馈内容')).toHaveTextContent('user_feedback_insights');
+    expect(within(dialog).getAllByText('数据连接获取内容').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('经过 Skill 处理后的内容').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('结果动作反馈内容').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('结果动作状态')).toBeInTheDocument();
     expect(within(dialog).getByText('结果摘要')).toBeInTheDocument();
     expect(dialog).toHaveTextContent('用户反馈洞察抽取（取数 + AI 分析 + 写入）');

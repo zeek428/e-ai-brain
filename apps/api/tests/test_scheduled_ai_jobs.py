@@ -387,6 +387,28 @@ def test_user_feedback_collect_with_ai_pipeline_is_normalized_to_insight_extract
     assert job["skill_ids"] == [skill["id"]]
 
 
+def test_online_log_ai_analysis_requires_ai_runtime_configuration():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "online_log_ai_analysis",
+            "name": "线上日志异常分析",
+            "schedule_type": "manual",
+            "source_system": "online-log-platform",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "AI_AGENT_REQUIRED"
+    assert "AI job requires agent_id" in response.text
+
+
 def test_manual_scheduled_ai_job_run_creates_snapshot_collector_run_and_suggestion():
     app.state.store.reset()
     admin_headers = auth_headers()

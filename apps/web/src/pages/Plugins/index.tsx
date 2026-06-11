@@ -588,6 +588,99 @@ function JsonDiagnosticsBlock({ title, value }: { title: string; value?: unknown
   );
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function diagnosticText(value: unknown): string {
+  if (value === undefined || value === null || value === '') {
+    return '-';
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return compactJson(value);
+}
+
+function ConnectionRequestDebugPanel({ requestSummary }: { requestSummary?: unknown }) {
+  if (!isPlainRecord(requestSummary)) {
+    return null;
+  }
+  const headers = isPlainRecord(requestSummary.headers) ? requestSummary.headers : {};
+  const headerSources = isPlainRecord(requestSummary.header_sources) ? requestSummary.header_sources : {};
+  const headerNames = Array.from(new Set([...Object.keys(headers), ...Object.keys(headerSources)]));
+  const headerRows = headerNames.map((name) => ({
+    name,
+    source: diagnosticText(headerSources[name]),
+    value: diagnosticText(headers[name]),
+  }));
+
+  return (
+    <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+      <Typography.Text strong>请求调试台</Typography.Text>
+      <div
+        style={{
+          border: '1px solid #e5e7eb',
+          borderRadius: 8,
+          padding: 12,
+        }}
+      >
+        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+          <div>
+            <Typography.Text style={{ color: '#64748b', display: 'block', marginBottom: 4 }}>
+              最终请求 URL
+            </Typography.Text>
+            <Typography.Text copyable style={{ wordBreak: 'break-all' }}>
+              {diagnosticText(requestSummary.url)}
+            </Typography.Text>
+          </div>
+          <Space wrap>
+            <Tag>Method: {diagnosticText(requestSummary.method)}</Tag>
+            <Tag>Protocol: {diagnosticText(requestSummary.protocol)}</Tag>
+          </Space>
+          <JsonDiagnosticsBlock title="Query 参数" value={requestSummary.query} />
+          <JsonDiagnosticsBlock title="请求 Body" value={requestSummary.body} />
+        </Space>
+      </div>
+      {headerRows.length > 0 ? (
+        <div>
+          <Typography.Text strong>Header 来源</Typography.Text>
+          <Table
+            columns={[
+              { dataIndex: 'name', title: 'Header', width: 220 },
+              {
+                dataIndex: 'value',
+                title: '最终值',
+                render: (value: string) => (
+                  <Typography.Text style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {value}
+                  </Typography.Text>
+                ),
+              },
+              {
+                dataIndex: 'source',
+                title: '来源',
+                width: 240,
+                render: (value: string) => (
+                  <Typography.Text style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {value}
+                  </Typography.Text>
+                ),
+              },
+            ]}
+            dataSource={headerRows}
+            pagination={false}
+            rowKey="name"
+            scroll={{ x: 760 }}
+            size="small"
+          />
+        </div>
+      ) : null}
+      <JsonDiagnosticsBlock title="完整请求 JSON" value={requestSummary} />
+    </Space>
+  );
+}
+
 function RequestParameterRows({
   addText,
   name,
@@ -1343,7 +1436,7 @@ export default function PluginsPage() {
               scroll={{ x: 920 }}
               size="small"
             />
-            <JsonDiagnosticsBlock title="完整请求信息" value={requestSummary} />
+            <ConnectionRequestDebugPanel requestSummary={requestSummary} />
             <JsonDiagnosticsBlock title="远端响应信息" value={result.response_summary} />
           </Space>
         ),

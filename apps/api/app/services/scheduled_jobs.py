@@ -67,6 +67,11 @@ SCHEDULED_JOB_TYPES = {
     "user_feedback_insight_extract",
     "user_usage_metric_collect",
 }
+AI_REQUIRED_SCHEDULED_JOB_TYPES = {
+    "iteration_plan_suggestion_generate",
+    "online_log_ai_analysis",
+    "user_feedback_insight_extract",
+}
 SCHEDULED_JOB_EXECUTION_MODES = {"ai_assisted", "ai_generated", "deterministic"}
 SCHEDULED_JOB_SCHEDULE_TYPES = {"cron", "interval", "manual"}
 SCHEDULED_JOB_RUN_STATUSES = {"cancelled", "failed", "queued", "running", "skipped", "succeeded"}
@@ -719,7 +724,7 @@ def effective_scheduled_job_type(payload: Any) -> str:
 
 
 def effective_scheduled_job_execution_mode(payload: Any, job_type: str) -> str:
-    if job_type == "user_feedback_insight_extract":
+    if job_type in AI_REQUIRED_SCHEDULED_JOB_TYPES:
         return "ai_generated"
     return str(payload_field(payload, "execution_mode") or "deterministic")
 
@@ -740,10 +745,10 @@ def validate_job_refs(
     agent_id = payload.agent_id
     skill_ids = list(payload.skill_ids)
     model_gateway_config_id = payload.model_gateway_config_id
-    plugin_backed_ai_job = job_type == "user_feedback_insight_extract"
+    ai_required_job = job_type in AI_REQUIRED_SCHEDULED_JOB_TYPES
     ai_processing_job = (
         execution_mode in {"ai_assisted", "ai_generated"}
-        or plugin_backed_ai_job
+        or ai_required_job
     )
     if ai_processing_job:
         if agent_id is None:
@@ -753,21 +758,21 @@ def validate_job_refs(
             raise api_error(404, "NOT_FOUND", "AI agent not found")
         if agent.get("status") != "active":
             raise api_error(400, "AI_AGENT_INACTIVE", "AI agent is inactive")
-        if not skill_ids and not plugin_backed_ai_job:
+        if not skill_ids:
             skill_ids = list(agent.get("default_skill_ids") or [])
-        if plugin_backed_ai_job and not skill_ids:
+        if ai_required_job and not skill_ids:
             raise api_error(400, "AI_SKILL_REQUIRED", "AI processing job requires skill_ids")
         ensure_active_skills(current_store, skill_ids)
-        if plugin_backed_ai_job and model_gateway_config_id is None:
+        model_gateway_config_id = ensure_active_model_gateway(
+            current_store,
+            model_gateway_config_id or agent.get("model_gateway_config_id"),
+        )
+        if ai_required_job and model_gateway_config_id is None:
             raise api_error(
                 400,
                 "MODEL_GATEWAY_CONFIG_REQUIRED",
                 "AI processing job requires model_gateway_config_id",
             )
-        model_gateway_config_id = ensure_active_model_gateway(
-            current_store,
-            model_gateway_config_id or agent.get("model_gateway_config_id"),
-        )
     return agent_id, skill_ids, model_gateway_config_id, job_type, execution_mode
 
 

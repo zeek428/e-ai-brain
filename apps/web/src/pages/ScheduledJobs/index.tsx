@@ -180,6 +180,117 @@ function getRunExecutionNode(run: ScheduledJobRunRecord, nodeKey: string): unkno
   return undefined;
 }
 
+function nodeFieldText(value: unknown): string | undefined {
+  if (typeof value === 'string' && value) {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return undefined;
+}
+
+function runNodeTagColor(status: string | undefined): string {
+  if (status === 'succeeded') {
+    return 'green';
+  }
+  if (status === 'failed') {
+    return 'red';
+  }
+  if (status === 'skipped') {
+    return 'default';
+  }
+  return 'blue';
+}
+
+function RunExecutionNodeCard({
+  nodeKey,
+  title,
+  value,
+}: {
+  nodeKey: string;
+  title: string;
+  value: unknown;
+}) {
+  const node = isRecord(value) ? value : {};
+  const status = nodeFieldText(node.status) ?? (isEmptyJsonValue(value) ? '暂无数据' : 'available');
+  const metrics = [
+    { label: '模型调用', value: typeof node.model_gateway_called === 'boolean' ? (node.model_gateway_called ? '已调用' : '未调用') : undefined },
+    { label: '处理模式', value: nodeFieldText(node.processing_mode) },
+    { label: '模型日志', value: nodeFieldText(node.model_log_id) },
+    { label: '写入目标', value: nodeFieldText(node.write_target) },
+    { label: '写入数量', value: nodeFieldText(node.records_imported) },
+    { label: '源数据量', value: nodeFieldText(node.source_row_count) ?? nodeFieldText(node.row_count) },
+    { label: '连接', value: nodeFieldText(node.connection_id) },
+    { label: '动作', value: nodeFieldText(node.action_id) },
+  ].filter((item) => item.value);
+
+  return (
+    <div
+      aria-label={`流程节点 ${title}`}
+      style={{
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        minHeight: 132,
+        padding: 12,
+      }}
+    >
+      <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+        <Space align="center" wrap>
+          <Tag color={runNodeTagColor(status)}>{status}</Tag>
+          <Typography.Text strong>{title}</Typography.Text>
+        </Space>
+        {metrics.length > 0 ? (
+          <Space orientation="vertical" size={4} style={{ width: '100%' }}>
+            {metrics.map((item) => (
+              <div key={`${nodeKey}-${item.label}`} style={{ display: 'flex', gap: 8 }}>
+                <Typography.Text style={{ color: '#64748b', minWidth: 72 }}>{item.label}</Typography.Text>
+                <Typography.Text
+                  ellipsis={{ tooltip: item.value }}
+                  style={{ flex: 1, minWidth: 0 }}
+                >
+                  {item.value}
+                </Typography.Text>
+              </div>
+            ))}
+          </Space>
+        ) : (
+          <Typography.Text type="secondary">暂无节点摘要</Typography.Text>
+        )}
+      </Space>
+    </div>
+  );
+}
+
+function RunExecutionChain({ run }: { run: ScheduledJobRunRecord }) {
+  const nodes = [
+    { key: 'data_connection', title: '数据连接获取内容' },
+    { key: 'skill_processing', title: '经过 Skill 处理后的内容' },
+    { key: 'result_action', title: '结果动作反馈内容' },
+  ];
+  return (
+    <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+      <Typography.Text strong>三段式执行链路</Typography.Text>
+      <div
+        style={{
+          display: 'grid',
+          gap: 12,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        }}
+      >
+        {nodes.map((node) => (
+          <RunExecutionNodeCard
+            key={node.key}
+            nodeKey={node.key}
+            title={node.title}
+            value={getRunExecutionNode(run, node.key)}
+          />
+        ))}
+      </div>
+    </Space>
+  );
+}
+
 function snapshotStringValue(snapshot: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = snapshot?.[key];
   return typeof value === 'string' && value ? value : undefined;
@@ -921,6 +1032,7 @@ export default function ScheduledJobsPage() {
                 },
               ]}
             />
+            <RunExecutionChain run={selectedRun} />
             <JsonPreview
               title="数据连接获取内容"
               value={getRunExecutionNode(selectedRun, 'data_connection')}

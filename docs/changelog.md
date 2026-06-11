@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 定时作业和插件调试可观测性增强：AI 类型作业（用户反馈洞察抽取、线上日志 AI 分析、迭代规划建议）服务端强制校验 Agent/Skill/模型网关；运行详情新增三段式执行链路卡片；插件连接测试弹窗新增请求调试台，直接展示最终 URL、Header 来源、完整请求 JSON 和远端响应。
 - 插件管理新增邮箱官方标准插件：系统自动种子化 `email` 插件并返回 `is_system=true`，页面不提供编辑/删除，连接表单可自动带出邮件网关/API endpoint、Authorization、Content-Type 和默认邮件参数。
 - 插件管理新增 GitLab/GitHub 官方标准插件：系统自动种子化 DevOps 标准插件并返回 `is_system=true`，页面显示官方标准标签且不提供编辑/删除，连接表单可自动带出 GitLab/GitHub endpoint、认证方式和平台 Params/Headers。
 - 插件动作新增“代码巡检报告”结果写入目标，新增动作/编辑动作时可通过可视化字段配置仓库 ID、分支、提交 SHA、风险级别、摘要和 finding 列表 JSONPath，高级 `result_mapping` 继续同步。
