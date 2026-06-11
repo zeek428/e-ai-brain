@@ -126,6 +126,28 @@ function installPluginsFetchMock(options: { deferConnectionTest?: boolean; inclu
       return jsonResponse({ data: { deleted: true, id: 'plugin_maxcompute' } });
     }
     if (input === '/api/system/plugin-connections' && init?.method === 'GET') {
+      const officialConnections = options.includeOfficialPlugins
+        ? [
+            {
+              auth_type: 'api_key_header',
+              endpoint_url: 'https://mail-gateway.example.com/api',
+              environment: 'prod',
+              id: 'connection_email_prod',
+              name: '生产邮箱网关',
+              plugin_id: 'plugin_standard_email',
+              request_config: {
+                headers: { 'Content-Type': 'application/json' },
+                query: {
+                  default_from: 'ai-brain@example.com',
+                  default_to: 'owner@example.com',
+                  mail_provider: 'enterprise_mail_gateway',
+                  subject_template: '[AI Brain] {{job_name}} 执行结果',
+                },
+              },
+              status: 'active',
+            },
+          ]
+        : [];
       return jsonResponse({
         data: {
           items: [
@@ -142,8 +164,9 @@ function installPluginsFetchMock(options: { deferConnectionTest?: boolean; inclu
               },
               status: 'active',
             },
+            ...officialConnections,
           ],
-          total: 1,
+          total: 1 + officialConnections.length,
         },
       });
     }
@@ -523,7 +546,7 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
     fireEvent.click(await screen.findByText('邮箱 (http)'));
 
-    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://mail-gateway.example.com/api/send');
+    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://mail-gateway.example.com/api');
     expect(await within(dialog).findByLabelText('Header 名')).toHaveValue('Authorization');
     expect(within(dialog).getByDisplayValue('Content-Type')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('application/json')).toBeInTheDocument();
@@ -836,6 +859,54 @@ describe('PluginsPage', () => {
           }),
         }),
       ),
+    );
+  });
+
+  it('creates an official email notification action from the scene template', async () => {
+    const { actionBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '新增动作' });
+    fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
+    fireEvent.click(await screen.findByText('邮箱通知发送'));
+
+    expect(within(dialog).getByText('邮箱 (http)')).toBeInTheDocument();
+    expect(within(dialog).getByText('生产邮箱网关 (prod)')).toBeInTheDocument();
+    expect(within(dialog).getByText('POST')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/messages/send');
+    expect(within(dialog).getByDisplayValue('Content-Type')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('application/json')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('to')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('{{default_to}}')).toBeInTheDocument();
+    expect(within(dialog).getByText('仅保存运行结果')).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() =>
+      expect(actionBodies).toEqual([
+        expect.objectContaining({
+          action_type: 'http_request',
+          code: 'send_email_notification',
+          connection_id: 'connection_email_prod',
+          name: '发送邮件通知',
+          plugin_id: 'plugin_standard_email',
+          request_config: expect.objectContaining({
+            headers: { 'Content-Type': 'application/json' },
+            method: 'POST',
+            path: '/messages/send',
+            query: expect.objectContaining({
+              body_template: '{{result_summary}}',
+              subject_template: '{{subject_template}}',
+              to: '{{default_to}}',
+            }),
+          }),
+          result_mapping: { write_target: 'scheduled_job_result' },
+        }),
+      ]),
     );
   });
 

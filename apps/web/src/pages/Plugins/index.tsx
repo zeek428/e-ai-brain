@@ -109,6 +109,7 @@ type DeleteUsageGroup = {
 const MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO = 'maxcompute_weekly_feedback';
 const GITHUB_CODE_INSPECTION_SCENARIO = 'github_code_inspection';
 const GITLAB_CODE_INSPECTION_SCENARIO = 'gitlab_code_inspection';
+const EMAIL_NOTIFICATION_SCENARIO = 'email_notification';
 const MAXCOMPUTE_DEFAULT_FIELDS =
   'feedback_id,user_id,product_id,module_code,feedback_type,content,sentiment,created_at';
 const MAXCOMPUTE_DEFAULT_RESULT_MAPPING = {
@@ -134,6 +135,7 @@ const actionScenarioOptions = [
   { label: 'MaxCompute 每周用户反馈', value: MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO },
   { label: 'GitHub 代码巡检', value: GITHUB_CODE_INSPECTION_SCENARIO },
   { label: 'GitLab 代码巡检', value: GITLAB_CODE_INSPECTION_SCENARIO },
+  { label: '邮箱通知发送', value: EMAIL_NOTIFICATION_SCENARIO },
 ];
 
 const requestMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((value) => ({
@@ -212,7 +214,7 @@ const standardConnectionDefaultsByPluginCode: Record<string, Partial<ConnectionF
       { enabled: true, name: 'default_to', type: 'string', value: '' },
       { enabled: true, name: 'subject_template', type: 'string', value: '[AI Brain] {{job_name}} 执行结果' },
     ],
-    endpoint_url: 'https://mail-gateway.example.com/api/send',
+    endpoint_url: 'https://mail-gateway.example.com/api',
     header_name: 'Authorization',
   },
   github: {
@@ -1371,6 +1373,40 @@ export default function PluginsPage() {
         }),
         result_mapping: stableJson(CODE_INSPECTION_REPORT_DEFAULT_MAPPING),
         ...resultMappingVisualFields(CODE_INSPECTION_REPORT_DEFAULT_MAPPING),
+      };
+      actionForm.setFieldsValue(nextValues);
+      return;
+    }
+    if (scenario === EMAIL_NOTIFICATION_SCENARIO) {
+      const plugin = pluginByCode('email');
+      const path = '/messages/send';
+      const paramRows: RequestParameterRow[] = [
+        { enabled: true, name: 'to', type: 'string', value: '{{default_to}}' },
+        { enabled: true, name: 'subject_template', type: 'string', value: '{{subject_template}}' },
+        { enabled: true, name: 'body_template', type: 'string', value: '{{result_summary}}' },
+      ];
+      const headerRows: RequestParameterRow[] = [
+        { enabled: true, name: 'Content-Type', type: 'string', value: 'application/json' },
+      ];
+      const resultMapping = { ...SCHEDULED_JOB_RESULT_DEFAULT_MAPPING };
+      const nextValues: Partial<ActionFormValues> = {
+        action_type: 'http_request',
+        code: 'send_email_notification',
+        connection_id: connectionForPlugin(plugin?.id),
+        header_rows: headerRows,
+        method: 'POST',
+        name: '发送邮件通知',
+        param_rows: paramRows,
+        path,
+        plugin_id: plugin?.id,
+        request_config: stableJson({
+          headers: rowsToRecord(headerRows),
+          method: 'POST',
+          path,
+          query: rowsToRecord(paramRows),
+        }),
+        result_mapping: stableJson(resultMapping),
+        ...resultMappingVisualFields(resultMapping),
       };
       actionForm.setFieldsValue(nextValues);
     }
