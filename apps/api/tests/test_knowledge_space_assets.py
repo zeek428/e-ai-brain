@@ -135,3 +135,105 @@ def test_knowledge_space_folder_asset_upload_and_search_are_permission_filtered(
     )
     assert forbidden_preview.status_code == 403
     assert forbidden_preview.json()["detail"]["code"] == "FORBIDDEN"
+
+
+def test_knowledge_document_assets_and_import_jobs_are_listed_with_space_permissions():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+
+    viewer_response = client.post(
+        "/api/users",
+        headers=admin_headers,
+        json={
+            "display_name": "Knowledge Ops Reader",
+            "password": "reader123",
+            "roles": ["viewer"],
+            "status": "active",
+            "username": "ops-reader@example.com",
+        },
+    )
+    assert viewer_response.status_code == 200
+    viewer = viewer_response.json()["data"]
+    viewer_headers = auth_headers("ops-reader@example.com", "reader123")
+
+    space_response = client.post(
+        "/api/knowledge/spaces",
+        headers=admin_headers,
+        json={
+            "code": "ops",
+            "name": "运维知识空间",
+            "description": "运维资料",
+        },
+    )
+    assert space_response.status_code == 200
+    space = space_response.json()["data"]
+
+    member_response = client.put(
+        f"/api/knowledge/spaces/{space['id']}/members",
+        headers=admin_headers,
+        json={"members": [{"user_id": viewer["id"], "space_role": "reader"}]},
+    )
+    assert member_response.status_code == 200
+
+    folder_response = client.post(
+        f"/api/knowledge/spaces/{space['id']}/folders",
+        headers=admin_headers,
+        json={"name": "导入任务"},
+    )
+    assert folder_response.status_code == 200
+    folder = folder_response.json()["data"]
+
+    upload_response = client.post(
+        "/api/knowledge/documents/upload",
+        headers=admin_headers,
+        json={
+            "knowledge_space_id": space["id"],
+            "folder_id": folder["id"],
+            "title": "导入任务排查",
+            "filename": "ops-import.md",
+            "mime_type": "text/markdown",
+            "content_base64": base64.b64encode("导入任务排查手册。".encode()).decode("ascii"),
+            "doc_type": "runbook",
+            "tags": ["ops"],
+        },
+    )
+    assert upload_response.status_code == 200
+    uploaded = upload_response.json()["data"]
+    document = uploaded["document"]
+
+    assets_response = client.get(
+        f"/api/knowledge/documents/{document['id']}/assets",
+        headers=viewer_headers,
+    )
+    assert assets_response.status_code == 200
+    assets = assets_response.json()["data"]["items"]
+    assert assets == [uploaded["asset"]]
+    assert assets_response.json()["data"]["total"] == 1
+
+    jobs_response = client.get(
+        f"/api/knowledge/import-jobs?knowledge_space_id={space['id']}",
+        headers=viewer_headers,
+    )
+    assert jobs_response.status_code == 200
+    jobs = jobs_response.json()["data"]["items"]
+    assert [job["id"] for job in jobs] == [uploaded["import_job"]["id"]]
+    assert jobs[0]["document_id"] == document["id"]
+    assert jobs[0]["document_title"] == "导入任务排查"
+    assert jobs[0]["asset_filename"] == "ops-import.md"
+    assert jobs[0]["folder_path"] == "导入任务"
+    assert jobs_response.json()["data"]["total"] == 1
+
+    forbidden_assets = client.get(
+        f"/api/knowledge/documents/{document['id']}/assets",
+        headers=reviewer_headers,
+    )
+    assert forbidden_assets.status_code == 403
+    assert forbidden_assets.json()["detail"]["code"] == "FORBIDDEN"
+
+    forbidden_jobs = client.get(
+        f"/api/knowledge/import-jobs?knowledge_space_id={space['id']}",
+        headers=reviewer_headers,
+    )
+    assert forbidden_jobs.status_code == 403
+    assert forbidden_jobs.json()["detail"]["code"] == "FORBIDDEN"

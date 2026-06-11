@@ -1,6 +1,8 @@
 import {
+  DatabaseOutlined,
   DeleteOutlined,
   EditOutlined,
+  FileSearchOutlined,
   FolderAddOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -25,7 +27,9 @@ import {
   createManagementKnowledgeDocument,
   deleteManagementKnowledgeDocument,
   fetchKnowledgeDeposits,
+  fetchKnowledgeDocumentAssets,
   fetchKnowledgeFolders,
+  fetchKnowledgeImportJobs,
   fetchKnowledgeSearchResults,
   fetchKnowledgeSpaces,
   fetchManagementKnowledgeList,
@@ -35,6 +39,8 @@ import {
   updateManagementKnowledgeDocument,
   uploadKnowledgeDocument,
   type KnowledgeFolderRecord,
+  type KnowledgeAssetRecord,
+  type KnowledgeImportJobRecord,
   type KnowledgeListQuery,
   type KnowledgeDepositRecord,
   type KnowledgeSearchResultRecord,
@@ -59,6 +65,29 @@ const depositStatusLabels: Record<string, { color: string; label: string }> = {
   pending: { color: 'gold', label: '待审核' },
   rejected: { color: 'red', label: '已拒绝' },
 };
+
+const importJobStatusLabels: Record<string, { color: string; label: string }> = {
+  completed: { color: 'green', label: '已完成' },
+  failed: { color: 'red', label: '失败' },
+  parsing: { color: 'blue', label: '解析中' },
+  queued: { color: 'default', label: '排队中' },
+};
+
+const assetTypeLabels: Record<string, string> = {
+  original: '原始文件',
+  parsed_markdown: '解析文本',
+  table_json: '表格数据',
+};
+
+function formatAssetSize(sizeBytes: number) {
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+  if (sizeBytes < 1024 * 1024) {
+    return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 type KnowledgeFormValues = {
   content?: string;
@@ -125,10 +154,16 @@ export default function KnowledgePage() {
   const folderSubmitRef = useRef<HTMLButtonElement>(null);
   const rejectDepositSubmitRef = useRef<HTMLButtonElement>(null);
   const spaceSubmitRef = useRef<HTMLButtonElement>(null);
+  const [assetRows, setAssetRows] = useState<KnowledgeAssetRecord[]>([]);
+  const [assetsLoading, setAssetsLoading] = useState(false);
   const [depositRows, setDepositRows] = useState<KnowledgeDepositRecord[]>([]);
   const [depositsLoading, setDepositsLoading] = useState(false);
+  const [importJobRows, setImportJobRows] = useState<KnowledgeImportJobRecord[]>([]);
+  const [importJobsLoading, setImportJobsLoading] = useState(false);
+  const [isAssetsModalOpen, setIsAssetsModalOpen] = useState(false);
   const [isDepositsModalOpen, setIsDepositsModalOpen] = useState(false);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
+  const [isImportJobsModalOpen, setIsImportJobsModalOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isSpaceModalOpen, setIsSpaceModalOpen] = useState(false);
   const [editingDocument, setEditingDocument] = useState<KnowledgeRecord | null>(null);
@@ -171,6 +206,7 @@ export default function KnowledgePage() {
     status: 'loading',
     total: 0,
   });
+  const [assetsDocument, setAssetsDocument] = useState<KnowledgeRecord | null>(null);
   const roleOptions = useMemo(() => toUserRoleOptions(roleDefinitions), [roleDefinitions]);
   const spaceOptions = useMemo(
     () => spaces.map((space) => ({ label: `${space.name} (${space.code})`, value: space.id })),
@@ -313,6 +349,25 @@ export default function KnowledgePage() {
     void reloadDeposits();
   }, [reloadDeposits]);
 
+  const reloadImportJobs = useCallback(async (spaceId?: string) => {
+    setImportJobsLoading(true);
+    try {
+      const importJobs = await fetchKnowledgeImportJobs({ knowledgeSpaceId: spaceId });
+      setImportJobRows(importJobs);
+    } catch (importJobError) {
+      setImportJobRows([]);
+      message.error(formatMutationError(importJobError));
+    } finally {
+      setImportJobsLoading(false);
+    }
+  }, []);
+
+  const openImportJobsModal = useCallback(() => {
+    const spaceId = selectedSpaceId ?? spaces[0]?.id;
+    setIsImportJobsModalOpen(true);
+    void reloadImportJobs(spaceId);
+  }, [reloadImportJobs, selectedSpaceId, spaces]);
+
   const openSearchModal = useCallback(() => {
     setSearchInitialValues({ knowledge_space_id: selectedSpaceId, top_k: 5 });
     setSearchRows([]);
@@ -338,6 +393,21 @@ export default function KnowledgePage() {
     setIsModalOpen(true);
     if (row.knowledgeSpaceId) {
       setSelectedSpaceId(row.knowledgeSpaceId);
+    }
+  }, []);
+
+  const openAssetsModal = useCallback(async (row: KnowledgeRecord) => {
+    setAssetsDocument(row);
+    setAssetRows([]);
+    setIsAssetsModalOpen(true);
+    setAssetsLoading(true);
+    try {
+      const assets = await fetchKnowledgeDocumentAssets(row.id);
+      setAssetRows(assets);
+    } catch (assetError) {
+      message.error(formatMutationError(assetError));
+    } finally {
+      setAssetsLoading(false);
     }
   }, []);
 
@@ -520,6 +590,85 @@ export default function KnowledgePage() {
     }
   };
 
+  const assetColumns = useMemo<ProColumns<KnowledgeAssetRecord>[]>(
+    () => [
+      {
+        dataIndex: 'filename',
+        title: '文件名',
+      },
+      {
+        dataIndex: 'assetType',
+        title: '资产类型',
+        render: (_, row) => assetTypeLabels[row.assetType] ?? row.assetType,
+      },
+      {
+        dataIndex: 'mimeType',
+        title: 'MIME',
+        render: (_, row) => row.mimeType ?? '-',
+      },
+      {
+        dataIndex: 'sizeBytes',
+        title: '大小',
+        render: (_, row) => formatAssetSize(row.sizeBytes),
+      },
+      {
+        dataIndex: 'storageProvider',
+        title: '存储',
+        render: (_, row) => row.storageProvider ?? '-',
+      },
+    ],
+    [],
+  );
+
+  const importJobColumns = useMemo<ProColumns<KnowledgeImportJobRecord>[]>(
+    () => [
+      {
+        dataIndex: 'documentTitle',
+        title: '知识文档',
+        render: (_, row) => row.documentTitle ?? row.documentId,
+      },
+      {
+        dataIndex: 'assetFilename',
+        title: '源文件',
+        render: (_, row) => row.assetFilename ?? '-',
+      },
+      {
+        dataIndex: 'folderPath',
+        title: '目录',
+        render: (_, row) => row.folderPath ?? '-',
+      },
+      {
+        dataIndex: 'parserEngine',
+        title: '解析器',
+        render: (_, row) => row.parserEngine ?? '-',
+      },
+      {
+        dataIndex: 'chunkStrategy',
+        title: '切片策略',
+        render: (_, row) => row.chunkStrategy ?? '-',
+      },
+      {
+        dataIndex: 'progress',
+        title: '进度',
+        render: (_, row) => `${row.progress}%`,
+      },
+      {
+        dataIndex: 'status',
+        title: '状态',
+        render: (_, row) => {
+          const label = importJobStatusLabels[row.status] ?? { color: 'default', label: row.status };
+          return <StatusTag color={label.color} label={label.label} />;
+        },
+      },
+      {
+        dataIndex: 'errorMessage',
+        title: '失败原因',
+        render: (_, row) => row.errorMessage ?? '-',
+      },
+    ],
+    [],
+  );
+
   const columns = useMemo<ProColumns<KnowledgeRecord>[]>(
     () => [
       {
@@ -577,6 +726,9 @@ export default function KnowledgePage() {
         valueType: 'option',
         render: (_, row) => (
           <Space size={4}>
+            <Button aria-label="资产" icon={<FileSearchOutlined />} onClick={() => void openAssetsModal(row)} type="link">
+              资产
+            </Button>
             <Button icon={<EditOutlined />} onClick={() => openEditModal(row)} type="link">
               编辑
             </Button>
@@ -594,7 +746,7 @@ export default function KnowledgePage() {
         ),
       },
     ],
-    [handleDelete, handleRetryIndex, openEditModal, spaceNameById],
+    [handleDelete, handleRetryIndex, openAssetsModal, openEditModal, spaceNameById],
   );
 
   const depositColumns = useMemo<ProColumns<KnowledgeDepositRecord>[]>(
@@ -737,6 +889,9 @@ export default function KnowledgePage() {
           <Button icon={<PlusOutlined />} key="create-space" onClick={() => setIsSpaceModalOpen(true)}>
             新建空间
           </Button>,
+          <Button aria-label="导入任务" icon={<DatabaseOutlined />} key="import-jobs" onClick={openImportJobsModal}>
+            导入任务
+          </Button>,
           <Button aria-label="知识检索" icon={<SearchOutlined />} key="knowledge-search" onClick={openSearchModal}>
             知识检索
           </Button>,
@@ -745,6 +900,46 @@ export default function KnowledgePage() {
           </Button>,
         ]}
       />
+      <Modal
+        footer={null}
+        onCancel={() => setIsImportJobsModalOpen(false)}
+        open={isImportJobsModalOpen}
+        title="导入任务"
+        width={980}
+      >
+        <ProTable<KnowledgeImportJobRecord>
+          columns={importJobColumns}
+          dataSource={importJobRows}
+          loading={importJobsLoading}
+          options={false}
+          pagination={false}
+          rowKey="id"
+          search={false}
+        />
+        {importJobRows.length === 0 && !importJobsLoading ? (
+          <Text type="secondary">当前没有导入任务。</Text>
+        ) : null}
+      </Modal>
+      <Modal
+        footer={null}
+        onCancel={() => setIsAssetsModalOpen(false)}
+        open={isAssetsModalOpen}
+        title={assetsDocument ? `文档资产：${assetsDocument.title}` : '文档资产'}
+        width={860}
+      >
+        <ProTable<KnowledgeAssetRecord>
+          columns={assetColumns}
+          dataSource={assetRows}
+          loading={assetsLoading}
+          options={false}
+          pagination={false}
+          rowKey="id"
+          search={false}
+        />
+        {assetRows.length === 0 && !assetsLoading ? (
+          <Text type="secondary">当前文档没有可查看资产。</Text>
+        ) : null}
+      </Modal>
       <Modal
         destroyOnHidden
         footer={null}

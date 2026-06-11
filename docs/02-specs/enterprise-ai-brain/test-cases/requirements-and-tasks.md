@@ -444,12 +444,15 @@
 | 3 | POST `/api/knowledge/documents/upload` 上传 Markdown 文件 | 文件写入对象存储，结构表写入 `knowledge_assets`、`knowledge_import_jobs`、`knowledge_chunk_sets`、`knowledge_documents` 和 `knowledge_chunks`。 |
 | 4 | GET `/api/knowledge/documents?knowledge_space_id=...&folder_id=...` | 返回上传文档，包含 `source_asset_id`、`active_chunk_set_id` 和目录信息。 |
 | 5 | POST `/api/knowledge/search` 并传 `knowledge_space_id` | 只返回当前空间可读结果，source 包含 `asset_id`、`chunk_set_id`、`folder_id` 和 `knowledge_space_id`。 |
-| 6 | GET `/api/knowledge/assets/{asset_id}/preview` | 通过 API 鉴权返回文本预览，不暴露永久对象存储 URL。 |
-| 7 | 使用非空间成员重复列表、检索和预览 | 返回空结果或 403，不泄露空间文档、chunk 或资产内容。 |
+| 6 | GET `/api/knowledge/documents/{document_id}/assets` | 只返回当前用户可读文档的资产，包含文件名、资产类型、MIME、大小和存储提供方。 |
+| 7 | GET `/api/knowledge/import-jobs?knowledge_space_id=...` | 只返回当前用户可读空间的导入任务，包含文档标题、源文件、目录、解析器、切片策略、进度和状态。 |
+| 8 | GET `/api/knowledge/assets/{asset_id}/preview` | 通过 API 鉴权返回文本预览，不暴露永久对象存储 URL。 |
+| 9 | 使用非空间成员重复列表、检索、资产、导入任务和预览 | 返回空结果或 403，不泄露空间文档、chunk、任务或资产内容。 |
 
 **预期结果**:
 1. 知识空间是权限边界，目录是组织结构，资产存储只承载原始文件和解析产物。
 2. PostgreSQL 仍是业务事实源，MinIO/S3 仅作为对象存储层。
+3. 知识中心页面提供文档资产弹窗和导入任务弹窗，运营人员可查看导入处理结果。
 3. 前端知识中心支持空间筛选、目录选择、新建空间/目录和文件上传。
 
 **状态**: 已自动化覆盖。后端见 `apps/api/tests/test_knowledge_space_assets.py`、`apps/api/tests/test_knowledge_management_foundation.py` 和 `apps/api/tests/test_persistence_repository_boundaries.py`；前端见 `apps/web/tests/KnowledgePage.test.tsx`。

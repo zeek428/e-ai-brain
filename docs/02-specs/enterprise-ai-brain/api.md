@@ -484,7 +484,9 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Knowledge | GET | `/api/knowledge/spaces/{space_id}/folders` | 查询知识空间目录。 |
 | Knowledge | POST | `/api/knowledge/spaces/{space_id}/folders` | 创建知识空间目录。 |
 | Knowledge | POST | `/api/knowledge/documents/upload` | 上传文件到对象存储并创建知识文档、导入任务和 chunk set。 |
+| Knowledge | GET | `/api/knowledge/documents/{document_id}/assets` | 按文档查询可访问知识资产。 |
 | Knowledge | GET | `/api/knowledge/assets/{asset_id}/preview` | 鉴权后预览知识资产内容。 |
+| Knowledge | GET | `/api/knowledge/import-jobs` | 查询可访问知识导入任务，支持按知识空间、文档和状态过滤。 |
 | Knowledge | PATCH | `/api/knowledge/documents/{document_id}` | 更新知识文档元数据、内容、权限角色、标签或索引状态。 |
 | Knowledge | DELETE | `/api/knowledge/documents/{document_id}` | 删除知识文档。 |
 | Knowledge | POST | `/api/knowledge/documents/{document_id}/retry-index` | 重试失败知识文档索引。 |
@@ -2217,7 +2219,7 @@ POST /api/knowledge/documents/upload
 }
 ```
 
-上传接口把原始文件写入配置的 S3-compatible 对象存储，默认私有化部署使用 MinIO；业务事实仍写入 PostgreSQL 的 `knowledge_documents`、`knowledge_assets`、`knowledge_import_jobs`、`knowledge_chunk_sets` 和 `knowledge_chunks`。响应返回 `document`、`asset` 和 `import_job`。对象预览必须通过 `GET /api/knowledge/assets/{asset_id}/preview` 鉴权代理，不向前端暴露永久对象存储 URL。
+上传接口把原始文件写入配置的 S3-compatible 对象存储，默认私有化部署使用 MinIO；业务事实仍写入 PostgreSQL 的 `knowledge_documents`、`knowledge_assets`、`knowledge_import_jobs`、`knowledge_chunk_sets` 和 `knowledge_chunks`。响应返回 `document`、`asset` 和 `import_job`。文档资产通过 `GET /api/knowledge/documents/{document_id}/assets` 查询，导入任务通过 `GET /api/knowledge/import-jobs?knowledge_space_id=...&document_id=...&status=...` 查询，两者均先按知识空间或文档读权限过滤。对象预览必须通过 `GET /api/knowledge/assets/{asset_id}/preview` 鉴权代理，不向前端暴露永久对象存储 URL。
 
 查询文档：
 

@@ -24,7 +24,9 @@ from app.services.knowledge_management import (
     asset_preview_result,
     create_knowledge_folder_result,
     create_knowledge_space_result,
+    list_knowledge_document_assets_result,
     list_knowledge_folders_result,
+    list_knowledge_import_jobs_result,
     list_knowledge_spaces_result,
     update_knowledge_space_members_result,
     upload_knowledge_document_result,
@@ -236,6 +238,20 @@ def upload_knowledge_document(
     return envelope(result, get_trace_id(request))
 
 
+@router.get("/api/knowledge/documents/{document_id}/assets")
+def list_knowledge_document_assets(
+    document_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_knowledge_document_assets_result(
+        current_store=knowledge_write_store(store(request)),
+        document_id=document_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
 @router.get("/api/knowledge/assets/{asset_id}/preview")
 def preview_knowledge_asset(
     asset_id: str,
@@ -245,6 +261,24 @@ def preview_knowledge_asset(
     result = asset_preview_result(
         asset_id=asset_id,
         current_store=knowledge_write_store(store(request)),
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/api/knowledge/import-jobs")
+def list_knowledge_import_jobs(
+    request: Request,
+    document_id: str | None = None,
+    knowledge_space_id: str | None = None,
+    status: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = list_knowledge_import_jobs_result(
+        current_store=knowledge_write_store(store(request)),
+        document_id=document_id,
+        knowledge_space_id=knowledge_space_id,
+        status=status,
         user=user,
     )
     return envelope(result, get_trace_id(request))

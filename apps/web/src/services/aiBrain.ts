@@ -1064,6 +1064,29 @@ export type KnowledgeFolderRecord = {
   path: string;
 };
 
+export type KnowledgeAssetRecord = {
+  assetType: string;
+  filename: string;
+  id: string;
+  mimeType?: string;
+  sizeBytes: number;
+  storageProvider?: string;
+};
+
+export type KnowledgeImportJobRecord = {
+  assetFilename?: string;
+  chunkStrategy?: string;
+  documentId: string;
+  documentTitle?: string;
+  errorMessage?: string;
+  folderPath?: string;
+  id: string;
+  parserEngine?: string;
+  progress: number;
+  status: string;
+  updatedAt?: string;
+};
+
 export type KnowledgeDocumentUploadPayload = {
   content_base64: string;
   doc_type?: string;
@@ -1479,6 +1502,29 @@ type KnowledgeFolderListItem = {
   name: string;
   parent_folder_id?: string | null;
   path?: string;
+};
+
+type KnowledgeAssetListItem = {
+  asset_type?: string;
+  filename?: string;
+  id: string;
+  mime_type?: string;
+  size_bytes?: number;
+  storage_provider?: string;
+};
+
+type KnowledgeImportJobListItem = {
+  asset_filename?: string;
+  chunk_strategy?: string;
+  document_id: string;
+  document_title?: string;
+  error_message?: string | null;
+  folder_path?: string;
+  id: string;
+  parser_engine?: string;
+  progress?: number;
+  status?: string;
+  updated_at?: string;
 };
 
 type AuditEventListItem = {
@@ -4259,6 +4305,33 @@ function mapKnowledgeFolder(item: KnowledgeFolderListItem): KnowledgeFolderRecor
   };
 }
 
+function mapKnowledgeAsset(item: KnowledgeAssetListItem): KnowledgeAssetRecord {
+  return {
+    assetType: item.asset_type ?? '-',
+    filename: item.filename ?? item.id,
+    id: item.id,
+    mimeType: item.mime_type,
+    sizeBytes: Number(item.size_bytes ?? 0),
+    storageProvider: item.storage_provider,
+  };
+}
+
+function mapKnowledgeImportJob(item: KnowledgeImportJobListItem): KnowledgeImportJobRecord {
+  return {
+    assetFilename: item.asset_filename,
+    chunkStrategy: item.chunk_strategy,
+    documentId: item.document_id,
+    documentTitle: item.document_title,
+    errorMessage: item.error_message ?? undefined,
+    folderPath: item.folder_path,
+    id: item.id,
+    parserEngine: item.parser_engine,
+    progress: Number(item.progress ?? 0),
+    status: item.status ?? '-',
+    updatedAt: formatListDate(item.updated_at),
+  };
+}
+
 export async function fetchKnowledgeSpaces(): Promise<KnowledgeSpaceRecord[]> {
   const token = requireAccessToken();
   const spaces = await apiRequest<ListResponse<KnowledgeSpaceListItem>>('/api/knowledge/spaces', {
@@ -4304,6 +4377,33 @@ export async function createKnowledgeFolder(
     },
   );
   return mapKnowledgeFolder(folder);
+}
+
+export async function fetchKnowledgeDocumentAssets(
+  documentId: string,
+): Promise<KnowledgeAssetRecord[]> {
+  const token = requireAccessToken();
+  const assets = await apiRequest<ListResponse<KnowledgeAssetListItem>>(
+    `/api/knowledge/documents/${documentId}/assets`,
+    { token },
+  );
+  return assets.items.map(mapKnowledgeAsset);
+}
+
+export async function fetchKnowledgeImportJobs(params: {
+  knowledgeSpaceId?: string;
+  status?: string;
+} = {}): Promise<KnowledgeImportJobRecord[]> {
+  const token = requireAccessToken();
+  const query = new URLSearchParams();
+  appendQueryParam(query, 'knowledge_space_id', params.knowledgeSpaceId);
+  appendQueryParam(query, 'status', params.status);
+  const queryString = query.toString();
+  const importJobs = await apiRequest<ListResponse<KnowledgeImportJobListItem>>(
+    queryString ? `/api/knowledge/import-jobs?${queryString}` : '/api/knowledge/import-jobs',
+    { token },
+  );
+  return importJobs.items.map(mapKnowledgeImportJob);
 }
 
 export async function uploadKnowledgeDocument(payload: KnowledgeDocumentUploadPayload) {

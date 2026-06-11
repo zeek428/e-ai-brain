@@ -8,11 +8,11 @@
 | 功能版本 | v1.2-draft |
 | 适用系统版本 | >= v1.1 |
 | 文档状态 | Draft |
-| 最后更新 | 2026-06-10 |
+| 最后更新 | 2026-06-11 |
 
 ## 背景
 
-当前知识中心已经支持知识文档导入、文本 chunk 重建、Embedding 可用时的向量索引、权限过滤检索、索引失败重试和知识沉淀审核。现有数据库也已经引入 `knowledge_spaces`、`knowledge_space_products` 和 `knowledge_space_members`，但 `knowledge_documents` 仍主要按文档、产品、版本、角色权限、标签和索引状态组织，尚未形成完整的空间、目录和文件资产管理体验。
+当前知识中心已经支持知识文档导入、文本 chunk 重建、Embedding 可用时的向量索引、权限过滤检索、索引失败重试和知识沉淀审核。现有数据库已引入 `knowledge_spaces`、`knowledge_space_products`、`knowledge_space_members`、`knowledge_folders`、`knowledge_assets`、`knowledge_import_jobs` 和 `knowledge_chunk_sets`，页面已支持空间/目录筛选、文件上传、文档资产查看和导入任务查看；后续仍需继续完善目录移动、解析版本回滚、异步任务编排和检索质量评估。
 
 后续知识管理升级应吸收 KnowFlow 的生产级知识库经验，但不直接复制 KnowFlow/RAGFlow 的运行架构。KnowFlow 可参考的方向包括：文档解析任务化、多解析器适配、OCR/转换服务解耦、图文结构保留、父子分块、权限隔离和导入治理。AI Brain 的事实源仍保持 PostgreSQL，MinIO 作为 S3-compatible 对象存储实现，承载原始文件和解析产物。
 

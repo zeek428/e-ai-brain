@@ -310,6 +310,118 @@ def list_knowledge_folders_result(
     return {"items": items, "total": len(items)}
 
 
+def list_knowledge_document_assets_result(
+    *,
+    current_store: Any,
+    document_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    document = current_store.knowledge_documents.get(document_id)
+    if document is None:
+        raise api_error(404, "NOT_FOUND", "Knowledge document not found")
+    if not document_is_readable(current_store, user, document):
+        raise api_error(403, "FORBIDDEN", "Knowledge document permission denied")
+    items = [
+        dict(asset)
+        for asset in current_store.knowledge_assets.values()
+        if asset.get("document_id") == document_id
+    ]
+    items.sort(
+        key=lambda item: (item.get("asset_type", ""), item.get("created_at", ""), item["id"])
+    )
+    return {"document_id": document_id, "items": items, "total": len(items)}
+
+
+def _import_job_space_id(
+    *,
+    current_store: Any,
+    import_job: dict[str, Any],
+) -> str | None:
+    document_id = import_job.get("document_id")
+    if document_id:
+        document = current_store.knowledge_documents.get(document_id)
+        if document is not None:
+            document_space_id = document.get("knowledge_space_id")
+            if document_space_id:
+                return document_space_id
+    source_asset_id = import_job.get("source_asset_id")
+    if source_asset_id:
+        asset = current_store.knowledge_assets.get(source_asset_id)
+        if asset is not None:
+            return asset.get("knowledge_space_id")
+    return None
+
+
+def import_job_response(current_store: Any, import_job: dict[str, Any]) -> dict[str, Any]:
+    response = dict(import_job)
+    document = current_store.knowledge_documents.get(import_job.get("document_id"))
+    if document is not None:
+        response["document_title"] = document.get("title")
+        document_space_id = document.get("knowledge_space_id")
+        if document_space_id:
+            response["knowledge_space_id"] = document_space_id
+        folder_id = document.get("folder_id")
+        if folder_id:
+            folder = current_store.knowledge_folders.get(folder_id)
+            if folder is not None:
+                response["folder_id"] = folder_id
+                response["folder_path"] = folder.get("path") or folder_path(current_store, folder)
+    source_asset_id = import_job.get("source_asset_id")
+    if source_asset_id:
+        asset = current_store.knowledge_assets.get(source_asset_id)
+        if asset is not None:
+            response["asset_filename"] = asset.get("filename")
+            response["asset_mime_type"] = asset.get("mime_type")
+            response["asset_size_bytes"] = asset.get("size_bytes")
+            response.setdefault("knowledge_space_id", asset.get("knowledge_space_id"))
+    return response
+
+
+def list_knowledge_import_jobs_result(
+    *,
+    current_store: Any,
+    document_id: str | None,
+    knowledge_space_id: str | None,
+    status: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    if knowledge_space_id is not None:
+        ensure_space_access(current_store, user, space_id=knowledge_space_id, required="read")
+
+    items: list[dict[str, Any]] = []
+    for import_job in current_store.knowledge_import_jobs.values():
+        if document_id is not None and import_job.get("document_id") != document_id:
+            continue
+        if status is not None and import_job.get("status") != status:
+            continue
+        space_id = _import_job_space_id(current_store=current_store, import_job=import_job)
+        if knowledge_space_id is not None and space_id != knowledge_space_id:
+            continue
+        if space_id is not None and not user_can_access_space(
+            current_store,
+            user,
+            space_id=space_id,
+            required="read",
+        ):
+            continue
+        if space_id is None:
+            document = current_store.knowledge_documents.get(import_job.get("document_id"))
+            if document is not None and not document_is_readable(current_store, user, document):
+                continue
+        items.append(import_job_response(current_store, import_job))
+
+    items.sort(key=lambda item: (item.get("created_at", ""), item["id"]), reverse=True)
+    return {
+        "filters": {
+            "document_id": document_id,
+            "knowledge_space_id": knowledge_space_id,
+            "status": status,
+        },
+        "items": items,
+        "total": len(items),
+    }
+
+
 def decode_upload_content(content_base64: str) -> bytes:
     try:
         return base64.b64decode(content_base64.encode("ascii"), validate=True)

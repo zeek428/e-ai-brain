@@ -390,4 +390,109 @@ describe('KnowledgePage', () => {
       ]),
     );
   });
+
+  it('opens import job and document asset operation views', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (String(input) === '/api/knowledge/documents' || String(input).startsWith('/api/knowledge/documents?')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                active_chunk_set_id: 'knowledge_chunk_set_ops',
+                content: '导入任务排查内容',
+                doc_type: 'runbook',
+                folder_path: '导入任务',
+                id: 'knowledge_ops',
+                index_status: 'vector_indexed',
+                knowledge_space_id: 'space_ops',
+                permission_roles: ['admin'],
+                source_asset_id: 'knowledge_asset_ops',
+                title: '导入任务排查',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/spaces') {
+        return jsonResponse({
+          data: {
+            items: [{ code: 'ops', id: 'space_ops', name: '运维知识空间' }],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/auth/roles') {
+        return jsonResponse(roleCatalogEnvelope);
+      }
+      if (input === '/api/knowledge/import-jobs?knowledge_space_id=space_ops') {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                asset_filename: 'ops-import.md',
+                chunk_strategy: 'simple_text',
+                document_id: 'knowledge_ops',
+                document_title: '导入任务排查',
+                folder_path: '导入任务',
+                id: 'knowledge_import_job_ops',
+                parser_engine: 'plain_text',
+                progress: 100,
+                status: 'completed',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/knowledge/documents/knowledge_ops/assets') {
+        return jsonResponse({
+          data: {
+            document_id: 'knowledge_ops',
+            items: [
+              {
+                asset_type: 'original',
+                filename: 'ops-import.md',
+                id: 'knowledge_asset_ops',
+                mime_type: 'text/markdown',
+                size_bytes: 123,
+                storage_provider: 'minio',
+              },
+            ],
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<KnowledgePage />);
+
+    expect(await screen.findByText('导入任务排查')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '导入任务' }));
+
+    expect(await screen.findByText('plain_text')).toBeInTheDocument();
+    expect(screen.getByText('ops-import.md')).toBeInTheDocument();
+    expect(screen.getByText('100%')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '资产' }));
+
+    expect(await screen.findByText('原始文件')).toBeInTheDocument();
+    expect(screen.getAllByText('ops-import.md').length).toBeGreaterThan(1);
+    expect(screen.getByText('text/markdown')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/knowledge/documents/knowledge_ops/assets',
+        'GET',
+      ]),
+    );
+  });
 });
