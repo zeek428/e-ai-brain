@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -25,6 +27,7 @@ CODE_INSPECTION_RISK_LEVELS = {"low", "medium", "high", "critical"}
 CODE_INSPECTION_NOTIFICATION_CHANNELS = {"dingtalk", "email", "webhook"}
 CODE_INSPECTION_SORT_FIELDS = {
     "created_at",
+    "committer_count",
     "finding_count",
     "id",
     "risk_level",
@@ -34,6 +37,12 @@ CODE_INSPECTION_SORT_FIELDS = {
 }
 SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 SEVERE_FINDING_THRESHOLD = "high"
+DEFAULT_SEVERITY_MAPPING = {
+    "blocker": "critical",
+    "major": "high",
+    "minor": "low",
+}
+OPEN_BUG_STATUSES = {"assigned", "fixed", "needs_info", "open", "reopened", "triaged"}
 
 
 def ensure_non_blank(value: str | None, field: str) -> str:
@@ -55,13 +64,40 @@ def severity_rank(value: str | None) -> int:
     return SEVERITY_ORDER.get(str(value or "").lower(), SEVERITY_ORDER["medium"])
 
 
-def normalize_severity(value: Any, *, fallback: str = "medium") -> str:
+def normalized_severity_mapping(*mappings: Any) -> dict[str, str]:
+    normalized = dict(DEFAULT_SEVERITY_MAPPING)
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            continue
+        for source, target in mapping.items():
+            source_key = str(source or "").strip().lower()
+            target_value = str(target or "").strip().lower()
+            if source_key and target_value in CODE_INSPECTION_SEVERITIES:
+                normalized[source_key] = target_value
+    return normalized
+
+
+def normalize_severity(
+    value: Any,
+    *,
+    fallback: str = "medium",
+    severity_mapping: dict[str, str] | None = None,
+) -> str:
     normalized = str(value or fallback).lower()
+    if severity_mapping and normalized in severity_mapping:
+        normalized = severity_mapping[normalized]
     return normalized if normalized in CODE_INSPECTION_SEVERITIES else fallback
 
 
-def normalize_risk_level(value: Any, findings: list[dict[str, Any]]) -> str:
+def normalize_risk_level(
+    value: Any,
+    findings: list[dict[str, Any]],
+    *,
+    severity_mapping: dict[str, str] | None = None,
+) -> str:
     normalized = str(value or "").lower()
+    if severity_mapping and normalized in severity_mapping:
+        normalized = severity_mapping[normalized]
     if normalized in CODE_INSPECTION_RISK_LEVELS:
         return normalized
     if not findings:
@@ -69,6 +105,30 @@ def normalize_risk_level(value: Any, findings: list[dict[str, Any]]) -> str:
     highest = max(findings, key=lambda item: severity_rank(item.get("severity")))
     highest_severity = str(highest.get("severity") or "medium")
     return highest_severity if highest_severity in CODE_INSPECTION_RISK_LEVELS else "medium"
+
+
+def user_product_access(user: dict[str, Any]) -> tuple[bool, set[str]]:
+    roles = set(user.get("roles") or [])
+    if "admin" in roles:
+        return True, set()
+    product_ids: set[str] = set()
+    for scope in user.get("scope_summary") or []:
+        if scope.get("access_level") not in {"admin", "read", "write"}:
+            continue
+        scope_type = scope.get("scope_type")
+        scope_id = scope.get("scope_id")
+        if scope_type == "global" and scope_id == "*":
+            return True, set()
+        if scope_type == "product" and scope_id:
+            product_ids.add(str(scope_id))
+    return False, product_ids
+
+
+def user_can_read_product(user: dict[str, Any], product_id: Any) -> bool:
+    global_access, product_ids = user_product_access(user)
+    if global_access:
+        return True
+    return product_id is not None and str(product_id) in product_ids
 
 
 def validate_code_inspection_result_actions(actions: Any) -> list[dict[str, Any]]:
@@ -125,11 +185,115 @@ def code_inspection_source_json(plugin_summary: dict[str, Any]) -> dict[str, Any
     return response_json if isinstance(response_json, dict) else {}
 
 
+def action_severity_mapping(current_store: Any, job: dict[str, Any]) -> dict[str, str]:
+    action = current_store.plugin_actions.get(job.get("plugin_action_id")) or {}
+    action_config = action.get("request_config") or {}
+    job_config = job.get("config_json") or {}
+    return normalized_severity_mapping(
+        action_config.get("severity_mapping"),
+        job_config.get("severity_mapping"),
+    )
+
+
+def nested_value(raw: dict[str, Any], section: str, key: str) -> Any:
+    nested = raw.get(section)
+    return nested.get(key) if isinstance(nested, dict) else None
+
+
+def committer_field(raw: dict[str, Any], field: str) -> str | None:
+    value = (
+        raw.get(f"committer_{field}")
+        or nested_value(raw, "committer", field)
+        or raw.get(f"author_{field}")
+        or nested_value(raw, "author", field)
+    )
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def committer_key(finding: dict[str, Any]) -> str | None:
+    value = (
+        finding.get("committer_email")
+        or finding.get("committer_username")
+        or finding.get("committer_name")
+    )
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def committer_summary(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for finding in findings:
+        key = committer_key(finding)
+        if key is None:
+            continue
+        entry = grouped.setdefault(
+            key,
+            {
+                "bug_count": 0,
+                "email": finding.get("committer_email"),
+                "finding_count": 0,
+                "name": finding.get("committer_name"),
+                "severe_finding_count": 0,
+                "username": finding.get("committer_username"),
+            },
+        )
+        entry["finding_count"] += 1
+        if severity_rank(finding.get("severity")) >= severity_rank(SEVERE_FINDING_THRESHOLD):
+            entry["severe_finding_count"] += 1
+        if finding.get("created_bug_id"):
+            entry["bug_count"] += 1
+    return sorted(
+        grouped.values(),
+        key=lambda item: (
+            -int(item["severe_finding_count"]),
+            -int(item["finding_count"]),
+            str(item.get("email") or item.get("username") or item.get("name") or ""),
+        ),
+    )
+
+
+def committer_count(findings: list[dict[str, Any]]) -> int:
+    return len({key for finding in findings if (key := committer_key(finding))})
+
+
+def report_matches_committer(report: dict[str, Any], committer: str | None) -> bool:
+    if not committer:
+        return True
+    needle = committer.lower()
+    for item in report.get("committer_summary") or []:
+        haystack = " ".join(
+            str(item.get(field) or "")
+            for field in ("email", "name", "username")
+        ).lower()
+        if needle in haystack:
+            return True
+    return False
+
+
+def finding_fingerprint(finding: dict[str, Any], report: dict[str, Any]) -> str:
+    payload = {
+        "branch": report.get("branch"),
+        "committer": committer_key(finding),
+        "file_path": finding.get("file_path"),
+        "line_number": finding.get("line_number"),
+        "repository_id": report.get("repository_id"),
+        "rule_id": finding.get("rule_id"),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def normalized_findings(
     current_store: Any,
     *,
     raw_findings: Any,
     report_id: str,
+    severity_mapping: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     if not isinstance(raw_findings, list):
         return []
@@ -142,6 +306,9 @@ def normalized_findings(
         finding_id = current_store.new_id("code_inspection_finding")
         finding = {
             "category": str(raw.get("category") or "quality"),
+            "committer_email": committer_field(raw, "email"),
+            "committer_name": committer_field(raw, "name"),
+            "committer_username": committer_field(raw, "username"),
             "created_at": now,
             "created_bug_id": None,
             "description": str(raw.get("description") or ""),
@@ -156,7 +323,10 @@ def normalized_findings(
             "recommendation": str(raw.get("recommendation") or ""),
             "report_id": report_id,
             "rule_id": str(raw.get("rule_id") or ""),
-            "severity": normalize_severity(raw.get("severity")),
+            "severity": normalize_severity(
+                raw.get("severity"),
+                severity_mapping=severity_mapping,
+            ),
             "title": title,
             "updated_at": now,
         }
@@ -197,6 +367,7 @@ def create_code_inspection_report_records(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     sync_product_git_repository_store(current_store, job.get("product_id"))
     source_json = code_inspection_source_json(plugin_summary)
+    severity_mapping = action_severity_mapping(current_store, job)
     repository_id = str(
         source_json.get("repository_id")
         or (job.get("config_json") or {}).get("repository_id")
@@ -213,6 +384,7 @@ def create_code_inspection_report_records(
         current_store,
         raw_findings=source_json.get("findings"),
         report_id=report_id,
+        severity_mapping=severity_mapping,
     )
     now = datetime.now(UTC).isoformat()
     report = {
@@ -222,6 +394,8 @@ def create_code_inspection_report_records(
         "created_at": now,
         "created_bug_ids": [],
         "created_by": user["id"],
+        "committer_count": committer_count(findings),
+        "committer_summary": committer_summary(findings),
         "finding_count": len(findings),
         "id": report_id,
         "notification_ids": [],
@@ -230,7 +404,11 @@ def create_code_inspection_report_records(
         "repository": repository_snapshot(current_store, repository_id),
         "repository_id": repository_id,
         "result_actions": result_actions,
-        "risk_level": normalize_risk_level(source_json.get("risk_level"), findings),
+        "risk_level": normalize_risk_level(
+            source_json.get("risk_level"),
+            findings,
+            severity_mapping=severity_mapping,
+        ),
         "scheduled_job_id": job["id"],
         "scheduled_job_run_id": run_id,
         "severe_finding_count": sum(
@@ -286,9 +464,44 @@ def finding_bug_description(finding: dict[str, Any], report: dict[str, Any]) -> 
     ]
     if finding.get("line_number") is not None:
         parts.append(f"Line: {finding['line_number']}")
+    if finding.get("committer_email") or finding.get("committer_name"):
+        parts.append(
+            "Committer: "
+            f"{finding.get('committer_name') or '-'} "
+            f"<{finding.get('committer_email') or '-'}>"
+        )
     if finding.get("recommendation"):
         parts.append(f"Recommendation: {finding['recommendation']}")
     return "\n".join(str(part) for part in parts if str(part).strip())
+
+
+def existing_code_inspection_bug_id(
+    current_store: Any,
+    *,
+    fingerprint: str,
+    product_id: str,
+) -> str | None:
+    repository = getattr(current_store, "repository", None)
+    list_bug_summaries = getattr(repository, "list_bug_summaries", None)
+    if callable(list_bug_summaries):
+        bugs = list_bug_summaries(
+            product_id=product_id,
+            source="code_inspection",
+            sort_by="created_at",
+            sort_order="desc",
+        )
+    else:
+        bugs = list(current_store.bugs.values())
+    for bug in bugs:
+        evidence = bug.get("evidence") or {}
+        if (
+            bug.get("product_id") == product_id
+            and bug.get("source") == "code_inspection"
+            and bug.get("status") in OPEN_BUG_STATUSES
+            and evidence.get("finding_fingerprint") == fingerprint
+        ):
+            return str(bug["id"])
+    return None
 
 
 def create_bugs_for_findings(
@@ -298,11 +511,23 @@ def create_bugs_for_findings(
     report: dict[str, Any],
     severity_threshold: str,
     user: dict[str, Any],
-) -> list[str]:
+) -> dict[str, list[str]]:
     created_ids: list[str] = []
+    deduplicated_ids: list[str] = []
     threshold_rank = severity_rank(severity_threshold)
     for finding in findings:
         if severity_rank(finding.get("severity")) < threshold_rank:
+            continue
+        fingerprint = finding_fingerprint(finding, report)
+        existing_bug_id = existing_code_inspection_bug_id(
+            current_store,
+            fingerprint=fingerprint,
+            product_id=report["product_id"],
+        )
+        if existing_bug_id is not None:
+            finding["created_bug_id"] = existing_bug_id
+            current_store.code_inspection_findings[finding["id"]] = finding
+            deduplicated_ids.append(existing_bug_id)
             continue
         payload = SimpleNamespace(
             assignee=None,
@@ -313,7 +538,11 @@ def create_bugs_for_findings(
                 "code_inspection_finding_id": finding["id"],
                 "code_inspection_report_id": report["id"],
                 "commit_sha": report.get("commit_sha"),
+                "committer_email": finding.get("committer_email"),
+                "committer_name": finding.get("committer_name"),
+                "committer_username": finding.get("committer_username"),
                 "file_path": finding.get("file_path"),
+                "finding_fingerprint": fingerprint,
                 "line_number": finding.get("line_number"),
                 "rule_id": finding.get("rule_id"),
             },
@@ -338,7 +567,13 @@ def create_bugs_for_findings(
         created_ids.append(created["id"])
         finding["created_bug_id"] = created["id"]
         current_store.code_inspection_findings[finding["id"]] = finding
-    report["created_bug_ids"] = [*report.get("created_bug_ids", []), *created_ids]
+    report["created_bug_ids"] = [
+        *report.get("created_bug_ids", []),
+        *created_ids,
+        *deduplicated_ids,
+    ]
+    report["committer_count"] = committer_count(findings)
+    report["committer_summary"] = committer_summary(findings)
     report["updated_at"] = datetime.now(UTC).isoformat()
     current_store.code_inspection_reports[report["id"]] = report
     persist_code_inspection_records(
@@ -347,7 +582,7 @@ def create_bugs_for_findings(
         findings=findings,
         notifications=[],
     )
-    return created_ids
+    return {"created_ids": created_ids, "deduplicated_ids": deduplicated_ids}
 
 
 def create_code_inspection_notifications(
@@ -416,7 +651,9 @@ def execute_code_inspection_result_actions(
     report: dict[str, Any] | None = None
     findings: list[dict[str, Any]] = []
     bug_ids: list[str] = []
+    deduplicated_bug_ids: list[str] = []
     notification_ids: list[str] = []
+    action_results: list[dict[str, Any]] = []
     report_written = False
     for action in actions:
         action_type = action["type"]
@@ -431,6 +668,14 @@ def execute_code_inspection_result_actions(
                 user=user,
             )
             report_written = True
+            action_results.append(
+                {
+                    "action_type": action_type,
+                    "finding_count": len(findings),
+                    "report_id": report["id"],
+                    "status": "succeeded",
+                }
+            )
         elif action_type == "create_bug_for_severe_findings":
             if report is None:
                 report, findings = create_code_inspection_report_records(
@@ -443,14 +688,31 @@ def execute_code_inspection_result_actions(
                     user=user,
                 )
                 report_written = True
-            bug_ids.extend(
-                create_bugs_for_findings(
-                    current_store,
-                    findings=findings,
-                    report=report,
-                    severity_threshold=action.get("severity_threshold") or "critical",
-                    user=user,
+                action_results.append(
+                    {
+                        "action_type": "write_code_inspection_report",
+                        "finding_count": len(findings),
+                        "report_id": report["id"],
+                        "status": "succeeded",
+                    }
                 )
+            bug_result = create_bugs_for_findings(
+                current_store,
+                findings=findings,
+                report=report,
+                severity_threshold=action.get("severity_threshold") or "critical",
+                user=user,
+            )
+            bug_ids.extend(bug_result["created_ids"])
+            deduplicated_bug_ids.extend(bug_result["deduplicated_ids"])
+            action_results.append(
+                {
+                    "action_type": action_type,
+                    "created_bug_ids": bug_result["created_ids"],
+                    "deduplicated_bug_ids": bug_result["deduplicated_ids"],
+                    "severity_threshold": action.get("severity_threshold") or "critical",
+                    "status": "succeeded",
+                }
             )
         elif action_type == "send_notification":
             if report is None:
@@ -464,13 +726,28 @@ def execute_code_inspection_result_actions(
                     user=user,
                 )
                 report_written = True
-            notification_ids.extend(
-                create_code_inspection_notifications(
-                    current_store,
-                    action=action,
-                    report=report,
-                    user=user,
+                action_results.append(
+                    {
+                        "action_type": "write_code_inspection_report",
+                        "finding_count": len(findings),
+                        "report_id": report["id"],
+                        "status": "succeeded",
+                    }
                 )
+            created_notification_ids = create_code_inspection_notifications(
+                current_store,
+                action=action,
+                report=report,
+                user=user,
+            )
+            notification_ids.extend(created_notification_ids)
+            action_results.append(
+                {
+                    "action_type": action_type,
+                    "channels": action.get("channels") or [],
+                    "created_notification_ids": created_notification_ids,
+                    "status": "succeeded",
+                }
             )
     if report is None:
         report, findings = create_code_inspection_report_records(
@@ -483,8 +760,18 @@ def execute_code_inspection_result_actions(
             user=user,
         )
         report_written = True
+        action_results.append(
+            {
+                "action_type": "write_code_inspection_report",
+                "finding_count": len(findings),
+                "report_id": report["id"],
+                "status": "succeeded",
+            }
+        )
     return {
+        "action_results": action_results,
         "bug_ids": bug_ids,
+        "deduplicated_bug_ids": deduplicated_bug_ids,
         "finding_count": len(findings),
         "findings": findings,
         "notification_ids": notification_ids,
@@ -519,6 +806,7 @@ def public_code_inspection_report(report: dict[str, Any], current_store: Any) ->
 
 def list_code_inspection_reports_response(
     *,
+    committer: str | None,
     current_store: Any,
     page: int | None,
     page_size: int | None,
@@ -534,6 +822,7 @@ def list_code_inspection_reports_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_code_inspection_read(user)
+    global_access, product_scope_ids = user_product_access(user)
     if risk_level is not None:
         ensure_enum(risk_level, CODE_INSPECTION_RISK_LEVELS, "risk_level")
     ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
@@ -546,7 +835,32 @@ def list_code_inspection_reports_response(
         "risk_level": risk_level,
         "status": status,
         "title": title,
+        "committer": committer,
     }
+    if not global_access and product_id is not None and str(product_id) not in product_scope_ids:
+        items = []
+        payload = paginated_list_payload(
+            items,
+            filters=filters,
+            list_name="code_inspections",
+            observed=True,
+            page=page,
+            page_size=page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+            trace_id=trace_id,
+        )["data"]
+        return add_list_observability(
+            payload,
+            filters=filters,
+            list_name="code_inspections",
+            page=payload.get("page"),
+            page_size=payload.get("page_size"),
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
     repository = code_inspection_query_repository(current_store)
     if repository is not None:
         items = repository.list_code_inspection_reports(
@@ -565,10 +879,18 @@ def list_code_inspection_reports_response(
         items = [item for item in items if item.get("risk_level") == risk_level]
     if status:
         items = [item for item in items if item.get("status") == status]
+    if not global_access:
+        items = [
+            item
+            for item in items
+            if item.get("product_id") is not None
+            and str(item.get("product_id")) in product_scope_ids
+        ]
     items = [
         public_code_inspection_report(item, current_store)
         for item in items
         if list_text_matches(item, title, ("id", "summary", "repository_id"))
+        and report_matches_committer(item, committer)
     ]
     items = sort_list_items(
         items,
@@ -613,10 +935,14 @@ def code_inspection_detail_response(
         detail = repository.get_code_inspection_detail(report_id)
         if detail is None:
             raise api_error(404, "NOT_FOUND", "Code inspection report not found")
+        if not user_can_read_product(user, detail["report"].get("product_id")):
+            raise api_error(404, "NOT_FOUND", "Code inspection report not found")
         detail["report"] = public_code_inspection_report(detail["report"], current_store)
         return detail
     report = current_store.code_inspection_reports.get(report_id)
     if report is None:
+        raise api_error(404, "NOT_FOUND", "Code inspection report not found")
+    if not user_can_read_product(user, report.get("product_id")):
         raise api_error(404, "NOT_FOUND", "Code inspection report not found")
     findings = [
         finding

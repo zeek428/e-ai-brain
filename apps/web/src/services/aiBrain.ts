@@ -4144,6 +4144,15 @@ export async function fetchScheduledJobRuns(
 export type CodeInspectionReportRecord = {
   branch?: string | null;
   commit_sha?: string | null;
+  committer_count?: number;
+  committer_summary?: Array<{
+    bug_count?: number;
+    email?: string | null;
+    finding_count?: number;
+    name?: string | null;
+    severe_finding_count?: number;
+    username?: string | null;
+  }>;
   created_at?: string;
   created_bug_ids?: string[];
   finding_count: number;
@@ -4161,6 +4170,9 @@ export type CodeInspectionReportRecord = {
 
 export type CodeInspectionFindingRecord = {
   category?: string;
+  committer_email?: string | null;
+  committer_name?: string | null;
+  committer_username?: string | null;
   created_bug_id?: string | null;
   description?: string;
   file_path?: string;
@@ -4190,6 +4202,7 @@ export type CodeInspectionDetailRecord = {
 };
 
 export type CodeInspectionListQuery = {
+  committer?: string;
   page?: number;
   pageSize?: number;
   productId?: string;
@@ -4206,6 +4219,7 @@ export async function fetchCodeInspectionReports(query: CodeInspectionListQuery 
   const params = new URLSearchParams();
   appendQueryParam(params, 'page', query.page ?? 1);
   appendQueryParam(params, 'page_size', query.pageSize ?? 10);
+  appendQueryParam(params, 'committer', query.committer);
   appendQueryParam(params, 'product_id', query.productId);
   appendQueryParam(params, 'repository_id', query.repositoryId);
   appendQueryParam(params, 'risk_level', query.riskLevel);

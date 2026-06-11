@@ -313,6 +313,13 @@ describe('ScheduledJobsPage', () => {
                 status: 'succeeded',
                 write_target: 'user_feedback_insights',
               },
+              result_actions: [
+                {
+                  status: 'succeeded',
+                  type: 'write_result',
+                  write_target: 'user_feedback_insights',
+                },
+              ],
               skill_processing: {
                 model_gateway_called: true,
                 model_log_id: 'model_log_weekly_feedback',
@@ -350,6 +357,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByText('数据连接获取内容')).toBeInTheDocument();
     expect(within(dialog).getByText('经过 Skill 处理后的内容')).toBeInTheDocument();
     expect(within(dialog).getByText('结果动作反馈内容')).toBeInTheDocument();
+    expect(within(dialog).getByText('结果动作状态')).toBeInTheDocument();
     expect(within(dialog).getByText('结果摘要')).toBeInTheDocument();
     expect(dialog).toHaveTextContent('用户反馈洞察抽取（取数 + AI 分析 + 写入）');
     expect(dialog).toHaveTextContent('AI 生成');
@@ -363,6 +371,7 @@ describe('ScheduledJobsPage', () => {
     expect(dialog).toHaveTextContent('weekly_feedback_analysis');
     expect(dialog).toHaveTextContent('plugin_invocation_log_weekly_feedback');
     expect(dialog).toHaveTextContent('user_feedback_insights');
+    expect(dialog).toHaveTextContent('write_result');
   });
 
   it('shows an in-progress state while a scheduled job is running', async () => {

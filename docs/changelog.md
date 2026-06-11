@@ -8,8 +8,9 @@
 ## [Unreleased]
 
 ### Added
-- 运营治理新增代码审查巡检闭环：定时作业支持 `code_repository_inspection` 和多 `result_actions`，可把仓库质量/安全/规范扫描结果写入代码审查表、按严重级别自动创建 `code_inspection` 来源 Bug，并记录邮件/钉钉机器人通知反馈；新增运营治理 / 代码审查页面查看报告、finding 和通知明细。
-- 产品和技术文档同步代码审查巡检闭环：PRD、技术规格、系统概览、API 和测试用例统一描述代码仓库巡检、多结果动作、代码审查表、严重问题 Bug 派生和邮件/钉钉通知反馈。
+- 代码巡检结果新增提交人维度：报告列表和详情展示提交人汇总，finding 保存提交人姓名、邮箱和用户名，支持按提交人筛选；严重 finding 自动建 Bug 增加 fingerprint 去重、severity mapping、产品范围读取控制和结果动作状态摘要。
+- 运营治理新增代码巡检闭环：定时作业支持 `code_repository_inspection` 和多 `result_actions`，可把仓库质量/安全/规范扫描结果写入代码巡检报告表、按严重级别自动创建 `code_inspection` 来源 Bug，并记录邮件/钉钉机器人通知反馈；新增运营治理 / 代码巡检页面查看报告、finding 和通知明细。
+- 产品和技术文档同步代码巡检闭环：PRD、技术规格、系统概览、API 和测试用例统一描述代码仓库巡检、多结果动作、代码巡检报告表、严重问题 Bug 派生和邮件/钉钉通知反馈。
 - AI 助手工作台升级整体方案：新增设计文档，规划 `@` 显式引用知识库/业务对象/插件/AI 能力/定时任务、助理内配置草案、确认执行、定时任务运行追踪和权限/审计边界。
 - 定时作业新增可选知识引用：作业可配置 `knowledge_document_ids`，运行时在调用模型网关前按权限读取可检索知识 chunk，并以 `knowledge_references` 注入 Agent/Skill 上下文；运行结果详情在 Skill 节点展示引用知识输入。
 - 定时作业配置和执行链路校正：作业表单按“数据连接 -> AI 模型 -> Agent -> Skills -> 结果动作”配置，隐藏时间参数、连接输入参数和输出覆盖 JSON；`user_feedback_insight_extract` 运行时必须先取数，再通过模型网关按 Agent/Skill 处理为结构化 JSON，最后执行结果动作写入。

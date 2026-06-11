@@ -1857,16 +1857,18 @@ def run_scheduled_job_response(
             records_imported = int(inspection_result["finding_count"])
             result_summary = {
                 "bug_ids": inspection_result["bug_ids"],
+                "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
                 "execution_nodes": {
                     "bug_creation": {
                         "created_bug_ids": inspection_result["bug_ids"],
+                        "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
                         "label": "严重问题自动创建 Bug",
                         "records_imported": len(inspection_result["bug_ids"]),
                         "status": "succeeded",
                     },
                     "code_inspection_report": {
                         "finding_count": report["finding_count"],
-                        "label": "代码审查表写入结果",
+                        "label": "代码巡检报告写入结果",
                         "report_id": report["id"],
                         "risk_level": report["risk_level"],
                         "severe_finding_count": report["severe_finding_count"],
@@ -1884,6 +1886,7 @@ def run_scheduled_job_response(
                         "records_imported": len(inspection_result["notification_ids"]),
                         "status": "succeeded",
                     },
+                    "result_actions": inspection_result["action_results"],
                 },
                 "finding_count": report["finding_count"],
                 "notification_ids": inspection_result["notification_ids"],

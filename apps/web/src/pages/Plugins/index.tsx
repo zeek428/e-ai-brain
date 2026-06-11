@@ -1558,7 +1558,7 @@ export default function PluginsPage() {
                     width: 220,
                     render: (value) => {
                       const writeTarget = value && typeof value === 'object'
-                        ? (value as Record<string, unknown>).write_target
+                        ? (value as unknown as Record<string, unknown>).write_target
                         : undefined;
                       return typeof writeTarget === 'string'
                         ? resultWriteTargetLabelByValue.get(writeTarget) ?? writeTarget

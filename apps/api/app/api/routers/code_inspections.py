@@ -18,6 +18,7 @@ router = APIRouter(tags=["code-inspections"])
 @router.get("/api/governance/code-inspections")
 def list_code_inspections(
     request: Request,
+    committer: str | None = None,
     product_id: str | None = None,
     repository_id: str | None = None,
     risk_level: str | None = None,
@@ -30,6 +31,7 @@ def list_code_inspections(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     payload = list_code_inspection_reports_response(
+        committer=committer,
         current_store=store(request),
         page=page,
         page_size=page_size,

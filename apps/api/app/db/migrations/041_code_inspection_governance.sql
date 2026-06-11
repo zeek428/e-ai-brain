@@ -92,7 +92,7 @@ CREATE INDEX IF NOT EXISTS idx_code_inspection_notifications_report
 
 INSERT INTO permissions (code, name, category, description, risk_level, is_system, status)
 VALUES
-  ('code_inspection.read', '查看代码审查', 'devops', '查看定期仓库质量、安全和规范巡检报告。', 'normal', true, 'active')
+  ('code_inspection.read', '查看代码巡检', 'devops', '查看定期仓库质量、安全和规范巡检报告。', 'normal', true, 'active')
 ON CONFLICT (code) DO UPDATE SET
   name = EXCLUDED.name,
   category = EXCLUDED.category,
@@ -115,7 +115,7 @@ INSERT INTO menu_resources (
   status
 )
 VALUES
-  ('code_inspection.reports', '代码审查', '/governance/code-inspections', 'governance', 'page', 'CodeOutlined', 54, '["code_inspection.read"]'::jsonb, true, 'active')
+  ('code_inspection.reports', '代码巡检', '/governance/code-inspections', 'governance', 'page', 'CodeOutlined', 54, '["code_inspection.read"]'::jsonb, true, 'active')
 ON CONFLICT (code) DO UPDATE SET
   name = EXCLUDED.name,
   path = EXCLUDED.path,

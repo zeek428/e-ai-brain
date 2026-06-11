@@ -90,7 +90,7 @@ const statusLabelByValue = new Map([
 ]);
 
 const codeInspectionResultActionOptions = [
-  { label: '写入代码审查表', value: 'write_code_inspection_report' },
+  { label: '写入代码巡检报告', value: 'write_code_inspection_report' },
   { label: '严重问题自动创建 Bug', value: 'create_bug_for_severe_findings' },
   { label: '发送问题消息通知', value: 'send_notification' },
 ];
@@ -934,7 +934,7 @@ export default function ScheduledJobsPage() {
               value={getRunExecutionNode(selectedRun, 'result_action')}
             />
             <JsonPreview
-              title="代码审查表写入结果"
+              title="代码巡检报告写入结果"
               value={getRunExecutionNode(selectedRun, 'code_inspection_report')}
             />
             <JsonPreview
@@ -944,6 +944,10 @@ export default function ScheduledJobsPage() {
             <JsonPreview
               title="问题消息通知"
               value={getRunExecutionNode(selectedRun, 'notifications')}
+            />
+            <JsonPreview
+              title="结果动作状态"
+              value={getRunExecutionNode(selectedRun, 'result_actions')}
             />
             <JsonPreview title="结果摘要" value={selectedRun.result_summary} />
             <JsonPreview title="插件快照" value={selectedRun.resolved_plugin_snapshot} />

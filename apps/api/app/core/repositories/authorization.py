@@ -197,7 +197,7 @@ COMPATIBILITY_MENU_RESOURCES: list[dict[str, Any]] = [
     },
     {
         "code": "code_inspection.reports",
-        "name": "代码审查",
+        "name": "代码巡检",
         "path": "/governance/code-inspections",
         "parent_code": "governance",
         "menu_type": "page",

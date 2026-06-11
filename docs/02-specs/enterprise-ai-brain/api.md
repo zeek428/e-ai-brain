@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.236 |
+| 功能版本 | v1.1.237 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,7 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
-| v1.1.236 | 2026-06-11 | 新增代码仓库巡检 API：`code_repository_inspection` 定时作业支持 `result_actions` 多结果动作，运行写入代码审查报告、严重问题建 Bug 和通知记录，并提供运营治理代码审查列表/详情接口 | Codex |
+| v1.1.237 | 2026-06-11 | 代码巡检 API 增加提交人维度、`committer` 筛选、产品范围读取控制、severity mapping、严重 finding Bug 去重和结果动作状态摘要 | Codex |
+| v1.1.236 | 2026-06-11 | 新增代码仓库巡检 API：`code_repository_inspection` 定时作业支持 `result_actions` 多结果动作，运行写入代码巡检报告、严重问题建 Bug 和通知记录，并提供运营治理代码巡检列表/详情接口 | Codex |
 | v1.1.235 | 2026-06-11 | 新增 AI 助手工作台升级目标 API：`@` 引用候选/解析、聊天显式引用、动作草案、确认执行和取消草案 | Codex |
 | v1.1.234 | 2026-06-11 | 补充插件删除 API：插件、连接、动作支持 DELETE；若仍被连接、动作、定时作业或调用日志引用则返回 409 并提示使用清单 | Codex |
 | v1.1.233 | 2026-06-11 | 补充定时作业维护 API：列表页必须提供编辑和删除入口，后端支持 `DELETE /api/system/scheduled-jobs/{job_id}` 并写入删除审计 | Codex |
@@ -560,7 +561,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Scheduler | POST | `/api/system/scheduled-jobs/{job_id}/run` | 手动触发一次作业运行。 |
 | Scheduler | GET | `/api/system/scheduled-job-runs` | 查询定时作业运行实例、配置快照、collector run 关联和结果摘要。 |
 | Scheduler | POST | `/api/system/scheduled-job-runs/{run_id}/cancel` | 取消仍处于 queued/running 的运行实例。 |
-| Governance | GET | `/api/governance/code-inspections` | 查询定期代码仓库巡检报告列表，支持产品、仓库、风险级别、状态、分页和排序。 |
+| Governance | GET | `/api/governance/code-inspections` | 查询定期代码仓库巡检报告列表，支持产品、仓库、提交人、风险级别、状态、分页和排序，并按当前用户产品 scope 过滤。 |
 | Governance | GET | `/api/governance/code-inspections/{report_id}` | 查询单次代码巡检报告详情，返回报告、finding 列表和通知记录。 |
 | Attribution | GET | `/api/attribution/pending-items` | 查询待归属数据队列。 |
 | Attribution | POST | `/api/attribution/pending-items` | 登记无法映射产品、模块、需求或导入主体的真实数据。 |
@@ -2834,7 +2835,7 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 
 MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extract`，数据连接保存 endpoint、认证和公共 Params/Headers，结果动作通常为 `action_type=mcp_tool`、`tool_name=maxcompute.execute_sql`；请求时间参数优先在连接/动作 Params 中配置，作业级 `plugin_input_mapping` 仅作为兼容和高级覆盖。作业必须选择 `model_gateway_config_id`、`agent_id` 和 `skill_ids`，可选选择知识引用文档。动作 `result_mapping` 默认包含 `write_target=user_feedback_insights`、`insights_path`、`records_imported_path` 和 `rows_path`，作业 `plugin_output_mapping` 仅用于覆盖。运行顺序为数据连接取数、读取知识引用、模型网关按 Agent/Skill 处理为结构化 JSON、结果动作写入。运行成功后 `records_imported` 为实际新增洞察数，`result_summary.plugin.response_summary.json.row_count` 保留源表读取行数摘要；`result_summary.execution_nodes` 必须按 `data_connection`、`skill_processing`、`result_action` 三段保存数据连接获取内容、Skill 处理内容和结果动作反馈内容。`skill_processing.model_gateway_called=true`，并包含 `model_gateway_config_id`、`model_log_id`、`processing_mode=model_gateway_json_transform`、`input.knowledge_references` 和模型输出 JSON 摘要。
 
-代码仓库巡检场景使用 `job_type=code_repository_inspection`，通过 `plugin_connection_id` 和 `plugin_action_id` 调用仓库扫描器、SonarQube、SAST 或自建质量扫描服务。插件响应推荐返回 `repository_id`、`branch`、`commit_sha`、`risk_level`、`summary` 和 `findings[]`；每个 finding 至少包含 `rule_id`、`category`、`severity`、`title`、`description`、`file_path`、`line_number` 和 `recommendation`。示例 `result_actions`：
+代码仓库巡检场景使用 `job_type=code_repository_inspection`，通过 `plugin_connection_id` 和 `plugin_action_id` 调用仓库扫描器、SonarQube、SAST 或自建质量扫描服务。插件响应推荐返回 `repository_id`、`branch`、`commit_sha`、`risk_level`、`summary` 和 `findings[]`；每个 finding 至少包含 `rule_id`、`category`、`severity`、`title`、`description`、`file_path`、`line_number` 和 `recommendation`，并推荐包含 `committer_name`、`committer_email`、`committer_username`。插件动作 `request_config.severity_mapping` 或作业 `config_json.severity_mapping` 可把外部扫描器等级映射为平台 `info/low/medium/high/critical`。示例 `result_actions`：
 
 ```json
 [
@@ -2849,7 +2850,7 @@ MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extrac
 ]
 ```
 
-运行成功后必须创建 `code_inspection_reports` 和 `code_inspection_findings`；达到阈值的问题可创建 `source=code_inspection` 的 Bug，并把 `code_inspection_report_id`、`code_inspection_finding_id`、规则、文件和行号写入 Bug evidence；通知动作写入 `code_inspection_notifications`，第一阶段只记录邮件/钉钉机器人等发送目标和反馈摘要，不要求实际发出外部网络请求。运行摘要必须包含 `execution_nodes.data_connection`、`code_inspection_report`、`bug_creation` 和 `notifications`，方便运行详情按“取数/扫描、写报告、派生处理、通知反馈”查看。
+运行成功后必须创建 `code_inspection_reports` 和 `code_inspection_findings`；报告返回 `committer_count` 和 `committer_summary`，finding 返回 `committer_name`、`committer_email`、`committer_username`，列表接口可用 `committer` 按姓名、邮箱或用户名过滤。达到阈值的问题可创建 `source=code_inspection` 的 Bug，并把 `code_inspection_report_id`、`code_inspection_finding_id`、规则、文件、行号、提交人和 `finding_fingerprint` 写入 Bug evidence；同一仓库、分支、规则、文件、行号和提交人的开放 Bug 不重复创建，运行摘要在 `bug_creation.deduplicated_bug_ids` 返回复用的 Bug。通知动作写入 `code_inspection_notifications`，第一阶段只记录邮件/钉钉机器人等发送目标和反馈摘要，不要求实际发出外部网络请求。运行摘要必须包含 `execution_nodes.data_connection`、`code_inspection_report`、`bug_creation`、`notifications` 和 `result_actions`，方便运行详情按“取数/扫描、写报告、派生处理、通知反馈、动作状态”查看。
 
 运行实例响应必须包含 `scheduled_job_id`、`collector_run_id`、`trigger_type`、`scheduled_for`、`status`、`started_at`、`finished_at`、`records_imported`、`error_code`、`error_message`、`result_summary`、`config_snapshot`、`resolved_agent_snapshot`、`resolved_skill_snapshots`、`resolved_prompt_snapshot`、`tool_policy_snapshot`、`resolved_plugin_snapshot` 和 `plugin_invocation_log_id`。`result_summary.execution_nodes.data_connection` 应包含明文请求摘要、解析后的输入映射、插件响应摘要和源数据数量；`skill_processing` 应包含 Skill 配置、是否调用模型网关、处理输入和处理输出；`result_action` 应包含写入目标、写入数量、生成 ID 和动作反馈。模型日志仍只记录 provider、model、purpose、tokens、latency、status 和错误元数据，不保存完整 prompt 或完整输出。插件调用日志按管理员调试场景保存并返回明文请求/响应摘要，便于排查三方系统连接和动作写入问题。`POST /run` 仅创建一次运行实例并进入 `queued/running`，不得直接返回伪造业务结果。
 

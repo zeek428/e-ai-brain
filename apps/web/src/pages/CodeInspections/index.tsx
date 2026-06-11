@@ -31,6 +31,7 @@ const severityColorByValue = new Map([
 
 const sortFieldMap: Record<string, string> = {
   createdAt: 'created_at',
+  committerCount: 'committer_count',
   findingCount: 'finding_count',
   id: 'id',
   riskLevel: 'risk_level',
@@ -44,6 +45,7 @@ function normalizeFilterText(value: unknown) {
 
 function buildCodeInspectionQuery(query: ManagementListQuery): CodeInspectionListQuery {
   return {
+    committer: normalizeFilterText(query.filters.committer),
     page: query.page,
     pageSize: query.pageSize,
     riskLevel: normalizeFilterText(query.filters.riskLevel),
@@ -60,6 +62,42 @@ function compactText(value?: string | null) {
     <Typography.Text ellipsis={{ tooltip: text }} style={{ display: 'block', maxWidth: '100%' }}>
       {text}
     </Typography.Text>
+  );
+}
+
+function committerLabel(
+  value?: {
+    email?: string | null;
+    finding_count?: number;
+    name?: string | null;
+    username?: string | null;
+  } | null,
+) {
+  if (!value) {
+    return '-';
+  }
+  const identity = value.name || value.username || value.email || '-';
+  const email = value.email && value.email !== identity ? ` <${value.email}>` : '';
+  const count = value.finding_count ? ` (${value.finding_count})` : '';
+  return `${identity}${email}${count}`;
+}
+
+function committerSummaryText(row: CodeInspectionReportRecord) {
+  const summary = row.committer_summary ?? [];
+  if (!summary.length) {
+    return '-';
+  }
+  return summary.slice(0, 3).map(committerLabel).join('、');
+}
+
+function bugLink(value?: string | null) {
+  if (!value) {
+    return '-';
+  }
+  return (
+    <Typography.Link href={`/delivery/bugs?title=${encodeURIComponent(value)}`}>
+      {value}
+    </Typography.Link>
   );
 }
 
@@ -144,6 +182,13 @@ export default function CodeInspectionsPage() {
         render: (_, row) => compactText(row.branch),
       },
       {
+        dataIndex: 'committerCount',
+        sorter: true,
+        title: '提交人',
+        width: 260,
+        render: (_, row) => compactText(committerSummaryText(row)),
+      },
+      {
         dataIndex: 'riskLevel',
         sorter: true,
         title: '风险级别',
@@ -215,6 +260,7 @@ export default function CodeInspectionsPage() {
         dataSource={listState.rows}
         filters={[
           { label: '报告/摘要', name: 'title', type: 'text' },
+          { label: '提交人', name: 'committer', placeholder: '姓名 / 邮箱 / 用户名', type: 'text' },
           {
             label: '风险级别',
             name: 'riskLevel',
@@ -246,9 +292,9 @@ export default function CodeInspectionsPage() {
           total: listState.total,
         }}
         rowKey="id"
-        tableScroll={{ x: 1480 }}
-        tableTitle="代码审查"
-        title="代码审查"
+        tableScroll={{ x: 1740 }}
+        tableTitle="代码巡检"
+        title="代码巡检"
         toolbarActions={[
           <Button key="reload" onClick={reload}>
             刷新
@@ -259,7 +305,7 @@ export default function CodeInspectionsPage() {
       <Modal
         footer={<Button onClick={() => setDetailState(undefined)}>关闭</Button>}
         open={Boolean(detailState)}
-        title="代码审查详情"
+        title="代码巡检详情"
         width={1040}
         onCancel={() => setDetailState(undefined)}
       >
@@ -276,6 +322,12 @@ export default function CodeInspectionsPage() {
                 { key: 'risk', label: '风险级别', children: detailState.detail.report.risk_level },
                 { key: 'repository', label: '仓库', children: detailState.detail.report.repository_name || '-' },
                 { key: 'branch', label: '分支', children: detailState.detail.report.branch || '-' },
+                { key: 'committer_count', label: '提交人数', children: detailState.detail.report.committer_count ?? 0 },
+                {
+                  key: 'committers',
+                  label: '主要提交人',
+                  children: committerSummaryText(detailState.detail.report),
+                },
                 { key: 'finding_count', label: '问题数', children: detailState.detail.report.finding_count },
                 { key: 'severe_count', label: '严重问题', children: detailState.detail.report.severe_finding_count },
                 { key: 'bugs', label: '创建 Bug', children: detailState.detail.report.created_bug_ids?.join('、') || '-' },
@@ -294,18 +346,31 @@ export default function CodeInspectionsPage() {
                 { dataIndex: 'rule_id', title: '规则', width: 120 },
                 { dataIndex: 'title', title: '问题', width: 220 },
                 {
+                  dataIndex: 'committer_email',
+                  title: '提交人',
+                  width: 260,
+                  render: (_, row) =>
+                    compactText(
+                      committerLabel({
+                        email: row.committer_email,
+                        name: row.committer_name,
+                        username: row.committer_username,
+                      }),
+                    ),
+                },
+                {
                   dataIndex: 'file_path',
                   title: '位置',
                   width: 260,
                   render: (_, row) => compactText(`${row.file_path || '-'}${row.line_number ? `:${row.line_number}` : ''}`),
                 },
-                { dataIndex: 'created_bug_id', title: 'Bug', width: 140, render: (value) => value || '-' },
+                { dataIndex: 'created_bug_id', title: 'Bug', width: 150, render: (value) => bugLink(String(value ?? '')) },
                 { dataIndex: 'recommendation', title: '建议', render: (value) => compactText(String(value ?? '')) },
               ]}
               dataSource={detailState.detail.findings}
               pagination={false}
               rowKey="id"
-              scroll={{ x: 1180 }}
+              scroll={{ x: 1460 }}
               size="small"
             />
             <Table<CodeInspectionNotificationRecord>

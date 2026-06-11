@@ -142,7 +142,7 @@ const routes = [
       },
       {
         path: '/governance/code-inspections',
-        name: '代码审查',
+        name: '代码巡检',
         icon: 'CodeOutlined',
         component: './CodeInspections',
       },

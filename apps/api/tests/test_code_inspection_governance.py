@@ -1,6 +1,9 @@
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.code_inspections import existing_code_inspection_bug_id, finding_fingerprint
 
 client = TestClient(app)
 
@@ -11,23 +14,34 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     return {"Authorization": f"Bearer {token}"}
 
 
-def create_product(headers: dict[str, str]) -> dict:
+def create_product(
+    headers: dict[str, str],
+    *,
+    code: str = "repo-quality-product",
+    name: str = "Repository Quality Product",
+) -> dict:
     return client.post(
         "/api/products",
-        json={"code": "repo-quality-product", "name": "Repository Quality Product"},
+        json={"code": code, "name": name},
         headers=headers,
     ).json()["data"]
 
 
-def create_repository(headers: dict[str, str], product_id: str) -> dict:
+def create_repository(
+    headers: dict[str, str],
+    product_id: str,
+    *,
+    name: str = "service-api",
+    project_path: str = "example/service-api",
+) -> dict:
     return client.post(
         f"/api/products/{product_id}/git-repositories",
         json={
             "default_branch": "main",
             "git_provider": "github",
-            "name": "service-api",
-            "project_path": "example/service-api",
-            "remote_url": "https://github.com/example/service-api.git",
+            "name": name,
+            "project_path": project_path,
+            "remote_url": f"https://github.com/{project_path}.git",
             "repo_type": "code",
             "root_path": "/",
             "status": "active",
@@ -36,12 +50,57 @@ def create_repository(headers: dict[str, str], product_id: str) -> dict:
     ).json()["data"]
 
 
-def create_scanner_plugin(headers: dict[str, str], repository_id: str) -> tuple[dict, dict, dict]:
+def scanner_response(repository_id: str, *, severity: str = "critical") -> dict:
+    return {
+        "branch": "main",
+        "commit_sha": "abc1234",
+        "findings": [
+            {
+                "category": "security",
+                "committer_email": "alice@example.com",
+                "committer_name": "Alice Chen",
+                "committer_username": "alice",
+                "description": "Access key is committed in source code.",
+                "file_path": "src/config.py",
+                "line_number": 12,
+                "recommendation": "Move the key to a secret manager.",
+                "rule_id": "SEC001",
+                "severity": severity,
+                "title": "Hardcoded access key",
+            },
+            {
+                "category": "quality",
+                "committer_email": "bob@example.com",
+                "committer_name": "Bob Li",
+                "committer_username": "bob",
+                "description": "Function is too complex.",
+                "file_path": "src/service.py",
+                "line_number": 88,
+                "recommendation": "Split the function into smaller units.",
+                "rule_id": "QLT010",
+                "severity": "minor",
+                "title": "High cyclomatic complexity",
+            },
+        ],
+        "repository_id": repository_id,
+        "risk_level": severity,
+        "summary": "2 issues found, including 1 critical security issue.",
+    }
+
+
+def create_scanner_plugin(
+    headers: dict[str, str],
+    repository_id: str,
+    *,
+    code: str = "repo_quality_scanner",
+    request_config_extra: dict | None = None,
+    response_json: dict | None = None,
+) -> tuple[dict, dict, dict]:
     plugin = client.post(
         "/api/system/plugins",
         json={
             "category": "devops",
-            "code": "repo_quality_scanner",
+            "code": code,
             "description": "Scans repository quality, security and convention issues.",
             "name": "Repository Quality Scanner",
             "protocol": "http",
@@ -74,36 +133,9 @@ def create_scanner_plugin(headers: dict[str, str], repository_id: str) -> tuple[
             "output_schema": {"type": "object"},
             "plugin_id": plugin["id"],
             "request_config": {
+                **(request_config_extra or {}),
                 "method": "POST",
-                "mock_response_json": {
-                    "branch": "main",
-                    "commit_sha": "abc1234",
-                    "findings": [
-                        {
-                            "category": "security",
-                            "description": "Access key is committed in source code.",
-                            "file_path": "src/config.py",
-                            "line_number": 12,
-                            "recommendation": "Move the key to a secret manager.",
-                            "rule_id": "SEC001",
-                            "severity": "critical",
-                            "title": "Hardcoded access key",
-                        },
-                        {
-                            "category": "quality",
-                            "description": "Function is too complex.",
-                            "file_path": "src/service.py",
-                            "line_number": 88,
-                            "recommendation": "Split the function into smaller units.",
-                            "rule_id": "QLT010",
-                            "severity": "minor",
-                            "title": "High cyclomatic complexity",
-                        },
-                    ],
-                    "repository_id": repository_id,
-                    "risk_level": "critical",
-                    "summary": "2 issues found, including 1 critical security issue.",
-                },
+                "mock_response_json": response_json or scanner_response(repository_id),
                 "path": "/scan",
             },
             "result_mapping": {"records_imported_path": "$.findings"},
@@ -112,6 +144,42 @@ def create_scanner_plugin(headers: dict[str, str], repository_id: str) -> tuple[
         headers=headers,
     ).json()["data"]
     return plugin, connection, action
+
+
+def create_scoped_user(
+    headers: dict[str, str],
+    *,
+    product_id: str,
+    username: str,
+) -> dict[str, str]:
+    created = client.post(
+        "/api/users",
+        headers=headers,
+        json={
+            "display_name": username,
+            "password": "password123",
+            "roles": ["rd_owner"],
+            "status": "active",
+            "username": username,
+        },
+    )
+    assert created.status_code == 200
+    user = created.json()["data"]
+    scope_response = client.put(
+        f"/api/users/{user['id']}/scopes",
+        headers=headers,
+        json={
+            "scopes": [
+                {
+                    "access_level": "read",
+                    "scope_id": product_id,
+                    "scope_type": "product",
+                }
+            ]
+        },
+    )
+    assert scope_response.status_code == 200
+    return auth_headers(username, "password123")
 
 
 def test_scheduled_repository_inspection_runs_multiple_result_actions():
@@ -198,7 +266,9 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     assert detail.status_code == 200
     detail_payload = detail.json()["data"]
     assert detail_payload["report"]["repository_id"] == repository["id"]
+    assert detail_payload["report"]["committer_summary"][0]["email"] == "alice@example.com"
     assert detail_payload["findings"][0]["severity"] == "critical"
+    assert detail_payload["findings"][0]["committer_email"] == "alice@example.com"
     assert detail_payload["notifications"][0]["channel"] in {"email", "dingtalk"}
 
     bugs = client.get(
@@ -211,6 +281,7 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     assert bug_items[0]["severity"] == "critical"
     assert bug_items[0]["source"] == "code_inspection"
     assert bug_items[0]["evidence"]["code_inspection_report_id"] == report_id
+    assert bug_items[0]["evidence"]["committer_email"] == "alice@example.com"
 
 
 def test_scheduled_repository_inspection_rejects_unsupported_notification_channel():
@@ -243,3 +314,223 @@ def test_scheduled_repository_inspection_rejects_unsupported_notification_channe
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+
+
+def test_repository_inspection_supports_committer_filter_severity_mapping_and_bug_dedupe():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, code="repo-quality-product-committer")
+    repository = create_repository(headers, product["id"])
+    _, connection, action = create_scanner_plugin(
+        headers,
+        repository["id"],
+        code="repo_quality_scanner_committer",
+        request_config_extra={
+            "severity_mapping": {
+                "blocker": "critical",
+                "minor": "low",
+            }
+        },
+        response_json=scanner_response(repository["id"], severity="blocker"),
+    )
+
+    job_response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "branch": "main",
+                "repository_id": repository["id"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Weekly repository inspection by committer",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "result_actions": [
+                {"type": "write_code_inspection_report"},
+                {
+                    "severity_threshold": "high",
+                    "type": "create_bug_for_severe_findings",
+                },
+            ],
+            "schedule_type": "manual",
+            "source_system": "repo-quality-scanner",
+        },
+        headers=headers,
+    )
+    assert job_response.status_code == 200
+    job = job_response.json()["data"]
+
+    first_run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers)
+    assert first_run.status_code == 200
+    first_summary = first_run.json()["data"]["result_summary"]
+    first_report_id = first_summary["report_id"]
+    first_bug_id = first_summary["bug_ids"][0]
+    assert first_summary["execution_nodes"]["result_actions"][0]["status"] == "succeeded"
+
+    detail = client.get(f"/api/governance/code-inspections/{first_report_id}", headers=headers)
+    assert detail.status_code == 200
+    detail_payload = detail.json()["data"]
+    assert detail_payload["report"]["risk_level"] == "critical"
+    assert detail_payload["report"]["committer_count"] == 2
+    assert detail_payload["report"]["committer_summary"] == [
+        {
+            "bug_count": 1,
+            "email": "alice@example.com",
+            "finding_count": 1,
+            "name": "Alice Chen",
+            "severe_finding_count": 1,
+            "username": "alice",
+        },
+        {
+            "bug_count": 0,
+            "email": "bob@example.com",
+            "finding_count": 1,
+            "name": "Bob Li",
+            "severe_finding_count": 0,
+            "username": "bob",
+        },
+    ]
+    assert detail_payload["findings"][0]["severity"] == "critical"
+    assert detail_payload["findings"][0]["committer_email"] == "alice@example.com"
+    assert detail_payload["findings"][1]["severity"] == "low"
+
+    listed = client.get(
+        "/api/governance/code-inspections?committer=alice@example.com",
+        headers=headers,
+    )
+    assert listed.status_code == 200
+    assert listed.json()["data"]["total"] == 1
+    missed = client.get(
+        "/api/governance/code-inspections?committer=carol@example.com",
+        headers=headers,
+    )
+    assert missed.status_code == 200
+    assert missed.json()["data"]["total"] == 0
+
+    second_run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers)
+    assert second_run.status_code == 200
+    second_summary = second_run.json()["data"]["result_summary"]
+    bug_creation = second_summary["execution_nodes"]["bug_creation"]
+    assert bug_creation["created_bug_ids"] == []
+    assert bug_creation["deduplicated_bug_ids"] == [first_bug_id]
+
+    bugs = client.get(
+        f"/api/bugs?product_id={product['id']}&source=code_inspection",
+        headers=headers,
+    )
+    assert bugs.status_code == 200
+    assert [item["id"] for item in bugs.json()["data"]["items"]] == [first_bug_id]
+
+
+def test_repository_inspection_is_filtered_by_product_scope():
+    app.state.store.reset()
+    headers = auth_headers()
+    product_a = create_product(headers, code="repo-quality-product-a", name="Product A")
+    repository_a = create_repository(
+        headers,
+        product_a["id"],
+        name="service-a",
+        project_path="example/service-a",
+    )
+    _, connection_a, action_a = create_scanner_plugin(
+        headers,
+        repository_a["id"],
+        code="repo_quality_scanner_a",
+    )
+    product_b = create_product(headers, code="repo-quality-product-b", name="Product B")
+    repository_b = create_repository(
+        headers,
+        product_b["id"],
+        name="service-b",
+        project_path="example/service-b",
+    )
+    _, connection_b, action_b = create_scanner_plugin(
+        headers,
+        repository_b["id"],
+        code="repo_quality_scanner_b",
+    )
+
+    report_ids = []
+    for product, repository, connection, action in [
+        (product_a, repository_a, connection_a, action_a),
+        (product_b, repository_b, connection_b, action_b),
+    ]:
+        job = client.post(
+            "/api/system/scheduled-jobs",
+            json={
+                "config_json": {"repository_id": repository["id"]},
+                "enabled": True,
+                "execution_mode": "deterministic",
+                "job_type": "code_repository_inspection",
+                "name": f"Inspection {product['code']}",
+                "plugin_action_id": action["id"],
+                "plugin_connection_id": connection["id"],
+                "product_id": product["id"],
+                "result_actions": [{"type": "write_code_inspection_report"}],
+                "schedule_type": "manual",
+                "source_system": "repo-quality-scanner",
+            },
+            headers=headers,
+        ).json()["data"]
+        run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers)
+        assert run.status_code == 200
+        report_ids.append(run.json()["data"]["result_summary"]["report_id"])
+
+    scoped_headers = create_scoped_user(
+        headers,
+        product_id=product_a["id"],
+        username="repo-scope-reader@example.com",
+    )
+    scoped_list = client.get("/api/governance/code-inspections", headers=scoped_headers)
+    assert scoped_list.status_code == 200
+    assert [item["id"] for item in scoped_list.json()["data"]["items"]] == [report_ids[0]]
+
+    hidden_detail = client.get(
+        f"/api/governance/code-inspections/{report_ids[1]}",
+        headers=scoped_headers,
+    )
+    assert hidden_detail.status_code == 404
+
+
+def test_code_inspection_bug_dedupe_reads_repository_when_runtime_store_is_stale():
+    bug = {
+        "evidence": {"finding_fingerprint": "fingerprint_001"},
+        "id": "bug_existing",
+        "product_id": "product_001",
+        "source": "code_inspection",
+        "status": "open",
+    }
+    fake_store = SimpleNamespace(
+        bugs={},
+        repository=SimpleNamespace(
+            list_bug_summaries=lambda **kwargs: [bug]
+        ),
+    )
+
+    assert (
+        existing_code_inspection_bug_id(
+            fake_store,
+            fingerprint="fingerprint_001",
+            product_id="product_001",
+        )
+        == "bug_existing"
+    )
+
+
+def test_code_inspection_fingerprint_uses_non_email_committer_identity():
+    report = {"branch": "main", "repository_id": "repo_001"}
+    base_finding = {
+        "file_path": "src/service.py",
+        "line_number": 42,
+        "rule_id": "unsafe-call",
+    }
+
+    alice = {**base_finding, "committer_username": "alice", "title": "Unsafe call"}
+    alice_renamed = {**base_finding, "committer_username": "alice", "title": "Unsafe API call"}
+    bob = {**base_finding, "committer_username": "bob", "title": "Unsafe call"}
+
+    assert finding_fingerprint(alice, report) == finding_fingerprint(alice_renamed, report)
+    assert finding_fingerprint(alice, report) != finding_fingerprint(bob, report)
