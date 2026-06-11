@@ -481,11 +481,11 @@ export default function ScheduledJobsPage() {
     await reload();
   };
 
-  const triggerJob = async (job: ScheduledJobRecord) => {
+  const triggerJobRun = async (jobId: string) => {
     const hide = message.loading('作业执行中，请稍候...', 0);
-    setRunningJobId(job.id);
+    setRunningJobId(jobId);
     try {
-      const run = await runScheduledJob(job.id);
+      const run = await runScheduledJob(jobId);
       setSelectedRun(run);
       message.success('作业运行完成');
       await reload();
@@ -495,6 +495,10 @@ export default function ScheduledJobsPage() {
       hide();
       setRunningJobId(undefined);
     }
+  };
+
+  const triggerJob = async (job: ScheduledJobRecord) => {
+    await triggerJobRun(job.id);
   };
 
   const confirmDeleteJob = (job: ScheduledJobRecord) => {
@@ -714,16 +718,32 @@ export default function ScheduledJobsPage() {
                     key: 'actions',
                     title: '操作',
                     valueType: 'option',
-                    width: 130,
+                    width: 190,
                     render: (_, row) => (
-                      <Button
-                        aria-label={`查看运行结果 ${row.id}`}
-                        icon={<EyeOutlined />}
-                        onClick={() => setSelectedRun(row)}
-                        type="link"
-                      >
-                        详情
-                      </Button>
+                      <Space size={4}>
+                        <Button
+                          aria-label={`查看运行结果 ${row.id}`}
+                          icon={<EyeOutlined />}
+                          onClick={() => setSelectedRun(row)}
+                          type="link"
+                        >
+                          详情
+                        </Button>
+                        <Button
+                          aria-label={`复跑运行 ${row.id}`}
+                          disabled={Boolean(runningJobId) || !row.scheduled_job_id}
+                          icon={<ReloadOutlined />}
+                          loading={runningJobId === row.scheduled_job_id}
+                          onClick={() => {
+                            if (row.scheduled_job_id) {
+                              triggerJobRun(row.scheduled_job_id);
+                            }
+                          }}
+                          type="link"
+                        >
+                          复跑
+                        </Button>
+                      </Space>
                     ),
                   },
                 ]}

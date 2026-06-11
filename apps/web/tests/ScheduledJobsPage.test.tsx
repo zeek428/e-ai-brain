@@ -11,6 +11,7 @@ function installScheduledJobsFetchMock(
 ) {
   const jobDeleteIds: string[] = [];
   const jobUpdateBodies: unknown[] = [];
+  const runJobIds: string[] = [];
   const jobs = options.jobs ?? [];
   const runs = options.runs ?? [];
   const jsonResponse = (body: unknown) =>
@@ -32,6 +33,7 @@ function installScheduledJobsFetchMock(
       return jsonResponse({ data: { deleted: true, id: 'scheduled_job_weekly_feedback' } });
     }
     if (input === '/api/system/scheduled-jobs/scheduled_job_weekly_feedback/run' && init?.method === 'POST') {
+      runJobIds.push('scheduled_job_weekly_feedback');
       const run = options.runResponse ? await options.runResponse : runs[0];
       return jsonResponse({
         data: run ?? {
@@ -143,7 +145,7 @@ function installScheduledJobsFetchMock(
   });
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
   vi.stubGlobal('fetch', fetchMock);
-  return { jobDeleteIds, jobUpdateBodies };
+  return { jobDeleteIds, jobUpdateBodies, runJobIds };
 }
 
 describe('ScheduledJobsPage', () => {
@@ -376,6 +378,52 @@ describe('ScheduledJobsPage', () => {
     expect(dialog).toHaveTextContent('plugin_invocation_log_weekly_feedback');
     expect(dialog).toHaveTextContent('user_feedback_insights');
     expect(dialog).toHaveTextContent('write_result');
+  });
+
+  it('can rerun a scheduled job from an existing run record', async () => {
+    const { runJobIds } = installScheduledJobsFetchMock({
+      runResponse: Promise.resolve({
+        id: 'scheduled_job_run_weekly_feedback_rerun',
+        records_imported: 2,
+        result_summary: {
+          execution_nodes: {
+            result_action: {
+              records_imported: 2,
+              status: 'succeeded',
+              write_target: 'user_feedback_insights',
+            },
+            skill_processing: {
+              model_gateway_called: true,
+              model_log_id: 'model_log_rerun',
+              status: 'succeeded',
+            },
+          },
+        },
+        scheduled_job_id: 'scheduled_job_weekly_feedback',
+        status: 'succeeded',
+        trigger_type: 'manual_rerun',
+      }),
+      runs: [
+        {
+          id: 'scheduled_job_run_weekly_feedback',
+          records_imported: 1,
+          result_summary: {},
+          scheduled_job_id: 'scheduled_job_weekly_feedback',
+          status: 'failed',
+          trigger_type: 'manual',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    fireEvent.click(await screen.findByRole('button', { name: '复跑运行 scheduled_job_run_weekly_feedback' }));
+
+    await waitFor(() => expect(runJobIds).toEqual(['scheduled_job_weekly_feedback']));
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    expect(dialog).toHaveTextContent('scheduled_job_run_weekly_feedback_rerun');
+    expect(dialog).toHaveTextContent('model_log_rerun');
   });
 
   it('shows an in-progress state while a scheduled job is running', async () => {

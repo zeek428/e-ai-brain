@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.239 |
+| 功能版本 | v1.1.240 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.240 | 2026-06-12 | 定时作业运行记录补充复跑契约：前端可从运行记录基于 `scheduled_job_id` 复用作业运行接口并展示新运行详情 | Codex |
 | v1.1.239 | 2026-06-11 | 收紧 AI 类型定时作业 API 校验，补充运行详情三段节点和连接测试请求调试台响应展示要求 | Codex |
 | v1.1.238 | 2026-06-11 | 插件动作 `result_mapping.write_target` 补充 `code_inspection_reports`，页面提供代码巡检报告 JSONPath 可视化配置 | Codex |
 | v1.1.237 | 2026-06-11 | 代码巡检 API 增加提交人维度、`committer` 筛选、产品范围读取控制、severity mapping、严重 finding Bug 去重和结果动作状态摘要 | Codex |
@@ -2831,7 +2832,7 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 }
 ```
 
-`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`。`user_feedback_collect` 表示仅取数采集，不执行平台 Skill/大模型处理；若用户反馈作业同时配置插件动作、AI 模型、Agent 或 Skills，后端必须按兼容规则归一为 `user_feedback_insight_extract` 并使用 `ai_generated`，避免配置了 AI 链路却静默直通。`iteration_plan_suggestion_generate`、`online_log_ai_analysis` 和 `user_feedback_insight_extract` 属于 AI 必选链路作业，服务端即使收到 `deterministic` 也必须按有效 `ai_generated` 校验并要求 active Agent、active Skills（可取 Agent 默认 Skill）和 active 模型网关（可取 Agent 默认模型网关或作业覆盖项）；缺失时分别返回 `AI_AGENT_REQUIRED`、`AI_SKILL_REQUIRED` 或 `MODEL_GATEWAY_CONFIG_REQUIRED`。`knowledge_document_ids` 为可选知识引用；配置后运行时必须先按当前用户权限读取可检索知识 chunk，并以 `knowledge_references` 注入 Agent/Skill 模型请求上下文。`result_actions` 为可选结果动作列表；`code_repository_inspection` 使用该字段按顺序执行 `write_code_inspection_report`、`create_bug_for_severe_findings`、`send_notification` 等动作。指定 `model_gateway_config_id` 时覆盖 Agent 默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发和取消必须写入审计。
+`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`。`user_feedback_collect` 表示仅取数采集，不执行平台 Skill/大模型处理；若用户反馈作业同时配置插件动作、AI 模型、Agent 或 Skills，后端必须按兼容规则归一为 `user_feedback_insight_extract` 并使用 `ai_generated`，避免配置了 AI 链路却静默直通。`iteration_plan_suggestion_generate`、`online_log_ai_analysis` 和 `user_feedback_insight_extract` 属于 AI 必选链路作业，服务端即使收到 `deterministic` 也必须按有效 `ai_generated` 校验并要求 active Agent、active Skills（可取 Agent 默认 Skill）和 active 模型网关（可取 Agent 默认模型网关或作业覆盖项）；缺失时分别返回 `AI_AGENT_REQUIRED`、`AI_SKILL_REQUIRED` 或 `MODEL_GATEWAY_CONFIG_REQUIRED`。`knowledge_document_ids` 为可选知识引用；配置后运行时必须先按当前用户权限读取可检索知识 chunk，并以 `knowledge_references` 注入 Agent/Skill 模型请求上下文。`result_actions` 为可选结果动作列表；`code_repository_inspection` 使用该字段按顺序执行 `write_code_inspection_report`、`create_bug_for_severe_findings`、`send_notification` 等动作。指定 `model_gateway_config_id` 时覆盖 Agent 默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发、从运行记录复跑和取消必须写入审计；运行记录复跑不新增专用 API，前端读取运行记录的 `scheduled_job_id` 后调用 `POST /api/system/scheduled-jobs/{job_id}/run`，成功后展示返回的新运行实例详情。
 
 插件链路按“数据连接取数 -> Skill 分析处理 -> 结果动作写入”理解：作业定义中 `plugin_connection_id` 表示取数连接，`skill_ids` 表示处理能力，`plugin_action_id` 表示结果动作，`plugin_input_mapping` 表示运行时传给连接/动作的输入参数。`plugin_output_mapping` 是作业级覆盖项；为空时运行时复用结果动作的 `result_mapping`。插件输出映射第一阶段支持 `records_imported_path` 这类摘要字段映射和 `write_target` 写入目标，真实业务入库仍必须通过对应业务 service 完成。
 
