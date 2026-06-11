@@ -54,6 +54,17 @@ class PluginReadRepository:
                 self.upsert_plugins(cursor, {plugin["id"]: plugin})
                 self._upsert_audit(cursor, audit_event)
 
+    def delete_plugin_record(
+        self,
+        plugin_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM integration_plugins WHERE id = %s", (plugin_id,))
+                self._upsert_audit(cursor, audit_event)
+
     def list_plugin_connections(
         self,
         *,
@@ -66,7 +77,7 @@ class PluginReadRepository:
                 cursor.execute(
                     f"""
                     SELECT id, plugin_id, name, environment, endpoint_url, auth_type,
-                           auth_config, timeout_seconds, max_retries, status,
+                           auth_config, request_config, timeout_seconds, max_retries, status,
                            created_by, created_at, updated_at
                     FROM plugin_connections
                     {where}
@@ -85,6 +96,17 @@ class PluginReadRepository:
         with self._connect() as connection_obj:
             with connection_obj.cursor() as cursor:
                 self.upsert_plugin_connections(cursor, {connection["id"]: connection})
+                self._upsert_audit(cursor, audit_event)
+
+    def delete_plugin_connection_record(
+        self,
+        connection_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM plugin_connections WHERE id = %s", (connection_id,))
                 self._upsert_audit(cursor, audit_event)
 
     def list_plugin_actions(
@@ -118,6 +140,17 @@ class PluginReadRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self.upsert_plugin_actions(cursor, {action["id"]: action})
+                self._upsert_audit(cursor, audit_event)
+
+    def delete_plugin_action_record(
+        self,
+        action_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM plugin_actions WHERE id = %s", (action_id,))
                 self._upsert_audit(cursor, audit_event)
 
     def list_plugin_invocation_logs(
@@ -211,11 +244,12 @@ class PluginReadRepository:
                 """
                 INSERT INTO plugin_connections (
                   id, plugin_id, name, environment, endpoint_url, auth_type, auth_config,
-                  timeout_seconds, max_retries, status, created_by, created_at, updated_at
+                  request_config, timeout_seconds, max_retries, status, created_by, created_at,
+                  updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s::jsonb,
-                  %s, %s, %s, %s, COALESCE(%s::timestamptz, now()),
+                  %s::jsonb, %s, %s, %s, %s, COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -225,6 +259,7 @@ class PluginReadRepository:
                   endpoint_url = EXCLUDED.endpoint_url,
                   auth_type = EXCLUDED.auth_type,
                   auth_config = EXCLUDED.auth_config,
+                  request_config = EXCLUDED.request_config,
                   timeout_seconds = EXCLUDED.timeout_seconds,
                   max_retries = EXCLUDED.max_retries,
                   status = EXCLUDED.status,
@@ -238,6 +273,7 @@ class PluginReadRepository:
                     connection["endpoint_url"],
                     connection.get("auth_type", "none"),
                     _json(connection.get("auth_config"), {}),
+                    _json(connection.get("request_config"), {}),
                     connection.get("timeout_seconds", 30),
                     connection.get("max_retries", 0),
                     connection.get("status", "active"),
@@ -389,12 +425,13 @@ class PluginReadRepository:
             "endpoint_url": row[4],
             "auth_type": row[5],
             "auth_config": row[6] or {},
-            "timeout_seconds": row[7],
-            "max_retries": row[8],
-            "status": row[9],
-            "created_by": row[10],
-            "created_at": row[11].isoformat() if row[11] else None,
-            "updated_at": row[12].isoformat() if row[12] else None,
+            "request_config": row[7] or {},
+            "timeout_seconds": row[8],
+            "max_retries": row[9],
+            "status": row[10],
+            "created_by": row[11],
+            "created_at": row[12].isoformat() if row[12] else None,
+            "updated_at": row[13].isoformat() if row[13] else None,
         }
 
     def _action_from_row(self, row: Any) -> dict[str, Any]:

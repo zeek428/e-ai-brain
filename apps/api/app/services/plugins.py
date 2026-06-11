@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -33,18 +34,7 @@ PLUGIN_AUTH_TYPES = {"none", "bearer", "api_key_header", "basic"}
 PLUGIN_ACTION_TYPES = {"http_request", "mcp_tool"}
 PLUGIN_CONNECTION_ENVIRONMENTS = {"default", "dev", "test", "staging", "prod", "sandbox"}
 PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
-SECRET_KEYS = {
-    "api_key",
-    "api_key_ref",
-    "authorization",
-    "password",
-    "private-token",
-    "secret",
-    "secret_ref",
-    "token",
-    "token_ref",
-    "x-api-key",
-}
+MASKED_SECRET_PLACEHOLDER = "***"
 
 
 def require_admin(user: dict[str, Any]) -> None:
@@ -160,6 +150,17 @@ def sync_plugin_invocation_log_store(
     )
 
 
+def sync_plugin_dependency_store(current_store: Any) -> None:
+    sync_plugin_store(current_store)
+    sync_plugin_connection_store(current_store)
+    sync_plugin_action_store(current_store)
+    sync_plugin_invocation_log_store(current_store)
+    repository = getattr(current_store, "repository", None)
+    list_scheduled_jobs = getattr(repository, "list_scheduled_jobs", None)
+    if callable(list_scheduled_jobs):
+        replace_collection(current_store, "scheduled_jobs", list_scheduled_jobs())
+
+
 def persist_record(
     current_store: Any,
     method_name: str,
@@ -175,18 +176,20 @@ def persist_record(
     )
 
 
-def mask_secret_config(value: Any) -> Any:
-    if isinstance(value, dict):
-        masked: dict[str, Any] = {}
-        for key, item in value.items():
-            if key.lower() in SECRET_KEYS:
-                masked[key] = "***"
-            else:
-                masked[key] = mask_secret_config(item)
-        return masked
-    if isinstance(value, list):
-        return [mask_secret_config(item) for item in value]
-    return value
+def merge_masked_config(existing: Any, incoming: Any) -> Any:
+    if incoming == MASKED_SECRET_PLACEHOLDER:
+        return existing
+    if isinstance(existing, dict) and isinstance(incoming, dict):
+        merged = dict(existing)
+        for key, value in incoming.items():
+            merged[key] = merge_masked_config(existing.get(key), value)
+        return merged
+    if isinstance(existing, list) and isinstance(incoming, list):
+        return [
+            merge_masked_config(existing[index], value) if index < len(existing) else value
+            for index, value in enumerate(incoming)
+        ]
+    return incoming
 
 
 def compact_preview_value(value: Any) -> Any:
@@ -195,7 +198,7 @@ def compact_preview_value(value: Any) -> Any:
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     try:
-        encoded = json.dumps(mask_secret_config(value), ensure_ascii=False)
+        encoded = json.dumps(value, ensure_ascii=False)
     except TypeError:
         return str(value)[:200]
     return value if len(encoded) <= 400 else f"{encoded[:400]}..."
@@ -218,14 +221,48 @@ def diagnostic_step(
     return step
 
 
+def _is_masked_secret_placeholder(value: Any) -> bool:
+    return isinstance(value, str) and value.strip() == MASKED_SECRET_PLACEHOLDER
+
+
+def _header_key(headers: dict[str, Any], header_name: str) -> str | None:
+    normalized = header_name.lower()
+    for key in headers:
+        if str(key).lower() == normalized:
+            return str(key)
+    return None
+
+
+def _set_header(
+    headers: dict[str, Any],
+    sources: dict[str, str],
+    header_name: str,
+    value: Any,
+    source: str,
+) -> None:
+    existing_key = _header_key(headers, header_name)
+    if existing_key is not None and existing_key != header_name:
+        headers.pop(existing_key, None)
+        sources.pop(existing_key, None)
+    headers[header_name] = str(value)
+    sources[header_name] = source
+
+
+def _response_summary_from_http_error(exc: HTTPError) -> dict[str, Any]:
+    body = exc.read(2048).decode("utf-8", errors="replace")
+    return {
+        "body_preview": body,
+        "reason": getattr(exc, "reason", None),
+        "status_code": exc.code,
+    }
+
+
 def public_plugin(plugin: dict[str, Any]) -> dict[str, Any]:
     return dict(plugin)
 
 
 def public_connection(connection: dict[str, Any]) -> dict[str, Any]:
-    public = dict(connection)
-    public["auth_config"] = mask_secret_config(public.get("auth_config") or {})
-    return public
+    return dict(connection)
 
 
 def public_action(action: dict[str, Any]) -> dict[str, Any]:
@@ -233,10 +270,113 @@ def public_action(action: dict[str, Any]) -> dict[str, Any]:
 
 
 def public_invocation_log(log: dict[str, Any]) -> dict[str, Any]:
-    public = dict(log)
-    public["request_summary"] = mask_secret_config(public.get("request_summary") or {})
-    public["response_summary"] = mask_secret_config(public.get("response_summary") or {})
-    return public
+    return dict(log)
+
+
+def usage_names(items: list[dict[str, Any]], *, limit: int = 3) -> str:
+    names = [str(item.get("name") or item.get("code") or item.get("id")) for item in items[:limit]]
+    suffix = f" 等 {len(items)} 个" if len(items) > limit else f" {len(items)} 个"
+    return f"{'、'.join(names)}{suffix}" if names else f"{len(items)} 个"
+
+
+def usage_summary(usages: dict[str, list[dict[str, Any]]]) -> str:
+    labels = {
+        "actions": "动作",
+        "connections": "连接",
+        "logs": "调用日志",
+        "scheduled_jobs": "定时作业",
+    }
+    parts = [
+        f"{labels[key]}：{usage_names(items)}"
+        for key, items in usages.items()
+        if items
+    ]
+    return "；".join(parts)
+
+
+def ensure_not_used_for_delete(
+    usages: dict[str, list[dict[str, Any]]],
+    *,
+    object_label: str,
+) -> None:
+    summary = usage_summary(usages)
+    if not summary:
+        return
+    raise api_error(
+        409,
+        "PLUGIN_RESOURCE_IN_USE",
+        f"{object_label}正在被使用，不能删除。{summary}。请先解除引用、删除下级配置，或将其停用。",
+    )
+
+
+def plugin_delete_usages(current_store: Any, plugin_id: str) -> dict[str, list[dict[str, Any]]]:
+    connections = [
+        connection
+        for connection in current_store.plugin_connections.values()
+        if connection.get("plugin_id") == plugin_id
+    ]
+    actions = [
+        action
+        for action in current_store.plugin_actions.values()
+        if action.get("plugin_id") == plugin_id
+    ]
+    connection_ids = {connection["id"] for connection in connections}
+    action_ids = {action["id"] for action in actions}
+    scheduled_jobs = [
+        job
+        for job in getattr(current_store, "scheduled_jobs", {}).values()
+        if job.get("plugin_action_id") in action_ids
+        or job.get("plugin_connection_id") in connection_ids
+    ]
+    logs = [
+        log
+        for log in current_store.plugin_invocation_logs.values()
+        if log.get("plugin_id") == plugin_id
+        or log.get("action_id") in action_ids
+        or log.get("connection_id") in connection_ids
+    ]
+    return {
+        "connections": connections,
+        "actions": actions,
+        "scheduled_jobs": scheduled_jobs,
+        "logs": logs,
+    }
+
+
+def connection_delete_usages(
+    current_store: Any,
+    connection_id: str,
+) -> dict[str, list[dict[str, Any]]]:
+    actions = [
+        action
+        for action in current_store.plugin_actions.values()
+        if action.get("connection_id") == connection_id
+    ]
+    scheduled_jobs = [
+        job
+        for job in getattr(current_store, "scheduled_jobs", {}).values()
+        if job.get("plugin_connection_id") == connection_id
+    ]
+    logs = [
+        log
+        for log in current_store.plugin_invocation_logs.values()
+        if log.get("connection_id") == connection_id
+    ]
+    return {"actions": actions, "scheduled_jobs": scheduled_jobs, "logs": logs}
+
+
+def action_delete_usages(current_store: Any, action_id: str) -> dict[str, list[dict[str, Any]]]:
+    scheduled_jobs = [
+        job
+        for job in getattr(current_store, "scheduled_jobs", {}).values()
+        if job.get("plugin_action_id") == action_id
+    ]
+    logs = [
+        log
+        for log in current_store.plugin_invocation_logs.values()
+        if log.get("action_id") == action_id
+    ]
+    return {"scheduled_jobs": scheduled_jobs, "logs": logs}
 
 
 def list_plugins_response(
@@ -339,6 +479,37 @@ def patch_plugin_response(
     return public_plugin(plugin)
 
 
+def delete_plugin_response(
+    *,
+    current_store: Any,
+    plugin_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    sync_plugin_dependency_store(current_store)
+    plugin = current_store.integration_plugins.get(plugin_id)
+    if plugin is None:
+        raise api_error(404, "NOT_FOUND", "Plugin not found")
+    ensure_not_used_for_delete(
+        plugin_delete_usages(current_store, plugin_id),
+        object_label=f"插件「{plugin['name']}」",
+    )
+    current_store.integration_plugins.pop(plugin_id, None)
+    audit_event = record_audit_event(
+        current_store,
+        event_type="plugin.deleted",
+        actor_id=user["id"],
+        subject_type="plugin",
+        subject_id=plugin_id,
+        payload={"code": plugin["code"], "name": plugin["name"]},
+    )
+    repository = getattr(current_store, "repository", None)
+    delete_record = getattr(repository, "delete_plugin_record", None)
+    if callable(delete_record):
+        delete_record(plugin_id, audit_event=audit_event)
+    return {"deleted": True, "id": plugin_id}
+
+
 def ensure_active_plugin(current_store: Any, plugin_id: str) -> dict[str, Any]:
     sync_plugin_store(current_store)
     plugin = current_store.integration_plugins.get(plugin_id)
@@ -395,6 +566,7 @@ def create_plugin_connection_response(
         "max_retries": payload.max_retries,
         "name": ensure_non_blank(payload.name, "name"),
         "plugin_id": payload.plugin_id,
+        "request_config": payload.request_config,
         "status": payload.status,
         "timeout_seconds": payload.timeout_seconds,
         "updated_at": now,
@@ -441,6 +613,16 @@ def patch_plugin_connection_response(
     for key in ("endpoint_url", "environment", "name"):
         if key in updates:
             updates[key] = ensure_non_blank(updates[key], key)
+    if "auth_config" in updates:
+        updates["auth_config"] = merge_masked_config(
+            connection.get("auth_config") or {},
+            updates["auth_config"] or {},
+        )
+    if "request_config" in updates:
+        updates["request_config"] = merge_masked_config(
+            connection.get("request_config") or {},
+            updates["request_config"] or {},
+        )
     connection = {**connection, **updates, "updated_at": datetime.now(UTC).isoformat()}
     current_store.plugin_connections[connection_id] = connection
     audit_event = record_audit_event(
@@ -458,6 +640,37 @@ def patch_plugin_connection_response(
         audit_event=audit_event,
     )
     return public_connection(connection)
+
+
+def delete_plugin_connection_response(
+    *,
+    connection_id: str,
+    current_store: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    sync_plugin_dependency_store(current_store)
+    connection = current_store.plugin_connections.get(connection_id)
+    if connection is None:
+        raise api_error(404, "NOT_FOUND", "Plugin connection not found")
+    ensure_not_used_for_delete(
+        connection_delete_usages(current_store, connection_id),
+        object_label=f"连接「{connection['name']}」",
+    )
+    current_store.plugin_connections.pop(connection_id, None)
+    audit_event = record_audit_event(
+        current_store,
+        event_type="plugin_connection.deleted",
+        actor_id=user["id"],
+        subject_type="plugin_connection",
+        subject_id=connection_id,
+        payload={"name": connection["name"], "plugin_id": connection["plugin_id"]},
+    )
+    repository = getattr(current_store, "repository", None)
+    delete_record = getattr(repository, "delete_plugin_connection_record", None)
+    if callable(delete_record):
+        delete_record(connection_id, audit_event=audit_event)
+    return {"deleted": True, "id": connection_id}
 
 
 def test_plugin_connection_response(
@@ -498,6 +711,30 @@ def test_plugin_connection_response(
     )
     auth_type = str(connection.get("auth_type") or "none")
     auth_config = connection.get("auth_config") or {}
+    request_config = resolve_connection_request_config(connection)
+    request_query = _dict_config_section(request_config.get("query"))
+    request_method = "POST" if plugin.get("protocol") == "mcp_http" else "GET"
+    request_url = _url_with_query(str(connection.get("endpoint_url") or ""), request_query)
+    request_body: dict[str, Any] | None = None
+    request_headers, header_sources = _build_headers_with_sources(
+        connection,
+        {"request_config": {}},
+    )
+    if plugin.get("protocol") == "mcp_http":
+        request_body = {
+            "id": f"connection_test_{connection_id}",
+            "jsonrpc": "2.0",
+            "method": "tools/list",
+            "params": {},
+        }
+        request_headers = {**request_headers, "Content-Type": "application/json"}
+        header_sources = {**header_sources, "Content-Type": "system.default"}
+    masked_placeholder_headers = [
+        header_name
+        for header_name, header_value in request_headers.items()
+        if _is_masked_secret_placeholder(header_value)
+    ]
+    response_summary: dict[str, Any] = {}
     diagnostics.append(
         diagnostic_step(
             "auth_configured",
@@ -524,25 +761,18 @@ def test_plugin_connection_response(
         elif plugin.get("protocol") == "mcp_http":
             step_start = perf_counter()
             request = Request(
-                connection["endpoint_url"],
-                data=json.dumps(
-                    {
-                        "id": f"connection_test_{connection_id}",
-                        "jsonrpc": "2.0",
-                        "method": "tools/list",
-                        "params": {},
-                    },
-                    ensure_ascii=False,
-                ).encode("utf-8"),
-                headers={
-                    **_build_headers(connection, {"request_config": {}}),
-                    "Content-Type": "application/json",
-                },
-                method="POST",
+                request_url,
+                data=json.dumps(request_body or {}, ensure_ascii=False).encode("utf-8"),
+                headers=request_headers,
+                method=request_method,
             )
             timeout = min(int(connection.get("timeout_seconds") or 10), 10)
             with urlopen(request, timeout=timeout) as response:
-                response.read(512)
+                body_preview = response.read(2048).decode("utf-8", errors="replace")
+                response_summary = {
+                    "body_preview": body_preview,
+                    "status_code": getattr(response, "status", None),
+                }
                 diagnostics.append(
                     diagnostic_step(
                         "mcp_tools_list",
@@ -554,13 +784,17 @@ def test_plugin_connection_response(
         else:
             step_start = perf_counter()
             request = Request(
-                connection["endpoint_url"],
-                headers=_build_headers(connection, {"request_config": {}}),
-                method="GET",
+                request_url,
+                headers=request_headers,
+                method=request_method,
             )
             timeout = min(int(connection.get("timeout_seconds") or 10), 10)
             with urlopen(request, timeout=timeout) as response:
-                response.read(512)
+                body_preview = response.read(2048).decode("utf-8", errors="replace")
+                response_summary = {
+                    "body_preview": body_preview,
+                    "status_code": getattr(response, "status", None),
+                }
                 diagnostics.append(
                     diagnostic_step(
                         "network_request",
@@ -569,6 +803,20 @@ def test_plugin_connection_response(
                         status_code=getattr(response, "status", None),
                     ),
                 )
+    except HTTPError as exc:
+        status = "failed"
+        error_code = exc.__class__.__name__
+        error_message = str(exc)
+        response_summary = _response_summary_from_http_error(exc)
+        diagnostics.append(
+            diagnostic_step(
+                "network_request" if plugin.get("protocol") != "mcp_http" else "mcp_tools_list",
+                detail=error_message,
+                status="failed",
+                error_code=error_code,
+                status_code=exc.code,
+            ),
+        )
     except Exception as exc:
         status = "failed"
         error_code = exc.__class__.__name__
@@ -598,13 +846,21 @@ def test_plugin_connection_response(
         "plugin_id": plugin["id"],
         "protocol": plugin.get("protocol"),
         "request_summary": {
-            "auth_config": mask_secret_config(auth_config),
+            "auth_config": auth_config,
             "auth_type": auth_type,
+            "body": request_body,
+            "header_sources": header_sources,
+            "headers": request_headers,
             "host": parsed_endpoint.netloc,
-            "method": "POST" if plugin.get("protocol") == "mcp_http" else "GET",
+            "masked_placeholder_headers": masked_placeholder_headers,
+            "method": request_method,
             "protocol": plugin.get("protocol"),
+            "query": request_query,
+            "request_config": request_config,
             "scheme": parsed_endpoint.scheme,
+            "url": request_url,
         },
+        "response_summary": response_summary,
         "status": status,
     }
     audit_event = record_audit_event(
@@ -750,6 +1006,11 @@ def patch_plugin_action_response(
     for key in ("code", "name"):
         if key in updates:
             updates[key] = ensure_non_blank(updates[key], key)
+    if "request_config" in updates:
+        updates["request_config"] = merge_masked_config(
+            action.get("request_config") or {},
+            updates["request_config"] or {},
+        )
     action = {**action, **updates, "updated_at": datetime.now(UTC).isoformat()}
     current_store.plugin_actions[action_id] = action
     audit_event = record_audit_event(
@@ -771,6 +1032,37 @@ def patch_plugin_action_response(
         audit_event=audit_event,
     )
     return public_action(action)
+
+
+def delete_plugin_action_response(
+    *,
+    action_id: str,
+    current_store: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    sync_plugin_dependency_store(current_store)
+    action = current_store.plugin_actions.get(action_id)
+    if action is None:
+        raise api_error(404, "NOT_FOUND", "Plugin action not found")
+    ensure_not_used_for_delete(
+        action_delete_usages(current_store, action_id),
+        object_label=f"动作「{action['name']}」",
+    )
+    current_store.plugin_actions.pop(action_id, None)
+    audit_event = record_audit_event(
+        current_store,
+        event_type="plugin_action.deleted",
+        actor_id=user["id"],
+        subject_type="plugin_action",
+        subject_id=action_id,
+        payload={"code": action["code"], "name": action["name"], "plugin_id": action["plugin_id"]},
+    )
+    repository = getattr(current_store, "repository", None)
+    delete_record = getattr(repository, "delete_plugin_action_record", None)
+    if callable(delete_record):
+        delete_record(action_id, audit_event=audit_event)
+    return {"deleted": True, "id": action_id}
 
 
 def ensure_active_plugin_action(
@@ -832,7 +1124,11 @@ def json_path_value(payload: Any, path: str | None) -> Any:
 
 def records_imported_from_mapping(response_summary: dict[str, Any], mapping: dict[str, Any]) -> int:
     value = json_path_value(response_summary.get("json"), mapping.get("records_imported_path"))
-    return value if isinstance(value, int) and value >= 0 else 0
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, list):
+        return len(value)
+    return 0
 
 
 def plugin_invocation_timezone(input_payload: dict[str, Any] | None) -> ZoneInfo:
@@ -863,21 +1159,97 @@ def resolve_action_request_config(
     )
 
 
+def resolve_connection_request_config(
+    connection: dict[str, Any],
+    input_payload: dict[str, Any] | None = None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    timezone = plugin_invocation_timezone(input_payload)
+    return resolve_dynamic_parameter_value(
+        connection.get("request_config") or {},
+        dynamic_time_parameters(now=now, timezone=timezone),
+        now=now,
+        timezone=timezone,
+    )
+
+
+def _dict_config_section(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _url_with_query(url: str, query: dict[str, Any]) -> str:
+    if not query:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{urlencode(query)}"
+
+
+def resolve_plugin_request_config(
+    connection: dict[str, Any],
+    action: dict[str, Any],
+    input_payload: dict[str, Any] | None = None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    connection_config = resolve_connection_request_config(connection, input_payload, now=now)
+    action_config = resolve_action_request_config(action, input_payload, now=now)
+    merged = {**connection_config, **action_config}
+
+    connection_query = _dict_config_section(connection_config.get("query"))
+    action_query = _dict_config_section(action_config.get("query"))
+    if connection_query or action_query:
+        merged["query"] = {**connection_query, **action_query}
+
+    connection_headers = _dict_config_section(connection_config.get("headers"))
+    action_headers = _dict_config_section(action_config.get("headers"))
+    if connection_headers or action_headers:
+        merged["headers"] = {**connection_headers, **action_headers}
+
+    return merged
+
+
 def _build_headers(
     connection: dict[str, Any],
     action: dict[str, Any],
     input_payload: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    headers = dict(resolve_action_request_config(action, input_payload).get("headers") or {})
+    headers, _ = _build_headers_with_sources(connection, action, input_payload)
+    return headers
+
+
+def _build_headers_with_sources(
+    connection: dict[str, Any],
+    action: dict[str, Any],
+    input_payload: dict[str, Any] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    request_config = resolve_plugin_request_config(connection, action, input_payload)
+    headers = dict(request_config.get("headers") or {})
+    sources = {str(key): "request_config.headers" for key in headers}
     auth_config = connection.get("auth_config") or {}
     if connection.get("auth_type") == "bearer" and auth_config.get("token_ref"):
-        headers.setdefault("Authorization", f"Bearer {auth_config['token_ref']}")
+        _set_header(
+            headers,
+            sources,
+            "Authorization",
+            f"Bearer {auth_config['token_ref']}",
+            "auth_config.bearer",
+        )
     if connection.get("auth_type") == "api_key_header":
         header_name = auth_config.get("header_name") or "X-API-Key"
         secret_ref = auth_config.get("secret_ref")
         if secret_ref:
-            headers.setdefault(header_name, str(secret_ref))
-    return {str(key): str(value) for key, value in headers.items()}
+            _set_header(
+                headers,
+                sources,
+                str(header_name),
+                str(secret_ref),
+                "auth_config.api_key_header",
+            )
+    string_headers = {str(key): str(value) for key, value in headers.items()}
+    return string_headers, {
+        str(key): sources.get(str(key), "request_config.headers") for key in string_headers
+    }
 
 
 def _invoke_http(
@@ -886,15 +1258,14 @@ def _invoke_http(
     action: dict[str, Any],
     input_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    request_config = resolve_action_request_config(action, input_payload)
+    request_config = resolve_plugin_request_config(connection, action, input_payload)
     if "mock_response_json" in request_config:
         return {"json": request_config["mock_response_json"], "mocked": True}
     method = str(request_config.get("method") or "GET").upper()
     path = str(request_config.get("path") or "")
     url = urljoin(connection["endpoint_url"].rstrip("/") + "/", path.lstrip("/"))
-    query = request_config.get("query") or {}
-    if query:
-        url = f"{url}?{urlencode(query)}"
+    query = _dict_config_section(request_config.get("query"))
+    url = _url_with_query(url, query)
     body = input_payload if method not in {"GET", "HEAD"} else None
     request_body = (
         json.dumps(body or {}, ensure_ascii=False).encode("utf-8")
@@ -924,12 +1295,16 @@ def _invoke_mcp_http(
     action: dict[str, Any],
     input_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    request_config = resolve_action_request_config(action, input_payload)
+    request_config = resolve_plugin_request_config(connection, action, input_payload)
     if "mock_response_json" in request_config:
         return {"json": request_config["mock_response_json"], "mocked": True}
     tool_name = ensure_non_blank(request_config.get("tool_name"), "tool_name")
+    url = _url_with_query(
+        str(connection["endpoint_url"]),
+        _dict_config_section(request_config.get("query")),
+    )
     request = Request(
-        connection["endpoint_url"],
+        url,
         data=json.dumps(
             {
                 "id": action["id"],
@@ -973,31 +1348,34 @@ def plugin_action_request_preview(
     action: dict[str, Any],
     input_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    request_config = resolve_action_request_config(action, input_payload)
-    headers = mask_secret_config(_build_headers(connection, action, input_payload))
+    request_config = resolve_plugin_request_config(connection, action, input_payload)
+    headers = _build_headers(connection, action, input_payload)
     if plugin["protocol"] == "mcp_http":
+        query = _dict_config_section(request_config.get("query"))
+        endpoint_url = str(connection.get("endpoint_url") or "")
         return {
-            "arguments": mask_secret_config(input_payload),
-            "endpoint_url": connection.get("endpoint_url"),
+            "arguments": input_payload,
+            "endpoint_url": endpoint_url,
             "headers": headers,
             "jsonrpc_method": "tools/call",
             "method": "POST",
             "protocol": plugin["protocol"],
+            "query": query,
             "tool_name": request_config.get("tool_name"),
+            "url": _url_with_query(endpoint_url, query),
         }
     method = str(request_config.get("method") or "GET").upper()
     path = str(request_config.get("path") or "")
     url = urljoin(str(connection.get("endpoint_url", "")).rstrip("/") + "/", path.lstrip("/"))
-    query = request_config.get("query") or {}
-    if query:
-        url = f"{url}?{urlencode(query)}"
+    query = _dict_config_section(request_config.get("query"))
+    url = _url_with_query(url, query)
     return {
-        "body": mask_secret_config(input_payload if method not in {"GET", "HEAD"} else None),
+        "body": input_payload if method not in {"GET", "HEAD"} else None,
         "headers": headers,
         "method": method,
         "path": path,
         "protocol": plugin["protocol"],
-        "query": mask_secret_config(query),
+        "query": query,
         "url": url,
     }
 
@@ -1062,7 +1440,7 @@ def trial_plugin_action_response(
         "mapping_hits": result_mapping_hits(response_summary, action.get("result_mapping") or {}),
         "plugin_id": plugin["id"],
         "request_preview": request_preview,
-        "response_summary": mask_secret_config(response_summary),
+        "response_summary": response_summary,
         "status": status,
     }
 
@@ -1124,6 +1502,12 @@ def invoke_plugin_action_response(
         "input_keys": sorted((input_payload or {}).keys()),
         "plugin_code": plugin["code"],
         "protocol": plugin["protocol"],
+        "request_preview": plugin_action_request_preview(
+            plugin,
+            connection,
+            action,
+            input_payload or {},
+        ),
     }
     log = {
         "action_id": action["id"],

@@ -322,7 +322,7 @@ describe('KnowledgePage', () => {
         expect(init?.method).toBe('POST');
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({
-          chunk_strategy: 'simple_text',
+          chunk_strategy: 'regex_section',
           doc_type: 'manual',
           filename: 'payment-runbook.md',
           folder_id: 'knowledge_folder_runbook',
@@ -381,6 +381,8 @@ describe('KnowledgePage', () => {
       target: { files: [file] },
     });
     expect(await screen.findByText('payment-runbook.md')).toBeInTheDocument();
+    fireEvent.mouseDown(within(documentModal).getByLabelText('分块策略'));
+    fireEvent.click(await screen.findByText('正则分块'));
 
     fireEvent.click(within(documentModal).getByRole('button', { name: /OK|确 定/ }));
 
@@ -453,6 +455,19 @@ describe('KnowledgePage', () => {
           },
         });
       }
+      if (input === '/api/knowledge/import-worker/status') {
+        return jsonResponse({
+          data: {
+            active_job_id: 'knowledge_import_job_ops',
+            enabled: true,
+            failed_count: 0,
+            pending_count: importJobStatus === 'completed' ? 0 : 1,
+            processed_count: importJobStatus === 'completed' ? 1 : 0,
+            queued_job_ids: importJobStatus === 'completed' ? [] : ['knowledge_import_job_ops'],
+            running: true,
+          },
+        });
+      }
       if (input === '/api/knowledge/import-jobs/knowledge_import_job_ops/run') {
         expect(init?.method).toBe('POST');
         importJobStatus = 'completed';
@@ -516,7 +531,18 @@ describe('KnowledgePage', () => {
                 chunk_set_id: 'knowledge_chunk_set_ops',
                 content: 'ops-import 解析完成',
                 id: 'chunk_child',
-                metadata: { chunk_role: 'child', heading: '导入任务' },
+                metadata: {
+                  chunk_role: 'child',
+                  columns: ['owner', 'risk'],
+                  heading: '导入任务',
+                  image_count: 2,
+                  image_refs: ['image-7-a'],
+                  page_number: 7,
+                  source_asset_type: 'table_json',
+                  source_kind: 'table',
+                  table_count: 1,
+                  table_index: 1,
+                },
                 parent_chunk_id: 'chunk_parent',
                 parent_content: '# 导入任务',
               },
@@ -544,6 +570,10 @@ describe('KnowledgePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '导入任务' }));
 
     expect(await screen.findByText('markdown')).toBeInTheDocument();
+    expect(screen.getByText('导入 worker')).toBeInTheDocument();
+    expect(screen.getByText('运行中')).toBeInTheDocument();
+    expect(screen.getByText('待处理 1')).toBeInTheDocument();
+    expect(screen.getByText('失败 0')).toBeInTheDocument();
     expect(screen.getByText('ops-import.md')).toBeInTheDocument();
     expect(screen.getByText('0%')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /运行/ }));
@@ -570,6 +600,11 @@ describe('KnowledgePage', () => {
     expect(await screen.findByText('parent_child')).toBeInTheDocument();
     expect(screen.getAllByText('父块').length).toBeGreaterThan(1);
     expect(screen.getByText('子块')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '第 7 页 / 表格 1 / 图片 2 / 表格数 1 / table / table_json / 列：owner, risk / 图：image-7-a',
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText('ops-import 解析完成')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('checkbox', { name: '选择 knowledge_ops' }));

@@ -85,6 +85,79 @@ def split_markdown_parent_child_content(content: str) -> list[dict[str, Any]]:
     return descriptors
 
 
+def split_regex_section_content(content: str) -> list[dict[str, Any]]:
+    pattern = re.compile(
+        r"(?im)^(?P<separator>\s*(?:-{3,}|\*{3,}|_{3,}|#{1,6}\s+.+|(?:第[一二三四五六七八九十百千\d]+[章节篇部分]\s*[:：]?.*)|(?:section|chapter)\s+\d+(?:[.:：].*)?))$"
+    )
+    matches = list(pattern.finditer(content))
+    sections: list[dict[str, Any]] = []
+    previous_start = 0
+    previous_title = "文档开头"
+    previous_separator = "document_start"
+    section_index = 1
+
+    for match in matches:
+        body = content[previous_start : match.start()].strip()
+        if body:
+            sections.append(
+                {
+                    "body": body,
+                    "section_index": section_index,
+                    "separator": previous_separator,
+                    "title": previous_title,
+                }
+            )
+            section_index += 1
+        previous_start = match.end()
+        previous_title = match.group("separator").strip()
+        previous_separator = "regex_separator"
+
+    trailing_body = content[previous_start:].strip()
+    if trailing_body:
+        sections.append(
+            {
+                "body": trailing_body,
+                "section_index": section_index,
+                "separator": previous_separator,
+                "title": previous_title,
+            }
+        )
+
+    if not sections:
+        sections = [
+            {
+                "body": chunk,
+                "section_index": index,
+                "separator": "blank_line",
+                "title": f"片段 {index}",
+            }
+            for index, chunk in enumerate(split_knowledge_content(content), start=1)
+        ]
+
+    descriptors: list[dict[str, Any]] = []
+    for section in sections:
+        section_body = str(section["body"]).strip()
+        if not section_body:
+            continue
+        for part_index, chunk_content in enumerate(
+            split_knowledge_content(section_body),
+            start=1,
+        ):
+            descriptors.append(
+                {
+                    "content": chunk_content,
+                    "local_id": f"regex-{section['section_index']}-{part_index}",
+                    "metadata": {
+                        "chunk_role": "regex_section",
+                        "section_index": section["section_index"],
+                        "section_title": section["title"],
+                        "split_pattern": section["separator"],
+                    },
+                }
+            )
+    return descriptors
+
+
 def split_knowledge_content_descriptors(
     content: str,
     *,
@@ -92,6 +165,8 @@ def split_knowledge_content_descriptors(
 ) -> list[dict[str, Any]]:
     if chunk_strategy == "parent_child":
         return split_markdown_parent_child_content(content)
+    if chunk_strategy == "regex_section":
+        return split_regex_section_content(content)
     return [
         {
             "content": chunk,

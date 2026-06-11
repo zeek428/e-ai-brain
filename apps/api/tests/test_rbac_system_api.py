@@ -111,6 +111,22 @@ def test_role_menu_grants_return_updated_menu_codes():
     ]
 
 
+def test_task_center_contains_ai_jobs_and_plugin_menus():
+    response = client.get("/api/system/menus", headers=auth_headers())
+
+    assert response.status_code == 200
+    menus = {item["code"]: item for item in response.json()["data"]["items"]}
+    assert menus["system.ai_capabilities"]["parent_code"] == "task"
+    assert menus["system.ai_capabilities"]["path"] == "/tasks/ai-capabilities"
+    assert menus["system.scheduled_jobs"]["parent_code"] == "task"
+    assert menus["system.scheduled_jobs"]["path"] == "/tasks/scheduled-jobs"
+    assert menus["system.plugins"]["parent_code"] == "task"
+    assert menus["system.plugins"]["path"] == "/tasks/plugins"
+    assert menus["system.users"]["parent_code"] == "system"
+    assert menus["system.roles"]["parent_code"] == "system"
+    assert menus["system.model_gateway"]["parent_code"] == "system"
+
+
 def test_mutating_role_operation_writes_role_change_and_audit_events():
     headers = auth_headers()
 

@@ -191,6 +191,15 @@ body {
   padding-inline: 4px;
 }
 
+.management-row-actions {
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.management-row-actions .ant-btn {
+  padding-inline: 4px;
+}
+
 .requirement-list-primary-action {
   max-width: 84px;
 }

@@ -129,6 +129,17 @@ class ScheduledAiJobReadRepository:
                 self.upsert_scheduled_jobs(cursor, {job["id"]: job})
                 self._upsert_audit(cursor, audit_event)
 
+    def delete_scheduled_job_record(
+        self,
+        job_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM scheduled_jobs WHERE id = %s", (job_id,))
+                self._upsert_audit(cursor, audit_event)
+
     def list_scheduled_job_runs(
         self,
         *,

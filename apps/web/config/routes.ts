@@ -36,6 +36,24 @@ const routes = [
         icon: 'UnorderedListOutlined',
         component: './TaskCenter',
       },
+      {
+        path: '/tasks/ai-capabilities',
+        name: 'AI 能力配置',
+        icon: 'RobotOutlined',
+        component: './AiCapabilities',
+      },
+      {
+        path: '/tasks/scheduled-jobs',
+        name: '定时作业',
+        icon: 'ClockCircleOutlined',
+        component: './ScheduledJobs',
+      },
+      {
+        path: '/tasks/plugins',
+        name: '插件管理',
+        icon: 'ApiOutlined',
+        component: './Plugins',
+      },
     ],
   },
   {
@@ -151,24 +169,6 @@ const routes = [
         icon: 'ApiOutlined',
         component: './ModelGateway',
       },
-      {
-        path: '/system/ai-capabilities',
-        name: 'AI 能力配置',
-        icon: 'RobotOutlined',
-        component: './AiCapabilities',
-      },
-      {
-        path: '/system/scheduled-jobs',
-        name: '定时作业',
-        icon: 'ClockCircleOutlined',
-        component: './ScheduledJobs',
-      },
-      {
-        path: '/system/plugins',
-        name: '插件管理',
-        icon: 'ApiOutlined',
-        component: './Plugins',
-      },
     ],
   },
   {
@@ -253,12 +253,32 @@ const routes = [
   },
   {
     path: '/ai-capabilities',
-    redirect: '/system/ai-capabilities',
+    redirect: '/tasks/ai-capabilities',
     hideInMenu: true,
   },
   {
     path: '/scheduled-jobs',
-    redirect: '/system/scheduled-jobs',
+    redirect: '/tasks/scheduled-jobs',
+    hideInMenu: true,
+  },
+  {
+    path: '/plugins',
+    redirect: '/tasks/plugins',
+    hideInMenu: true,
+  },
+  {
+    path: '/system/ai-capabilities',
+    redirect: '/tasks/ai-capabilities',
+    hideInMenu: true,
+  },
+  {
+    path: '/system/scheduled-jobs',
+    redirect: '/tasks/scheduled-jobs',
+    hideInMenu: true,
+  },
+  {
+    path: '/system/plugins',
+    redirect: '/tasks/plugins',
     hideInMenu: true,
   },
   {

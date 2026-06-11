@@ -6,10 +6,55 @@ import './proComponentsMock';
 
 import PluginsPage from '../src/pages/Plugins';
 
-function installPluginsFetchMock() {
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
+function pluginConnectionTestBody() {
+  return {
+    data: {
+      checked_at: '2026-06-10T00:00:00Z',
+      connection_id: 'connection_maxcompute_prod',
+      diagnostics: [
+        { detail: 'ai-brain-maxcompute-mcp.internal', name: 'endpoint_configured', status: 'succeeded' },
+        { detail: 'tools/list 调用完成', latency_ms: 3, name: 'mcp_tools_list', status: 'succeeded' },
+      ],
+      environment: 'prod',
+      latency_ms: 3,
+      plugin_id: 'plugin_maxcompute',
+      protocol: 'mcp_http',
+      request_summary: {
+        header_sources: { Authorization: 'auth_config.api_key_header' },
+        headers: { Authorization: 'APPCODE 208b5b1456ee445ca47a42c' },
+        masked_placeholder_headers: [],
+        method: 'POST',
+        protocol: 'mcp_http',
+        query: { start_pt: '20260604' },
+        url: 'https://ai-brain-maxcompute-mcp.internal/mcp?start_pt=20260604',
+      },
+      response_summary: { body_preview: '{"ok":true}', status_code: 200 },
+      status: 'succeeded',
+    },
+  };
+}
+
+function installPluginsFetchMock(options: { deferConnectionTest?: boolean } = {}) {
   const actionBodies: unknown[] = [];
+  const actionDeleteIds: string[] = [];
+  const actionUpdateBodies: unknown[] = [];
   const connectionBodies: unknown[] = [];
+  const connectionDeleteIds: string[] = [];
+  const connectionUpdateBodies: unknown[] = [];
   const connectionTestCalls: string[] = [];
+  const pluginDeleteIds: string[] = [];
+  const pluginUpdateBodies: unknown[] = [];
+  const connectionTestDeferred = options.deferConnectionTest
+    ? createDeferred<Response>()
+    : undefined;
   const jsonResponse = (body: unknown) =>
     new Response(JSON.stringify(body), {
       headers: { 'Content-Type': 'application/json' },
@@ -35,6 +80,14 @@ function installPluginsFetchMock() {
         },
       });
     }
+    if (input === '/api/system/plugins/plugin_maxcompute' && init?.method === 'PATCH') {
+      pluginUpdateBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({ data: { id: 'plugin_maxcompute', status: 'active' } });
+    }
+    if (input === '/api/system/plugins/plugin_maxcompute' && init?.method === 'DELETE') {
+      pluginDeleteIds.push('plugin_maxcompute');
+      return jsonResponse({ data: { deleted: true, id: 'plugin_maxcompute' } });
+    }
     if (input === '/api/system/plugin-connections' && init?.method === 'GET') {
       return jsonResponse({
         data: {
@@ -46,6 +99,10 @@ function installPluginsFetchMock() {
               id: 'connection_maxcompute_prod',
               name: '生产 MaxCompute 项目',
               plugin_id: 'plugin_maxcompute',
+              request_config: {
+                headers: { 'X-Workspace': 'prod' },
+                query: { appCode: '208b5b1456ee445ca47a42c' },
+              },
               status: 'active',
             },
           ],
@@ -53,31 +110,50 @@ function installPluginsFetchMock() {
         },
       });
     }
+    if (input === '/api/system/plugin-connections/connection_maxcompute_prod' && init?.method === 'PATCH') {
+      connectionUpdateBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({ data: { id: 'connection_maxcompute_prod', status: 'active' } });
+    }
+    if (input === '/api/system/plugin-connections/connection_maxcompute_prod' && init?.method === 'DELETE') {
+      connectionDeleteIds.push('connection_maxcompute_prod');
+      return jsonResponse({ data: { deleted: true, id: 'connection_maxcompute_prod' } });
+    }
     if (input === '/api/system/plugin-connections' && init?.method === 'POST') {
       connectionBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'connection_created', status: 'active' } });
     }
     if (input === '/api/system/plugin-connections/connection_maxcompute_prod/test' && init?.method === 'POST') {
       connectionTestCalls.push(String(input));
-      return jsonResponse({
-        data: {
-          checked_at: '2026-06-10T00:00:00Z',
-          connection_id: 'connection_maxcompute_prod',
-          diagnostics: [
-            { detail: 'ai-brain-maxcompute-mcp.internal', name: 'endpoint_configured', status: 'succeeded' },
-            { detail: 'tools/list 调用完成', latency_ms: 3, name: 'mcp_tools_list', status: 'succeeded' },
-          ],
-          environment: 'prod',
-          latency_ms: 3,
-          plugin_id: 'plugin_maxcompute',
-          protocol: 'mcp_http',
-          request_summary: { method: 'POST', protocol: 'mcp_http' },
-          status: 'succeeded',
-        },
-      });
+      if (connectionTestDeferred) {
+        return connectionTestDeferred.promise;
+      }
+      return jsonResponse(pluginConnectionTestBody());
     }
     if (input === '/api/system/plugin-actions' && init?.method === 'GET') {
-      return jsonResponse({ data: { items: [], total: 0 } });
+      return jsonResponse({
+        data: {
+          items: [
+            {
+              action_type: 'http_request',
+              code: 'fetch_feedback_api',
+              connection_id: 'connection_maxcompute_prod',
+              id: 'action_feedback_api',
+              name: '调用反馈 API',
+              plugin_id: 'plugin_maxcompute',
+              request_config: {
+                headers: { Authorization: 'APPCODE old' },
+                method: 'GET',
+                path: '/zqf_api/feedback',
+                query: { start_pt: '{{current_date-7}}' },
+              },
+              requires_human_review: false,
+              result_mapping: { write_target: 'scheduled_job_result' },
+              status: 'active',
+            },
+          ],
+          total: 1,
+        },
+      });
     }
     if (input === '/api/system/scheduled-jobs' && init?.method === 'GET') {
       return jsonResponse({ data: { items: [], total: 0 } });
@@ -104,11 +180,32 @@ function installPluginsFetchMock() {
       actionBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'action_maxcompute_weekly', status: 'active' } });
     }
+    if (input === '/api/system/plugin-actions/action_feedback_api' && init?.method === 'PATCH') {
+      actionUpdateBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({ data: { id: 'action_feedback_api', status: 'active' } });
+    }
+    if (input === '/api/system/plugin-actions/action_feedback_api' && init?.method === 'DELETE') {
+      actionDeleteIds.push('action_feedback_api');
+      return jsonResponse({ data: { deleted: true, id: 'action_feedback_api' } });
+    }
     throw new Error(`Unexpected fetch call: ${String(input)}`);
   });
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
   vi.stubGlobal('fetch', fetchMock);
-  return { actionBodies, connectionBodies, connectionTestCalls };
+  return {
+    actionBodies,
+    actionDeleteIds,
+    actionUpdateBodies,
+    connectionBodies,
+    connectionDeleteIds,
+    connectionTestCalls,
+    connectionUpdateBodies,
+    pluginDeleteIds,
+    pluginUpdateBodies,
+    resolveConnectionTest: () => {
+      connectionTestDeferred?.resolve(jsonResponse(pluginConnectionTestBody()));
+    },
+  };
 }
 
 describe('PluginsPage', () => {
@@ -138,6 +235,28 @@ describe('PluginsPage', () => {
     expect(screen.getByText('日志 / 监控')).toBeInTheDocument();
   });
 
+  it('warns when deleting resources in use and can delete unused actions', async () => {
+    const { actionDeleteIds, pluginDeleteIds } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    expect(await screen.findByText('阿里云 MaxCompute')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '删除插件 阿里云 MaxCompute' }));
+    expect(await screen.findByText('当前对象正在被使用，不能删除。请先解除下面的引用，或将其停用。')).toBeInTheDocument();
+    expect(screen.getByText('连接：')).toBeInTheDocument();
+    expect(screen.getByText('生产 MaxCompute 项目')).toBeInTheDocument();
+    expect(screen.getByText('动作：')).toBeInTheDocument();
+    expect(screen.getByText('调用反馈 API')).toBeInTheDocument();
+    expect(pluginDeleteIds).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: /知道了|OK|确\s*定/ }));
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(await screen.findByRole('button', { name: '删除动作 调用反馈 API' }));
+    await screen.findByText('确定删除动作「调用反馈 API」吗？');
+    fireEvent.click(screen.getAllByRole('button', { name: /删\s*除/ }).at(-1)!);
+    await waitFor(() => expect(actionDeleteIds).toEqual(['action_feedback_api']));
+  });
+
   it('uses predefined connection environments and can test a connection', async () => {
     const { connectionBodies, connectionTestCalls } = installPluginsFetchMock();
 
@@ -150,11 +269,16 @@ describe('PluginsPage', () => {
     await waitFor(() =>
       expect(connectionTestCalls).toEqual(['/api/system/plugin-connections/connection_maxcompute_prod/test']),
     );
+    expect(await screen.findByText('完整请求信息')).toBeInTheDocument();
+    expect(screen.getByText(/ai-brain-maxcompute-mcp\.internal\/mcp\?start_pt=20260604/)).toBeInTheDocument();
+    expect(screen.getByText(/auth_config\.api_key_header/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /OK|确\s*定|知道了/ }));
 
     fireEvent.click(screen.getByRole('button', { name: '新增连接' }));
     const dialog = await screen.findByRole('dialog', { name: '新增连接' });
     expect(within(dialog).queryByRole('textbox', { name: '环境' })).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('认证配置 JSON')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('请求配置 JSON')).not.toBeInTheDocument();
     fireEvent.mouseDown(within(dialog).getByLabelText('环境'));
     expect(await screen.findByText('预发 / Staging')).toBeInTheDocument();
     expect(screen.getAllByText('生产').length).toBeGreaterThan(0);
@@ -172,6 +296,14 @@ describe('PluginsPage', () => {
     fireEvent.change(await within(dialog).findByLabelText('Header 值/密钥引用'), {
       target: { value: 'vault/maxcompute/appcode' },
     });
+    fireEvent.click(within(dialog).getByRole('button', { name: /添加 Params/ }));
+    fireEvent.change(within(dialog).getByPlaceholderText('参数名'), { target: { value: 'start_pt' } });
+    fireEvent.change(within(dialog).getByPlaceholderText('参数值'), { target: { value: '{{current_date-7}}' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /添加 Headers/ }));
+    fireEvent.change(within(dialog).getByPlaceholderText('Header 名'), { target: { value: 'Authorization' } });
+    fireEvent.change(within(dialog).getByPlaceholderText('Header 值'), {
+      target: { value: 'APPCODE 208b5b1456ee445ca47a42c' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() =>
@@ -184,6 +316,125 @@ describe('PluginsPage', () => {
           auth_type: 'api_key_header',
           endpoint_url: 'https://example.aliyunapi.com',
           name: '生产 MaxCompute API',
+          request_config: {
+            headers: { Authorization: 'APPCODE 208b5b1456ee445ca47a42c' },
+            query: { start_pt: '{{current_date-7}}' },
+          },
+        }),
+      ]),
+    );
+  }, 10000);
+
+  it('shows an in-progress state while a connection test is running', async () => {
+    const { connectionTestCalls, resolveConnectionTest } = installPluginsFetchMock({
+      deferConnectionTest: true,
+    });
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '连接' }));
+    fireEvent.click(await screen.findByRole('button', { name: '测试连接 生产 MaxCompute 项目' }));
+
+    await waitFor(() =>
+      expect(connectionTestCalls).toEqual(['/api/system/plugin-connections/connection_maxcompute_prod/test']),
+    );
+    const testingButton = await screen.findByRole('button', {
+      name: '连接测试中 生产 MaxCompute 项目',
+    });
+    expect(testingButton).toBeDisabled();
+    expect(testingButton).toHaveTextContent('测试中');
+    expect(screen.getByText('正在测试连接「生产 MaxCompute 项目」，请稍候...')).toBeInTheDocument();
+
+    resolveConnectionTest();
+
+    expect(await screen.findByText('完整请求信息')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '测试连接 生产 MaxCompute 项目' })).toBeInTheDocument(),
+    );
+  });
+
+  it('can edit existing plugins', async () => {
+    const { pluginUpdateBodies } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑插件 阿里云 MaxCompute' }));
+    const dialog = await screen.findByRole('dialog', { name: '编辑插件' });
+    fireEvent.change(within(dialog).getByLabelText('名称'), {
+      target: { value: '阿里云 MaxCompute 网关' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+    await waitFor(() =>
+      expect(pluginUpdateBodies).toEqual([
+        expect.objectContaining({
+          name: '阿里云 MaxCompute 网关',
+          protocol: 'mcp_http',
+        }),
+      ]),
+    );
+  });
+
+  it('can edit existing connections', async () => {
+    const { connectionUpdateBodies } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    const connectionsTab = screen.getByRole('tab', { name: '连接' });
+    fireEvent.click(connectionsTab);
+    await waitFor(() => expect(connectionsTab).toHaveAttribute('aria-selected', 'true'));
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接 生产 MaxCompute 项目' }));
+    let dialog = await screen.findByRole('dialog', { name: '编辑连接' });
+    fireEvent.change(within(dialog).getByLabelText('名称'), {
+      target: { value: '生产 MaxCompute 项目 v2' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /添加 Params/ }));
+    fireEvent.change(within(dialog).getAllByPlaceholderText('参数名').at(-1)!, {
+      target: { value: 'end_pt' },
+    });
+    fireEvent.change(within(dialog).getAllByPlaceholderText('参数值').at(-1)!, {
+      target: { value: '{{current_date}}' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+    await waitFor(() =>
+      expect(connectionUpdateBodies).toEqual([
+        expect.objectContaining({
+          name: '生产 MaxCompute 项目 v2',
+          request_config: {
+            headers: { 'X-Workspace': 'prod' },
+            query: {
+              appCode: '208b5b1456ee445ca47a42c',
+              end_pt: '{{current_date}}',
+            },
+          },
+        }),
+      ]),
+    );
+  });
+
+  it('can edit existing actions', async () => {
+    const { actionUpdateBodies } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    const actionsTab = screen.getByRole('tab', { name: '动作' });
+    fireEvent.click(actionsTab);
+    await waitFor(() => expect(actionsTab).toHaveAttribute('aria-selected', 'true'));
+    fireEvent.click(await screen.findByRole('button', { name: '编辑动作 调用反馈 API' }));
+    const dialog = await screen.findByRole('dialog', { name: '编辑动作' });
+    fireEvent.change(within(dialog).getByLabelText('请求路径'), {
+      target: { value: '/zqf_api/feedback/v2' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+    await waitFor(() =>
+      expect(actionUpdateBodies).toEqual([
+        expect.objectContaining({
+          code: 'fetch_feedback_api',
+          request_config: {
+            headers: { Authorization: 'APPCODE old' },
+            method: 'GET',
+            path: '/zqf_api/feedback/v2',
+            query: { start_pt: '{{current_date-7}}' },
+          },
         }),
       ]),
     );
@@ -198,6 +449,10 @@ describe('PluginsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
 
     const dialog = await screen.findByRole('dialog', { name: '新增动作' });
+    expect(within(dialog).getByLabelText('结果写入目标')).toBeInTheDocument();
+    expect(within(dialog).getByText('仅保存运行结果')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('导入数量 JSONPath')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('洞察列表 JSONPath')).not.toBeInTheDocument();
     fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
     fireEvent.click(await screen.findByText('阿里云 MaxCompute (mcp_http)'));
     fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '调用反馈 API' } });
@@ -228,10 +483,31 @@ describe('PluginsPage', () => {
             path: '/zqf_api/feedback',
             query: { start_pt: '{{current_date-7}}' },
           },
-          result_mapping: {},
+          result_mapping: { write_target: 'scheduled_job_result' },
         }),
       ]),
     );
+  });
+
+  it('updates result mapping fields when the write target changes', async () => {
+    installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '新增动作' });
+    expect(within(dialog).getByLabelText('导入数量 JSONPath')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('洞察列表 JSONPath')).not.toBeInTheDocument();
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('结果写入目标'));
+    fireEvent.click(await screen.findByText('用户洞察表'));
+
+    expect(within(dialog).getByLabelText('洞察列表 JSONPath')).toHaveValue('$.insights');
+    expect(within(dialog).getByLabelText('源表行数 JSONPath')).toHaveValue('$.row_count');
+    expect(within(dialog).getByLabelText('原始行列表 JSONPath')).toHaveValue('$.rows');
+    expect(within(dialog).queryByLabelText('导入数量 JSONPath')).not.toBeInTheDocument();
   });
 
   it('creates a MaxCompute weekly feedback action from guided fields while allowing advanced JSON edits', async () => {
@@ -246,6 +522,11 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
     fireEvent.click(await screen.findByText('MaxCompute 每周用户反馈'));
 
+    expect(within(dialog).getByText('用户洞察表')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('洞察列表 JSONPath')).toHaveValue('$.insights');
+    fireEvent.change(within(dialog).getByLabelText('洞察列表 JSONPath'), {
+      target: { value: '$.analysis.insights' },
+    });
     expect(within(dialog).getByLabelText('表名')).toHaveValue('ods_user_feedback');
     expect(within(dialog).getByLabelText('时间字段')).toHaveValue('created_at');
     expect(within(dialog).getByLabelText('返回字段')).toHaveValue(
@@ -274,9 +555,10 @@ describe('PluginsPage', () => {
             tool_name: 'maxcompute.execute_sql',
           }),
           result_mapping: {
-            insights_path: '$.insights',
+            insights_path: '$.analysis.insights',
             records_imported_path: '$.row_count',
             rows_path: '$.rows',
+            write_target: 'user_feedback_insights',
           },
         }),
       ]),

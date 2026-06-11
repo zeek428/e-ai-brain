@@ -508,18 +508,16 @@ class KnowledgeWriteRepository:
                   %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
-                ON CONFLICT (id) DO UPDATE SET
+                ON CONFLICT (bucket, object_key) DO UPDATE SET
                   knowledge_space_id = EXCLUDED.knowledge_space_id,
                   document_id = EXCLUDED.document_id,
                   asset_type = EXCLUDED.asset_type,
                   storage_provider = EXCLUDED.storage_provider,
-                  bucket = EXCLUDED.bucket,
-                  object_key = EXCLUDED.object_key,
                   content_hash = EXCLUDED.content_hash,
                   filename = EXCLUDED.filename,
                   mime_type = EXCLUDED.mime_type,
                   size_bytes = EXCLUDED.size_bytes,
-                  metadata = EXCLUDED.metadata,
+                  metadata = knowledge_assets.metadata || EXCLUDED.metadata,
                   created_by = EXCLUDED.created_by,
                   updated_at = EXCLUDED.updated_at
                 """,
@@ -555,12 +553,13 @@ class KnowledgeWriteRepository:
                 INSERT INTO knowledge_chunk_sets (
                   id, document_id, source_asset_id, parsed_asset_id, parser_engine,
                   parser_version, chunk_strategy, embedding_model, embedding_dimension,
-                  status, created_by, activated_at, created_at, updated_at
+                  status, created_by, activated_at, created_at, updated_at,
+                  index_status, vector_index_error
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                   %s::timestamptz, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   document_id = EXCLUDED.document_id,
@@ -574,6 +573,8 @@ class KnowledgeWriteRepository:
                   status = EXCLUDED.status,
                   created_by = EXCLUDED.created_by,
                   activated_at = EXCLUDED.activated_at,
+                  index_status = EXCLUDED.index_status,
+                  vector_index_error = EXCLUDED.vector_index_error,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -591,6 +592,8 @@ class KnowledgeWriteRepository:
                     chunk_set.get("activated_at"),
                     created_at,
                     updated_at,
+                    chunk_set.get("index_status"),
+                    chunk_set.get("vector_index_error"),
                 ),
             )
 
@@ -607,12 +610,14 @@ class KnowledgeWriteRepository:
                 INSERT INTO knowledge_import_jobs (
                   id, document_id, source_asset_id, parser_engine, chunk_strategy,
                   status, progress, error_code, error_message, created_by, started_at,
-                  finished_at, created_at, updated_at
+                  finished_at, created_at, updated_at, locked_by, locked_until,
+                  attempt_count
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                   %s::timestamptz, %s::timestamptz,
-                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
+                  %s, %s::timestamptz, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   document_id = EXCLUDED.document_id,
@@ -626,6 +631,9 @@ class KnowledgeWriteRepository:
                   created_by = EXCLUDED.created_by,
                   started_at = EXCLUDED.started_at,
                   finished_at = EXCLUDED.finished_at,
+                  locked_by = EXCLUDED.locked_by,
+                  locked_until = EXCLUDED.locked_until,
+                  attempt_count = EXCLUDED.attempt_count,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -643,6 +651,9 @@ class KnowledgeWriteRepository:
                     import_job.get("finished_at"),
                     created_at,
                     updated_at,
+                    import_job.get("locked_by"),
+                    import_job.get("locked_until"),
+                    import_job.get("attempt_count", 0),
                 ),
             )
 

@@ -1,18 +1,21 @@
-import { PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { PageContainer } from '@ant-design/pro-components';
-import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
-import { useCallback, useEffect, useState } from 'react';
+import { DeleteOutlined, EditOutlined, EyeOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PageContainer, ProTable } from '@ant-design/pro-components';
+import { Button, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Tabs, Tag, Switch, Typography, message } from 'antd';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   createScheduledJob,
+  deleteScheduledJob,
   fetchActiveProductOptions,
   fetchAiAgents,
   fetchAiSkills,
+  fetchModelGatewayConfigs,
   fetchPluginActions,
   fetchPluginConnections,
   fetchScheduledJobRuns,
   fetchScheduledJobs,
   runScheduledJob,
+  updateScheduledJob,
   type AiAgentRecord,
   type AiSkillRecord,
   type PluginActionRecord,
@@ -21,6 +24,7 @@ import {
   type ScheduledJobRecord,
   type ScheduledJobRunRecord,
 } from '../../services/aiBrain';
+import type { ModelGatewayConfigRecord } from '../../data/management';
 
 type ScheduledJobFormValues = {
   agent_id?: string;
@@ -29,188 +33,125 @@ type ScheduledJobFormValues = {
   execution_mode: string;
   interval_seconds?: number;
   job_type: string;
+  model_gateway_config_id?: string;
   name: string;
   plugin_action_id?: string;
   plugin_connection_id?: string;
   plugin_input_mapping?: string;
-  plugin_input_rows?: RequestParameterRow[];
   plugin_output_mapping?: string;
   product_id?: string;
   schedule_type: string;
   skill_ids?: string[];
   source_system: string;
-  time_parameter_preset?: string;
-};
-
-type RequestParameterRow = {
-  description?: string;
-  enabled?: boolean;
-  name?: string;
-  type?: 'boolean' | 'number' | 'string';
-  value?: string;
 };
 
 const jobTypeOptions = [
-  'iteration_plan_suggestion_generate',
-  'online_log_ai_analysis',
-  'user_usage_metric_collect',
-  'user_feedback_collect',
-  'online_log_metric_collect',
-  'dashboard_snapshot_refresh',
-  'plugin_action_invoke',
-  'user_feedback_insight_extract',
-].map((value) => ({ label: value, value }));
-
-const pluginInputTimePresetOptions = [
-  { label: '不使用动态时间参数', value: 'none' },
-  { label: '当前日期', value: 'current_date' },
-  { label: '当前日期 - 7 天', value: 'current_date_minus_7' },
-  { label: '上一个完整自然周', value: 'last_full_week' },
-  { label: '最近 7 天', value: 'last_7_days' },
-  { label: '今天', value: 'today' },
-  { label: '昨天', value: 'yesterday' },
+  { label: '用户反馈洞察抽取（取数 + AI 分析 + 写入）', value: 'user_feedback_insight_extract' },
+  { label: '迭代规划建议生成', value: 'iteration_plan_suggestion_generate' },
+  { label: '线上日志 AI 分析', value: 'online_log_ai_analysis' },
+  { label: '用户使用指标采集', value: 'user_usage_metric_collect' },
+  { label: '用户反馈采集（仅取数，不调用 AI）', value: 'user_feedback_collect' },
+  { label: '线上日志指标采集', value: 'online_log_metric_collect' },
+  { label: 'GitLab 每日代码指标采集', value: 'gitlab_daily_code_metric_collect' },
+  { label: 'Jenkins 发布记录采集', value: 'jenkins_release_collect' },
+  { label: '插件动作调用', value: 'plugin_action_invoke' },
+  { label: '看板快照刷新', value: 'dashboard_snapshot_refresh' },
+  { label: '生命周期上下文刷新', value: 'lifecycle_context_refresh' },
+  { label: '待归属数据重试', value: 'pending_attribution_retry' },
 ];
 
-const pluginInputMappingByTimePreset: Record<string, Record<string, string>> = {
-  current_date: {
-    end_pt: '{{current_date}}',
-  },
-  current_date_minus_7: {
-    end_pt: '{{current_date}}',
-    start_pt: '{{current_date-7}}',
-  },
-  last_7_days: {
-    window_end: '{{last_7_days.end}}',
-    window_start: '{{last_7_days.start}}',
-  },
-  last_full_week: {
-    week_end: '{{last_full_week.end}}',
-    week_start: '{{last_full_week.start}}',
-  },
-  today: {
-    window_end: '{{today.end}}',
-    window_start: '{{today.start}}',
-  },
-  yesterday: {
-    window_end: '{{yesterday.end}}',
-    window_start: '{{yesterday.start}}',
-  },
-};
+const jobTypeLabelByValue = new Map(jobTypeOptions.map((option) => [option.value, option.label]));
 
-const requestParameterTypeOptions = [
-  { label: 'string', value: 'string' },
-  { label: 'number', value: 'number' },
-  { label: 'boolean', value: 'boolean' },
+const executionModeOptions = [
+  { label: '确定性执行', value: 'deterministic' },
+  { label: 'AI 辅助', value: 'ai_assisted' },
+  { label: 'AI 生成', value: 'ai_generated' },
 ];
 
-const systemVariableOptions = [
-  { label: '当前日期 YYYYMMDD', value: '{{current_date}}' },
-  { label: '当前日期 - 7 天', value: '{{current_date-7}}' },
-  { label: '当前时间', value: '{{now}}' },
-  { label: '上一完整周开始', value: '{{last_full_week.start}}' },
-  { label: '上一完整周结束', value: '{{last_full_week.end}}' },
-  { label: '最近 7 天开始', value: '{{last_7_days.start}}' },
-  { label: '最近 7 天结束', value: '{{last_7_days.end}}' },
+const executionModeLabelByValue = new Map(executionModeOptions.map((option) => [option.value, option.label]));
+
+const scheduleTypeOptions = [
+  { label: '手动触发', value: 'manual' },
+  { label: 'Cron 定时', value: 'cron' },
+  { label: '固定间隔', value: 'interval' },
 ];
 
-function parseParameterValue(row: RequestParameterRow): unknown {
-  const value = row.value ?? '';
-  if (row.type === 'number') {
-    const numericValue = Number(value);
-    return Number.isFinite(numericValue) ? numericValue : value;
-  }
-  if (row.type === 'boolean') {
-    return value === 'true' || value === '1' || value === '是';
-  }
-  return value;
+const scheduleTypeLabelByValue = new Map(scheduleTypeOptions.map((option) => [option.value, option.label]));
+
+const statusLabelByValue = new Map([
+  ['active', '启用'],
+  ['disabled', '停用'],
+]);
+
+function ellipsisText(value: string | undefined) {
+  const text = value || '-';
+  return (
+    <Typography.Text ellipsis={{ tooltip: text }} style={{ display: 'block', maxWidth: '100%' }}>
+      {text}
+    </Typography.Text>
+  );
 }
 
-function rowsToRecord(rows: RequestParameterRow[] | undefined): Record<string, unknown> {
-  return (rows ?? []).reduce<Record<string, unknown>>((result, row) => {
-    const name = row.name?.trim();
-    if (row.enabled === false || !name) {
-      return result;
-    }
-    result[name] = parseParameterValue(row);
-    return result;
-  }, {});
+function isEmptyJsonValue(value: unknown): boolean {
+  return (
+    value == null
+    || (Array.isArray(value) && value.length === 0)
+    || (typeof value === 'object'
+      && !Array.isArray(value)
+      && Object.keys(value as Record<string, unknown>).length === 0)
+  );
 }
 
-function recordToRows(record: Record<string, unknown>): RequestParameterRow[] {
-  return Object.entries(record).map(([name, value]) => ({
-    enabled: true,
-    name,
-    type: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string',
-    value: typeof value === 'string' ? value : String(value),
-  }));
-}
-
-function parseJsonObject(value: string | undefined, field: string): Record<string, unknown> {
-  if (!value?.trim()) {
-    return {};
+function formatJsonValue(value: unknown): string {
+  if (isEmptyJsonValue(value)) {
+    return '暂无数据';
   }
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // fall through to a consistent validation message
-  }
-  throw new Error(`${field} 必须是 JSON 对象`);
-}
-
-function stableJson(value: Record<string, unknown>): string {
   return JSON.stringify(value, null, 2);
 }
 
-function PluginInputRows() {
-  const form = Form.useFormInstance<ScheduledJobFormValues>();
+function JsonPreview({ title, value }: { title: string; value: unknown }) {
   return (
-    <Form.List name="plugin_input_rows">
-      {(fields, { add, remove }) => (
-        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-          <Typography.Text strong>插件输入映射</Typography.Text>
-          {fields.map((field) => (
-            <Space key={field.key} align="baseline" wrap>
-              <Form.Item name={[field.name, 'enabled']} valuePropName="checked" initialValue style={{ marginBottom: 0 }}>
-                <Checkbox />
-              </Form.Item>
-              <Form.Item name={[field.name, 'name']} style={{ marginBottom: 0 }}>
-                <Input placeholder="参数名，如 start_pt" style={{ width: 180 }} />
-              </Form.Item>
-              <Form.Item name={[field.name, 'value']} style={{ marginBottom: 0 }}>
-                <Input placeholder="参数值，如 {{current_date-7}}" style={{ width: 260 }} />
-              </Form.Item>
-              <Select
-                allowClear
-                options={systemVariableOptions}
-                placeholder="系统变量"
-                style={{ width: 190 }}
-                onChange={(value) => {
-                  if (value) {
-                    form.setFieldValue(['plugin_input_rows', field.name, 'value'], value);
-                  }
-                }}
-              />
-              <Form.Item name={[field.name, 'type']} initialValue="string" style={{ marginBottom: 0 }}>
-                <Select options={requestParameterTypeOptions} style={{ width: 120 }} />
-              </Form.Item>
-              <Form.Item name={[field.name, 'description']} style={{ marginBottom: 0 }}>
-                <Input placeholder="说明" style={{ width: 180 }} />
-              </Form.Item>
-              <Button aria-label="删除输入参数" onClick={() => remove(field.name)}>
-                删除
-              </Button>
-            </Space>
-          ))}
-          <Button icon={<PlusOutlined />} onClick={() => add({ enabled: true, type: 'string' })} type="dashed">
-            添加输入参数
-          </Button>
-        </Space>
-      )}
-    </Form.List>
+    <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+      <Typography.Text strong>{title}</Typography.Text>
+      <Typography.Paragraph
+        copyable={!isEmptyJsonValue(value)}
+        style={{
+          background: '#f6f8fa',
+          border: '1px solid #e5e7eb',
+          borderRadius: 6,
+          marginBottom: 0,
+          maxHeight: 260,
+          overflow: 'auto',
+          padding: 12,
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {formatJsonValue(value)}
+      </Typography.Paragraph>
+    </Space>
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getRunExecutionNode(run: ScheduledJobRunRecord, nodeKey: string): unknown {
+  const nodes = run.result_summary?.execution_nodes;
+  if (isRecord(nodes)) {
+    return nodes[nodeKey];
+  }
+  return undefined;
+}
+
+function snapshotStringValue(snapshot: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = snapshot?.[key];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function snapshotStringListValue(snapshot: Record<string, unknown> | undefined, key: string): string[] {
+  const value = snapshot?.[key];
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
 }
 
 export default function ScheduledJobsPage() {
@@ -222,10 +163,53 @@ export default function ScheduledJobsPage() {
   const [products, setProducts] = useState<ProductFilterOption[]>([]);
   const [agents, setAgents] = useState<AiAgentRecord[]>([]);
   const [skills, setSkills] = useState<AiSkillRecord[]>([]);
+  const [modelGatewayConfigs, setModelGatewayConfigs] = useState<ModelGatewayConfigRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [advancedPluginInputJsonOpen, setAdvancedPluginInputJsonOpen] = useState(false);
+  const [editingJob, setEditingJob] = useState<ScheduledJobRecord | undefined>();
+  const [selectedRun, setSelectedRun] = useState<ScheduledJobRunRecord | undefined>();
+  const [runningJobId, setRunningJobId] = useState<string | undefined>();
   const selectedJobType = Form.useWatch('job_type', form);
+  const pluginActionById = useMemo(
+    () => new Map(pluginActions.map((action) => [action.id, action])),
+    [pluginActions],
+  );
+  const pluginConnectionById = useMemo(
+    () => new Map(pluginConnections.map((connection) => [connection.id, connection])),
+    [pluginConnections],
+  );
+  const modelGatewayConfigById = useMemo(
+    () => new Map(modelGatewayConfigs.map((config) => [config.id, config])),
+    [modelGatewayConfigs],
+  );
+  const agentById = useMemo(
+    () => new Map(agents.map((agent) => [agent.id, agent])),
+    [agents],
+  );
+  const skillById = useMemo(
+    () => new Map(skills.map((skill) => [skill.id, skill])),
+    [skills],
+  );
+  const selectedRunConfigSnapshot = selectedRun?.config_snapshot;
+  const selectedRunAgentId = snapshotStringValue(selectedRunConfigSnapshot, 'agent_id');
+  const selectedRunModelGatewayConfigId = snapshotStringValue(selectedRunConfigSnapshot, 'model_gateway_config_id');
+  const selectedRunSkillIds = snapshotStringListValue(selectedRunConfigSnapshot, 'skill_ids');
+  const selectedRunJobType = snapshotStringValue(selectedRunConfigSnapshot, 'job_type');
+  const selectedRunExecutionMode = snapshotStringValue(selectedRunConfigSnapshot, 'execution_mode');
+  const selectedRunAgentLabel =
+    snapshotStringValue(selectedRun?.resolved_agent_snapshot, 'name')
+    ?? (selectedRunAgentId ? agentById.get(selectedRunAgentId)?.name ?? selectedRunAgentId : '-');
+  const selectedRunModelLabel =
+    selectedRunModelGatewayConfigId
+      ? modelGatewayConfigById.get(selectedRunModelGatewayConfigId)?.name ?? selectedRunModelGatewayConfigId
+      : '-';
+  const selectedRunSkillLabels =
+    selectedRun?.resolved_skill_snapshots
+      ?.map((skill) => String(skill.name ?? skill.code ?? skill.id ?? ''))
+      .filter(Boolean)
+      .join('、')
+    || selectedRunSkillIds.map((skillId) => skillById.get(skillId)?.name ?? skillId).join('、')
+    || '-';
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -238,6 +222,7 @@ export default function ScheduledJobsPage() {
         nextProducts,
         nextAgents,
         nextSkills,
+        nextModelGatewayConfigs,
       ] =
         await Promise.all([
           fetchScheduledJobs(),
@@ -247,6 +232,7 @@ export default function ScheduledJobsPage() {
           fetchActiveProductOptions(),
           fetchAiAgents(),
           fetchAiSkills(),
+          fetchModelGatewayConfigs(),
         ]);
       setJobs(nextJobs);
       setRuns(nextRuns);
@@ -255,6 +241,7 @@ export default function ScheduledJobsPage() {
       setProducts(nextProducts);
       setAgents(nextAgents.filter((agent) => agent.status === 'active'));
       setSkills(nextSkills.filter((skill) => skill.status === 'active'));
+      setModelGatewayConfigs(nextModelGatewayConfigs.filter((config) => config.status === 'active'));
     } catch (error) {
       message.error(error instanceof Error ? error.message : '定时作业加载失败');
     } finally {
@@ -266,68 +253,95 @@ export default function ScheduledJobsPage() {
     void reload();
   }, [reload]);
 
+  const openCreateJobModal = () => {
+    setEditingJob(undefined);
+    form.resetFields();
+    form.setFieldsValue({
+      enabled: true,
+      execution_mode: 'ai_generated',
+      job_type: 'user_feedback_insight_extract',
+      schedule_type: 'manual',
+      source_system: 'ai-brain',
+    });
+    setModalOpen(true);
+  };
+
+  const openEditJobModal = (job: ScheduledJobRecord) => {
+    setEditingJob(job);
+    form.resetFields();
+    form.setFieldsValue({
+      agent_id: job.agent_id ?? undefined,
+      cron_expression: job.cron_expression ?? undefined,
+      enabled: job.enabled ?? true,
+      execution_mode: job.execution_mode ?? 'deterministic',
+      interval_seconds: job.interval_seconds ?? undefined,
+      job_type: job.job_type,
+      model_gateway_config_id: job.model_gateway_config_id ?? undefined,
+      name: job.name,
+      plugin_action_id: job.plugin_action_id ?? undefined,
+      plugin_connection_id: job.plugin_connection_id ?? undefined,
+      product_id: job.product_id ?? undefined,
+      schedule_type: job.schedule_type ?? 'manual',
+      skill_ids: job.skill_ids ?? [],
+      source_system: job.source_system ?? 'ai-brain',
+    });
+    setModalOpen(true);
+  };
+
+  const closeJobModal = () => {
+    setModalOpen(false);
+    setEditingJob(undefined);
+    form.resetFields();
+  };
+
   const submitJob = async () => {
     const values = await form.validateFields();
-    const {
-      plugin_input_rows: _pluginInputRows,
-      time_parameter_preset: _timeParameterPreset,
-      ...payload
-    } = values;
-    await createScheduledJob({
-      ...payload,
-      plugin_input_mapping: advancedPluginInputJsonOpen
-        ? parseJsonObject(values.plugin_input_mapping, '插件输入映射')
-        : rowsToRecord(values.plugin_input_rows),
-      plugin_output_mapping: values.plugin_output_mapping
-        ? parseJsonObject(values.plugin_output_mapping, '插件输出映射')
-        : {},
+    const requestPayload: Partial<ScheduledJobRecord> = {
+      ...values,
+      plugin_input_mapping: editingJob?.plugin_input_mapping ?? {},
+      plugin_output_mapping: editingJob?.plugin_output_mapping ?? {},
       skill_ids: values.skill_ids ?? [],
-    });
-    message.success('定时作业已创建');
-    setModalOpen(false);
-    setAdvancedPluginInputJsonOpen(false);
-    form.resetFields();
+    };
+    if (editingJob) {
+      await updateScheduledJob(editingJob.id, requestPayload);
+      message.success('定时作业已更新');
+    } else {
+      await createScheduledJob(requestPayload);
+      message.success('定时作业已创建');
+    }
+    closeJobModal();
     await reload();
   };
 
   const triggerJob = async (job: ScheduledJobRecord) => {
-    await runScheduledJob(job.id);
-    message.success('已触发作业运行');
-    await reload();
-  };
-
-  const applyTimeParameterPreset = (preset: string) => {
-    if (preset === 'none') {
-      form.setFieldsValue({ plugin_input_mapping: undefined, plugin_input_rows: [] });
-      return;
-    }
-    const nextMapping = pluginInputMappingByTimePreset[preset] ?? {};
-    form.setFieldsValue({
-      plugin_input_mapping: stableJson(nextMapping),
-      plugin_input_rows: recordToRows(nextMapping),
-    });
-  };
-
-  const syncPluginInputJsonFromRows = () => {
-    form.setFieldValue('plugin_input_mapping', stableJson(rowsToRecord(form.getFieldValue('plugin_input_rows'))));
-  };
-
-  const applyPluginInputJsonToRows = () => {
+    const hide = message.loading('作业执行中，请稍候...', 0);
+    setRunningJobId(job.id);
     try {
-      const mapping = parseJsonObject(form.getFieldValue('plugin_input_mapping'), '插件输入映射');
-      form.setFieldValue('plugin_input_rows', recordToRows(mapping));
-      message.success('已从 JSON 同步到输入映射表格');
+      const run = await runScheduledJob(job.id);
+      setSelectedRun(run);
+      message.success('作业运行完成');
+      await reload();
     } catch (error) {
-      message.error(error instanceof Error ? error.message : 'JSON 解析失败');
+      message.error(error instanceof Error ? error.message : '作业运行失败');
+    } finally {
+      hide();
+      setRunningJobId(undefined);
     }
   };
 
-  const toggleAdvancedPluginInputJson = () => {
-    const nextOpen = !advancedPluginInputJsonOpen;
-    if (nextOpen) {
-      syncPluginInputJsonFromRows();
-    }
-    setAdvancedPluginInputJsonOpen(nextOpen);
+  const confirmDeleteJob = (job: ScheduledJobRecord) => {
+    Modal.confirm({
+      title: '删除定时作业',
+      content: `确定删除「${job.name}」吗？`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        await deleteScheduledJob(job.id);
+        message.success('定时作业已删除');
+        await reload();
+      },
+    });
   };
 
   return (
@@ -338,42 +352,149 @@ export default function ScheduledJobsPage() {
             key: 'jobs',
             label: '作业配置',
             children: (
-              <Table<ScheduledJobRecord>
+              <ProTable<ScheduledJobRecord>
+                cardBordered
+                className="management-list-table"
+                dateFormatter="string"
+                headerTitle="作业配置"
                 loading={loading}
+                options={{
+                  density: true,
+                  fullScreen: true,
+                  reload,
+                  setting: true,
+                }}
+                pagination={{
+                  showSizeChanger: true,
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
                 rowKey="id"
+                scroll={{ x: 1860 }}
+                search={false}
                 dataSource={jobs}
                 tableLayout="fixed"
-                title={() => (
-                  <Space>
-                    <Button aria-label="新增作业" icon={<PlusOutlined />} type="primary" onClick={() => setModalOpen(true)}>
-                      新增作业
-                    </Button>
-                    <Button icon={<ReloadOutlined />} onClick={reload}>
-                      刷新
-                    </Button>
-                  </Space>
-                )}
+                toolBarRender={() => [
+                  <Button key="create-job" aria-label="新增作业" icon={<PlusOutlined />} type="primary" onClick={openCreateJobModal}>
+                    新增作业
+                  </Button>,
+                  <Button key="reload-jobs" icon={<ReloadOutlined />} onClick={reload}>
+                    刷新
+                  </Button>,
+                ]}
                 columns={[
-                  { dataIndex: 'name', title: '名称', ellipsis: true },
-                  { dataIndex: 'job_type', title: '类型', ellipsis: true },
-                  { dataIndex: 'plugin_action_id', title: '插件动作', ellipsis: true, render: (value) => value || '-' },
-                  { dataIndex: 'execution_mode', title: '执行模式', width: 150 },
-                  { dataIndex: 'schedule_type', title: '调度', width: 120 },
-                  { dataIndex: 'next_run_at', title: '下次运行', ellipsis: true, render: (value) => value || '-' },
+                  { dataIndex: 'name', title: '名称', width: 220, render: (value) => ellipsisText(String(value ?? '')) },
+                  {
+                    dataIndex: 'job_type',
+                    title: '类型',
+                    width: 190,
+                    render: (value) => ellipsisText(jobTypeLabelByValue.get(String(value)) ?? String(value ?? '')),
+                  },
+                  {
+                    dataIndex: 'plugin_connection_id',
+                    title: '数据连接',
+                    width: 220,
+                    render: (value) => {
+                      const connection = value ? pluginConnectionById.get(String(value)) : undefined;
+                      return ellipsisText(connection ? `${connection.name} (${connection.environment ?? 'default'})` : String(value ?? ''));
+                    },
+                  },
+                  {
+                    dataIndex: 'model_gateway_config_id',
+                    title: 'AI 模型',
+                    width: 220,
+                    render: (value) => {
+                      const config = value ? modelGatewayConfigById.get(String(value)) : undefined;
+                      return ellipsisText(config ? `${config.name} (${config.defaultChatModel})` : String(value ?? ''));
+                    },
+                  },
+                  {
+                    dataIndex: 'agent_id',
+                    title: 'Agent',
+                    width: 180,
+                    render: (value) => {
+                      const agent = value ? agentById.get(String(value)) : undefined;
+                      return ellipsisText(agent ? agent.name : String(value ?? ''));
+                    },
+                  },
+                  {
+                    dataIndex: 'skill_ids',
+                    title: 'Skills',
+                    width: 220,
+                    render: (value) => {
+                      const labels = Array.isArray(value)
+                        ? value.map((skillId) => skillById.get(String(skillId))?.name ?? String(skillId))
+                        : [];
+                      return ellipsisText(labels.join('、'));
+                    },
+                  },
+                  {
+                    dataIndex: 'plugin_action_id',
+                    title: '结果动作',
+                    width: 220,
+                    render: (value) => {
+                      const action = value ? pluginActionById.get(String(value)) : undefined;
+                      return ellipsisText(action ? action.name : String(value ?? ''));
+                    },
+                  },
+                  {
+                    dataIndex: 'execution_mode',
+                    title: '执行模式',
+                    width: 130,
+                    render: (value) => executionModeLabelByValue.get(String(value)) ?? String(value ?? '-'),
+                  },
+                  {
+                    dataIndex: 'schedule_type',
+                    title: '调度',
+                    width: 120,
+                    render: (value) => scheduleTypeLabelByValue.get(String(value)) ?? String(value ?? '-'),
+                  },
+                  { dataIndex: 'next_run_at', title: '下次运行', width: 180, render: (value) => ellipsisText(String(value ?? '')) },
                   {
                     dataIndex: 'status',
                     title: '状态',
-                    width: 120,
-                    render: (value, row) => <Tag color={row.enabled ? 'green' : 'default'}>{String(value ?? '-')}</Tag>,
+                    width: 100,
+                    render: (value, row) => (
+                      <Tag color={row.enabled ? 'green' : 'default'}>
+                        {statusLabelByValue.get(String(value)) ?? String(value ?? '-')}
+                      </Tag>
+                    ),
                   },
                   {
+                    fixed: 'right',
                     key: 'actions',
                     title: '操作',
-                    width: 140,
+                    valueType: 'option',
+                    width: 260,
                     render: (_, row) => (
-                      <Button icon={<PlayCircleOutlined />} onClick={() => triggerJob(row)}>
-                        运行
-                      </Button>
+                      <Space className="management-row-actions" size={0}>
+                        <Button
+                          aria-label={`编辑作业 ${row.name}`}
+                          icon={<EditOutlined />}
+                          onClick={() => openEditJobModal(row)}
+                          type="link"
+                        >
+                          编辑
+                        </Button>
+                        <Button
+                          aria-label={`运行作业 ${row.name}`}
+                          disabled={Boolean(runningJobId)}
+                          icon={<PlayCircleOutlined />}
+                          loading={runningJobId === row.id}
+                          onClick={() => triggerJob(row)}
+                          type="link"
+                        >
+                          运行
+                        </Button>
+                        <Button
+                          aria-label={`删除作业 ${row.name}`}
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => confirmDeleteJob(row)}
+                          type="link"
+                        >
+                          删除
+                        </Button>
+                      </Space>
                     ),
                   },
                 ]}
@@ -384,20 +505,53 @@ export default function ScheduledJobsPage() {
             key: 'runs',
             label: '运行记录',
             children: (
-              <Table<ScheduledJobRunRecord>
+              <ProTable<ScheduledJobRunRecord>
+                cardBordered
+                className="management-list-table"
+                dateFormatter="string"
+                headerTitle="运行记录"
                 loading={loading}
+                options={{
+                  density: true,
+                  fullScreen: true,
+                  reload,
+                  setting: true,
+                }}
+                pagination={{
+                  showSizeChanger: true,
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
                 rowKey="id"
+                scroll={{ x: 1340 }}
+                search={false}
                 dataSource={runs}
                 tableLayout="fixed"
                 columns={[
-                  { dataIndex: 'id', title: '运行 ID', ellipsis: true },
-                  { dataIndex: 'scheduled_job_id', title: '作业 ID', ellipsis: true },
+                  { dataIndex: 'id', title: '运行 ID', ellipsis: true, width: 220 },
+                  { dataIndex: 'scheduled_job_id', title: '作业 ID', ellipsis: true, width: 220 },
                   { dataIndex: 'status', title: '状态', width: 120 },
                   { dataIndex: 'trigger_type', title: '触发方式', width: 120 },
-                  { dataIndex: 'collector_run_id', title: '采集运行', ellipsis: true, render: (value) => value || '-' },
-                  { dataIndex: 'plugin_invocation_log_id', title: '插件调用', ellipsis: true, render: (value) => value || '-' },
+                  { dataIndex: 'collector_run_id', title: '采集运行', ellipsis: true, width: 220, render: (value) => value || '-' },
+                  { dataIndex: 'plugin_invocation_log_id', title: '插件调用', ellipsis: true, width: 220, render: (value) => value || '-' },
                   { dataIndex: 'records_imported', title: '导入数', width: 100 },
-                  { dataIndex: 'error_message', title: '错误', ellipsis: true, render: (value) => value || '-' },
+                  { dataIndex: 'error_message', title: '错误', ellipsis: true, width: 180, render: (value) => value || '-' },
+                  {
+                    fixed: 'right',
+                    key: 'actions',
+                    title: '操作',
+                    valueType: 'option',
+                    width: 130,
+                    render: (_, row) => (
+                      <Button
+                        aria-label={`查看运行结果 ${row.id}`}
+                        icon={<EyeOutlined />}
+                        onClick={() => setSelectedRun(row)}
+                        type="link"
+                      >
+                        详情
+                      </Button>
+                    ),
+                  },
                 ]}
               />
             ),
@@ -407,28 +561,17 @@ export default function ScheduledJobsPage() {
 
       <Modal
         open={modalOpen}
-        title="新增定时作业"
-        onCancel={() => {
-          setModalOpen(false);
-          setAdvancedPluginInputJsonOpen(false);
-        }}
+        title={editingJob ? '编辑定时作业' : '新增定时作业'}
+        onCancel={closeJobModal}
         onOk={submitJob}
       >
         <Form
           form={form}
           layout="vertical"
-          onValuesChange={(changedValues) => {
-            if (
-              advancedPluginInputJsonOpen
-              && Object.prototype.hasOwnProperty.call(changedValues, 'plugin_input_rows')
-            ) {
-              syncPluginInputJsonFromRows();
-            }
-          }}
           initialValues={{
             enabled: true,
-            execution_mode: 'deterministic',
-            plugin_input_rows: [],
+            execution_mode: 'ai_generated',
+            job_type: 'user_feedback_insight_extract',
             schedule_type: 'manual',
             source_system: 'ai-brain',
           }}
@@ -444,22 +587,10 @@ export default function ScheduledJobsPage() {
               <Switch />
             </Form.Item>
             <Form.Item label="执行模式" name="execution_mode">
-              <Select
-                options={[
-                  { label: 'deterministic', value: 'deterministic' },
-                  { label: 'ai_assisted', value: 'ai_assisted' },
-                  { label: 'ai_generated', value: 'ai_generated' },
-                ]}
-              />
+              <Select options={executionModeOptions} />
             </Form.Item>
             <Form.Item label="调度方式" name="schedule_type">
-              <Select
-                options={[
-                  { label: 'manual', value: 'manual' },
-                  { label: 'cron', value: 'cron' },
-                  { label: 'interval', value: 'interval' },
-                ]}
-              />
+              <Select options={scheduleTypeOptions} />
             </Form.Item>
           </Space>
           <Form.Item
@@ -482,7 +613,55 @@ export default function ScheduledJobsPage() {
               }))}
             />
           </Form.Item>
-          <Form.Item label="Agent" name="agent_id">
+          <Form.Item
+            label="数据连接"
+            name="plugin_connection_id"
+            rules={
+              selectedJobType === 'user_feedback_insight_extract'
+                ? [{ required: true, message: '请选择数据连接' }]
+                : []
+            }
+          >
+            <Select
+              allowClear
+              optionFilterProp="label"
+              placeholder="请选择取数连接"
+              showSearch
+              options={pluginConnections.map((connection) => ({
+                label: `${connection.name} (${connection.environment ?? 'default'})`,
+                value: connection.id,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            label="AI 模型"
+            name="model_gateway_config_id"
+            rules={
+              selectedJobType === 'user_feedback_insight_extract'
+                ? [{ required: true, message: '请选择 AI 模型' }]
+                : []
+            }
+          >
+            <Select
+              allowClear
+              optionFilterProp="label"
+              placeholder="请选择 AI 模型"
+              showSearch
+              options={modelGatewayConfigs.map((config) => ({
+                label: `${config.name} (${config.defaultChatModel})`,
+                value: config.id,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            label="Agent"
+            name="agent_id"
+            rules={
+              selectedJobType === 'user_feedback_insight_extract'
+                ? [{ required: true, message: '请选择 Agent' }]
+                : []
+            }
+          >
             <Select
               allowClear
               optionFilterProp="label"
@@ -494,7 +673,15 @@ export default function ScheduledJobsPage() {
               }))}
             />
           </Form.Item>
-          <Form.Item label="Skills" name="skill_ids">
+          <Form.Item
+            label="Skills"
+            name="skill_ids"
+            rules={
+              selectedJobType === 'user_feedback_insight_extract'
+                ? [{ required: true, message: '请选择 Skills' }]
+                : []
+            }
+          >
             <Select
               allowClear
               mode="multiple"
@@ -507,51 +694,25 @@ export default function ScheduledJobsPage() {
               }))}
             />
           </Form.Item>
-          <Form.Item label="插件动作" name="plugin_action_id">
+          <Form.Item
+            label="结果动作"
+            name="plugin_action_id"
+            rules={
+              selectedJobType === 'user_feedback_insight_extract'
+                ? [{ required: true, message: '请选择结果动作' }]
+                : []
+            }
+          >
             <Select
               allowClear
+              optionFilterProp="label"
+              placeholder="请选择结果动作"
+              showSearch
               options={pluginActions.map((action) => ({
                 label: `${action.name} (${action.code})`,
                 value: action.id,
               }))}
             />
-          </Form.Item>
-          <Form.Item label="插件连接" name="plugin_connection_id">
-            <Select
-              allowClear
-              optionFilterProp="label"
-              placeholder="默认使用动作绑定连接"
-              showSearch
-              options={pluginConnections.map((connection) => ({
-                label: `${connection.name} (${connection.environment ?? 'default'})`,
-                value: connection.id,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item label="时间参数" name="time_parameter_preset">
-            <Select
-              options={pluginInputTimePresetOptions}
-              placeholder="选择后自动生成动态参数"
-              onChange={applyTimeParameterPreset}
-            />
-          </Form.Item>
-          <PluginInputRows />
-          <Button type="link" onClick={toggleAdvancedPluginInputJson}>
-            高级输入映射 JSON 修改
-          </Button>
-          {advancedPluginInputJsonOpen ? (
-            <>
-              <Space style={{ marginBottom: 8 }}>
-                <Button onClick={syncPluginInputJsonFromRows}>同步表格到 JSON</Button>
-                <Button onClick={applyPluginInputJsonToRows}>从 JSON 应用到表格</Button>
-              </Space>
-              <Form.Item label="插件输入映射 JSON" name="plugin_input_mapping">
-                <Input.TextArea rows={3} placeholder='{"start_pt":"{{current_date-7}}","end_pt":"{{current_date}}"}' />
-              </Form.Item>
-            </>
-          ) : null}
-          <Form.Item label="插件输出映射 JSON" name="plugin_output_mapping">
-            <Input.TextArea rows={3} placeholder='{"records_imported_path":"$.commits"}' />
           </Form.Item>
           <Form.Item label="Cron 表达式" name="cron_expression">
             <Input />
@@ -563,6 +724,73 @@ export default function ScheduledJobsPage() {
             <Input />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        footer={<Button onClick={() => setSelectedRun(undefined)}>关闭</Button>}
+        open={Boolean(selectedRun)}
+        title="运行结果详情"
+        width={980}
+        onCancel={() => setSelectedRun(undefined)}
+      >
+        {selectedRun ? (
+          <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+            <Descriptions
+              bordered
+              column={2}
+              size="small"
+              items={[
+                { key: 'id', label: '运行 ID', children: selectedRun.id },
+                { key: 'status', label: '状态', children: selectedRun.status },
+                {
+                  key: 'job_type',
+                  label: '作业类型',
+                  children: selectedRunJobType ? jobTypeLabelByValue.get(selectedRunJobType) ?? selectedRunJobType : '-',
+                },
+                {
+                  key: 'execution_mode',
+                  label: '执行模式',
+                  children: selectedRunExecutionMode
+                    ? executionModeLabelByValue.get(selectedRunExecutionMode) ?? selectedRunExecutionMode
+                    : '-',
+                },
+                { key: 'model_gateway_config_id', label: 'AI 模型', children: selectedRunModelLabel },
+                { key: 'agent_id', label: 'Agent', children: selectedRunAgentLabel },
+                { key: 'skill_ids', label: 'Skills', children: selectedRunSkillLabels },
+                { key: 'trigger_type', label: '触发方式', children: selectedRun.trigger_type || '-' },
+                { key: 'records_imported', label: '导入数', children: selectedRun.records_imported ?? 0 },
+                { key: 'collector_run_id', label: '采集运行', children: selectedRun.collector_run_id || '-' },
+                { key: 'plugin_invocation_log_id', label: '插件调用', children: selectedRun.plugin_invocation_log_id || '-' },
+                { key: 'scheduled_job_id', label: '作业 ID', children: selectedRun.scheduled_job_id || '-' },
+                { key: 'started_at', label: '开始时间', children: selectedRun.started_at || '-' },
+                { key: 'finished_at', label: '结束时间', children: selectedRun.finished_at || '-' },
+                { key: 'error_code', label: '错误码', children: selectedRun.error_code || '-' },
+                {
+                  key: 'error_message',
+                  label: '错误信息',
+                  children: selectedRun.error_message || '-',
+                },
+              ]}
+            />
+            <JsonPreview
+              title="数据连接获取内容"
+              value={getRunExecutionNode(selectedRun, 'data_connection')}
+            />
+            <JsonPreview
+              title="经过 Skill 处理后的内容"
+              value={getRunExecutionNode(selectedRun, 'skill_processing')}
+            />
+            <JsonPreview
+              title="结果动作反馈内容"
+              value={getRunExecutionNode(selectedRun, 'result_action')}
+            />
+            <JsonPreview title="结果摘要" value={selectedRun.result_summary} />
+            <JsonPreview title="插件快照" value={selectedRun.resolved_plugin_snapshot} />
+            <JsonPreview title="Skill 快照" value={selectedRun.resolved_skill_snapshots} />
+            <JsonPreview title="Prompt 快照" value={selectedRun.resolved_prompt_snapshot} />
+            <JsonPreview title="作业配置快照" value={selectedRun.config_snapshot} />
+          </Space>
+        ) : null}
       </Modal>
     </PageContainer>
   );

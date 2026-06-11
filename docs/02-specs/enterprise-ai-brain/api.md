@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.222 |
+| 功能版本 | v1.1.234 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,9 +13,23 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.234 | 2026-06-11 | 补充插件删除 API：插件、连接、动作支持 DELETE；若仍被连接、动作、定时作业或调用日志引用则返回 409 并提示使用清单 | Codex |
+| v1.1.233 | 2026-06-11 | 补充定时作业维护 API：列表页必须提供编辑和删除入口，后端支持 `DELETE /api/system/scheduled-jobs/{job_id}` 并写入删除审计 | Codex |
+| v1.1.231 | 2026-06-11 | 补充插件维护 API 契约：插件、连接、动作均支持按 ID PATCH 编辑，连接/动作编辑保留历史 `***` 占位对应的原始密钥并继续支持 Params/Headers 可视化配置 | Codex |
+| v1.1.232 | 2026-06-11 | 明确定时作业插件链路 API 语义：数据连接负责取数，Skill 负责分析处理，结果动作通过 `result_mapping.write_target` 声明写入目标；作业 `plugin_output_mapping` 为空时复用动作结果映射 | Codex |
+| v1.1.230 | 2026-06-11 | 知识导入可靠性收口：worker 增加数据库租约 claim，目录归档按整棵子树生效，解析资产按 bucket/object_key 幂等 upsert，chunk set 保留索引状态用于回滚恢复 | Codex |
+| v1.1.228 | 2026-06-11 | OCR JSON 知识导入的 chunk metadata 补充页内图片数量、表格数量和图片引用，前端 chunk 预览同步展示图片来源 | Codex |
+| v1.1.227 | 2026-06-11 | 知识导入新增 `regex_section` 分块策略，可按 Markdown/章节/Section 分隔符切分并在 chunk metadata 写入分段标题和切分规则 | Codex |
+| v1.1.226 | 2026-06-11 | 知识 chunk 版本化数据库约束收口：移除旧 `document_id/chunk_index` 唯一约束，新增 `document_id/chunk_set_id/chunk_index` 唯一索引以支持历史 chunk set 共存 | Codex |
+| v1.1.225 | 2026-06-11 | 知识导入 worker 补偿扫描 queued 任务时沿用导入任务 `created_by` 作为写入归属，避免后台任务创建 chunk set 时违反用户外键 | Codex |
+| v1.1.224 | 2026-06-11 | 知识导入解析产物拆分增强：`ocr_json` / `table_json` 解析器除生成 Markdown 外，还沉淀结构化资产并向 chunk metadata 写入页码、表格列和来源资产引用；worker 周期性补偿扫描 queued 任务 | Codex |
+| v1.1.223 | 2026-06-11 | 知识导入任务新增应用内后台 worker/队列契约：上传、重解析和 retry 自动入队，补充 worker 状态接口和 run 运维补偿语义 | Codex |
 | v1.1.222 | 2026-06-11 | 知识导入任务补充 run/retry/cancel、重解析、chunk set 预览/激活、父子分块 source 和目录批量整理契约 | Codex |
 | v1.1.221 | 2026-06-10 | 知识中心新增知识空间、空间成员、目录、MinIO/S3 资产上传、导入任务和 asset preview API 契约，检索和列表支持空间/目录过滤 | Codex |
 | v1.1.220 | 2026-06-10 | 补充 `user_feedback_insight_extract` 定时作业契约：可绑定 MaxCompute/MCP 插件动作，从 `insights_path` 映射读取洞察并写入用户反馈洞察表 | Codex |
+| v1.1.232 | 2026-06-11 | 插件连接调试契约改为明文展示：连接响应、测试诊断、动作请求预览和插件调用日志返回真实 auth/request/header 值，不再因 `***` 占位提前拦截请求 | Codex |
+| v1.1.231 | 2026-06-11 | 增强插件连接测试诊断契约：返回最终 URL、query、headers、Header 来源、`***` 占位检测和远端响应摘要，认证配置里的同名认证 Header 优先于 Params/Headers 表格值 | Codex |
+| v1.1.230 | 2026-06-11 | 补充插件连接级请求配置契约：连接保存公共 `request_config.query/headers`，连接测试、动作预览和实际调用与动作配置合并 | Codex |
 | v1.1.229 | 2026-06-11 | 补充插件配置体验优化契约：连接测试返回诊断步骤，动作支持试运行和映射命中，系统变量提供预览接口，定时作业插件输入映射默认表格化且 JSON 作为高级入口 | Codex |
 | v1.1.219 | 2026-06-10 | 新增插件管理 API：补充插件、连接、动作、调用日志、动作手动调用，以及定时作业引用插件动作的请求/响应字段 | Codex |
 | v1.1.218 | 2026-06-10 | 新增定时系统作业和 AI 能力配置目标 API：补充 Agent、Skill、定时作业、运行实例、手动触发、取消、AI 配置快照和审计契约 | Codex |
@@ -525,16 +539,18 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | GET | `/api/system/plugins` | 查询集成插件定义。 |
 | Plugins | POST | `/api/system/plugins` | 创建 HTTP/MCP 插件定义；`category` 必须使用约定枚举 `general/data_warehouse/devops/issue_tracking/observability/knowledge_base/collaboration/ai_service/business_system`。 |
 | Plugins | PATCH | `/api/system/plugins/{plugin_id}` | 更新插件名称、分类、协议、风险等级或状态；分类必须使用插件分类枚举，不允许自由文本。 |
-| Plugins | GET/POST/PATCH | `/api/system/plugin-connections` | 管理插件连接配置；`environment` 必须使用约定枚举 `default/dev/test/staging/prod/sandbox`；连接认证默认按 `none/bearer/api_key_header/basic` 展示 Token、Header 或 Basic 字段并生成 `auth_config`，JSON 仅作为高级修改入口；响应必须脱敏 `auth_config` 中的 token、secret、password、api_key 等字段。 |
-| Plugins | POST | `/api/system/plugin-connections/{connection_id}/test` | 测试插件连接 endpoint 可达性和认证配置，返回 `status/latency_ms/error_message/request_summary/diagnostics[]` 等结构化结果并写入审计；诊断步骤覆盖 endpoint、协议、认证、HTTP 请求或 MCP `tools/list`，请求摘要必须脱敏。 |
+| Plugins | DELETE | `/api/system/plugins/{plugin_id}` | 删除未被使用的插件；若存在下级连接、动作、定时作业或调用日志引用，返回 `409 PLUGIN_RESOURCE_IN_USE` 并提示使用清单。 |
+| Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-connections`, `/api/system/plugin-connections/{connection_id}` | 管理插件连接配置；`environment` 必须使用约定枚举 `default/dev/test/staging/prod/sandbox`；连接认证默认按 `none/bearer/api_key_header/basic` 展示 Token、Header 或 Basic 字段并生成 `auth_config`，JSON 仅作为高级修改入口；连接级公共 Params/Headers 默认通过表格维护并生成 `request_config.query/headers`，高级请求 JSON 仅作为精修入口；响应按管理员调试场景明文返回 `auth_config` 和 `request_config`，便于定位三方连接问题；编辑时若提交历史 `***` 占位，服务端仍保留原始密钥值，避免旧页面回填覆盖真实配置；删除连接前必须确认未被动作、定时作业或调用日志引用，否则返回 409。 |
+| Plugins | POST | `/api/system/plugin-connections/{connection_id}/test` | 测试插件连接 endpoint 可达性、认证和连接级 Params/Headers 配置，返回 `status/latency_ms/error_message/request_summary/response_summary/diagnostics[]` 等结构化结果并写入审计；`request_summary` 必须包含最终 `url/query/headers/header_sources/masked_placeholder_headers` 并明文展示实际请求值；认证配置生成的同名认证 Header 优先于 Params/Headers 表格值；若最终请求仍包含 `***`，服务端应把它作为用户配置的明文值发出，同时在 `masked_placeholder_headers` 标记，便于判断是否误填；HTTP 400/500 等远端错误需在 `response_summary` 中保留状态码和响应片段。 |
 | Plugins | GET | `/api/system/plugin-system-variables` | 查询系统变量预览；支持 `timezone` 参数，返回 `{{current_date}}`、`{{current_date-7}}`、`{{last_full_week.start}}` 等表达式、说明和当前解析值。 |
-| Plugins | GET/POST/PATCH | `/api/system/plugin-actions` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口；页面必须支持可视化表格与 JSON 双向同步，并提供请求预览。 |
+| Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-actions`, `/api/system/plugin-actions/{action_id}` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作新增和编辑默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口；页面必须支持可视化表格与 JSON 双向同步，并提供明文请求预览和结果写入目标；`result_mapping.write_target` 首批支持 `scheduled_job_result` 与 `user_feedback_insights`；编辑时若提交历史 `***` 占位，服务端必须保留原始敏感值；删除动作前必须确认未被定时作业或调用日志引用，否则返回 409。 |
 | Plugins | POST | `/api/system/plugin-actions/{action_id}/invoke` | 管理员手动调用一次插件动作并写入调用日志。 |
 | Plugins | POST | `/api/system/plugin-actions/{action_id}/trial` | 管理员试运行一次插件动作；可临时覆盖连接和输入 payload，返回 `request_preview/response_summary/mapping_hits/status/latency_ms/error_message`，不作为正式定时作业调用日志。 |
 | Plugins | GET | `/api/system/plugin-invocation-logs` | 查询插件动作调用日志。 |
 | Scheduler | GET | `/api/system/scheduled-jobs` | 查询定时系统作业定义。 |
 | Scheduler | POST | `/api/system/scheduled-jobs` | 创建采集、AI 分析、插件动作调用、迭代建议或看板刷新作业。 |
 | Scheduler | PATCH | `/api/system/scheduled-jobs/{job_id}` | 更新作业计划、启停、插件动作、AI 装配、重试和超时策略。 |
+| Scheduler | DELETE | `/api/system/scheduled-jobs/{job_id}` | 删除定时作业定义并写入 `scheduled_job.deleted` 审计；当前物理删除遵循数据库外键约束处理关联运行实例，运行历史归档后续通过软删除设计单独演进。 |
 | Scheduler | POST | `/api/system/scheduled-jobs/{job_id}/run` | 手动触发一次作业运行。 |
 | Scheduler | GET | `/api/system/scheduled-job-runs` | 查询定时作业运行实例、配置快照、collector run 关联和结果摘要。 |
 | Scheduler | POST | `/api/system/scheduled-job-runs/{run_id}/cancel` | 取消仍处于 queued/running 的运行实例。 |
@@ -2193,7 +2209,7 @@ POST /api/knowledge/spaces/{space_id}/folders
 PATCH /api/knowledge/folders/{folder_id}
 ```
 
-空间成员角色支持 `reader`、`contributor`、`maintainer` 和 `admin`。空间是知识访问边界；目录只承担空间内组织结构，不作为独立安全边界。`PATCH /api/knowledge/folders/{folder_id}` 支持 `name`、`parent_folder_id`、`sort_order` 和 `status=active|archived`，移动目录时必须拒绝跨空间、移动到自身或移动到子孙目录。
+空间成员角色支持 `reader`、`contributor`、`maintainer` 和 `admin`。空间是知识访问边界；目录只承担空间内组织结构，不作为独立安全边界。`PATCH /api/knowledge/folders/{folder_id}` 支持 `name`、`parent_folder_id`、`sort_order` 和 `status=active|archived`，移动目录时必须拒绝跨空间、移动到自身或移动到子孙目录。目录归档按整棵子树生效：父目录归档后，子目录在目录列表中不可见，且不得继续作为新建子目录、上传文档或批量移动文档的目标目录。
 
 导入文档：
 
@@ -2235,7 +2251,7 @@ POST /api/knowledge/documents/upload
 }
 ```
 
-上传接口把原始文件写入配置的 S3-compatible 对象存储，默认私有化部署使用 MinIO；业务事实写入 PostgreSQL 的 `knowledge_documents`、`knowledge_assets` 和 `knowledge_import_jobs`。上传成功后文档进入 `importing`，`active_chunk_set_id` 为空，导入任务进入 `queued`，不会在请求内同步生成 chunk set。响应返回 `document`、原始 `asset` 和 `import_job`。文档资产通过 `GET /api/knowledge/documents/{document_id}/assets` 查询，导入任务通过 `GET /api/knowledge/import-jobs?knowledge_space_id=...&document_id=...&status=...` 查询，两者均先按知识空间或文档读权限过滤。对象预览必须通过 `GET /api/knowledge/assets/{asset_id}/preview` 鉴权代理，不向前端暴露永久对象存储 URL。
+上传接口把原始文件写入配置的 S3-compatible 对象存储，默认私有化部署使用 MinIO；业务事实写入 PostgreSQL 的 `knowledge_documents`、`knowledge_assets` 和 `knowledge_import_jobs`。上传成功后文档进入 `importing`，`active_chunk_set_id` 为空，导入任务进入 `queued`，不会在请求内同步生成 chunk set；应用内 `knowledge_import_worker` 默认在非测试环境启用并自动消费 queued 任务，启动和空闲轮询时都会补偿扫描 repository 中遗漏的 queued 任务，补偿运行沿用导入任务 `created_by` 作为写入归属，确保 `knowledge_chunk_sets.created_by` 仍引用真实系统用户；`APP_ENV=test/testing/pytest` 默认关闭以保持单测可控。响应返回 `document`、原始 `asset` 和 `import_job`。文档资产通过 `GET /api/knowledge/documents/{document_id}/assets` 查询，导入任务通过 `GET /api/knowledge/import-jobs?knowledge_space_id=...&document_id=...&status=...` 查询，两者均先按知识空间或文档读权限过滤。对象预览必须通过 `GET /api/knowledge/assets/{asset_id}/preview` 鉴权代理，不向前端暴露永久对象存储 URL。
 
 导入任务操作：
 
@@ -2243,9 +2259,10 @@ POST /api/knowledge/documents/upload
 POST /api/knowledge/import-jobs/{job_id}/run
 POST /api/knowledge/import-jobs/{job_id}/retry
 POST /api/knowledge/import-jobs/{job_id}/cancel
+GET /api/knowledge/import-worker/status
 ```
 
-`run` 读取原始资产，按 `parser_engine` 生成独立 `parsed_markdown` 资产，再写入新的 `knowledge_chunk_sets` 和 `knowledge_chunks`；成功后切换文档 `active_chunk_set_id`，旧 active chunk set 归档。当前支持 `plain_text`、`markdown`、`pdf_text`、`ocr_json`、`table_json` 解析器和 `simple_text`、`parent_child` 分块策略。`retry` 只把 failed/cancelled 任务重置为 `queued`，不得重复创建文档或原始资产；`cancel` 只能取消 queued/uploaded/failed 任务，状态不允许时返回 `IMPORT_JOB_STATE_INVALID`。
+后台 worker 会先通过 PostgreSQL repository 对 queued 任务执行原子 claim，写入 `locked_by`、`locked_until` 并递增 `attempt_count`；只有获取租约的 worker 才能继续解析，任务完成、失败、取消或 retry 时必须清理锁字段。worker 会读取原始资产，按 `parser_engine` 生成独立 `parsed_markdown` 资产，再写入新的 `knowledge_chunk_sets` 和 `knowledge_chunks`；成功后切换文档 `active_chunk_set_id`，旧 active chunk set 归档。数据库唯一性以 `document_id + chunk_set_id + chunk_index` 为边界，允许同一文档的历史 chunk set 与当前 chunk set 保留相同 chunk 序号。`ocr_json` 和 `table_json` 解析器会额外写入结构化 `ocr_json` / `table_json` sidecar 资产，`parsed_markdown.metadata.structured_asset_ids` 指向这些结构化资产，chunk metadata 会补充 `page_number`、`image_count`、`image_refs`、`table_count`、`table_index`、`columns`、`source_kind`、`source_asset_type` 和 `structured_asset_id`；`regex_section` 分块会按 Markdown 标题、分隔线、中文章节和英文 Section/Chapter 标记切分，并在 chunk metadata 写入 `chunk_role=regex_section`、`section_title` 和 `split_pattern`；解析资产按 `bucket/object_key` 幂等 upsert，半成功重试不得重复创建同一对象资产。`run` 保留为测试、运维补偿和 worker 关闭场景下的手动触发入口。当前支持 `plain_text`、`markdown`、`pdf_text`、`ocr_json`、`table_json` 解析器和 `simple_text`、`parent_child`、`regex_section` 分块策略。`retry` 只把 failed/cancelled 任务重置为 `queued` 并在 worker 可用时重新入队，不得重复创建文档或原始资产；`cancel` 只能取消 queued/uploaded/failed 任务，状态不允许时返回 `IMPORT_JOB_STATE_INVALID`。`GET /api/knowledge/import-worker/status` 需要管理员或知识维护权限，返回 `enabled/running/worker_id/pending_count/active_job_id/queued_job_ids/processed_count/failed_count`，用于页面或运维检查后台队列状态。可通过 `KNOWLEDGE_IMPORT_WORKER_ENABLED`、`KNOWLEDGE_IMPORT_WORKER_POLL_INTERVAL_SECONDS` 和 `KNOWLEDGE_IMPORT_WORKER_LOCK_TTL_SECONDS` 调整 worker。
 
 分块版本与重解析：
 
@@ -2257,7 +2274,7 @@ POST /api/knowledge/documents/{document_id}/reparse
 POST /api/knowledge/documents/batch-move
 ```
 
-`chunk-sets` 返回文档所有分块版本的解析器、分块策略、chunk 数、状态和激活时间；`chunks` 返回指定版本的 chunk 内容、`parent_chunk_id` 和 `metadata.chunk_role/heading/section_index`。`activate` 将历史版本设为 active 并归档同文档其他版本；`reparse` 基于原始资产创建新的 queued 导入任务，只有 run 成功后才切换 active。`batch-move` 接收 `document_ids` 与 `folder_id`，逐条校验写权限并返回 `updated` 和 `skipped`。
+`chunk-sets` 返回文档所有分块版本的解析器、分块策略、chunk 数、状态、激活时间、`index_status` 和 `vector_index_error`；`chunks` 返回指定版本的 chunk 内容、`parent_chunk_id` 和 `metadata.chunk_role/heading/section_index/section_title/split_pattern`。`activate` 将历史版本设为 active、归档同文档其他版本，并按目标 chunk set 保存的索引状态恢复文档 `index_status`，不能只根据是否存在 embedding_model 猜测状态；`reparse` 基于原始资产创建新的 queued 导入任务并在 worker 可用时自动处理，只有导入任务成功后才切换 active，失败的新 chunk set 保持 `failed` 且旧 active 继续可检索。`batch-move` 接收 `document_ids` 与 `folder_id`，逐条校验写权限并返回 `updated` 和 `skipped`。
 
 查询文档：
 
@@ -2322,7 +2339,7 @@ POST /api/knowledge/search
 }
 ```
 
-前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且 Embedding 网关可用时查询文本会生成 embedding，并只和 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 计算 cosine 相似度，返回 `score` 与 `retrieval_mode=vector`；不兼容、缺失或仅文本索引可用时按关键词检索返回 `retrieval_mode=keyword` 且 `score=null`。启用 `parent_child` 时父块不作为直接命中结果返回，子块命中会在 `source.parent_chunk_id` 和 `source.parent_content` 中补充父块上下文。无结果时展示真实空状态，不回退到示例数据。
+前端知识中心提供“知识检索”弹窗，提交真实 `/api/knowledge/search` 请求并展示可访问结果的标题、来源、召回模式和内容摘要；后端返回 chunk 级命中结果，权限过滤必须在返回 chunk 前完成。存在可读向量 chunk 且 Embedding 网关可用时查询文本会生成 embedding，并只和 `embedding_config_id`、`embedding_model`、`embedding_dimension` 兼容的 chunk 计算 cosine 相似度，返回 `score` 与 `retrieval_mode=vector`；不兼容、缺失或仅文本索引可用时按关键词检索返回 `retrieval_mode=keyword` 且 `score=null`。启用 `parent_child` 时父块不作为直接命中结果返回，子块命中会在 `source.parent_chunk_id` 和 `source.parent_content` 中补充父块上下文；OCR/Table 导入的命中 chunk metadata 可包含页码、图片数量、图片引用、表格数量、表格序号、列名和结构化解析资产引用。无结果时展示真实空状态，不回退到示例数据。
 
 知识沉淀：
 
@@ -2679,15 +2696,15 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 }
 ```
 
-`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`。平台内 AI 作业必须引用 active Agent 和 active Skills；当 `user_feedback_insight_extract` 绑定的插件动作已经封装 MCP/上游 AI 分析时，可先由插件输出结构化洞察，后续再按需要补充 Agent/Skill。指定 `model_gateway_config_id` 时覆盖 Agent 默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发和取消必须写入审计。
+`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`。`user_feedback_collect` 表示仅取数采集，不执行平台 Skill/大模型处理；若用户反馈作业同时配置插件动作、AI 模型、Agent 或 Skills，后端必须按兼容规则归一为 `user_feedback_insight_extract` 并使用 `ai_generated`，避免配置了 AI 链路却静默直通。平台内 AI 作业必须引用 active Agent 和 active Skills；当 `user_feedback_insight_extract` 绑定的插件动作已经封装 MCP/上游 AI 分析时，可先由插件输出结构化洞察，后续再按需要补充 Agent/Skill。指定 `model_gateway_config_id` 时覆盖 Agent 默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发和取消必须写入审计。
 
-插件动作作业可设置 `job_type=plugin_action_invoke`，并在作业定义中传入 `plugin_action_id`、可选 `plugin_connection_id`、`plugin_input_mapping` 和 `plugin_output_mapping`。定时任务负责选择“调哪个插件动作、用哪个连接、什么时候调”；AI Skill 只消费插件返回数据并生成分析，不保存三方系统连接或密钥。插件输出映射第一阶段支持 `records_imported_path` 这类摘要字段映射，真实业务入库仍必须通过对应业务 service 完成。
+插件链路按“数据连接取数 -> Skill 分析处理 -> 结果动作写入”理解：作业定义中 `plugin_connection_id` 表示取数连接，`skill_ids` 表示处理能力，`plugin_action_id` 表示结果动作，`plugin_input_mapping` 表示运行时传给连接/动作的输入参数。`plugin_output_mapping` 是作业级覆盖项；为空时运行时复用结果动作的 `result_mapping`。插件输出映射第一阶段支持 `records_imported_path` 这类摘要字段映射和 `write_target` 写入目标，真实业务入库仍必须通过对应业务 service 完成。
 
-`plugin_input_mapping` 和插件动作 `request_config.query/headers` 支持动态时间 token，保存配置时保留语义 token，运行实例触发时按作业 `timezone` 解析。首批 token 包括 `{{current_date}}` / `{{date}}`（输出 `YYYYMMDD`）、`{{date_iso}}`（输出 `YYYY-MM-DD`）、`{{now}}`、`{{today.start}}`、`{{today.end}}`、`{{yesterday.start}}`、`{{yesterday.end}}`、`{{last_7_days.start}}`、`{{last_7_days.end}}`、`{{last_full_week.start}}` 和 `{{last_full_week.end}}`；日期和时间 token 支持简单天数偏移表达式，例如 `{{current_date-7}}` 表示当前日期前 7 天、`{{today.start-7}}` 表示今天零点前 7 天。历史值 `last_monday_00:00:00` 与 `this_monday_00:00:00` 兼容解析为上一完整自然周起止时间。前端配置默认以参数表格维护插件输入映射，并在高级模式中提供 JSON 同步和反向应用，避免要求业务用户手写复杂 JSON。
+`plugin_input_mapping`、插件连接 `request_config.query/headers` 和插件动作 `request_config.query/headers` 支持动态时间 token，保存配置时保留语义 token，运行实例触发时按作业 `timezone` 解析。首批 token 包括 `{{current_date}}` / `{{date}}`（输出 `YYYYMMDD`）、`{{date_iso}}`（输出 `YYYY-MM-DD`）、`{{now}}`、`{{today.start}}`、`{{today.end}}`、`{{yesterday.start}}`、`{{yesterday.end}}`、`{{last_7_days.start}}`、`{{last_7_days.end}}`、`{{last_full_week.start}}` 和 `{{last_full_week.end}}`；日期和时间 token 支持简单天数偏移表达式，例如 `{{current_date-7}}` 表示当前日期前 7 天、`{{today.start-7}}` 表示今天零点前 7 天。历史值 `last_monday_00:00:00` 与 `this_monday_00:00:00` 兼容解析为上一完整自然周起止时间。前端配置默认以参数表格维护插件连接 Params/Headers、插件动作 Params/Headers 和连接输入映射，并在高级模式中提供 JSON 同步和反向应用，避免要求业务用户手写复杂 JSON。连接配置作为公共默认值，动作配置作为具体接口覆盖项；同名 query/header 由动作覆盖连接。
 
-MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extract`，插件动作通常为 `action_type=mcp_tool`、`tool_name=maxcompute.execute_sql`；`plugin_input_mapping` 可传入 `week_start={{last_full_week.start}}`、`week_end={{last_full_week.end}}`、`time_field`，`plugin_output_mapping` 至少支持 `insights_path`、`records_imported_path` 和 `rows_path`。运行成功后 `records_imported` 为实际新增洞察数，`result_summary.plugin.response_summary.json.row_count` 保留源表读取行数摘要。
+MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extract`，数据连接保存 endpoint、认证和公共 Params/Headers，结果动作通常为 `action_type=mcp_tool`、`tool_name=maxcompute.execute_sql`；请求时间参数优先在连接/动作 Params 中配置，作业级 `plugin_input_mapping` 仅作为兼容和高级覆盖。作业必须选择 `model_gateway_config_id`、`agent_id` 和 `skill_ids`。动作 `result_mapping` 默认包含 `write_target=user_feedback_insights`、`insights_path`、`records_imported_path` 和 `rows_path`，作业 `plugin_output_mapping` 仅用于覆盖。运行顺序为数据连接取数、模型网关按 Agent/Skill 处理为结构化 JSON、结果动作写入。运行成功后 `records_imported` 为实际新增洞察数，`result_summary.plugin.response_summary.json.row_count` 保留源表读取行数摘要；`result_summary.execution_nodes` 必须按 `data_connection`、`skill_processing`、`result_action` 三段保存数据连接获取内容、Skill 处理内容和结果动作反馈内容。`skill_processing.model_gateway_called=true`，并包含 `model_gateway_config_id`、`model_log_id`、`processing_mode=model_gateway_json_transform` 和模型输出 JSON 摘要。
 
-运行实例响应必须包含 `scheduled_job_id`、`collector_run_id`、`trigger_type`、`scheduled_for`、`status`、`started_at`、`finished_at`、`records_imported`、`error_code`、`error_message`、`result_summary`、`config_snapshot`、`resolved_agent_snapshot`、`resolved_skill_snapshots`、`resolved_prompt_snapshot`、`tool_policy_snapshot`、`resolved_plugin_snapshot` 和 `plugin_invocation_log_id`。模型日志仍只记录 provider、model、purpose、tokens、latency、status 和错误元数据，不保存完整 prompt 或完整输出。插件调用日志只记录请求/响应摘要和错误元数据，不保存明文 token 或完整敏感 payload。`POST /run` 仅创建一次运行实例并进入 `queued/running`，不得直接返回伪造业务结果。
+运行实例响应必须包含 `scheduled_job_id`、`collector_run_id`、`trigger_type`、`scheduled_for`、`status`、`started_at`、`finished_at`、`records_imported`、`error_code`、`error_message`、`result_summary`、`config_snapshot`、`resolved_agent_snapshot`、`resolved_skill_snapshots`、`resolved_prompt_snapshot`、`tool_policy_snapshot`、`resolved_plugin_snapshot` 和 `plugin_invocation_log_id`。`result_summary.execution_nodes.data_connection` 应包含明文请求摘要、解析后的输入映射、插件响应摘要和源数据数量；`skill_processing` 应包含 Skill 配置、是否调用模型网关、处理输入和处理输出；`result_action` 应包含写入目标、写入数量、生成 ID 和动作反馈。模型日志仍只记录 provider、model、purpose、tokens、latency、status 和错误元数据，不保存完整 prompt 或完整输出。插件调用日志按管理员调试场景保存并返回明文请求/响应摘要，便于排查三方系统连接和动作写入问题。`POST /run` 仅创建一次运行实例并进入 `queued/running`，不得直接返回伪造业务结果。
 
 待归属数据队列：
 
@@ -3428,6 +3445,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
+| v1.1.230 | 2026-06-11 | 知识导入可靠性收口：worker 数据库租约、目录子树归档、资产幂等 upsert 和 chunk set 索引状态回滚。 |
 | v1.1.222 | 2026-06-11 | 知识导入任务新增 run/retry/cancel、重解析、chunk set 预览/激活、父子分块 source 和目录批量整理契约。 |
 | v1.1.221 | 2026-06-10 | 知识中心新增知识空间、目录、MinIO/S3 资产上传、导入任务、chunk set 和资产预览契约。 |
 | v1.1.97 | 2026-06-05 | 明确首页看板允许 PostgreSQL source rows + Python 聚合，管理主列表仍要求服务端分页、排序和筛选。 |

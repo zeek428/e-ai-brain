@@ -37,6 +37,23 @@ class Settings:
             "true",
             "yes",
         }
+        default_import_worker_enabled = (
+            "false" if self.app_env.lower() in {"test", "testing", "pytest"} else "true"
+        )
+        self.knowledge_import_worker_enabled = os.getenv(
+            "KNOWLEDGE_IMPORT_WORKER_ENABLED",
+            default_import_worker_enabled,
+        ).lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        self.knowledge_import_worker_poll_interval_seconds = float(
+            os.getenv("KNOWLEDGE_IMPORT_WORKER_POLL_INTERVAL_SECONDS", "1.0"),
+        )
+        self.knowledge_import_worker_lock_ttl_seconds = float(
+            os.getenv("KNOWLEDGE_IMPORT_WORKER_LOCK_TTL_SECONDS", "300.0"),
+        )
         self.model_gateway_base_url = os.getenv("MODEL_GATEWAY_BASE_URL", "")
         self.model_gateway_api_key = os.getenv("MODEL_GATEWAY_API_KEY", "")
         self.model_gateway_default_chat_model = os.getenv(

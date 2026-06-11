@@ -96,6 +96,44 @@ def test_postgres_table_maintenance_delegates_to_domain_repository(monkeypatch):
     ]
 
 
+def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkeypatch):
+    repository = PostgresSnapshotRepository("postgresql://unused")
+    applied_migrations: list[str] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql: str) -> None:
+            assert sql.strip()
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    monkeypatch.setattr(repository, "_connect", lambda: FakeConnection())
+    monkeypatch.setattr(
+        repository,
+        "_apply_additive_migration",
+        lambda cursor, filename: applied_migrations.append(filename),
+    )
+
+    repository._ensure_schema_compatibility()
+
+    assert "036_integration_plugins.sql" in applied_migrations
+    assert "038_plugin_connection_request_config.sql" in applied_migrations
+    assert "039_task_center_operational_menus.sql" in applied_migrations
+
+
 def test_postgres_brain_app_read_models_delegate_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []
@@ -1266,6 +1304,11 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
         "search_knowledge_chunks",
         record_call("search_knowledge_chunks", [{"source": "search_knowledge_chunks"}]),
     )
+    monkeypatch.setattr(
+        KnowledgeReadRepository,
+        "claim_knowledge_import_job",
+        record_call("claim_knowledge_import_job", True),
+    )
 
     assert repository.load_knowledge() == {
         "knowledge_assets": {},
@@ -1295,6 +1338,11 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
         user_roles=["product_owner"],
         query="AI Brain",
     )[0]["source"] == "search_knowledge_chunks"
+    assert repository.claim_knowledge_import_job(
+        job_id="knowledge_import_job_001",
+        worker_id="worker_001",
+        lock_ttl_seconds=120,
+    ) is True
 
     assert calls == [
         ("load_knowledge", {}),
@@ -1333,6 +1381,14 @@ def test_postgres_knowledge_read_models_delegate_to_domain_repository(monkeypatc
                 "query": "AI Brain",
                 "user_id": None,
                 "user_roles": ["product_owner"],
+            },
+        ),
+        (
+            "claim_knowledge_import_job",
+            {
+                "job_id": "knowledge_import_job_001",
+                "lock_ttl_seconds": 120,
+                "worker_id": "worker_001",
             },
         ),
     ]

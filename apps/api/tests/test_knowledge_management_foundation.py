@@ -29,6 +29,11 @@ def test_knowledge_management_migration_declares_assets_folders_jobs_and_chunk_s
         "ADD COLUMN IF NOT EXISTS active_chunk_set_id text",
         "ADD COLUMN IF NOT EXISTS document_version integer",
         "ADD COLUMN IF NOT EXISTS chunk_set_id text",
+        "ADD COLUMN IF NOT EXISTS locked_by text",
+        "ADD COLUMN IF NOT EXISTS locked_until timestamptz",
+        "ADD COLUMN IF NOT EXISTS attempt_count integer",
+        "ADD COLUMN IF NOT EXISTS index_status text",
+        "ADD COLUMN IF NOT EXISTS vector_index_error text",
     ]:
         assert column in sql
 
@@ -37,8 +42,13 @@ def test_knowledge_management_migration_declares_assets_folders_jobs_and_chunk_s
         "idx_knowledge_assets_document",
         "idx_knowledge_import_jobs_document_status",
         "idx_knowledge_chunks_chunk_set",
+        "idx_knowledge_chunks_document_chunk_set_index",
+        "idx_knowledge_chunks_document_legacy_index",
+        "idx_knowledge_import_jobs_queue_lock",
     ]:
         assert index in sql
+
+    assert "DROP CONSTRAINT IF EXISTS knowledge_chunks_document_id_chunk_index_key" in sql
 
 
 def test_docker_compose_declares_private_minio_service_for_knowledge_assets():

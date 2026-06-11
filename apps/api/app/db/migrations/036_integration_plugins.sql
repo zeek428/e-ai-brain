@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS plugin_connections (
   endpoint_url text NOT NULL,
   auth_type text NOT NULL DEFAULT 'none',
   auth_config jsonb NOT NULL DEFAULT '{}'::jsonb,
+  request_config jsonb NOT NULL DEFAULT '{}'::jsonb,
   timeout_seconds integer NOT NULL DEFAULT 30,
   max_retries integer NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'active',
@@ -127,7 +128,7 @@ INSERT INTO menu_resources (
   status
 )
 VALUES
-  ('system.plugins', '插件管理', '/system/plugins', 'system', 'page', 'ApiOutlined', 66, '["system.plugins.manage"]'::jsonb, true, 'active')
+  ('system.plugins', '插件管理', '/tasks/plugins', 'task', 'page', 'ApiOutlined', 24, '["system.plugins.manage"]'::jsonb, true, 'active')
 ON CONFLICT (code) DO UPDATE SET
   name = EXCLUDED.name,
   path = EXCLUDED.path,

@@ -1,5 +1,5 @@
-import { ApiOutlined, DeleteOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { PageContainer } from '@ant-design/pro-components';
+import { ApiOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -7,6 +7,9 @@ import {
   createPlugin,
   createPluginAction,
   createPluginConnection,
+  deletePlugin,
+  deletePluginAction,
+  deletePluginConnection,
   fetchPluginActions,
   fetchPluginConnections,
   fetchPluginInvocationLogs,
@@ -16,6 +19,9 @@ import {
   invokePluginAction,
   testPluginConnection,
   trialPluginAction,
+  updatePlugin,
+  updatePluginAction,
+  updatePluginConnection,
   type PluginActionTrialResult,
   type PluginActionRecord,
   type PluginConnectionRecord,
@@ -38,6 +44,8 @@ type PluginFormValues = {
 type ConnectionFormValues = {
   auth_config?: string;
   auth_type: string;
+  connection_header_rows?: RequestParameterRow[];
+  connection_param_rows?: RequestParameterRow[];
   endpoint_url: string;
   environment: string;
   header_name?: string;
@@ -45,6 +53,7 @@ type ConnectionFormValues = {
   name: string;
   password_ref?: string;
   plugin_id: string;
+  request_config?: string;
   secret_ref?: string;
   status: string;
   timeout_seconds: number;
@@ -58,6 +67,7 @@ type ActionFormValues = {
   connection_id?: string;
   description?: string;
   header_rows?: RequestParameterRow[];
+  insights_path?: string;
   max_rows?: number;
   method?: string;
   name: string;
@@ -66,12 +76,15 @@ type ActionFormValues = {
   plugin_id: string;
   request_config?: string;
   requires_human_review: boolean;
+  records_imported_path?: string;
   result_mapping?: string;
+  rows_path?: string;
   returned_fields?: string;
   scenario?: string;
   status: string;
   table_name?: string;
   time_field?: string;
+  write_target?: string;
 };
 
 type RequestParameterRow = {
@@ -82,6 +95,11 @@ type RequestParameterRow = {
   value?: string;
 };
 
+type DeleteUsageGroup = {
+  items: string[];
+  label: string;
+};
+
 const MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO = 'maxcompute_weekly_feedback';
 const MAXCOMPUTE_DEFAULT_FIELDS =
   'feedback_id,user_id,product_id,module_code,feedback_type,content,sentiment,created_at';
@@ -89,6 +107,10 @@ const MAXCOMPUTE_DEFAULT_RESULT_MAPPING = {
   insights_path: '$.insights',
   records_imported_path: '$.row_count',
   rows_path: '$.rows',
+  write_target: 'user_feedback_insights',
+};
+const SCHEDULED_JOB_RESULT_DEFAULT_MAPPING = {
+  write_target: 'scheduled_job_result',
 };
 
 const requestMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((value) => ({
@@ -101,6 +123,15 @@ const requestParameterTypeOptions = [
   { label: 'number', value: 'number' },
   { label: 'boolean', value: 'boolean' },
 ];
+
+const resultWriteTargetOptions = [
+  { label: '仅保存运行结果', value: 'scheduled_job_result' },
+  { label: '用户洞察表', value: 'user_feedback_insights' },
+];
+
+const resultWriteTargetLabelByValue = new Map(
+  resultWriteTargetOptions.map((option) => [option.value, option.label]),
+);
 
 const systemVariableOptions = [
   { label: '当前日期 YYYYMMDD', value: '{{current_date}}' },
@@ -145,6 +176,29 @@ const connectionEnvironmentLabelByValue = new Map(
 
 function stableJson(value: Record<string, unknown>): string {
   return JSON.stringify(value, null, 2);
+}
+
+function usageItemName(item: { code?: string; id?: string; name?: string | null }) {
+  return item.name || item.code || item.id || '-';
+}
+
+function hasDeleteUsage(groups: DeleteUsageGroup[]) {
+  return groups.some((group) => group.items.length > 0);
+}
+
+function deleteUsageContent(groups: DeleteUsageGroup[]) {
+  return (
+    <Space orientation="vertical" size={8}>
+      <Typography.Text>当前对象正在被使用，不能删除。请先解除下面的引用，或将其停用。</Typography.Text>
+      {groups.filter((group) => group.items.length > 0).map((group) => (
+        <div key={group.label}>
+          <Typography.Text strong>{group.label}：</Typography.Text>
+          <Typography.Text>{group.items.slice(0, 5).join('、')}</Typography.Text>
+          {group.items.length > 5 ? <Typography.Text type="secondary"> 等 {group.items.length} 个</Typography.Text> : null}
+        </div>
+      ))}
+    </Space>
+  );
 }
 
 function buildMaxComputeRequestConfig(values: Partial<ActionFormValues>): Record<string, unknown> {
@@ -200,6 +254,11 @@ function recordToRows(record: unknown): RequestParameterRow[] {
   }));
 }
 
+function configSection(config: Record<string, unknown> | undefined, key: string): unknown {
+  const section = config?.[key];
+  return section && typeof section === 'object' && !Array.isArray(section) ? section : undefined;
+}
+
 function buildVisualRequestConfig(values: Partial<ActionFormValues>): Record<string, unknown> {
   const config: Record<string, unknown> = {};
   const method = values.method || 'GET';
@@ -229,18 +288,32 @@ function buildActionRequestPreview(
       ? buildMaxComputeRequestConfig(formValues)
       : buildVisualRequestConfig(formValues);
   const method = String(config.method ?? 'POST').toUpperCase();
-  const query = config.query && typeof config.query === 'object' ? config.query : {};
+  const connectionRequestConfig = connection?.request_config ?? {};
+  const connectionQuery =
+    connectionRequestConfig.query && typeof connectionRequestConfig.query === 'object'
+      ? connectionRequestConfig.query
+      : {};
+  const actionQuery = config.query && typeof config.query === 'object' ? config.query : {};
+  const query = { ...(connectionQuery as Record<string, unknown>), ...(actionQuery as Record<string, unknown>) };
+  const connectionHeaders =
+    connectionRequestConfig.headers && typeof connectionRequestConfig.headers === 'object'
+      ? connectionRequestConfig.headers
+      : {};
+  const actionHeaders = config.headers && typeof config.headers === 'object' ? config.headers : {};
+  const headers = { ...(connectionHeaders as Record<string, unknown>), ...(actionHeaders as Record<string, unknown>) };
   const path = String(config.path ?? '');
   const baseUrl = connection?.endpoint_url?.replace(/\/$/, '') ?? '';
   const queryString = new URLSearchParams(query as Record<string, string>).toString();
   return {
     endpoint: connection?.endpoint_url ?? '-',
-    headers: config.headers ?? {},
+    headers,
     method,
     path: path || (config.tool_name ? '(MCP tools/call)' : ''),
     query,
     tool_name: config.tool_name,
-    url: path ? `${baseUrl}/${path.replace(/^\//, '')}${queryString ? `?${queryString}` : ''}` : baseUrl,
+    url: path
+      ? `${baseUrl}/${path.replace(/^\//, '')}${queryString ? `?${queryString}` : ''}`
+      : `${baseUrl}${queryString ? `?${queryString}` : ''}`,
   };
 }
 
@@ -263,6 +336,57 @@ function buildConnectionAuthConfig(values: Partial<ConnectionFormValues>): Recor
   return {};
 }
 
+function buildConnectionRequestConfig(values: Partial<ConnectionFormValues>): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+  const query = rowsToRecord(values.connection_param_rows);
+  const headers = rowsToRecord(values.connection_header_rows);
+  if (Object.keys(query).length > 0) {
+    config.query = query;
+  }
+  if (Object.keys(headers).length > 0) {
+    config.headers = headers;
+  }
+  return config;
+}
+
+function buildConnectionPayload(
+  values: ConnectionFormValues,
+  authConfig: Record<string, unknown>,
+  requestConfig: Record<string, unknown>,
+): Partial<PluginConnectionRecord> {
+  return {
+    auth_config: authConfig,
+    auth_type: values.auth_type,
+    endpoint_url: values.endpoint_url,
+    environment: values.environment,
+    max_retries: values.max_retries,
+    name: values.name,
+    plugin_id: values.plugin_id,
+    request_config: requestConfig,
+    status: values.status,
+    timeout_seconds: values.timeout_seconds,
+  };
+}
+
+function buildActionPayload(
+  values: ActionFormValues,
+  requestConfig: Record<string, unknown>,
+  resultMapping: Record<string, unknown>,
+): Partial<PluginActionRecord> {
+  return {
+    action_type: values.action_type,
+    code: values.code,
+    connection_id: values.connection_id,
+    description: values.description,
+    name: values.name,
+    plugin_id: values.plugin_id,
+    request_config: requestConfig,
+    requires_human_review: values.requires_human_review,
+    result_mapping: resultMapping,
+    status: values.status,
+  };
+}
+
 function parseJsonObject(value: string | undefined, field: string): Record<string, unknown> {
   if (!value?.trim()) {
     return {};
@@ -282,6 +406,92 @@ function compactJson(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2);
 }
 
+function mergeWriteTarget(
+  resultMapping: Record<string, unknown>,
+  writeTarget?: string,
+): Record<string, unknown> {
+  const nextMapping = { ...resultMapping };
+  if (writeTarget) {
+    nextMapping.write_target = writeTarget;
+  }
+  return nextMapping;
+}
+
+function defaultResultMappingForWriteTarget(writeTarget?: string): Record<string, unknown> {
+  if (writeTarget === 'user_feedback_insights') {
+    return { ...MAXCOMPUTE_DEFAULT_RESULT_MAPPING };
+  }
+  return { ...SCHEDULED_JOB_RESULT_DEFAULT_MAPPING };
+}
+
+function writeTargetFromResultMapping(resultMapping: Record<string, unknown>): string {
+  return typeof resultMapping.write_target === 'string'
+    ? resultMapping.write_target
+    : 'scheduled_job_result';
+}
+
+function stringMappingValue(resultMapping: Record<string, unknown>, key: string): string | undefined {
+  const value = resultMapping[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function resultMappingVisualFields(resultMapping: Record<string, unknown>): Partial<ActionFormValues> {
+  return {
+    insights_path: stringMappingValue(resultMapping, 'insights_path'),
+    records_imported_path: stringMappingValue(resultMapping, 'records_imported_path'),
+    rows_path: stringMappingValue(resultMapping, 'rows_path'),
+    write_target: writeTargetFromResultMapping(resultMapping),
+  };
+}
+
+function buildVisualResultMapping(values: Partial<ActionFormValues>): Record<string, unknown> {
+  const writeTarget = values.write_target || 'scheduled_job_result';
+  if (writeTarget === 'user_feedback_insights') {
+    return mergeWriteTarget(
+      {
+        insights_path: values.insights_path?.trim() || '$.insights',
+        records_imported_path: values.records_imported_path?.trim() || '$.row_count',
+        rows_path: values.rows_path?.trim() || '$.rows',
+      },
+      writeTarget,
+    );
+  }
+  return mergeWriteTarget(
+    {
+      ...(values.records_imported_path?.trim()
+        ? { records_imported_path: values.records_imported_path.trim() }
+        : {}),
+    },
+    writeTarget,
+  );
+}
+
+function JsonDiagnosticsBlock({ title, value }: { title: string; value?: unknown }) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return (
+    <div>
+      <Typography.Text strong>{title}</Typography.Text>
+      <pre
+        style={{
+          background: '#f8fafc',
+          border: '1px solid #e5e7eb',
+          borderRadius: 6,
+          margin: '8px 0 0',
+          maxHeight: 260,
+          overflow: 'auto',
+          padding: 12,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+      >
+        {compactJson(value)}
+      </pre>
+    </div>
+  );
+}
+
 function RequestParameterRows({
   addText,
   name,
@@ -290,12 +500,12 @@ function RequestParameterRows({
   valuePlaceholder,
 }: {
   addText: string;
-  name: 'header_rows' | 'param_rows';
+  name: 'connection_header_rows' | 'connection_param_rows' | 'header_rows' | 'param_rows';
   namePlaceholder: string;
   title: string;
   valuePlaceholder: string;
 }) {
-  const form = Form.useFormInstance<ActionFormValues>();
+  const form = Form.useFormInstance();
   return (
     <Form.List name={name}>
       {(fields, { add, remove }) => (
@@ -366,6 +576,9 @@ export default function PluginsPage() {
   const [pluginModalOpen, setPluginModalOpen] = useState(false);
   const [connectionModalOpen, setConnectionModalOpen] = useState(false);
   const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [editingPlugin, setEditingPlugin] = useState<PluginRecord | undefined>();
+  const [editingConnection, setEditingConnection] = useState<PluginConnectionRecord | undefined>();
+  const [editingAction, setEditingAction] = useState<PluginActionRecord | undefined>();
   const [trialModalOpen, setTrialModalOpen] = useState(false);
   const [trialAction, setTrialAction] = useState<PluginActionRecord | undefined>();
   const [trialConnectionId, setTrialConnectionId] = useState<string | undefined>();
@@ -374,7 +587,9 @@ export default function PluginsPage() {
   const [trialRunning, setTrialRunning] = useState(false);
   const [actionScenario, setActionScenario] = useState<string | undefined>();
   const [advancedConnectionJsonOpen, setAdvancedConnectionJsonOpen] = useState(false);
+  const [advancedConnectionRequestJsonOpen, setAdvancedConnectionRequestJsonOpen] = useState(false);
   const [advancedActionJsonOpen, setAdvancedActionJsonOpen] = useState(false);
+  const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
   const selectedConnectionAuthType = Form.useWatch('auth_type', connectionForm);
   const actionFormValues = Form.useWatch([], actionForm) as ActionFormValues | undefined;
 
@@ -453,31 +668,272 @@ export default function PluginsPage() {
       .catch(() => setSystemVariables([]));
   }, []);
 
+  const openCreatePluginModal = () => {
+    setEditingPlugin(undefined);
+    pluginForm.resetFields();
+    pluginForm.setFieldsValue({
+      category: 'general',
+      protocol: 'http',
+      risk_level: 'medium',
+      status: 'active',
+    });
+    setPluginModalOpen(true);
+  };
+
+  const openEditPluginModal = (plugin: PluginRecord) => {
+    setEditingPlugin(plugin);
+    pluginForm.resetFields();
+    pluginForm.setFieldsValue({
+      category: plugin.category ?? 'general',
+      code: plugin.code,
+      description: plugin.description ?? undefined,
+      name: plugin.name,
+      protocol: plugin.protocol,
+      risk_level: plugin.risk_level ?? 'medium',
+      status: plugin.status,
+    });
+    setPluginModalOpen(true);
+  };
+
+  const closePluginModal = () => {
+    setPluginModalOpen(false);
+    setEditingPlugin(undefined);
+    pluginForm.resetFields();
+  };
+
   const submitPlugin = async () => {
     const values = await pluginForm.validateFields();
-    await createPlugin(values);
-    message.success('插件已创建');
-    setPluginModalOpen(false);
-    pluginForm.resetFields();
+    if (editingPlugin) {
+      await updatePlugin(editingPlugin.id, values);
+      message.success('插件已更新');
+    } else {
+      await createPlugin(values);
+      message.success('插件已创建');
+    }
+    closePluginModal();
     await reload();
+  };
+
+  const warnDeleteUsage = (title: string, groups: DeleteUsageGroup[]) => {
+    Modal.warning({
+      content: deleteUsageContent(groups),
+      okText: '知道了',
+      title,
+      width: 640,
+    });
+  };
+
+  const pluginDeleteUsageGroups = (plugin: PluginRecord): DeleteUsageGroup[] => {
+    const pluginConnections = connections.filter((connection) => connection.plugin_id === plugin.id);
+    const pluginActions = actions.filter((action) => action.plugin_id === plugin.id);
+    const connectionIds = new Set(pluginConnections.map((connection) => connection.id));
+    const actionIds = new Set(pluginActions.map((action) => action.id));
+    return [
+      { items: pluginConnections.map(usageItemName), label: '连接' },
+      { items: pluginActions.map(usageItemName), label: '动作' },
+      {
+        items: scheduledJobs
+          .filter((job) => (
+            actionIds.has(String(job.plugin_action_id ?? ''))
+            || connectionIds.has(String(job.plugin_connection_id ?? ''))
+          ))
+          .map(usageItemName),
+        label: '定时作业',
+      },
+      {
+        items: logs
+          .filter((log) => (
+            log.plugin_id === plugin.id
+            || actionIds.has(String(log.action_id ?? ''))
+            || connectionIds.has(String(log.connection_id ?? ''))
+          ))
+          .map(usageItemName),
+        label: '调用日志',
+      },
+    ];
+  };
+
+  const connectionDeleteUsageGroups = (connection: PluginConnectionRecord): DeleteUsageGroup[] => [
+    {
+      items: actions
+        .filter((action) => action.connection_id === connection.id)
+        .map(usageItemName),
+      label: '动作',
+    },
+    {
+      items: scheduledJobs
+        .filter((job) => job.plugin_connection_id === connection.id)
+        .map(usageItemName),
+      label: '定时作业',
+    },
+    {
+      items: logs
+        .filter((log) => log.connection_id === connection.id)
+        .map(usageItemName),
+      label: '调用日志',
+    },
+  ];
+
+  const actionDeleteUsageGroups = (action: PluginActionRecord): DeleteUsageGroup[] => [
+    {
+      items: scheduledJobs
+        .filter((job) => job.plugin_action_id === action.id)
+        .map(usageItemName),
+      label: '定时作业',
+    },
+    {
+      items: logs
+        .filter((log) => log.action_id === action.id)
+        .map(usageItemName),
+      label: '调用日志',
+    },
+  ];
+
+  const confirmDeletePlugin = (plugin: PluginRecord) => {
+    const usageGroups = pluginDeleteUsageGroups(plugin);
+    if (hasDeleteUsage(usageGroups)) {
+      warnDeleteUsage(`插件「${plugin.name}」正在使用中`, usageGroups);
+      return;
+    }
+    Modal.confirm({
+      cancelText: '取消',
+      content: `确定删除插件「${plugin.name}」吗？`,
+      okText: '删除',
+      okType: 'danger',
+      title: '删除插件',
+      onOk: async () => {
+        try {
+          await deletePlugin(plugin.id);
+          message.success('插件已删除');
+          await reload();
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '插件删除失败');
+        }
+      },
+    });
+  };
+
+  const confirmDeleteConnection = (connection: PluginConnectionRecord) => {
+    const usageGroups = connectionDeleteUsageGroups(connection);
+    if (hasDeleteUsage(usageGroups)) {
+      warnDeleteUsage(`连接「${connection.name}」正在使用中`, usageGroups);
+      return;
+    }
+    Modal.confirm({
+      cancelText: '取消',
+      content: `确定删除连接「${connection.name}」吗？`,
+      okText: '删除',
+      okType: 'danger',
+      title: '删除连接',
+      onOk: async () => {
+        try {
+          await deletePluginConnection(connection.id);
+          message.success('连接已删除');
+          await reload();
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '连接删除失败');
+        }
+      },
+    });
+  };
+
+  const confirmDeleteAction = (action: PluginActionRecord) => {
+    const usageGroups = actionDeleteUsageGroups(action);
+    if (hasDeleteUsage(usageGroups)) {
+      warnDeleteUsage(`动作「${action.name}」正在使用中`, usageGroups);
+      return;
+    }
+    Modal.confirm({
+      cancelText: '取消',
+      content: `确定删除动作「${action.name}」吗？`,
+      okText: '删除',
+      okType: 'danger',
+      title: '删除动作',
+      onOk: async () => {
+        try {
+          await deletePluginAction(action.id);
+          message.success('动作已删除');
+          await reload();
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '动作删除失败');
+        }
+      },
+    });
+  };
+
+  const openCreateConnectionModal = () => {
+    setEditingConnection(undefined);
+    setAdvancedConnectionJsonOpen(false);
+    setAdvancedConnectionRequestJsonOpen(false);
+    connectionForm.resetFields();
+    connectionForm.setFieldsValue({
+      auth_type: 'none',
+      environment: 'default',
+      max_retries: 0,
+      status: 'active',
+      timeout_seconds: 30,
+    });
+    setConnectionModalOpen(true);
+  };
+
+  const openEditConnectionModal = (connection: PluginConnectionRecord) => {
+    const authConfig = connection.auth_config ?? {};
+    const requestConfig = connection.request_config ?? {};
+    setEditingConnection(connection);
+    setAdvancedConnectionJsonOpen(false);
+    setAdvancedConnectionRequestJsonOpen(false);
+    connectionForm.resetFields();
+    connectionForm.setFieldsValue({
+      auth_config: stableJson(authConfig),
+      auth_type: connection.auth_type ?? 'none',
+      connection_header_rows: recordToRows(configSection(requestConfig, 'headers')),
+      connection_param_rows: recordToRows(configSection(requestConfig, 'query')),
+      endpoint_url: connection.endpoint_url,
+      environment: connection.environment ?? 'default',
+      header_name: typeof authConfig.header_name === 'string' ? authConfig.header_name : undefined,
+      max_retries: connection.max_retries ?? 0,
+      name: connection.name,
+      password_ref: typeof authConfig.password_ref === 'string' ? authConfig.password_ref : undefined,
+      plugin_id: connection.plugin_id,
+      request_config: stableJson(requestConfig),
+      secret_ref: typeof authConfig.secret_ref === 'string' ? authConfig.secret_ref : undefined,
+      status: connection.status,
+      timeout_seconds: connection.timeout_seconds ?? 30,
+      token_ref: typeof authConfig.token_ref === 'string' ? authConfig.token_ref : undefined,
+      username_ref: typeof authConfig.username_ref === 'string' ? authConfig.username_ref : undefined,
+    });
+    setConnectionModalOpen(true);
+  };
+
+  const closeConnectionModal = () => {
+    setConnectionModalOpen(false);
+    setEditingConnection(undefined);
+    setAdvancedConnectionJsonOpen(false);
+    setAdvancedConnectionRequestJsonOpen(false);
+    connectionForm.resetFields();
   };
 
   const submitConnection = async () => {
     try {
       const values = await connectionForm.validateFields();
-      await createPluginConnection({
-        ...values,
-        auth_config: advancedConnectionJsonOpen
-          ? parseJsonObject(values.auth_config, '认证配置')
-          : buildConnectionAuthConfig(values),
-      });
-      message.success('连接已创建');
-      setConnectionModalOpen(false);
-      setAdvancedConnectionJsonOpen(false);
-      connectionForm.resetFields();
+      const authConfig = advancedConnectionJsonOpen
+        ? parseJsonObject(values.auth_config, '认证配置')
+        : buildConnectionAuthConfig(values);
+      const requestConfig = advancedConnectionRequestJsonOpen
+        ? parseJsonObject(values.request_config, '请求配置')
+        : buildConnectionRequestConfig(values);
+      const payload = buildConnectionPayload(values, authConfig, requestConfig);
+      if (editingConnection) {
+        await updatePluginConnection(editingConnection.id, payload);
+        message.success('连接已更新');
+      } else {
+        await createPluginConnection(payload);
+        message.success('连接已创建');
+      }
+      closeConnectionModal();
       await reload();
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '连接创建失败');
+      message.error(error instanceof Error ? error.message : editingConnection ? '连接更新失败' : '连接创建失败');
     }
   };
 
@@ -490,37 +946,81 @@ export default function PluginsPage() {
           : advancedActionJsonOpen
             ? parseJsonObject(values.request_config, '请求配置')
             : buildVisualRequestConfig(values);
-      const resultMapping =
-        values.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO && !values.result_mapping?.trim()
-          ? MAXCOMPUTE_DEFAULT_RESULT_MAPPING
-          : parseJsonObject(values.result_mapping, '结果映射');
-      await createPluginAction({
-        action_type: values.action_type,
-        code: values.code,
-        connection_id: values.connection_id,
-        description: values.description,
-        name: values.name,
-        plugin_id: values.plugin_id,
-        request_config: requestConfig,
-        requires_human_review: values.requires_human_review,
-        result_mapping: resultMapping,
-        status: values.status,
-      });
-      message.success('动作已创建');
-      setActionModalOpen(false);
-      setActionScenario(undefined);
-      setAdvancedActionJsonOpen(false);
-      actionForm.resetFields();
+      const resultMapping = advancedActionJsonOpen
+        ? mergeWriteTarget(parseJsonObject(values.result_mapping, '结果映射'), values.write_target)
+        : buildVisualResultMapping(values);
+      const payload = buildActionPayload(values, requestConfig, resultMapping);
+      if (editingAction) {
+        await updatePluginAction(editingAction.id, payload);
+        message.success('动作已更新');
+      } else {
+        await createPluginAction(payload);
+        message.success('动作已创建');
+      }
+      closeActionModal();
       await reload();
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '动作创建失败');
+      message.error(error instanceof Error ? error.message : editingAction ? '动作更新失败' : '动作创建失败');
     }
   };
 
-  const openActionModal = () => {
+  const openCreateActionModal = () => {
+    setEditingAction(undefined);
     setActionScenario(undefined);
     setAdvancedActionJsonOpen(false);
+    actionForm.resetFields();
+    actionForm.setFieldsValue({
+      action_type: 'http_request',
+      method: 'GET',
+      requires_human_review: false,
+      result_mapping: stableJson(SCHEDULED_JOB_RESULT_DEFAULT_MAPPING),
+      status: 'active',
+      ...resultMappingVisualFields(SCHEDULED_JOB_RESULT_DEFAULT_MAPPING),
+    });
     setActionModalOpen(true);
+  };
+
+  const openEditActionModal = (action: PluginActionRecord) => {
+    const requestConfig = action.request_config ?? {};
+    const resultMapping = action.result_mapping ?? {};
+    const isMaxComputeAction = requestConfig.tool_name === 'maxcompute.execute_sql';
+    setEditingAction(action);
+    setActionScenario(isMaxComputeAction ? MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO : undefined);
+    setAdvancedActionJsonOpen(!isMaxComputeAction && action.action_type === 'mcp_tool');
+    actionForm.resetFields();
+    actionForm.setFieldsValue({
+      action_type: action.action_type,
+      code: action.code,
+      connection_id: action.connection_id ?? undefined,
+      description: action.description ?? undefined,
+      header_rows: recordToRows(configSection(requestConfig, 'headers')),
+      max_rows: typeof requestConfig.limit === 'number' ? requestConfig.limit : undefined,
+      method: typeof requestConfig.method === 'string' ? requestConfig.method : 'GET',
+      name: action.name,
+      param_rows: recordToRows(configSection(requestConfig, 'query')),
+      path: typeof requestConfig.path === 'string' ? requestConfig.path : undefined,
+      plugin_id: action.plugin_id,
+      request_config: stableJson(requestConfig),
+      requires_human_review: action.requires_human_review,
+      result_mapping: stableJson(resultMapping),
+      returned_fields: Array.isArray(requestConfig.fields)
+        ? requestConfig.fields.join(',')
+        : undefined,
+      scenario: isMaxComputeAction ? MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO : undefined,
+      status: action.status,
+      table_name: typeof requestConfig.table === 'string' ? requestConfig.table : undefined,
+      time_field: typeof requestConfig.time_field === 'string' ? requestConfig.time_field : undefined,
+      ...resultMappingVisualFields(resultMapping),
+    });
+    setActionModalOpen(true);
+  };
+
+  const closeActionModal = () => {
+    setActionModalOpen(false);
+    setEditingAction(undefined);
+    setActionScenario(undefined);
+    setAdvancedActionJsonOpen(false);
+    actionForm.resetFields();
   };
 
   const applyActionScenario = (scenario?: string) => {
@@ -547,8 +1047,17 @@ export default function PluginsPage() {
       returned_fields: MAXCOMPUTE_DEFAULT_FIELDS,
       table_name: 'ods_user_feedback',
       time_field: 'created_at',
+      ...resultMappingVisualFields(MAXCOMPUTE_DEFAULT_RESULT_MAPPING),
     };
     actionForm.setFieldsValue(nextValues);
+  };
+
+  const applyWriteTargetDefaults = (writeTarget?: string) => {
+    const resultMapping = defaultResultMappingForWriteTarget(writeTarget);
+    actionForm.setFieldsValue({
+      result_mapping: stableJson(resultMapping),
+      ...resultMappingVisualFields(resultMapping),
+    });
   };
 
   const toggleAdvancedActionJson = () => {
@@ -567,24 +1076,22 @@ export default function PluginsPage() {
         : buildVisualRequestConfig(values);
     actionForm.setFieldsValue({
       request_config: stableJson(requestConfig),
-      result_mapping: values.result_mapping?.trim()
-        ? values.result_mapping
-        : values.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
-          ? stableJson(MAXCOMPUTE_DEFAULT_RESULT_MAPPING)
-          : stableJson({}),
+      result_mapping: stableJson(buildVisualResultMapping(values)),
     });
   };
 
   const applyActionJsonToVisual = () => {
     try {
       const config = parseJsonObject(actionForm.getFieldValue('request_config'), '请求配置');
+      const resultMapping = parseJsonObject(actionForm.getFieldValue('result_mapping'), '结果映射');
       actionForm.setFieldsValue({
         header_rows: recordToRows(config.headers),
         method: typeof config.method === 'string' ? config.method : 'GET',
         param_rows: recordToRows(config.query),
         path: typeof config.path === 'string' ? config.path : undefined,
+        ...resultMappingVisualFields(resultMapping),
       });
-      message.success('已从 JSON 同步到 Params / Headers');
+      message.success('已从 JSON 同步到可视化字段');
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'JSON 解析失败');
     }
@@ -603,6 +1110,19 @@ export default function PluginsPage() {
     setAdvancedConnectionJsonOpen(nextOpen);
   };
 
+  const syncConnectionRequestJsonFromVisual = () => {
+    const values = connectionForm.getFieldsValue();
+    connectionForm.setFieldValue('request_config', stableJson(buildConnectionRequestConfig(values)));
+  };
+
+  const toggleAdvancedConnectionRequestJson = () => {
+    const nextOpen = !advancedConnectionRequestJsonOpen;
+    if (nextOpen) {
+      syncConnectionRequestJsonFromVisual();
+    }
+    setAdvancedConnectionRequestJsonOpen(nextOpen);
+  };
+
   const applyConnectionJsonToVisual = () => {
     try {
       const config = parseJsonObject(connectionForm.getFieldValue('auth_config'), '认证配置');
@@ -619,6 +1139,19 @@ export default function PluginsPage() {
     }
   };
 
+  const applyConnectionRequestJsonToVisual = () => {
+    try {
+      const config = parseJsonObject(connectionForm.getFieldValue('request_config'), '请求配置');
+      connectionForm.setFieldsValue({
+        connection_header_rows: recordToRows(config.headers),
+        connection_param_rows: recordToRows(config.query),
+      });
+      message.success('已从请求 JSON 同步到 Params / Headers');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'JSON 解析失败');
+    }
+  };
+
   const runAction = async (action: PluginActionRecord) => {
     await invokePluginAction(action.id);
     message.success('插件动作已执行');
@@ -626,33 +1159,86 @@ export default function PluginsPage() {
   };
 
   const runConnectionTest = async (connection: PluginConnectionRecord) => {
-    const result = await testPluginConnection(connection.id);
-    Modal.info({
-      content: (
-        <Space orientation="vertical" size={10} style={{ width: '100%' }}>
-          <div>状态：<Tag color={result.status === 'succeeded' ? 'green' : 'red'}>{result.status}</Tag>耗时：{result.latency_ms}ms</div>
-          <Table
-            columns={[
-              { dataIndex: 'name', title: '检查项' },
-              { dataIndex: 'status', title: '状态', render: (value: string) => <Tag>{value}</Tag> },
-              { dataIndex: 'detail', title: '说明', ellipsis: true },
-              { dataIndex: 'latency_ms', title: '耗时 ms', width: 100, render: (value?: number) => value ?? '-' },
-            ]}
-            dataSource={result.diagnostics ?? []}
-            pagination={false}
-            rowKey="name"
-            size="small"
-          />
-          <Typography.Text code>{compactJson(result.request_summary)}</Typography.Text>
-        </Space>
-      ),
-      title: '连接测试诊断',
-      width: 760,
+    if (testingConnectionId) {
+      return;
+    }
+    const messageKey = `plugin-connection-test-${connection.id}`;
+    setTestingConnectionId(connection.id);
+    message.loading({
+      content: `正在测试连接「${connection.name}」，请稍候...`,
+      duration: 0,
+      key: messageKey,
     });
-    if (result.status === 'succeeded') {
-      message.success(`连接测试成功，耗时 ${result.latency_ms}ms`);
-    } else {
-      message.error(result.error_message || '连接测试失败');
+    try {
+      const result = await testPluginConnection(connection.id);
+      const requestSummary = result.request_summary ?? {};
+      const placeholderHeaders = Array.isArray(requestSummary.masked_placeholder_headers)
+        ? requestSummary.masked_placeholder_headers.map(String)
+        : [];
+      Modal.info({
+        content: (
+          <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+            <div>状态：<Tag color={result.status === 'succeeded' ? 'green' : 'red'}>{result.status}</Tag>耗时：{result.latency_ms}ms</div>
+            {placeholderHeaders.length > 0 ? (
+              <Alert
+                description={`最终请求仍包含脱敏占位：${placeholderHeaders.join('、')}。请重新填写真实 Header 值，或改用认证配置字段维护 Authorization。`}
+                message="Authorization 等敏感 Header 不能使用 *** 占位发起请求"
+                showIcon
+                type="error"
+              />
+            ) : null}
+            {result.error_message ? (
+              <Alert description={result.error_message} message="错误信息" showIcon type="error" />
+            ) : null}
+            <Table
+              columns={[
+                { dataIndex: 'name', title: '检查项', width: 190 },
+                { dataIndex: 'status', title: '状态', width: 130, render: (value: string) => <Tag>{value}</Tag> },
+                {
+                  dataIndex: 'detail',
+                  title: '说明',
+                  render: (value?: string) => (
+                    <Typography.Text style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {value ?? '-'}
+                    </Typography.Text>
+                  ),
+                },
+                { dataIndex: 'latency_ms', title: '耗时 ms', width: 100, render: (value?: number) => value ?? '-' },
+              ]}
+              dataSource={result.diagnostics ?? []}
+              pagination={false}
+              rowKey="name"
+              scroll={{ x: 920 }}
+              size="small"
+            />
+            <JsonDiagnosticsBlock title="完整请求信息" value={requestSummary} />
+            <JsonDiagnosticsBlock title="远端响应信息" value={result.response_summary} />
+          </Space>
+        ),
+        title: '连接测试诊断',
+        width: 980,
+      });
+      if (result.status === 'succeeded') {
+        message.success({
+          content: `连接测试成功，耗时 ${result.latency_ms}ms`,
+          duration: 3,
+          key: messageKey,
+        });
+      } else {
+        message.error({
+          content: result.error_message || '连接测试失败',
+          duration: 5,
+          key: messageKey,
+        });
+      }
+    } catch (error) {
+      message.error({
+        content: error instanceof Error ? error.message : '连接测试失败',
+        duration: 5,
+        key: messageKey,
+      });
+    } finally {
+      setTestingConnectionId(undefined);
     }
   };
 
@@ -734,24 +1320,38 @@ export default function PluginsPage() {
             key: 'plugins',
             label: '插件',
             children: (
-              <Table<PluginRecord>
+              <ProTable<PluginRecord>
+                cardBordered
+                className="management-list-table"
+                dateFormatter="string"
+                headerTitle="插件"
                 loading={loading}
+                options={{
+                  density: true,
+                  fullScreen: true,
+                  reload,
+                  setting: true,
+                }}
+                pagination={{
+                  showSizeChanger: true,
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
                 rowKey="id"
+                scroll={{ x: 1132 }}
+                search={false}
                 dataSource={plugins}
                 tableLayout="fixed"
-                title={() => (
-                  <Space>
-                    <Button aria-label="新增插件" icon={<PlusOutlined />} type="primary" onClick={() => setPluginModalOpen(true)}>
-                      新增插件
-                    </Button>
-                    <Button icon={<ReloadOutlined />} onClick={reload}>
-                      刷新
-                    </Button>
-                  </Space>
-                )}
+                toolBarRender={() => [
+                  <Button key="create-plugin" aria-label="新增插件" icon={<PlusOutlined />} type="primary" onClick={openCreatePluginModal}>
+                    新增插件
+                  </Button>,
+                  <Button key="reload-plugins" icon={<ReloadOutlined />} onClick={reload}>
+                    刷新
+                  </Button>,
+                ]}
                 columns={[
-                  { dataIndex: 'name', title: '名称', ellipsis: true },
-                  { dataIndex: 'code', title: '编码', ellipsis: true },
+                  { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
+                  { dataIndex: 'code', title: '编码', ellipsis: true, width: 200 },
                   { dataIndex: 'protocol', title: '协议', width: 120 },
                   {
                     dataIndex: 'category',
@@ -766,6 +1366,34 @@ export default function PluginsPage() {
                     width: 110,
                     render: (value) => <Tag color={value === 'active' ? 'green' : 'default'}>{String(value)}</Tag>,
                   },
+                  {
+                    fixed: 'right',
+                    key: 'actions',
+                    title: '操作',
+                    valueType: 'option',
+                    width: 164,
+                    render: (_, row) => (
+                      <Space className="management-row-actions" size={0}>
+                        <Button
+                          aria-label={`编辑插件 ${row.name}`}
+                          icon={<EditOutlined />}
+                          onClick={() => openEditPluginModal(row)}
+                          type="link"
+                        >
+                          编辑
+                        </Button>
+                        <Button
+                          aria-label={`删除插件 ${row.name}`}
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => confirmDeletePlugin(row)}
+                          type="link"
+                        >
+                          删除
+                        </Button>
+                      </Space>
+                    ),
+                  },
                 ]}
               />
             ),
@@ -774,27 +1402,42 @@ export default function PluginsPage() {
             key: 'connections',
             label: '连接',
             children: (
-              <Table<PluginConnectionRecord>
+              <ProTable<PluginConnectionRecord>
+                cardBordered
+                className="management-list-table"
+                dateFormatter="string"
+                headerTitle="连接"
                 loading={loading}
+                options={{
+                  density: true,
+                  fullScreen: true,
+                  reload,
+                  setting: true,
+                }}
+                pagination={{
+                  showSizeChanger: true,
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
                 rowKey="id"
+                scroll={{ x: 1420 }}
+                search={false}
                 dataSource={connections}
                 tableLayout="fixed"
-                title={() => (
-                  <Space>
-                    <Button aria-label="新增连接" icon={<PlusOutlined />} type="primary" onClick={() => setConnectionModalOpen(true)}>
-                      新增连接
-                    </Button>
-                    <Button icon={<ReloadOutlined />} onClick={reload}>
-                      刷新
-                    </Button>
-                  </Space>
-                )}
+                toolBarRender={() => [
+                  <Button key="create-connection" aria-label="新增连接" icon={<PlusOutlined />} type="primary" onClick={openCreateConnectionModal}>
+                    新增连接
+                  </Button>,
+                  <Button key="reload-connections" icon={<ReloadOutlined />} onClick={reload}>
+                    刷新
+                  </Button>,
+                ]}
                 columns={[
-                  { dataIndex: 'name', title: '名称', ellipsis: true },
+                  { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
                   {
                     dataIndex: 'plugin_id',
                     title: '插件',
                     ellipsis: true,
+                    width: 220,
                     render: (value) => pluginById.get(String(value))?.name ?? value,
                   },
                   {
@@ -804,17 +1447,54 @@ export default function PluginsPage() {
                     render: (value) => connectionEnvironmentLabelByValue.get(String(value)) ?? String(value ?? '-'),
                   },
                   { dataIndex: 'auth_type', title: '认证', width: 130 },
-                  { dataIndex: 'endpoint_url', title: 'Endpoint', ellipsis: true },
+                  { dataIndex: 'endpoint_url', title: 'Endpoint', ellipsis: true, width: 320 },
                   { dataIndex: 'status', title: '状态', width: 110 },
                   {
+                    fixed: 'right',
                     key: 'actions',
                     title: '操作',
-                    width: 120,
-                    render: (_, row) => (
-                      <Button aria-label="测试" icon={<PlayCircleOutlined />} onClick={() => runConnectionTest(row)}>
-                        测试
-                      </Button>
-                    ),
+                    valueType: 'option',
+                    width: 260,
+                    render: (_, row) => {
+                      const isTestingConnection = testingConnectionId === row.id;
+                      return (
+                        <Space className="management-row-actions" size={0}>
+                          <Button
+                            aria-label={`编辑连接 ${row.name}`}
+                            disabled={Boolean(testingConnectionId)}
+                            icon={<EditOutlined />}
+                            onClick={() => openEditConnectionModal(row)}
+                            type="link"
+                          >
+                            编辑
+                          </Button>
+                          <Button
+                            aria-label={
+                              isTestingConnection
+                                ? `连接测试中 ${row.name}`
+                                : `测试连接 ${row.name}`
+                            }
+                            disabled={Boolean(testingConnectionId)}
+                            icon={<PlayCircleOutlined />}
+                            loading={isTestingConnection}
+                            onClick={() => runConnectionTest(row)}
+                            type="link"
+                          >
+                            {isTestingConnection ? '测试中' : '测试'}
+                          </Button>
+                          <Button
+                            aria-label={`删除连接 ${row.name}`}
+                            danger
+                            disabled={Boolean(testingConnectionId)}
+                            icon={<DeleteOutlined />}
+                            onClick={() => confirmDeleteConnection(row)}
+                            type="link"
+                          >
+                            删除
+                          </Button>
+                        </Space>
+                      );
+                    },
                   },
                 ]}
               />
@@ -824,48 +1504,97 @@ export default function PluginsPage() {
             key: 'actions',
             label: '动作',
             children: (
-              <Table<PluginActionRecord>
+              <ProTable<PluginActionRecord>
+                cardBordered
+                className="management-list-table"
+                dateFormatter="string"
+                headerTitle="动作"
                 loading={loading}
+                options={{
+                  density: true,
+                  fullScreen: true,
+                  reload,
+                  setting: true,
+                }}
+                pagination={{
+                  showSizeChanger: true,
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
                 rowKey="id"
+                scroll={{ x: 1570 }}
+                search={false}
                 dataSource={actions}
                 tableLayout="fixed"
-                title={() => (
-                  <Space>
-                    <Button aria-label="新增动作" icon={<PlusOutlined />} type="primary" onClick={openActionModal}>
-                      新增动作
-                    </Button>
-                    <Button icon={<ReloadOutlined />} onClick={reload}>
-                      刷新
-                    </Button>
-                  </Space>
-                )}
+                toolBarRender={() => [
+                  <Button key="create-action" aria-label="新增动作" icon={<PlusOutlined />} type="primary" onClick={openCreateActionModal}>
+                    新增动作
+                  </Button>,
+                  <Button key="reload-actions" icon={<ReloadOutlined />} onClick={reload}>
+                    刷新
+                  </Button>,
+                ]}
                 columns={[
-                  { dataIndex: 'name', title: '名称', ellipsis: true },
-                  { dataIndex: 'code', title: '编码', ellipsis: true },
+                  { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
+                  { dataIndex: 'code', title: '编码', ellipsis: true, width: 200 },
                   { dataIndex: 'action_type', title: '类型', width: 130 },
                   {
                     dataIndex: 'plugin_id',
                     title: '插件',
                     ellipsis: true,
+                    width: 200,
                     render: (value) => pluginById.get(String(value))?.name ?? value,
                   },
                   {
                     dataIndex: 'connection_id',
                     title: '连接',
                     ellipsis: true,
+                    width: 200,
                     render: (value) => value ? connectionById.get(String(value))?.name ?? value : '-',
+                  },
+                  {
+                    dataIndex: 'result_mapping',
+                    title: '写入目标',
+                    ellipsis: true,
+                    width: 220,
+                    render: (value) => {
+                      const writeTarget = value && typeof value === 'object'
+                        ? (value as Record<string, unknown>).write_target
+                        : undefined;
+                      return typeof writeTarget === 'string'
+                        ? resultWriteTargetLabelByValue.get(writeTarget) ?? writeTarget
+                        : '仅保存运行结果';
+                    },
                   },
                   { dataIndex: 'status', title: '状态', width: 100 },
                   {
+                    fixed: 'right',
                     key: 'actions',
                     title: '操作',
-                    width: 210,
+                    valueType: 'option',
+                    width: 300,
                     render: (_, row) => (
-                      <Space>
-                        <Button icon={<PlayCircleOutlined />} onClick={() => openTrialModal(row)}>
+                      <Space className="management-row-actions" size={0}>
+                        <Button
+                          aria-label={`编辑动作 ${row.name}`}
+                          icon={<EditOutlined />}
+                          onClick={() => openEditActionModal(row)}
+                          type="link"
+                        >
+                          编辑
+                        </Button>
+                        <Button icon={<PlayCircleOutlined />} onClick={() => openTrialModal(row)} type="link">
                           试运行
                         </Button>
-                        <Button onClick={() => runAction(row)}>运行</Button>
+                        <Button onClick={() => runAction(row)} type="link">运行</Button>
+                        <Button
+                          aria-label={`删除动作 ${row.name}`}
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => confirmDeleteAction(row)}
+                          type="link"
+                        >
+                          删除
+                        </Button>
                       </Space>
                     ),
                   },
@@ -877,18 +1606,34 @@ export default function PluginsPage() {
             key: 'logs',
             label: '调用日志',
             children: (
-              <Table<PluginInvocationLogRecord>
+              <ProTable<PluginInvocationLogRecord>
+                cardBordered
+                className="management-list-table"
+                dateFormatter="string"
+                headerTitle="调用日志"
                 loading={loading}
+                options={{
+                  density: true,
+                  fullScreen: true,
+                  reload,
+                  setting: true,
+                }}
+                pagination={{
+                  showSizeChanger: true,
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
                 rowKey="id"
+                scroll={{ x: 1210 }}
+                search={false}
                 dataSource={logs}
                 tableLayout="fixed"
                 columns={[
-                  { dataIndex: 'id', title: '日志 ID', ellipsis: true },
-                  { dataIndex: 'action_id', title: '动作 ID', ellipsis: true },
-                  { dataIndex: 'scheduled_job_id', title: '定时作业', ellipsis: true, render: (value) => value || '-' },
+                  { dataIndex: 'id', title: '日志 ID', ellipsis: true, width: 240 },
+                  { dataIndex: 'action_id', title: '动作 ID', ellipsis: true, width: 240 },
+                  { dataIndex: 'scheduled_job_id', title: '定时作业', ellipsis: true, width: 240, render: (value) => value || '-' },
                   { dataIndex: 'status', title: '状态', width: 110 },
                   { dataIndex: 'latency_ms', title: '耗时 ms', width: 110 },
-                  { dataIndex: 'error_message', title: '错误', ellipsis: true, render: (value) => value || '-' },
+                  { dataIndex: 'error_message', title: '错误', ellipsis: true, width: 270, render: (value) => value || '-' },
                 ]}
               />
             ),
@@ -896,7 +1641,12 @@ export default function PluginsPage() {
         ]}
       />
 
-      <Modal open={pluginModalOpen} title="新增插件" onCancel={() => setPluginModalOpen(false)} onOk={submitPlugin}>
+      <Modal
+        open={pluginModalOpen}
+        title={editingPlugin ? '编辑插件' : '新增插件'}
+        onCancel={closePluginModal}
+        onOk={submitPlugin}
+      >
         <Form
           form={pluginForm}
           layout="vertical"
@@ -946,17 +1696,23 @@ export default function PluginsPage() {
 
       <Modal
         open={connectionModalOpen}
-        title="新增连接"
-        onCancel={() => {
-          setConnectionModalOpen(false);
-          setAdvancedConnectionJsonOpen(false);
-        }}
+        title={editingConnection ? '编辑连接' : '新增连接'}
+        width={860}
+        onCancel={closeConnectionModal}
         onOk={submitConnection}
       >
         <Form
           form={connectionForm}
           layout="vertical"
           initialValues={{ auth_type: 'none', environment: 'default', max_retries: 0, status: 'active', timeout_seconds: 30 }}
+          onValuesChange={(changedValues, allValues) => {
+            if (
+              advancedConnectionRequestJsonOpen
+              && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
+            ) {
+              connectionForm.setFieldValue('request_config', stableJson(buildConnectionRequestConfig(allValues)));
+            }
+          }}
         >
           <Form.Item label="插件" name="plugin_id" rules={[{ required: true }]}>
             <Select options={pluginOptions} />
@@ -1026,6 +1782,34 @@ export default function PluginsPage() {
               </Form.Item>
             </>
           ) : null}
+          <RequestParameterRows
+            addText="添加 Params"
+            name="connection_param_rows"
+            namePlaceholder="参数名"
+            title="Params"
+            valuePlaceholder="参数值"
+          />
+          <RequestParameterRows
+            addText="添加 Headers"
+            name="connection_header_rows"
+            namePlaceholder="Header 名"
+            title="Headers"
+            valuePlaceholder="Header 值"
+          />
+          <Button type="link" onClick={toggleAdvancedConnectionRequestJson}>
+            高级请求 JSON 修改
+          </Button>
+          {advancedConnectionRequestJsonOpen ? (
+            <>
+              <Space style={{ marginBottom: 8 }}>
+                <Button onClick={syncConnectionRequestJsonFromVisual}>同步可视化到 JSON</Button>
+                <Button onClick={applyConnectionRequestJsonToVisual}>从 JSON 应用到 Params / Headers</Button>
+              </Space>
+              <Form.Item label="请求配置 JSON" name="request_config">
+                <Input.TextArea rows={4} placeholder='{"query":{"start_pt":"{{current_date-7}}"},"headers":{"Authorization":"APPCODE xxx"}}' />
+              </Form.Item>
+            </>
+          ) : null}
           <Space>
             <Form.Item label="超时秒数" name="timeout_seconds">
               <InputNumber min={1} />
@@ -1050,12 +1834,8 @@ export default function PluginsPage() {
         cancelText="取消"
         okText="确定"
         open={actionModalOpen}
-        title="新增动作"
-        onCancel={() => {
-          setActionModalOpen(false);
-          setActionScenario(undefined);
-          setAdvancedActionJsonOpen(false);
-        }}
+        title={editingAction ? '编辑动作' : '新增动作'}
+        onCancel={closeActionModal}
         onOk={submitAction}
       >
         <Form
@@ -1071,13 +1851,17 @@ export default function PluginsPage() {
                 allValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
                   ? buildMaxComputeRequestConfig(allValues)
                   : buildVisualRequestConfig(allValues);
-              actionForm.setFieldValue('request_config', stableJson(requestConfig));
+              actionForm.setFieldsValue({
+                request_config: stableJson(requestConfig),
+                result_mapping: stableJson(buildVisualResultMapping(allValues)),
+              });
             }
           }}
           initialValues={{
             action_type: 'http_request',
             method: 'GET',
             requires_human_review: false,
+            write_target: 'scheduled_job_result',
             status: 'active',
           }}
         >
@@ -1093,6 +1877,34 @@ export default function PluginsPage() {
           </Form.Item>
           <Form.Item label="连接" name="connection_id">
             <Select allowClear options={connectionOptions} />
+          </Form.Item>
+          <Form.Item label="结果写入目标" name="write_target">
+            <Select options={resultWriteTargetOptions} onChange={applyWriteTargetDefaults} />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(previous, current) => previous.write_target !== current.write_target}>
+            {({ getFieldValue }) =>
+              getFieldValue('write_target') === 'user_feedback_insights' ? (
+                <Space wrap>
+                  <Form.Item
+                    label="洞察列表 JSONPath"
+                    name="insights_path"
+                    rules={[{ required: true, message: '请输入洞察列表路径' }]}
+                  >
+                    <Input placeholder="$.insights" style={{ width: 220 }} />
+                  </Form.Item>
+                  <Form.Item label="源表行数 JSONPath" name="records_imported_path">
+                    <Input placeholder="$.row_count" style={{ width: 220 }} />
+                  </Form.Item>
+                  <Form.Item label="原始行列表 JSONPath" name="rows_path">
+                    <Input placeholder="$.rows" style={{ width: 220 }} />
+                  </Form.Item>
+                </Space>
+              ) : (
+                <Form.Item label="导入数量 JSONPath" name="records_imported_path">
+                  <Input placeholder="$.row_count" />
+                </Form.Item>
+              )
+            }
           </Form.Item>
           <Form.Item label="名称" name="name" rules={[{ required: true }]}>
             <Input />

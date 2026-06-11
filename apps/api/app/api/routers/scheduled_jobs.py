@@ -13,6 +13,7 @@ from app.services.scheduled_jobs import (
     create_ai_skill_package_response,
     create_ai_skill_response,
     create_scheduled_job_response,
+    delete_scheduled_job_response,
     list_ai_agents_response,
     list_ai_skills_response,
     list_scheduled_job_runs_response,
@@ -291,6 +292,22 @@ def patch_scheduled_job(
             current_store=store(request),
             job_id=job_id,
             payload=payload,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.delete("/api/system/scheduled-jobs/{job_id}")
+def delete_scheduled_job(
+    job_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        delete_scheduled_job_response(
+            current_store=store(request),
+            job_id=job_id,
             user=user,
         ),
         get_trace_id(request),

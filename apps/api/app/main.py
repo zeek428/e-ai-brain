@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from time import perf_counter
 from typing import Any
 from urllib.request import urlopen  # noqa: F401 - kept for existing test/provider injection hooks
@@ -49,11 +50,13 @@ from app.core.repositories.authorization import (
 from app.core.store import MemoryStore
 from app.core.trace import get_trace_id, new_trace_id
 from app.core.users import MemoryUserRepository, PostgresUserRepository
+from app.services.knowledge_import_worker import (
+    start_knowledge_import_worker,
+    stop_knowledge_import_worker,
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
-
-app = FastAPI(title="Enterprise AI Brain API", version="0.1.0")
 
 
 def _is_test_env() -> bool:
@@ -105,6 +108,16 @@ def build_authorization_repository() -> (
     return CompatibilityAuthorizationRepository()
 
 
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    start_knowledge_import_worker(application, settings)
+    try:
+        yield
+    finally:
+        stop_knowledge_import_worker(application)
+
+
+app = FastAPI(title="Enterprise AI Brain API", version="0.1.0", lifespan=lifespan)
 app.state.store = build_store()
 app.state.user_repository = build_user_repository()
 app.state.authorization_repository = build_authorization_repository()

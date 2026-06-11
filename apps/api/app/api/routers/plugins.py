@@ -11,6 +11,9 @@ from app.services.plugins import (
     create_plugin_action_response,
     create_plugin_connection_response,
     create_plugin_response,
+    delete_plugin_action_response,
+    delete_plugin_connection_response,
+    delete_plugin_response,
     invoke_plugin_action_response,
     list_plugin_actions_response,
     list_plugin_connections_response,
@@ -55,6 +58,7 @@ class PluginConnectionRequest(BaseModel):
     max_retries: int = 0
     name: str
     plugin_id: str
+    request_config: dict[str, Any] = Field(default_factory=dict)
     status: str = "active"
     timeout_seconds: int = 30
 
@@ -67,6 +71,7 @@ class PluginConnectionPatchRequest(BaseModel):
     max_retries: int | None = None
     name: str | None = None
     plugin_id: str | None = None
+    request_config: dict[str, Any] | None = None
     status: str | None = None
     timeout_seconds: int | None = None
 
@@ -155,6 +160,22 @@ def patch_plugin(
     )
 
 
+@router.delete("/api/system/plugins/{plugin_id}")
+def delete_plugin(
+    plugin_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        delete_plugin_response(
+            current_store=store(request),
+            plugin_id=plugin_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
 @router.get("/api/system/plugin-connections")
 def list_plugin_connections(
     request: Request,
@@ -200,6 +221,22 @@ def patch_plugin_connection(
             connection_id=connection_id,
             current_store=store(request),
             payload=payload,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.delete("/api/system/plugin-connections/{connection_id}")
+def delete_plugin_connection(
+    connection_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        delete_plugin_connection_response(
+            connection_id=connection_id,
+            current_store=store(request),
             user=user,
         ),
         get_trace_id(request),
@@ -263,6 +300,22 @@ def patch_plugin_action(
             action_id=action_id,
             current_store=store(request),
             payload=payload,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.delete("/api/system/plugin-actions/{action_id}")
+def delete_plugin_action(
+    action_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        delete_plugin_action_response(
+            action_id=action_id,
+            current_store=store(request),
             user=user,
         ),
         get_trace_id(request),

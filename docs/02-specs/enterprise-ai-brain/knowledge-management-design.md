@@ -12,7 +12,7 @@
 
 ## 背景
 
-当前知识中心已经支持知识文档导入、文本 chunk 重建、Embedding 可用时的向量索引、权限过滤检索、索引失败重试和知识沉淀审核。现有数据库已引入 `knowledge_spaces`、`knowledge_space_products`、`knowledge_space_members`、`knowledge_folders`、`knowledge_assets`、`knowledge_import_jobs` 和 `knowledge_chunk_sets`；页面已支持空间/目录筛选、文件上传、文档资产查看、导入任务查看、chunk 预览、chunk set 切换、目录整理和文档批量移动。当前已具备导入任务排队、显式运行、失败重试、取消、原始资产与解析资产分离、Markdown 父子分块和父块上下文返回的 MVP 能力；后续仍需继续完善真实后台队列、外部 OCR/版面解析器、图片/表格结构化质量和检索质量评估。
+当前知识中心已经支持知识文档导入、文本 chunk 重建、Embedding 可用时的向量索引、权限过滤检索、索引失败重试和知识沉淀审核。现有数据库已引入 `knowledge_spaces`、`knowledge_space_products`、`knowledge_space_members`、`knowledge_folders`、`knowledge_assets`、`knowledge_import_jobs` 和 `knowledge_chunk_sets`；页面已支持空间/目录筛选、文件上传、文档资产查看、导入任务查看、worker 状态查看、chunk 预览、chunk 来源元数据展示、chunk set 切换、目录整理和文档批量移动。当前已具备导入任务排队、应用内后台 worker 自动消费、queued 任务周期性补偿扫描、显式运行补偿、失败重试、取消、原始资产与解析资产分离、OCR/Table 结构化 sidecar 资产、Markdown 父子分块、页码/图片/表格来源 metadata 和父块上下文返回的 MVP 能力；本轮可靠性收口已补齐 worker 数据库租约、目录归档子树语义、资产 `bucket/object_key` 幂等 upsert 和 chunk set 索引状态恢复；后续仍需继续完善外部消息队列、外部 OCR/版面解析器、图片/表格结构化质量和检索质量评估。
 
 后续知识管理升级应吸收 KnowFlow 的生产级知识库经验，但不直接复制 KnowFlow/RAGFlow 的运行架构。KnowFlow 可参考的方向包括：文档解析任务化、多解析器适配、OCR/转换服务解耦、图文结构保留、父子分块、权限隔离和导入治理。AI Brain 的事实源仍保持 PostgreSQL，MinIO 作为 S3-compatible 对象存储实现，承载原始文件和解析产物。
 
@@ -75,6 +75,7 @@ Knowledge Space
 2. 目录支持树形结构、排序、移动、重命名和归档。
 3. 文档必须属于一个空间，可以不属于目录；无目录文档展示在空间根目录。
 4. 目录权限默认继承空间权限，不在 v1.2 引入目录级 ACL，避免权限模型过早复杂化。
+5. 父目录归档后，整棵子树视为不可用；子目录不再出现在目录列表中，也不能作为新建子目录、上传文档或批量移动文档的目标。
 
 ### 文档
 
@@ -90,7 +91,7 @@ Knowledge Space
 | `parsed_asset_id` | 当前解析文本或 Markdown 产物。 |
 | `active_chunk_set_id` | 当前生效分块版本。 |
 | `parser_engine` | 当前解析器，例如 `manual_text`、`markdown`、`pdf_text`、`mineru`。 |
-| `chunk_strategy` | 当前分块策略，例如 `simple_text`、`title`、`regex`、`parent_child`。 |
+| `chunk_strategy` | 当前分块策略，例如 `simple_text`、`regex_section`、`parent_child`。 |
 | `document_version` | 文档版本号，用于重上传和重解析。 |
 
 ### 资产
@@ -124,7 +125,7 @@ knowledge/{space_id}/{document_id}/{document_version}/{asset_type}/{content_hash
 
 ### 导入任务
 
-`knowledge_import_jobs` 管理文档处理生命周期。当前 MVP 上传接口先创建文档、原始资产和 `queued` 导入任务，导入任务由显式运行接口推进；目标生产态可替换为后台 worker 或消息队列，但 API 状态契约保持稳定。
+`knowledge_import_jobs` 管理文档处理生命周期。当前 MVP 上传接口先创建文档、原始资产和 `queued` 导入任务，再由应用内 `knowledge_import_worker` 后台队列自动消费；显式 `run` 接口保留为测试、运维补偿和 worker 关闭时的手动触发入口。后续如替换为 Redis/Celery/RQ 等外部消息队列，API 状态契约保持稳定。
 
 状态流：
 
@@ -134,13 +135,13 @@ queued -> processing -> completed
        -> cancelled
 ```
 
-任务记录应包含 `document_id`、`source_asset_id`、`parser_engine`、`chunk_strategy`、`status`、`progress`、`error_code`、`error_message`、`started_at`、`finished_at` 和 `created_by`。`failed` 和 `cancelled` 任务可通过 retry 回到 `queued`；不允许运行已完成或已取消任务。
+任务记录应包含 `document_id`、`source_asset_id`、`parser_engine`、`chunk_strategy`、`status`、`progress`、`error_code`、`error_message`、`started_at`、`finished_at`、`created_by`、`locked_by`、`locked_until` 和 `attempt_count`。`failed` 和 `cancelled` 任务可通过 retry 回到 `queued`；不允许运行已完成或已取消任务。worker 启动或空闲轮询补偿遗漏 queued 任务时，必须沿用任务 `created_by` 作为解析资产、chunk set 和 chunk 的写入归属，避免使用不存在的系统用户破坏 PostgreSQL 外键和审计链路。多实例或重复入队场景下，worker 必须先通过 PostgreSQL 原子 claim 获取租约，只有 claim 成功的实例才能执行解析；终态和 retry 必须清理锁字段。
 
 ### 分块版本
 
 建议新增 `knowledge_chunk_sets` 管理一次解析和分块的版本。文档通过 `active_chunk_set_id` 指向当前生效版本，重解析先生成新的 chunk set，成功后再切换 active 指针。
 
-`knowledge_chunk_sets` 至少包含 `document_id`、`source_asset_id`、`parsed_asset_id`、`parser_engine`、`parser_version`、`chunk_strategy`、`embedding_model`、`embedding_dimension`、`status`、`created_by`、`created_at` 和 `activated_at`。
+`knowledge_chunk_sets` 至少包含 `document_id`、`source_asset_id`、`parsed_asset_id`、`parser_engine`、`parser_version`、`chunk_strategy`、`embedding_model`、`embedding_dimension`、`status`、`index_status`、`vector_index_error`、`created_by`、`created_at` 和 `activated_at`。`knowledge_chunks` 的 chunk 序号唯一性必须以 `document_id + chunk_set_id + chunk_index` 为边界，不能继续使用旧的 `document_id + chunk_index` 唯一约束，否则重解析和历史版本回滚会被数据库层阻断。
 
 分块版本规则：
 
@@ -148,6 +149,8 @@ queued -> processing -> completed
 2. 新 chunk set 构建失败不得删除旧 active chunk。
 3. 重解析成功后再归档旧 chunk set，保留必要审计和回滚依据。
 4. 父子分块时，父块和子块必须属于同一个 chunk set。
+5. 同一文档的不同 chunk set 可以使用相同 `chunk_index`，检索和预览必须通过 `active_chunk_set_id` 或显式 `chunk_set_id` 限定版本。
+6. 历史 chunk set 激活时，文档索引状态必须按 chunk set 保存的 `index_status` 恢复，不能仅根据 embedding 字段猜测。
 
 ## 处理流程
 
@@ -156,8 +159,8 @@ queued -> processing -> completed
 1. API 校验用户对目标空间的写权限。
 2. 后端把原始文件写入 MinIO，并创建 `knowledge_assets`。
 3. 后端创建 `knowledge_documents` 和 `knowledge_import_jobs`。
-4. 导入任务读取原始资产，执行格式转换和解析。
-5. 解析后的 Markdown、OCR JSON、图片或表格资产写回 MinIO。
+4. 后台 worker 或手动补偿入口先 claim 导入任务租约，再读取原始资产，执行格式转换和解析。
+5. 解析后的 Markdown、OCR JSON、表格 JSON、图片或表格资产写回 MinIO；结构化 sidecar 资产与 Markdown 资产分开记录。
 6. 分块结果写入新的 `knowledge_chunk_sets` 和 `knowledge_chunks`，Embedding 通过 `model_gateway` 生成。
 7. 分块和索引完成后切换文档 `active_chunk_set_id`。
 8. 文档进入 `text_indexed` 或 `vector_indexed`；失败时进入 `index_failed` 并记录错误，旧 active chunk set 保持可用。
@@ -195,8 +198,9 @@ queued -> processing -> completed
 | `GET` | `/api/knowledge/documents/{document_id}/assets` | 查询文档资产。 |
 | `GET` | `/api/knowledge/assets/{asset_id}/preview` | 鉴权后返回预览或短期签名 URL。 |
 | `GET` | `/api/knowledge/import-jobs` | 查询导入任务。 |
-| `POST` | `/api/knowledge/import-jobs/{job_id}/run` | 运行 queued/failed 导入任务，生成解析资产、chunk set 和 chunk。 |
-| `POST` | `/api/knowledge/import-jobs/{job_id}/retry` | 将 failed/cancelled 导入任务重置为 queued，不重复创建文档。 |
+| `GET` | `/api/knowledge/import-worker/status` | 查询应用内导入 worker 的启用、运行、待处理和 active job 状态。 |
+| `POST` | `/api/knowledge/import-jobs/{job_id}/run` | 手动补偿运行 queued/failed 导入任务，生成解析资产、chunk set 和 chunk。 |
+| `POST` | `/api/knowledge/import-jobs/{job_id}/retry` | 将 failed/cancelled 导入任务重置为 queued，并在 worker 可用时重新入队，不重复创建文档。 |
 | `POST` | `/api/knowledge/import-jobs/{job_id}/cancel` | 取消 queued 或 failed 导入任务。 |
 | `GET` | `/api/knowledge/documents/{document_id}/chunk-sets` | 查询文档分块版本。 |
 | `GET` | `/api/knowledge/documents/{document_id}/chunks` | 查询指定 chunk set 的 chunk 预览。 |
@@ -217,7 +221,7 @@ queued -> processing -> completed
 
 1. 左侧空间与目录树：空间切换、目录新增、移动、归档。
 2. 中部文档列表：按目录、类型、索引状态、导入状态、产品版本、标签筛选。
-3. 右侧或抽屉详情：文档元数据、资产列表、解析预览、chunk 预览、导入任务时间线。
+3. 右侧或抽屉详情：文档元数据、资产列表、解析预览、chunk 预览、chunk 来源元数据、导入任务时间线和 worker 状态。
 4. 上传导入弹窗：目标空间、目录、产品、版本、权限继承、文件、解析器、分块策略。
 5. 检索弹窗：选择空间范围，展示命中 chunk、父块上下文、来源目录、页码和资产预览入口。
 6. 沉淀审核：采纳时选择空间和目录，避免任务沉淀继续进入无组织的文档池。
@@ -247,9 +251,11 @@ queued -> processing -> completed
 
 1. `knowledge_import_jobs` 支持 queued、processing、completed、failed、cancelled 状态。
 2. txt、md、pdf 基础文本解析，OCR JSON 和表格 JSON 作为结构化适配输入。
-3. 原始资产和 `parsed_markdown` 解析资产分开写入 MinIO/S3-compatible 存储。
-4. 导入进度、失败原因、显式运行、取消、重试和 chunk 预览。
+3. 原始资产、`parsed_markdown` 解析资产、`ocr_json` 和 `table_json` 结构化 sidecar 资产分开写入 MinIO/S3-compatible 存储。
+4. 应用内后台 worker、启动补偿 queued 任务、导入进度、worker 状态展示、失败原因、显式运行补偿、取消、重试和 chunk 预览。
 5. chunk set 可查询、激活和回滚，重解析成功后归档旧版本。
+6. worker 使用 PostgreSQL 租约 claim queued 任务，避免多实例重复消费；解析资产按 `bucket/object_key` 幂等 upsert，避免半成功重试重复资产。
+7. 目录归档按整棵子树生效；chunk set 保存索引状态，历史版本激活时可恢复 `text_indexed` 或 `vector_indexed` 语义。
 
 验收重点：
 
@@ -257,6 +263,12 @@ queued -> processing -> completed
 2. 重试不会重复创建同一文档或重复暴露旧 chunk。
 3. Embedding 不可用时仍可进入 `text_indexed`。
 4. 重解析失败不得切换 `active_chunk_set_id`。
+5. 上传、重解析和 retry 创建 queued 任务后自动入队；worker 启动和空闲轮询时会扫描并补偿遗漏的 queued 任务，补偿写入沿用导入任务创建人；`GET /api/knowledge/import-worker/status` 可观测待处理、active、成功和失败计数。
+6. OCR/Table JSON 导入后的 chunk metadata 至少可回溯页码、图片数量、图片引用、表格数量、表格序号、列名和结构化资产 ID，前端 chunk 预览应展示这些来源信息。
+7. 旧库迁移后应移除 `knowledge_chunks(document_id, chunk_index)` 唯一约束，允许重解析生成新的 chunk set 并保留旧版本。
+8. worker 重复入队或多实例场景下，只有获取 `locked_by/locked_until` 租约的实例能执行任务；终态会释放锁并保留 `attempt_count`。
+9. 父目录归档后，其子目录不能继续出现在目录树，也不能作为新建目录、上传或批量移动目标。
+10. 激活历史 chunk set 后，文档 `index_status` 按该 chunk set 保存的状态恢复；新版本索引失败时旧 active chunk set 保持可用。
 
 ### Phase 3: KnowFlow 风格解析增强
 
@@ -270,8 +282,9 @@ queued -> processing -> completed
 当前实现状态：
 
 1. 已落地 `plain_text`、`markdown`、`pdf_text`、`ocr_json`、`table_json` 解析器枚举和基础转换。
-2. 已落地 `simple_text` 与 `parent_child` 分块策略，父子分块以 Markdown 标题为父块、段落为子块；检索只召回子块，并在 source 中返回 `parent_chunk_id` 与 `parent_content`。
-3. 外部 OCR、图片版面识别、真实 PDF 版式恢复和多模态检索尚未接入生产解析服务，应作为 Phase 3 后续增强继续推进。
+2. 已落地 OCR JSON / Table JSON 结构化 sidecar 资产，解析后的 Markdown 资产通过 metadata 关联结构化资产；chunk metadata 可携带 `page_number`、`image_count`、`image_refs`、`table_count`、`table_index`、`columns`、`source_kind`、`source_asset_type` 和 `structured_asset_id`。
+3. 已落地 `simple_text`、`parent_child` 与 `regex_section` 分块策略：父子分块以 Markdown 标题为父块、段落为子块，检索只召回子块并在 source 中返回 `parent_chunk_id` 与 `parent_content`；正则分块按 Markdown 标题、分隔线、中文章节和英文 Section/Chapter 标记切分，并在 chunk metadata 保留 `section_title` 与 `split_pattern`。
+4. 外部 OCR、图片版面识别、真实 PDF 版式恢复和多模态检索尚未接入生产解析服务，应作为 Phase 3 后续增强继续推进。
 
 验收重点：
 

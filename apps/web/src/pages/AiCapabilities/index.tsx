@@ -1,9 +1,10 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { PageContainer } from '@ant-design/pro-components';
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Switch, Upload, message } from 'antd';
+import { PageContainer, ProTable, type ProColumns } from '@ant-design/pro-components';
+import { Button, Form, Input, Modal, Popconfirm, Select, Space, Tabs, Tag, Switch, Upload, message } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { StatusTag } from '../../components/ManagementListPage';
 import type { ModelGatewayConfigRecord } from '../../data/management';
 import {
   createAiAgent,
@@ -233,7 +234,7 @@ export default function AiCapabilitiesPage() {
 
   const renderStatusTag = (value: unknown) => {
     const status = String(value ?? '');
-    return <Tag color={STATUS_COLORS[status] ?? 'default'}>{STATUS_LABELS[status] ?? status}</Tag>;
+    return <StatusTag color={STATUS_COLORS[status] ?? 'default'} label={STATUS_LABELS[status] ?? status} />;
   };
 
   const modelGatewayConfigName = (configId?: string | null) => {
@@ -253,6 +254,111 @@ export default function AiCapabilitiesPage() {
     })),
   ];
 
+  const agentColumns = useMemo<ProColumns<AiAgentRecord>[]>(
+    () => [
+      { dataIndex: 'name', ellipsis: true, title: '名称', width: 220 },
+      { dataIndex: 'code', ellipsis: true, title: '编码', width: 180 },
+      {
+        dataIndex: 'model_gateway_config_id',
+        ellipsis: true,
+        title: '模型网关',
+        width: 240,
+        render: (value) => modelGatewayConfigName(value ? String(value) : undefined),
+      },
+      {
+        dataIndex: 'default_skill_ids',
+        ellipsis: true,
+        title: '默认 Skills',
+        width: 220,
+        render: (value) => (Array.isArray(value) && value.length ? value.join(', ') : '-'),
+      },
+      {
+        dataIndex: 'status',
+        title: '状态',
+        width: 112,
+        render: renderStatusTag,
+      },
+      {
+        fixed: 'right',
+        key: 'actions',
+        title: '操作',
+        valueType: 'option',
+        width: 164,
+        render: (_, record) => (
+          <Space className="management-row-actions" size={0}>
+            <Button type="link" onClick={() => openEditAgent(record)}>
+              编辑
+            </Button>
+            <Popconfirm
+              title="确认删除该 Agent？"
+              description="删除后状态将变为停用，已有运行记录不会被移除。"
+              okText="删除"
+              cancelText="取消"
+              onConfirm={() => disableAgent(record)}
+            >
+              <Button danger disabled={record.status === 'disabled'} type="link">
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
+      },
+    ],
+    [modelGatewayConfigs],
+  );
+
+  const skillColumns = useMemo<ProColumns<AiSkillRecord>[]>(
+    () => [
+      { dataIndex: 'name', ellipsis: true, title: '名称', width: 220 },
+      { dataIndex: 'code', ellipsis: true, title: '编码', width: 200 },
+      { dataIndex: 'version', title: '版本', width: 120 },
+      {
+        dataIndex: 'source_type',
+        title: '来源',
+        width: 120,
+        render: (value) => <Tag>{value === 'package' ? '文件包' : '表单'}</Tag>,
+      },
+      {
+        dataIndex: 'requires_human_review',
+        title: '人工确认',
+        width: 120,
+        render: (value) => (value ? '需要' : '不需要'),
+      },
+      {
+        dataIndex: 'status',
+        title: '状态',
+        width: 112,
+        render: renderStatusTag,
+      },
+      {
+        fixed: 'right',
+        key: 'actions',
+        title: '操作',
+        valueType: 'option',
+        width: 164,
+        render: (_, record) => (
+          <Space className="management-row-actions" size={0}>
+            <Button type="link" onClick={() => openEditSkill(record)}>
+              编辑
+            </Button>
+            <Popconfirm
+              title="确认删除该 Skill？"
+              description="删除后状态将变为停用，已有运行记录不会被移除。"
+              okText="删除"
+              cancelText="取消"
+              onConfirm={() => disableSkill(record)}
+            >
+              <Button danger disabled={record.status === 'disabled'} type="link">
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
+      },
+    ],
+    [],
+  );
+
   return (
     <PageContainer title="AI 能力配置">
       <Tabs
@@ -261,59 +367,32 @@ export default function AiCapabilitiesPage() {
             key: 'agents',
             label: 'Agent 管理',
             children: (
-              <Table<AiAgentRecord>
+              <ProTable<AiAgentRecord>
+                cardBordered
+                className="management-list-table"
+                columns={agentColumns}
+                dateFormatter="string"
+                headerTitle="Agent 管理"
                 loading={loading}
+                options={{
+                  density: true,
+                  fullScreen: true,
+                  reload,
+                  setting: true,
+                }}
+                pagination={{
+                  showSizeChanger: true,
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
                 rowKey="id"
+                scroll={{ x: 1156 }}
+                search={false}
                 dataSource={agents}
                 tableLayout="fixed"
-                title={() => (
-                  <Button icon={<PlusOutlined />} type="primary" onClick={openCreateAgent}>
+                toolBarRender={() => [
+                  <Button key="create-agent" icon={<PlusOutlined />} type="primary" onClick={openCreateAgent}>
                     新增 Agent
-                  </Button>
-                )}
-                columns={[
-                  { dataIndex: 'name', title: '名称', ellipsis: true },
-                  { dataIndex: 'code', title: '编码', ellipsis: true },
-                  {
-                    dataIndex: 'model_gateway_config_id',
-                    title: '模型网关',
-                    ellipsis: true,
-                    render: (value) => modelGatewayConfigName(value ? String(value) : undefined),
-                  },
-                  {
-                    dataIndex: 'default_skill_ids',
-                    title: '默认 Skills',
-                    ellipsis: true,
-                    render: (value) => (Array.isArray(value) && value.length ? value.join(', ') : '-'),
-                  },
-                  {
-                    dataIndex: 'status',
-                    title: '状态',
-                    width: 120,
-                    render: renderStatusTag,
-                  },
-                  {
-                    title: '操作',
-                    width: 144,
-                    render: (_, record) => (
-                      <Space size={4}>
-                        <Button type="link" onClick={() => openEditAgent(record)}>
-                          编辑
-                        </Button>
-                        <Popconfirm
-                          title="确认删除该 Agent？"
-                          description="删除后状态将变为停用，已有运行记录不会被移除。"
-                          okText="删除"
-                          cancelText="取消"
-                          onConfirm={() => disableAgent(record)}
-                        >
-                          <Button danger disabled={record.status === 'disabled'} type="link">
-                            删除
-                          </Button>
-                        </Popconfirm>
-                      </Space>
-                    ),
-                  },
+                  </Button>,
                 ]}
               />
             ),
@@ -322,63 +401,35 @@ export default function AiCapabilitiesPage() {
             key: 'skills',
             label: 'Skill 管理',
             children: (
-              <Table<AiSkillRecord>
+              <ProTable<AiSkillRecord>
+                cardBordered
+                className="management-list-table"
+                columns={skillColumns}
+                dateFormatter="string"
+                headerTitle="Skill 管理"
                 loading={loading}
+                options={{
+                  density: true,
+                  fullScreen: true,
+                  reload,
+                  setting: true,
+                }}
+                pagination={{
+                  showSizeChanger: true,
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
                 rowKey="id"
+                scroll={{ x: 1056 }}
+                search={false}
                 dataSource={skills}
                 tableLayout="fixed"
-                title={() => (
-                  <Space>
-                    <Button icon={<PlusOutlined />} type="primary" onClick={openCreateSkill}>
-                      新增 Skill
-                    </Button>
-                    <Button onClick={() => setSkillPackageModalOpen(true)}>上传 Skill 包</Button>
-                  </Space>
-                )}
-                columns={[
-                  { dataIndex: 'name', title: '名称', ellipsis: true },
-                  { dataIndex: 'code', title: '编码', ellipsis: true },
-                  { dataIndex: 'version', title: '版本', width: 120 },
-                  {
-                    dataIndex: 'source_type',
-                    title: '来源',
-                    width: 120,
-                    render: (value) => <Tag>{value === 'package' ? '文件包' : '表单'}</Tag>,
-                  },
-                  {
-                    dataIndex: 'requires_human_review',
-                    title: '人工确认',
-                    width: 120,
-                    render: (value) => (value ? '需要' : '不需要'),
-                  },
-                  {
-                    dataIndex: 'status',
-                    title: '状态',
-                    width: 120,
-                    render: renderStatusTag,
-                  },
-                  {
-                    title: '操作',
-                    width: 144,
-                    render: (_, record) => (
-                      <Space size={4}>
-                        <Button type="link" onClick={() => openEditSkill(record)}>
-                          编辑
-                        </Button>
-                        <Popconfirm
-                          title="确认删除该 Skill？"
-                          description="删除后状态将变为停用，已有运行记录不会被移除。"
-                          okText="删除"
-                          cancelText="取消"
-                          onConfirm={() => disableSkill(record)}
-                        >
-                          <Button danger disabled={record.status === 'disabled'} type="link">
-                            删除
-                          </Button>
-                        </Popconfirm>
-                      </Space>
-                    ),
-                  },
+                toolBarRender={() => [
+                  <Button key="create-skill" icon={<PlusOutlined />} type="primary" onClick={openCreateSkill}>
+                    新增 Skill
+                  </Button>,
+                  <Button key="upload-skill" onClick={() => setSkillPackageModalOpen(true)}>
+                    上传 Skill 包
+                  </Button>,
                 ]}
               />
             ),

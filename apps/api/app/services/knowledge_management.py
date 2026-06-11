@@ -22,7 +22,7 @@ READ_SPACE_ROLES = WRITE_SPACE_ROLES | {"reader"}
 IMPORT_JOB_RUNNABLE_STATUSES = {"queued", "uploaded", "failed"}
 IMPORT_JOB_RETRYABLE_STATUSES = {"failed", "cancelled"}
 SUPPORTED_PARSER_ENGINES = {"plain_text", "markdown", "pdf_text", "ocr_json", "table_json"}
-SUPPORTED_CHUNK_STRATEGIES = {"simple_text", "parent_child"}
+SUPPORTED_CHUNK_STRATEGIES = {"simple_text", "parent_child", "regex_section"}
 
 
 def now_iso() -> str:
@@ -273,6 +273,8 @@ def create_knowledge_folder_result(
         parent = current_store.knowledge_folders.get(parent_folder_id)
         if parent is None or parent.get("knowledge_space_id") != space_id:
             raise api_error(404, "NOT_FOUND", "Parent folder not found")
+        if not folder_is_effectively_active(current_store, parent_folder_id):
+            raise api_error(409, "KNOWLEDGE_FOLDER_ARCHIVED", "Parent folder is archived")
     timestamp = now_iso()
     folder = {
         "id": current_store.new_id("knowledge_folder"),
@@ -312,6 +314,22 @@ def folder_descendant_ids(current_store: Any, folder_id: str) -> set[str]:
     return descendants
 
 
+def folder_is_effectively_active(current_store: Any, folder_id: str | None) -> bool:
+    if folder_id is None:
+        return True
+    visited: set[str] = set()
+    current_id = folder_id
+    while current_id:
+        if current_id in visited:
+            return False
+        visited.add(current_id)
+        folder = current_store.knowledge_folders.get(current_id)
+        if folder is None or folder.get("status", "active") == "archived":
+            return False
+        current_id = folder.get("parent_folder_id")
+    return True
+
+
 def patch_knowledge_folder_result(
     *,
     current_store: Any,
@@ -334,6 +352,8 @@ def patch_knowledge_folder_result(
         parent = current_store.knowledge_folders.get(parent_folder_id)
         if parent is None or parent.get("knowledge_space_id") != space_id:
             raise api_error(404, "NOT_FOUND", "Parent folder not found")
+        if not folder_is_effectively_active(current_store, parent_folder_id):
+            raise api_error(409, "KNOWLEDGE_FOLDER_ARCHIVED", "Parent folder is archived")
         if parent_folder_id == folder_id or parent_folder_id in folder_descendant_ids(
             current_store,
             folder_id,
@@ -374,7 +394,8 @@ def list_knowledge_folders_result(
     items = [
         {**folder, "path": folder_path(current_store, folder)}
         for folder in current_store.knowledge_folders.values()
-        if folder.get("knowledge_space_id") == space_id and folder.get("status") != "archived"
+        if folder.get("knowledge_space_id") == space_id
+        and folder_is_effectively_active(current_store, folder["id"])
     ]
     items.sort(key=lambda item: (item.get("sort_order", 0), item["name"], item["id"]))
     return {"items": items, "total": len(items)}
@@ -506,17 +527,34 @@ def create_asset_record(
     current_store: Any,
     document_id: str,
     filename: str,
+    metadata: dict[str, Any] | None = None,
     mime_type: str,
     space_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
     settings = get_settings()
     digest = hashlib.sha256(content).hexdigest()
-    asset_id = current_store.new_id("knowledge_asset")
     object_key = f"knowledge/{space_id}/{document_id}/v1/{asset_type}/{digest}/{filename}"
+    bucket = settings.object_storage_bucket
+    for existing_asset in current_store.knowledge_assets.values():
+        if existing_asset.get("bucket") != bucket or existing_asset.get("object_key") != object_key:
+            continue
+        if metadata:
+            updated_asset = {
+                **existing_asset,
+                "metadata": {
+                    **dict(existing_asset.get("metadata") or {}),
+                    **dict(metadata),
+                },
+                "updated_at": now_iso(),
+            }
+            current_store.knowledge_assets[updated_asset["id"]] = updated_asset
+            return dict(updated_asset)
+        return dict(existing_asset)
+    asset_id = current_store.new_id("knowledge_asset")
     storage = object_storage()
     stored = storage.put_bytes(
-        bucket=settings.object_storage_bucket,
+        bucket=bucket,
         content=content,
         mime_type=mime_type,
         object_key=object_key,
@@ -534,7 +572,7 @@ def create_asset_record(
         "filename": filename,
         "mime_type": mime_type,
         "size_bytes": stored.size_bytes,
-        "metadata": {},
+        "metadata": dict(metadata or {}),
         "created_by": user["id"],
         "created_at": timestamp,
         "updated_at": timestamp,
@@ -562,6 +600,245 @@ def normalize_chunk_strategy(chunk_strategy: str | None) -> str:
     if normalized not in SUPPORTED_CHUNK_STRATEGIES:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported chunk_strategy")
     return normalized
+
+
+def _json_asset_content(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
+
+
+def _normalized_number(value: Any, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _source_metadata_for_content(
+    source_map: list[dict[str, Any]],
+    content: str,
+) -> dict[str, Any]:
+    for source in source_map:
+        match_text = str(source.get("match_text") or "").strip()
+        if not match_text:
+            continue
+        if match_text in content or content in match_text:
+            return dict(source.get("metadata") or {})
+    return {}
+
+
+def _parse_ocr_json_payload(payload: Any, *, filename: str, parser_engine: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("OCR_JSON_INVALID")
+    pages = payload.get("pages")
+    normalized_pages: list[dict[str, Any]] = []
+    markdown_sections: list[str] = []
+    source_map: list[dict[str, Any]] = []
+    image_count = 0
+    if isinstance(pages, list):
+        for index, page in enumerate(pages, start=1):
+            if not isinstance(page, dict):
+                continue
+            page_text = str(page.get("text", "")).strip()
+            if not page_text:
+                continue
+            page_number = _normalized_number(
+                page.get("page_number", page.get("page")),
+                index,
+            )
+            images = page.get("images") if isinstance(page.get("images"), list) else []
+            tables = page.get("tables") if isinstance(page.get("tables"), list) else []
+            image_refs = [
+                str(
+                    image.get("id")
+                    or image.get("image_id")
+                    or image.get("name")
+                    or image.get("filename")
+                    or index
+                )
+                for image in images
+                if isinstance(image, dict)
+            ]
+            image_count += len(images)
+            normalized_pages.append(
+                {
+                    "page_number": page_number,
+                    "text": page_text,
+                    "image_count": len(images),
+                    "image_refs": image_refs,
+                    "table_count": len(tables),
+                }
+            )
+            markdown_sections.append(f"## Page {page_number}\n\n{page_text}")
+            source_map.append(
+                {
+                    "match_text": page_text,
+                    "metadata": {
+                        "image_count": len(images),
+                        "image_refs": image_refs,
+                        "page_number": page_number,
+                        "source_asset_type": "ocr_json",
+                        "source_kind": "ocr_page",
+                        "table_count": len(tables),
+                    },
+                }
+            )
+    else:
+        page_text = str(payload.get("text", "")).strip()
+        if page_text:
+            normalized_pages.append(
+                {
+                    "page_number": 1,
+                    "text": page_text,
+                    "image_count": 0,
+                    "table_count": 0,
+                }
+            )
+            markdown_sections.append(page_text)
+            source_map.append(
+                {
+                    "match_text": page_text,
+                    "metadata": {
+                        "page_number": 1,
+                        "source_asset_type": "ocr_json",
+                        "source_kind": "ocr_page",
+                    },
+                }
+            )
+    if not markdown_sections:
+        raise ValueError("OCR_TEXT_EMPTY")
+    normalized_payload = {
+        "parser_engine": parser_engine,
+        "pages": normalized_pages,
+    }
+    return {
+        "asset_type": "parsed_markdown",
+        "content": "\n\n".join(markdown_sections),
+        "filename": f"{filename}.ocr.md",
+        "mime_type": "text/markdown",
+        "metadata": {
+            "image_count": image_count,
+            "page_count": len(normalized_pages),
+            "parser_engine": parser_engine,
+            "source_asset_type": "ocr_json",
+        },
+        "sidecar_assets": [
+            {
+                "asset_type": "ocr_json",
+                "content": _json_asset_content(normalized_payload),
+                "filename": f"{filename}.ocr.json",
+                "mime_type": "application/json",
+                "metadata": {
+                    "image_count": image_count,
+                    "page_count": len(normalized_pages),
+                    "parser_engine": parser_engine,
+                },
+            }
+        ],
+        "source_map": source_map,
+    }
+
+
+def _normalized_table_specs(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [{"name": "Table 1", "rows": payload}]
+    if not isinstance(payload, dict):
+        raise ValueError("TABLE_JSON_INVALID")
+    tables = payload.get("tables")
+    if isinstance(tables, list):
+        return [
+            {
+                "name": str(table.get("name") or f"Table {index}").strip(),
+                "rows": table.get("rows", []),
+            }
+            for index, table in enumerate(tables, start=1)
+            if isinstance(table, dict)
+        ]
+    return [
+        {
+            "name": str(payload.get("name") or "Table 1").strip(),
+            "rows": payload.get("rows", []),
+        }
+    ]
+
+
+def _parse_table_json_payload(payload: Any, *, filename: str, parser_engine: str) -> dict[str, Any]:
+    markdown_sections: list[str] = []
+    normalized_tables: list[dict[str, Any]] = []
+    source_map: list[dict[str, Any]] = []
+    all_columns: set[str] = set()
+    for table_index, table_spec in enumerate(_normalized_table_specs(payload), start=1):
+        rows = table_spec.get("rows")
+        if not isinstance(rows, list) or not rows:
+            continue
+        row_dicts = [row for row in rows if isinstance(row, dict)]
+        if not row_dicts:
+            continue
+        columns = sorted({key for row in row_dicts for key in row})
+        if not columns:
+            continue
+        all_columns.update(columns)
+        header = "| " + " | ".join(columns) + " |"
+        divider = "| " + " | ".join(["---"] * len(columns)) + " |"
+        body = [
+            "| " + " | ".join(str(row.get(column, "")) for column in columns) + " |"
+            for row in row_dicts
+        ]
+        table_name = str(table_spec.get("name") or f"Table {table_index}").strip()
+        table_markdown = "\n".join([header, divider, *body])
+        markdown_sections.append(f"## Table {table_index}: {table_name}\n\n{table_markdown}")
+        normalized_tables.append(
+            {
+                "columns": columns,
+                "name": table_name,
+                "rows": row_dicts,
+                "table_index": table_index,
+            }
+        )
+        source_map.append(
+            {
+                "match_text": table_markdown,
+                "metadata": {
+                    "columns": columns,
+                    "source_asset_type": "table_json",
+                    "source_kind": "table",
+                    "table_index": table_index,
+                    "table_name": table_name,
+                },
+            }
+        )
+    if not markdown_sections:
+        raise ValueError("TABLE_EMPTY")
+    normalized_payload = {
+        "parser_engine": parser_engine,
+        "tables": normalized_tables,
+    }
+    columns = sorted(all_columns)
+    return {
+        "asset_type": "parsed_markdown",
+        "content": "\n\n".join(markdown_sections),
+        "filename": f"{filename}.table.md",
+        "mime_type": "text/markdown",
+        "metadata": {
+            "columns": columns,
+            "parser_engine": parser_engine,
+            "source_asset_type": "table_json",
+            "table_count": len(normalized_tables),
+        },
+        "sidecar_assets": [
+            {
+                "asset_type": "table_json",
+                "content": _json_asset_content(normalized_payload),
+                "filename": f"{filename}.table.json",
+                "mime_type": "application/json",
+                "metadata": {
+                    "columns": columns,
+                    "parser_engine": parser_engine,
+                    "table_count": len(normalized_tables),
+                },
+            }
+        ],
+        "source_map": source_map,
+    }
 
 
 def parse_asset_content(
@@ -594,7 +871,15 @@ def parse_asset_content(
         }
     if parser_engine == "pdf_text":
         printable = "".join(char if char.isprintable() or char.isspace() else " " for char in text)
-        normalized = "\n".join(line.strip() for line in printable.splitlines() if line.strip())
+        page_texts = [
+            "\n".join(line.strip() for line in page.splitlines() if line.strip())
+            for page in printable.split("\f")
+        ]
+        page_texts = [page for page in page_texts if page]
+        normalized = "\n\n".join(
+            f"## Page {index}\n\n{page}" if len(page_texts) > 1 else page
+            for index, page in enumerate(page_texts, start=1)
+        )
         if not normalized:
             raise ValueError("PDF_TEXT_EMPTY")
         return {
@@ -602,51 +887,31 @@ def parse_asset_content(
             "content": normalized,
             "filename": f"{filename}.parsed.md",
             "mime_type": "text/markdown",
-            "metadata": {"parser_engine": parser_engine, "source_mime_type": mime_type},
+            "metadata": {
+                "page_count": len(page_texts),
+                "parser_engine": parser_engine,
+                "source_mime_type": mime_type,
+            },
+            "source_map": [
+                {
+                    "match_text": page,
+                    "metadata": {"page_number": index, "source_kind": "pdf_page"},
+                }
+                for index, page in enumerate(page_texts, start=1)
+            ],
         }
     if parser_engine == "ocr_json":
-        payload = json.loads(text)
-        pages = payload.get("pages") if isinstance(payload, dict) else None
-        if isinstance(pages, list):
-            page_texts = [
-                f"Page {index}: {str(page.get('text', '')).strip()}"
-                for index, page in enumerate(pages, start=1)
-                if isinstance(page, dict) and str(page.get("text", "")).strip()
-            ]
-            parsed_text = "\n\n".join(page_texts)
-        else:
-            parsed_text = str(payload.get("text", "")).strip() if isinstance(payload, dict) else ""
-        if not parsed_text:
-            raise ValueError("OCR_TEXT_EMPTY")
-        return {
-            "asset_type": "parsed_markdown",
-            "content": parsed_text,
-            "filename": f"{filename}.ocr.md",
-            "mime_type": "text/markdown",
-            "metadata": {"parser_engine": parser_engine, "source_asset_type": "ocr_json"},
-        }
+        return _parse_ocr_json_payload(
+            json.loads(text),
+            filename=filename,
+            parser_engine=parser_engine,
+        )
     if parser_engine == "table_json":
-        payload = json.loads(text)
-        rows = payload if isinstance(payload, list) else payload.get("rows", [])
-        if not rows:
-            raise ValueError("TABLE_EMPTY")
-        columns = sorted({key for row in rows if isinstance(row, dict) for key in row})
-        if not columns:
-            raise ValueError("TABLE_EMPTY")
-        header = "| " + " | ".join(columns) + " |"
-        divider = "| " + " | ".join(["---"] * len(columns)) + " |"
-        body = [
-            "| " + " | ".join(str(row.get(column, "")) for column in columns) + " |"
-            for row in rows
-            if isinstance(row, dict)
-        ]
-        return {
-            "asset_type": "parsed_markdown",
-            "content": "\n".join([header, divider, *body]),
-            "filename": f"{filename}.table.md",
-            "mime_type": "text/markdown",
-            "metadata": {"parser_engine": parser_engine, "source_asset_type": "table_json"},
-        }
+        return _parse_table_json_payload(
+            json.loads(text),
+            filename=filename,
+            parser_engine=parser_engine,
+        )
     raise ValueError("UNSUPPORTED_PARSER")
 
 
@@ -668,7 +933,11 @@ def upload_knowledge_document_result(
     ensure_space_access(current_store, user, space_id=knowledge_space_id, required="write")
     if folder_id is not None:
         folder = current_store.knowledge_folders.get(folder_id)
-        if folder is None or folder.get("knowledge_space_id") != knowledge_space_id:
+        if (
+            folder is None
+            or folder.get("knowledge_space_id") != knowledge_space_id
+            or not folder_is_effectively_active(current_store, folder_id)
+        ):
             raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
     content = decode_upload_content(content_base64)
     if not content:
@@ -723,6 +992,9 @@ def upload_knowledge_document_result(
         "error_code": None,
         "error_message": None,
         "created_by": user["id"],
+        "locked_by": None,
+        "locked_until": None,
+        "attempt_count": 0,
         "started_at": None,
         "finished_at": None,
         "created_at": timestamp,
@@ -782,6 +1054,8 @@ def _mark_import_job_failed(
         "progress": 80,
         "error_code": error_code,
         "error_message": error_message,
+        "locked_by": None,
+        "locked_until": None,
         "finished_at": timestamp,
         "updated_at": timestamp,
     }
@@ -853,17 +1127,39 @@ def run_knowledge_import_job_result(
             mime_type=source_asset.get("mime_type", "application/octet-stream"),
             parser_engine=running_job.get("parser_engine", "plain_text"),
         )
+        structured_assets: list[dict[str, Any]] = []
+        structured_asset_by_type: dict[str, dict[str, Any]] = {}
+        for sidecar in parsed.get("sidecar_assets") or []:
+            structured_asset = create_asset_record(
+                asset_type=sidecar["asset_type"],
+                content=str(sidecar["content"]).encode(),
+                current_store=current_store,
+                document_id=document["id"],
+                filename=sidecar["filename"],
+                metadata=sidecar.get("metadata", {}),
+                mime_type=sidecar["mime_type"],
+                space_id=space_id or source_asset["knowledge_space_id"],
+                user=user,
+            )
+            current_store.knowledge_assets[structured_asset["id"]] = structured_asset
+            structured_assets.append(structured_asset)
+            structured_asset_by_type[structured_asset["asset_type"]] = structured_asset
+        parsed_metadata = dict(parsed.get("metadata") or {})
+        if structured_assets:
+            parsed_metadata["structured_asset_ids"] = [
+                asset["id"] for asset in structured_assets
+            ]
         parsed_asset = create_asset_record(
             asset_type=parsed["asset_type"],
             content=parsed["content"].encode(),
             current_store=current_store,
             document_id=document["id"],
             filename=parsed["filename"],
+            metadata=parsed_metadata,
             mime_type=parsed["mime_type"],
             space_id=space_id or source_asset["knowledge_space_id"],
             user=user,
         )
-        parsed_asset["metadata"] = parsed.get("metadata", {})
         current_store.knowledge_assets[parsed_asset["id"]] = parsed_asset
         chunk_set_id = current_store.new_id("knowledge_chunk_set")
         chunk_set = {
@@ -879,6 +1175,8 @@ def run_knowledge_import_job_result(
             "status": "building",
             "created_by": user["id"],
             "created_at": timestamp,
+            "index_status": None,
+            "vector_index_error": None,
             "updated_at": timestamp,
             "activated_at": None,
         }
@@ -908,15 +1206,30 @@ def run_knowledge_import_job_result(
                     old_parent_chunk_id,
                 )
             chunk["chunk_set_id"] = chunk_set_id
+            source_metadata = _source_metadata_for_content(
+                parsed.get("source_map") or [],
+                chunk.get("content", ""),
+            )
+            source_asset_type = source_metadata.get("source_asset_type")
+            if source_asset_type in structured_asset_by_type:
+                source_metadata["structured_asset_id"] = structured_asset_by_type[
+                    source_asset_type
+                ]["id"]
             chunk.setdefault("metadata", {})["knowledge_space_id"] = document.get(
                 "knowledge_space_id",
             )
+            chunk["metadata"].update(source_metadata)
             chunk["metadata"]["folder_id"] = document.get("folder_id")
             chunk["metadata"]["source_asset_id"] = source_asset["id"]
             chunk["metadata"]["parsed_asset_id"] = parsed_asset["id"]
             chunk["metadata"]["chunk_set_id"] = chunk_set_id
         previous_active_id = document.get("active_chunk_set_id")
-        if previous_active_id and previous_active_id in current_store.knowledge_chunk_sets:
+        next_index_status = indexed_document["index_status"]
+        if (
+            next_index_status != "index_failed"
+            and previous_active_id
+            and previous_active_id in current_store.knowledge_chunk_sets
+        ):
             previous_active = current_store.knowledge_chunk_sets[previous_active_id]
             current_store.knowledge_chunk_sets[previous_active_id] = {
                 **previous_active,
@@ -925,15 +1238,17 @@ def run_knowledge_import_job_result(
             }
         chunk_set = {
             **chunk_set,
-            "status": "active" if indexed_document["index_status"] != "index_failed" else "failed",
+            "status": "active" if next_index_status != "index_failed" else "failed",
             "embedding_model": (
                 chunks[0].get("metadata", {}).get("embedding_model") if chunks else None
             ),
             "embedding_dimension": (
                 chunks[0].get("metadata", {}).get("embedding_dimension") if chunks else None
             ),
+            "index_status": next_index_status,
+            "vector_index_error": indexed_document.get("vector_index_error"),
             "activated_at": now_iso()
-            if indexed_document["index_status"] != "index_failed"
+            if next_index_status != "index_failed"
             else None,
             "updated_at": now_iso(),
         }
@@ -953,11 +1268,13 @@ def run_knowledge_import_job_result(
         completed_job = {
             **running_job,
             "status": "completed"
-            if indexed_document["index_status"] != "index_failed"
+            if next_index_status != "index_failed"
             else "failed",
-            "progress": 100 if indexed_document["index_status"] != "index_failed" else 80,
+            "progress": 100 if next_index_status != "index_failed" else 80,
             "error_code": indexed_document.get("index_error"),
             "error_message": indexed_document.get("index_error"),
+            "locked_by": None,
+            "locked_until": None,
             "finished_at": now_iso(),
             "updated_at": now_iso(),
         }
@@ -979,6 +1296,7 @@ def run_knowledge_import_job_result(
             "import_job": import_job_response(current_store, completed_job),
             "chunk_set": dict(chunk_set),
             "parsed_asset": dict(parsed_asset),
+            "parsed_assets": [dict(asset) for asset in [*structured_assets, parsed_asset]],
         }
     except Exception as exc:  # noqa: BLE001
         failed_job = _mark_import_job_failed(
@@ -1029,6 +1347,8 @@ def retry_knowledge_import_job_result(
         "progress": 0,
         "error_code": None,
         "error_message": None,
+        "locked_by": None,
+        "locked_until": None,
         "started_at": None,
         "finished_at": None,
         "updated_at": now_iso(),
@@ -1077,6 +1397,8 @@ def cancel_knowledge_import_job_result(
         **import_job,
         "status": "cancelled",
         "progress": import_job.get("progress", 0),
+        "locked_by": None,
+        "locked_until": None,
         "finished_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -1204,13 +1526,18 @@ def activate_knowledge_chunk_set_result(
             ),
             "updated_at": now_iso(),
         }
+    restored_index_status = chunk_set.get("index_status") or (
+        "vector_indexed" if chunk_set.get("embedding_model") else "text_indexed"
+    )
     updated_document = {
         **document,
         "active_chunk_set_id": chunk_set_id,
         "parsed_asset_id": chunk_set.get("parsed_asset_id") or document.get("parsed_asset_id"),
         "parser_engine": chunk_set.get("parser_engine"),
         "chunk_strategy": chunk_set.get("chunk_strategy"),
-        "index_status": "text_indexed",
+        "index_status": restored_index_status,
+        "index_error": None,
+        "vector_index_error": chunk_set.get("vector_index_error"),
         "updated_at": now_iso(),
     }
     current_store.knowledge_documents[document_id] = updated_document
@@ -1268,6 +1595,9 @@ def reparse_knowledge_document_result(
         "error_code": None,
         "error_message": None,
         "created_by": user["id"],
+        "locked_by": None,
+        "locked_until": None,
+        "attempt_count": 0,
         "started_at": None,
         "finished_at": None,
         "created_at": timestamp,
@@ -1311,7 +1641,7 @@ def batch_move_knowledge_documents_result(
     target_folder = None
     if folder_id is not None:
         target_folder = current_store.knowledge_folders.get(folder_id)
-        if target_folder is None or target_folder.get("status") == "archived":
+        if target_folder is None or not folder_is_effectively_active(current_store, folder_id):
             raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
         ensure_space_access(
             current_store,

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, require_roles, store
+from app.core.config import get_settings
 from app.core.trace import envelope, get_trace_id
 from app.services.knowledge_deposit_decisions import (
     approve_knowledge_deposit_result,
@@ -20,6 +21,10 @@ from app.services.knowledge_deposits import (
     retry_knowledge_document_index_result,
 )
 from app.services.knowledge_documents import knowledge_document_list_response
+from app.services.knowledge_import_worker import (
+    enqueue_knowledge_import_job,
+    knowledge_import_worker_status,
+)
 from app.services.knowledge_management import (
     activate_knowledge_chunk_set_result,
     asset_preview_result,
@@ -43,6 +48,7 @@ from app.services.knowledge_management import (
 from app.services.knowledge_search import knowledge_search_response
 
 router = APIRouter(tags=["knowledge"])
+settings = get_settings()
 
 
 class KnowledgeDocumentRequest(BaseModel):
@@ -285,6 +291,11 @@ def upload_knowledge_document(
         title=payload.title,
         user=user,
     )
+    enqueue_knowledge_import_job(
+        request.app,
+        job_id=result["import_job"]["id"],
+        user=user,
+    )
     return envelope(result, get_trace_id(request))
 
 
@@ -334,6 +345,18 @@ def list_knowledge_import_jobs(
     return envelope(result, get_trace_id(request))
 
 
+@router.get("/api/knowledge/import-worker/status")
+def get_knowledge_import_worker_status(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"knowledge_owner"})
+    return envelope(
+        knowledge_import_worker_status(request.app, settings),
+        get_trace_id(request),
+    )
+
+
 @router.post("/api/knowledge/import-jobs/{job_id}/run")
 def run_knowledge_import_job(
     job_id: str,
@@ -357,6 +380,11 @@ def retry_knowledge_import_job(
     result = retry_knowledge_import_job_result(
         current_store=knowledge_write_store(store(request)),
         job_id=job_id,
+        user=user,
+    )
+    enqueue_knowledge_import_job(
+        request.app,
+        job_id=result["import_job"]["id"],
         user=user,
     )
     return envelope(result, get_trace_id(request))
@@ -434,6 +462,11 @@ def reparse_knowledge_document(
         chunk_strategy=payload.chunk_strategy,
         document_id=document_id,
         parser_engine=payload.parser_engine,
+        user=user,
+    )
+    enqueue_knowledge_import_job(
+        request.app,
+        job_id=result["import_job"]["id"],
         user=user,
     )
     return envelope(result, get_trace_id(request))

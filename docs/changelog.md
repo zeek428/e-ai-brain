@@ -8,16 +8,37 @@
 ## [Unreleased]
 
 ### Added
+- 定时作业配置和执行链路校正：作业表单按“数据连接 -> AI 模型 -> Agent -> Skills -> 结果动作”配置，隐藏时间参数、连接输入参数和输出覆盖 JSON；`user_feedback_insight_extract` 运行时必须先取数，再通过模型网关按 Agent/Skill 处理为结构化 JSON，最后执行结果动作写入。
+- 定时作业手动运行可观测性增强：点击运行后按钮进入执行中状态并禁用重复触发；运行结果详情顶部直接展示本次作业类型、执行模式、AI 模型、Agent 和 Skills，便于判断是否经过大模型处理。
+- 定时作业运行结果详情补齐三段核心节点：详情弹窗优先展示数据连接获取内容、经过 Skill 处理后的内容和结果动作反馈内容；运行摘要新增 `execution_nodes`，并在 Skill 节点展示模型调用、处理输入输出和 `model_log_id`。
+- 任务中心后台配置列表风格统一：AI 能力配置、定时作业、插件管理改用与需求管理一致的管理表格样式，包含卡片边框、固定列宽、横向滚动、右侧固定操作列和紧凑行内操作。
+- 定时作业运行结果查看增强：运行记录列表新增详情入口，手动触发后自动打开本次运行详情，集中展示结果摘要、插件调用、Skill/Prompt 快照、作业配置快照和错误信息。
+- 插件管理删除闭环增强：插件、连接和动作列表新增删除入口；删除前展示连接、动作、定时作业和调用日志使用清单，后端 DELETE 也会在资源被引用时返回 409，避免级联误删正在使用的集成配置。
+- 定时作业维护闭环增强：作业列表新增编辑和删除入口，编辑弹窗回填现有调度、AI 装配和插件映射配置；后端新增 `DELETE /api/system/scheduled-jobs/{job_id}` 并记录 `scheduled_job.deleted` 审计。
+- 插件动作结果映射表单联动：`结果写入目标` 变更后，下方可视化 JSONPath 字段会按目标切换；用户洞察表目标展示洞察列表、源表行数和原始行列表路径，高级 JSON 继续支持双向同步。
+- 插件动作写入目标收敛：动作配置新增“结果写入目标”可视化选择，MaxCompute 用户反馈场景默认写入用户洞察表；定时作业未单独设置输出映射时复用动作 `result_mapping`，运行摘要保留 Skill 处理信息和写入目标。
+- 插件连接测试交互增强：点击测试后按钮显示 `测试中` 并禁用重复操作，同时展示持续 loading 提示，避免第三方接口耗时较长时用户误以为没有触发。
+- 插件连接测试诊断改为明文调试：连接响应、测试弹窗、动作试运行预览和插件调用日志展示真实 auth/request/header 值；认证配置生成的 Authorization/API Key Header 仍优先于 Headers 表格同名值，最终请求若包含 `***` 会按明文发送并在诊断中标记，便于排查系统时间变量、Header 配置和第三方 400 错误。
+- 菜单归属调整：AI 能力配置、定时作业、插件管理统一移动到任务中心下，旧 `/system/...` 页面入口保留隐藏重定向，系统管理聚焦用户、角色和模型网关治理。
+- 插件管理维护闭环增强：插件、连接、动作列表新增编辑入口，编辑弹窗回填现有配置并通过 PATCH 保存；连接和动作编辑保留 Params/Headers 可视化配置，高级 JSON 仍作为精修入口。
+- 知识导入可靠性收口：worker 使用 PostgreSQL 租约 claim queued 任务并暴露 worker_id，目录归档按子树生效，解析资产按 `bucket/object_key` 幂等 upsert，chunk set 保存索引状态以支持历史版本准确回滚。
+- OCR JSON 知识导入的 chunk 来源元数据补齐页内图片数量、表格数量和图片引用，知识中心 chunk 预览同步展示图片来源，便于回溯图文结构。
+- 知识导入新增 `regex_section` 正则分块策略，支持按 Markdown 标题、分隔线、中文章节和英文 Section/Chapter 切分，并在 chunk metadata/预览中保留分段标题和切分规则。
+- 知识中心前端运营可观测性增强：导入任务弹窗展示后台 worker 启用、运行、待处理、active、已处理和失败计数，chunk 预览展示 OCR/Table 页码、表格序号、列名和来源资产类型。
+- 知识导入 worker 补偿归属收口：启动和空闲轮询扫描遗漏 queued 任务时沿用导入任务创建人写入解析资产、chunk set 和 chunk，避免后台系统用户不存在导致 PostgreSQL 外键失败。
+- 知识导入解析产物拆分增强：`ocr_json` / `table_json` 解析器会额外生成结构化 sidecar 资产，并向 chunk metadata 写入页码、表格列和结构化资产引用；解析资产按 `bucket/object_key` 幂等复用，避免半成功重试重复资产。
+- 知识导入任务后台化：新增应用内 `knowledge_import_worker` 队列，上传、重解析和 retry 后自动入队，应用启动和空闲轮询时补偿 queued 任务，并新增 worker 状态接口；`run` 保留为测试和运维补偿入口。
 - 知识中心导入任务闭环增强：上传文件后创建 queued 导入任务，新增 run/retry/cancel、重解析、chunk set 查询/预览/激活、父子分块检索父块上下文和导入任务状态冲突错误语义。
 - 知识中心运营操作增强：前端新增导入任务运行、文档 chunk 预览、chunk set 回滚入口、目录整理和文档批量移动；后端补齐目录重命名/移动/归档和批量移动写接口。
 - 知识中心运营闭环增强：新增文档资产列表和导入任务列表 API，前端知识中心支持查看文档资产、导入任务进度、解析器、切片策略、源文件和目录信息，并按知识空间权限过滤。
 - 知识管理第一阶段落地：新增知识空间、空间成员、空间目录、MinIO/S3-compatible 对象存储抽象、知识资产、导入任务、chunk set、文件上传和资产预览能力；知识列表与检索支持空间/目录过滤并按空间成员权限隔离。
 - 知识管理升级设计文档：明确知识库按知识空间、目录、文档、MinIO/S3 资产、chunk/embedding 分层管理，吸收 KnowFlow 的解析任务、父子分块和治理思路，同时保持 PostgreSQL 作为业务事实源。
+- 插件连接请求配置增强：新增连接级 Params/Headers 可视化配置，提交为 `plugin_connections.request_config.query/headers`，高级请求 JSON 仅作为精修入口；连接测试、动作预览和实际调用会合并连接默认值与动作配置，同名参数由动作覆盖。
 - 插件动作配置体验增强：新增动作默认用 Params/Headers 表格配置 HTTP 请求参数和请求头，参数值可选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量并在运行时解析，提交时生成 `request_config.query/headers`，高级 JSON 仅作为完整配置精修入口。
 - 插件连接配置增强：连接环境收敛为 `default/dev/test/staging/prod/sandbox` 受控枚举，认证配置默认按认证方式展示 Token/Header/Basic 字段并只把 JSON 作为高级修改入口，连接列表新增测试按钮和后端测试接口；定时作业插件输入映射新增动态时间 token 模板，运行时按作业时区解析。
 - 插件分类收敛为受控枚举：新增插件页面改为下拉选择，后端创建/更新插件拒绝自由文本分类，并在 API/技术规格中约定分类值。
 - MaxCompute 每周用户反馈洞察场景落地：插件动作页新增引导式模板，可自动生成 MCP 查询配置并保留高级 JSON 编辑；定时作业新增 `user_feedback_insight_extract`，可将插件返回的 AI 洞察写入用户反馈洞察表。
-- 插件管理第一阶段落地：新增系统插件、连接、动作和调用日志管理，支持 HTTP/MCP HTTP 协议配置、密钥配置脱敏、调用审计，并允许定时作业通过 `plugin_action_id` 调用插件动作和保存运行快照。
+- 插件管理第一阶段落地：新增系统插件、连接、动作和调用日志管理，支持 HTTP/MCP HTTP 协议配置、密钥配置、调用审计，并允许定时作业通过 `plugin_action_id` 调用插件动作和保存运行快照。
 - 定时系统作业与 AI 能力装配：PRD/API/技术规格/测试用例补充 Agent、Skill、定时作业、运行实例、AI 配置快照、collector run 关联、锁租约、失败重试和人工确认边界，并落地基础 API、菜单和页面入口。
 - AI 能力配置第一阶段落地：Agent 继续表单配置，Skill 支持 zip 文件包上传、本地存储、checksum/manifest 持久化，并在定时 AI 作业运行时加载本地 Skill 文件内容写入快照。
 - 迭代版本新增代码分支配置：版本页提供“代码分支”入口，可按同产品多个 GitHub/GitLab 代码库维护基准分支、开发分支、状态和创建来源；后端新增 `product_version_branch_configs` 结构表和对应 API，并纳入产品配置 DB-first 读写与审计。
@@ -96,6 +117,10 @@
 - 前端管理列表统一表格规范增强：`ManagementListPage` 默认固定布局、按显示列宽自动计算横向滚动宽度、默认长文本省略和操作列右固定；角色页入口/权限以数量摘要展示并在详情查看；DevOps 采集运行/待归属子表补齐固定列宽、横向滚动和操作列固定。
 
 ### Fixed
+- 修复用户反馈定时作业配置了插件、模型和 Skill 但运行时未调用大模型的问题：后端会将这类 `user_feedback_collect` 兼容配置归一为 `user_feedback_insight_extract` 并使用 AI 生成模式，前端新增作业默认选择“用户反馈洞察抽取（取数 + AI 分析 + 写入）”，同时标明“用户反馈采集”仅取数、不调用 AI。
+- 修复已有 PostgreSQL 库访问插件连接列表返回 500 的问题：启动兼容迁移现在会加载 `038_plugin_connection_request_config.sql`，为旧 `plugin_connections` 表补齐 `request_config` 列。
+- 修复插件连接/动作编辑时历史 `***` 占位字段可能覆盖真实密钥的问题：PATCH 收到 `***` 时保留服务端原始 `auth_config/request_config` 敏感值，避免旧列表回填保存后连接失效。
+- 修复知识 chunk set 版本化与数据库旧唯一约束不一致的问题：迁移会移除 `knowledge_chunks(document_id, chunk_index)` 约束，改按 `document_id/chunk_set_id/chunk_index` 限定同一版本内 chunk 序号，避免历史 queued job 或重解析重跑时撞库。
 - 修复仅授权产品负责人的用户仍看到全量左侧菜单的问题：补齐 `users.roles` 到 `user_roles` 的兼容回填迁移，授权仓储在旧数据未回填时按活跃角色兜底解析；前端登录成功后立即刷新 `/api/auth/me` 并在菜单渲染时优先使用最新 `menu_tree`，避免切换用户后沿用旧菜单。
 - 日志监控页面移除“采集运行记录”和“待归属数据队列”两个功能区，不再请求 `/api/collectors/runs` 与 `/api/attribution/pending-items`；首页下钻、菜单和角色入口同步使用“日志监控”命名。
 - 用户洞察产品上下文下拉补齐分页：登记反馈和转需求加载 active 产品时请求更大 page size，避免默认分页截断导致看不到 Enterprise AI Brain / AI Brain 产品；用户洞察页面移除“登记使用指标”和“生成迭代建议”两个低价值主按钮。

@@ -337,6 +337,14 @@ class KnowledgeRepository(Protocol):
 
     def save_knowledge(self, payload: dict[str, Any]) -> None: ...
 
+    def claim_knowledge_import_job(
+        self,
+        *,
+        job_id: str,
+        worker_id: str,
+        lock_ttl_seconds: float,
+    ) -> bool: ...
+
     def save_knowledge_document_records(
         self,
         *,

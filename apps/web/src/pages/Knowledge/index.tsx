@@ -39,6 +39,7 @@ import {
   fetchKnowledgeDocumentAssets,
   fetchKnowledgeFolders,
   fetchKnowledgeImportJobs,
+  fetchKnowledgeImportWorkerStatus,
   fetchKnowledgeSearchResults,
   fetchKnowledgeSpaces,
   fetchManagementKnowledgeList,
@@ -56,6 +57,7 @@ import {
   type KnowledgeFolderRecord,
   type KnowledgeAssetRecord,
   type KnowledgeImportJobRecord,
+  type KnowledgeImportWorkerStatusRecord,
   type KnowledgeListQuery,
   type KnowledgeDepositRecord,
   type KnowledgeSearchResultRecord,
@@ -91,6 +93,7 @@ const importJobStatusLabels: Record<string, { color: string; label: string }> = 
 };
 
 const assetTypeLabels: Record<string, string> = {
+  ocr_json: 'OCR 结果',
   original: '原始文件',
   parsed_markdown: '解析文本',
   table_json: '表格数据',
@@ -193,6 +196,9 @@ export default function KnowledgePage() {
   const [depositsLoading, setDepositsLoading] = useState(false);
   const [importJobRows, setImportJobRows] = useState<KnowledgeImportJobRecord[]>([]);
   const [importJobsLoading, setImportJobsLoading] = useState(false);
+  const [importWorkerStatus, setImportWorkerStatus] =
+    useState<KnowledgeImportWorkerStatusRecord | null>(null);
+  const [importWorkerStatusLoading, setImportWorkerStatusLoading] = useState(false);
   const [chunkRows, setChunkRows] = useState<KnowledgeChunkRecord[]>([]);
   const [chunkSetRows, setChunkSetRows] = useState<KnowledgeChunkSetRecord[]>([]);
   const [chunksLoading, setChunksLoading] = useState(false);
@@ -406,11 +412,25 @@ export default function KnowledgePage() {
     }
   }, []);
 
+  const reloadImportWorkerStatus = useCallback(async () => {
+    setImportWorkerStatusLoading(true);
+    try {
+      const status = await fetchKnowledgeImportWorkerStatus();
+      setImportWorkerStatus(status);
+    } catch (statusError) {
+      setImportWorkerStatus(null);
+      message.error(formatMutationError(statusError));
+    } finally {
+      setImportWorkerStatusLoading(false);
+    }
+  }, []);
+
   const openImportJobsModal = useCallback(() => {
     const spaceId = selectedSpaceId ?? spaces[0]?.id;
     setIsImportJobsModalOpen(true);
     void reloadImportJobs(spaceId);
-  }, [reloadImportJobs, selectedSpaceId, spaces]);
+    void reloadImportWorkerStatus();
+  }, [reloadImportJobs, reloadImportWorkerStatus, selectedSpaceId, spaces]);
 
   const openSearchModal = useCallback(() => {
     setSearchInitialValues({ knowledge_space_id: selectedSpaceId, top_k: 5 });
@@ -501,11 +521,15 @@ export default function KnowledgePage() {
         await cancelKnowledgeImportJob(row.id);
         message.success('导入任务已取消');
       }
-      await Promise.all([reloadImportJobs(selectedSpaceId ?? spaces[0]?.id), reload()]);
+      await Promise.all([
+        reloadImportJobs(selectedSpaceId ?? spaces[0]?.id),
+        reloadImportWorkerStatus(),
+        reload(),
+      ]);
     } catch (jobError) {
       message.error(formatMutationError(jobError));
     }
-  }, [reload, reloadImportJobs, selectedSpaceId, spaces]);
+  }, [reload, reloadImportJobs, reloadImportWorkerStatus, selectedSpaceId, spaces]);
 
   const handleActivateChunkSet = useCallback(async (row: KnowledgeChunkSetRecord) => {
     if (!chunksDocument) {
@@ -915,12 +939,42 @@ export default function KnowledgePage() {
       {
         dataIndex: 'chunkRole',
         title: '角色',
-        render: (_, row) => (row.chunkRole === 'parent' ? '父块' : row.chunkRole === 'child' ? '子块' : '普通块'),
+        render: (_, row) => {
+          if (row.chunkRole === 'parent') {
+            return '父块';
+          }
+          if (row.chunkRole === 'child') {
+            return '子块';
+          }
+          if (row.chunkRole === 'regex_section') {
+            return '正则分块';
+          }
+          return '普通块';
+        },
       },
       {
         dataIndex: 'heading',
         title: '标题层级',
         render: (_, row) => row.heading ?? '-',
+      },
+      {
+        key: 'source',
+        title: '来源',
+        render: (_, row) => {
+          const sourceParts = [
+            row.pageNumber ? `第 ${row.pageNumber} 页` : undefined,
+            row.tableIndex ? `表格 ${row.tableIndex}` : undefined,
+            row.imageCount ? `图片 ${row.imageCount}` : undefined,
+            row.tableCount ? `表格数 ${row.tableCount}` : undefined,
+            row.sectionTitle ? `分段：${row.sectionTitle}` : undefined,
+            row.splitPattern ? `规则：${row.splitPattern}` : undefined,
+            row.sourceKind,
+            row.sourceAssetType,
+            row.tableColumns?.length ? `列：${row.tableColumns.join(', ')}` : undefined,
+            row.imageRefs?.length ? `图：${row.imageRefs.join(', ')}` : undefined,
+          ].filter(Boolean);
+          return sourceParts.length > 0 ? sourceParts.join(' / ') : '-';
+        },
       },
       {
         dataIndex: 'content',
@@ -1202,6 +1256,35 @@ export default function KnowledgePage() {
         title="导入任务"
         width={980}
       >
+        <Space
+          style={{ justifyContent: 'space-between', marginBottom: 12, width: '100%' }}
+          wrap
+        >
+          <Space wrap>
+            <Text strong>导入 worker</Text>
+            <StatusTag
+              color={importWorkerStatus?.enabled ? 'blue' : 'default'}
+              label={importWorkerStatus?.enabled ? '已启用' : '未启用'}
+            />
+            <StatusTag
+              color={importWorkerStatus?.running ? 'green' : 'default'}
+              label={importWorkerStatus?.running ? '运行中' : '已停止'}
+            />
+            <Text type="secondary">待处理 {importWorkerStatus?.pendingCount ?? 0}</Text>
+            <Text type="secondary">处理中 {importWorkerStatus?.activeJobId ?? '-'}</Text>
+            <Text type="secondary">已处理 {importWorkerStatus?.processedCount ?? 0}</Text>
+            <Text type={importWorkerStatus?.failedCount ? 'danger' : 'secondary'}>
+              失败 {importWorkerStatus?.failedCount ?? 0}
+            </Text>
+          </Space>
+          <Button
+            icon={<ReloadOutlined />}
+            loading={importWorkerStatusLoading}
+            onClick={() => void reloadImportWorkerStatus()}
+          >
+            刷新状态
+          </Button>
+        </Space>
         <ProTable<KnowledgeImportJobRecord>
           columns={importJobColumns}
           dataSource={importJobRows}
@@ -1409,6 +1492,7 @@ export default function KnowledgePage() {
                   options={[
                     { label: '简单文本', value: 'simple_text' },
                     { label: '父子分块', value: 'parent_child' },
+                    { label: '正则分块', value: 'regex_section' },
                   ]}
                   placeholder="简单文本"
                 />

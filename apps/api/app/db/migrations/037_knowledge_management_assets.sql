@@ -58,6 +58,14 @@ CREATE TABLE IF NOT EXISTS knowledge_import_jobs (
 CREATE INDEX IF NOT EXISTS idx_knowledge_import_jobs_document_status
   ON knowledge_import_jobs(document_id, status);
 
+ALTER TABLE knowledge_import_jobs
+  ADD COLUMN IF NOT EXISTS locked_by text,
+  ADD COLUMN IF NOT EXISTS locked_until timestamptz,
+  ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_import_jobs_queue_lock
+  ON knowledge_import_jobs(status, locked_until, created_at);
+
 CREATE TABLE IF NOT EXISTS knowledge_chunk_sets (
   id text PRIMARY KEY DEFAULT ('knowledge_chunk_set_' || replace(gen_random_uuid()::text, '-', '')),
   document_id text NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
@@ -78,6 +86,10 @@ CREATE TABLE IF NOT EXISTS knowledge_chunk_sets (
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_sets_document_status
   ON knowledge_chunk_sets(document_id, status);
 
+ALTER TABLE knowledge_chunk_sets
+  ADD COLUMN IF NOT EXISTS index_status text,
+  ADD COLUMN IF NOT EXISTS vector_index_error text;
+
 ALTER TABLE knowledge_documents
   ADD COLUMN IF NOT EXISTS knowledge_space_id text REFERENCES knowledge_spaces(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS folder_id text REFERENCES knowledge_folders(id) ON DELETE SET NULL,
@@ -96,5 +108,16 @@ ALTER TABLE knowledge_chunks
   ADD COLUMN IF NOT EXISTS parent_chunk_id text REFERENCES knowledge_chunks(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS content_hash text;
 
+ALTER TABLE knowledge_chunks
+  DROP CONSTRAINT IF EXISTS knowledge_chunks_document_id_chunk_index_key;
+
 CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_chunk_set
   ON knowledge_chunks(chunk_set_id, chunk_index);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_chunks_document_chunk_set_index
+  ON knowledge_chunks(document_id, chunk_set_id, chunk_index)
+  WHERE chunk_set_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document_legacy_index
+  ON knowledge_chunks(document_id, chunk_index)
+  WHERE chunk_set_id IS NULL;

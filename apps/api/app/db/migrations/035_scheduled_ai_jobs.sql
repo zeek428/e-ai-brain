@@ -157,8 +157,8 @@ INSERT INTO menu_resources (
   status
 )
 VALUES
-  ('system.ai_capabilities', 'AI 能力配置', '/system/ai-capabilities', 'system', 'page', 'RobotOutlined', 64, '["system.ai_capabilities.manage"]'::jsonb, true, 'active'),
-  ('system.scheduled_jobs', '定时作业', '/system/scheduled-jobs', 'system', 'page', 'ClockCircleOutlined', 65, '["system.scheduled_jobs.manage"]'::jsonb, true, 'active')
+  ('system.ai_capabilities', 'AI 能力配置', '/tasks/ai-capabilities', 'task', 'page', 'RobotOutlined', 22, '["system.ai_capabilities.manage"]'::jsonb, true, 'active'),
+  ('system.scheduled_jobs', '定时作业', '/tasks/scheduled-jobs', 'task', 'page', 'ClockCircleOutlined', 23, '["system.scheduled_jobs.manage"]'::jsonb, true, 'active')
 ON CONFLICT (code) DO UPDATE SET
   name = EXCLUDED.name,
   path = EXCLUDED.path,

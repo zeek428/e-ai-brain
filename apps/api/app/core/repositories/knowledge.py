@@ -71,6 +71,35 @@ class KnowledgeReadRepository:
     def save_knowledge(self, payload: dict[str, Any]) -> None:
         self._write_repository.save_knowledge(payload)
 
+    def claim_knowledge_import_job(
+        self,
+        *,
+        job_id: str,
+        worker_id: str,
+        lock_ttl_seconds: float,
+    ) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE knowledge_import_jobs
+                    SET locked_by = %s,
+                        locked_until = now() + (%s * interval '1 second'),
+                        attempt_count = COALESCE(attempt_count, 0) + 1,
+                        updated_at = now()
+                    WHERE id = %s
+                      AND status = 'queued'
+                      AND (
+                        locked_until IS NULL
+                        OR locked_until < now()
+                        OR locked_by = %s
+                      )
+                    RETURNING id
+                    """,
+                    (worker_id, lock_ttl_seconds, job_id, worker_id),
+                )
+                return cursor.fetchone() is not None
+
     def save_knowledge_document_records(
         self,
         *,
@@ -767,11 +796,16 @@ class KnowledgeReadRepository:
             "finished_at": _iso(row[11]),
             "created_at": _iso(row[12]),
             "updated_at": _iso(row[13]),
+            "locked_by": row[14],
+            "locked_until": _iso(row[15]),
+            "attempt_count": row[16] or 0,
         }
         for optional_key in (
             "error_code",
             "error_message",
             "finished_at",
+            "locked_by",
+            "locked_until",
             "source_asset_id",
             "started_at",
             "created_at",
@@ -798,15 +832,19 @@ class KnowledgeReadRepository:
             "activated_at": _iso(row[11]),
             "created_at": _iso(row[12]),
             "updated_at": _iso(row[13]),
+            "index_status": row[14],
+            "vector_index_error": row[15],
         }
         for optional_key in (
             "activated_at",
             "embedding_dimension",
             "embedding_model",
+            "index_status",
             "parsed_asset_id",
             "source_asset_id",
             "created_at",
             "updated_at",
+            "vector_index_error",
         ):
             if chunk_set[optional_key] is None:
                 chunk_set.pop(optional_key)
@@ -870,7 +908,8 @@ class KnowledgeReadRepository:
             """
             SELECT id, document_id, source_asset_id, parser_engine, chunk_strategy,
                    status, progress, error_code, error_message, created_by, started_at,
-                   finished_at, created_at, updated_at
+                   finished_at, created_at, updated_at, locked_by, locked_until,
+                   attempt_count
             FROM knowledge_import_jobs
             ORDER BY created_at, id
             """
@@ -885,7 +924,8 @@ class KnowledgeReadRepository:
             """
             SELECT id, document_id, source_asset_id, parsed_asset_id, parser_engine,
                    parser_version, chunk_strategy, embedding_model, embedding_dimension,
-                   status, created_by, activated_at, created_at, updated_at
+                   status, created_by, activated_at, created_at, updated_at,
+                   index_status, vector_index_error
             FROM knowledge_chunk_sets
             ORDER BY document_id, created_at, id
             """

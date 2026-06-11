@@ -1089,6 +1089,17 @@ export type KnowledgeImportJobRecord = {
   updatedAt?: string;
 };
 
+export type KnowledgeImportWorkerStatusRecord = {
+  activeJobId?: string | null;
+  enabled: boolean;
+  failedCount: number;
+  pendingCount: number;
+  processedCount: number;
+  queuedJobIds: string[];
+  running: boolean;
+  workerId?: string | null;
+};
+
 export type KnowledgeChunkSetRecord = {
   activatedAt?: string;
   chunkCount: number;
@@ -1106,8 +1117,18 @@ export type KnowledgeChunkRecord = {
   content: string;
   heading?: string;
   id: string;
+  imageCount?: number;
+  imageRefs?: string[];
   parentChunkId?: string;
   parentContent?: string;
+  pageNumber?: number;
+  sectionTitle?: string;
+  sourceAssetType?: string;
+  sourceKind?: string;
+  splitPattern?: string;
+  tableColumns?: string[];
+  tableCount?: number;
+  tableIndex?: number;
 };
 
 export type KnowledgeDocumentUploadPayload = {
@@ -1552,6 +1573,17 @@ type KnowledgeImportJobListItem = {
   updated_at?: string;
 };
 
+type KnowledgeImportWorkerStatusItem = {
+  active_job_id?: string | null;
+  enabled?: boolean;
+  failed_count?: number;
+  pending_count?: number;
+  processed_count?: number;
+  queued_job_ids?: string[];
+  running?: boolean;
+  worker_id?: string | null;
+};
+
 type KnowledgeChunkSetListItem = {
   activated_at?: string;
   chunk_count?: number;
@@ -1568,8 +1600,18 @@ type KnowledgeChunkListItem = {
   content?: string;
   id: string;
   metadata?: {
+    columns?: string[];
     chunk_role?: string;
     heading?: string;
+    image_count?: number;
+    image_refs?: string[];
+    page_number?: number;
+    section_title?: string;
+    source_asset_type?: string;
+    source_kind?: string;
+    split_pattern?: string;
+    table_count?: number;
+    table_index?: number;
   };
   parent_chunk_id?: string;
   parent_content?: string;
@@ -3616,10 +3658,13 @@ export type AiAgentRecord = {
 export type ScheduledJobRecord = {
   agent_id?: string | null;
   config_json?: Record<string, unknown>;
+  cron_expression?: string | null;
   enabled?: boolean;
   execution_mode?: string;
   id: string;
+  interval_seconds?: number | null;
   job_type: string;
+  model_gateway_config_id?: string | null;
   name: string;
   next_run_at?: string | null;
   plugin_action_id?: string | null;
@@ -3629,20 +3674,29 @@ export type ScheduledJobRecord = {
   product_id?: string | null;
   schedule_type?: string;
   skill_ids?: string[];
+  source_system?: string;
   status?: string;
+  timezone?: string;
 };
 
 export type ScheduledJobRunRecord = {
+  config_snapshot?: Record<string, unknown>;
   collector_run_id?: string | null;
+  error_code?: string | null;
   error_message?: string | null;
+  finished_at?: string | null;
   id: string;
   plugin_invocation_log_id?: string | null;
   records_imported?: number;
   resolved_agent_snapshot?: Record<string, unknown>;
   resolved_plugin_snapshot?: Record<string, unknown>;
+  resolved_prompt_snapshot?: Record<string, unknown>;
+  resolved_skill_snapshots?: Array<Record<string, unknown>>;
   result_summary?: Record<string, unknown>;
   scheduled_job_id?: string;
+  started_at?: string | null;
   status: string;
+  tool_policy_snapshot?: Record<string, unknown>;
   trigger_type?: string;
 };
 
@@ -3666,6 +3720,7 @@ export type PluginConnectionRecord = {
   max_retries?: number;
   name: string;
   plugin_id: string;
+  request_config?: Record<string, unknown>;
   status: string;
   timeout_seconds?: number;
 };
@@ -3690,6 +3745,7 @@ export type PluginConnectionTestResult = {
   plugin_id: string;
   protocol: string;
   request_summary?: Record<string, unknown>;
+  response_summary?: Record<string, unknown>;
   status: string;
 };
 
@@ -3773,6 +3829,14 @@ export async function updatePlugin(pluginId: string, payload: Partial<PluginReco
   });
 }
 
+export async function deletePlugin(pluginId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(`/api/system/plugins/${pluginId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
 export async function fetchPluginConnections(
   query: { pluginId?: string; status?: string } = {},
 ): Promise<PluginConnectionRecord[]> {
@@ -3793,6 +3857,26 @@ export async function createPluginConnection(payload: Partial<PluginConnectionRe
   return apiRequest<PluginConnectionRecord>('/api/system/plugin-connections', {
     body: payload,
     method: 'POST',
+    token,
+  });
+}
+
+export async function updatePluginConnection(
+  connectionId: string,
+  payload: Partial<PluginConnectionRecord>,
+) {
+  const token = requireAccessToken();
+  return apiRequest<PluginConnectionRecord>(`/api/system/plugin-connections/${connectionId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function deletePluginConnection(connectionId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(`/api/system/plugin-connections/${connectionId}`, {
+    method: 'DELETE',
     token,
   });
 }
@@ -3835,6 +3919,23 @@ export async function createPluginAction(payload: Partial<PluginActionRecord>) {
   return apiRequest<PluginActionRecord>('/api/system/plugin-actions', {
     body: payload,
     method: 'POST',
+    token,
+  });
+}
+
+export async function updatePluginAction(actionId: string, payload: Partial<PluginActionRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<PluginActionRecord>(`/api/system/plugin-actions/${actionId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function deletePluginAction(actionId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(`/api/system/plugin-actions/${actionId}`, {
+    method: 'DELETE',
     token,
   });
 }
@@ -3995,6 +4096,14 @@ export async function updateScheduledJob(jobId: string, payload: Partial<Schedul
   return apiRequest<ScheduledJobRecord>(`/api/system/scheduled-jobs/${jobId}`, {
     body: payload,
     method: 'PATCH',
+    token,
+  });
+}
+
+export async function deleteScheduledJob(jobId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(`/api/system/scheduled-jobs/${jobId}`, {
+    method: 'DELETE',
     token,
   });
 }
@@ -4461,8 +4570,33 @@ function mapKnowledgeChunk(item: KnowledgeChunkListItem): KnowledgeChunkRecord {
     content: item.content ?? '',
     heading: item.metadata?.heading,
     id: item.id,
+    imageCount: item.metadata?.image_count,
+    imageRefs: item.metadata?.image_refs,
     parentChunkId: item.parent_chunk_id,
     parentContent: item.parent_content,
+    pageNumber: item.metadata?.page_number,
+    sectionTitle: item.metadata?.section_title,
+    sourceAssetType: item.metadata?.source_asset_type,
+    sourceKind: item.metadata?.source_kind,
+    splitPattern: item.metadata?.split_pattern,
+    tableColumns: item.metadata?.columns,
+    tableCount: item.metadata?.table_count,
+    tableIndex: item.metadata?.table_index,
+  };
+}
+
+function mapKnowledgeImportWorkerStatus(
+  item: KnowledgeImportWorkerStatusItem,
+): KnowledgeImportWorkerStatusRecord {
+  return {
+    activeJobId: item.active_job_id ?? null,
+    enabled: Boolean(item.enabled),
+    failedCount: Number(item.failed_count ?? 0),
+    pendingCount: Number(item.pending_count ?? 0),
+    processedCount: Number(item.processed_count ?? 0),
+    queuedJobIds: item.queued_job_ids ?? [],
+    running: Boolean(item.running),
+    workerId: item.worker_id ?? null,
   };
 }
 
@@ -4556,6 +4690,15 @@ export async function fetchKnowledgeImportJobs(params: {
     { token },
   );
   return importJobs.items.map(mapKnowledgeImportJob);
+}
+
+export async function fetchKnowledgeImportWorkerStatus(): Promise<KnowledgeImportWorkerStatusRecord> {
+  const token = requireAccessToken();
+  const status = await apiRequest<KnowledgeImportWorkerStatusItem>(
+    '/api/knowledge/import-worker/status',
+    { token },
+  );
+  return mapKnowledgeImportWorkerStatus(status);
 }
 
 export async function runKnowledgeImportJob(jobId: string) {

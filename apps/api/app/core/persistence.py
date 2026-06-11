@@ -91,6 +91,14 @@ class PostgresSnapshotRepository:
                 )
                 self._apply_additive_migration(
                     cursor,
+                    "038_plugin_connection_request_config.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "039_task_center_operational_menus.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
                     "037_knowledge_management_assets.sql",
                 )
 
@@ -1185,6 +1193,19 @@ class PostgresSnapshotRepository:
     def save_knowledge(self, payload: dict[str, Any]) -> None:
         self._knowledge_read_repository.save_knowledge(payload)
 
+    def claim_knowledge_import_job(
+        self,
+        *,
+        job_id: str,
+        worker_id: str,
+        lock_ttl_seconds: float,
+    ) -> bool:
+        return self._knowledge_read_repository.claim_knowledge_import_job(
+            job_id=job_id,
+            worker_id=worker_id,
+            lock_ttl_seconds=lock_ttl_seconds,
+        )
+
     def save_knowledge_document_records(
         self,
         *,
@@ -1410,6 +1431,17 @@ class PostgresSnapshotRepository:
             audit_event=audit_event,
         )
 
+    def delete_scheduled_job_record(
+        self,
+        job_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._scheduled_ai_job_read_repository.delete_scheduled_job_record(
+            job_id,
+            audit_event=audit_event,
+        )
+
     def save_scheduled_job_run_record(
         self,
         run: dict[str, Any],
@@ -1429,6 +1461,14 @@ class PostgresSnapshotRepository:
     ) -> None:
         self._plugin_read_repository.save_plugin_record(plugin, audit_event=audit_event)
 
+    def delete_plugin_record(
+        self,
+        plugin_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.delete_plugin_record(plugin_id, audit_event=audit_event)
+
     def save_plugin_connection_record(
         self,
         connection: dict[str, Any],
@@ -1440,6 +1480,17 @@ class PostgresSnapshotRepository:
             audit_event=audit_event,
         )
 
+    def delete_plugin_connection_record(
+        self,
+        connection_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.delete_plugin_connection_record(
+            connection_id,
+            audit_event=audit_event,
+        )
+
     def save_plugin_action_record(
         self,
         action: dict[str, Any],
@@ -1448,6 +1499,17 @@ class PostgresSnapshotRepository:
     ) -> None:
         self._plugin_read_repository.save_plugin_action_record(
             action,
+            audit_event=audit_event,
+        )
+
+    def delete_plugin_action_record(
+        self,
+        action_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.delete_plugin_action_record(
+            action_id,
             audit_event=audit_event,
         )
 

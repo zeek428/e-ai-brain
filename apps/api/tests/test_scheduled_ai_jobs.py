@@ -203,6 +203,126 @@ def test_ai_skills_agents_and_scheduled_jobs_are_admin_managed():
     assert listed["total"] == 1
     assert listed["items"][0]["agent_id"] == agent_data["id"]
 
+    patched = client.patch(
+        f"/api/system/scheduled-jobs/{job_data['id']}",
+        json={"enabled": False, "name": "每周迭代建议 v2"},
+        headers=admin_headers,
+    )
+    assert patched.status_code == 200
+    patched_data = patched.json()["data"]
+    assert patched_data["enabled"] is False
+    assert patched_data["name"] == "每周迭代建议 v2"
+    assert patched_data["status"] == "disabled"
+
+    deleted = client.delete(
+        f"/api/system/scheduled-jobs/{job_data['id']}",
+        headers=admin_headers,
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["data"] == {"deleted": True, "id": job_data["id"]}
+    listed_after_delete = client.get(
+        "/api/system/scheduled-jobs",
+        headers=admin_headers,
+    ).json()["data"]
+    assert listed_after_delete["total"] == 0
+
+
+def test_user_feedback_collect_with_ai_pipeline_is_normalized_to_insight_extract():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    model_gateway = create_model_gateway(admin_headers)
+    product = create_product(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "feedback_insight",
+            "name": "反馈洞察",
+            "prompt_template": "提取用户反馈洞察",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "feedback_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈分析 Agent",
+            "status": "active",
+            "system_prompt": "你负责分析用户反馈。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "maxcompute_feedback",
+            "name": "MaxCompute 用户反馈",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://example.com/feedback",
+            "name": "反馈数据连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_feedback",
+            "connection_id": connection["id"],
+            "name": "获取反馈",
+            "plugin_id": plugin["id"],
+            "request_config": {"method": "GET", "mock_response_json": {"row_count": 0}},
+            "result_mapping": {
+                "insights_path": "$.insights",
+                "records_imported_path": "$.row_count",
+                "write_target": "user_feedback_insights",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "user_feedback_collect",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "提取每周用户反馈有价值信息",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+            "source_system": "aliyun-maxcompute",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    job = response.json()["data"]
+    assert job["job_type"] == "user_feedback_insight_extract"
+    assert job["execution_mode"] == "ai_generated"
+    assert job["agent_id"] == agent["id"]
+    assert job["model_gateway_config_id"] == model_gateway["id"]
+    assert job["skill_ids"] == [skill["id"]]
+
 
 def test_manual_scheduled_ai_job_run_creates_snapshot_collector_run_and_suggestion():
     app.state.store.reset()

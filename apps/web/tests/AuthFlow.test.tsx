@@ -65,12 +65,21 @@ describe('AI Brain auth flow and routes', () => {
     expect(routes).toContain("path: '/system/model-gateway'");
     expect(routes).toContain("name: '模型网关'");
     expect(routes).toContain("component: './ModelGateway'");
-    expect(routes).toContain("path: '/system/ai-capabilities'");
+    expect(routes).toContain("path: '/tasks/ai-capabilities'");
     expect(routes).toContain("name: 'AI 能力配置'");
     expect(routes).toContain("component: './AiCapabilities'");
-    expect(routes).toContain("path: '/system/scheduled-jobs'");
+    expect(routes).toContain("path: '/tasks/scheduled-jobs'");
     expect(routes).toContain("name: '定时作业'");
     expect(routes).toContain("component: './ScheduledJobs'");
+    expect(routes).toContain("path: '/tasks/plugins'");
+    expect(routes).toContain("name: '插件管理'");
+    expect(routes).toContain("component: './Plugins'");
+    expect(routes).toContain("path: '/system/ai-capabilities'");
+    expect(routes).toContain("redirect: '/tasks/ai-capabilities'");
+    expect(routes).toContain("path: '/system/scheduled-jobs'");
+    expect(routes).toContain("redirect: '/tasks/scheduled-jobs'");
+    expect(routes).toContain("path: '/system/plugins'");
+    expect(routes).toContain("redirect: '/tasks/plugins'");
     expect(routes).toContain("component: './TaskCenter'");
   });
 
