@@ -1489,6 +1489,75 @@ def result_mapping_hits(
     return hits
 
 
+def result_write_preview(
+    response_summary: dict[str, Any],
+    mapping: dict[str, Any],
+) -> dict[str, Any]:
+    write_target = str(mapping.get("write_target") or "scheduled_job_result")
+    raw_json = response_summary.get("json")
+    labels = {
+        "code_inspection_reports": "代码巡检报告",
+        "scheduled_job_result": "定时作业结果",
+        "user_feedback_insights": "用户洞察表",
+    }
+
+    if write_target == "code_inspection_reports":
+        findings = json_path_value(raw_json, str(mapping.get("findings_path") or "$.findings"))
+        sample_records = findings[:3] if isinstance(findings, list) else []
+        report_preview = {
+            "branch": json_path_value(raw_json, str(mapping.get("branch_path") or "$.branch")),
+            "commit_sha": json_path_value(
+                raw_json,
+                str(mapping.get("commit_sha_path") or "$.commit_sha"),
+            ),
+            "repository_id": json_path_value(
+                raw_json,
+                str(mapping.get("repository_id_path") or "$.repository_id"),
+            ),
+            "risk_level": json_path_value(
+                raw_json,
+                str(mapping.get("risk_level_path") or "$.risk_level"),
+            ),
+            "summary": json_path_value(raw_json, str(mapping.get("summary_path") or "$.summary")),
+        }
+        return {
+            "candidate_count": len(findings) if isinstance(findings, list) else 0,
+            "records_imported": len(findings) if isinstance(findings, list) else 0,
+            "report_preview": {
+                key: compact_preview_value(value)
+                for key, value in report_preview.items()
+                if value is not None
+            },
+            "sample_records": [compact_preview_value(record) for record in sample_records],
+            "write_target": write_target,
+            "write_target_label": labels[write_target],
+        }
+
+    if write_target == "user_feedback_insights":
+        insights = json_path_value(raw_json, str(mapping.get("insights_path") or "$.insights"))
+        rows = json_path_value(raw_json, str(mapping.get("rows_path") or "$.rows"))
+        sample_records = insights[:3] if isinstance(insights, list) else []
+        return {
+            "candidate_count": len(insights) if isinstance(insights, list) else 0,
+            "records_imported": records_imported_from_mapping(response_summary, mapping),
+            "sample_records": [compact_preview_value(record) for record in sample_records],
+            "source_row_count": len(rows) if isinstance(rows, list) else None,
+            "write_target": write_target,
+            "write_target_label": labels[write_target],
+        }
+
+    preview_value = json_path_value(raw_json, mapping.get("records_imported_path"))
+    sample_records = preview_value[:3] if isinstance(preview_value, list) else []
+    return {
+        "candidate_count": len(preview_value) if isinstance(preview_value, list) else 0,
+        "preview_value": compact_preview_value(preview_value),
+        "records_imported": records_imported_from_mapping(response_summary, mapping),
+        "sample_records": [compact_preview_value(record) for record in sample_records],
+        "write_target": write_target,
+        "write_target_label": labels.get(write_target, write_target),
+    }
+
+
 def trial_plugin_action_response(
     *,
     action_id: str,
@@ -1531,6 +1600,10 @@ def trial_plugin_action_response(
         "request_preview": request_preview,
         "response_summary": response_summary,
         "status": status,
+        "write_preview": result_write_preview(
+            response_summary,
+            action.get("result_mapping") or {},
+        ),
     }
 
 

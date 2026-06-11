@@ -45,6 +45,7 @@ function pluginConnectionTestBody() {
 function installPluginsFetchMock(options: { deferConnectionTest?: boolean; includeOfficialPlugins?: boolean } = {}) {
   const actionBodies: unknown[] = [];
   const actionDeleteIds: string[] = [];
+  const actionTrialBodies: unknown[] = [];
   const actionUpdateBodies: unknown[] = [];
   const connectionBodies: unknown[] = [];
   const connectionDeleteIds: string[] = [];
@@ -224,6 +225,40 @@ function installPluginsFetchMock(options: { deferConnectionTest?: boolean; inclu
       actionDeleteIds.push('action_feedback_api');
       return jsonResponse({ data: { deleted: true, id: 'action_feedback_api' } });
     }
+    if (input === '/api/system/plugin-actions/action_feedback_api/trial' && init?.method === 'POST') {
+      actionTrialBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({
+        data: {
+          action_id: 'action_feedback_api',
+          connection_id: 'connection_maxcompute_prod',
+          latency_ms: 12,
+          mapping_hits: [
+            {
+              key: 'records_imported_path',
+              matched: true,
+              path: '$.commits',
+              value_preview: 8,
+            },
+          ],
+          plugin_id: 'plugin_maxcompute',
+          request_preview: {
+            method: 'GET',
+            query: { start_pt: '20260604' },
+            url: 'https://ai-brain-maxcompute-mcp.internal/mcp?start_pt=20260604',
+          },
+          response_summary: { json: { commits: 8 } },
+          status: 'succeeded',
+          write_preview: {
+            candidate_count: 0,
+            preview_value: 8,
+            records_imported: 8,
+            sample_records: [],
+            write_target: 'scheduled_job_result',
+            write_target_label: '定时作业结果',
+          },
+        },
+      });
+    }
     throw new Error(`Unexpected fetch call: ${String(input)}`);
   });
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -231,6 +266,7 @@ function installPluginsFetchMock(options: { deferConnectionTest?: boolean; inclu
   return {
     actionBodies,
     actionDeleteIds,
+    actionTrialBodies,
     actionUpdateBodies,
     connectionBodies,
     connectionDeleteIds,
@@ -801,5 +837,31 @@ describe('PluginsPage', () => {
         }),
       ),
     );
+  });
+
+  it('shows write preview in action trial diagnostics', async () => {
+    const { actionTrialBodies } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(await screen.findByText('试运行'));
+
+    const dialog = await screen.findByRole('dialog', { name: '动作试运行：调用反馈 API' });
+    fireEvent.click(within(dialog).getByRole('button', { name: '试运行' }));
+
+    await waitFor(() =>
+      expect(actionTrialBodies).toEqual([
+        {
+          connection_id: 'connection_maxcompute_prod',
+          input_payload: {},
+        },
+      ]),
+    );
+    expect(await within(dialog).findByText('写入预览')).toBeInTheDocument();
+    expect(within(dialog).getByText('写入目标：定时作业结果')).toBeInTheDocument();
+    expect(within(dialog).getByText('预计写入：8')).toBeInTheDocument();
+    expect(within(dialog).getByText('候选记录：0')).toBeInTheDocument();
+    expect(within(dialog).getByText('预览值')).toBeInTheDocument();
   });
 });

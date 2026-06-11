@@ -3814,6 +3814,16 @@ export type PluginActionTrialResult = {
   request_preview?: Record<string, unknown>;
   response_summary?: Record<string, unknown>;
   status: string;
+  write_preview?: {
+    candidate_count?: number;
+    preview_value?: unknown;
+    records_imported?: number;
+    report_preview?: Record<string, unknown>;
+    sample_records?: unknown[];
+    source_row_count?: number | null;
+    write_target?: string;
+    write_target_label?: string;
+  };
 };
 
 export async function fetchPlugins(): Promise<PluginRecord[]> {

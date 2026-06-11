@@ -709,6 +709,97 @@ def test_plugin_action_trial_returns_request_preview_and_mapping_hits():
             "value_preview": 8,
         }
     ]
+    assert result["write_preview"] == {
+        "candidate_count": 0,
+        "preview_value": 8,
+        "records_imported": 8,
+        "sample_records": [],
+        "write_target": "scheduled_job_result",
+        "write_target_label": "定时作业结果",
+    }
+
+
+def test_plugin_action_trial_returns_write_preview_for_code_inspection_mapping():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, connection, _ = create_plugin_bundle(admin_headers)
+
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "scan_repository_alerts",
+            "connection_id": connection["id"],
+            "input_schema": {"type": "object"},
+            "name": "扫描仓库告警",
+            "output_schema": {"type": "object"},
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {
+                    "payload": {
+                        "alerts": [
+                            {
+                                "file_path": "src/config.py",
+                                "line_number": 12,
+                                "rule_id": "SEC001",
+                                "severity": "critical",
+                                "title": "Hardcoded key",
+                            }
+                        ],
+                        "branch": "main",
+                        "commit": "abc1234",
+                        "repository": "repo_001",
+                        "risk": "critical",
+                        "summary": "1 critical issue found.",
+                    }
+                },
+                "path": "/alerts",
+            },
+            "result_mapping": {
+                "branch_path": "$.payload.branch",
+                "commit_sha_path": "$.payload.commit",
+                "findings_path": "$.payload.alerts",
+                "repository_id_path": "$.payload.repository",
+                "risk_level_path": "$.payload.risk",
+                "summary_path": "$.payload.summary",
+                "write_target": "code_inspection_reports",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/trial",
+        headers=admin_headers,
+        json={"connection_id": connection["id"], "input_payload": {}},
+    )
+
+    assert response.status_code == 200
+    result = response.json()["data"]
+    assert result["write_preview"] == {
+        "candidate_count": 1,
+        "records_imported": 1,
+        "report_preview": {
+            "branch": "main",
+            "commit_sha": "abc1234",
+            "repository_id": "repo_001",
+            "risk_level": "critical",
+            "summary": "1 critical issue found.",
+        },
+        "sample_records": [
+            {
+                "file_path": "src/config.py",
+                "line_number": 12,
+                "rule_id": "SEC001",
+                "severity": "critical",
+                "title": "Hardcoded key",
+            }
+        ],
+        "write_target": "code_inspection_reports",
+        "write_target_label": "代码巡检报告",
+    }
 
 
 def test_scheduled_job_can_invoke_configured_plugin_action_with_snapshots_and_logs():

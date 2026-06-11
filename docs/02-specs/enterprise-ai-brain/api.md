@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.242 |
+| 功能版本 | v1.1.243 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.243 | 2026-06-12 | 插件动作试运行响应补充 `write_preview`，前端弹窗展示写入目标、预计写入数量、候选数量和样例数据 | Codex |
 | v1.1.242 | 2026-06-12 | 代码巡检定时作业运行时应用动作/作业输出 `result_mapping`，支持从嵌套响应或 `$` 根数组提取巡检报告字段 | Codex |
 | v1.1.241 | 2026-06-12 | 插件动作页面补充 GitHub/GitLab 代码巡检场景模板，默认生成官方插件请求配置和代码巡检报告映射 | Codex |
 | v1.1.240 | 2026-06-12 | 定时作业运行记录补充复跑契约：前端可从运行记录基于 `scheduled_job_id` 复用作业运行接口并展示新运行详情 | Codex |
@@ -559,7 +560,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | GET | `/api/system/plugin-system-variables` | 查询系统变量预览；支持 `timezone` 参数，返回 `{{current_date}}`、`{{current_date-7}}`、`{{last_full_week.start}}` 等表达式、说明和当前解析值。 |
 | Plugins | GET/POST/PATCH/DELETE | `/api/system/plugin-actions`, `/api/system/plugin-actions/{action_id}` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作新增和编辑默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口；页面必须支持可视化表格与 JSON 双向同步，并提供明文请求预览和结果写入目标；`result_mapping.write_target` 首批支持 `scheduled_job_result`、`user_feedback_insights` 与 `code_inspection_reports`；页面场景模板至少包含 MaxCompute 每周用户反馈、GitHub 代码巡检和 GitLab 代码巡检，GitHub/GitLab 模板自动填充官方插件、HTTP 请求路径、默认 Params 和代码巡检报告 JSONPath 映射，提交时仍按普通 `POST /api/system/plugin-actions` 保存；代码巡检作业运行时按 `plugin_output_mapping` 或动作 `result_mapping` 提取仓库、分支、提交、风险、摘要和 finding 列表，JSONPath 支持 `$` 根节点；编辑时若提交历史 `***` 占位，服务端必须保留原始敏感值；删除动作前必须确认未被定时作业或调用日志引用，否则返回 409。 |
 | Plugins | POST | `/api/system/plugin-actions/{action_id}/invoke` | 管理员手动调用一次插件动作并写入调用日志。 |
-| Plugins | POST | `/api/system/plugin-actions/{action_id}/trial` | 管理员试运行一次插件动作；可临时覆盖连接和输入 payload，返回 `request_preview/response_summary/mapping_hits/status/latency_ms/error_message`，不作为正式定时作业调用日志。 |
+| Plugins | POST | `/api/system/plugin-actions/{action_id}/trial` | 管理员试运行一次插件动作；可临时覆盖连接和输入 payload，返回 `request_preview/response_summary/mapping_hits/write_preview/status/latency_ms/error_message`，不作为正式定时作业调用日志；`write_preview` 包含 `write_target/write_target_label/records_imported/candidate_count/sample_records/preview_value/report_preview/source_row_count` 等字段，用于页面展示结果动作将写入哪里、预计写入多少和样例数据。 |
 | Plugins | GET | `/api/system/plugin-invocation-logs` | 查询插件动作调用日志。 |
 | Scheduler | GET | `/api/system/scheduled-jobs` | 查询定时系统作业定义。 |
 | Scheduler | POST | `/api/system/scheduled-jobs` | 创建采集、AI 分析、插件动作调用、迭代建议或看板刷新作业。 |

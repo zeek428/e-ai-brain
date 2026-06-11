@@ -596,6 +596,57 @@ function JsonDiagnosticsBlock({ title, value }: { title: string; value?: unknown
   );
 }
 
+function TrialWritePreviewBlock({ value }: { value?: PluginActionTrialResult['write_preview'] }) {
+  if (!value) {
+    return null;
+  }
+  const writeTargetLabel = value.write_target_label || value.write_target || '-';
+  const sampleRecords = value.sample_records ?? [];
+  const hasReportPreview = value.report_preview && Object.keys(value.report_preview).length > 0;
+  const hasPreviewValue = value.preview_value !== undefined;
+  return (
+    <Space
+      orientation="vertical"
+      size={8}
+      style={{
+        background: '#f8fafc',
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        padding: 12,
+        width: '100%',
+      }}
+    >
+      <Typography.Text strong>写入预览</Typography.Text>
+      <Space wrap>
+        <Tag color="blue">写入目标：{writeTargetLabel}</Tag>
+        <Tag color="green">预计写入：{value.records_imported ?? 0}</Tag>
+        <Tag>候选记录：{value.candidate_count ?? 0}</Tag>
+        {value.source_row_count !== undefined && value.source_row_count !== null ? (
+          <Tag>源数据：{value.source_row_count}</Tag>
+        ) : null}
+      </Space>
+      {hasReportPreview ? (
+        <>
+          <Typography.Text type="secondary">报告字段预览</Typography.Text>
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{compactJson(value.report_preview)}</pre>
+        </>
+      ) : null}
+      {sampleRecords.length ? (
+        <>
+          <Typography.Text type="secondary">样例记录</Typography.Text>
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{compactJson(sampleRecords)}</pre>
+        </>
+      ) : null}
+      {hasPreviewValue ? (
+        <>
+          <Typography.Text type="secondary">预览值</Typography.Text>
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{compactJson(value.preview_value)}</pre>
+        </>
+      ) : null}
+    </Space>
+  );
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -2380,6 +2431,7 @@ export default function PluginsPage() {
                 rowKey="key"
                 size="small"
               />
+              <TrialWritePreviewBlock value={trialResult.write_preview} />
               <Typography.Text strong>响应摘要</Typography.Text>
               <pre style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
                 {compactJson(trialResult.response_summary)}
