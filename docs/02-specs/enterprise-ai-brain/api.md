@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.234 |
+| 功能版本 | v1.1.236 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.236 | 2026-06-11 | 新增代码仓库巡检 API：`code_repository_inspection` 定时作业支持 `result_actions` 多结果动作，运行写入代码审查报告、严重问题建 Bug 和通知记录，并提供运营治理代码审查列表/详情接口 | Codex |
+| v1.1.235 | 2026-06-11 | 新增 AI 助手工作台升级目标 API：`@` 引用候选/解析、聊天显式引用、动作草案、确认执行和取消草案 | Codex |
 | v1.1.234 | 2026-06-11 | 补充插件删除 API：插件、连接、动作支持 DELETE；若仍被连接、动作、定时作业或调用日志引用则返回 409 并提示使用清单 | Codex |
 | v1.1.233 | 2026-06-11 | 补充定时作业维护 API：列表页必须提供编辑和删除入口，后端支持 `DELETE /api/system/scheduled-jobs/{job_id}` 并写入删除审计 | Codex |
 | v1.1.231 | 2026-06-11 | 补充插件维护 API 契约：插件、连接、动作均支持按 ID PATCH 编辑，连接/动作编辑保留历史 `***` 占位对应的原始密钥并继续支持 Params/Headers 可视化配置 | Codex |
@@ -463,6 +465,10 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题。 |
+| Assistant Target | GET | `/api/assistant/reference-candidates` | 目标态：按 query/type/product_id 返回当前用户可通过 `@` 引用的对象。 |
+| Assistant Target | POST | `/api/assistant/references/resolve` | 目标态：解析并校验显式引用，返回可进入上下文的脱敏引用快照。 |
+| Assistant Target | POST | `/api/assistant/actions/draft` | 目标态：生成 AI 能力、插件、定时作业或运行操作的待确认草案。 |
+| Assistant Target | GET/POST | `/api/assistant/actions/{draft_id}` | 目标态：查询草案详情、确认执行或取消草案；确认后调度到已有领域 service。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |
@@ -554,6 +560,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Scheduler | POST | `/api/system/scheduled-jobs/{job_id}/run` | 手动触发一次作业运行。 |
 | Scheduler | GET | `/api/system/scheduled-job-runs` | 查询定时作业运行实例、配置快照、collector run 关联和结果摘要。 |
 | Scheduler | POST | `/api/system/scheduled-job-runs/{run_id}/cancel` | 取消仍处于 queued/running 的运行实例。 |
+| Governance | GET | `/api/governance/code-inspections` | 查询定期代码仓库巡检报告列表，支持产品、仓库、风险级别、状态、分页和排序。 |
+| Governance | GET | `/api/governance/code-inspections/{report_id}` | 查询单次代码巡检报告详情，返回报告、finding 列表和通知记录。 |
 | Attribution | GET | `/api/attribution/pending-items` | 查询待归属数据队列。 |
 | Attribution | POST | `/api/attribution/pending-items` | 登记无法映射产品、模块、需求或导入主体的真实数据。 |
 | Attribution | POST | `/api/attribution/pending-items/{item_id}/resolve` | 将待归属项归属到已有上下文或忽略为噪声。 |
@@ -1228,6 +1236,127 @@ POST /api/assistant/chat
 ```
 
 助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs` 和 `assistant.model_gateway`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report` 和 `knowledge_deposit`。助手消息 `references` 返回可跳转链接；若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录元数据，审计事件为 `assistant.chat_completed`。
+
+目标态 AI 助手工作台会在现有聊天接口上扩展结构化显式引用。请求体新增可选 `references`，由前端 `@` 选择器提交，不要求后端从自然语言中猜测 ID：
+
+```json
+{
+  "conversation_id": "conversation_001",
+  "message": "基于这些知识，帮我生成每周反馈洞察定时任务草案。",
+  "product_id": "product_001",
+  "references": [
+    {"type": "knowledge_document", "id": "knowledge_doc_001"},
+    {"type": "plugin_action", "id": "plugin_action_maxcompute_feedback"},
+    {"type": "ai_agent", "id": "agent_user_insight"},
+    {"type": "ai_skill", "id": "skill_feedback_summary"}
+  ],
+  "context": {"source": "assistant-page"}
+}
+```
+
+服务端必须先通过引用解析流程校验所有显式引用，未授权、不可读、不可检索或不存在的引用不得进入模型上下文。知识引用支持 `knowledge_space`、`knowledge_folder`、`knowledge_document` 和 `knowledge_chunk`；空间/目录级引用必须结合用户问题做权限过滤检索，不得把全空间正文注入模型。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
+
+目标态 `@` 引用候选：
+
+```http
+GET /api/assistant/reference-candidates?query=反馈&type=knowledge_document&product_id=product_001
+```
+
+响应：
+
+```json
+{
+  "items": [
+    {
+      "id": "knowledge_doc_001",
+      "type": "knowledge_document",
+      "title": "反馈分类标准",
+      "url": "/assets/knowledge?document_id=knowledge_doc_001",
+      "metadata": {
+        "knowledge_space_id": "knowledge_space_001",
+        "index_status": "vector_indexed"
+      }
+    }
+  ],
+  "total": 1
+}
+```
+
+目标态引用解析：
+
+```http
+POST /api/assistant/references/resolve
+```
+
+```json
+{
+  "references": [
+    {"type": "scheduled_job", "id": "scheduled_job_001"},
+    {"type": "knowledge_document", "id": "knowledge_doc_001"}
+  ],
+  "product_id": "product_001"
+}
+```
+
+响应返回 `items` 与 `errors`。`items` 是可进入上下文的脱敏快照；`errors` 包含 `type`、`id`、`code` 和 `message`，用于前端标记失效引用。后端必须按当前用户权限过滤候选和解析结果，不能只依赖前端隐藏。
+
+目标态助理动作草案：
+
+```http
+POST /api/assistant/actions/draft
+GET /api/assistant/actions/assistant_action_draft_001
+POST /api/assistant/actions/assistant_action_draft_001/confirm
+POST /api/assistant/actions/assistant_action_draft_001/cancel
+```
+
+草案请求：
+
+```json
+{
+  "conversation_id": "conversation_001",
+  "intent": "scheduled_job.create",
+  "message": "每周一 9 点拉取上周反馈，AI 分析后写入用户洞察。",
+  "references": [
+    {"type": "plugin_action", "id": "plugin_action_maxcompute_feedback"},
+    {"type": "knowledge_document", "id": "knowledge_doc_001"},
+    {"type": "ai_agent", "id": "agent_user_insight"},
+    {"type": "ai_skill", "id": "skill_feedback_summary"}
+  ]
+}
+```
+
+草案响应：
+
+```json
+{
+  "id": "assistant_action_draft_001",
+  "action_type": "scheduled_job.create",
+  "status": "awaiting_confirmation",
+  "risk_level": "high",
+  "requires_confirmation": true,
+  "subject_type": "scheduled_job",
+  "payload": {
+    "name": "每周用户反馈洞察",
+    "job_type": "user_feedback_insight_extract",
+    "schedule_type": "cron",
+    "cron_expression": "0 9 * * MON",
+    "timezone": "Asia/Shanghai",
+    "plugin_action_id": "plugin_action_maxcompute_feedback",
+    "agent_id": "agent_user_insight",
+    "skill_ids": ["skill_feedback_summary"],
+    "knowledge_document_ids": ["knowledge_doc_001"],
+    "execution_mode": "ai_generated"
+  },
+  "diff": {
+    "created": ["scheduled_job"]
+  },
+  "warnings": [
+    "确认后将创建启用状态的定时作业。"
+  ]
+}
+```
+
+`confirm` 只接受仍处于 `awaiting_confirmation` 且未过期的草案。确认后必须重新校验用户权限和引用状态，再调用对应领域 service，例如 AI 能力配置调用 `/api/system/ai-skills` 或 `/api/system/ai-agents` 的 service，插件配置调用 plugins service，定时作业配置或运行调用 scheduled_jobs service。确认成功写入 `assistant_action.confirmed` 和领域审计事件；失败写入 `assistant_action.failed`，不得部分绕过领域 service。删除、停用、插件试运行、定时作业运行和会写入业务数据的动作必须在草案中标记 `risk_level=high` 并展示影响摘要。
 
 `conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
 
@@ -2697,13 +2826,30 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 }
 ```
 
-`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`。`user_feedback_collect` 表示仅取数采集，不执行平台 Skill/大模型处理；若用户反馈作业同时配置插件动作、AI 模型、Agent 或 Skills，后端必须按兼容规则归一为 `user_feedback_insight_extract` 并使用 `ai_generated`，避免配置了 AI 链路却静默直通。平台内 AI 作业必须引用 active Agent 和 active Skills；当 `user_feedback_insight_extract` 绑定的插件动作已经封装 MCP/上游 AI 分析时，可先由插件输出结构化洞察，后续再按需要补充 Agent/Skill。`knowledge_document_ids` 为可选知识引用；配置后运行时必须先按当前用户权限读取可检索知识 chunk，并以 `knowledge_references` 注入 Agent/Skill 模型请求上下文。指定 `model_gateway_config_id` 时覆盖 Agent 默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发和取消必须写入审计。
+`job_type` 首批允许 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。`execution_mode` 只允许 `deterministic`、`ai_assisted`、`ai_generated`。`user_feedback_collect` 表示仅取数采集，不执行平台 Skill/大模型处理；若用户反馈作业同时配置插件动作、AI 模型、Agent 或 Skills，后端必须按兼容规则归一为 `user_feedback_insight_extract` 并使用 `ai_generated`，避免配置了 AI 链路却静默直通。平台内 AI 作业必须引用 active Agent 和 active Skills；当 `user_feedback_insight_extract` 绑定的插件动作已经封装 MCP/上游 AI 分析时，可先由插件输出结构化洞察，后续再按需要补充 Agent/Skill。`knowledge_document_ids` 为可选知识引用；配置后运行时必须先按当前用户权限读取可检索知识 chunk，并以 `knowledge_references` 注入 Agent/Skill 模型请求上下文。`result_actions` 为可选结果动作列表；`code_repository_inspection` 使用该字段按顺序执行 `write_code_inspection_report`、`create_bug_for_severe_findings`、`send_notification` 等动作。指定 `model_gateway_config_id` 时覆盖 Agent 默认模型网关，但仍必须指向 active 模型网关配置。`cron_expression` 和 `interval_seconds` 按 `schedule_type` 二选一；`timezone` 默认 `Asia/Shanghai`。作业创建、修改、启停、手动触发和取消必须写入审计。
 
 插件链路按“数据连接取数 -> Skill 分析处理 -> 结果动作写入”理解：作业定义中 `plugin_connection_id` 表示取数连接，`skill_ids` 表示处理能力，`plugin_action_id` 表示结果动作，`plugin_input_mapping` 表示运行时传给连接/动作的输入参数。`plugin_output_mapping` 是作业级覆盖项；为空时运行时复用结果动作的 `result_mapping`。插件输出映射第一阶段支持 `records_imported_path` 这类摘要字段映射和 `write_target` 写入目标，真实业务入库仍必须通过对应业务 service 完成。
 
 `plugin_input_mapping`、插件连接 `request_config.query/headers` 和插件动作 `request_config.query/headers` 支持动态时间 token，保存配置时保留语义 token，运行实例触发时按作业 `timezone` 解析。首批 token 包括 `{{current_date}}` / `{{date}}`（输出 `YYYYMMDD`）、`{{date_iso}}`（输出 `YYYY-MM-DD`）、`{{now}}`、`{{today.start}}`、`{{today.end}}`、`{{yesterday.start}}`、`{{yesterday.end}}`、`{{last_7_days.start}}`、`{{last_7_days.end}}`、`{{last_full_week.start}}` 和 `{{last_full_week.end}}`；日期和时间 token 支持简单天数偏移表达式，例如 `{{current_date-7}}` 表示当前日期前 7 天、`{{today.start-7}}` 表示今天零点前 7 天。历史值 `last_monday_00:00:00` 与 `this_monday_00:00:00` 兼容解析为上一完整自然周起止时间。前端配置默认以参数表格维护插件连接 Params/Headers、插件动作 Params/Headers 和连接输入映射，并在高级模式中提供 JSON 同步和反向应用，避免要求业务用户手写复杂 JSON。连接配置作为公共默认值，动作配置作为具体接口覆盖项；同名 query/header 由动作覆盖连接。
 
 MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extract`，数据连接保存 endpoint、认证和公共 Params/Headers，结果动作通常为 `action_type=mcp_tool`、`tool_name=maxcompute.execute_sql`；请求时间参数优先在连接/动作 Params 中配置，作业级 `plugin_input_mapping` 仅作为兼容和高级覆盖。作业必须选择 `model_gateway_config_id`、`agent_id` 和 `skill_ids`，可选选择知识引用文档。动作 `result_mapping` 默认包含 `write_target=user_feedback_insights`、`insights_path`、`records_imported_path` 和 `rows_path`，作业 `plugin_output_mapping` 仅用于覆盖。运行顺序为数据连接取数、读取知识引用、模型网关按 Agent/Skill 处理为结构化 JSON、结果动作写入。运行成功后 `records_imported` 为实际新增洞察数，`result_summary.plugin.response_summary.json.row_count` 保留源表读取行数摘要；`result_summary.execution_nodes` 必须按 `data_connection`、`skill_processing`、`result_action` 三段保存数据连接获取内容、Skill 处理内容和结果动作反馈内容。`skill_processing.model_gateway_called=true`，并包含 `model_gateway_config_id`、`model_log_id`、`processing_mode=model_gateway_json_transform`、`input.knowledge_references` 和模型输出 JSON 摘要。
+
+代码仓库巡检场景使用 `job_type=code_repository_inspection`，通过 `plugin_connection_id` 和 `plugin_action_id` 调用仓库扫描器、SonarQube、SAST 或自建质量扫描服务。插件响应推荐返回 `repository_id`、`branch`、`commit_sha`、`risk_level`、`summary` 和 `findings[]`；每个 finding 至少包含 `rule_id`、`category`、`severity`、`title`、`description`、`file_path`、`line_number` 和 `recommendation`。示例 `result_actions`：
+
+```json
+[
+  {"type": "write_code_inspection_report"},
+  {"type": "create_bug_for_severe_findings", "severity_threshold": "critical"},
+  {
+    "type": "send_notification",
+    "channels": ["email", "dingtalk"],
+    "recipients": ["quality@example.com"],
+    "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=..."
+  }
+]
+```
+
+运行成功后必须创建 `code_inspection_reports` 和 `code_inspection_findings`；达到阈值的问题可创建 `source=code_inspection` 的 Bug，并把 `code_inspection_report_id`、`code_inspection_finding_id`、规则、文件和行号写入 Bug evidence；通知动作写入 `code_inspection_notifications`，第一阶段只记录邮件/钉钉机器人等发送目标和反馈摘要，不要求实际发出外部网络请求。运行摘要必须包含 `execution_nodes.data_connection`、`code_inspection_report`、`bug_creation` 和 `notifications`，方便运行详情按“取数/扫描、写报告、派生处理、通知反馈”查看。
 
 运行实例响应必须包含 `scheduled_job_id`、`collector_run_id`、`trigger_type`、`scheduled_for`、`status`、`started_at`、`finished_at`、`records_imported`、`error_code`、`error_message`、`result_summary`、`config_snapshot`、`resolved_agent_snapshot`、`resolved_skill_snapshots`、`resolved_prompt_snapshot`、`tool_policy_snapshot`、`resolved_plugin_snapshot` 和 `plugin_invocation_log_id`。`result_summary.execution_nodes.data_connection` 应包含明文请求摘要、解析后的输入映射、插件响应摘要和源数据数量；`skill_processing` 应包含 Skill 配置、是否调用模型网关、处理输入和处理输出；`result_action` 应包含写入目标、写入数量、生成 ID 和动作反馈。模型日志仍只记录 provider、model、purpose、tokens、latency、status 和错误元数据，不保存完整 prompt 或完整输出。插件调用日志按管理员调试场景保存并返回明文请求/响应摘要，便于排查三方系统连接和动作写入问题。`POST /run` 仅创建一次运行实例并进入 `queued/running`，不得直接返回伪造业务结果。
 

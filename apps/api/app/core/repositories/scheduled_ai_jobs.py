@@ -109,7 +109,7 @@ class ScheduledAiJobReadRepository:
                            status, next_run_at, last_run_at, last_success_at, last_failure_at,
                            last_error_message, created_by, created_at, updated_at,
                            plugin_action_id, plugin_connection_id, plugin_input_mapping,
-                           plugin_output_mapping, knowledge_document_ids
+                           plugin_output_mapping, knowledge_document_ids, result_actions
                     FROM scheduled_jobs
                     {where}
                     ORDER BY next_run_at DESC NULLS LAST, id DESC
@@ -301,7 +301,7 @@ class ScheduledAiJobReadRepository:
                   next_run_at, last_run_at, last_success_at, last_failure_at,
                   last_error_message, created_by, created_at, updated_at,
                   plugin_action_id, plugin_connection_id, plugin_input_mapping,
-                  plugin_output_mapping, knowledge_document_ids
+                  plugin_output_mapping, knowledge_document_ids, result_actions
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
@@ -310,7 +310,8 @@ class ScheduledAiJobReadRepository:
                   %s, %s, %s, %s,
                   %s::timestamptz, %s::timestamptz, %s::timestamptz,
                   %s::timestamptz, %s, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now()), %s, %s, %s::jsonb, %s::jsonb, %s::jsonb
+                  COALESCE(%s::timestamptz, now()), %s, %s, %s::jsonb, %s::jsonb,
+                  %s::jsonb, %s::jsonb
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   name = EXCLUDED.name,
@@ -341,6 +342,7 @@ class ScheduledAiJobReadRepository:
                   plugin_input_mapping = EXCLUDED.plugin_input_mapping,
                   plugin_output_mapping = EXCLUDED.plugin_output_mapping,
                   knowledge_document_ids = EXCLUDED.knowledge_document_ids,
+                  result_actions = EXCLUDED.result_actions,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -376,6 +378,7 @@ class ScheduledAiJobReadRepository:
                     _json(job.get("plugin_input_mapping"), {}),
                     _json(job.get("plugin_output_mapping"), {}),
                     _json(job.get("knowledge_document_ids"), []),
+                    _json(job.get("result_actions"), []),
                 ),
             )
 
@@ -538,6 +541,7 @@ class ScheduledAiJobReadRepository:
             "plugin_input_mapping": row[29] or {},
             "plugin_output_mapping": row[30] or {},
             "knowledge_document_ids": row[31] or [],
+            "result_actions": row[32] or [],
         }
 
     def _run_from_row(self, row: Any) -> dict[str, Any]:

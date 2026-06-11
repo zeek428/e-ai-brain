@@ -101,6 +101,7 @@ class ScheduledJobRequest(BaseModel):
     plugin_input_mapping: dict[str, Any] = Field(default_factory=dict)
     plugin_output_mapping: dict[str, Any] = Field(default_factory=dict)
     product_id: str | None = None
+    result_actions: list[dict[str, Any]] = Field(default_factory=list)
     schedule_type: str = "manual"
     skill_ids: list[str] = Field(default_factory=list)
     source_system: str = "ai-brain"
@@ -126,6 +127,7 @@ class ScheduledJobPatchRequest(BaseModel):
     plugin_input_mapping: dict[str, Any] | None = None
     plugin_output_mapping: dict[str, Any] | None = None
     product_id: str | None = None
+    result_actions: list[dict[str, Any]] | None = None
     schedule_type: str | None = None
     skill_ids: list[str] | None = None
     source_system: str | None = None

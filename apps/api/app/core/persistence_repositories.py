@@ -6,6 +6,7 @@ from app.core.repositories.assistant_chat import AssistantChatReadRepository
 from app.core.repositories.audit import AuditReadRepository
 from app.core.repositories.brain_apps import BrainAppReadRepository
 from app.core.repositories.bugs import BugReadRepository
+from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.core.repositories.devops import DevopsReadRepository
 from app.core.repositories.git_review import GitReviewReadRepository
 from app.core.repositories.knowledge import KnowledgeReadRepository
@@ -107,6 +108,10 @@ def install_snapshot_repositories(repository: Any) -> None:
         upsert_audit_events=callbacks.upsert_audit_events,
     )
     repository._plugin_read_repository = PluginReadRepository(
+        repository._connect,
+        upsert_audit_events=callbacks.upsert_audit_events,
+    )
+    repository._code_inspection_read_repository = CodeInspectionReadRepository(
         repository._connect,
         upsert_audit_events=callbacks.upsert_audit_events,
     )

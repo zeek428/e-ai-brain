@@ -3673,11 +3673,20 @@ export type ScheduledJobRecord = {
   plugin_input_mapping?: Record<string, unknown>;
   plugin_output_mapping?: Record<string, unknown>;
   product_id?: string | null;
+  result_actions?: ScheduledJobResultAction[];
   schedule_type?: string;
   skill_ids?: string[];
   source_system?: string;
   status?: string;
   timezone?: string;
+};
+
+export type ScheduledJobResultAction = {
+  channels?: string[];
+  recipients?: string[];
+  severity_threshold?: string;
+  type: string;
+  webhook_url?: string;
 };
 
 export type ScheduledJobRunRecord = {
@@ -4130,6 +4139,97 @@ export async function fetchScheduledJobRuns(
     { token },
   );
   return response.items;
+}
+
+export type CodeInspectionReportRecord = {
+  branch?: string | null;
+  commit_sha?: string | null;
+  created_at?: string;
+  created_bug_ids?: string[];
+  finding_count: number;
+  id: string;
+  notification_ids?: string[];
+  product_id?: string | null;
+  repository_id?: string | null;
+  repository_name?: string | null;
+  repository_path?: string | null;
+  risk_level: string;
+  severe_finding_count: number;
+  status: string;
+  summary?: string;
+};
+
+export type CodeInspectionFindingRecord = {
+  category?: string;
+  created_bug_id?: string | null;
+  description?: string;
+  file_path?: string;
+  id: string;
+  line_number?: number | null;
+  recommendation?: string;
+  report_id: string;
+  rule_id?: string;
+  severity: string;
+  title: string;
+};
+
+export type CodeInspectionNotificationRecord = {
+  channel: string;
+  created_at?: string;
+  id: string;
+  message?: string;
+  report_id: string;
+  status: string;
+  target?: string | null;
+};
+
+export type CodeInspectionDetailRecord = {
+  findings: CodeInspectionFindingRecord[];
+  notifications: CodeInspectionNotificationRecord[];
+  report: CodeInspectionReportRecord & Record<string, unknown>;
+};
+
+export type CodeInspectionListQuery = {
+  page?: number;
+  pageSize?: number;
+  productId?: string;
+  repositoryId?: string;
+  riskLevel?: string;
+  sortField?: string;
+  sortOrder?: 'ascend' | 'descend';
+  status?: string;
+  title?: string;
+};
+
+export async function fetchCodeInspectionReports(query: CodeInspectionListQuery = {}) {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'page', query.page ?? 1);
+  appendQueryParam(params, 'page_size', query.pageSize ?? 10);
+  appendQueryParam(params, 'product_id', query.productId);
+  appendQueryParam(params, 'repository_id', query.repositoryId);
+  appendQueryParam(params, 'risk_level', query.riskLevel);
+  appendQueryParam(params, 'sort_by', query.sortField);
+  appendQueryParam(params, 'sort_order', query.sortOrder === 'ascend' ? 'asc' : 'desc');
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'title', query.title);
+  const response = await apiRequest<ListResponse<CodeInspectionReportRecord>>(
+    `/api/governance/code-inspections?${params.toString()}`,
+    { token },
+  );
+  return {
+    page: response.page ?? query.page ?? 1,
+    pageSize: response.page_size ?? query.pageSize ?? 10,
+    rows: response.items,
+    total: response.total,
+  };
+}
+
+export async function fetchCodeInspectionDetail(reportId: string): Promise<CodeInspectionDetailRecord> {
+  const token = requireAccessToken();
+  return apiRequest<CodeInspectionDetailRecord>(`/api/governance/code-inspections/${reportId}`, {
+    token,
+  });
 }
 
 function mapRequirementRecord(requirement: RequirementListItem): RequirementRecord {

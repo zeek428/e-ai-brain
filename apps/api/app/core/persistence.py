@@ -101,6 +101,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "037_knowledge_management_assets.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "040_scheduled_job_knowledge_references.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "041_code_inspection_governance.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -970,6 +978,39 @@ class PostgresSnapshotRepository:
             scheduled_job_id=scheduled_job_id,
             status=status,
         )
+
+    def save_code_inspection_records(
+        self,
+        *,
+        report: dict[str, Any],
+        findings: list[dict[str, Any]],
+        notifications: list[dict[str, Any]],
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        return self._code_inspection_read_repository.save_code_inspection_records(
+            report=report,
+            findings=findings,
+            notifications=notifications,
+            audit_event=audit_event,
+        )
+
+    def list_code_inspection_reports(
+        self,
+        *,
+        product_id: str | None = None,
+        repository_id: str | None = None,
+        risk_level: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._code_inspection_read_repository.list_code_inspection_reports(
+            product_id=product_id,
+            repository_id=repository_id,
+            risk_level=risk_level,
+            status=status,
+        )
+
+    def get_code_inspection_detail(self, report_id: str) -> dict[str, Any] | None:
+        return self._code_inspection_read_repository.get_code_inspection_detail(report_id)
 
     def list_plugins(
         self,

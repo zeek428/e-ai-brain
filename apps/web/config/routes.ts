@@ -140,6 +140,12 @@ const routes = [
         icon: 'SafetyCertificateOutlined',
         component: './Audit',
       },
+      {
+        path: '/governance/code-inspections',
+        name: '代码审查',
+        icon: 'CodeOutlined',
+        component: './CodeInspections',
+      },
     ],
   },
   {

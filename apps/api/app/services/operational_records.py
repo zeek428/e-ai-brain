@@ -9,6 +9,7 @@ from app.api.deps import api_error, require_roles
 from app.services.product_config_context import product_config_source_store
 
 COLLECTOR_TYPES = {
+    "code_inspection",
     "gitlab_daily_code_metric",
     "iteration_plan_suggestion",
     "jenkins_release",
@@ -353,4 +354,3 @@ def patch_collector_run_response(
         audit_event=audit_event,
     )
     return run
-

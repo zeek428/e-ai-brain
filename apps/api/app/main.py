@@ -17,6 +17,7 @@ from app.api.routers.audit import router as audit_router
 from app.api.routers.auth import router as auth_router
 from app.api.routers.brain_apps import router as brain_apps_router
 from app.api.routers.bugs import router as bugs_router
+from app.api.routers.code_inspections import router as code_inspections_router
 from app.api.routers.code_review_reports import router as code_review_reports_router
 from app.api.routers.collectors import router as collectors_router
 from app.api.routers.dashboard import router as dashboard_router
@@ -136,6 +137,7 @@ app.include_router(attribution_router)
 app.include_router(auth_router)
 app.include_router(brain_apps_router)
 app.include_router(bugs_router)
+app.include_router(code_inspections_router)
 app.include_router(code_review_reports_router)
 app.include_router(collectors_router)
 app.include_router(dashboard_router)

@@ -89,6 +89,18 @@ def test_scheduled_ai_job_endpoints_are_owned_by_scheduled_jobs_router():
         assert _route_for(path, method).endpoint.__module__ == expected_module
 
 
+def test_code_inspection_endpoints_are_owned_by_code_inspections_router():
+    expected_module = "app.api.routers.code_inspections"
+
+    assert _route_for("/api/governance/code-inspections", "GET").endpoint.__module__ == (
+        expected_module
+    )
+    assert _route_for(
+        "/api/governance/code-inspections/{report_id}",
+        "GET",
+    ).endpoint.__module__ == expected_module
+
+
 def test_product_core_endpoints_are_owned_by_products_router():
     expected_module = "app.api.routers.products"
 

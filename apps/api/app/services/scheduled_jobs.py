@@ -11,6 +11,10 @@ from urllib.request import urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.api.deps import api_error, require_roles
+from app.services.code_inspections import (
+    execute_code_inspection_result_actions,
+    validate_code_inspection_result_actions,
+)
 from app.services.dynamic_parameters import (
     dynamic_time_parameters,
     resolve_dynamic_parameter_value,
@@ -50,6 +54,7 @@ AI_SKILL_STATUSES = {"active", "draft", "disabled"}
 AI_AGENT_STATUSES = {"active", "disabled"}
 SCHEDULED_JOB_TYPES = {
     "dashboard_snapshot_refresh",
+    "code_repository_inspection",
     "gitlab_daily_code_metric_collect",
     "iteration_plan_suggestion_generate",
     "jenkins_release_collect",
@@ -782,6 +787,12 @@ def validate_plugin_refs(current_store: Any, payload: Any) -> tuple[str | None, 
                 "PLUGIN_ACTION_REQUIRED",
                 "user_feedback_insight_extract requires plugin_action_id",
             )
+        if effective_scheduled_job_type(payload) == "code_repository_inspection":
+            raise api_error(
+                400,
+                "PLUGIN_ACTION_REQUIRED",
+                "code_repository_inspection requires plugin_action_id",
+            )
         return None, None
     _, connection, _ = ensure_active_plugin_action(
         current_store,
@@ -834,6 +845,9 @@ def create_scheduled_job_response(
         execution_mode,
     ) = validate_job_refs(current_store, payload)
     plugin_action_id, plugin_connection_id = validate_plugin_refs(current_store, payload)
+    result_actions = validate_code_inspection_result_actions(
+        payload.result_actions if job_type == "code_repository_inspection" else [],
+    )
     knowledge_document_ids = validate_knowledge_document_ids(
         current_store,
         payload.knowledge_document_ids,
@@ -867,6 +881,7 @@ def create_scheduled_job_response(
         "plugin_input_mapping": payload.plugin_input_mapping,
         "plugin_output_mapping": payload.plugin_output_mapping,
         "product_id": payload.product_id,
+        "result_actions": result_actions,
         "schedule_type": payload.schedule_type,
         "skill_ids": skill_ids,
         "source_system": ensure_non_blank(payload.source_system, "source_system"),
@@ -915,6 +930,12 @@ def patch_scheduled_job_response(
         execution_mode,
     ) = validate_job_refs(current_store, draft)
     plugin_action_id, plugin_connection_id = validate_plugin_refs(current_store, draft)
+    draft_result_actions = (
+        payload_field(draft, "result_actions", [])
+        if job_type == "code_repository_inspection"
+        else []
+    )
+    result_actions = validate_code_inspection_result_actions(draft_result_actions)
     knowledge_document_ids = validate_knowledge_document_ids(
         current_store,
         payload_field(draft, "knowledge_document_ids", []),
@@ -932,6 +953,7 @@ def patch_scheduled_job_response(
     updates["execution_mode"] = execution_mode
     updates["plugin_action_id"] = plugin_action_id
     updates["plugin_connection_id"] = plugin_connection_id
+    updates["result_actions"] = result_actions
     if {"schedule_type", "interval_seconds", "cron_expression"} & updates.keys():
         updates["next_run_at"] = next_run_at(draft)
     if "enabled" in updates:
@@ -1026,6 +1048,7 @@ def create_collector_run_for_job(
     now = datetime.now(UTC).isoformat()
     collector_run_id = current_store.new_id("collector_run")
     collector_type = {
+        "code_repository_inspection": "code_inspection",
         "iteration_plan_suggestion_generate": "iteration_plan_suggestion",
         "online_log_ai_analysis": "online_log_metric",
         "user_feedback_insight_extract": "user_feedback",
@@ -1814,6 +1837,62 @@ def run_scheduled_job_response(
                 resolved_plugin_input_mapping=resolved_plugin_input_mapping,
                 user=user,
             )
+        elif job["job_type"] == "code_repository_inspection" and plugin_summary is not None:
+            if plugin_summary.get("status") != "succeeded":
+                raise api_error(
+                    502,
+                    "PLUGIN_ACTION_FAILED",
+                    "Code repository inspection plugin action failed",
+                )
+            inspection_result = execute_code_inspection_result_actions(
+                current_store,
+                collector_run_id=collector_run["id"],
+                job=job,
+                plugin_summary=plugin_summary,
+                result_actions=job.get("result_actions") or [],
+                run_id=run_id,
+                user=user,
+            )
+            report = inspection_result["report"]
+            records_imported = int(inspection_result["finding_count"])
+            result_summary = {
+                "bug_ids": inspection_result["bug_ids"],
+                "execution_nodes": {
+                    "bug_creation": {
+                        "created_bug_ids": inspection_result["bug_ids"],
+                        "label": "严重问题自动创建 Bug",
+                        "records_imported": len(inspection_result["bug_ids"]),
+                        "status": "succeeded",
+                    },
+                    "code_inspection_report": {
+                        "finding_count": report["finding_count"],
+                        "label": "代码审查表写入结果",
+                        "report_id": report["id"],
+                        "risk_level": report["risk_level"],
+                        "severe_finding_count": report["severe_finding_count"],
+                        "status": "succeeded",
+                    },
+                    "data_connection": build_data_connection_execution_node(
+                        job=job,
+                        plugin_summary=plugin_summary,
+                        records_imported=records_imported,
+                        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                    ),
+                    "notifications": {
+                        "created_notification_ids": inspection_result["notification_ids"],
+                        "label": "问题消息通知",
+                        "records_imported": len(inspection_result["notification_ids"]),
+                        "status": "succeeded",
+                    },
+                },
+                "finding_count": report["finding_count"],
+                "notification_ids": inspection_result["notification_ids"],
+                "plugin": plugin_summary,
+                "report_id": report["id"],
+                "result_actions": inspection_result["result_actions"],
+                "risk_level": report["risk_level"],
+                "severe_finding_count": report["severe_finding_count"],
+            }
         else:
             result_summary = {"message": "No handler implemented"}
             if plugin_summary is not None:

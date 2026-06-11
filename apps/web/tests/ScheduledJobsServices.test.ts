@@ -6,6 +6,8 @@ import {
   createScheduledJob,
   fetchAiAgents,
   fetchAiSkills,
+  fetchCodeInspectionDetail,
+  fetchCodeInspectionReports,
   fetchScheduledJobRuns,
   fetchScheduledJobs,
   runScheduledJob,
@@ -157,5 +159,83 @@ describe('scheduled AI job service mappings', () => {
     await expect(fetchScheduledJobRuns({ scheduledJobId: 'scheduled_job_001' })).resolves.toEqual([
       expect.objectContaining({ id: 'scheduled_job_run_001' }),
     ]);
+  });
+
+  it('passes code inspection result actions and reads inspection reports', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/system/scheduled-jobs' && init?.method === 'POST') {
+        expect(JSON.parse(String(init.body))).toMatchObject({
+          job_type: 'code_repository_inspection',
+          result_actions: [
+            { type: 'write_code_inspection_report' },
+            { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
+          ],
+        });
+        return jsonResponse({ data: { id: 'scheduled_job_code_001', status: 'active' } });
+      }
+      if (
+        input ===
+          '/api/governance/code-inspections?page=2&page_size=20&risk_level=critical&sort_order=desc' &&
+        init?.method === 'GET'
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                finding_count: 2,
+                id: 'code_inspection_report_001',
+                risk_level: 'critical',
+                severe_finding_count: 1,
+                status: 'completed',
+              },
+            ],
+            page: 2,
+            page_size: 20,
+            total: 1,
+          },
+        });
+      }
+      if (input === '/api/governance/code-inspections/code_inspection_report_001' && init?.method === 'GET') {
+        return jsonResponse({
+          data: {
+            findings: [{ id: 'code_inspection_finding_001', report_id: 'code_inspection_report_001', severity: 'critical', title: 'Hardcoded key' }],
+            notifications: [],
+            report: { finding_count: 1, id: 'code_inspection_report_001', risk_level: 'critical', severe_finding_count: 1, status: 'completed' },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      createScheduledJob({
+        job_type: 'code_repository_inspection',
+        name: 'Weekly code inspection',
+        result_actions: [
+          { type: 'write_code_inspection_report' },
+          { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
+        ],
+      }),
+    ).resolves.toMatchObject({ id: 'scheduled_job_code_001' });
+    await expect(
+      fetchCodeInspectionReports({ page: 2, pageSize: 20, riskLevel: 'critical', sortOrder: 'descend' }),
+    ).resolves.toMatchObject({
+      page: 2,
+      pageSize: 20,
+      rows: [expect.objectContaining({ id: 'code_inspection_report_001' })],
+      total: 1,
+    });
+    await expect(fetchCodeInspectionDetail('code_inspection_report_001')).resolves.toMatchObject({
+      findings: [expect.objectContaining({ severity: 'critical' })],
+      report: expect.objectContaining({ id: 'code_inspection_report_001' }),
+    });
   });
 });

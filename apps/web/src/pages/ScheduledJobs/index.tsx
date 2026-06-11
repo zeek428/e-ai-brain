@@ -23,6 +23,7 @@ import {
   type PluginConnectionRecord,
   type ProductFilterOption,
   type ScheduledJobRecord,
+  type ScheduledJobResultAction,
   type ScheduledJobRunRecord,
 } from '../../services/aiBrain';
 import type { ModelGatewayConfigRecord } from '../../data/management';
@@ -43,12 +44,14 @@ type ScheduledJobFormValues = {
   plugin_input_mapping?: string;
   plugin_output_mapping?: string;
   product_id?: string;
+  result_actions?: ScheduledJobResultAction[];
   schedule_type: string;
   skill_ids?: string[];
   source_system: string;
 };
 
 const jobTypeOptions = [
+  { label: '代码仓库巡检（质量 / 安全 / 规范）', value: 'code_repository_inspection' },
   { label: '用户反馈洞察抽取（取数 + AI 分析 + 写入）', value: 'user_feedback_insight_extract' },
   { label: '迭代规划建议生成', value: 'iteration_plan_suggestion_generate' },
   { label: '线上日志 AI 分析', value: 'online_log_ai_analysis' },
@@ -85,6 +88,36 @@ const statusLabelByValue = new Map([
   ['active', '启用'],
   ['disabled', '停用'],
 ]);
+
+const codeInspectionResultActionOptions = [
+  { label: '写入代码审查表', value: 'write_code_inspection_report' },
+  { label: '严重问题自动创建 Bug', value: 'create_bug_for_severe_findings' },
+  { label: '发送问题消息通知', value: 'send_notification' },
+];
+
+const resultActionLabelByValue = new Map(codeInspectionResultActionOptions.map((option) => [option.value, option.label]));
+
+const severityThresholdOptions = [
+  { label: 'critical', value: 'critical' },
+  { label: 'high', value: 'high' },
+  { label: 'medium', value: 'medium' },
+];
+
+const notificationChannelOptions = [
+  { label: '邮件', value: 'email' },
+  { label: '钉钉机器人', value: 'dingtalk' },
+];
+
+const defaultCodeInspectionResultActions: ScheduledJobResultAction[] = [
+  { type: 'write_code_inspection_report' },
+  { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
+  { channels: ['email'], recipients: [], type: 'send_notification' },
+];
+
+function resultActionLabels(actions?: ScheduledJobResultAction[]) {
+  const labels = (actions ?? []).map((action) => resultActionLabelByValue.get(action.type) ?? action.type);
+  return labels.join('、');
+}
 
 function ellipsisText(value: string | undefined) {
   const text = value || '-';
@@ -174,6 +207,10 @@ export default function ScheduledJobsPage() {
   const [selectedRun, setSelectedRun] = useState<ScheduledJobRunRecord | undefined>();
   const [runningJobId, setRunningJobId] = useState<string | undefined>();
   const selectedJobType = Form.useWatch('job_type', form);
+  const aiProcessingRequired = selectedJobType === 'user_feedback_insight_extract';
+  const pluginActionRequired = ['code_repository_inspection', 'plugin_action_invoke', 'user_feedback_insight_extract'].includes(
+    selectedJobType ?? '',
+  );
   const pluginActionById = useMemo(
     () => new Map(pluginActions.map((action) => [action.id, action])),
     [pluginActions],
@@ -293,6 +330,7 @@ export default function ScheduledJobsPage() {
       plugin_action_id: job.plugin_action_id ?? undefined,
       plugin_connection_id: job.plugin_connection_id ?? undefined,
       product_id: job.product_id ?? undefined,
+      result_actions: job.result_actions?.length ? job.result_actions : defaultCodeInspectionResultActions,
       schedule_type: job.schedule_type ?? 'manual',
       skill_ids: job.skill_ids ?? [],
       source_system: job.source_system ?? 'ai-brain',
@@ -313,6 +351,12 @@ export default function ScheduledJobsPage() {
       plugin_input_mapping: editingJob?.plugin_input_mapping ?? {},
       plugin_output_mapping: editingJob?.plugin_output_mapping ?? {},
       knowledge_document_ids: values.knowledge_document_ids ?? [],
+      result_actions:
+        values.job_type === 'code_repository_inspection'
+          ? values.result_actions?.length
+            ? values.result_actions
+            : defaultCodeInspectionResultActions
+          : [],
       skill_ids: values.skill_ids ?? [],
     };
     if (editingJob) {
@@ -442,12 +486,18 @@ export default function ScheduledJobsPage() {
                   },
                   {
                     dataIndex: 'plugin_action_id',
-                    title: '结果动作',
+                    title: '插件动作',
                     width: 220,
                     render: (value) => {
                       const action = value ? pluginActionById.get(String(value)) : undefined;
                       return ellipsisText(action ? action.name : String(value ?? ''));
                     },
+                  },
+                  {
+                    dataIndex: 'result_actions',
+                    title: '结果动作',
+                    width: 240,
+                    render: (value) => ellipsisText(resultActionLabels(value as ScheduledJobResultAction[])),
                   },
                   {
                     dataIndex: 'execution_mode',
@@ -575,6 +625,7 @@ export default function ScheduledJobsPage() {
       <Modal
         open={modalOpen}
         title={editingJob ? '编辑定时作业' : '新增定时作业'}
+        width={820}
         onCancel={closeJobModal}
         onOk={submitJob}
       >
@@ -593,7 +644,19 @@ export default function ScheduledJobsPage() {
             <Input />
           </Form.Item>
           <Form.Item label="作业类型" name="job_type" rules={[{ required: true }]}>
-            <Select options={jobTypeOptions} />
+            <Select
+              options={jobTypeOptions}
+              onChange={(value) => {
+                if (value === 'code_repository_inspection') {
+                  form.setFieldsValue({
+                    execution_mode: 'deterministic',
+                    result_actions: form.getFieldValue('result_actions')?.length
+                      ? form.getFieldValue('result_actions')
+                      : defaultCodeInspectionResultActions,
+                  });
+                }
+              }}
+            />
           </Form.Item>
           <Space>
             <Form.Item label="启用" name="enabled" valuePropName="checked">
@@ -610,7 +673,7 @@ export default function ScheduledJobsPage() {
             label="所属产品"
             name="product_id"
             rules={
-              selectedJobType === 'user_feedback_insight_extract'
+              aiProcessingRequired || selectedJobType === 'code_repository_inspection'
                 ? [{ required: true, message: '请选择产品' }]
                 : []
             }
@@ -630,7 +693,7 @@ export default function ScheduledJobsPage() {
             label="数据连接"
             name="plugin_connection_id"
             rules={
-              selectedJobType === 'user_feedback_insight_extract'
+              pluginActionRequired
                 ? [{ required: true, message: '请选择数据连接' }]
                 : []
             }
@@ -650,7 +713,7 @@ export default function ScheduledJobsPage() {
             label="AI 模型"
             name="model_gateway_config_id"
             rules={
-              selectedJobType === 'user_feedback_insight_extract'
+              aiProcessingRequired
                 ? [{ required: true, message: '请选择 AI 模型' }]
                 : []
             }
@@ -670,7 +733,7 @@ export default function ScheduledJobsPage() {
             label="Agent"
             name="agent_id"
             rules={
-              selectedJobType === 'user_feedback_insight_extract'
+              aiProcessingRequired
                 ? [{ required: true, message: '请选择 Agent' }]
                 : []
             }
@@ -690,7 +753,7 @@ export default function ScheduledJobsPage() {
             label="Skills"
             name="skill_ids"
             rules={
-              selectedJobType === 'user_feedback_insight_extract'
+              aiProcessingRequired
                 ? [{ required: true, message: '请选择 Skills' }]
                 : []
             }
@@ -721,11 +784,11 @@ export default function ScheduledJobsPage() {
             />
           </Form.Item>
           <Form.Item
-            label="结果动作"
+            label={selectedJobType === 'code_repository_inspection' ? '插件扫描动作' : '结果动作'}
             name="plugin_action_id"
             rules={
-              selectedJobType === 'user_feedback_insight_extract'
-                ? [{ required: true, message: '请选择结果动作' }]
+              pluginActionRequired
+                ? [{ required: true, message: '请选择插件动作' }]
                 : []
             }
           >
@@ -740,6 +803,66 @@ export default function ScheduledJobsPage() {
               }))}
             />
           </Form.Item>
+          {selectedJobType === 'code_repository_inspection' ? (
+            <Form.List name="result_actions">
+              {(fields, { add, remove }) => (
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  <Typography.Text strong>结果动作</Typography.Text>
+                  {fields.map((field) => (
+                    <Space key={field.key} align="start" size={8} style={{ width: '100%' }}>
+                      <Form.Item
+                        {...field}
+                        name={[field.name, 'type']}
+                        rules={[{ required: true, message: '请选择结果动作' }]}
+                        style={{ flex: 1, marginBottom: 8 }}
+                      >
+                        <Select options={codeInspectionResultActionOptions} placeholder="请选择结果动作" />
+                      </Form.Item>
+                      <Form.Item noStyle shouldUpdate>
+                        {({ getFieldValue }) => {
+                          const actionType = getFieldValue(['result_actions', field.name, 'type']);
+                          if (actionType === 'create_bug_for_severe_findings') {
+                            return (
+                              <Form.Item
+                                name={[field.name, 'severity_threshold']}
+                                style={{ marginBottom: 8, width: 150 }}
+                              >
+                                <Select options={severityThresholdOptions} placeholder="严重级别" />
+                              </Form.Item>
+                            );
+                          }
+                          if (actionType === 'send_notification') {
+                            return (
+                              <Space direction="vertical" size={8} style={{ width: 360 }}>
+                                <Form.Item
+                                  name={[field.name, 'channels']}
+                                  rules={[{ required: true, message: '请选择通知渠道' }]}
+                                  style={{ marginBottom: 0 }}
+                                >
+                                  <Select mode="multiple" options={notificationChannelOptions} placeholder="通知渠道" />
+                                </Form.Item>
+                                <Form.Item name={[field.name, 'recipients']} style={{ marginBottom: 0 }}>
+                                  <Select mode="tags" placeholder="邮件收件人" tokenSeparators={[',', '，']} />
+                                </Form.Item>
+                                <Form.Item name={[field.name, 'webhook_url']} style={{ marginBottom: 8 }}>
+                                  <Input placeholder="钉钉机器人 Webhook" />
+                                </Form.Item>
+                              </Space>
+                            );
+                          }
+                          return null;
+                        }}
+                      </Form.Item>
+                      <Button danger icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
+                    </Space>
+                  ))}
+                  <Button icon={<PlusOutlined />} onClick={() => add({ type: 'write_code_inspection_report' })}>
+                    新增结果动作
+                  </Button>
+                </Space>
+              )}
+            </Form.List>
+          ) : null}
           <Form.Item label="Cron 表达式" name="cron_expression">
             <Input />
           </Form.Item>
@@ -809,6 +932,18 @@ export default function ScheduledJobsPage() {
             <JsonPreview
               title="结果动作反馈内容"
               value={getRunExecutionNode(selectedRun, 'result_action')}
+            />
+            <JsonPreview
+              title="代码审查表写入结果"
+              value={getRunExecutionNode(selectedRun, 'code_inspection_report')}
+            />
+            <JsonPreview
+              title="严重问题自动创建 Bug"
+              value={getRunExecutionNode(selectedRun, 'bug_creation')}
+            />
+            <JsonPreview
+              title="问题消息通知"
+              value={getRunExecutionNode(selectedRun, 'notifications')}
             />
             <JsonPreview title="结果摘要" value={selectedRun.result_summary} />
             <JsonPreview title="插件快照" value={selectedRun.resolved_plugin_snapshot} />

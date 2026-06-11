@@ -196,6 +196,16 @@ COMPATIBILITY_MENU_RESOURCES: list[dict[str, Any]] = [
         "status": "active",
     },
     {
+        "code": "code_inspection.reports",
+        "name": "代码审查",
+        "path": "/governance/code-inspections",
+        "parent_code": "governance",
+        "menu_type": "page",
+        "sort_order": 54,
+        "required_permissions": ["code_inspection.read"],
+        "status": "active",
+    },
+    {
         "code": "system",
         "name": "系统管理",
         "path": "/system",
@@ -296,6 +306,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
         "devops.metrics",
         "insight.center",
         "audit.events",
+        "code_inspection.reports",
         "system",
         "system.users",
         "system.roles",
@@ -320,6 +331,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
         "knowledge.center",
         "governance",
         "insight.center",
+        "code_inspection.reports",
     },
     "rd_owner": {
         "workspace.dashboard",
@@ -334,6 +346,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
         "knowledge.search",
         "governance",
         "devops.metrics",
+        "code_inspection.reports",
     },
     "reviewer": {"task", "task.center", "governance", "audit.events"},
     "knowledge_owner": {
