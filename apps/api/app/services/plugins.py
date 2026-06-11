@@ -4,12 +4,13 @@ import json
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.api.deps import api_error, require_roles
 from app.services.dynamic_parameters import (
+    dynamic_parameter_preview,
     dynamic_time_parameters,
     resolve_dynamic_parameter_value,
 )
@@ -32,7 +33,18 @@ PLUGIN_AUTH_TYPES = {"none", "bearer", "api_key_header", "basic"}
 PLUGIN_ACTION_TYPES = {"http_request", "mcp_tool"}
 PLUGIN_CONNECTION_ENVIRONMENTS = {"default", "dev", "test", "staging", "prod", "sandbox"}
 PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
-SECRET_KEYS = {"api_key", "api_key_ref", "password", "secret", "secret_ref", "token", "token_ref"}
+SECRET_KEYS = {
+    "api_key",
+    "api_key_ref",
+    "authorization",
+    "password",
+    "private-token",
+    "secret",
+    "secret_ref",
+    "token",
+    "token_ref",
+    "x-api-key",
+}
 
 
 def require_admin(user: dict[str, Any]) -> None:
@@ -175,6 +187,35 @@ def mask_secret_config(value: Any) -> Any:
     if isinstance(value, list):
         return [mask_secret_config(item) for item in value]
     return value
+
+
+def compact_preview_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return value if len(value) <= 200 else f"{value[:200]}..."
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    try:
+        encoded = json.dumps(mask_secret_config(value), ensure_ascii=False)
+    except TypeError:
+        return str(value)[:200]
+    return value if len(encoded) <= 400 else f"{encoded[:400]}..."
+
+
+def diagnostic_step(
+    name: str,
+    *,
+    detail: str | None = None,
+    latency_ms: int | None = None,
+    status: str = "succeeded",
+    **extra: Any,
+) -> dict[str, Any]:
+    step = {"name": name, "status": status}
+    if detail is not None:
+        step["detail"] = detail
+    if latency_ms is not None:
+        step["latency_ms"] = latency_ms
+    step.update({key: value for key, value in extra.items() if value is not None})
+    return step
 
 
 def public_plugin(plugin: dict[str, Any]) -> dict[str, Any]:
@@ -435,14 +476,45 @@ def test_plugin_connection_response(
     if plugin is None:
         raise api_error(404, "NOT_FOUND", "Plugin not found")
     start = perf_counter()
+    diagnostics: list[dict[str, Any]] = []
     status = "succeeded"
     error_code = None
     error_message = None
     mocked = False
+    parsed_endpoint = urlparse(str(connection.get("endpoint_url") or ""))
+    diagnostics.append(
+        diagnostic_step(
+            "endpoint_configured",
+            detail=parsed_endpoint.netloc or parsed_endpoint.path or "未配置 Endpoint",
+            status="succeeded" if connection.get("endpoint_url") else "failed",
+        ),
+    )
+    diagnostics.append(
+        diagnostic_step(
+            "protocol_supported",
+            detail=str(plugin.get("protocol")),
+            status="failed" if plugin.get("protocol") == "mcp_stdio" else "succeeded",
+        ),
+    )
+    auth_type = str(connection.get("auth_type") or "none")
+    auth_config = connection.get("auth_config") or {}
+    diagnostics.append(
+        diagnostic_step(
+            "auth_configured",
+            detail=auth_type,
+            status="warning" if auth_type != "none" and not auth_config else "succeeded",
+        ),
+    )
     try:
-        auth_config = connection.get("auth_config") or {}
         if "mock_test_response" in auth_config:
             mocked = True
+            diagnostics.append(
+                diagnostic_step(
+                    "network_request",
+                    detail="使用 mock_test_response，未发起真实网络请求",
+                    status="mocked",
+                ),
+            )
         elif plugin.get("protocol") == "mcp_stdio":
             raise api_error(
                 400,
@@ -450,6 +522,7 @@ def test_plugin_connection_response(
                 "mcp_stdio connection test requires isolated command execution and is not enabled",
             )
         elif plugin.get("protocol") == "mcp_http":
+            step_start = perf_counter()
             request = Request(
                 connection["endpoint_url"],
                 data=json.dumps(
@@ -470,7 +543,16 @@ def test_plugin_connection_response(
             timeout = min(int(connection.get("timeout_seconds") or 10), 10)
             with urlopen(request, timeout=timeout) as response:
                 response.read(512)
+                diagnostics.append(
+                    diagnostic_step(
+                        "mcp_tools_list",
+                        detail="tools/list 调用完成",
+                        latency_ms=int((perf_counter() - step_start) * 1000),
+                        status_code=getattr(response, "status", None),
+                    ),
+                )
         else:
+            step_start = perf_counter()
             request = Request(
                 connection["endpoint_url"],
                 headers=_build_headers(connection, {"request_config": {}}),
@@ -479,6 +561,14 @@ def test_plugin_connection_response(
             timeout = min(int(connection.get("timeout_seconds") or 10), 10)
             with urlopen(request, timeout=timeout) as response:
                 response.read(512)
+                diagnostics.append(
+                    diagnostic_step(
+                        "network_request",
+                        detail="HTTP GET 调用完成",
+                        latency_ms=int((perf_counter() - step_start) * 1000),
+                        status_code=getattr(response, "status", None),
+                    ),
+                )
     except Exception as exc:
         status = "failed"
         error_code = exc.__class__.__name__
@@ -486,10 +576,19 @@ def test_plugin_connection_response(
         if hasattr(exc, "detail") and isinstance(exc.detail, dict):
             error_code = exc.detail.get("code", error_code)
             error_message = exc.detail.get("message", error_message)
+        diagnostics.append(
+            diagnostic_step(
+                "network_request" if plugin.get("protocol") != "mcp_http" else "mcp_tools_list",
+                detail=error_message,
+                status="failed",
+                error_code=error_code,
+            ),
+        )
     latency_ms = int((perf_counter() - start) * 1000)
     result = {
         "checked_at": datetime.now(UTC).isoformat(),
         "connection_id": connection_id,
+        "diagnostics": diagnostics,
         "endpoint_url": connection.get("endpoint_url"),
         "environment": connection.get("environment"),
         "error_code": error_code,
@@ -498,6 +597,14 @@ def test_plugin_connection_response(
         "mocked": mocked,
         "plugin_id": plugin["id"],
         "protocol": plugin.get("protocol"),
+        "request_summary": {
+            "auth_config": mask_secret_config(auth_config),
+            "auth_type": auth_type,
+            "host": parsed_endpoint.netloc,
+            "method": "POST" if plugin.get("protocol") == "mcp_http" else "GET",
+            "protocol": plugin.get("protocol"),
+            "scheme": parsed_endpoint.scheme,
+        },
         "status": status,
     }
     audit_event = record_audit_event(
@@ -858,6 +965,123 @@ def _invoke_action(
     if plugin["protocol"] == "mcp_http":
         return _invoke_mcp_http(connection, action, input_payload)
     return _invoke_http(plugin, connection, action, input_payload)
+
+
+def plugin_action_request_preview(
+    plugin: dict[str, Any],
+    connection: dict[str, Any],
+    action: dict[str, Any],
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    request_config = resolve_action_request_config(action, input_payload)
+    headers = mask_secret_config(_build_headers(connection, action, input_payload))
+    if plugin["protocol"] == "mcp_http":
+        return {
+            "arguments": mask_secret_config(input_payload),
+            "endpoint_url": connection.get("endpoint_url"),
+            "headers": headers,
+            "jsonrpc_method": "tools/call",
+            "method": "POST",
+            "protocol": plugin["protocol"],
+            "tool_name": request_config.get("tool_name"),
+        }
+    method = str(request_config.get("method") or "GET").upper()
+    path = str(request_config.get("path") or "")
+    url = urljoin(str(connection.get("endpoint_url", "")).rstrip("/") + "/", path.lstrip("/"))
+    query = request_config.get("query") or {}
+    if query:
+        url = f"{url}?{urlencode(query)}"
+    return {
+        "body": mask_secret_config(input_payload if method not in {"GET", "HEAD"} else None),
+        "headers": headers,
+        "method": method,
+        "path": path,
+        "protocol": plugin["protocol"],
+        "query": mask_secret_config(query),
+        "url": url,
+    }
+
+
+def result_mapping_hits(
+    response_summary: dict[str, Any],
+    mapping: dict[str, Any],
+) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    for key, path in mapping.items():
+        if not isinstance(path, str) or not path.startswith("$."):
+            continue
+        value = json_path_value(response_summary.get("json"), path)
+        hits.append(
+            {
+                "key": key,
+                "matched": value is not None,
+                "path": path,
+                "value_preview": compact_preview_value(value),
+            },
+        )
+    return hits
+
+
+def trial_plugin_action_response(
+    *,
+    action_id: str,
+    connection_id: str | None,
+    current_store: Any,
+    input_payload: dict[str, Any] | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    plugin, connection, action = ensure_active_plugin_action(
+        current_store,
+        action_id,
+        connection_id=connection_id,
+    )
+    payload = input_payload or {}
+    start = perf_counter()
+    response_summary: dict[str, Any] = {}
+    error_code = None
+    error_message = None
+    status = "succeeded"
+    request_preview = plugin_action_request_preview(plugin, connection, action, payload)
+    try:
+        response_summary = _invoke_action(plugin, connection, action, payload)
+    except Exception as exc:
+        status = "failed"
+        error_code = exc.__class__.__name__
+        error_message = str(exc)
+        if hasattr(exc, "detail") and isinstance(exc.detail, dict):
+            error_code = exc.detail.get("code", error_code)
+            error_message = exc.detail.get("message", error_message)
+    latency_ms = int((perf_counter() - start) * 1000)
+    return {
+        "action_id": action["id"],
+        "connection_id": connection["id"],
+        "error_code": error_code,
+        "error_message": error_message,
+        "latency_ms": latency_ms,
+        "mapping_hits": result_mapping_hits(response_summary, action.get("result_mapping") or {}),
+        "plugin_id": plugin["id"],
+        "request_preview": request_preview,
+        "response_summary": mask_secret_config(response_summary),
+        "status": status,
+    }
+
+
+def plugin_system_variables_response(
+    *,
+    timezone_name: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    resolved_timezone_name = timezone_name or "UTC"
+    try:
+        timezone = ZoneInfo(resolved_timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported timezone") from exc
+    return {
+        "items": dynamic_parameter_preview(timezone=timezone),
+        "timezone": resolved_timezone_name,
+    }
 
 
 def invoke_plugin_action_response(

@@ -113,6 +113,13 @@ describe('ScheduledJobsPage', () => {
 
     fireEvent.mouseDown(within(dialog).getByLabelText('时间参数'));
     fireEvent.click(await screen.findByText('当前日期 - 7 天'));
+    expect(within(dialog).getByDisplayValue('start_pt')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('{{current_date-7}}')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('end_pt')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('{{current_date}}')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('插件输入映射 JSON')).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '高级输入映射 JSON 修改' }));
     expect(within(dialog).getByLabelText('插件输入映射 JSON')).toHaveValue(
       JSON.stringify(
         {
@@ -123,6 +130,7 @@ describe('ScheduledJobsPage', () => {
         2,
       ),
     );
+    fireEvent.click(within(dialog).getByRole('button', { name: '从 JSON 应用到表格' }));
 
     fireEvent.mouseDown(within(dialog).getByLabelText('时间参数'));
     fireEvent.click(await screen.findByText('上一个完整自然周'));

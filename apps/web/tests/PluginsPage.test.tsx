@@ -63,16 +63,39 @@ function installPluginsFetchMock() {
         data: {
           checked_at: '2026-06-10T00:00:00Z',
           connection_id: 'connection_maxcompute_prod',
+          diagnostics: [
+            { detail: 'ai-brain-maxcompute-mcp.internal', name: 'endpoint_configured', status: 'succeeded' },
+            { detail: 'tools/list 调用完成', latency_ms: 3, name: 'mcp_tools_list', status: 'succeeded' },
+          ],
           environment: 'prod',
           latency_ms: 3,
           plugin_id: 'plugin_maxcompute',
           protocol: 'mcp_http',
+          request_summary: { method: 'POST', protocol: 'mcp_http' },
           status: 'succeeded',
         },
       });
     }
     if (input === '/api/system/plugin-actions' && init?.method === 'GET') {
       return jsonResponse({ data: { items: [], total: 0 } });
+    }
+    if (input === '/api/system/scheduled-jobs' && init?.method === 'GET') {
+      return jsonResponse({ data: { items: [], total: 0 } });
+    }
+    if (String(input).startsWith('/api/system/plugin-system-variables') && init?.method === 'GET') {
+      return jsonResponse({
+        data: {
+          items: [
+            {
+              description: 'YYYYMMDD 格式，适合近 7 天起始分区',
+              expression: '{{current_date-7}}',
+              label: '当前日期 - 7 天',
+              value: '20260603',
+            },
+          ],
+          timezone: 'Asia/Shanghai',
+        },
+      });
     }
     if (input === '/api/system/plugin-invocation-logs' && init?.method === 'GET') {
       return jsonResponse({ data: { items: [], total: 0 } });

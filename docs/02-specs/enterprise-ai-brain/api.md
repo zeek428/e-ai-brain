@@ -16,6 +16,7 @@
 | v1.1.222 | 2026-06-11 | 知识导入任务补充 run/retry/cancel、重解析、chunk set 预览/激活、父子分块 source 和目录批量整理契约 | Codex |
 | v1.1.221 | 2026-06-10 | 知识中心新增知识空间、空间成员、目录、MinIO/S3 资产上传、导入任务和 asset preview API 契约，检索和列表支持空间/目录过滤 | Codex |
 | v1.1.220 | 2026-06-10 | 补充 `user_feedback_insight_extract` 定时作业契约：可绑定 MaxCompute/MCP 插件动作，从 `insights_path` 映射读取洞察并写入用户反馈洞察表 | Codex |
+| v1.1.229 | 2026-06-11 | 补充插件配置体验优化契约：连接测试返回诊断步骤，动作支持试运行和映射命中，系统变量提供预览接口，定时作业插件输入映射默认表格化且 JSON 作为高级入口 | Codex |
 | v1.1.219 | 2026-06-10 | 新增插件管理 API：补充插件、连接、动作、调用日志、动作手动调用，以及定时作业引用插件动作的请求/响应字段 | Codex |
 | v1.1.218 | 2026-06-10 | 新增定时系统作业和 AI 能力配置目标 API：补充 Agent、Skill、定时作业、运行实例、手动触发、取消、AI 配置快照和审计契约 | Codex |
 | v1.1.217 | 2026-06-09 | 迭代版本新增代码分支配置 API，支持按版本维护多代码库基准分支、开发分支、状态和创建来源 | Codex |
@@ -525,9 +526,11 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | POST | `/api/system/plugins` | 创建 HTTP/MCP 插件定义；`category` 必须使用约定枚举 `general/data_warehouse/devops/issue_tracking/observability/knowledge_base/collaboration/ai_service/business_system`。 |
 | Plugins | PATCH | `/api/system/plugins/{plugin_id}` | 更新插件名称、分类、协议、风险等级或状态；分类必须使用插件分类枚举，不允许自由文本。 |
 | Plugins | GET/POST/PATCH | `/api/system/plugin-connections` | 管理插件连接配置；`environment` 必须使用约定枚举 `default/dev/test/staging/prod/sandbox`；连接认证默认按 `none/bearer/api_key_header/basic` 展示 Token、Header 或 Basic 字段并生成 `auth_config`，JSON 仅作为高级修改入口；响应必须脱敏 `auth_config` 中的 token、secret、password、api_key 等字段。 |
-| Plugins | POST | `/api/system/plugin-connections/{connection_id}/test` | 测试插件连接 endpoint 可达性和认证配置，返回 `status/latency_ms/error_message` 等结构化结果并写入审计。 |
-| Plugins | GET/POST/PATCH | `/api/system/plugin-actions` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口。 |
+| Plugins | POST | `/api/system/plugin-connections/{connection_id}/test` | 测试插件连接 endpoint 可达性和认证配置，返回 `status/latency_ms/error_message/request_summary/diagnostics[]` 等结构化结果并写入审计；诊断步骤覆盖 endpoint、协议、认证、HTTP 请求或 MCP `tools/list`，请求摘要必须脱敏。 |
+| Plugins | GET | `/api/system/plugin-system-variables` | 查询系统变量预览；支持 `timezone` 参数，返回 `{{current_date}}`、`{{current_date-7}}`、`{{last_full_week.start}}` 等表达式、说明和当前解析值。 |
+| Plugins | GET/POST/PATCH | `/api/system/plugin-actions` | 管理插件动作，动作可绑定 HTTP 请求或 MCP tool；HTTP 请求动作默认通过可视化 Params/Headers 维护 `request_config.query` 与 `request_config.headers`，可在参数值中选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量表达式，JSON 仅作为高级修改入口；页面必须支持可视化表格与 JSON 双向同步，并提供请求预览。 |
 | Plugins | POST | `/api/system/plugin-actions/{action_id}/invoke` | 管理员手动调用一次插件动作并写入调用日志。 |
+| Plugins | POST | `/api/system/plugin-actions/{action_id}/trial` | 管理员试运行一次插件动作；可临时覆盖连接和输入 payload，返回 `request_preview/response_summary/mapping_hits/status/latency_ms/error_message`，不作为正式定时作业调用日志。 |
 | Plugins | GET | `/api/system/plugin-invocation-logs` | 查询插件动作调用日志。 |
 | Scheduler | GET | `/api/system/scheduled-jobs` | 查询定时系统作业定义。 |
 | Scheduler | POST | `/api/system/scheduled-jobs` | 创建采集、AI 分析、插件动作调用、迭代建议或看板刷新作业。 |
@@ -2680,7 +2683,7 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 
 插件动作作业可设置 `job_type=plugin_action_invoke`，并在作业定义中传入 `plugin_action_id`、可选 `plugin_connection_id`、`plugin_input_mapping` 和 `plugin_output_mapping`。定时任务负责选择“调哪个插件动作、用哪个连接、什么时候调”；AI Skill 只消费插件返回数据并生成分析，不保存三方系统连接或密钥。插件输出映射第一阶段支持 `records_imported_path` 这类摘要字段映射，真实业务入库仍必须通过对应业务 service 完成。
 
-`plugin_input_mapping` 和插件动作 `request_config.query/headers` 支持动态时间 token，保存配置时保留语义 token，运行实例触发时按作业 `timezone` 解析。首批 token 包括 `{{current_date}}` / `{{date}}`（输出 `YYYYMMDD`）、`{{date_iso}}`（输出 `YYYY-MM-DD`）、`{{now}}`、`{{today.start}}`、`{{today.end}}`、`{{yesterday.start}}`、`{{yesterday.end}}`、`{{last_7_days.start}}`、`{{last_7_days.end}}`、`{{last_full_week.start}}` 和 `{{last_full_week.end}}`；日期和时间 token 支持简单天数偏移表达式，例如 `{{current_date-7}}` 表示当前日期前 7 天、`{{today.start-7}}` 表示今天零点前 7 天。历史值 `last_monday_00:00:00` 与 `this_monday_00:00:00` 兼容解析为上一完整自然周起止时间。
+`plugin_input_mapping` 和插件动作 `request_config.query/headers` 支持动态时间 token，保存配置时保留语义 token，运行实例触发时按作业 `timezone` 解析。首批 token 包括 `{{current_date}}` / `{{date}}`（输出 `YYYYMMDD`）、`{{date_iso}}`（输出 `YYYY-MM-DD`）、`{{now}}`、`{{today.start}}`、`{{today.end}}`、`{{yesterday.start}}`、`{{yesterday.end}}`、`{{last_7_days.start}}`、`{{last_7_days.end}}`、`{{last_full_week.start}}` 和 `{{last_full_week.end}}`；日期和时间 token 支持简单天数偏移表达式，例如 `{{current_date-7}}` 表示当前日期前 7 天、`{{today.start-7}}` 表示今天零点前 7 天。历史值 `last_monday_00:00:00` 与 `this_monday_00:00:00` 兼容解析为上一完整自然周起止时间。前端配置默认以参数表格维护插件输入映射，并在高级模式中提供 JSON 同步和反向应用，避免要求业务用户手写复杂 JSON。
 
 MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extract`，插件动作通常为 `action_type=mcp_tool`、`tool_name=maxcompute.execute_sql`；`plugin_input_mapping` 可传入 `week_start={{last_full_week.start}}`、`week_end={{last_full_week.end}}`、`time_field`，`plugin_output_mapping` 至少支持 `insights_path`、`records_imported_path` 和 `rows_path`。运行成功后 `records_imported` 为实际新增洞察数，`result_summary.plugin.response_summary.json.row_count` 保留源表读取行数摘要。
 

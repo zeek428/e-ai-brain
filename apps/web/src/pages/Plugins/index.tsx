@@ -1,6 +1,6 @@
 import { ApiOutlined, DeleteOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, message } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
@@ -10,13 +10,19 @@ import {
   fetchPluginActions,
   fetchPluginConnections,
   fetchPluginInvocationLogs,
+  fetchPluginSystemVariables,
   fetchPlugins,
+  fetchScheduledJobs,
   invokePluginAction,
   testPluginConnection,
+  trialPluginAction,
+  type PluginActionTrialResult,
   type PluginActionRecord,
   type PluginConnectionRecord,
   type PluginInvocationLogRecord,
   type PluginRecord,
+  type PluginSystemVariableRecord,
+  type ScheduledJobRecord,
 } from '../../services/aiBrain';
 
 type PluginFormValues = {
@@ -182,6 +188,18 @@ function rowsToRecord(rows: RequestParameterRow[] | undefined): Record<string, u
   }, {});
 }
 
+function recordToRows(record: unknown): RequestParameterRow[] {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return [];
+  }
+  return Object.entries(record as Record<string, unknown>).map(([name, value]) => ({
+    enabled: true,
+    name,
+    type: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string',
+    value: typeof value === 'string' ? value : String(value),
+  }));
+}
+
 function buildVisualRequestConfig(values: Partial<ActionFormValues>): Record<string, unknown> {
   const config: Record<string, unknown> = {};
   const method = values.method || 'GET';
@@ -199,6 +217,31 @@ function buildVisualRequestConfig(values: Partial<ActionFormValues>): Record<str
     config.headers = headers;
   }
   return config;
+}
+
+function buildActionRequestPreview(
+  values: Partial<ActionFormValues> | undefined,
+  connection?: PluginConnectionRecord,
+): Record<string, unknown> {
+  const formValues = values ?? {};
+  const config =
+    formValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
+      ? buildMaxComputeRequestConfig(formValues)
+      : buildVisualRequestConfig(formValues);
+  const method = String(config.method ?? 'POST').toUpperCase();
+  const query = config.query && typeof config.query === 'object' ? config.query : {};
+  const path = String(config.path ?? '');
+  const baseUrl = connection?.endpoint_url?.replace(/\/$/, '') ?? '';
+  const queryString = new URLSearchParams(query as Record<string, string>).toString();
+  return {
+    endpoint: connection?.endpoint_url ?? '-',
+    headers: config.headers ?? {},
+    method,
+    path: path || (config.tool_name ? '(MCP tools/call)' : ''),
+    query,
+    tool_name: config.tool_name,
+    url: path ? `${baseUrl}/${path.replace(/^\//, '')}${queryString ? `?${queryString}` : ''}` : baseUrl,
+  };
 }
 
 function buildConnectionAuthConfig(values: Partial<ConnectionFormValues>): Record<string, unknown> {
@@ -233,6 +276,10 @@ function parseJsonObject(value: string | undefined, field: string): Record<strin
     // fall through to a consistent validation message
   }
   throw new Error(`${field} 必须是 JSON 对象`);
+}
+
+function compactJson(value: unknown): string {
+  return JSON.stringify(value ?? {}, null, 2);
 }
 
 function RequestParameterRows({
@@ -313,14 +360,23 @@ export default function PluginsPage() {
   const [connections, setConnections] = useState<PluginConnectionRecord[]>([]);
   const [actions, setActions] = useState<PluginActionRecord[]>([]);
   const [logs, setLogs] = useState<PluginInvocationLogRecord[]>([]);
+  const [scheduledJobs, setScheduledJobs] = useState<ScheduledJobRecord[]>([]);
+  const [systemVariables, setSystemVariables] = useState<PluginSystemVariableRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [pluginModalOpen, setPluginModalOpen] = useState(false);
   const [connectionModalOpen, setConnectionModalOpen] = useState(false);
   const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [trialModalOpen, setTrialModalOpen] = useState(false);
+  const [trialAction, setTrialAction] = useState<PluginActionRecord | undefined>();
+  const [trialConnectionId, setTrialConnectionId] = useState<string | undefined>();
+  const [trialInputJson, setTrialInputJson] = useState('{}');
+  const [trialResult, setTrialResult] = useState<PluginActionTrialResult | undefined>();
+  const [trialRunning, setTrialRunning] = useState(false);
   const [actionScenario, setActionScenario] = useState<string | undefined>();
   const [advancedConnectionJsonOpen, setAdvancedConnectionJsonOpen] = useState(false);
   const [advancedActionJsonOpen, setAdvancedActionJsonOpen] = useState(false);
   const selectedConnectionAuthType = Form.useWatch('auth_type', connectionForm);
+  const actionFormValues = Form.useWatch([], actionForm) as ActionFormValues | undefined;
 
   const pluginOptions = useMemo(
     () => plugins.map((plugin) => ({ label: `${plugin.name} (${plugin.protocol})`, value: plugin.id })),
@@ -334,20 +390,52 @@ export default function PluginsPage() {
       })),
     [connections],
   );
+  const connectionById = useMemo(
+    () => new Map(connections.map((connection) => [connection.id, connection])),
+    [connections],
+  );
+  const pluginById = useMemo(() => new Map(plugins.map((plugin) => [plugin.id, plugin])), [plugins]);
+  const actionById = useMemo(() => new Map(actions.map((action) => [action.id, action])), [actions]);
+  const requestPreview = useMemo(
+    () => buildActionRequestPreview(actionFormValues, connectionById.get(actionFormValues?.connection_id ?? '')),
+    [actionFormValues, connectionById],
+  );
+  const integrationChains = useMemo(() => {
+    const chains = scheduledJobs
+      .filter((job) => job.plugin_action_id)
+      .map((job) => {
+        const action = actionById.get(String(job.plugin_action_id));
+        const connection = action?.connection_id ? connectionById.get(action.connection_id) : undefined;
+        const plugin = action?.plugin_id ? pluginById.get(action.plugin_id) : undefined;
+        return { action, connection, job, plugin };
+      })
+      .filter((chain) => chain.action);
+    if (chains.length > 0) {
+      return chains;
+    }
+    return actions.slice(0, 3).map((action) => ({
+      action,
+      connection: action.connection_id ? connectionById.get(action.connection_id) : undefined,
+      job: undefined,
+      plugin: pluginById.get(action.plugin_id),
+    }));
+  }, [actionById, actions, connectionById, pluginById, scheduledJobs]);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextPlugins, nextConnections, nextActions, nextLogs] = await Promise.all([
+      const [nextPlugins, nextConnections, nextActions, nextLogs, nextJobs] = await Promise.all([
         fetchPlugins(),
         fetchPluginConnections(),
         fetchPluginActions(),
         fetchPluginInvocationLogs(),
+        fetchScheduledJobs(),
       ]);
       setPlugins(nextPlugins);
       setConnections(nextConnections);
       setActions(nextActions);
       setLogs(nextLogs);
+      setScheduledJobs(nextJobs);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '插件配置加载失败');
     } finally {
@@ -358,6 +446,12 @@ export default function PluginsPage() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    fetchPluginSystemVariables('Asia/Shanghai')
+      .then((result) => setSystemVariables(result.items))
+      .catch(() => setSystemVariables([]));
+  }, []);
 
   const submitPlugin = async () => {
     const values = await pluginForm.validateFields();
@@ -460,23 +554,40 @@ export default function PluginsPage() {
   const toggleAdvancedActionJson = () => {
     const nextOpen = !advancedActionJsonOpen;
     if (nextOpen) {
-      const values = actionForm.getFieldsValue();
-      const requestConfig =
-        values.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
-          ? buildMaxComputeRequestConfig(values)
-          : buildVisualRequestConfig(values);
-      actionForm.setFieldsValue({
-        request_config: values.request_config?.trim()
-          ? values.request_config
-          : stableJson(requestConfig),
-        result_mapping: values.result_mapping?.trim()
-          ? values.result_mapping
-          : values.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
-            ? stableJson(MAXCOMPUTE_DEFAULT_RESULT_MAPPING)
-            : stableJson({}),
-      });
+      syncActionJsonFromVisual();
     }
     setAdvancedActionJsonOpen(nextOpen);
+  };
+
+  const syncActionJsonFromVisual = () => {
+    const values = actionForm.getFieldsValue();
+    const requestConfig =
+      values.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
+        ? buildMaxComputeRequestConfig(values)
+        : buildVisualRequestConfig(values);
+    actionForm.setFieldsValue({
+      request_config: stableJson(requestConfig),
+      result_mapping: values.result_mapping?.trim()
+        ? values.result_mapping
+        : values.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
+          ? stableJson(MAXCOMPUTE_DEFAULT_RESULT_MAPPING)
+          : stableJson({}),
+    });
+  };
+
+  const applyActionJsonToVisual = () => {
+    try {
+      const config = parseJsonObject(actionForm.getFieldValue('request_config'), '请求配置');
+      actionForm.setFieldsValue({
+        header_rows: recordToRows(config.headers),
+        method: typeof config.method === 'string' ? config.method : 'GET',
+        param_rows: recordToRows(config.query),
+        path: typeof config.path === 'string' ? config.path : undefined,
+      });
+      message.success('已从 JSON 同步到 Params / Headers');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'JSON 解析失败');
+    }
   };
 
   const toggleAdvancedConnectionJson = () => {
@@ -492,6 +603,22 @@ export default function PluginsPage() {
     setAdvancedConnectionJsonOpen(nextOpen);
   };
 
+  const applyConnectionJsonToVisual = () => {
+    try {
+      const config = parseJsonObject(connectionForm.getFieldValue('auth_config'), '认证配置');
+      connectionForm.setFieldsValue({
+        header_name: typeof config.header_name === 'string' ? config.header_name : undefined,
+        password_ref: typeof config.password_ref === 'string' ? config.password_ref : undefined,
+        secret_ref: typeof config.secret_ref === 'string' ? config.secret_ref : undefined,
+        token_ref: typeof config.token_ref === 'string' ? config.token_ref : undefined,
+        username_ref: typeof config.username_ref === 'string' ? config.username_ref : undefined,
+      });
+      message.success('已从认证 JSON 同步到可视化字段');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'JSON 解析失败');
+    }
+  };
+
   const runAction = async (action: PluginActionRecord) => {
     await invokePluginAction(action.id);
     message.success('插件动作已执行');
@@ -500,6 +627,28 @@ export default function PluginsPage() {
 
   const runConnectionTest = async (connection: PluginConnectionRecord) => {
     const result = await testPluginConnection(connection.id);
+    Modal.info({
+      content: (
+        <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+          <div>状态：<Tag color={result.status === 'succeeded' ? 'green' : 'red'}>{result.status}</Tag>耗时：{result.latency_ms}ms</div>
+          <Table
+            columns={[
+              { dataIndex: 'name', title: '检查项' },
+              { dataIndex: 'status', title: '状态', render: (value: string) => <Tag>{value}</Tag> },
+              { dataIndex: 'detail', title: '说明', ellipsis: true },
+              { dataIndex: 'latency_ms', title: '耗时 ms', width: 100, render: (value?: number) => value ?? '-' },
+            ]}
+            dataSource={result.diagnostics ?? []}
+            pagination={false}
+            rowKey="name"
+            size="small"
+          />
+          <Typography.Text code>{compactJson(result.request_summary)}</Typography.Text>
+        </Space>
+      ),
+      title: '连接测试诊断',
+      width: 760,
+    });
     if (result.status === 'succeeded') {
       message.success(`连接测试成功，耗时 ${result.latency_ms}ms`);
     } else {
@@ -507,8 +656,78 @@ export default function PluginsPage() {
     }
   };
 
+  const openTrialModal = (action: PluginActionRecord) => {
+    setTrialAction(action);
+    setTrialConnectionId(action.connection_id ?? undefined);
+    setTrialInputJson('{}');
+    setTrialResult(undefined);
+    setTrialModalOpen(true);
+  };
+
+  const runActionTrial = async () => {
+    if (!trialAction) {
+      return;
+    }
+    try {
+      setTrialRunning(true);
+      const parsedInput = parseJsonObject(trialInputJson, '试运行输入');
+      const result = await trialPluginAction(trialAction.id, {
+        connection_id: trialConnectionId,
+        input_payload: parsedInput,
+      });
+      setTrialResult(result);
+      if (result.status === 'succeeded') {
+        message.success('试运行完成');
+      } else {
+        message.error(result.error_message || '试运行失败');
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '试运行失败');
+    } finally {
+      setTrialRunning(false);
+    }
+  };
+
   return (
     <PageContainer title="插件管理">
+      <Space orientation="vertical" size={12} style={{ width: '100%', marginBottom: 16 }}>
+        <Alert
+          title="系统变量预览"
+          description={
+            <Space wrap>
+              {(systemVariables.length > 0 ? systemVariables : systemVariableOptions.map((item) => ({
+                expression: item.value,
+                label: item.label,
+                value: item.value,
+              }))).map((item) => (
+                <Tag key={item.expression}>
+                  {item.label}: {item.expression} = {item.value}
+                </Tag>
+              ))}
+            </Space>
+          }
+          showIcon
+          type="info"
+        />
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 12 }}>
+          <Typography.Text strong>调用链路</Typography.Text>
+          <Space orientation="vertical" size={8} style={{ display: 'flex', marginTop: 10 }}>
+            {integrationChains.length > 0 ? integrationChains.map((chain, index) => (
+              <Space key={`${chain.action?.id ?? index}-${chain.job?.id ?? 'action'}`} wrap>
+                <Tag color="blue">插件：{chain.plugin?.name ?? chain.action?.plugin_id}</Tag>
+                <Typography.Text type="secondary">→</Typography.Text>
+                <Tag color="cyan">连接：{chain.connection?.name ?? chain.action?.connection_id ?? '未绑定'}</Tag>
+                <Typography.Text type="secondary">→</Typography.Text>
+                <Tag color="purple">动作：{chain.action?.name}</Tag>
+                <Typography.Text type="secondary">→</Typography.Text>
+                <Tag color={chain.job ? 'green' : 'default'}>定时作业：{chain.job?.name ?? '未绑定'}</Tag>
+              </Space>
+            )) : (
+              <Typography.Text type="secondary">暂无可展示链路</Typography.Text>
+            )}
+          </Space>
+        </div>
+      </Space>
       <Tabs
         items={[
           {
@@ -572,7 +791,12 @@ export default function PluginsPage() {
                 )}
                 columns={[
                   { dataIndex: 'name', title: '名称', ellipsis: true },
-                  { dataIndex: 'plugin_id', title: '插件 ID', ellipsis: true },
+                  {
+                    dataIndex: 'plugin_id',
+                    title: '插件',
+                    ellipsis: true,
+                    render: (value) => pluginById.get(String(value))?.name ?? value,
+                  },
                   {
                     dataIndex: 'environment',
                     title: '环境',
@@ -619,17 +843,30 @@ export default function PluginsPage() {
                   { dataIndex: 'name', title: '名称', ellipsis: true },
                   { dataIndex: 'code', title: '编码', ellipsis: true },
                   { dataIndex: 'action_type', title: '类型', width: 130 },
-                  { dataIndex: 'plugin_id', title: '插件 ID', ellipsis: true },
-                  { dataIndex: 'connection_id', title: '连接 ID', ellipsis: true },
+                  {
+                    dataIndex: 'plugin_id',
+                    title: '插件',
+                    ellipsis: true,
+                    render: (value) => pluginById.get(String(value))?.name ?? value,
+                  },
+                  {
+                    dataIndex: 'connection_id',
+                    title: '连接',
+                    ellipsis: true,
+                    render: (value) => value ? connectionById.get(String(value))?.name ?? value : '-',
+                  },
                   { dataIndex: 'status', title: '状态', width: 100 },
                   {
                     key: 'actions',
                     title: '操作',
-                    width: 130,
+                    width: 210,
                     render: (_, row) => (
-                      <Button icon={<PlayCircleOutlined />} onClick={() => runAction(row)}>
-                        运行
-                      </Button>
+                      <Space>
+                        <Button icon={<PlayCircleOutlined />} onClick={() => openTrialModal(row)}>
+                          试运行
+                        </Button>
+                        <Button onClick={() => runAction(row)}>运行</Button>
+                      </Space>
                     ),
                   },
                 ]}
@@ -774,9 +1011,20 @@ export default function PluginsPage() {
             高级认证 JSON 修改
           </Button>
           {advancedConnectionJsonOpen ? (
-            <Form.Item label="认证配置 JSON" name="auth_config">
-              <Input.TextArea rows={4} placeholder='{"header_name":"PRIVATE-TOKEN","secret_ref":"vault/gitlab/token"}' />
-            </Form.Item>
+            <>
+              <Space style={{ marginBottom: 8 }}>
+                <Button onClick={() => {
+                  const values = connectionForm.getFieldsValue();
+                  connectionForm.setFieldValue('auth_config', stableJson(buildConnectionAuthConfig(values)));
+                }}>
+                  同步可视化到 JSON
+                </Button>
+                <Button onClick={applyConnectionJsonToVisual}>从 JSON 应用到字段</Button>
+              </Space>
+              <Form.Item label="认证配置 JSON" name="auth_config">
+                <Input.TextArea rows={4} placeholder='{"header_name":"PRIVATE-TOKEN","secret_ref":"vault/gitlab/token"}' />
+              </Form.Item>
+            </>
           ) : null}
           <Space>
             <Form.Item label="超时秒数" name="timeout_seconds">
@@ -813,6 +1061,19 @@ export default function PluginsPage() {
         <Form
           form={actionForm}
           layout="vertical"
+          onValuesChange={(changedValues, allValues) => {
+            if (
+              advancedActionJsonOpen
+              && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
+              && !Object.prototype.hasOwnProperty.call(changedValues, 'result_mapping')
+            ) {
+              const requestConfig =
+                allValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
+                  ? buildMaxComputeRequestConfig(allValues)
+                  : buildVisualRequestConfig(allValues);
+              actionForm.setFieldValue('request_config', stableJson(requestConfig));
+            }
+          }}
           initialValues={{
             action_type: 'http_request',
             method: 'GET',
@@ -905,11 +1166,19 @@ export default function PluginsPage() {
               </Form.Item>
             </>
           ) : null}
+          <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+            <Typography.Text strong>请求预览</Typography.Text>
+            <pre style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{compactJson(requestPreview)}</pre>
+          </div>
           <Button type="link" onClick={toggleAdvancedActionJson}>
             高级 JSON 修改
           </Button>
           {advancedActionJsonOpen ? (
             <>
+              <Space style={{ marginBottom: 8 }}>
+                <Button onClick={syncActionJsonFromVisual}>同步可视化到 JSON</Button>
+                <Button onClick={applyActionJsonToVisual}>从 JSON 应用到 Params / Headers</Button>
+              </Space>
               <Form.Item label="请求配置 JSON" name="request_config">
                 <Input.TextArea rows={5} placeholder='{"method":"GET","path":"/api/v4/projects/1/metrics"}' />
               </Form.Item>
@@ -922,6 +1191,67 @@ export default function PluginsPage() {
             <Input.TextArea rows={3} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        confirmLoading={trialRunning}
+        okText="试运行"
+        open={trialModalOpen}
+        title={`动作试运行${trialAction ? `：${trialAction.name}` : ''}`}
+        width={820}
+        onCancel={() => setTrialModalOpen(false)}
+        onOk={runActionTrial}
+      >
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+          <Space wrap>
+            <Typography.Text strong>连接</Typography.Text>
+            <Select
+              allowClear
+              options={connectionOptions}
+              style={{ width: 320 }}
+              value={trialConnectionId}
+              onChange={setTrialConnectionId}
+            />
+          </Space>
+          <div>
+            <Typography.Text strong>试运行输入 JSON</Typography.Text>
+            <Input.TextArea
+              rows={5}
+              value={trialInputJson}
+              onChange={(event) => setTrialInputJson(event.target.value)}
+            />
+          </div>
+          {trialResult ? (
+            <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+              <div>
+                状态：<Tag color={trialResult.status === 'succeeded' ? 'green' : 'red'}>{trialResult.status}</Tag>
+                耗时：{trialResult.latency_ms}ms
+              </div>
+              {trialResult.error_message ? <Alert title={trialResult.error_message} type="error" /> : null}
+              <Typography.Text strong>请求预览</Typography.Text>
+              <pre style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
+                {compactJson(trialResult.request_preview)}
+              </pre>
+              <Typography.Text strong>结果映射命中</Typography.Text>
+              <Table
+                columns={[
+                  { dataIndex: 'key', title: '字段' },
+                  { dataIndex: 'path', title: 'JSONPath' },
+                  { dataIndex: 'matched', title: '命中', render: (value: boolean) => <Tag color={value ? 'green' : 'red'}>{value ? '是' : '否'}</Tag> },
+                  { dataIndex: 'value_preview', title: '值预览', ellipsis: true, render: (value: unknown) => compactJson(value) },
+                ]}
+                dataSource={trialResult.mapping_hits ?? []}
+                pagination={false}
+                rowKey="key"
+                size="small"
+              />
+              <Typography.Text strong>响应摘要</Typography.Text>
+              <pre style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
+                {compactJson(trialResult.response_summary)}
+              </pre>
+            </Space>
+          ) : null}
+        </Space>
       </Modal>
     </PageContainer>
   );

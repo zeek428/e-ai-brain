@@ -69,6 +69,32 @@ def dynamic_time_parameters(
     return {key: _format_dynamic_parameter(key, value) for key, value in values.items()}
 
 
+def dynamic_parameter_preview(
+    *,
+    now: datetime | None = None,
+    timezone: ZoneInfo | None = None,
+) -> list[dict[str, str]]:
+    base_items = [
+        ("{{current_date}}", "当前日期", "YYYYMMDD 格式，适合分区字段"),
+        ("{{current_date-7}}", "当前日期 - 7 天", "YYYYMMDD 格式，适合近 7 天起始分区"),
+        ("{{date_iso}}", "当前日期 ISO", "YYYY-MM-DD 格式"),
+        ("{{now}}", "当前时间", "带时区的 ISO 时间"),
+        ("{{today.start}}", "今天开始", "当天 00:00:00"),
+        ("{{today.end}}", "今天结束", "次日 00:00:00"),
+        ("{{last_full_week.start}}", "上完整周开始", "上周一 00:00:00"),
+        ("{{last_full_week.end}}", "上完整周结束", "本周一 00:00:00"),
+    ]
+    return [
+        {
+            "description": description,
+            "expression": expression,
+            "label": label,
+            "value": str(resolve_dynamic_parameter_value(expression, now=now, timezone=timezone)),
+        }
+        for expression, label, description in base_items
+    ]
+
+
 def _resolve_token(match: re.Match[str], *, now: datetime | None, timezone: ZoneInfo | None) -> str:
     name = match.group("name")
     values = _dynamic_parameter_datetimes(now=now, timezone=timezone)

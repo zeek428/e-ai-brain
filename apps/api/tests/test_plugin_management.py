@@ -181,9 +181,34 @@ def test_plugin_connection_can_be_tested_with_structured_result_and_audit():
     assert result["mocked"] is True
     assert result["environment"] == "sandbox"
     assert result["protocol"] == "http"
+    assert result["request_summary"]["auth_config"]["mock_test_response"]["ok"] is True
+    assert [step["name"] for step in result["diagnostics"]] == [
+        "endpoint_configured",
+        "protocol_supported",
+        "auth_configured",
+        "network_request",
+    ]
+    assert result["diagnostics"][-1]["status"] == "mocked"
 
     audit_events = client.get("/api/audit/events", headers=admin_headers).json()["data"]["items"]
     assert "plugin_connection.test_succeeded" in [event["event_type"] for event in audit_events]
+
+
+def test_plugin_system_variables_preview_includes_date_offsets():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    response = client.get(
+        "/api/system/plugin-system-variables?timezone=Asia/Shanghai",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    result = response.json()["data"]
+    assert result["timezone"] == "Asia/Shanghai"
+    expressions = {item["expression"]: item for item in result["items"]}
+    assert "{{current_date-7}}" in expressions
+    assert expressions["{{current_date-7}}"]["value"].isdigit()
 
 
 def test_plugin_input_mapping_resolves_dynamic_time_tokens_by_job_timezone():
@@ -236,6 +261,35 @@ def test_plugin_action_request_config_resolves_system_variable_expressions():
     assert resolved["query"]["end_pt"] == "20260610"
     assert resolved["query"]["start_pt"] == "20260603"
     assert resolved["query"]["window_start"] == "2026-06-03T00:00:00+08:00"
+
+
+def test_plugin_action_trial_returns_request_preview_and_mapping_hits():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    _, connection, action = create_plugin_bundle(admin_headers)
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/trial",
+        json={
+            "connection_id": connection["id"],
+            "input_payload": {"timezone": "Asia/Shanghai"},
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    result = response.json()["data"]
+    assert result["status"] == "succeeded"
+    assert result["request_preview"]["method"] == "GET"
+    assert result["response_summary"]["json"]["commits"] == 8
+    assert result["mapping_hits"] == [
+        {
+            "key": "records_imported_path",
+            "matched": True,
+            "path": "$.commits",
+            "value_preview": 8,
+        }
+    ]
 
 
 def test_scheduled_job_can_invoke_configured_plugin_action_with_snapshots_and_logs():

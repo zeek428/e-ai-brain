@@ -3673,6 +3673,14 @@ export type PluginConnectionRecord = {
 export type PluginConnectionTestResult = {
   checked_at: string;
   connection_id: string;
+  diagnostics?: Array<{
+    detail?: string;
+    error_code?: string;
+    latency_ms?: number;
+    name: string;
+    status: string;
+    status_code?: number;
+  }>;
   endpoint_url?: string;
   environment?: string;
   error_code?: string | null;
@@ -3681,6 +3689,7 @@ export type PluginConnectionTestResult = {
   mocked?: boolean;
   plugin_id: string;
   protocol: string;
+  request_summary?: Record<string, unknown>;
   status: string;
 };
 
@@ -3713,6 +3722,31 @@ export type PluginInvocationLogRecord = {
   scheduled_job_run_id?: string | null;
   status: string;
   trigger_type?: string;
+};
+
+export type PluginSystemVariableRecord = {
+  description?: string;
+  expression: string;
+  label: string;
+  value: string;
+};
+
+export type PluginActionTrialResult = {
+  action_id: string;
+  connection_id: string;
+  error_code?: string | null;
+  error_message?: string | null;
+  latency_ms: number;
+  mapping_hits?: Array<{
+    key: string;
+    matched: boolean;
+    path: string;
+    value_preview?: unknown;
+  }>;
+  plugin_id: string;
+  request_preview?: Record<string, unknown>;
+  response_summary?: Record<string, unknown>;
+  status: string;
 };
 
 export async function fetchPlugins(): Promise<PluginRecord[]> {
@@ -3771,6 +3805,16 @@ export async function testPluginConnection(connectionId: string) {
   });
 }
 
+export async function fetchPluginSystemVariables(timezone = 'Asia/Shanghai') {
+  const token = requireAccessToken();
+  const params = new URLSearchParams({ timezone });
+  const response = await apiRequest<{ items: PluginSystemVariableRecord[]; timezone: string }>(
+    `/api/system/plugin-system-variables?${params.toString()}`,
+    { token },
+  );
+  return response;
+}
+
 export async function fetchPluginActions(
   query: { pluginId?: string; status?: string } = {},
 ): Promise<PluginActionRecord[]> {
@@ -3799,6 +3843,21 @@ export async function invokePluginAction(actionId: string, inputPayload: Record<
   const token = requireAccessToken();
   return apiRequest<PluginInvocationLogRecord>(`/api/system/plugin-actions/${actionId}/invoke`, {
     body: { input_payload: inputPayload, trigger_type: 'manual' },
+    method: 'POST',
+    token,
+  });
+}
+
+export async function trialPluginAction(
+  actionId: string,
+  payload: { connection_id?: string | null; input_payload?: Record<string, unknown> } = {},
+) {
+  const token = requireAccessToken();
+  return apiRequest<PluginActionTrialResult>(`/api/system/plugin-actions/${actionId}/trial`, {
+    body: {
+      connection_id: payload.connection_id,
+      input_payload: payload.input_payload ?? {},
+    },
     method: 'POST',
     token,
   });

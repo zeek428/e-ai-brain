@@ -19,7 +19,9 @@ from app.services.plugins import (
     patch_plugin_action_response,
     patch_plugin_connection_response,
     patch_plugin_response,
+    plugin_system_variables_response,
     test_plugin_connection_response,
+    trial_plugin_action_response,
 )
 
 router = APIRouter(tags=["plugins"])
@@ -103,6 +105,11 @@ class PluginInvokeRequest(BaseModel):
     connection_id: str | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     trigger_type: str = "manual"
+
+
+class PluginActionTrialRequest(BaseModel):
+    connection_id: str | None = None
+    input_payload: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.get("/api/system/plugins")
@@ -279,6 +286,37 @@ def invoke_plugin_action(
             trigger_type=payload.trigger_type,
             user=user,
         ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/plugin-actions/{action_id}/trial")
+def trial_plugin_action(
+    action_id: str,
+    payload: PluginActionTrialRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        trial_plugin_action_response(
+            action_id=action_id,
+            connection_id=payload.connection_id,
+            current_store=store(request),
+            input_payload=payload.input_payload,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/plugin-system-variables")
+def plugin_system_variables(
+    request: Request,
+    timezone: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        plugin_system_variables_response(timezone_name=timezone, user=user),
         get_trace_id(request),
     )
 

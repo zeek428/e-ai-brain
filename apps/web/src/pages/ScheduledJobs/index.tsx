@@ -1,6 +1,6 @@
 import { PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, message } from 'antd';
+import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 
 import {
@@ -33,12 +33,21 @@ type ScheduledJobFormValues = {
   plugin_action_id?: string;
   plugin_connection_id?: string;
   plugin_input_mapping?: string;
+  plugin_input_rows?: RequestParameterRow[];
   plugin_output_mapping?: string;
   product_id?: string;
   schedule_type: string;
   skill_ids?: string[];
   source_system: string;
   time_parameter_preset?: string;
+};
+
+type RequestParameterRow = {
+  description?: string;
+  enabled?: boolean;
+  name?: string;
+  type?: 'boolean' | 'number' | 'string';
+  value?: string;
 };
 
 const jobTypeOptions = [
@@ -88,6 +97,122 @@ const pluginInputMappingByTimePreset: Record<string, Record<string, string>> = {
   },
 };
 
+const requestParameterTypeOptions = [
+  { label: 'string', value: 'string' },
+  { label: 'number', value: 'number' },
+  { label: 'boolean', value: 'boolean' },
+];
+
+const systemVariableOptions = [
+  { label: '当前日期 YYYYMMDD', value: '{{current_date}}' },
+  { label: '当前日期 - 7 天', value: '{{current_date-7}}' },
+  { label: '当前时间', value: '{{now}}' },
+  { label: '上一完整周开始', value: '{{last_full_week.start}}' },
+  { label: '上一完整周结束', value: '{{last_full_week.end}}' },
+  { label: '最近 7 天开始', value: '{{last_7_days.start}}' },
+  { label: '最近 7 天结束', value: '{{last_7_days.end}}' },
+];
+
+function parseParameterValue(row: RequestParameterRow): unknown {
+  const value = row.value ?? '';
+  if (row.type === 'number') {
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? numericValue : value;
+  }
+  if (row.type === 'boolean') {
+    return value === 'true' || value === '1' || value === '是';
+  }
+  return value;
+}
+
+function rowsToRecord(rows: RequestParameterRow[] | undefined): Record<string, unknown> {
+  return (rows ?? []).reduce<Record<string, unknown>>((result, row) => {
+    const name = row.name?.trim();
+    if (row.enabled === false || !name) {
+      return result;
+    }
+    result[name] = parseParameterValue(row);
+    return result;
+  }, {});
+}
+
+function recordToRows(record: Record<string, unknown>): RequestParameterRow[] {
+  return Object.entries(record).map(([name, value]) => ({
+    enabled: true,
+    name,
+    type: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string',
+    value: typeof value === 'string' ? value : String(value),
+  }));
+}
+
+function parseJsonObject(value: string | undefined, field: string): Record<string, unknown> {
+  if (!value?.trim()) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // fall through to a consistent validation message
+  }
+  throw new Error(`${field} 必须是 JSON 对象`);
+}
+
+function stableJson(value: Record<string, unknown>): string {
+  return JSON.stringify(value, null, 2);
+}
+
+function PluginInputRows() {
+  const form = Form.useFormInstance<ScheduledJobFormValues>();
+  return (
+    <Form.List name="plugin_input_rows">
+      {(fields, { add, remove }) => (
+        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+          <Typography.Text strong>插件输入映射</Typography.Text>
+          {fields.map((field) => (
+            <Space key={field.key} align="baseline" wrap>
+              <Form.Item name={[field.name, 'enabled']} valuePropName="checked" initialValue style={{ marginBottom: 0 }}>
+                <Checkbox />
+              </Form.Item>
+              <Form.Item name={[field.name, 'name']} style={{ marginBottom: 0 }}>
+                <Input placeholder="参数名，如 start_pt" style={{ width: 180 }} />
+              </Form.Item>
+              <Form.Item name={[field.name, 'value']} style={{ marginBottom: 0 }}>
+                <Input placeholder="参数值，如 {{current_date-7}}" style={{ width: 260 }} />
+              </Form.Item>
+              <Select
+                allowClear
+                options={systemVariableOptions}
+                placeholder="系统变量"
+                style={{ width: 190 }}
+                onChange={(value) => {
+                  if (value) {
+                    form.setFieldValue(['plugin_input_rows', field.name, 'value'], value);
+                  }
+                }}
+              />
+              <Form.Item name={[field.name, 'type']} initialValue="string" style={{ marginBottom: 0 }}>
+                <Select options={requestParameterTypeOptions} style={{ width: 120 }} />
+              </Form.Item>
+              <Form.Item name={[field.name, 'description']} style={{ marginBottom: 0 }}>
+                <Input placeholder="说明" style={{ width: 180 }} />
+              </Form.Item>
+              <Button aria-label="删除输入参数" onClick={() => remove(field.name)}>
+                删除
+              </Button>
+            </Space>
+          ))}
+          <Button icon={<PlusOutlined />} onClick={() => add({ enabled: true, type: 'string' })} type="dashed">
+            添加输入参数
+          </Button>
+        </Space>
+      )}
+    </Form.List>
+  );
+}
+
 export default function ScheduledJobsPage() {
   const [form] = Form.useForm<ScheduledJobFormValues>();
   const [jobs, setJobs] = useState<ScheduledJobRecord[]>([]);
@@ -99,6 +224,7 @@ export default function ScheduledJobsPage() {
   const [skills, setSkills] = useState<AiSkillRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [advancedPluginInputJsonOpen, setAdvancedPluginInputJsonOpen] = useState(false);
   const selectedJobType = Form.useWatch('job_type', form);
 
   const reload = useCallback(async () => {
@@ -142,19 +268,24 @@ export default function ScheduledJobsPage() {
 
   const submitJob = async () => {
     const values = await form.validateFields();
-    const { time_parameter_preset: _timeParameterPreset, ...payload } = values;
+    const {
+      plugin_input_rows: _pluginInputRows,
+      time_parameter_preset: _timeParameterPreset,
+      ...payload
+    } = values;
     await createScheduledJob({
       ...payload,
-      plugin_input_mapping: values.plugin_input_mapping
-        ? JSON.parse(values.plugin_input_mapping) as Record<string, unknown>
-        : {},
+      plugin_input_mapping: advancedPluginInputJsonOpen
+        ? parseJsonObject(values.plugin_input_mapping, '插件输入映射')
+        : rowsToRecord(values.plugin_input_rows),
       plugin_output_mapping: values.plugin_output_mapping
-        ? JSON.parse(values.plugin_output_mapping) as Record<string, unknown>
+        ? parseJsonObject(values.plugin_output_mapping, '插件输出映射')
         : {},
       skill_ids: values.skill_ids ?? [],
     });
     message.success('定时作业已创建');
     setModalOpen(false);
+    setAdvancedPluginInputJsonOpen(false);
     form.resetFields();
     await reload();
   };
@@ -167,12 +298,36 @@ export default function ScheduledJobsPage() {
 
   const applyTimeParameterPreset = (preset: string) => {
     if (preset === 'none') {
-      form.setFieldsValue({ plugin_input_mapping: undefined });
+      form.setFieldsValue({ plugin_input_mapping: undefined, plugin_input_rows: [] });
       return;
     }
+    const nextMapping = pluginInputMappingByTimePreset[preset] ?? {};
     form.setFieldsValue({
-      plugin_input_mapping: JSON.stringify(pluginInputMappingByTimePreset[preset] ?? {}, null, 2),
+      plugin_input_mapping: stableJson(nextMapping),
+      plugin_input_rows: recordToRows(nextMapping),
     });
+  };
+
+  const syncPluginInputJsonFromRows = () => {
+    form.setFieldValue('plugin_input_mapping', stableJson(rowsToRecord(form.getFieldValue('plugin_input_rows'))));
+  };
+
+  const applyPluginInputJsonToRows = () => {
+    try {
+      const mapping = parseJsonObject(form.getFieldValue('plugin_input_mapping'), '插件输入映射');
+      form.setFieldValue('plugin_input_rows', recordToRows(mapping));
+      message.success('已从 JSON 同步到输入映射表格');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'JSON 解析失败');
+    }
+  };
+
+  const toggleAdvancedPluginInputJson = () => {
+    const nextOpen = !advancedPluginInputJsonOpen;
+    if (nextOpen) {
+      syncPluginInputJsonFromRows();
+    }
+    setAdvancedPluginInputJsonOpen(nextOpen);
   };
 
   return (
@@ -250,13 +405,30 @@ export default function ScheduledJobsPage() {
         ]}
       />
 
-      <Modal open={modalOpen} title="新增定时作业" onCancel={() => setModalOpen(false)} onOk={submitJob}>
+      <Modal
+        open={modalOpen}
+        title="新增定时作业"
+        onCancel={() => {
+          setModalOpen(false);
+          setAdvancedPluginInputJsonOpen(false);
+        }}
+        onOk={submitJob}
+      >
         <Form
           form={form}
           layout="vertical"
+          onValuesChange={(changedValues) => {
+            if (
+              advancedPluginInputJsonOpen
+              && Object.prototype.hasOwnProperty.call(changedValues, 'plugin_input_rows')
+            ) {
+              syncPluginInputJsonFromRows();
+            }
+          }}
           initialValues={{
             enabled: true,
             execution_mode: 'deterministic',
+            plugin_input_rows: [],
             schedule_type: 'manual',
             source_system: 'ai-brain',
           }}
@@ -363,9 +535,21 @@ export default function ScheduledJobsPage() {
               onChange={applyTimeParameterPreset}
             />
           </Form.Item>
-          <Form.Item label="插件输入映射 JSON" name="plugin_input_mapping">
-            <Input.TextArea rows={3} placeholder='{"start_pt":"{{current_date-7}}","end_pt":"{{current_date}}"}' />
-          </Form.Item>
+          <PluginInputRows />
+          <Button type="link" onClick={toggleAdvancedPluginInputJson}>
+            高级输入映射 JSON 修改
+          </Button>
+          {advancedPluginInputJsonOpen ? (
+            <>
+              <Space style={{ marginBottom: 8 }}>
+                <Button onClick={syncPluginInputJsonFromRows}>同步表格到 JSON</Button>
+                <Button onClick={applyPluginInputJsonToRows}>从 JSON 应用到表格</Button>
+              </Space>
+              <Form.Item label="插件输入映射 JSON" name="plugin_input_mapping">
+                <Input.TextArea rows={3} placeholder='{"start_pt":"{{current_date-7}}","end_pt":"{{current_date}}"}' />
+              </Form.Item>
+            </>
+          ) : null}
           <Form.Item label="插件输出映射 JSON" name="plugin_output_mapping">
             <Input.TextArea rows={3} placeholder='{"records_imported_path":"$.commits"}' />
           </Form.Item>
