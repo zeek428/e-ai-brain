@@ -16,6 +16,7 @@ from app.core.listing import (
 )
 from app.services.bugs import create_bug_result
 from app.services.operational_records import record_audit_event
+from app.services.plugins import json_path_value
 
 CODE_INSPECTION_ACTION_TYPES = {
     "create_bug_for_severe_findings",
@@ -180,9 +181,49 @@ def default_code_inspection_result_actions(actions: list[dict[str, Any]]) -> lis
     return [{"type": "write_code_inspection_report"}]
 
 
+def code_inspection_response_json(plugin_summary: dict[str, Any]) -> Any:
+    return (plugin_summary.get("response_summary") or {}).get("json") or {}
+
+
 def code_inspection_source_json(plugin_summary: dict[str, Any]) -> dict[str, Any]:
-    response_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
+    response_json = code_inspection_response_json(plugin_summary)
     return response_json if isinstance(response_json, dict) else {}
+
+
+def code_inspection_result_mapping(current_store: Any, job: dict[str, Any]) -> dict[str, Any]:
+    job_mapping = job.get("plugin_output_mapping") or {}
+    if isinstance(job_mapping, dict) and job_mapping:
+        return dict(job_mapping)
+    action = current_store.plugin_actions.get(job.get("plugin_action_id")) or {}
+    action_mapping = action.get("result_mapping") or {}
+    return dict(action_mapping) if isinstance(action_mapping, dict) else {}
+
+
+def mapped_code_inspection_source_json(
+    current_store: Any,
+    *,
+    job: dict[str, Any],
+    plugin_summary: dict[str, Any],
+) -> dict[str, Any]:
+    raw_json = code_inspection_response_json(plugin_summary)
+    source = dict(raw_json) if isinstance(raw_json, dict) else {}
+    mapping = code_inspection_result_mapping(current_store, job)
+    path_fields = {
+        "branch_path": "branch",
+        "commit_sha_path": "commit_sha",
+        "findings_path": "findings",
+        "repository_id_path": "repository_id",
+        "risk_level_path": "risk_level",
+        "summary_path": "summary",
+    }
+    for mapping_key, source_key in path_fields.items():
+        path = mapping.get(mapping_key)
+        if not isinstance(path, str):
+            continue
+        value = json_path_value(raw_json, path)
+        if value is not None:
+            source[source_key] = value
+    return source
 
 
 def action_severity_mapping(current_store: Any, job: dict[str, Any]) -> dict[str, str]:
@@ -366,7 +407,11 @@ def create_code_inspection_report_records(
     user: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     sync_product_git_repository_store(current_store, job.get("product_id"))
-    source_json = code_inspection_source_json(plugin_summary)
+    source_json = mapped_code_inspection_source_json(
+        current_store,
+        job=job,
+        plugin_summary=plugin_summary,
+    )
     severity_mapping = action_severity_mapping(current_store, job)
     repository_id = str(
         source_json.get("repository_id")

@@ -664,6 +664,13 @@ def test_records_imported_mapping_counts_array_values():
         )
         == 2
     )
+    assert (
+        records_imported_from_mapping(
+            {"json": [{"id": 1}, {"id": 2}, {"id": 3}]},
+            {"records_imported_path": "$"},
+        )
+        == 3
+    )
 
 
 def test_plugin_action_trial_returns_request_preview_and_mapping_hits():

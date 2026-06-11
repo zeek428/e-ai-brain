@@ -1198,6 +1198,8 @@ def resolve_plugin_snapshot(
 
 
 def json_path_value(payload: Any, path: str | None) -> Any:
+    if path == "$":
+        return payload
     if not path or not path.startswith("$."):
         return None
     current = payload
@@ -1473,7 +1475,7 @@ def result_mapping_hits(
 ) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     for key, path in mapping.items():
-        if not isinstance(path, str) or not path.startswith("$."):
+        if not isinstance(path, str) or not (path == "$" or path.startswith("$.")):
             continue
         value = json_path_value(response_summary.get("json"), path)
         hits.append(

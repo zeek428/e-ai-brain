@@ -93,6 +93,7 @@ def create_scanner_plugin(
     repository_id: str,
     *,
     code: str = "repo_quality_scanner",
+    result_mapping: dict | None = None,
     request_config_extra: dict | None = None,
     response_json: dict | None = None,
 ) -> tuple[dict, dict, dict]:
@@ -138,7 +139,7 @@ def create_scanner_plugin(
                 "mock_response_json": response_json or scanner_response(repository_id),
                 "path": "/scan",
             },
-            "result_mapping": {"records_imported_path": "$.findings"},
+            "result_mapping": result_mapping or {"records_imported_path": "$.findings"},
             "status": "active",
         },
         headers=headers,
@@ -423,6 +424,93 @@ def test_repository_inspection_supports_committer_filter_severity_mapping_and_bu
     )
     assert bugs.status_code == 200
     assert [item["id"] for item in bugs.json()["data"]["items"]] == [first_bug_id]
+
+
+def test_repository_inspection_applies_action_result_mapping_before_writing_report():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, code="repo-quality-product-mapped")
+    repository = create_repository(headers, product["id"])
+    nested_response = {
+        "payload": {
+            "alerts": [
+                {
+                    "author": {
+                        "email": "security@example.com",
+                        "name": "Security Owner",
+                        "username": "sec-owner",
+                    },
+                    "category": "security",
+                    "description": "Token is committed.",
+                    "file_path": "app/settings.py",
+                    "line_number": 7,
+                    "recommendation": "Rotate the token and move it to vault.",
+                    "rule_id": "GITHUB_SECRET_001",
+                    "severity": "error",
+                    "title": "Secret token exposure",
+                }
+            ],
+            "branch": "release/2026.06",
+            "commit": "def5678",
+            "repository": repository["id"],
+            "risk": "error",
+            "summary": "1 secret scanning alert needs action.",
+        }
+    }
+    _, connection, action = create_scanner_plugin(
+        headers,
+        repository["id"],
+        code="repo_quality_scanner_mapped",
+        request_config_extra={
+            "severity_mapping": {
+                "error": "critical",
+            }
+        },
+        response_json=nested_response,
+        result_mapping={
+            "branch_path": "$.payload.branch",
+            "commit_sha_path": "$.payload.commit",
+            "findings_path": "$.payload.alerts",
+            "repository_id_path": "$.payload.repository",
+            "risk_level_path": "$.payload.risk",
+            "summary_path": "$.payload.summary",
+            "write_target": "code_inspection_reports",
+        },
+    )
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {"repository_id": repository["id"]},
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Mapped repository inspection",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "repo-quality-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers)
+
+    assert run.status_code == 200
+    summary = run.json()["data"]["result_summary"]
+    assert summary["finding_count"] == 1
+    assert summary["risk_level"] == "critical"
+    report_id = summary["report_id"]
+    detail = client.get(f"/api/governance/code-inspections/{report_id}", headers=headers)
+    detail_payload = detail.json()["data"]
+    assert detail_payload["report"]["repository_id"] == repository["id"]
+    assert detail_payload["report"]["branch"] == "release/2026.06"
+    assert detail_payload["report"]["commit_sha"] == "def5678"
+    assert detail_payload["report"]["summary"] == "1 secret scanning alert needs action."
+    assert detail_payload["findings"][0]["severity"] == "critical"
+    assert detail_payload["findings"][0]["committer_email"] == "security@example.com"
 
 
 def test_repository_inspection_is_filtered_by_product_scope():
