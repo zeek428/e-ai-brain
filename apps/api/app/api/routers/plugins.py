@@ -8,13 +8,18 @@ from pydantic import BaseModel, Field
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
 from app.services.ai_executor_runners import (
+    append_ai_executor_task_logs_response,
+    cancel_ai_executor_task_response,
     claim_ai_executor_task_response,
     complete_ai_executor_task_response,
     create_ai_executor_runner_response,
     delete_ai_executor_runner_response,
     list_ai_executor_runners_response,
+    list_ai_executor_task_logs_response,
     patch_ai_executor_runner_response,
+    rotate_ai_executor_runner_token_response,
     runner_heartbeat_response,
+    timeout_ai_executor_tasks_response,
 )
 from app.services.plugins import (
     create_plugin_action_response,
@@ -160,9 +165,23 @@ class AiExecutorRunnerHeartbeatRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class AiExecutorRunnerTokenRotateRequest(BaseModel):
+    runner_token: str | None = None
+
+
 class AiExecutorTaskClaimRequest(BaseModel):
     executor_type: str | None = None
     runner_id: str
+
+
+class AiExecutorTaskLogAppendRequest(BaseModel):
+    logs: list[dict[str, Any]] = Field(default_factory=list)
+    runner_id: str
+    status: str = "running"
+
+
+class AiExecutorTaskCancelRequest(BaseModel):
+    reason: str | None = None
 
 
 class AiExecutorTaskCompleteRequest(BaseModel):
@@ -172,6 +191,10 @@ class AiExecutorTaskCompleteRequest(BaseModel):
     result_json: dict[str, Any] = Field(default_factory=dict)
     runner_id: str
     status: str
+
+
+class AiExecutorTaskTimeoutScanRequest(BaseModel):
+    now: str | None = None
 
 
 @router.get("/api/system/ai-executor-runners")
@@ -224,6 +247,24 @@ def patch_ai_executor_runner(
     )
 
 
+@router.post("/api/system/ai-executor-runners/{runner_id}/rotate-token")
+def rotate_ai_executor_runner_token(
+    payload: AiExecutorRunnerTokenRotateRequest,
+    request: Request,
+    runner_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        rotate_ai_executor_runner_token_response(
+            current_store=store(request),
+            payload=payload,
+            runner_id=runner_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
 @router.delete("/api/system/ai-executor-runners/{runner_id}")
 def delete_ai_executor_runner(
     request: Request,
@@ -252,6 +293,73 @@ def ai_executor_runner_heartbeat(
             metadata=payload.metadata,
             request=request,
             runner_id=runner_id,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/ai-executor-tasks/{task_id}/logs")
+def list_ai_executor_task_logs(
+    request: Request,
+    task_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        list_ai_executor_task_logs_response(
+            current_store=store(request),
+            task_id=task_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-tasks/{task_id}/logs")
+def append_ai_executor_task_logs(
+    payload: AiExecutorTaskLogAppendRequest,
+    request: Request,
+    task_id: str,
+) -> dict[str, Any]:
+    return envelope(
+        append_ai_executor_task_logs_response(
+            current_store=store(request),
+            payload=payload,
+            request=request,
+            task_id=task_id,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-tasks/{task_id}/cancel")
+def cancel_ai_executor_task(
+    payload: AiExecutorTaskCancelRequest,
+    request: Request,
+    task_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        cancel_ai_executor_task_response(
+            current_store=store(request),
+            payload=payload,
+            task_id=task_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-tasks/timeout-scan")
+def timeout_ai_executor_tasks(
+    payload: AiExecutorTaskTimeoutScanRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        timeout_ai_executor_tasks_response(
+            current_store=store(request),
+            payload=payload,
+            user=user,
         ),
         get_trace_id(request),
     )

@@ -151,6 +151,8 @@ function installPluginsFetchMock(
   const pluginUpdateBodies: unknown[] = [];
   const runnerBodies: unknown[] = [];
   const runnerDeleteIds: string[] = [];
+  const runnerRotateBodies: unknown[] = [];
+  const runnerTaskCancelBodies: unknown[] = [];
   const runnerUpdateBodies: unknown[] = [];
   const connectionTestDeferred = options.deferConnectionTest
     ? createDeferred<Response>()
@@ -632,6 +634,8 @@ function installPluginsFetchMock(
               health_status: 'online',
               id: 'ai_executor_runner_001',
               last_heartbeat_at: '2026-06-13T09:00:00Z',
+              latest_task_id: 'ai_executor_task_001',
+              latest_task_status: 'running',
               max_concurrent_tasks: 1,
               metadata: { codex_path: '/Applications/Codex.app/Contents/Resources/codex' },
               name: 'Zeek Mac 本地执行器',
@@ -639,6 +643,8 @@ function installPluginsFetchMock(
               setup_command: 'ai-brain-runner start --runner-id ai_executor_runner_001 --token <runner_token> --server http://127.0.0.1:8000',
               status: 'active',
               token_configured: true,
+              token_rotated_at: '2026-06-13T09:10:00Z',
+              token_version: 2,
               workspace_roots: ['/Users/zeek/source/e-ai-brain'],
             },
           ],
@@ -656,6 +662,58 @@ function installPluginsFetchMock(
           setup_command: 'ai-brain-runner start --runner-id ai_executor_runner_created --token runner-token-created --server http://127.0.0.1:8000',
           status: 'active',
           token_configured: true,
+        },
+      });
+    }
+    if (input === '/api/system/ai-executor-runners/ai_executor_runner_001/rotate-token' && init?.method === 'POST') {
+      runnerRotateBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({
+        data: {
+          id: 'ai_executor_runner_001',
+          name: 'Zeek Mac 本地执行器',
+          runner_token: 'runner-token-rotated',
+          status: 'active',
+          token_configured: true,
+          token_rotated_at: '2026-06-13T09:20:00Z',
+          token_version: 3,
+        },
+      });
+    }
+    if (input === '/api/system/ai-executor-tasks/ai_executor_task_001/logs' && init?.method === 'GET') {
+      return jsonResponse({
+        data: {
+          logs: [
+            {
+              level: 'info',
+              message: 'checkout repository',
+              sequence: 1,
+              timestamp: '2026-06-13T09:11:00Z',
+            },
+            {
+              level: 'info',
+              message: 'scan started',
+              sequence: 2,
+              timestamp: '2026-06-13T09:11:10Z',
+            },
+          ],
+          task: {
+            id: 'ai_executor_task_001',
+            runner_id: 'ai_executor_runner_001',
+            status: 'running',
+          },
+        },
+      });
+    }
+    if (input === '/api/system/ai-executor-tasks/ai_executor_task_001/cancel' && init?.method === 'POST') {
+      runnerTaskCancelBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({
+        data: {
+          task: {
+            error_code: 'AI_EXECUTOR_TASK_CANCELLED',
+            id: 'ai_executor_task_001',
+            runner_id: 'ai_executor_runner_001',
+            status: 'cancelled',
+          },
         },
       });
     }
@@ -867,6 +925,8 @@ function installPluginsFetchMock(
     },
     runnerBodies,
     runnerDeleteIds,
+    runnerRotateBodies,
+    runnerTaskCancelBodies,
     runnerUpdateBodies,
   };
 }
@@ -951,6 +1011,36 @@ describe('PluginsPage', () => {
       ]),
     );
     expect(await screen.findByText('runner-token-created')).toBeInTheDocument();
+  });
+
+  it('rotates runner tokens and shows streaming task logs with cancellation', async () => {
+    const { runnerRotateBodies, runnerTaskCancelBodies } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '执行器' }));
+
+    expect(await screen.findByText('Token v2')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-13T09:10:00Z')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '轮换 Token Zeek Mac 本地执行器' }));
+    const rotateDialog = await findDialogByTitle('轮换 Runner Token');
+    fireEvent.click(within(rotateDialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() => expect(runnerRotateBodies).toEqual([{}]));
+    expect(await screen.findByText('runner-token-rotated')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '查看执行日志 Zeek Mac 本地执行器' }));
+    const logDrawer = await screen.findByRole('dialog', { name: 'Runner 执行日志' });
+    expect(within(logDrawer).getByText('ai_executor_task_001')).toBeInTheDocument();
+    expect(within(logDrawer).getByText('checkout repository')).toBeInTheDocument();
+    expect(within(logDrawer).getByText('scan started')).toBeInTheDocument();
+
+    fireEvent.click(within(logDrawer).getByRole('button', { name: '取消任务' }));
+    await waitFor(() =>
+      expect(runnerTaskCancelBodies).toEqual([{ reason: '管理员从插件管理页面取消 Runner 任务' }]),
+    );
+    expect(await screen.findByText('Runner 任务已取消')).toBeInTheDocument();
   });
 
   it('shows the official plugin marketplace and opens guided connection setup', async () => {

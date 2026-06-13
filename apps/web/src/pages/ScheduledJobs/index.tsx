@@ -48,6 +48,7 @@ import {
   fetchScheduledJobRunObservability,
   fetchScheduledJobRuns,
   fetchScheduledJobs,
+  generateScheduledJobTemplateFromRun,
   resolveAssistantDraftResourceId,
   runScheduledJob,
   testPluginConnection,
@@ -189,7 +190,7 @@ const runTriggerTypeLabelByValue = new Map([
 
 const templateSourceTypeLabelByValue = new Map([
   ['scheduled_job', '作业'],
-  ['scheduled_job_run', '运行快照'],
+  ['scheduled_job_run', '运行记录'],
 ]);
 
 const codeInspectionResultActionOptions = [
@@ -932,6 +933,87 @@ function RunExecutionChain({ run }: { run: ScheduledJobRunRecord }) {
   );
 }
 
+function RunTraceDag({ run }: { run: ScheduledJobRunRecord }) {
+  const traceGraph = isRecord(run.result_summary?.trace_graph) ? run.result_summary.trace_graph : undefined;
+  const nodes = Array.isArray(traceGraph?.nodes)
+    ? traceGraph.nodes.filter(isRecord)
+    : [];
+  const edges = Array.isArray(traceGraph?.edges)
+    ? traceGraph.edges.filter(isRecord)
+    : [];
+  if (!nodes.length && !edges.length) {
+    return null;
+  }
+  return (
+    <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+      <Typography.Text strong>运行 Trace DAG</Typography.Text>
+      <div
+        style={{
+          display: 'grid',
+          gap: 12,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+        }}
+      >
+        {nodes.map((node) => {
+          const id = nodeFieldText(node.id) ?? nodeFieldText(node.label) ?? 'trace_node';
+          const label = nodeFieldText(node.label) ?? id;
+          const duration = typeof node.duration_ms === 'number' ? `${node.duration_ms}ms` : '-';
+          const retryCount = typeof node.retry_count === 'number' ? node.retry_count : 0;
+          const error = nodeFieldText(node.error);
+          const status = nodeFieldText(node.status) ?? 'unknown';
+          return (
+            <div
+              aria-label={`Trace 节点 ${label}`}
+              key={id}
+              style={{
+                border: '1px solid #dbeafe',
+                borderRadius: 8,
+                background: '#f8fbff',
+                padding: 12,
+              }}
+            >
+              <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+                <Space wrap>
+                  <Tag color={runNodeTagColor(status)}>{status}</Tag>
+                  <Typography.Text strong>{label}</Typography.Text>
+                </Space>
+                <Space wrap size={8}>
+                  <Tag color="blue">{duration}</Tag>
+                  <Tag>重试 {retryCount}</Tag>
+                  {error ? <Tag color="red">{error}</Tag> : null}
+                </Space>
+                <Typography.Paragraph
+                  style={{
+                    background: '#fff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: 6,
+                    marginBottom: 0,
+                    maxHeight: 120,
+                    overflow: 'auto',
+                    padding: 8,
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {formatJsonValue({ input: node.input, output: node.output })}
+                </Typography.Paragraph>
+              </Space>
+            </div>
+          );
+        })}
+      </div>
+      {edges.length ? (
+        <Space wrap>
+          {edges.map((edge, index) => {
+            const from = nodeFieldText(edge.from) ?? '-';
+            const to = nodeFieldText(edge.to) ?? '-';
+            return <Tag key={`${from}-${to}-${index}`}>{from} → {to}</Tag>;
+          })}
+        </Space>
+      ) : null}
+    </Space>
+  );
+}
+
 function RunSourceComparison({ run }: { run: ScheduledJobRunRecord }) {
   const source = run.source_run_summary;
   if (!source) {
@@ -1200,7 +1282,7 @@ function scheduledJobTemplateValuesFromRecord(
       recordStringValue(record, 'model_gateway_config_id')
       ?? fallback?.model_gateway_config_id
       ?? undefined,
-    name: `${name} ${nameSuffix}`,
+    name: nameSuffix ? `${name} ${nameSuffix}` : name,
     plugin_action_id: recordStringValue(record, 'plugin_action_id') ?? fallback?.plugin_action_id ?? undefined,
     plugin_connection_id: pluginConnectionId,
     plugin_input_mapping: recordValue(record.plugin_input_mapping) ?? fallback?.plugin_input_mapping ?? {},
@@ -1256,6 +1338,7 @@ export default function ScheduledJobsPage() {
   const [selectedRun, setSelectedRun] = useState<ScheduledJobRunRecord | undefined>();
   const [selectedRunResultWriteRecords, setSelectedRunResultWriteRecords] = useState<ResultWriteRecord[]>([]);
   const [selectedRunResultWriteRecordsLoading, setSelectedRunResultWriteRecordsLoading] = useState(false);
+  const [generatedRunTemplate, setGeneratedRunTemplate] = useState<ScheduledJobTemplateRecord | undefined>();
   const [runningJobId, setRunningJobId] = useState<string | undefined>();
   const [connectionTestResult, setConnectionTestResult] = useState<PluginConnectionTestResult | undefined>();
   const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
@@ -1270,17 +1353,27 @@ export default function ScheduledJobsPage() {
   const selectedResultActions = Form.useWatch('result_actions', form);
   const selectedJobType = Form.useWatch('job_type', form);
   const selectedTemplateCode = Form.useWatch('template', form);
+  const availableJobTemplates = useMemo(
+    () =>
+      generatedRunTemplate
+        ? [
+            ...jobTemplates.filter((template) => template.code !== generatedRunTemplate.code),
+            generatedRunTemplate,
+          ]
+        : jobTemplates,
+    [generatedRunTemplate, jobTemplates],
+  );
   const selectedJobTemplate = useMemo(
-    () => jobTemplates.find((template) => template.code === selectedTemplateCode),
-    [jobTemplates, selectedTemplateCode],
+    () => availableJobTemplates.find((template) => template.code === selectedTemplateCode),
+    [availableJobTemplates, selectedTemplateCode],
   );
   const jobTemplateOptions = useMemo(
     () =>
-      jobTemplates.map((template) => ({
+      availableJobTemplates.map((template) => ({
         label: template.name,
         value: template.code,
       })),
-    [jobTemplates],
+    [availableJobTemplates],
   );
   const pluginActionById = useMemo(
     () => new Map(pluginActions.map((action) => [action.id, action])),
@@ -1535,7 +1628,7 @@ export default function ScheduledJobsPage() {
 
   const applyJobTemplate = useCallback(
     (templateCode?: string) => {
-      const template = jobTemplates.find((item) => item.code === templateCode);
+      const template = availableJobTemplates.find((item) => item.code === templateCode);
       if (!template) {
         return;
       }
@@ -1580,7 +1673,7 @@ export default function ScheduledJobsPage() {
       findActionForTemplate,
       findConnectionForAction,
       form,
-      jobTemplates,
+      availableJobTemplates,
       knowledgeDocuments,
       modelGatewayConfigs,
       products,
@@ -1725,6 +1818,7 @@ export default function ScheduledJobsPage() {
     setAssistantDraftPayload(undefined);
     setAssistantDraftSource(undefined);
     setTemplateSource(undefined);
+    setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
     form.resetFields();
     form.setFieldsValue({
@@ -1746,6 +1840,7 @@ export default function ScheduledJobsPage() {
     setEditingJob(undefined);
     setAssistantDraftPayload(undefined);
     setAssistantDraftSource(undefined);
+    setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
     setTemplateSource({
       sourceId: job.id,
@@ -1771,6 +1866,7 @@ export default function ScheduledJobsPage() {
     setEditingJob(undefined);
     setAssistantDraftPayload(undefined);
     setAssistantDraftSource(undefined);
+    setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
     setTemplateSource({
       sourceId: run.id,
@@ -1784,11 +1880,62 @@ export default function ScheduledJobsPage() {
     message.success('已按本次运行快照生成新作业草稿，请确认后保存');
   };
 
+  const generateTemplateFromRun = async (run: ScheduledJobRunRecord) => {
+    try {
+      const template = await generateScheduledJobTemplateFromRun(run.id);
+      const payloadDefaults = (template.payload_defaults ?? {}) as Record<string, unknown>;
+      const values = scheduledJobTemplateValuesFromRecord(payloadDefaults, {
+        fallback: template.payload_defaults,
+        nameSuffix: '',
+        pluginConnectionById,
+      });
+      const jobType = values.job_type ?? 'user_feedback_insight_extract';
+      const executionMode = values.execution_mode ?? 'ai_generated';
+      const aiRequired = requiresAiAssembly(jobType, executionMode);
+      const enrichedValues = {
+        ...values,
+        agent_id: aiRequired ? values.agent_id ?? agents[0]?.id : values.agent_id,
+        model_gateway_config_id: aiRequired
+          ? values.model_gateway_config_id ?? modelGatewayConfigs[0]?.id
+          : values.model_gateway_config_id,
+        product_id: values.product_id ?? products[0]?.id,
+        skill_ids:
+          values.skill_ids?.length
+            ? values.skill_ids
+            : aiRequired && skills[0]?.id
+              ? [skills[0].id]
+              : [],
+      };
+      setSelectedRun(undefined);
+      setEditingJob(undefined);
+      setAssistantDraftPayload(undefined);
+      setAssistantDraftSource(undefined);
+      setConnectionTestResult(undefined);
+      setGeneratedRunTemplate(template);
+      setTemplateSource({
+        sourceId: run.id,
+        sourceType: 'scheduled_job_run',
+        title: template.name,
+        values: enrichedValues,
+      });
+      form.resetFields();
+      form.setFieldsValue({
+        ...enrichedValues,
+        template: template.code,
+      });
+      setModalOpen(true);
+      message.success('已从成功运行生成作业模板');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '运行模板生成失败');
+    }
+  };
+
   const openEditJobModal = (job: ScheduledJobRecord) => {
     setEditingJob(job);
     setAssistantDraftPayload(undefined);
     setAssistantDraftSource(undefined);
     setTemplateSource(undefined);
+    setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
     form.resetFields();
     form.setFieldsValue({
@@ -1823,6 +1970,7 @@ export default function ScheduledJobsPage() {
     setAssistantDraftPayload(undefined);
     setAssistantDraftSource(undefined);
     setTemplateSource(undefined);
+    setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
     form.resetFields();
   };
@@ -1835,7 +1983,7 @@ export default function ScheduledJobsPage() {
       return;
     }
     const { template, ...jobValues } = values;
-    const selectedTemplate = jobTemplates.find((item) => item.code === template);
+    const selectedTemplate = availableJobTemplates.find((item) => item.code === template);
     delete jobValues.connection_environment;
     const draftConfigJson = recordFromDraftPayload(assistantDraftPayload ?? {}, 'config_json') ?? {};
     const templateConfigJson = templateSource?.values.config_json ?? {};
@@ -2213,6 +2361,8 @@ export default function ScheduledJobsPage() {
       />
 
       <Modal
+        aria-label={editingJob ? '编辑定时作业' : '新增定时作业'}
+        destroyOnHidden
         open={modalOpen}
         title={editingJob ? '编辑定时作业' : '新增定时作业'}
         width={820}
@@ -2487,9 +2637,15 @@ export default function ScheduledJobsPage() {
       </Modal>
 
       <Modal
+        destroyOnHidden
         footer={(
           <Space>
             <Button onClick={() => setSelectedRun(undefined)}>关闭</Button>
+            {selectedRun?.status === 'succeeded' ? (
+              <Button onClick={() => void generateTemplateFromRun(selectedRun)}>
+                生成模板
+              </Button>
+            ) : null}
             {selectedRun ? (
               <Button icon={<CopyOutlined />} type="primary" onClick={() => openCopyRunModal(selectedRun)}>
                 复制本次配置
@@ -2557,6 +2713,7 @@ export default function ScheduledJobsPage() {
             />
             <RunSourceComparison run={selectedRun} />
             <RunExecutionChain run={selectedRun} />
+            <RunTraceDag run={selectedRun} />
             <RunResultWriteRecords
               loading={selectedRunResultWriteRecordsLoading}
               records={selectedRunResultWriteRecords}

@@ -20,6 +20,7 @@ function installScheduledJobsFetchMock(
   const jobDeleteIds: string[] = [];
   const jobUpdateBodies: unknown[] = [];
   const connectionTestIds: string[] = [];
+  const generatedTemplateRequests: string[] = [];
   const runJobBodies: unknown[] = [];
   const runJobIds: string[] = [];
   const resultWriteRecordCalls: string[] = [];
@@ -238,6 +239,45 @@ function installScheduledJobsFetchMock(
     if (input === '/api/system/scheduled-job-runs' && init?.method === 'GET') {
       return jsonResponse({ data: { items: runs, total: runs.length } });
     }
+    if (
+      input === '/api/system/scheduled-job-runs/scheduled_job_run_weekly_feedback/template'
+      && init?.method === 'POST'
+    ) {
+      generatedTemplateRequests.push('scheduled_job_run_weekly_feedback');
+      return jsonResponse({
+        data: {
+          code: 'generated_from_scheduled_job_run_weekly_feedback',
+          name: '每周反馈运行模板',
+          payload_defaults: {
+            config_json: {
+              template_source: {
+                source_id: 'scheduled_job_run_weekly_feedback',
+                source_type: 'scheduled_job_run',
+                title: '每周反馈运行模板',
+              },
+            },
+            cron_expression: '0 9 * * MON',
+            enabled: true,
+            execution_mode: 'ai_generated',
+            job_type: 'user_feedback_insight_extract',
+            name: '每周反馈运行模板',
+            plugin_action_id: 'plugin_action_maxcompute',
+            plugin_connection_id: 'connection_maxcompute_prod',
+            schedule_type: 'cron',
+            skill_ids: ['skill_feedback'],
+            source_system: 'aliyun-maxcompute',
+          },
+          source_run_id: 'scheduled_job_run_weekly_feedback',
+          template_version: 'generated-v1',
+          wizard_steps: [
+            { key: 'data_connection', required: true, title: '数据连接' },
+            { key: 'ai_processing', required: true, title: 'AI 处理' },
+            { key: 'result_write', required: true, title: '结果写入' },
+            { key: 'schedule', required: true, title: '调度' },
+          ],
+        },
+      });
+    }
     if (input === '/api/system/scheduled-job-runs/observability' && init?.method === 'GET') {
       return jsonResponse({ data: observability });
     }
@@ -389,6 +429,7 @@ function installScheduledJobsFetchMock(
   vi.stubGlobal('fetch', fetchMock);
   return {
     connectionTestIds,
+    generatedTemplateRequests,
     jobCreateBodies,
     jobDeleteIds,
     jobUpdateBodies,
@@ -1036,7 +1077,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '复制运行配置 scheduled_job_run_weekly_feedback' }));
 
     const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
-    expect(within(dialog).getByLabelText('当前复制来源')).toHaveTextContent('运行快照');
+    expect(within(dialog).getByLabelText('当前复制来源')).toHaveTextContent('运行记录');
     expect(within(dialog).getByLabelText('当前复制来源')).toHaveTextContent('scheduled_job_run_weekly_feedback');
     expect(within(dialog).getByLabelText('名称')).toHaveValue('每周用户反馈洞察 运行快照副本');
     expect(within(dialog).getByText('生产 MaxCompute 项目 (prod)')).toBeInTheDocument();
@@ -1222,6 +1263,44 @@ describe('ScheduledJobsPage', () => {
             processing: {
               skill_codes: ['weekly_feedback_analysis'],
             },
+            trace_graph: {
+              edges: [
+                { from: 'data_connection', to: 'skill_processing' },
+                { from: 'skill_processing', to: 'result_action' },
+              ],
+              nodes: [
+                {
+                  duration_ms: 318,
+                  error: null,
+                  id: 'data_connection',
+                  input: { week_start: '20260601' },
+                  label: '数据连接获取内容',
+                  output: { records_imported: 18, response_status_code: 200 },
+                  retry_count: 1,
+                  status: 'succeeded',
+                },
+                {
+                  duration_ms: 860,
+                  error: null,
+                  id: 'skill_processing',
+                  input: { source_row_count: 18 },
+                  label: '经过 Skill 处理后的内容',
+                  output: { candidate_count: 1 },
+                  retry_count: 1,
+                  status: 'succeeded',
+                },
+                {
+                  duration_ms: 42,
+                  error: null,
+                  id: 'result_action',
+                  input: { write_target: 'user_feedback_insights' },
+                  label: '结果写入反馈内容',
+                  output: { created_ids: ['insight_001'] },
+                  retry_count: 1,
+                  status: 'succeeded',
+                },
+              ],
+            },
             write_target: 'user_feedback_insights',
           },
           scheduled_job_id: 'scheduled_job_weekly_feedback',
@@ -1252,6 +1331,11 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getAllByText('数据连接获取内容').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('经过 Skill 处理后的内容').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('结果写入反馈内容').length).toBeGreaterThan(0);
+    expect(within(dialog).getByText('运行 Trace DAG')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('318ms');
+    expect(within(dialog).getByLabelText('Trace 节点 经过 Skill 处理后的内容')).toHaveTextContent('860ms');
+    expect(within(dialog).getByText('data_connection → skill_processing')).toBeInTheDocument();
+    expect(within(dialog).getByText('skill_processing → result_action')).toBeInTheDocument();
     expect(within(dialog).getByText('结果写入状态')).toBeInTheDocument();
     expect(within(dialog).getByText('结果摘要')).toBeInTheDocument();
     expect(dialog).toHaveTextContent('用户反馈洞察抽取（取数 + AI 分析 + 写入）');
@@ -1267,6 +1351,63 @@ describe('ScheduledJobsPage', () => {
     expect(dialog).toHaveTextContent('plugin_invocation_log_weekly_feedback');
     expect(dialog).toHaveTextContent('user_feedback_insights');
     expect(dialog).toHaveTextContent('write_result');
+  });
+
+  it('generates a scheduled job template from a successful run', async () => {
+    const { generatedTemplateRequests, jobCreateBodies } = installScheduledJobsFetchMock({
+      runs: [
+        {
+          config_snapshot: {
+            execution_mode: 'ai_generated',
+            job_type: 'user_feedback_insight_extract',
+            name: '每周反馈运行',
+          },
+          finished_at: '2026-06-11T10:00:03Z',
+          id: 'scheduled_job_run_weekly_feedback',
+          records_imported: 1,
+          result_summary: {
+            execution_nodes: {
+              data_connection: { records_imported: 18, status: 'succeeded' },
+              result_action: { records_imported: 1, status: 'succeeded' },
+              skill_processing: { model_gateway_called: true, status: 'succeeded' },
+            },
+          },
+          scheduled_job_id: 'scheduled_job_weekly_feedback',
+          status: 'succeeded',
+          trigger_type: 'manual',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
+
+    const detailDialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    fireEvent.click(within(detailDialog).getByRole('button', { name: '生成模板' }));
+
+    await waitFor(() => expect(generatedTemplateRequests).toEqual(['scheduled_job_run_weekly_feedback']));
+    const createDialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+    expect(within(createDialog).getByLabelText('名称')).toHaveValue('每周反馈运行模板');
+    expect(within(createDialog).getByText('任务创建向导')).toBeInTheDocument();
+    expect(within(createDialog).getByText('运行记录')).toBeInTheDocument();
+
+    fireEvent.click(within(createDialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(jobCreateBodies[0]).toMatchObject({
+        config_json: {
+          template_source: {
+            source_id: 'scheduled_job_run_weekly_feedback',
+            source_type: 'scheduled_job_run',
+          },
+        },
+        name: '每周反馈运行模板',
+        plugin_action_id: 'plugin_action_maxcompute',
+        plugin_connection_id: 'connection_maxcompute_prod',
+      }),
+    );
   });
 
   it('shows AI executor runner details in scheduled job run results', async () => {

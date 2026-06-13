@@ -253,3 +253,108 @@ class ScheduledJobExecutionEngine:
             "status": "succeeded",
             "write_target": "code_inspection_reports",
         }
+
+    @staticmethod
+    def trace_graph_for_run(run: dict[str, Any]) -> dict[str, Any] | None:
+        result_summary = run.get("result_summary") or {}
+        execution_nodes = result_summary.get("execution_nodes")
+        if not isinstance(execution_nodes, dict) or not execution_nodes:
+            return None
+        config_snapshot = run.get("config_snapshot") or {}
+        retry_count = int(config_snapshot.get("max_retry_count") or 0)
+        ordered_node_ids = [
+            "data_connection",
+            "runner_execution",
+            "skill_processing",
+            "result_action",
+            "task_creation",
+            "bug_creation",
+            "notifications",
+            "code_inspection_report",
+        ]
+        present_ids = [node_id for node_id in ordered_node_ids if node_id in execution_nodes]
+        for node_id in execution_nodes:
+            if node_id not in present_ids and isinstance(execution_nodes.get(node_id), dict):
+                present_ids.append(node_id)
+        graph_nodes = [
+            ScheduledJobExecutionEngine._trace_graph_node(
+                node_id,
+                execution_nodes.get(node_id),
+                retry_count=retry_count,
+            )
+            for node_id in present_ids
+        ]
+        graph_edges = [
+            {"from": present_ids[index], "to": present_ids[index + 1]}
+            for index in range(len(present_ids) - 1)
+        ]
+        return {"edges": graph_edges, "nodes": graph_nodes}
+
+    @staticmethod
+    def _trace_graph_node(
+        node_id: str,
+        raw_node: Any,
+        *,
+        retry_count: int,
+    ) -> dict[str, Any]:
+        node = raw_node if isinstance(raw_node, dict) else {}
+        duration_ms = node.get("latency_ms")
+        if not isinstance(duration_ms, int | float):
+            duration_ms = 0
+        status = str(node.get("status") or ("empty" if not node else "available"))
+        error_message = node.get("error_message")
+        error_code = node.get("error_code")
+        error = (
+            {"code": error_code, "message": error_message}
+            if error_code or error_message or status in {"failed", "timed_out", "cancelled"}
+            else None
+        )
+        return {
+            "duration_ms": max(0, int(duration_ms)),
+            "error": error,
+            "id": node_id,
+            "input": ScheduledJobExecutionEngine._trace_node_input(node_id, node),
+            "label": node.get("label") or node_id,
+            "output": ScheduledJobExecutionEngine._trace_node_output(node_id, node),
+            "retry_count": retry_count,
+            "status": status,
+        }
+
+    @staticmethod
+    def _trace_node_input(node_id: str, node: dict[str, Any]) -> dict[str, Any]:
+        if node_id == "data_connection":
+            value = node.get("input_mapping")
+            return dict(value) if isinstance(value, dict) else {}
+        if node_id == "skill_processing":
+            value = node.get("input")
+            return dict(value) if isinstance(value, dict) else {}
+        if node_id == "result_action":
+            return {
+                "records_imported": node.get("records_imported"),
+                "write_target": node.get("write_target"),
+            }
+        return {}
+
+    @staticmethod
+    def _trace_node_output(node_id: str, node: dict[str, Any]) -> dict[str, Any]:
+        if node_id == "data_connection":
+            return {
+                "records_imported": node.get("records_imported"),
+                "response_status_code": node.get("response_status_code"),
+            }
+        if node_id == "skill_processing":
+            value = node.get("output")
+            return dict(value) if isinstance(value, dict) else {}
+        if node_id in {"result_action", "task_creation", "bug_creation", "notifications"}:
+            feedback = node.get("feedback")
+            if isinstance(feedback, dict):
+                return dict(feedback)
+            return {
+                key: node.get(key)
+                for key in ("created_task_ids", "created_bug_ids", "created_notification_ids")
+                if key in node
+            }
+        if node_id == "runner_execution":
+            result_json = node.get("result_json")
+            return dict(result_json) if isinstance(result_json, dict) else {}
+        return {}

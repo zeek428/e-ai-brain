@@ -24,6 +24,7 @@ from app.services.scheduled_jobs import (
     patch_ai_skill_response,
     patch_scheduled_job_response,
     run_scheduled_job_response,
+    scheduled_job_template_from_run_response,
 )
 
 router = APIRouter(tags=["scheduled-jobs"])
@@ -379,6 +380,22 @@ def scheduled_job_run_observability(
 ) -> dict[str, Any]:
     return envelope(
         scheduled_job_run_observability_response(current_store=store(request)),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/scheduled-job-runs/{run_id}/template")
+def scheduled_job_run_template(
+    request: Request,
+    run_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        scheduled_job_template_from_run_response(
+            current_store=store(request),
+            run_id=run_id,
+            user=user,
+        ),
         get_trace_id(request),
     )
 

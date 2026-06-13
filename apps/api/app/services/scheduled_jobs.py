@@ -46,6 +46,7 @@ from app.services.plugins import (
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
 )
+from app.services.scheduled_job_templates import STANDARD_WIZARD_STEPS
 from app.services.skill_packages import load_skill_package_snapshot, store_skill_package
 from app.services.user_feedback import (
     USER_FEEDBACK_SENTIMENTS,
@@ -942,12 +943,90 @@ def public_scheduled_job_run(
     current_store: Any,
 ) -> dict[str, Any]:
     public_run = dict(run)
+    result_summary = dict(public_run.get("result_summary") or {})
+    if "trace_graph" not in result_summary:
+        trace_graph = JobExecutionEngine.trace_graph_for_run(public_run)
+        if trace_graph is not None:
+            result_summary["trace_graph"] = trace_graph
+            public_run["result_summary"] = result_summary
     source_run_id = run.get("source_run_id")
     if source_run_id:
         public_run["source_run_summary"] = scheduled_job_run_source_summary(
             current_store.scheduled_job_runs.get(source_run_id),
         )
     return public_run
+
+
+def scheduled_job_template_from_run_response(
+    *,
+    current_store: Any,
+    run_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    sync_scheduled_job_run_store(current_store)
+    run = current_store.scheduled_job_runs.get(run_id)
+    if run is None:
+        raise api_error(404, "NOT_FOUND", "Scheduled job run not found")
+    if run.get("status") != "succeeded":
+        raise api_error(
+            409,
+            "SCHEDULED_JOB_RUN_NOT_SUCCESSFUL",
+            "Only successful scheduled job runs can generate templates",
+        )
+    config = dict(run.get("config_snapshot") or {})
+    job_name = str(config.get("name") or run.get("scheduled_job_id") or run_id)
+    payload_keys = (
+        "agent_id",
+        "config_json",
+        "cron_expression",
+        "enabled",
+        "execution_mode",
+        "interval_seconds",
+        "job_type",
+        "knowledge_document_ids",
+        "lock_ttl_seconds",
+        "max_retry_count",
+        "model_gateway_config_id",
+        "plugin_action_id",
+        "plugin_connection_id",
+        "plugin_input_mapping",
+        "plugin_output_mapping",
+        "product_id",
+        "result_actions",
+        "schedule_type",
+        "skill_ids",
+        "source_system",
+        "timeout_seconds",
+        "timezone",
+    )
+    payload_defaults = {
+        key: config.get(key)
+        for key in payload_keys
+        if key in config and config.get(key) is not None
+    }
+    source = {
+        "source_id": run_id,
+        "source_type": "scheduled_job_run",
+        "title": job_name,
+    }
+    config_json = dict(payload_defaults.get("config_json") or {})
+    config_json["template_source"] = source
+    payload_defaults["config_json"] = config_json
+    payload_defaults["enabled"] = True
+    payload_defaults["name"] = f"{job_name} 模板"
+    return {
+        "category": str(config.get("job_type") or "generated"),
+        "code": f"generated_from_{run_id}",
+        "description": f"由成功运行 {run_id} 反向生成，可作为新增定时作业模板。",
+        "name": f"{job_name} 模板",
+        "payload_defaults": payload_defaults,
+        "recommended_scenarios": ["成功运行复用", "配置模板化", "快速创建同类任务"],
+        "resource_selectors": {},
+        "source_run_id": run_id,
+        "template_version": "generated-v1",
+        "wizard_steps": STANDARD_WIZARD_STEPS,
+    }
 
 
 def create_scheduled_job_response(

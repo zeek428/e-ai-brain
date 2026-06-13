@@ -8,6 +8,9 @@
 ## [Unreleased]
 
 ### Added
+- Runner 控制台增强：AI 执行器 Runner 支持 Token 轮换、显示 Token 版本和最近任务状态，任务日志可在插件管理中查看并支持管理员取消运行中任务；后端补充 Runner 任务日志追加/查询、取消和超时扫描接口。
+- 定时作业运行可视化增强：运行详情新增 Trace DAG，按数据连接、Runner 执行、Skill/AI 处理、结果写入、代码巡检报告、Bug/任务/通知等节点展示输入、输出、耗时、重试和错误定位。
+- 成功运行反向生成模板：新增从成功运行记录生成定时作业模板接口，前端可在运行详情中一键生成新作业草稿并保留 `config_json.template_source` 来源，降低重复配置成本。
 - 任务编排平台升级：定时作业模板新增 `wizard_steps`，内置每周反馈洞察、代码巡检、邮件摘要、GitLab MR AI 审查和 AI 执行器仓库任务五类模板；新增作业页展示任务创建向导，并把用户侧“动作”文案收敛为“执行/结果写入”。
 - 官方插件 schema 化：`/api/system/plugin-marketplace` 为 MaxCompute、GitLab、GitHub、邮箱和 AI 执行器返回 `connection_schema`，插件市场展示连接表单字段，JSON 保留为高级修改入口。
 - Runner 产品化增强：AI 执行器 Runner 列表返回并展示 `health_status`、`heartbeat_age_seconds` 和可复制 `setup_command`，便于本地 Codex/Claude/Hermes/OpenClaw Runner 接入远程 AI Brain。

@@ -452,6 +452,154 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
     assert "ai-brain-runner" in listed_runner["setup_command"]
 
 
+def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["openclaw"],
+            "heartbeat_timeout_seconds": 30,
+            "name": "OpenClaw Runner",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret-v1",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    rotated = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/rotate-token",
+        json={"runner_token": "runner-secret-v2"},
+        headers=admin_headers,
+    )
+    assert rotated.status_code == 200
+    rotated_runner = rotated.json()["data"]
+    assert rotated_runner["runner_token"] == "runner-secret-v2"
+    assert rotated_runner["token_rotated_at"]
+    assert rotated_runner["token_version"] == 2
+
+    old_heartbeat = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        json={"metadata": {}},
+        headers={"X-Runner-Token": "runner-secret-v1"},
+    )
+    assert old_heartbeat.status_code == 401
+
+    new_heartbeat = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        json={"metadata": {"pid": 123}},
+        headers={"X-Runner-Token": "runner-secret-v2"},
+    )
+    assert new_heartbeat.status_code == 200
+
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "runner://ai-executor",
+            "environment": "dev",
+            "name": "OpenClaw Runner 连接",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "openclaw",
+                    "instruction_timeout_seconds": 1,
+                    "runner_id": runner["id"],
+                    "workspace_root": "/Users/zeek/source/e-ai-brain",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "openclaw_cancel_timeout",
+            "connection_id": connection["id"],
+            "name": "OpenClaw 取消超时",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "instruction": "执行较长仓库扫描并持续输出日志。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    invoked = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "manual"}},
+        headers=admin_headers,
+    ).json()["data"]
+    task_id = invoked["response_summary"]["json"]["runner_task_id"]
+
+    claimed = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret-v2"},
+    )
+    assert claimed.status_code == 200
+
+    appended_logs = client.post(
+        f"/api/system/ai-executor-tasks/{task_id}/logs",
+        json={
+            "logs": [
+                {"level": "info", "message": "checkout repository"},
+                {"level": "info", "message": "scan started"},
+            ],
+            "runner_id": runner["id"],
+            "status": "running",
+        },
+        headers={"X-Runner-Token": "runner-secret-v2"},
+    )
+    assert appended_logs.status_code == 200
+    assert appended_logs.json()["data"]["task"]["status"] == "running"
+
+    logs = client.get(
+        f"/api/system/ai-executor-tasks/{task_id}/logs",
+        headers=admin_headers,
+    )
+    assert logs.status_code == 200
+    assert [entry["sequence"] for entry in logs.json()["data"]["logs"]] == [1, 2]
+    assert logs.json()["data"]["logs"][1]["message"] == "scan started"
+
+    cancelled = client.post(
+        f"/api/system/ai-executor-tasks/{task_id}/cancel",
+        json={"reason": "用户手动停止"},
+        headers=admin_headers,
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["data"]["task"]["status"] == "cancelled"
+    assert cancelled.json()["data"]["task"]["error_code"] == "AI_EXECUTOR_TASK_CANCELLED"
+
+    timed_out_task = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "manual-timeout"}},
+        headers=admin_headers,
+    ).json()["data"]
+    timed_out_task_id = timed_out_task["response_summary"]["json"]["runner_task_id"]
+    scanned = client.post(
+        "/api/system/ai-executor-tasks/timeout-scan",
+        json={"now": "2099-01-01T00:00:00+00:00"},
+        headers=admin_headers,
+    )
+    assert scanned.status_code == 200
+    assert timed_out_task_id in scanned.json()["data"]["timed_out_task_ids"]
+
+    timeout_logs = client.get(
+        f"/api/system/ai-executor-tasks/{timed_out_task_id}/logs",
+        headers=admin_headers,
+    ).json()["data"]
+    assert timeout_logs["task"]["status"] == "timed_out"
+    assert timeout_logs["task"]["error_code"] == "AI_EXECUTOR_TASK_TIMEOUT"
+
+
 def test_scheduled_ai_executor_runner_completion_updates_run_detail():
     app.state.store.reset()
     admin_headers = auth_headers()

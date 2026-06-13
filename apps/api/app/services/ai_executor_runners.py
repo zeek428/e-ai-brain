@@ -79,6 +79,8 @@ def _runner_public(runner: dict[str, Any]) -> dict[str, Any]:
     public["heartbeat_age_seconds"] = heartbeat_age
     public["health_status"] = _runner_health_status(runner, heartbeat_age)
     public["setup_command"] = _runner_setup_command(runner)
+    public["token_rotated_at"] = runner.get("token_rotated_at")
+    public["token_version"] = int(runner.get("token_version") or 1)
     return public
 
 
@@ -276,7 +278,9 @@ def _runner_node_from_task(task: dict[str, Any]) -> dict[str, Any]:
 def _status_for_runner_task(task_status: str) -> str:
     if task_status == "succeeded":
         return "succeeded"
-    if task_status in {"failed", "cancelled", "timed_out"}:
+    if task_status == "cancelled":
+        return "cancelled"
+    if task_status in {"failed", "timed_out"}:
         return "failed"
     return "running"
 
@@ -364,7 +368,7 @@ def _sync_runner_completion_to_scheduled_run(
         **run,
         "error_code": task.get("error_code") if run_status == "failed" else None,
         "error_message": task.get("error_message") if run_status == "failed" else None,
-        "finished_at": now if run_status in {"failed", "succeeded"} else None,
+        "finished_at": now if run_status in {"cancelled", "failed", "succeeded"} else None,
         "records_imported": records_imported,
         "result_summary": result_summary,
         "status": run_status,
@@ -392,7 +396,7 @@ def _sync_runner_completion_to_scheduled_run(
         audit_event=audit_event,
     )
 
-    if run_status not in {"failed", "succeeded"}:
+    if run_status not in {"cancelled", "failed", "succeeded"}:
         return
     collector_run = _load_collector_run(current_store, updated_run.get("collector_run_id"))
     if collector_run is not None:
@@ -458,6 +462,8 @@ def create_ai_executor_runner_response(
             "status",
         ),
         "token_hash": _token_hash(runner_token),
+        "token_rotated_at": None,
+        "token_version": 1,
         "updated_at": now,
         "workspace_roots": _normalized_string_list(
             getattr(payload, "workspace_roots", None),
@@ -496,11 +502,28 @@ def list_ai_executor_runners_response(
     if status is not None:
         _ensure_enum(status, AI_EXECUTOR_RUNNER_STATUSES, "status")
     sync_ai_executor_runner_store(current_store, status=status)
+    sync_ai_executor_task_store(current_store)
     items = []
     for runner in current_store.ai_executor_runners.values():
         if status is not None and runner.get("status") != status:
             continue
-        items.append(_runner_public(runner))
+        latest_task = max(
+            (
+                task
+                for task in current_store.ai_executor_tasks.values()
+                if task.get("runner_id") == runner.get("id")
+            ),
+            key=lambda task: (
+                task.get("updated_at") or task.get("created_at") or "",
+                task.get("id") or "",
+            ),
+            default=None,
+        )
+        item = _runner_public(runner)
+        if latest_task is not None:
+            item["latest_task_id"] = latest_task.get("id")
+            item["latest_task_status"] = latest_task.get("status")
+        items.append(item)
     items.sort(key=lambda item: (item.get("updated_at") or "", item["id"]), reverse=True)
     return {"items": items, "total": len(items)}
 
@@ -545,6 +568,8 @@ def patch_ai_executor_runner_response(
         updates["token_hash"] = _token_hash(
             _ensure_non_blank(updates.pop("runner_token"), "runner_token"),
         )
+        updates["token_rotated_at"] = datetime.now(UTC).isoformat()
+        updates["token_version"] = int(runner.get("token_version") or 1) + 1
     for int_key in ("heartbeat_timeout_seconds", "max_concurrent_tasks"):
         if int_key in updates:
             updates[int_key] = int(updates[int_key])
@@ -571,6 +596,45 @@ def patch_ai_executor_runner_response(
         audit_event=audit_event,
     )
     return _runner_public(runner)
+
+
+def rotate_ai_executor_runner_token_response(
+    *,
+    current_store: Any,
+    payload: Any,
+    runner_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    _ensure_admin(user)
+    sync_ai_executor_runner_store(current_store)
+    runner = current_store.ai_executor_runners.get(runner_id)
+    if runner is None:
+        raise api_error(404, "NOT_FOUND", "AI executor runner not found")
+    runner_token = str(getattr(payload, "runner_token", None) or secrets.token_urlsafe(32))
+    now = datetime.now(UTC).isoformat()
+    runner = {
+        **runner,
+        "token_hash": _token_hash(_ensure_non_blank(runner_token, "runner_token")),
+        "token_rotated_at": now,
+        "token_version": int(runner.get("token_version") or 1) + 1,
+        "updated_at": now,
+    }
+    current_store.ai_executor_runners[runner_id] = runner
+    audit_event = record_audit_event(
+        current_store,
+        event_type="ai_executor_runner.token_rotated",
+        actor_id=user["id"],
+        subject_type="ai_executor_runner",
+        subject_id=runner_id,
+        payload={"token_version": runner["token_version"]},
+    )
+    _persist_record(
+        current_store,
+        "save_ai_executor_runner_record",
+        runner,
+        audit_event=audit_event,
+    )
+    return {**_runner_public(runner), "runner_token": runner_token}
 
 
 def delete_ai_executor_runner_response(
@@ -816,6 +880,223 @@ def claim_ai_executor_task_response(
         runner_id=runner_id,
     )
     return {"task": _task_public(task)}
+
+
+def _sync_ai_executor_task_by_id(current_store: Any, task_id: str) -> dict[str, Any]:
+    sync_ai_executor_task_store(current_store)
+    task = current_store.ai_executor_tasks.get(task_id)
+    if task is None:
+        raise api_error(404, "NOT_FOUND", "AI executor task not found")
+    return task
+
+
+def _log_timestamp() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _append_task_logs(task: dict[str, Any], logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    existing = [dict(item) for item in task.get("logs") or [] if isinstance(item, dict)]
+    next_sequence = int(existing[-1].get("sequence") or len(existing)) + 1 if existing else 1
+    normalized: list[dict[str, Any]] = []
+    for item in logs:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                "level": str(item.get("level") or "info"),
+                "message": str(item.get("message") or ""),
+                "sequence": int(item.get("sequence") or next_sequence),
+                "timestamp": item.get("timestamp") or _log_timestamp(),
+            }
+        )
+        next_sequence += 1
+    return [*existing, *normalized]
+
+
+def list_ai_executor_task_logs_response(
+    *,
+    current_store: Any,
+    task_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    _ensure_admin(user)
+    task = _sync_ai_executor_task_by_id(current_store, task_id)
+    return {"logs": list(task.get("logs") or []), "task": _task_public(task)}
+
+
+def append_ai_executor_task_logs_response(
+    *,
+    current_store: Any,
+    payload: Any,
+    request: Request,
+    task_id: str,
+) -> dict[str, Any]:
+    runner_id = _ensure_non_blank(getattr(payload, "runner_id", None), "runner_id")
+    _authenticated_runner(current_store, request=request, runner_id=runner_id)
+    sync_ai_executor_task_store(current_store, runner_id=runner_id)
+    task = current_store.ai_executor_tasks.get(task_id)
+    if task is None or task.get("runner_id") != runner_id:
+        raise api_error(404, "NOT_FOUND", "AI executor task not found")
+    if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
+        raise api_error(409, "AI_EXECUTOR_TASK_TERMINAL", "Terminal task cannot append logs")
+    status = str(getattr(payload, "status", None) or task.get("status") or "running")
+    if status not in {"claimed", "running"}:
+        raise api_error(400, "VALIDATION_ERROR", "Log append status is invalid")
+    now = datetime.now(UTC).isoformat()
+    task = {
+        **task,
+        "logs": _append_task_logs(task, list(getattr(payload, "logs", None) or [])),
+        "status": status,
+        "updated_at": now,
+    }
+    current_store.ai_executor_tasks[task_id] = task
+    audit_event = record_audit_event(
+        current_store,
+        event_type="ai_executor_task.logs_appended",
+        actor_id=runner_id,
+        subject_type="ai_executor_task",
+        subject_id=task_id,
+        payload={"log_count": len(getattr(payload, "logs", None) or []), "runner_id": runner_id},
+    )
+    _persist_record(
+        current_store,
+        "save_ai_executor_task_record",
+        task,
+        audit_event=audit_event,
+    )
+    _sync_runner_completion_to_scheduled_run(current_store, task=task, runner_id=runner_id)
+    return {"logs": list(task.get("logs") or []), "task": _task_public(task)}
+
+
+def cancel_ai_executor_task_response(
+    *,
+    current_store: Any,
+    payload: Any,
+    task_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    _ensure_admin(user)
+    task = _sync_ai_executor_task_by_id(current_store, task_id)
+    if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
+        raise api_error(409, "AI_EXECUTOR_TASK_TERMINAL", "Terminal task cannot be cancelled")
+    now = datetime.now(UTC).isoformat()
+    reason = str(getattr(payload, "reason", None) or "cancelled by user")
+    task = {
+        **task,
+        "error_code": "AI_EXECUTOR_TASK_CANCELLED",
+        "error_message": reason,
+        "finished_at": now,
+        "logs": _append_task_logs(
+            task,
+            [{"level": "warning", "message": f"Task cancelled: {reason}", "timestamp": now}],
+        ),
+        "status": "cancelled",
+        "updated_at": now,
+    }
+    current_store.ai_executor_tasks[task_id] = task
+    audit_event = record_audit_event(
+        current_store,
+        event_type="ai_executor_task.cancelled",
+        actor_id=user["id"],
+        subject_type="ai_executor_task",
+        subject_id=task_id,
+        payload={"reason": reason, "runner_id": task.get("runner_id")},
+    )
+    _persist_record(
+        current_store,
+        "save_ai_executor_task_record",
+        task,
+        audit_event=audit_event,
+    )
+    _sync_runner_completion_to_scheduled_run(
+        current_store,
+        task=task,
+        runner_id=str(task.get("runner_id") or user["id"]),
+    )
+    return {"task": _task_public(task)}
+
+
+def _datetime_value(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def timeout_ai_executor_tasks_response(
+    *,
+    current_store: Any,
+    payload: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    _ensure_admin(user)
+    now = _datetime_value(getattr(payload, "now", None)) or datetime.now(UTC)
+    sync_ai_executor_task_store(current_store)
+    timed_out: list[dict[str, Any]] = []
+    for task in list(current_store.ai_executor_tasks.values()):
+        if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
+            continue
+        reference_at = (
+            _datetime_value(task.get("claimed_at"))
+            or _datetime_value(task.get("updated_at"))
+            or _datetime_value(task.get("created_at"))
+            or now
+        )
+        timeout_seconds = int(task.get("timeout_seconds") or 1800)
+        if (now - reference_at).total_seconds() < timeout_seconds:
+            continue
+        now_iso = now.isoformat()
+        updated_task = {
+            **task,
+            "error_code": "AI_EXECUTOR_TASK_TIMEOUT",
+            "error_message": f"AI executor task timed out after {timeout_seconds}s",
+            "finished_at": now_iso,
+            "logs": _append_task_logs(
+                task,
+                [
+                    {
+                        "level": "error",
+                        "message": f"Task timed out after {timeout_seconds}s",
+                        "timestamp": now_iso,
+                    }
+                ],
+            ),
+            "status": "timed_out",
+            "updated_at": now_iso,
+        }
+        current_store.ai_executor_tasks[updated_task["id"]] = updated_task
+        audit_event = record_audit_event(
+            current_store,
+            event_type="ai_executor_task.timed_out",
+            actor_id=user["id"],
+            subject_type="ai_executor_task",
+            subject_id=updated_task["id"],
+            payload={
+                "runner_id": updated_task.get("runner_id"),
+                "timeout_seconds": timeout_seconds,
+            },
+        )
+        _persist_record(
+            current_store,
+            "save_ai_executor_task_record",
+            updated_task,
+            audit_event=audit_event,
+        )
+        _sync_runner_completion_to_scheduled_run(
+            current_store,
+            task=updated_task,
+            runner_id=str(updated_task.get("runner_id") or user["id"]),
+        )
+        timed_out.append(updated_task)
+    return {
+        "timed_out_task_ids": [task["id"] for task in timed_out],
+        "tasks": [_task_public(task) for task in timed_out],
+    }
 
 
 def complete_ai_executor_task_response(

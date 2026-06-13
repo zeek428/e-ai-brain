@@ -113,6 +113,113 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     ]
 
 
+def test_successful_scheduled_job_run_can_generate_template_and_trace_graph():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "warehouse_reader",
+            "name": "数据仓库读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://warehouse.example.com",
+            "environment": "prod",
+            "name": "生产数据仓库",
+            "plugin_id": plugin["id"],
+            "request_config": {"query": {"start_pt": "{{current_date-7}}"}},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_weekly_rows",
+            "connection_id": connection["id"],
+            "name": "拉取每周数据",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {"row_count": 2, "rows": [{"id": 1}, {"id": 2}]},
+                "path": "/rows",
+            },
+            "result_mapping": {
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "cron_expression": "0 9 * * MON",
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "max_retry_count": 2,
+            "name": "每周数据同步",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "plugin_input_mapping": {"week_start": "{{last_full_week.start}}"},
+            "schedule_type": "cron",
+            "source_system": "warehouse",
+            "timezone": "Asia/Shanghai",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    run = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    ).json()["data"]
+    assert run["status"] == "succeeded"
+    assert run["records_imported"] == 2
+
+    trace_graph = run["result_summary"]["trace_graph"]
+    assert trace_graph["edges"] == [
+        {"from": "data_connection", "to": "skill_processing"},
+        {"from": "skill_processing", "to": "result_action"},
+    ]
+    by_node = {node["id"]: node for node in trace_graph["nodes"]}
+    assert by_node["data_connection"]["duration_ms"] >= 0
+    assert by_node["data_connection"]["input"]["week_start"].startswith("2026-06-01T00:00:00")
+    assert by_node["data_connection"]["output"]["records_imported"] == 2
+    assert by_node["skill_processing"]["retry_count"] == 2
+    assert by_node["result_action"]["error"] is None
+
+    generated = client.post(
+        f"/api/system/scheduled-job-runs/{run['id']}/template",
+        headers=admin_headers,
+    )
+    assert generated.status_code == 200
+    template = generated.json()["data"]
+    assert template["code"] == f"generated_from_{run['id']}"
+    assert template["source_run_id"] == run["id"]
+    assert template["payload_defaults"]["name"] == "每周数据同步 模板"
+    assert template["payload_defaults"]["plugin_action_id"] == action["id"]
+    assert template["payload_defaults"]["plugin_connection_id"] == connection["id"]
+    assert template["payload_defaults"]["cron_expression"] == "0 9 * * MON"
+    assert template["payload_defaults"]["config_json"]["template_source"] == {
+        "source_id": run["id"],
+        "source_type": "scheduled_job_run",
+        "title": "每周数据同步",
+    }
+    assert template["wizard_steps"][0]["key"] == "data_connection"
+
+
 def build_skill_package() -> bytes:
     buffer = BytesIO()
     with ZipFile(buffer, "w") as package:

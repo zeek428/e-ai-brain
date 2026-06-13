@@ -200,7 +200,8 @@ class PluginReadRepository:
                     f"""
                     SELECT id, name, protocol, endpoint_url, executor_types, workspace_roots,
                            token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
-                           last_heartbeat_at, metadata, created_by, created_at, updated_at
+                           last_heartbeat_at, metadata, created_by, created_at, updated_at,
+                           token_rotated_at, token_version
                     FROM ai_executor_runners
                     {where}
                     ORDER BY updated_at DESC, id ASC
@@ -488,13 +489,14 @@ class PluginReadRepository:
                 INSERT INTO ai_executor_runners (
                   id, name, protocol, endpoint_url, executor_types, workspace_roots,
                   token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
-                  last_heartbeat_at, metadata, created_by, created_at, updated_at
+                  last_heartbeat_at, metadata, created_by, created_at, updated_at,
+                  token_rotated_at, token_version
                 )
                 VALUES (
                   %s, %s, %s, %s, %s::jsonb, %s::jsonb,
                   %s, %s, %s, %s,
                   %s::timestamptz, %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), %s::timestamptz, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   name = EXCLUDED.name,
@@ -508,6 +510,8 @@ class PluginReadRepository:
                   status = EXCLUDED.status,
                   last_heartbeat_at = EXCLUDED.last_heartbeat_at,
                   metadata = EXCLUDED.metadata,
+                  token_rotated_at = EXCLUDED.token_rotated_at,
+                  token_version = EXCLUDED.token_version,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -526,6 +530,8 @@ class PluginReadRepository:
                     runner.get("created_by"),
                     runner.get("created_at"),
                     runner.get("updated_at") or runner.get("created_at"),
+                    runner.get("token_rotated_at"),
+                    runner.get("token_version", 1),
                 ),
             )
 
@@ -700,6 +706,8 @@ class PluginReadRepository:
             "created_by": row[12],
             "created_at": row[13].isoformat() if row[13] else None,
             "updated_at": row[14].isoformat() if row[14] else None,
+            "token_rotated_at": row[15].isoformat() if len(row) > 15 and row[15] else None,
+            "token_version": row[16] if len(row) > 16 and row[16] is not None else 1,
         }
 
     def _ai_executor_task_from_row(self, row: Any) -> dict[str, Any]:

@@ -1,4 +1,14 @@
-import { ApiOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  ApiOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  FileTextOutlined,
+  KeyOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  StopOutlined,
+} from '@ant-design/icons';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
@@ -10,10 +20,12 @@ import {
   createPlugin,
   createPluginAction,
   createPluginConnection,
+  cancelAiExecutorTask,
   deletePlugin,
   deletePluginAction,
   deletePluginConnection,
   deleteAiExecutorRunner,
+  fetchAiExecutorTaskLogs,
   fetchAiExecutorRunners,
   fetchPluginActions,
   fetchPluginActionTemplates,
@@ -27,6 +39,7 @@ import {
   invokePluginAction,
   rememberAssistantDraftResolution,
   resolveAssistantDraftResourceId,
+  rotateAiExecutorRunnerToken,
   testPluginConnection,
   trialPluginAction,
   updateAiExecutorRunner,
@@ -35,6 +48,8 @@ import {
   updatePluginConnection,
   type AssistantPluginActionDraft,
   type AssistantPluginConnectionDraft,
+  type AiExecutorTaskLogRecord,
+  type AiExecutorTaskRecord,
   type AiExecutorRunnerRecord,
   type PluginActionTrialResult,
   type PluginActionRecord,
@@ -1312,6 +1327,13 @@ export default function PluginsPage() {
   const [editingConnection, setEditingConnection] = useState<PluginConnectionRecord | undefined>();
   const [editingAction, setEditingAction] = useState<PluginActionRecord | undefined>();
   const [editingRunner, setEditingRunner] = useState<AiExecutorRunnerRecord | undefined>();
+  const [rotatingRunner, setRotatingRunner] = useState<AiExecutorRunnerRecord | undefined>();
+  const [rotatingRunnerLoading, setRotatingRunnerLoading] = useState(false);
+  const [rotatedRunnerToken, setRotatedRunnerToken] = useState<string | undefined>();
+  const [runnerLogModalOpen, setRunnerLogModalOpen] = useState(false);
+  const [runnerLogLoading, setRunnerLogLoading] = useState(false);
+  const [runnerLogTask, setRunnerLogTask] = useState<AiExecutorTaskRecord | undefined>();
+  const [runnerLogRows, setRunnerLogRows] = useState<AiExecutorTaskLogRecord[]>([]);
   const [assistantConnectionDraftSource, setAssistantConnectionDraftSource] = useState<
     { draftId?: string; title?: string } | undefined
   >();
@@ -1634,6 +1656,74 @@ export default function PluginsPage() {
       },
       title: '删除执行器',
     });
+  };
+
+  const latestRunnerTaskId = (runner: AiExecutorRunnerRecord): string | undefined => {
+    const metadataTaskId = runner.metadata?.latest_task_id;
+    return runner.latest_task_id ?? (typeof metadataTaskId === 'string' ? metadataTaskId : undefined);
+  };
+
+  const rotateRunnerToken = (runner: AiExecutorRunnerRecord) => {
+    setRotatingRunner(runner);
+  };
+
+  const submitRotateRunnerToken = async () => {
+    if (!rotatingRunner) {
+      return;
+    }
+    setRotatingRunnerLoading(true);
+    try {
+      const updatedRunner = await rotateAiExecutorRunnerToken(rotatingRunner.id);
+      message.success('Runner Token 已轮换');
+      setRotatingRunner(undefined);
+      if (updatedRunner.runner_token) {
+        setRotatedRunnerToken(updatedRunner.runner_token);
+      }
+      await reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Runner Token 轮换失败');
+    } finally {
+      setRotatingRunnerLoading(false);
+    }
+  };
+
+  const openRunnerLogs = async (runner: AiExecutorRunnerRecord) => {
+    const taskId = latestRunnerTaskId(runner);
+    if (!taskId) {
+      message.warning('当前执行器暂无可查看的任务日志');
+      return;
+    }
+    setRunnerLogModalOpen(true);
+    setRunnerLogLoading(true);
+    try {
+      const result = await fetchAiExecutorTaskLogs(taskId);
+      setRunnerLogTask(result.task);
+      setRunnerLogRows(result.logs ?? []);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Runner 执行日志加载失败');
+    } finally {
+      setRunnerLogLoading(false);
+    }
+  };
+
+  const cancelRunnerTask = async () => {
+    if (!runnerLogTask?.id) {
+      return;
+    }
+    setRunnerLogLoading(true);
+    try {
+      const result = await cancelAiExecutorTask(
+        runnerLogTask.id,
+        '管理员从插件管理页面取消 Runner 任务',
+      );
+      setRunnerLogTask(result.task);
+      message.success('Runner 任务已取消');
+      await reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Runner 任务取消失败');
+    } finally {
+      setRunnerLogLoading(false);
+    }
   };
 
   const warnDeleteUsage = (title: string, groups: DeleteUsageGroup[]) => {
@@ -2986,8 +3076,23 @@ export default function PluginsPage() {
                   {
                     dataIndex: 'token_configured',
                     title: 'Token',
-                    width: 100,
-                    render: (value) => <Tag color={value ? 'green' : 'default'}>{value ? '已配置' : '未配置'}</Tag>,
+                    width: 220,
+                    render: (value, row) => (
+                      <Space orientation="vertical" size={2}>
+                        <Space size={6} wrap>
+                          <Tag color={value ? 'green' : 'default'}>{value ? '已配置' : '未配置'}</Tag>
+                          <Typography.Text>Token v{row.token_version ?? 1}</Typography.Text>
+                        </Space>
+                        <Typography.Text type="secondary">
+                          {row.token_rotated_at ?? '未轮换'}
+                        </Typography.Text>
+                        {row.latest_task_id ? (
+                          <Typography.Text type="secondary">
+                            最近任务 {row.latest_task_status ?? '-'}
+                          </Typography.Text>
+                        ) : null}
+                      </Space>
+                    ),
                   },
                   {
                     dataIndex: 'status',
@@ -3011,9 +3116,26 @@ export default function PluginsPage() {
                     key: 'actions',
                     title: '操作',
                     valueType: 'option',
-                    width: 170,
+                    width: 300,
                     render: (_, row) => (
                       <Space className="management-row-actions" size={0}>
+                        <Button
+                          aria-label={`轮换 Token ${row.name}`}
+                          icon={<KeyOutlined />}
+                          onClick={() => rotateRunnerToken(row)}
+                          type="link"
+                        >
+                          轮换
+                        </Button>
+                        <Button
+                          aria-label={`查看执行日志 ${row.name}`}
+                          disabled={!latestRunnerTaskId(row)}
+                          icon={<FileTextOutlined />}
+                          onClick={() => openRunnerLogs(row)}
+                          type="link"
+                        >
+                          日志
+                        </Button>
                         <Button
                           aria-label={`编辑执行器 ${row.name}`}
                           icon={<EditOutlined />}
@@ -3178,6 +3300,106 @@ export default function PluginsPage() {
           },
         ]}
       />
+
+      {rotatedRunnerToken ? (
+        <Alert
+          closable
+          onClose={() => setRotatedRunnerToken(undefined)}
+          showIcon
+          style={{ marginTop: 16 }}
+          title="Runner Token 已轮换"
+          type="success"
+          description={(
+            <Space orientation="vertical" size={6}>
+              <Typography.Text>新 Token 仅本次返回，请同步更新本地 Runner 配置。</Typography.Text>
+              <Typography.Text code copyable={{ text: rotatedRunnerToken }}>
+                {rotatedRunnerToken}
+              </Typography.Text>
+            </Space>
+          )}
+        />
+      ) : null}
+
+      <Modal
+        cancelText="取消"
+        confirmLoading={rotatingRunnerLoading}
+        destroyOnHidden
+        okText="确定"
+        open={Boolean(rotatingRunner)}
+        title="轮换 Runner Token"
+        onCancel={() => setRotatingRunner(undefined)}
+        onOk={submitRotateRunnerToken}
+      >
+        <Space orientation="vertical" size={8}>
+          <Typography.Text>
+            轮换后旧 Token 会立即失效，请将新 Token 配置到本地 Runner。
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            当前执行器：{rotatingRunner?.name ?? '-'}
+          </Typography.Text>
+        </Space>
+      </Modal>
+
+      <Modal
+        aria-label="Runner 执行日志"
+        destroyOnHidden
+        footer={(
+          <Space>
+            <Button onClick={() => setRunnerLogModalOpen(false)}>关闭</Button>
+            <Button
+              aria-label="取消任务"
+              danger
+              disabled={!runnerLogTask?.id || ['cancelled', 'failed', 'succeeded', 'timed_out'].includes(runnerLogTask.status)}
+              icon={<StopOutlined />}
+              loading={runnerLogLoading}
+              onClick={cancelRunnerTask}
+            >
+              取消任务
+            </Button>
+          </Space>
+        )}
+        open={runnerLogModalOpen}
+        title="Runner 执行日志"
+        width={820}
+        onCancel={() => setRunnerLogModalOpen(false)}
+      >
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+          <Space wrap>
+            <Typography.Text strong>任务 ID</Typography.Text>
+            <Typography.Text code copyable={runnerLogTask?.id ? { text: runnerLogTask.id } : false}>
+              {runnerLogTask?.id ?? '-'}
+            </Typography.Text>
+            <Tag>{runnerLogTask?.status ?? '-'}</Tag>
+          </Space>
+          <Table<AiExecutorTaskLogRecord>
+            columns={[
+              { dataIndex: 'sequence', title: '#', width: 72 },
+              { dataIndex: 'level', title: '级别', width: 100, render: (value) => String(value ?? 'info') },
+              {
+                dataIndex: 'message',
+                title: '日志内容',
+                render: (value) => (
+                  <Typography.Text style={{ whiteSpace: 'pre-wrap' }}>
+                    {String(value ?? '')}
+                  </Typography.Text>
+                ),
+              },
+              {
+                key: 'created_at',
+                title: '时间',
+                width: 220,
+                render: (_, row) =>
+                  row.created_at ?? String((row as unknown as Record<string, unknown>).timestamp ?? '-'),
+              },
+            ]}
+            dataSource={runnerLogRows}
+            loading={runnerLogLoading}
+            pagination={false}
+            rowKey={(row) => `${row.sequence ?? row.created_at ?? row.message}-${row.message}`}
+            size="small"
+          />
+        </Space>
+      </Modal>
 
       <Modal
         open={pluginModalOpen}

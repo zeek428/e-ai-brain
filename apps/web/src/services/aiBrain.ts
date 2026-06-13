@@ -4140,6 +4140,8 @@ export type AiExecutorRunnerRecord = {
   heartbeat_timeout_seconds?: number;
   health_status?: string;
   id: string;
+  latest_task_id?: string | null;
+  latest_task_status?: string | null;
   last_heartbeat_at?: string | null;
   max_concurrent_tasks?: number;
   metadata?: Record<string, unknown>;
@@ -4149,8 +4151,42 @@ export type AiExecutorRunnerRecord = {
   setup_command?: string;
   status: string;
   token_configured?: boolean;
+  token_rotated_at?: string | null;
+  token_version?: number;
   updated_at?: string | null;
   workspace_roots?: string[];
+};
+
+export type AiExecutorTaskRecord = {
+  action_id?: string | null;
+  assigned_at?: string | null;
+  cancelled_at?: string | null;
+  completed_at?: string | null;
+  created_at?: string | null;
+  error_message?: string | null;
+  executor_type?: string | null;
+  id: string;
+  logs?: AiExecutorTaskLogRecord[];
+  result?: Record<string, unknown>;
+  runner_id?: string | null;
+  scheduled_job_run_id?: string | null;
+  status: string;
+  timed_out_at?: string | null;
+  updated_at?: string | null;
+  workspace_root?: string | null;
+};
+
+export type AiExecutorTaskLogRecord = {
+  created_at?: string | null;
+  level?: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+  sequence?: number;
+};
+
+export type AiExecutorTaskLogsResponse = {
+  logs: AiExecutorTaskLogRecord[];
+  task: AiExecutorTaskRecord;
 };
 
 export type PluginSystemVariableRecord = {
@@ -4237,6 +4273,40 @@ export async function deleteAiExecutorRunner(runnerId: string) {
   const token = requireAccessToken();
   return apiRequest<{ deleted: boolean; id: string }>(`/api/system/ai-executor-runners/${runnerId}`, {
     method: 'DELETE',
+    token,
+  });
+}
+
+export async function rotateAiExecutorRunnerToken(
+  runnerId: string,
+  payload: { runner_token?: string } = {},
+) {
+  const token = requireAccessToken();
+  return apiRequest<AiExecutorRunnerRecord & { runner_token?: string }>(
+    `/api/system/ai-executor-runners/${runnerId}/rotate-token`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function fetchAiExecutorTaskLogs(taskId: string): Promise<AiExecutorTaskLogsResponse> {
+  const token = requireAccessToken();
+  return apiRequest<AiExecutorTaskLogsResponse>(`/api/system/ai-executor-tasks/${taskId}/logs`, {
+    token,
+  });
+}
+
+export async function cancelAiExecutorTask(
+  taskId: string,
+  reason?: string,
+): Promise<{ task: AiExecutorTaskRecord }> {
+  const token = requireAccessToken();
+  return apiRequest<{ task: AiExecutorTaskRecord }>(`/api/system/ai-executor-tasks/${taskId}/cancel`, {
+    body: { reason },
+    method: 'POST',
     token,
   });
 }
@@ -4545,6 +4615,14 @@ export async function fetchScheduledJobTemplates(): Promise<ScheduledJobTemplate
     { token },
   );
   return response.items;
+}
+
+export async function generateScheduledJobTemplateFromRun(runId: string): Promise<ScheduledJobTemplateRecord> {
+  const token = requireAccessToken();
+  return apiRequest<ScheduledJobTemplateRecord>(`/api/system/scheduled-job-runs/${runId}/template`, {
+    method: 'POST',
+    token,
+  });
 }
 
 export async function createScheduledJob(payload: Partial<ScheduledJobRecord>) {
