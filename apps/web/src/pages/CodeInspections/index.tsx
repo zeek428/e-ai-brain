@@ -1,10 +1,12 @@
 import type { ProColumns } from '@ant-design/pro-components';
-import { Button, Descriptions, Modal, Space, Table, Tag, Typography, message } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button, Card, Col, Descriptions, Modal, Row, Space, Statistic, Table, Tag, Typography, message } from 'antd';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import {
   fetchCodeInspectionDetail,
+  fetchCodeInspectionDashboard,
+  type CodeInspectionDashboardRecord,
   fetchCodeInspectionReports,
   type CodeInspectionDetailRecord,
   type CodeInspectionFindingRecord,
@@ -65,6 +67,33 @@ function compactText(value?: string | null) {
   );
 }
 
+function internalHref(path: string, params: Record<string, string | undefined>) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      search.set(key, value);
+    }
+  });
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+function linkedTraceText(value: string | null | undefined, href: string) {
+  if (!value) {
+    return compactText(value);
+  }
+  return (
+    <Typography.Link
+      ellipsis
+      href={href}
+      style={{ display: 'block', maxWidth: '100%' }}
+      title={value}
+    >
+      {value}
+    </Typography.Link>
+  );
+}
+
 function committerLabel(
   value?: {
     email?: string | null;
@@ -101,6 +130,211 @@ function bugLink(value?: string | null) {
   );
 }
 
+function percentText(value?: number | null) {
+  const normalized = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  return `${Math.round(normalized * 100)}%`;
+}
+
+function severityTag(value?: string | null) {
+  const text = value || '-';
+  return <Tag color={severityColorByValue.get(text) ?? riskColorByValue.get(text) ?? 'default'}>{text}</Tag>;
+}
+
+function compactMetricTable<Row extends Record<string, unknown>>({
+  columns,
+  dataSource,
+  rowKey,
+}: {
+  columns: Array<{
+    dataIndex: keyof Row & string;
+    render?: (value: unknown, row: Row) => ReactNode;
+    title: string;
+    width?: number;
+  }>;
+  dataSource: Row[];
+  rowKey: (keyof Row & string) | ((record: Row, index?: number) => string);
+}) {
+  return (
+    <Table<Row>
+      columns={columns}
+      dataSource={dataSource}
+      pagination={false}
+      rowKey={rowKey}
+      scroll={{ x: columns.reduce((total, column) => total + (column.width ?? 140), 0) }}
+      size="small"
+    />
+  );
+}
+
+function CodeInspectionGovernanceOverview({
+  dashboard,
+  loading,
+}: {
+  dashboard?: CodeInspectionDashboardRecord;
+  loading: boolean;
+}) {
+  const summary = dashboard?.summary;
+  const sla = dashboard?.sla;
+  return (
+    <Space orientation="vertical" size={12} style={{ width: '100%', marginBottom: 16 }}>
+      <Row gutter={[12, 12]}>
+        <Col lg={6} md={12} xs={24}>
+          <Card loading={loading} size="small">
+            <Statistic title="巡检报告" value={summary?.report_count ?? 0} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card loading={loading} size="small">
+            <Statistic title="发现问题" value={summary?.finding_count ?? 0} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card loading={loading} size="small">
+            <Statistic title="严重问题" value={summary?.severe_finding_count ?? 0} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card loading={loading} size="small">
+            <Statistic
+              suffix={<Tag color={sla?.status === 'healthy' ? 'green' : 'orange'}>{sla?.status ?? '-'}</Tag>}
+              title="Bug 覆盖率"
+              value={percentText(sla?.bug_coverage_rate)}
+            />
+          </Card>
+        </Col>
+      </Row>
+      <Row gutter={[12, 12]}>
+        <Col lg={12} xs={24}>
+          <Card loading={loading} size="small" title="规则维度统计">
+            {compactMetricTable({
+              columns: [
+                { dataIndex: 'rule_id', title: '规则', width: 180 },
+                {
+                  dataIndex: 'severity',
+                  render: (value) => severityTag(String(value ?? '')),
+                  title: '最高级别',
+                  width: 120,
+                },
+                { dataIndex: 'category', title: '分类', width: 120 },
+                { dataIndex: 'finding_count', title: '问题数', width: 100 },
+                { dataIndex: 'severe_finding_count', title: '严重', width: 90 },
+              ],
+              dataSource: dashboard?.rule_distribution ?? [],
+              rowKey: 'rule_id',
+            })}
+          </Card>
+        </Col>
+        <Col lg={12} xs={24}>
+          <Card loading={loading} size="small" title="仓库风险排行">
+            {compactMetricTable({
+              columns: [
+                {
+                  dataIndex: 'repository_name',
+                  render: (_, row) => compactText(String(row.repository_name ?? row.repository_id ?? '-')),
+                  title: '仓库',
+                  width: 220,
+                },
+                {
+                  dataIndex: 'risk_level',
+                  render: (value) => severityTag(String(value ?? '')),
+                  title: '最高风险',
+                  width: 120,
+                },
+                { dataIndex: 'report_count', title: '报告', width: 90 },
+                { dataIndex: 'finding_count', title: '问题数', width: 100 },
+                { dataIndex: 'severe_finding_count', title: '严重', width: 90 },
+              ],
+              dataSource: dashboard?.repository_ranking ?? [],
+              rowKey: 'repository_id',
+            })}
+          </Card>
+        </Col>
+        <Col lg={12} xs={24}>
+          <Card loading={loading} size="small" title="分支风险排行">
+            {compactMetricTable({
+              columns: [
+                { dataIndex: 'branch', title: '分支', width: 160 },
+                {
+                  dataIndex: 'repository_name',
+                  render: (_, row) => compactText(String(row.repository_name ?? row.repository_id ?? '-')),
+                  title: '仓库',
+                  width: 220,
+                },
+                { dataIndex: 'finding_count', title: '问题数', width: 100 },
+                { dataIndex: 'severe_finding_count', title: '严重', width: 90 },
+              ],
+              dataSource: dashboard?.branch_ranking ?? [],
+              rowKey: (row) => `${row.repository_id ?? row.repository_name ?? '-'}:${row.branch ?? '-'}`,
+            })}
+          </Card>
+        </Col>
+        <Col lg={12} xs={24}>
+          <Card loading={loading} size="small" title="提交人风险排行">
+            {compactMetricTable({
+              columns: [
+                {
+                  dataIndex: 'email',
+                  render: (_, row) => compactText(committerLabel(row)),
+                  title: '提交人',
+                  width: 260,
+                },
+                { dataIndex: 'finding_count', title: '问题数', width: 100 },
+                { dataIndex: 'severe_finding_count', title: '严重', width: 90 },
+                { dataIndex: 'bug_count', title: 'Bug', width: 90 },
+              ],
+              dataSource: dashboard?.committer_ranking ?? [],
+              rowKey: (row) => row.email ?? row.username ?? row.name ?? 'unknown',
+            })}
+          </Card>
+        </Col>
+      </Row>
+      <Card loading={loading} size="small" title="严重问题 SLA">
+        <Descriptions
+          column={{ lg: 4, md: 2, xs: 1 }}
+          items={[
+            { key: 'threshold', label: '严重阈值', children: sla?.severe_threshold ?? '-' },
+            { key: 'covered', label: '已关联 Bug', children: sla?.covered_by_bug_count ?? 0 },
+            { key: 'uncovered', label: '未覆盖严重问题', children: sla?.uncovered_severe_finding_count ?? 0 },
+            { key: 'oldest', label: '最早未覆盖', children: sla?.oldest_uncovered_at ?? '-' },
+          ]}
+          size="small"
+        />
+      </Card>
+    </Space>
+  );
+}
+
+function sourceTraceItems(report: CodeInspectionReportRecord) {
+  return [
+    { key: 'source_system', label: '来源系统', children: compactText(report.source_system) },
+    {
+      key: 'scheduled_job_id',
+      label: '来源作业',
+      children: linkedTraceText(
+        report.scheduled_job_id,
+        internalHref('/tasks/scheduled-jobs', {
+          tab: 'jobs',
+          job_id: report.scheduled_job_id ?? undefined,
+        }),
+      ),
+    },
+    {
+      key: 'scheduled_job_run_id',
+      label: '来源运行',
+      children: linkedTraceText(
+        report.scheduled_job_run_id,
+        internalHref('/tasks/scheduled-jobs', {
+          tab: 'runs',
+          run_id: report.scheduled_job_run_id ?? undefined,
+        }),
+      ),
+    },
+    { key: 'plugin_connection_id', label: '数据连接', children: compactText(report.plugin_connection_id) },
+    { key: 'plugin_action_id', label: '结果动作', children: compactText(report.plugin_action_id) },
+    { key: 'plugin_invocation_log_id', label: '插件调用', children: compactText(report.plugin_invocation_log_id) },
+  ];
+}
+
 export default function CodeInspectionsPage() {
   const [detailState, setDetailState] = useState<{
     detail?: CodeInspectionDetailRecord;
@@ -127,11 +361,20 @@ export default function CodeInspectionsPage() {
     status: 'loading',
     total: 0,
   });
+  const [dashboardState, setDashboardState] = useState<{
+    dashboard?: CodeInspectionDashboardRecord;
+    status: 'error' | 'loading' | 'ready';
+  }>({ status: 'loading' });
 
   const reload = useCallback(async () => {
     setListState((current) => ({ ...current, status: 'loading' }));
+    setDashboardState((current) => ({ ...current, status: 'loading' }));
     try {
-      const result = await fetchCodeInspectionReports(buildCodeInspectionQuery(listQuery));
+      const query = buildCodeInspectionQuery(listQuery);
+      const [result, dashboard] = await Promise.all([
+        fetchCodeInspectionReports(query),
+        fetchCodeInspectionDashboard(query),
+      ]);
       setListState({
         page: result.page,
         pageSize: result.pageSize,
@@ -139,9 +382,11 @@ export default function CodeInspectionsPage() {
         status: 'ready',
         total: result.total,
       });
+      setDashboardState({ dashboard, status: 'ready' });
     } catch (error) {
       message.error(formatMutationError(error));
       setListState((current) => ({ ...current, rows: [], status: 'error' }));
+      setDashboardState((current) => ({ ...current, status: 'error' }));
     }
   }, [listQuery]);
 
@@ -255,6 +500,12 @@ export default function CodeInspectionsPage() {
   return (
     <>
       <ManagementListPage<CodeInspectionReportRecord>
+        beforeTable={
+          <CodeInspectionGovernanceOverview
+            dashboard={dashboardState.dashboard}
+            loading={dashboardState.status === 'loading'}
+          />
+        }
         breadcrumbGroup="运营治理"
         columns={columns}
         dataSource={listState.rows}
@@ -312,7 +563,7 @@ export default function CodeInspectionsPage() {
         {detailState?.loading ? (
           <Typography.Text type="secondary">详情加载中...</Typography.Text>
         ) : detailState?.detail ? (
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={16} style={{ width: '100%' }}>
             <Descriptions
               bordered
               column={2}
@@ -333,6 +584,13 @@ export default function CodeInspectionsPage() {
                 { key: 'bugs', label: '创建 Bug', children: detailState.detail.report.created_bug_ids?.join('、') || '-' },
                 { key: 'summary', label: '摘要', children: detailState.detail.report.summary || '-' },
               ]}
+            />
+            <Descriptions
+              bordered
+              column={2}
+              items={sourceTraceItems(detailState.detail.report)}
+              size="small"
+              title="来源链路"
             />
             <Table<CodeInspectionFindingRecord>
               columns={[

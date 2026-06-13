@@ -145,6 +145,7 @@ export type AssistantChatResponse = {
   model: string;
   references: AssistantReference[];
   suggestions: string[];
+  toolResults: AssistantToolResult[];
 };
 
 export type AssistantReference = {
@@ -153,6 +154,107 @@ export type AssistantReference = {
   type: string;
   url: string;
 };
+
+export type AssistantToolResultItem = {
+  action?: string;
+  draft_id?: string;
+  payload?: Record<string, unknown>;
+  requires_confirmation?: boolean;
+  risk_level?: string;
+  title?: string;
+  [key: string]: unknown;
+};
+
+export type AssistantToolResult = {
+  intent?: string;
+  items?: AssistantToolResultItem[];
+  references?: AssistantReference[];
+  summary?: Record<string, unknown>;
+  tool: string;
+};
+
+export const ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY =
+  'ai_brain_assistant_scheduled_job_draft';
+export const ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY =
+  'ai_brain_assistant_plugin_action_draft';
+export const ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY =
+  'ai_brain_assistant_plugin_connection_draft';
+export const ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY =
+  'ai_brain_assistant_draft_resolution';
+
+export type AssistantDraftResourceType = 'plugin_action' | 'plugin_connection' | 'scheduled_job';
+
+export type AssistantDraftResolutionRecord = {
+  resource_id: string;
+  resource_type: AssistantDraftResourceType;
+  title?: string;
+};
+
+export type AssistantDraftResolutionMap = Record<string, AssistantDraftResolutionRecord>;
+
+export type AssistantScheduledJobDraft = {
+  draftId?: string;
+  payload: Record<string, unknown>;
+  title?: string;
+};
+
+export type AssistantPluginActionDraft = AssistantScheduledJobDraft;
+export type AssistantPluginConnectionDraft = AssistantScheduledJobDraft;
+
+export function readAssistantDraftResolutions(): AssistantDraftResolutionMap {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY) ?? '{}') as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as AssistantDraftResolutionMap;
+    }
+  } catch {
+    // Ignore malformed session data and let the next save repair it.
+  }
+  return {};
+}
+
+export function rememberAssistantDraftResolution(params: {
+  draftId?: string;
+  resourceId?: string;
+  resourceType: AssistantDraftResourceType;
+  title?: string;
+}) {
+  if (typeof window === 'undefined' || !params.draftId || !params.resourceId) {
+    return;
+  }
+  const resolutions = readAssistantDraftResolutions();
+  const nextRecord: AssistantDraftResolutionRecord = {
+    resource_id: params.resourceId,
+    resource_type: params.resourceType,
+  };
+  if (params.title) {
+    nextRecord.title = params.title;
+  }
+  window.sessionStorage.setItem(
+    ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
+    JSON.stringify({ ...resolutions, [params.draftId]: nextRecord }),
+  );
+}
+
+export function resolveAssistantDraftResourceId(
+  payload: Record<string, unknown>,
+  resourceType: AssistantDraftResourceType,
+): string | undefined {
+  const prerequisiteIds = Array.isArray(payload.assistant_prerequisite_draft_ids)
+    ? payload.assistant_prerequisite_draft_ids.map(String).filter(Boolean)
+    : [];
+  if (!prerequisiteIds.length) {
+    return undefined;
+  }
+  const resolutions = readAssistantDraftResolutions();
+  const matchingResolution = prerequisiteIds
+    .map((draftId) => resolutions[draftId])
+    .find((resolution) => resolution?.resource_type === resourceType && resolution.resource_id);
+  return matchingResolution?.resource_id;
+}
 
 export type AssistantConversationSummary = {
   createdAt?: string;
@@ -173,6 +275,7 @@ export type AssistantConversationMessage = {
   role: 'assistant' | 'user';
   references: AssistantReference[];
   suggestions: string[];
+  toolResults: AssistantToolResult[];
 };
 
 type AssistantChatApiResponse = {
@@ -183,10 +286,12 @@ type AssistantChatApiResponse = {
     id?: string;
     references?: AssistantReference[];
     role?: string;
+    tool_results?: AssistantToolResult[];
   };
   model?: string;
   references?: AssistantReference[];
   suggestions?: string[];
+  tool_results?: AssistantToolResult[];
 };
 
 type AssistantConversationApiRecord = {
@@ -208,6 +313,7 @@ type AssistantMessageApiRecord = {
   role?: string;
   references?: AssistantReference[];
   suggestions?: string[];
+  tool_results?: AssistantToolResult[];
 };
 
 export type AssistantChatPayload = {
@@ -2094,6 +2200,7 @@ export async function chatWithAssistant(
     model: response.model ?? '',
     references: response.message.references ?? response.references ?? [],
     suggestions: response.suggestions ?? [],
+    toolResults: response.message.tool_results ?? response.tool_results ?? [],
   };
 }
 
@@ -2137,6 +2244,7 @@ export async function fetchAssistantConversationMessages(
     references: item.references ?? [],
     role: item.role === 'user' ? 'user' : 'assistant',
     suggestions: item.suggestions ?? [],
+    toolResults: item.tool_results ?? [],
   }));
 }
 
@@ -3689,6 +3797,20 @@ export type ScheduledJobResultAction = {
   webhook_url?: string;
 };
 
+export type ScheduledJobTemplateRecord = {
+  available_resource_counts?: Record<string, number>;
+  category?: string;
+  code: string;
+  description?: string;
+  installed?: boolean;
+  name: string;
+  payload_defaults?: Partial<ScheduledJobRecord>;
+  publisher?: string;
+  recommended_scenarios?: string[];
+  resource_selectors?: Record<string, unknown>;
+  template_version?: string;
+};
+
 export type ScheduledJobRunRecord = {
   config_snapshot?: Record<string, unknown>;
   collector_run_id?: string | null;
@@ -3704,10 +3826,66 @@ export type ScheduledJobRunRecord = {
   resolved_skill_snapshots?: Array<Record<string, unknown>>;
   result_summary?: Record<string, unknown>;
   scheduled_job_id?: string;
+  source_run_id?: string | null;
+  source_run_summary?: {
+    error_code?: string | null;
+    finished_at?: string | null;
+    id?: string;
+    latency_ms?: number | null;
+    records_imported?: number;
+    started_at?: string | null;
+    status?: string | null;
+    trigger_type?: string | null;
+  } | null;
   started_at?: string | null;
   status: string;
   tool_policy_snapshot?: Record<string, unknown>;
   trigger_type?: string;
+};
+
+export type ScheduledJobRunObservability = {
+  error_distribution?: Array<{ count: number; error: string }>;
+  generated_at?: string;
+  job_type_distribution?: Array<{ count: number; job_type: string }>;
+  recent_failures?: Array<{
+    error_code?: string | null;
+    error_message?: string | null;
+    id: string;
+    job_name?: string;
+    latency_ms?: number | null;
+    scheduled_job_id?: string | null;
+    started_at?: string | null;
+  }>;
+  slow_runs?: Array<{
+    error_code?: string | null;
+    id: string;
+    job_name?: string;
+    latency_ms?: number | null;
+    records_imported?: number;
+    scheduled_job_id?: string | null;
+    started_at?: string | null;
+    status?: string;
+  }>;
+  status_distribution?: Array<{ count: number; status: string }>;
+  summary: {
+    action_write_runs?: number;
+    action_write_success_rate?: number;
+    action_write_success_runs?: number;
+    average_latency_ms?: number;
+    average_records_imported?: number;
+    cancelled_runs?: number;
+    failed_runs?: number;
+    failure_rate?: number;
+    model_gateway_called_runs?: number;
+    model_gateway_token_total?: number;
+    plugin_invocation_runs?: number;
+    running_runs?: number;
+    success_rate?: number;
+    succeeded_runs?: number;
+    total_runs?: number;
+  };
+  trigger_type_distribution?: Array<{ count: number; trigger_type: string }>;
+  write_target_distribution?: Array<{ count: number; write_target: string }>;
 };
 
 export type PluginRecord = {
@@ -3722,21 +3900,119 @@ export type PluginRecord = {
   status: string;
 };
 
+export type PluginMarketplaceItem = {
+  action_count: number;
+  action_templates?: string[];
+  category: string;
+  code: string;
+  connection_defaults?: Record<string, unknown>;
+  connection_count: number;
+  connection_template_version?: string;
+  description?: string | null;
+  id: string;
+  installed: boolean;
+  is_system?: boolean;
+  name: string;
+  plugin_id?: string | null;
+  protocol: string;
+  publisher?: string;
+  recommended_scenarios?: string[];
+  risk_level?: string;
+  status: string;
+  summary?: string;
+};
+
+export type PluginActionTemplateRecord = {
+  action_type: string;
+  code: string;
+  default_code?: string;
+  default_name?: string;
+  description?: string | null;
+  form_defaults?: Record<string, unknown>;
+  name: string;
+  plugin_code: string;
+  plugin_id?: string | null;
+  request_config?: Record<string, unknown>;
+  result_mapping?: Record<string, unknown>;
+  template_version?: string;
+};
+
+export type ResultWriteTargetFieldRecord = {
+  description?: string;
+  key: string;
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+};
+
+export type ResultWriteTargetRecord = {
+  code: string;
+  default_result_mapping: Record<string, unknown>;
+  description?: string;
+  form_label?: string;
+  label: string;
+  mapping_fields: ResultWriteTargetFieldRecord[];
+  supported_job_types?: string[];
+};
+
 export type PluginConnectionRecord = {
   auth_config?: Record<string, unknown>;
   auth_type?: string;
   endpoint_url: string;
   environment?: string;
   id: string;
+  last_test_summary?: {
+    checked_at?: string | null;
+    error_code?: string | null;
+    error_message?: string | null;
+    failed_step?: string | null;
+    latency_ms?: number | null;
+    mocked?: boolean;
+    response_status_code?: number | null;
+    status?: string | null;
+  };
   max_retries?: number;
   name: string;
   plugin_id: string;
   request_config?: Record<string, unknown>;
   status: string;
+  test_history?: PluginConnectionTestHistoryRecord[];
   timeout_seconds?: number;
 };
 
+export type PluginConnectionRepairSuggestion = {
+  code: string;
+  detail: string;
+  title: string;
+};
+
+export type PluginConnectionActionTemplateDraft = {
+  action_type?: string;
+  code?: string;
+  connection_id?: string;
+  description?: string;
+  name?: string;
+  plugin_id?: string;
+  request_config?: Record<string, unknown>;
+  requires_human_review?: boolean;
+  result_mapping?: Record<string, unknown>;
+  status?: string;
+};
+
+export type PluginConnectionTestHistoryRecord = {
+  action_template_draft?: PluginConnectionActionTemplateDraft;
+  checked_at?: string;
+  error_code?: string | null;
+  error_message?: string | null;
+  latency_ms?: number;
+  repair_suggestions?: PluginConnectionRepairSuggestion[];
+  request_summary?: Record<string, unknown>;
+  response_summary?: Record<string, unknown>;
+  status?: string;
+};
+
 export type PluginConnectionTestResult = {
+  action_template_draft?: PluginConnectionActionTemplateDraft;
   checked_at: string;
   connection_id: string;
   diagnostics?: Array<{
@@ -3756,8 +4032,10 @@ export type PluginConnectionTestResult = {
   plugin_id: string;
   protocol: string;
   request_summary?: Record<string, unknown>;
+  repair_suggestions?: PluginConnectionRepairSuggestion[];
   response_summary?: Record<string, unknown>;
   status: string;
+  test_history?: PluginConnectionTestHistoryRecord[];
 };
 
 export type PluginActionRecord = {
@@ -3832,6 +4110,24 @@ export async function fetchPlugins(): Promise<PluginRecord[]> {
   return response.items;
 }
 
+export async function fetchPluginMarketplace(): Promise<PluginMarketplaceItem[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<PluginMarketplaceItem>>('/api/system/plugin-marketplace', { token });
+  return response.items;
+}
+
+export async function fetchPluginActionTemplates(): Promise<PluginActionTemplateRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<PluginActionTemplateRecord>>('/api/system/plugin-action-templates', { token });
+  return response.items;
+}
+
+export async function fetchResultWriteTargets(): Promise<ResultWriteTargetRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<ResultWriteTargetRecord>>('/api/system/result-write-targets', { token });
+  return response.items;
+}
+
 export async function createPlugin(payload: Partial<PluginRecord>) {
   const token = requireAccessToken();
   return apiRequest<PluginRecord>('/api/system/plugins', {
@@ -3859,10 +4155,11 @@ export async function deletePlugin(pluginId: string) {
 }
 
 export async function fetchPluginConnections(
-  query: { pluginId?: string; status?: string } = {},
+  query: { environment?: string; pluginId?: string; status?: string } = {},
 ): Promise<PluginConnectionRecord[]> {
   const token = requireAccessToken();
   const params = new URLSearchParams();
+  appendQueryParam(params, 'environment', query.environment);
   appendQueryParam(params, 'plugin_id', query.pluginId);
   appendQueryParam(params, 'status', query.status);
   const queryString = params.toString();
@@ -4103,6 +4400,15 @@ export async function fetchScheduledJobs(): Promise<ScheduledJobRecord[]> {
   return response.items;
 }
 
+export async function fetchScheduledJobTemplates(): Promise<ScheduledJobTemplateRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<ScheduledJobTemplateRecord>>(
+    '/api/system/scheduled-job-templates',
+    { token },
+  );
+  return response.items;
+}
+
 export async function createScheduledJob(payload: Partial<ScheduledJobRecord>) {
   const token = requireAccessToken();
   return apiRequest<ScheduledJobRecord>('/api/system/scheduled-jobs', {
@@ -4129,9 +4435,14 @@ export async function deleteScheduledJob(jobId: string) {
   });
 }
 
-export async function runScheduledJob(jobId: string) {
+export async function runScheduledJob(
+  jobId: string,
+  triggerType: 'manual' | 'manual_rerun' = 'manual',
+  sourceRunId?: string,
+) {
   const token = requireAccessToken();
   return apiRequest<ScheduledJobRunRecord>(`/api/system/scheduled-jobs/${jobId}/run`, {
+    body: { source_run_id: sourceRunId, trigger_type: triggerType },
     method: 'POST',
     token,
   });
@@ -4152,6 +4463,13 @@ export async function fetchScheduledJobRuns(
   return response.items;
 }
 
+export async function fetchScheduledJobRunObservability(): Promise<ScheduledJobRunObservability> {
+  const token = requireAccessToken();
+  return apiRequest<ScheduledJobRunObservability>('/api/system/scheduled-job-runs/observability', {
+    token,
+  });
+}
+
 export type CodeInspectionReportRecord = {
   branch?: string | null;
   commit_sha?: string | null;
@@ -4169,12 +4487,18 @@ export type CodeInspectionReportRecord = {
   finding_count: number;
   id: string;
   notification_ids?: string[];
+  plugin_action_id?: string | null;
+  plugin_connection_id?: string | null;
+  plugin_invocation_log_id?: string | null;
   product_id?: string | null;
   repository_id?: string | null;
   repository_name?: string | null;
   repository_path?: string | null;
   risk_level: string;
+  scheduled_job_id?: string | null;
+  scheduled_job_run_id?: string | null;
   severe_finding_count: number;
+  source_system?: string | null;
   status: string;
   summary?: string;
 };
@@ -4212,6 +4536,71 @@ export type CodeInspectionDetailRecord = {
   report: CodeInspectionReportRecord & Record<string, unknown>;
 };
 
+export type CodeInspectionDashboardRecord = {
+  branch_ranking: Array<{
+    branch?: string | null;
+    finding_count: number;
+    report_count: number;
+    repository_id?: string | null;
+    repository_name?: string | null;
+    severe_finding_count: number;
+  }>;
+  category_distribution: Array<{ category: string; count: number }>;
+  committer_ranking: Array<{
+    bug_count: number;
+    email?: string | null;
+    finding_count: number;
+    name?: string | null;
+    severe_finding_count: number;
+    username?: string | null;
+  }>;
+  repository_ranking: Array<{
+    branch_count: number;
+    finding_count: number;
+    report_count: number;
+    repository_id?: string | null;
+    repository_name?: string | null;
+    repository_path?: string | null;
+    risk_level: string;
+    severe_finding_count: number;
+  }>;
+  risk_distribution: Array<{ count: number; risk_level: string }>;
+  rule_distribution: Array<{
+    category?: string;
+    finding_count: number;
+    rule_id: string;
+    severity: string;
+    severe_finding_count: number;
+  }>;
+  severity_distribution: Array<{ count: number; severity: string }>;
+  sla: {
+    bug_coverage_rate: number;
+    covered_by_bug_count: number;
+    oldest_uncovered_at?: string | null;
+    severe_finding_count: number;
+    severe_threshold: string;
+    status: 'at_risk' | 'healthy' | string;
+    uncovered_severe_finding_count: number;
+  };
+  summary: {
+    bug_created_count: number;
+    critical_finding_count: number;
+    failed_report_count: number;
+    finding_count: number;
+    high_finding_count: number;
+    repository_count: number;
+    report_count: number;
+    severe_finding_count: number;
+  };
+  trend: Array<{
+    bug_count: number;
+    date: string;
+    finding_count: number;
+    report_count: number;
+    severe_finding_count: number;
+  }>;
+};
+
 export type CodeInspectionListQuery = {
   committer?: string;
   page?: number;
@@ -4225,19 +4614,23 @@ export type CodeInspectionListQuery = {
   title?: string;
 };
 
+function appendCodeInspectionQuery(params: URLSearchParams, query: CodeInspectionListQuery = {}) {
+  appendQueryParam(params, 'committer', query.committer);
+  appendQueryParam(params, 'product_id', query.productId);
+  appendQueryParam(params, 'repository_id', query.repositoryId);
+  appendQueryParam(params, 'risk_level', query.riskLevel);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'title', query.title);
+}
+
 export async function fetchCodeInspectionReports(query: CodeInspectionListQuery = {}) {
   const token = requireAccessToken();
   const params = new URLSearchParams();
   appendQueryParam(params, 'page', query.page ?? 1);
   appendQueryParam(params, 'page_size', query.pageSize ?? 10);
-  appendQueryParam(params, 'committer', query.committer);
-  appendQueryParam(params, 'product_id', query.productId);
-  appendQueryParam(params, 'repository_id', query.repositoryId);
-  appendQueryParam(params, 'risk_level', query.riskLevel);
+  appendCodeInspectionQuery(params, query);
   appendQueryParam(params, 'sort_by', query.sortField);
   appendQueryParam(params, 'sort_order', query.sortOrder === 'ascend' ? 'asc' : 'desc');
-  appendQueryParam(params, 'status', query.status);
-  appendQueryParam(params, 'title', query.title);
   const response = await apiRequest<ListResponse<CodeInspectionReportRecord>>(
     `/api/governance/code-inspections?${params.toString()}`,
     { token },
@@ -4248,6 +4641,19 @@ export async function fetchCodeInspectionReports(query: CodeInspectionListQuery 
     rows: response.items,
     total: response.total,
   };
+}
+
+export async function fetchCodeInspectionDashboard(query: CodeInspectionListQuery = {}) {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendCodeInspectionQuery(params, query);
+  const queryString = params.toString();
+  return apiRequest<CodeInspectionDashboardRecord>(
+    queryString
+      ? `/api/governance/code-inspections/dashboard?${queryString}`
+      : '/api/governance/code-inspections/dashboard',
+    { token },
+  );
 }
 
 export async function fetchCodeInspectionDetail(reportId: string): Promise<CodeInspectionDetailRecord> {

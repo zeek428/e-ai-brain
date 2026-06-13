@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS scheduled_job_runs (
   id text PRIMARY KEY,
   scheduled_job_id text NOT NULL REFERENCES scheduled_jobs(id) ON DELETE CASCADE,
   collector_run_id text REFERENCES collector_runs(id) ON DELETE SET NULL,
+  source_run_id text REFERENCES scheduled_job_runs(id) ON DELETE SET NULL,
   trigger_type text NOT NULL DEFAULT 'manual',
   status text NOT NULL DEFAULT 'queued',
   scheduled_for timestamptz,

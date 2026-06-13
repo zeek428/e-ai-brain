@@ -29,6 +29,32 @@ def test_collector_runs_return_real_empty_list_without_placeholder_rows():
     assert response.json()["data"] == {"items": [], "total": 0}
 
 
+def test_collector_runs_accept_scheduled_job_collector_types():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product = create_product(admin_headers)
+
+    for collector_type in (
+        "code_inspection",
+        "dashboard_snapshot_refresh",
+        "lifecycle_context_refresh",
+        "pending_attribution_retry",
+        "plugin_action_invoke",
+    ):
+        response = client.post(
+            "/api/collectors/runs",
+            json={
+                "collector_type": collector_type,
+                "product_id": product["id"],
+                "source_system": "scheduled-job",
+            },
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["collector_type"] == collector_type
+
+
 def test_collector_run_create_patch_filter_and_audit():
     app.state.store.reset()
     admin_headers = auth_headers()

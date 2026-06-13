@@ -15,10 +15,13 @@ from app.services.plugins import (
     delete_plugin_connection_response,
     delete_plugin_response,
     invoke_plugin_action_response,
+    list_plugin_action_templates_response,
     list_plugin_actions_response,
     list_plugin_connections_response,
     list_plugin_invocation_logs_response,
+    list_plugin_marketplace_response,
     list_plugins_response,
+    list_result_write_targets_response,
     patch_plugin_action_response,
     patch_plugin_connection_response,
     patch_plugin_response,
@@ -130,6 +133,39 @@ def list_plugins(
     )
 
 
+@router.get("/api/system/plugin-marketplace")
+def list_plugin_marketplace(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        list_plugin_marketplace_response(current_store=store(request), user=user),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/plugin-action-templates")
+def list_plugin_action_templates(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        list_plugin_action_templates_response(current_store=store(request), user=user),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/result-write-targets")
+def list_result_write_targets(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        list_result_write_targets_response(current_store=store(request), user=user),
+        get_trace_id(request),
+    )
+
+
 @router.post("/api/system/plugins")
 def create_plugin(
     payload: PluginRequest,
@@ -179,6 +215,7 @@ def delete_plugin(
 @router.get("/api/system/plugin-connections")
 def list_plugin_connections(
     request: Request,
+    environment: str | None = None,
     plugin_id: str | None = None,
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
@@ -186,6 +223,7 @@ def list_plugin_connections(
     return envelope(
         list_plugin_connections_response(
             current_store=store(request),
+            environment=environment,
             plugin_id=plugin_id,
             status=status,
         ),

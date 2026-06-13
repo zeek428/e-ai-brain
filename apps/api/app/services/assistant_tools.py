@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.assistant_draft_builder import AssistantDraftBuilder
 from app.services.assistant_references import normalize_assistant_references
 
 __all__ = ["assistant_tool_results"]
-
 
 def assistant_tool_results(
     current_store: Any,
@@ -18,9 +18,18 @@ def assistant_tool_results(
 
     context = _assistant_read_context(current_store, product_id=product_id)
     intents = _assistant_tool_intents(message)
+    draft_builder = AssistantDraftBuilder(context)
     results: list[dict[str, Any]] = []
     for intent in intents:
-        if intent == "delivery_progress":
+        if intent == "plugin_connection_draft":
+            results.append(draft_builder.plugin_connection_draft(message=message))
+        elif intent == "plugin_action_draft":
+            results.append(draft_builder.plugin_action_draft(message=message))
+        elif intent == "code_inspection_job_draft":
+            results.append(draft_builder.code_inspection_job_draft(message=message))
+        elif intent == "scheduled_job_draft":
+            results.append(draft_builder.scheduled_job_draft())
+        elif intent == "delivery_progress":
             results.append(_delivery_progress_tool(context, limit=limit))
         elif intent == "pending_reviews":
             results.append(_pending_reviews_tool(context, limit=limit))
@@ -52,6 +61,8 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
     ]
     task_ids = {str(task["id"]) for task in tasks if task.get("id") is not None}
     return {
+        "ai_agents": list(getattr(current_store, "ai_agents", {}).values()),
+        "ai_skills": list(getattr(current_store, "ai_skills", {}).values()),
         "bugs": [
             bug
             for bug in current_store.bugs.values()
@@ -67,8 +78,18 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
             for review in current_store.human_reviews.values()
             if str(review.get("ai_task_id")) in task_ids
         ],
+        "integration_plugins": list(getattr(current_store, "integration_plugins", {}).values()),
+        "knowledge_documents": list(getattr(current_store, "knowledge_documents", {}).values()),
+        "model_gateway_configs": list(getattr(current_store, "model_gateway_configs", {}).values()),
+        "plugin_actions": list(getattr(current_store, "plugin_actions", {}).values()),
+        "plugin_connections": list(getattr(current_store, "plugin_connections", {}).values()),
         "products": products,
         "requirements": requirements,
+        "scheduled_jobs": [
+            job
+            for job in getattr(current_store, "scheduled_jobs", {}).values()
+            if not product_ids or job.get("product_id") in product_ids
+        ],
         "tasks": tasks,
         "task_by_id": {str(task["id"]): task for task in tasks if task.get("id") is not None},
         "versions": [
@@ -82,6 +103,16 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
 def _assistant_tool_intents(message: str) -> list[str]:
     normalized = message.lower()
     intents: list[str] = []
+    if _plugin_connection_draft_requested(normalized):
+        intents.append("plugin_connection_draft")
+    if _plugin_action_draft_requested(normalized):
+        intents.append("plugin_action_draft")
+    if _scheduled_job_draft_requested(normalized):
+        intents.append(
+            "code_inspection_job_draft"
+            if _code_inspection_draft_requested(normalized)
+            else "scheduled_job_draft",
+        )
     keyword_map = [
         (("进展", "进度", "全链路", "项目", "开发情况", "progress"), "delivery_progress"),
         (("待确认", "review", "评审", "确认"), "pending_reviews"),
@@ -96,6 +127,94 @@ def _assistant_tool_intents(message: str) -> list[str]:
     if not intents:
         intents = ["delivery_progress", "pending_reviews", "bugs"]
     return _unique(intents)[:4]
+
+
+def _scheduled_job_draft_requested(normalized_message: str) -> bool:
+    has_create_intent = any(
+        keyword in normalized_message
+        for keyword in ("创建", "新增", "配置", "生成", "新建", "create", "draft")
+    )
+    has_scheduled_job = any(
+        keyword in normalized_message
+        for keyword in ("定时作业", "定时任务", "scheduled job", "schedule")
+    )
+    has_weekly_feedback = any(
+        keyword in normalized_message
+        for keyword in ("用户反馈", "周反馈", "每周", "feedback", "maxcompute")
+    )
+    if has_create_intent and has_scheduled_job and _code_inspection_draft_requested(
+        normalized_message,
+    ):
+        return True
+    return has_create_intent and has_scheduled_job and has_weekly_feedback
+
+
+def _code_inspection_draft_requested(normalized_message: str) -> bool:
+    return any(
+        keyword in normalized_message
+        for keyword in (
+            "代码巡检",
+            "质量",
+            "安全",
+            "规范",
+            "code inspection",
+            "github",
+            "gitlab",
+            "扫描",
+        )
+    )
+
+
+def _plugin_action_draft_requested(normalized_message: str) -> bool:
+    has_create_intent = any(
+        keyword in normalized_message
+        for keyword in ("创建", "新增", "配置", "生成", "新建", "create", "draft")
+    )
+    has_action = any(
+        keyword in normalized_message
+        for keyword in ("插件动作", "动作", "结果动作", "plugin action", "action")
+    )
+    has_supported_template = any(
+        keyword in normalized_message
+        for keyword in (
+            "github",
+            "gitlab",
+            "邮箱",
+            "邮件",
+            "email",
+            "代码巡检",
+            "安全告警",
+            "通知",
+        )
+    )
+    return (
+        has_create_intent
+        and has_action
+        and has_supported_template
+        and not _scheduled_job_draft_requested(normalized_message)
+    )
+
+
+def _plugin_connection_draft_requested(normalized_message: str) -> bool:
+    has_create_intent = any(
+        keyword in normalized_message
+        for keyword in ("创建", "新增", "配置", "生成", "新建", "接入", "create", "draft")
+    )
+    has_connection = any(
+        keyword in normalized_message
+        for keyword in ("插件连接", "连接", "接入配置", "connection", "connector")
+    )
+    has_supported_plugin = any(
+        keyword in normalized_message
+        for keyword in ("github", "gitlab", "邮箱", "邮件", "email")
+    )
+    return (
+        has_create_intent
+        and has_connection
+        and has_supported_plugin
+        and not _scheduled_job_draft_requested(normalized_message)
+        and not _plugin_action_draft_requested(normalized_message)
+    )
 
 
 def _delivery_progress_tool(context: dict[str, Any], *, limit: int) -> dict[str, Any]:

@@ -68,17 +68,20 @@ class PluginReadRepository:
     def list_plugin_connections(
         self,
         *,
+        environment: str | None = None,
         plugin_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        where, params = self._where({"plugin_id": plugin_id, "status": status})
+        where, params = self._where(
+            {"environment": environment, "plugin_id": plugin_id, "status": status},
+        )
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
                     SELECT id, plugin_id, name, environment, endpoint_url, auth_type,
                            auth_config, request_config, timeout_seconds, max_retries, status,
-                           created_by, created_at, updated_at
+                           created_by, created_at, updated_at, last_test_summary, test_history
                     FROM plugin_connections
                     {where}
                     ORDER BY plugin_id ASC, environment ASC, id ASC
@@ -247,12 +250,12 @@ class PluginReadRepository:
                 INSERT INTO plugin_connections (
                   id, plugin_id, name, environment, endpoint_url, auth_type, auth_config,
                   request_config, timeout_seconds, max_retries, status, created_by, created_at,
-                  updated_at
+                  updated_at, last_test_summary, test_history
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s::jsonb,
                   %s::jsonb, %s, %s, %s, %s, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), %s::jsonb, %s::jsonb
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   plugin_id = EXCLUDED.plugin_id,
@@ -265,7 +268,9 @@ class PluginReadRepository:
                   timeout_seconds = EXCLUDED.timeout_seconds,
                   max_retries = EXCLUDED.max_retries,
                   status = EXCLUDED.status,
-                  updated_at = EXCLUDED.updated_at
+                  updated_at = EXCLUDED.updated_at,
+                  last_test_summary = EXCLUDED.last_test_summary,
+                  test_history = EXCLUDED.test_history
                 """,
                 (
                     connection["id"],
@@ -282,6 +287,8 @@ class PluginReadRepository:
                     connection.get("created_by"),
                     connection.get("created_at"),
                     connection.get("updated_at") or connection.get("created_at"),
+                    _json(connection.get("last_test_summary"), {}),
+                    _json(connection.get("test_history"), []),
                 ),
             )
 
@@ -435,6 +442,8 @@ class PluginReadRepository:
             "created_by": row[11],
             "created_at": row[12].isoformat() if row[12] else None,
             "updated_at": row[13].isoformat() if row[13] else None,
+            "last_test_summary": row[14] or {},
+            "test_history": row[15] or [],
         }
 
     def _action_from_row(self, row: Any) -> dict[str, Any]:

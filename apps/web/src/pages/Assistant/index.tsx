@@ -2,6 +2,7 @@ import {
   ClockCircleOutlined,
   DatabaseOutlined,
   ExclamationCircleOutlined,
+  FileTextOutlined,
   LinkOutlined,
   MessageOutlined,
   PlusOutlined,
@@ -11,16 +12,23 @@ import {
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import { Button, Input, Space, Spin, Tag, Typography, message as toast } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
+  ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+  ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   chatWithAssistant,
   fetchAssistantConversationMessages,
   fetchAssistantConversations,
+  fetchResultWriteTargets,
   type AssistantChatResponse,
   type AssistantConversationMessage,
   type AssistantReference,
   type AssistantConversationSummary,
+  type AssistantToolResult,
+  type AssistantToolResultItem,
+  type ResultWriteTargetRecord,
 } from '../../services/aiBrain';
 import { formatMutationError } from '../../utils/managementCrud';
 
@@ -32,6 +40,7 @@ type ChatMessage = {
   id: string;
   references?: AssistantReference[];
   role: 'assistant' | 'user';
+  toolResults?: AssistantToolResult[];
 };
 
 const welcomeMessages: ChatMessage[] = [
@@ -65,7 +74,277 @@ const starterPrompts = [
   },
 ];
 
-function AssistantBubble({ message }: { message: ChatMessage }) {
+function actionDraftItems(toolResults?: AssistantToolResult[]) {
+  return (toolResults ?? [])
+    .filter((toolResult) => toolResult.tool === 'assistant.action_draft')
+    .flatMap((toolResult) => toolResult.items ?? [])
+    .filter(
+      (item) =>
+        (
+          item.action === 'create_scheduled_job'
+          || item.action === 'create_plugin_action'
+          || item.action === 'create_plugin_connection'
+        )
+        && item.draft_id,
+    );
+}
+
+function draftPayloadText(payload: Record<string, unknown> | undefined, field: string) {
+  const value = field.split('.').reduce<unknown>((current, key) => {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      return undefined;
+    }
+    return (current as Record<string, unknown>)[key];
+  }, payload);
+  if (Array.isArray(value)) {
+    return value.length ? value.join('、') : '-';
+  }
+  if (value && typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return value === undefined || value === null || value === '' ? '-' : String(value);
+}
+
+function draftPayloadLabel(
+  payload: Record<string, unknown> | undefined,
+  field: string,
+  resultWriteTargetLabels: Map<string, string>,
+) {
+  const value = draftPayloadText(payload, field);
+  if (field === 'result_mapping.write_target') {
+    return resultWriteTargetLabels.get(value) ?? value;
+  }
+  return value;
+}
+
+function storeScheduledJobDraft(draft: AssistantToolResultItem) {
+  if (!draft.payload || typeof window === 'undefined') {
+    return;
+  }
+  window.sessionStorage.setItem(
+    ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+    JSON.stringify({
+      draftId: draft.draft_id,
+      payload: draft.payload,
+      title: draft.title,
+    }),
+  );
+}
+
+function storePluginActionDraft(draft: AssistantToolResultItem) {
+  if (!draft.payload || typeof window === 'undefined') {
+    return;
+  }
+  window.sessionStorage.setItem(
+    ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
+    JSON.stringify({
+      draftId: draft.draft_id,
+      payload: draft.payload,
+      title: draft.title,
+    }),
+  );
+}
+
+function storePluginConnectionDraft(draft: AssistantToolResultItem) {
+  if (!draft.payload || typeof window === 'undefined') {
+    return;
+  }
+  window.sessionStorage.setItem(
+    ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+    JSON.stringify({
+      draftId: draft.draft_id,
+      payload: draft.payload,
+      title: draft.title,
+    }),
+  );
+}
+
+function AssistantActionDraftCards({
+  drafts,
+  resultWriteTargetLabels,
+}: {
+  drafts: AssistantToolResultItem[];
+  resultWriteTargetLabels: Map<string, string>;
+}) {
+  if (!drafts.length) {
+    return null;
+  }
+  return (
+    <div className="assistant-action-draft-list">
+      {drafts.map((draft) => {
+        const payload = draft.payload;
+        const isPluginActionDraft = draft.action === 'create_plugin_action';
+        const isPluginConnectionDraft = draft.action === 'create_plugin_connection';
+        return (
+          <div className="assistant-action-draft-card" key={draft.draft_id}>
+            <div className="assistant-action-draft-header">
+              <Space size={8} wrap>
+                <FileTextOutlined />
+                <Text strong>{draft.title ?? '配置草案'}</Text>
+                {draft.risk_level ? <Tag color="orange">风险：{draft.risk_level}</Tag> : null}
+                {draft.requires_confirmation ? <Tag color="blue">待确认</Tag> : null}
+              </Space>
+              <Text type="secondary">
+                {isPluginConnectionDraft
+                  ? '确认前不会写入插件连接'
+                  : isPluginActionDraft
+                    ? '确认前不会写入插件动作'
+                    : '确认前不会写入作业定义'}
+              </Text>
+            </div>
+            <div className="assistant-action-draft-grid">
+              {isPluginConnectionDraft ? (
+                <>
+                  <span>
+                    <Text type="secondary">插件</Text>
+                    <Text>{draftPayloadText(payload, 'plugin_id')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">Endpoint</Text>
+                    <Text>{draftPayloadText(payload, 'endpoint_url')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">环境</Text>
+                    <Text>{draftPayloadText(payload, 'environment')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">认证</Text>
+                    <Text>{draftPayloadText(payload, 'auth_type')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">Params</Text>
+                    <Text>{draftPayloadText(payload, 'request_config.query')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">Headers</Text>
+                    <Text>{draftPayloadText(payload, 'request_config.headers')}</Text>
+                  </span>
+                </>
+              ) : isPluginActionDraft ? (
+                <>
+                  <span>
+                    <Text type="secondary">动作类型</Text>
+                    <Text>{draftPayloadText(payload, 'action_type')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">编码</Text>
+                    <Text>{draftPayloadText(payload, 'code')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">插件</Text>
+                    <Text>{draftPayloadText(payload, 'plugin_id')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">连接</Text>
+                    <Text>{draftPayloadText(payload, 'connection_id')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">请求方法</Text>
+                    <Text>{draftPayloadText(payload, 'request_config.method')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">请求路径</Text>
+                    <Text>{draftPayloadText(payload, 'request_config.path')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">写入目标</Text>
+                    <Text>{draftPayloadLabel(payload, 'result_mapping.write_target', resultWriteTargetLabels)}</Text>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span>
+                    <Text type="secondary">作业类型</Text>
+                    <Text>{draftPayloadText(payload, 'job_type')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">调度</Text>
+                    <Text>{draftPayloadText(payload, 'cron_expression')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">执行模式</Text>
+                    <Text>{draftPayloadText(payload, 'execution_mode')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">AI 模型</Text>
+                    <Text>{draftPayloadText(payload, 'model_gateway_config_id')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">Agent</Text>
+                    <Text>{draftPayloadText(payload, 'agent_id')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">Skills</Text>
+                    <Text>{draftPayloadText(payload, 'skill_ids')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">数据连接</Text>
+                    <Text>{draftPayloadText(payload, 'plugin_connection_id')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">结果动作</Text>
+                    <Text>{draftPayloadText(payload, 'plugin_action_id')}</Text>
+                  </span>
+                  {draftPayloadText(payload, 'assistant_prerequisite_draft_ids') !== '-' ? (
+                    <span>
+                      <Text type="secondary">前置草案</Text>
+                      <Text>{draftPayloadText(payload, 'assistant_prerequisite_draft_ids')}</Text>
+                    </span>
+                  ) : null}
+                </>
+              )}
+            </div>
+            <Space size={8} wrap>
+              {isPluginConnectionDraft ? (
+                <Button
+                  href="/tasks/plugins"
+                  size="small"
+                  type="primary"
+                  onMouseDown={() => storePluginConnectionDraft(draft)}
+                  onClick={() => storePluginConnectionDraft(draft)}
+                >
+                  应用到插件连接表单
+                </Button>
+              ) : isPluginActionDraft ? (
+                <Button
+                  href="/tasks/plugins"
+                  size="small"
+                  type="primary"
+                  onMouseDown={() => storePluginActionDraft(draft)}
+                  onClick={() => storePluginActionDraft(draft)}
+                >
+                  应用到插件动作表单
+                </Button>
+              ) : (
+                <Button
+                  href="/tasks/scheduled-jobs"
+                  size="small"
+                  type="primary"
+                  onMouseDown={() => storeScheduledJobDraft(draft)}
+                  onClick={() => storeScheduledJobDraft(draft)}
+                >
+                  应用到定时作业表单
+                </Button>
+              )}
+              <Button href={`/assistant?draft_id=${draft.draft_id}`} size="small">
+                查看草案
+              </Button>
+            </Space>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AssistantBubble({
+  message,
+  resultWriteTargetLabels,
+}: {
+  message: ChatMessage;
+  resultWriteTargetLabels: Map<string, string>;
+}) {
+  const drafts = actionDraftItems(message.toolResults);
   return (
     <div className={`assistant-bubble assistant-bubble-${message.role}`}>
       <div className="assistant-bubble-avatar">
@@ -88,6 +367,7 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
             ))}
           </div>
         ) : null}
+        <AssistantActionDraftCards drafts={drafts} resultWriteTargetLabels={resultWriteTargetLabels} />
       </div>
     </div>
   );
@@ -102,8 +382,18 @@ export default function AssistantPage() {
   const [isSending, setIsSending] = useState(false);
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
+  const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
+  const resultWriteTargetsLoadRequestedRef = useRef(false);
 
   const canSend = useMemo(() => inputValue.trim().length > 0 && !isSending, [inputValue, isSending]);
+  const hasPluginActionDraft = useMemo(
+    () => messages.some((item) => actionDraftItems(item.toolResults).some((draft) => draft.action === 'create_plugin_action')),
+    [messages],
+  );
+  const resultWriteTargetLabels = useMemo(
+    () => new Map(resultWriteTargets.map((target) => [target.code, target.form_label || target.label])),
+    [resultWriteTargets],
+  );
 
   const loadConversations = useCallback(async () => {
     setIsLoadingConversations(true);
@@ -119,6 +409,28 @@ export default function AssistantPage() {
   useEffect(() => {
     void loadConversations();
   }, [loadConversations]);
+
+  useEffect(() => {
+    if (!hasPluginActionDraft || resultWriteTargetsLoadRequestedRef.current) {
+      return;
+    }
+    let didCancel = false;
+    resultWriteTargetsLoadRequestedRef.current = true;
+    fetchResultWriteTargets()
+      .then((items) => {
+        if (!didCancel) {
+          setResultWriteTargets(items);
+        }
+      })
+      .catch((error) => {
+        if (!didCancel) {
+          toast.error(formatMutationError(error));
+        }
+      });
+    return () => {
+      didCancel = true;
+    };
+  }, [hasPluginActionDraft]);
 
   const startNewConversation = () => {
     setConversationId(undefined);
@@ -138,6 +450,7 @@ export default function AssistantPage() {
               id: item.id,
               references: item.references,
               role: item.role,
+              toolResults: item.toolResults,
             }))
           : welcomeMessages,
       );
@@ -152,6 +465,7 @@ export default function AssistantPage() {
               model: latestAssistantMessage.model ?? '',
               references: latestAssistantMessage.references,
               suggestions: latestAssistantMessage.suggestions,
+              toolResults: latestAssistantMessage.toolResults,
             }
           : undefined,
       );
@@ -190,6 +504,7 @@ export default function AssistantPage() {
           id: response.messageId,
           references: response.references,
           role: 'assistant',
+          toolResults: response.toolResults,
         },
       ]);
       await loadConversations();
@@ -283,7 +598,11 @@ export default function AssistantPage() {
           </div>
           <div className="assistant-message-list" aria-live="polite">
             {messages.map((item) => (
-              <AssistantBubble key={item.id} message={item} />
+              <AssistantBubble
+                key={item.id}
+                message={item}
+                resultWriteTargetLabels={resultWriteTargetLabels}
+              />
             ))}
             {isLoadingMessages ? (
               <div className="assistant-thinking">

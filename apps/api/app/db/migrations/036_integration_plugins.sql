@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS plugin_connections (
   auth_type text NOT NULL DEFAULT 'none',
   auth_config jsonb NOT NULL DEFAULT '{}'::jsonb,
   request_config jsonb NOT NULL DEFAULT '{}'::jsonb,
+  last_test_summary jsonb NOT NULL DEFAULT '{}'::jsonb,
+  test_history jsonb NOT NULL DEFAULT '[]'::jsonb,
   timeout_seconds integer NOT NULL DEFAULT 30,
   max_retries integer NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'active',

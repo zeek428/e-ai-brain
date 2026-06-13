@@ -1,0 +1,192 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+RESULT_WRITE_TARGETS = [
+    {
+        "code": "scheduled_job_result",
+        "default_result_mapping": {
+            "write_target": "scheduled_job_result",
+        },
+        "description": "仅保存为定时作业运行结果，适合调试、归档或后续人工复制。",
+        "form_label": "仅保存运行结果",
+        "label": "定时作业结果",
+        "mapping_fields": [
+            {
+                "description": "从响应 JSON 中读取导入数量或结果数组的路径。",
+                "key": "records_imported_path",
+                "label": "导入数量 JSONPath",
+                "placeholder": "$.row_count",
+                "required": False,
+            },
+        ],
+        "supported_job_types": ["plugin_action_invoke"],
+    },
+    {
+        "code": "user_feedback_insights",
+        "default_result_mapping": {
+            "insights_path": "$.insights",
+            "records_imported_path": "$.row_count",
+            "rows_path": "$.rows",
+            "write_target": "user_feedback_insights",
+        },
+        "description": "把 AI 处理后的用户反馈洞察写入用户洞察表。",
+        "form_label": "用户洞察表",
+        "label": "用户洞察表",
+        "mapping_fields": [
+            {
+                "description": "AI 输出中洞察列表所在路径。",
+                "key": "insights_path",
+                "label": "洞察列表 JSONPath",
+                "placeholder": "$.insights",
+                "required": True,
+            },
+            {
+                "description": "原始源表行数所在路径。",
+                "key": "records_imported_path",
+                "label": "源表行数 JSONPath",
+                "placeholder": "$.row_count",
+                "required": False,
+            },
+            {
+                "description": "原始行列表所在路径，用于运行详情回放。",
+                "key": "rows_path",
+                "label": "原始行列表 JSONPath",
+                "placeholder": "$.rows",
+                "required": False,
+            },
+        ],
+        "supported_job_types": ["user_feedback_insight_extract"],
+    },
+    {
+        "code": "code_inspection_reports",
+        "default_result_mapping": {
+            "branch_path": "$.branch",
+            "commit_sha_path": "$.commit_sha",
+            "findings_path": "$.findings",
+            "repository_id_path": "$.repository_id",
+            "risk_level_path": "$.risk_level",
+            "summary_path": "$.summary",
+            "write_target": "code_inspection_reports",
+        },
+        "description": "把仓库扫描或 AI 复核后的 findings 写入代码巡检报告。",
+        "form_label": "代码巡检报告",
+        "label": "代码巡检报告",
+        "mapping_fields": [
+            {
+                "description": "代码问题列表所在路径。",
+                "key": "findings_path",
+                "label": "Finding 列表 JSONPath",
+                "placeholder": "$.findings",
+                "required": True,
+            },
+            {
+                "description": "产品 Git 仓库 ID 所在路径。",
+                "key": "repository_id_path",
+                "label": "仓库 ID JSONPath",
+                "placeholder": "$.repository_id",
+                "required": False,
+            },
+            {
+                "description": "扫描分支所在路径。",
+                "key": "branch_path",
+                "label": "分支 JSONPath",
+                "placeholder": "$.branch",
+                "required": False,
+            },
+            {
+                "description": "扫描提交 SHA 所在路径。",
+                "key": "commit_sha_path",
+                "label": "提交 SHA JSONPath",
+                "placeholder": "$.commit_sha",
+                "required": False,
+            },
+            {
+                "description": "整体风险等级所在路径。",
+                "key": "risk_level_path",
+                "label": "风险级别 JSONPath",
+                "placeholder": "$.risk_level",
+                "required": False,
+            },
+            {
+                "description": "巡检摘要所在路径。",
+                "key": "summary_path",
+                "label": "摘要 JSONPath",
+                "placeholder": "$.summary",
+                "required": False,
+            },
+        ],
+        "supported_job_types": ["code_repository_inspection"],
+    },
+    {
+        "code": "email_notifications",
+        "default_result_mapping": {
+            "delivery_id_path": "$.message_id",
+            "delivery_status_path": "$.status",
+            "recipients_path": "$.recipients",
+            "subject_path": "$.subject",
+            "write_target": "email_notifications",
+        },
+        "description": "记录邮件通知动作的投递反馈，便于任务运行详情追踪。",
+        "form_label": "邮件通知记录",
+        "label": "邮件通知记录",
+        "mapping_fields": [
+            {
+                "description": "收件人列表或单个收件人所在路径。",
+                "key": "recipients_path",
+                "label": "收件人 JSONPath",
+                "placeholder": "$.recipients",
+                "required": True,
+            },
+            {
+                "description": "邮件主题所在路径。",
+                "key": "subject_path",
+                "label": "主题 JSONPath",
+                "placeholder": "$.subject",
+                "required": False,
+            },
+            {
+                "description": "投递状态所在路径。",
+                "key": "delivery_status_path",
+                "label": "投递状态 JSONPath",
+                "placeholder": "$.status",
+                "required": False,
+            },
+            {
+                "description": "邮件网关返回的消息 ID 所在路径。",
+                "key": "delivery_id_path",
+                "label": "消息 ID JSONPath",
+                "placeholder": "$.message_id",
+                "required": False,
+            },
+        ],
+        "supported_job_types": ["plugin_action_invoke", "code_repository_inspection"],
+    },
+]
+
+
+def result_write_targets() -> list[dict[str, Any]]:
+    return deepcopy(RESULT_WRITE_TARGETS)
+
+
+def result_write_target_by_code(code: str | None) -> dict[str, Any] | None:
+    normalized = str(code or "scheduled_job_result")
+    for target in RESULT_WRITE_TARGETS:
+        if target["code"] == normalized:
+            return deepcopy(target)
+    return None
+
+
+def result_write_target_default_mapping(code: str | None) -> dict[str, Any]:
+    target = result_write_target_by_code(code)
+    if target is None:
+        return {"write_target": str(code or "scheduled_job_result")}
+    return deepcopy(target["default_result_mapping"])
+
+
+def result_write_target_label(code: str | None) -> str:
+    target = result_write_target_by_code(code)
+    if target is None:
+        return str(code or "scheduled_job_result")
+    return str(target["label"])

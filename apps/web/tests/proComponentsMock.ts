@@ -66,6 +66,7 @@ vi.mock('@ant-design/pro-components', async () => {
     onSubmit,
     rowKey,
     rowSelection,
+    search,
     scroll,
     tableLayout,
     toolBarRender,
@@ -94,11 +95,12 @@ vi.mock('@ant-design/pro-components', async () => {
       onChange?: (selectedRowKeys: React.Key[], selectedRows: Row[]) => void;
       selectedRowKeys?: React.Key[];
     };
+    search?: false;
     scroll?: { x?: number | string | true };
     tableLayout?: string;
     toolBarRender?: () => React.ReactNode[];
   }) {
-    const searchColumns = columns.filter((column) => column.search !== false);
+    const searchColumns = search === false ? [] : columns.filter((column) => column.search !== false);
     const tableColumns = columns.filter((column) => !column.hideInTable);
     const selectedKeys = new Set((rowSelection?.selectedRowKeys ?? []).map(String));
     const toggleSelection = (row: Row, checked: boolean) => {
@@ -140,7 +142,7 @@ vi.mock('@ant-design/pro-components', async () => {
         searchColumns.map((column) =>
           React.createElement(
             'label',
-            { key: String(column.dataIndex) },
+            { key: String(column.key ?? column.dataIndex ?? column.title) },
             column.title,
             column.valueType === 'dateRange'
               ? React.createElement(

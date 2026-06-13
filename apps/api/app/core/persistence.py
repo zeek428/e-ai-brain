@@ -117,6 +117,26 @@ class PostgresSnapshotRepository:
                     cursor,
                     "043_official_devops_plugins.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "044_scheduled_job_run_source.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "045_scheduled_job_collector_types.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "046_code_inspection_plugin_source.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "047_plugin_connection_last_test_summary.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "048_plugin_connection_test_history.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1031,10 +1051,12 @@ class PostgresSnapshotRepository:
     def list_plugin_connections(
         self,
         *,
+        environment: str | None = None,
         plugin_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         return self._plugin_read_repository.list_plugin_connections(
+            environment=environment,
             plugin_id=plugin_id,
             status=status,
         )

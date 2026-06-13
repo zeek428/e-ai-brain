@@ -1,7 +1,9 @@
+import json
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+import app.services.scheduled_jobs as scheduled_jobs_service
 from app.main import app
 from app.services.code_inspections import existing_code_inspection_bug_id, finding_fingerprint
 
@@ -45,6 +47,23 @@ def create_repository(
             "repo_type": "code",
             "root_path": "/",
             "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+
+
+def create_model_gateway(headers: dict[str, str]) -> dict:
+    return client.post(
+        "/api/system/model-gateway-configs",
+        json={
+            "api_key": "sk-code-inspection",
+            "base_url": "https://llm.example.com/v1",
+            "default_chat_model": "code-inspection-model",
+            "is_default": True,
+            "name": "代码巡检模型",
+            "provider": "openai_compatible",
+            "status": "active",
+            "timeout_seconds": 12,
         },
         headers=headers,
     ).json()["data"]
@@ -255,10 +274,16 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     assert listed.status_code == 200
     listed_payload = listed.json()["data"]
     assert listed_payload["total"] == 1
-    assert listed_payload["items"][0]["id"] == report_id
-    assert listed_payload["items"][0]["finding_count"] == 2
-    assert listed_payload["items"][0]["risk_level"] == "critical"
-    assert listed_payload["items"][0]["severe_finding_count"] == 1
+    listed_report = listed_payload["items"][0]
+    assert listed_report["id"] == report_id
+    assert listed_report["finding_count"] == 2
+    assert listed_report["risk_level"] == "critical"
+    assert listed_report["severe_finding_count"] == 1
+    assert listed_report["scheduled_job_id"] == job["id"]
+    assert listed_report["scheduled_job_run_id"] == run["id"]
+    assert listed_report["plugin_connection_id"] == connection["id"]
+    assert listed_report["plugin_action_id"] == action["id"]
+    assert listed_report["plugin_invocation_log_id"].startswith("plugin_invocation_log_")
 
     detail = client.get(
         f"/api/governance/code-inspections/{report_id}",
@@ -267,6 +292,13 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     assert detail.status_code == 200
     detail_payload = detail.json()["data"]
     assert detail_payload["report"]["repository_id"] == repository["id"]
+    assert detail_payload["report"]["scheduled_job_id"] == job["id"]
+    assert detail_payload["report"]["scheduled_job_run_id"] == run["id"]
+    assert detail_payload["report"]["plugin_connection_id"] == connection["id"]
+    assert detail_payload["report"]["plugin_action_id"] == action["id"]
+    assert detail_payload["report"]["plugin_invocation_log_id"].startswith(
+        "plugin_invocation_log_",
+    )
     assert detail_payload["report"]["committer_summary"][0]["email"] == "alice@example.com"
     assert detail_payload["findings"][0]["severity"] == "critical"
     assert detail_payload["findings"][0]["committer_email"] == "alice@example.com"
@@ -283,6 +315,223 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     assert bug_items[0]["source"] == "code_inspection"
     assert bug_items[0]["evidence"]["code_inspection_report_id"] == report_id
     assert bug_items[0]["evidence"]["committer_email"] == "alice@example.com"
+
+
+def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, code="repo-quality-product-dashboard")
+    repository = create_repository(headers, product["id"])
+    _, connection, action = create_scanner_plugin(headers, repository["id"])
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {"branch": "main", "repository_id": repository["id"]},
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Dashboard repository inspection",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "result_actions": [
+                {"type": "write_code_inspection_report"},
+                {
+                    "severity_threshold": "critical",
+                    "type": "create_bug_for_severe_findings",
+                },
+            ],
+            "schedule_type": "manual",
+            "source_system": "repo-quality-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+    run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers)
+    assert run.status_code == 200
+
+    dashboard = client.get(
+        f"/api/governance/code-inspections/dashboard?product_id={product['id']}",
+        headers=headers,
+    )
+
+    assert dashboard.status_code == 200
+    payload = dashboard.json()["data"]
+    assert payload["summary"]["report_count"] == 1
+    assert payload["summary"]["finding_count"] == 2
+    assert payload["summary"]["severe_finding_count"] == 1
+    assert payload["summary"]["bug_created_count"] == 1
+    assert payload["sla"]["status"] == "healthy"
+    assert payload["sla"]["bug_coverage_rate"] == 1
+    assert payload["rule_distribution"][0]["rule_id"] == "SEC001"
+    assert payload["rule_distribution"][0]["severe_finding_count"] == 1
+    assert payload["repository_ranking"][0]["repository_id"] == repository["id"]
+    assert payload["repository_ranking"][0]["risk_level"] == "critical"
+    assert payload["branch_ranking"][0]["branch"] == "main"
+    assert payload["committer_ranking"][0]["email"] == "alice@example.com"
+    assert payload["committer_ranking"][0]["bug_count"] == 1
+    assert payload["trend"][0]["report_count"] == 1
+
+    filtered = client.get(
+        "/api/governance/code-inspections/dashboard?committer=carol@example.com",
+        headers=headers,
+    )
+    assert filtered.status_code == 200
+    assert filtered.json()["data"]["summary"]["report_count"] == 0
+
+
+def test_ai_generated_repository_inspection_calls_model_before_writing_report(monkeypatch):
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, code="repo-quality-product-ai")
+    repository = create_repository(headers, product["id"])
+    model_gateway = create_model_gateway(headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "code_inspection_analysis",
+            "name": "代码巡检分析",
+            "prompt_template": "归一化扫描器结果，提取安全、质量和规范问题。",
+            "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "code_inspection_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "代码巡检 Agent",
+            "status": "active",
+            "system_prompt": "你是代码巡检分析助手。",
+        },
+        headers=headers,
+    ).json()["data"]
+    _, connection, action = create_scanner_plugin(
+        headers,
+        repository["id"],
+        code="repo_quality_scanner_ai",
+        response_json=scanner_response(repository["id"], severity="minor"),
+    )
+    model_calls: list[dict[str, object]] = []
+
+    class FakeModelResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "branch": "main",
+                                        "commit_sha": "ai5678",
+                                        "findings": [
+                                            {
+                                                "category": "security",
+                                                "committer_email": "alice@example.com",
+                                                "committer_name": "Alice Chen",
+                                                "description": "AI 复核后确认存在密钥泄露风险。",
+                                                "file_path": "src/config.py",
+                                                "line_number": 12,
+                                                "recommendation": "立即轮转密钥并迁移到密钥管理。",
+                                                "rule_id": "AI_SEC001",
+                                                "severity": "critical",
+                                                "title": "AI confirmed hardcoded access key",
+                                            },
+                                        ],
+                                        "repository_id": repository["id"],
+                                        "risk_level": "critical",
+                                        "summary": "AI 复核确认 1 个 critical 安全问题。",
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            },
+                        },
+                    ],
+                    "usage": {
+                        "completion_tokens": 28,
+                        "prompt_tokens": 80,
+                        "total_tokens": 108,
+                    },
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_model_urlopen(request, timeout):
+        model_calls.append(
+            {
+                "body": request.data.decode("utf-8"),
+                "headers": dict(request.header_items()),
+                "timeout": timeout,
+                "url": request.full_url,
+            },
+        )
+        return FakeModelResponse()
+
+    monkeypatch.setattr(scheduled_jobs_service, "urlopen", fake_model_urlopen)
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "config_json": {"repository_id": repository["id"]},
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "code_repository_inspection",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "AI repository inspection",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+            "source_system": "repo-quality-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers)
+
+    assert run.status_code == 200
+    run_payload = run.json()["data"]
+    assert run_payload["status"] == "succeeded"
+    assert model_calls and model_calls[0]["url"] == "https://llm.example.com/v1/chat/completions"
+    assert model_calls[0]["timeout"] == 12
+    model_body = json.loads(str(model_calls[0]["body"]))
+    assert model_body["model"] == "code-inspection-model"
+    user_payload = json.loads(model_body["messages"][1]["content"])
+    assert user_payload["job"]["job_type"] == "code_repository_inspection"
+    assert user_payload["output_contract"]["write_target"] == "code_inspection_reports"
+    assert user_payload["source_row_count"] == 2
+
+    execution_nodes = run_payload["result_summary"]["execution_nodes"]
+    assert execution_nodes["data_connection"]["records_imported"] == 2
+    assert execution_nodes["skill_processing"]["model_gateway_called"] is True
+    assert execution_nodes["skill_processing"]["model_log_id"].startswith("model_log_")
+    assert execution_nodes["skill_processing"]["output"]["finding_count"] == 1
+    assert execution_nodes["result_action"]["write_target"] == "code_inspection_reports"
+    assert execution_nodes["result_action"]["feedback"]["report_id"].startswith(
+        "code_inspection_report_",
+    )
+    assert run_payload["result_summary"]["plugin"]["response_summary"]["ai_processed"] is True
+
+    report_id = run_payload["result_summary"]["report_id"]
+    detail = client.get(f"/api/governance/code-inspections/{report_id}", headers=headers)
+    detail_payload = detail.json()["data"]
+    assert detail_payload["report"]["commit_sha"] == "ai5678"
+    assert detail_payload["report"]["risk_level"] == "critical"
+    assert detail_payload["findings"][0]["rule_id"] == "AI_SEC001"
+    assert detail_payload["findings"][0]["severity"] == "critical"
 
 
 def test_scheduled_repository_inspection_rejects_unsupported_notification_channel():

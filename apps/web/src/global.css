@@ -628,6 +628,47 @@ body {
   text-overflow: ellipsis;
 }
 
+.assistant-action-draft-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  white-space: normal;
+}
+
+.assistant-action-draft-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dbe7ff;
+  border-radius: 8px;
+  background: #f7faff;
+}
+
+.assistant-action-draft-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-action-draft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.assistant-action-draft-grid span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.assistant-action-draft-grid .ant-typography {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .assistant-bubble-user .assistant-bubble-content .ant-typography {
   color: #ffffff;
 }

@@ -132,6 +132,11 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "036_integration_plugins.sql" in applied_migrations
     assert "038_plugin_connection_request_config.sql" in applied_migrations
     assert "039_task_center_operational_menus.sql" in applied_migrations
+    assert "044_scheduled_job_run_source.sql" in applied_migrations
+    assert "045_scheduled_job_collector_types.sql" in applied_migrations
+    assert "046_code_inspection_plugin_source.sql" in applied_migrations
+    assert "047_plugin_connection_last_test_summary.sql" in applied_migrations
+    assert "048_plugin_connection_test_history.sql" in applied_migrations
 
 
 def test_postgres_brain_app_read_models_delegate_to_domain_repository(monkeypatch):

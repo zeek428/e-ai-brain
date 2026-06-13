@@ -43,6 +43,9 @@ from app.services.plugins import (
     records_imported_from_mapping,
     resolve_plugin_snapshot,
 )
+from app.services.scheduled_job_execution_engine import (
+    ScheduledJobExecutionEngine as JobExecutionEngine,
+)
 from app.services.skill_packages import load_skill_package_snapshot, store_skill_package
 from app.services.user_feedback import (
     USER_FEEDBACK_SENTIMENTS,
@@ -76,6 +79,7 @@ SCHEDULED_JOB_EXECUTION_MODES = {"ai_assisted", "ai_generated", "deterministic"}
 SCHEDULED_JOB_SCHEDULE_TYPES = {"cron", "interval", "manual"}
 SCHEDULED_JOB_RUN_STATUSES = {"cancelled", "failed", "queued", "running", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TERMINAL_STATUSES = {"cancelled", "failed", "skipped", "succeeded"}
+SCHEDULED_JOB_RUN_TRIGGER_TYPES = {"manual", "manual_rerun", "scheduler"}
 USER_FEEDBACK_INSIGHT_WRITE_TARGETS = {"scheduled_job_result", "user_feedback_insights"}
 
 
@@ -835,6 +839,117 @@ def list_scheduled_jobs_response(
     return {"items": items, "total": len(items)}
 
 
+def scheduled_job_audit_payload(job: dict[str, Any]) -> dict[str, Any]:
+    payload = {"job_type": job["job_type"], "enabled": job["enabled"]}
+    assistant_draft = (job.get("config_json") or {}).get("assistant_draft")
+    if isinstance(assistant_draft, dict):
+        payload["assistant_draft"] = {
+            key: value
+            for key, value in {
+                "draft_id": assistant_draft.get("draft_id"),
+                "source": assistant_draft.get("source"),
+                "title": assistant_draft.get("title"),
+            }.items()
+            if value
+        }
+    template_source = (job.get("config_json") or {}).get("template_source")
+    if isinstance(template_source, dict):
+        payload["template_source"] = {
+            key: value
+            for key, value in {
+                "source_id": template_source.get("source_id"),
+                "source_type": template_source.get("source_type"),
+                "title": template_source.get("title"),
+            }.items()
+            if value
+        }
+    return payload
+
+
+def scheduled_job_run_audit_payload(
+    *,
+    job: dict[str, Any],
+    run: dict[str, Any],
+) -> dict[str, Any]:
+    result_summary = run.get("result_summary") or {}
+    execution_nodes = result_summary.get("execution_nodes") or {}
+    skill_processing = execution_nodes.get("skill_processing") or {}
+    result_action = execution_nodes.get("result_action") or {}
+    processing = result_summary.get("processing") or {}
+    plugin_snapshot = run.get("resolved_plugin_snapshot") or {}
+    plugin = plugin_snapshot.get("plugin") or {}
+    connection = plugin_snapshot.get("connection") or {}
+    action = plugin_snapshot.get("action") or {}
+
+    model_gateway_called = None
+    if isinstance(skill_processing.get("model_gateway_called"), bool):
+        model_gateway_called = skill_processing["model_gateway_called"]
+    elif isinstance(processing.get("model_gateway_called"), bool):
+        model_gateway_called = processing["model_gateway_called"]
+
+    result_action_types = [
+        item.get("type")
+        for item in (job.get("result_actions") or [])
+        if isinstance(item, dict) and item.get("type")
+    ]
+    payload = {
+        "agent_id": job.get("agent_id"),
+        "collector_run_id": run.get("collector_run_id"),
+        "error_code": run.get("error_code"),
+        "execution_mode": job.get("execution_mode"),
+        "job_type": job["job_type"],
+        "knowledge_document_ids": list(job.get("knowledge_document_ids") or []) or None,
+        "model_gateway_called": model_gateway_called,
+        "model_gateway_config_id": job.get("model_gateway_config_id"),
+        "plugin_action_code": action.get("code"),
+        "plugin_action_id": job.get("plugin_action_id"),
+        "plugin_code": plugin.get("code"),
+        "plugin_connection_environment": connection.get("environment"),
+        "plugin_connection_id": job.get("plugin_connection_id"),
+        "plugin_invocation_log_id": run.get("plugin_invocation_log_id"),
+        "product_id": job.get("product_id"),
+        "records_imported": run.get("records_imported", 0),
+        "result_action_types": result_action_types or None,
+        "result_write_target": result_action.get("write_target")
+        or result_summary.get("write_target"),
+        "scheduled_job_id": run.get("scheduled_job_id"),
+        "skill_ids": list(job.get("skill_ids") or []) or None,
+        "source_run_id": run.get("source_run_id"),
+        "status": run.get("status"),
+        "trigger_type": run.get("trigger_type"),
+    }
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def scheduled_job_run_source_summary(source_run: dict[str, Any] | None) -> dict[str, Any] | None:
+    if source_run is None:
+        return None
+    return {
+        "error_code": source_run.get("error_code"),
+        "finished_at": source_run.get("finished_at"),
+        "id": source_run["id"],
+        "latency_ms": source_run.get("latency_ms"),
+        "records_imported": source_run.get("records_imported", 0),
+        "started_at": source_run.get("started_at"),
+        "status": source_run.get("status"),
+        "trigger_type": source_run.get("trigger_type"),
+    }
+
+
+def public_scheduled_job_run(
+    run: dict[str, Any],
+    *,
+    current_store: Any,
+) -> dict[str, Any]:
+    public_run = dict(run)
+    source_run_id = run.get("source_run_id")
+    if source_run_id:
+        public_run["source_run_summary"] = scheduled_job_run_source_summary(
+            current_store.scheduled_job_runs.get(source_run_id),
+        )
+    return public_run
+
+
 def create_scheduled_job_response(
     *,
     current_store: Any,
@@ -902,7 +1017,7 @@ def create_scheduled_job_response(
         actor_id=user["id"],
         subject_type="scheduled_job",
         subject_id=job_id,
-        payload={"job_type": job["job_type"], "enabled": job["enabled"]},
+        payload=scheduled_job_audit_payload(job),
     )
     persist_record(
         current_store,
@@ -971,7 +1086,7 @@ def patch_scheduled_job_response(
         actor_id=user["id"],
         subject_type="scheduled_job",
         subject_id=job_id,
-        payload={"job_type": job["job_type"], "enabled": job["enabled"]},
+        payload=scheduled_job_audit_payload(job),
     )
     persist_record(
         current_store,
@@ -1316,17 +1431,34 @@ def scheduled_job_ai_messages(
                         "prompt": prompt,
                     },
                 )
-    output_contract = {
-        "insights_path": str(output_mapping.get("insights_path") or "$.insights"),
-        "records_imported_path": str(output_mapping.get("records_imported_path") or "$.row_count"),
-        "write_target": output_mapping.get("write_target") or "user_feedback_insights",
-    }
-    system_prompt = (
-        (agent or {}).get("system_prompt")
-        or "你是企业 AI 大脑的数据分析助手，负责把数据连接返回的原始数据整理为结果动作需要的 JSON。"
-    )
-    user_payload = {
-        "instructions": [
+    if job.get("job_type") == "code_repository_inspection":
+        instructions = [
+            "分析 data_connection_response 中的仓库扫描数据，提取质量、安全和规范问题。",
+            "必须只返回 JSON 对象，不要返回 Markdown。",
+            (
+                "返回 JSON 必须包含 repository_id、branch、commit_sha、risk_level、"
+                "summary 和 findings 数组。"
+            ),
+            (
+                "findings 中每个问题至少包含 category、severity、title、description、"
+                "file_path、line_number、rule_id 和 recommendation；如果源数据有提交人，"
+                "保留 committer_name、committer_email 或 committer_username。"
+            ),
+            "如果源数据已有扫描 finding，也要校验、归一化严重级别并输出为结果动作可消费的结构。",
+        ]
+        output_contract = {
+            "branch_path": str(output_mapping.get("branch_path") or "$.branch"),
+            "commit_sha_path": str(output_mapping.get("commit_sha_path") or "$.commit_sha"),
+            "findings_path": str(output_mapping.get("findings_path") or "$.findings"),
+            "repository_id_path": str(
+                output_mapping.get("repository_id_path") or "$.repository_id",
+            ),
+            "risk_level_path": str(output_mapping.get("risk_level_path") or "$.risk_level"),
+            "summary_path": str(output_mapping.get("summary_path") or "$.summary"),
+            "write_target": output_mapping.get("write_target") or "code_inspection_reports",
+        }
+    else:
+        instructions = [
             "分析 data_connection_response 中的数据，提取有价值的信息。",
             "必须只返回 JSON 对象，不要返回 Markdown。",
             (
@@ -1334,7 +1466,20 @@ def scheduled_job_ai_messages(
                 "content、feedback_type、sentiment、source_channel 和 tags。"
             ),
             "如果源数据已有可用洞察，也要校验、清洗并输出为结果动作可消费的结构。",
-        ],
+        ]
+        output_contract = {
+            "insights_path": str(output_mapping.get("insights_path") or "$.insights"),
+            "records_imported_path": str(
+                output_mapping.get("records_imported_path") or "$.row_count",
+            ),
+            "write_target": output_mapping.get("write_target") or "user_feedback_insights",
+        }
+    system_prompt = (
+        (agent or {}).get("system_prompt")
+        or "你是企业 AI 大脑的数据分析助手，负责把数据连接返回的原始数据整理为结果动作需要的 JSON。"
+    )
+    user_payload = {
+        "instructions": instructions,
         "job": {
             "id": job.get("id"),
             "job_type": job.get("job_type"),
@@ -1489,67 +1634,6 @@ def run_scheduled_job_ai_processing(
     }
 
 
-def build_data_connection_execution_node(
-    *,
-    job: dict[str, Any],
-    plugin_summary: dict[str, Any],
-    records_imported: int,
-    resolved_plugin_input_mapping: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "action_id": plugin_summary.get("action_id") or job.get("plugin_action_id"),
-        "connection_id": plugin_summary.get("connection_id") or job.get("plugin_connection_id"),
-        "input_mapping": resolved_plugin_input_mapping,
-        "label": "数据连接获取内容",
-        "plugin_invocation_log_id": plugin_summary.get("invocation_log_id"),
-        "records_imported": records_imported,
-        "request_summary": plugin_summary.get("request_summary") or {},
-        "response_summary": plugin_summary.get("response_summary") or {},
-        "status": plugin_summary.get("status") or "unknown",
-    }
-
-
-def build_plugin_action_execution_nodes(
-    current_store: Any,
-    *,
-    job: dict[str, Any],
-    plugin_output_mapping: dict[str, Any],
-    plugin_records_imported: int,
-    plugin_summary: dict[str, Any],
-    resolved_plugin_input_mapping: dict[str, Any],
-) -> dict[str, Any]:
-    skill_ids = list(job.get("skill_ids", []))
-    return {
-        "data_connection": build_data_connection_execution_node(
-            job=job,
-            plugin_summary=plugin_summary,
-            records_imported=plugin_records_imported,
-            resolved_plugin_input_mapping=resolved_plugin_input_mapping,
-        ),
-        "result_action": {
-            "action_id": plugin_summary.get("action_id") or job.get("plugin_action_id"),
-            "feedback": {
-                "plugin_invocation_log_id": plugin_summary.get("invocation_log_id"),
-                "records_imported": plugin_records_imported,
-                "response_summary": plugin_summary.get("response_summary") or {},
-            },
-            "label": "结果动作反馈内容",
-            "records_imported": plugin_records_imported,
-            "status": plugin_summary.get("status") or "unknown",
-            "write_target": plugin_output_mapping.get("write_target") or "scheduled_job_result",
-        },
-        "skill_processing": {
-            "label": "Skill 处理后内容",
-            "model_gateway_called": False,
-            "note": "当前作业类型未执行平台 Skill/大模型处理，结果直接来自插件动作。",
-            "processing_mode": "plugin_structured_output",
-            "skill_codes": skill_codes_for_job(current_store, job),
-            "skill_ids": skill_ids,
-            "status": "not_configured" if not skill_ids else "not_run",
-        },
-    }
-
-
 def run_user_feedback_insight_extract_job(
     current_store: Any,
     *,
@@ -1637,7 +1721,7 @@ def run_user_feedback_insight_extract_job(
     skill_codes = skill_codes_for_job(current_store, job)
     summary = {
         "execution_nodes": {
-            "data_connection": build_data_connection_execution_node(
+            "data_connection": JobExecutionEngine.data_connection_execution_node(
                 job=job,
                 plugin_summary=plugin_summary,
                 records_imported=source_row_count,
@@ -1701,10 +1785,12 @@ def run_scheduled_job_response(
     *,
     current_store: Any,
     job_id: str,
+    source_run_id: str | None,
     trigger_type: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
+    ensure_enum(trigger_type, SCHEDULED_JOB_RUN_TRIGGER_TYPES, "scheduled job run trigger_type")
     sync_scheduled_job_store(current_store)
     sync_ai_agent_store(current_store)
     sync_ai_skill_store(current_store)
@@ -1712,6 +1798,24 @@ def run_scheduled_job_response(
     job = current_store.scheduled_jobs.get(job_id)
     if job is None:
         raise api_error(404, "NOT_FOUND", "Scheduled job not found")
+    source_run = None
+    if source_run_id:
+        sync_scheduled_job_run_store(current_store, scheduled_job_id=job_id)
+        source_run = current_store.scheduled_job_runs.get(source_run_id)
+        if source_run is None:
+            raise api_error(404, "NOT_FOUND", "Source scheduled job run not found")
+        if source_run.get("scheduled_job_id") != job_id:
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                "source_run_id must belong to the scheduled job",
+            )
+        if trigger_type != "manual_rerun":
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                "source_run_id is only supported for manual_rerun",
+            )
     if not job.get("enabled"):
         raise api_error(409, "SCHEDULED_JOB_DISABLED", "Scheduled job is disabled")
     effective_job_type = effective_scheduled_job_type(job)
@@ -1742,6 +1846,7 @@ def run_scheduled_job_response(
         "result_summary": {},
         "scheduled_for": now,
         "scheduled_job_id": job_id,
+        "source_run_id": source_run.get("id") if source_run else None,
         "started_at": now,
         "status": "running",
         "trigger_type": trigger_type,
@@ -1789,16 +1894,22 @@ def run_scheduled_job_response(
             )
             plugin_summary = {
                 "action_id": plugin_log.get("action_id"),
+                "connection_environment": (
+                    current_store.plugin_connections.get(plugin_log.get("connection_id")) or {}
+                ).get("environment"),
                 "connection_id": plugin_log.get("connection_id"),
                 "invocation_log_id": plugin_log["id"],
+                "latency_ms": plugin_log.get("latency_ms"),
                 "request_summary": plugin_log.get("request_summary") or {},
                 "response_summary": plugin_log.get("response_summary") or {},
                 "status": plugin_log["status"],
             }
             plugin_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
-            plugin_records_imported = records_imported_from_mapping(
-                plugin_log.get("response_summary") or {},
-                plugin_output_mapping,
+            plugin_records_imported = (
+                JobExecutionEngine.plugin_records_imported_from_result(
+                    plugin_summary,
+                    plugin_output_mapping,
+                )
             )
             run["plugin_invocation_log_id"] = plugin_log["id"]
         if job["job_type"] == "iteration_plan_suggestion_generate":
@@ -1810,26 +1921,26 @@ def run_scheduled_job_response(
             if plugin_summary is not None:
                 result_summary = {
                     **result_summary,
-                    "execution_nodes": build_plugin_action_execution_nodes(
-                        current_store,
+                    "execution_nodes": JobExecutionEngine.plugin_action_execution_nodes(
                         job=job,
                         plugin_output_mapping=plugin_output_mapping,
                         plugin_records_imported=plugin_records_imported,
                         plugin_summary=plugin_summary,
                         resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                        skill_codes=skill_codes_for_job(current_store, job),
                     ),
                     "plugin": plugin_summary,
                 }
                 records_imported += plugin_records_imported
         elif job["job_type"] == "plugin_action_invoke" and plugin_summary is not None:
             result_summary = {
-                "execution_nodes": build_plugin_action_execution_nodes(
-                    current_store,
+                "execution_nodes": JobExecutionEngine.plugin_action_execution_nodes(
                     job=job,
                     plugin_output_mapping=plugin_output_mapping,
                     plugin_records_imported=plugin_records_imported,
                     plugin_summary=plugin_summary,
                     resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                    skill_codes=skill_codes_for_job(current_store, job),
                 ),
                 "plugin": plugin_summary,
             }
@@ -1849,17 +1960,63 @@ def run_scheduled_job_response(
                     "PLUGIN_ACTION_FAILED",
                     "Code repository inspection plugin action failed",
                 )
+            source_response_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
+            if not isinstance(source_response_json, dict):
+                source_response_json = {}
+            code_inspection_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
+            source_finding_count = records_imported_from_mapping(
+                plugin_summary.get("response_summary") or {},
+                {
+                    "records_imported_path": code_inspection_output_mapping.get(
+                        "findings_path",
+                    )
+                    or code_inspection_output_mapping.get("records_imported_path")
+                },
+            )
+            ai_processing = None
+            effective_plugin_summary = plugin_summary
+            if JobExecutionEngine.uses_ai_processing(
+                job,
+                ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
+            ):
+                ai_processing = run_scheduled_job_ai_processing(
+                    current_store,
+                    job=job,
+                    output_mapping=code_inspection_output_mapping,
+                    source_response_json=source_response_json,
+                    source_row_count=source_finding_count,
+                    user=user,
+                )
+                effective_plugin_summary = (
+                    JobExecutionEngine.code_inspection_plugin_summary_for_ai_output(
+                        plugin_summary,
+                        ai_processing=ai_processing,
+                    )
+                )
             inspection_result = execute_code_inspection_result_actions(
                 current_store,
                 collector_run_id=collector_run["id"],
                 job=job,
-                plugin_summary=plugin_summary,
+                plugin_summary=effective_plugin_summary,
                 result_actions=job.get("result_actions") or [],
                 run_id=run_id,
                 user=user,
             )
             report = inspection_result["report"]
             records_imported = int(inspection_result["finding_count"])
+            skill_processing_node = (
+                JobExecutionEngine.code_inspection_skill_processing_node(
+                    ai_processing=ai_processing,
+                    job=job,
+                    output_mapping=code_inspection_output_mapping,
+                    skill_codes=skill_codes_for_job(current_store, job),
+                    source_finding_count=source_finding_count,
+                )
+            )
+            result_action_node = JobExecutionEngine.code_inspection_result_action_node(
+                inspection_result=inspection_result,
+                report=report,
+            )
             result_summary = {
                 "bug_ids": inspection_result["bug_ids"],
                 "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
@@ -1879,10 +2036,10 @@ def run_scheduled_job_response(
                         "severe_finding_count": report["severe_finding_count"],
                         "status": "succeeded",
                     },
-                    "data_connection": build_data_connection_execution_node(
+                    "data_connection": JobExecutionEngine.data_connection_execution_node(
                         job=job,
                         plugin_summary=plugin_summary,
-                        records_imported=records_imported,
+                        records_imported=source_finding_count,
                         resolved_plugin_input_mapping=resolved_plugin_input_mapping,
                     ),
                     "notifications": {
@@ -1891,11 +2048,18 @@ def run_scheduled_job_response(
                         "records_imported": len(inspection_result["notification_ids"]),
                         "status": "succeeded",
                     },
+                    "result_action": result_action_node,
                     "result_actions": inspection_result["action_results"],
+                    "skill_processing": skill_processing_node,
                 },
                 "finding_count": report["finding_count"],
                 "notification_ids": inspection_result["notification_ids"],
-                "plugin": plugin_summary,
+                "plugin": effective_plugin_summary,
+                "processing": {
+                    "model_gateway_called": ai_processing is not None,
+                    "skill_codes": skill_codes_for_job(current_store, job),
+                    "skill_ids": list(job.get("skill_ids", [])),
+                },
                 "report_id": report["id"],
                 "result_actions": inspection_result["result_actions"],
                 "risk_level": report["risk_level"],
@@ -1905,13 +2069,15 @@ def run_scheduled_job_response(
             result_summary = {"message": "No handler implemented"}
             if plugin_summary is not None:
                 result_summary["plugin"] = plugin_summary
-                result_summary["execution_nodes"] = build_plugin_action_execution_nodes(
-                    current_store,
+                result_summary["execution_nodes"] = (
+                    JobExecutionEngine.plugin_action_execution_nodes(
                     job=job,
                     plugin_output_mapping=plugin_output_mapping,
                     plugin_records_imported=plugin_records_imported,
                     plugin_summary=plugin_summary,
                     resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                    skill_codes=skill_codes_for_job(current_store, job),
+                    )
                 )
             records_imported = plugin_records_imported
         status = "succeeded"
@@ -1928,7 +2094,7 @@ def run_scheduled_job_response(
             )
             result_summary = {
                 "execution_nodes": {
-                    "data_connection": build_data_connection_execution_node(
+                    "data_connection": JobExecutionEngine.data_connection_execution_node(
                         job=job,
                         plugin_summary=plugin_summary,
                         records_imported=source_row_count,
@@ -1964,6 +2130,65 @@ def run_scheduled_job_response(
                 },
                 "write_target": plugin_output_mapping.get("write_target")
                 or "user_feedback_insights",
+            }
+        elif job["job_type"] == "code_repository_inspection" and plugin_summary is not None:
+            code_inspection_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
+            source_finding_count = records_imported_from_mapping(
+                plugin_summary.get("response_summary") or {},
+                {
+                    "records_imported_path": code_inspection_output_mapping.get(
+                        "findings_path",
+                    )
+                    or code_inspection_output_mapping.get("records_imported_path")
+                },
+            )
+            result_summary = {
+                "execution_nodes": {
+                    "data_connection": JobExecutionEngine.data_connection_execution_node(
+                        job=job,
+                        plugin_summary=plugin_summary,
+                        records_imported=source_finding_count,
+                        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                    ),
+                    "result_action": {
+                        "label": "结果动作反馈内容",
+                        "records_imported": 0,
+                        "status": "not_run",
+                        "write_target": "code_inspection_reports",
+                    },
+                    "skill_processing": {
+                        "error_code": error_code,
+                        "error_message": error_message,
+                        "label": "Skill 处理后内容",
+                        "model_gateway_called": JobExecutionEngine.uses_ai_processing(
+                            job,
+                            ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
+                        ),
+                        "model_gateway_config_id": job.get("model_gateway_config_id"),
+                        "note": "数据连接已完成，但代码巡检 AI 处理或结果写入失败。",
+                        "processing_mode": "model_gateway_json_transform"
+                        if JobExecutionEngine.uses_ai_processing(
+                            job,
+                            ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
+                        )
+                        else "plugin_structured_output",
+                        "skill_codes": skill_codes_for_job(current_store, job),
+                        "skill_ids": list(job.get("skill_ids", [])),
+                        "status": "failed",
+                    },
+                },
+                "plugin": plugin_summary,
+                "processing": {
+                    "error_code": error_code,
+                    "error_message": error_message,
+                    "model_gateway_called": JobExecutionEngine.uses_ai_processing(
+                        job,
+                        ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
+                    ),
+                    "skill_codes": skill_codes_for_job(current_store, job),
+                    "skill_ids": list(job.get("skill_ids", [])),
+                },
+                "write_target": "code_inspection_reports",
             }
         records_imported = 0
     finished_at = datetime.now(UTC).isoformat()
@@ -2011,7 +2236,7 @@ def run_scheduled_job_response(
         actor_id=user["id"],
         subject_type="scheduled_job_run",
         subject_id=run_id,
-        payload={"job_type": job["job_type"], "scheduled_job_id": job_id},
+        payload=scheduled_job_run_audit_payload(job=job, run=run),
     )
     persist_record(
         current_store,
@@ -2019,7 +2244,7 @@ def run_scheduled_job_response(
         run,
         audit_event=audit_event,
     )
-    return dict(run)
+    return public_scheduled_job_run(run, current_store=current_store)
 
 
 def list_scheduled_job_runs_response(
@@ -2041,7 +2266,7 @@ def list_scheduled_job_runs_response(
             continue
         if status is not None and run.get("status") != status:
             continue
-        items.append(dict(run))
+        items.append(public_scheduled_job_run(run, current_store=current_store))
     items.sort(key=lambda item: (item.get("started_at") or "", item["id"]), reverse=True)
     return {"items": items, "total": len(items)}
 

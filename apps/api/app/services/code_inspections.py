@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -38,6 +39,7 @@ CODE_INSPECTION_SORT_FIELDS = {
 }
 SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 SEVERE_FINDING_THRESHOLD = "high"
+DEFAULT_DASHBOARD_TREND_DAYS = 14
 DEFAULT_SEVERITY_MAPPING = {
     "blocker": "critical",
     "major": "high",
@@ -444,6 +446,8 @@ def create_code_inspection_report_records(
         "finding_count": len(findings),
         "id": report_id,
         "notification_ids": [],
+        "plugin_action_id": job.get("plugin_action_id"),
+        "plugin_connection_id": job.get("plugin_connection_id"),
         "plugin_invocation_log_id": plugin_summary.get("invocation_log_id"),
         "product_id": job.get("product_id"),
         "repository": repository_snapshot(current_store, repository_id),
@@ -849,63 +853,18 @@ def public_code_inspection_report(report: dict[str, Any], current_store: Any) ->
     }
 
 
-def list_code_inspection_reports_response(
+def scoped_code_inspection_reports(
     *,
-    committer: str | None,
     current_store: Any,
-    page: int | None,
-    page_size: int | None,
     product_id: str | None,
     repository_id: str | None,
     risk_level: str | None,
-    sort_by: str | None,
-    sort_order: str,
-    started_at: float | None,
     status: str | None,
-    title: str | None,
-    trace_id: str,
     user: dict[str, Any],
-) -> dict[str, Any]:
-    require_code_inspection_read(user)
+) -> list[dict[str, Any]]:
     global_access, product_scope_ids = user_product_access(user)
-    if risk_level is not None:
-        ensure_enum(risk_level, CODE_INSPECTION_RISK_LEVELS, "risk_level")
-    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
-    resolved_sort_by = sort_by or "created_at"
-    if resolved_sort_by not in CODE_INSPECTION_SORT_FIELDS:
-        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
-    filters = {
-        "product_id": product_id,
-        "repository_id": repository_id,
-        "risk_level": risk_level,
-        "status": status,
-        "title": title,
-        "committer": committer,
-    }
     if not global_access and product_id is not None and str(product_id) not in product_scope_ids:
-        items = []
-        payload = paginated_list_payload(
-            items,
-            filters=filters,
-            list_name="code_inspections",
-            observed=True,
-            page=page,
-            page_size=page_size,
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-            started_at=started_at,
-            trace_id=trace_id,
-        )["data"]
-        return add_list_observability(
-            payload,
-            filters=filters,
-            list_name="code_inspections",
-            page=payload.get("page"),
-            page_size=payload.get("page_size"),
-            sort_by=resolved_sort_by,
-            sort_order=sort_order,
-            started_at=started_at,
-        )
+        return []
     repository = code_inspection_query_repository(current_store)
     if repository is not None:
         items = repository.list_code_inspection_reports(
@@ -931,9 +890,381 @@ def list_code_inspection_reports_response(
             if item.get("product_id") is not None
             and str(item.get("product_id")) in product_scope_ids
         ]
+    return [public_code_inspection_report(item, current_store) for item in items]
+
+
+def findings_for_code_inspection_reports(
+    *,
+    current_store: Any,
+    reports: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    report_ids = {str(report["id"]) for report in reports if report.get("id") is not None}
+    if not report_ids:
+        return []
+    repository = code_inspection_query_repository(current_store)
+    findings: list[dict[str, Any]] = []
+    if repository is not None and callable(getattr(repository, "get_code_inspection_detail", None)):
+        for report_id in sorted(report_ids):
+            detail = repository.get_code_inspection_detail(report_id)
+            if detail is not None:
+                findings.extend(detail.get("findings") or [])
+        return findings
+    return [
+        finding
+        for finding in current_store.code_inspection_findings.values()
+        if str(finding.get("report_id")) in report_ids
+    ]
+
+
+def report_date_bucket(report: dict[str, Any]) -> str:
+    raw_created_at = str(report.get("created_at") or "")
+    try:
+        return datetime.fromisoformat(raw_created_at.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        return raw_created_at[:10] or "unknown"
+
+
+def counter_rows(counter: Counter[str], *, key_name: str = "key") -> list[dict[str, Any]]:
+    return [
+        {key_name: key, "count": count}
+        for key, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def highest_risk_level(current: str | None, candidate: str | None) -> str:
+    current_rank = severity_rank(current or "low")
+    candidate_rank = severity_rank(candidate or "low")
+    return str(candidate or "low") if candidate_rank > current_rank else str(current or "low")
+
+
+def code_inspection_dashboard_response(
+    *,
+    committer: str | None,
+    current_store: Any,
+    product_id: str | None,
+    repository_id: str | None,
+    risk_level: str | None,
+    status: str | None,
+    title: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_code_inspection_read(user)
+    if risk_level is not None:
+        ensure_enum(risk_level, CODE_INSPECTION_RISK_LEVELS, "risk_level")
+    reports = scoped_code_inspection_reports(
+        current_store=current_store,
+        product_id=product_id,
+        repository_id=repository_id,
+        risk_level=risk_level,
+        status=status,
+        user=user,
+    )
+    reports = [
+        report
+        for report in reports
+        if list_text_matches(report, title, ("id", "summary", "repository_id"))
+        and report_matches_committer(report, committer)
+    ]
+    findings = findings_for_code_inspection_reports(
+        current_store=current_store,
+        reports=reports,
+    )
+    findings_by_report: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for finding in findings:
+        if finding.get("report_id") is not None:
+            findings_by_report[str(finding["report_id"])].append(finding)
+
+    severity_counts: Counter[str] = Counter()
+    category_counts: Counter[str] = Counter()
+    risk_counts: Counter[str] = Counter()
+    rule_stats: dict[str, dict[str, Any]] = {}
+    repository_stats: dict[str, dict[str, Any]] = {}
+    branch_stats: dict[str, dict[str, Any]] = {}
+    committer_stats: dict[str, dict[str, Any]] = {}
+    trend_stats: dict[str, dict[str, Any]] = {}
+    severe_finding_count = 0
+    covered_by_bug_count = 0
+    oldest_uncovered_at: str | None = None
+
+    for report in reports:
+        report_id = str(report["id"])
+        report_findings = findings_by_report.get(report_id, [])
+        risk_level_value = str(report.get("risk_level") or "low")
+        risk_counts[risk_level_value] += 1
+        bucket = report_date_bucket(report)
+        trend = trend_stats.setdefault(
+            bucket,
+            {
+                "bug_count": 0,
+                "date": bucket,
+                "finding_count": 0,
+                "report_count": 0,
+                "severe_finding_count": 0,
+            },
+        )
+        trend["report_count"] += 1
+        trend["finding_count"] += int(report.get("finding_count") or len(report_findings))
+        trend["severe_finding_count"] += int(report.get("severe_finding_count") or 0)
+        trend["bug_count"] += len(report.get("created_bug_ids") or [])
+
+        repository_key = str(report.get("repository_id") or report.get("repository_name") or "-")
+        repository_entry = repository_stats.setdefault(
+            repository_key,
+            {
+                "branch_count": set(),
+                "finding_count": 0,
+                "repository_id": report.get("repository_id"),
+                "repository_name": report.get("repository_name"),
+                "repository_path": report.get("repository_path"),
+                "report_count": 0,
+                "risk_level": "low",
+                "severe_finding_count": 0,
+            },
+        )
+        repository_entry["report_count"] += 1
+        repository_entry["finding_count"] += int(
+            report.get("finding_count") or len(report_findings)
+        )
+        repository_entry["severe_finding_count"] += int(report.get("severe_finding_count") or 0)
+        repository_entry["risk_level"] = highest_risk_level(
+            repository_entry["risk_level"],
+            risk_level_value,
+        )
+        if report.get("branch"):
+            repository_entry["branch_count"].add(str(report["branch"]))
+
+        branch_key = f"{repository_key}:{report.get('branch') or '-'}"
+        branch_entry = branch_stats.setdefault(
+            branch_key,
+            {
+                "branch": report.get("branch") or "-",
+                "finding_count": 0,
+                "repository_id": report.get("repository_id"),
+                "repository_name": report.get("repository_name"),
+                "report_count": 0,
+                "severe_finding_count": 0,
+            },
+        )
+        branch_entry["report_count"] += 1
+        branch_entry["finding_count"] += int(report.get("finding_count") or len(report_findings))
+        branch_entry["severe_finding_count"] += int(report.get("severe_finding_count") or 0)
+
+        for committer in report.get("committer_summary") or []:
+            identity = (
+                committer.get("email")
+                or committer.get("username")
+                or committer.get("name")
+                or "unknown"
+            )
+            committer_entry = committer_stats.setdefault(
+                str(identity),
+                {
+                    "bug_count": 0,
+                    "email": committer.get("email"),
+                    "finding_count": 0,
+                    "name": committer.get("name"),
+                    "severe_finding_count": 0,
+                    "username": committer.get("username"),
+                },
+            )
+            committer_entry["finding_count"] += int(committer.get("finding_count") or 0)
+            committer_entry["severe_finding_count"] += int(
+                committer.get("severe_finding_count") or 0
+            )
+            committer_entry["bug_count"] += int(committer.get("bug_count") or 0)
+
+        for finding in report_findings:
+            severity = normalize_severity(finding.get("severity"), fallback="info")
+            category = str(finding.get("category") or "uncategorized")
+            rule_id = str(finding.get("rule_id") or "unknown")
+            severity_counts[severity] += 1
+            category_counts[category] += 1
+            is_severe = severity_rank(severity) >= severity_rank(SEVERE_FINDING_THRESHOLD)
+            if is_severe:
+                severe_finding_count += 1
+                if finding.get("created_bug_id"):
+                    covered_by_bug_count += 1
+                elif (
+                    oldest_uncovered_at is None
+                    or str(finding.get("created_at") or "") < oldest_uncovered_at
+                ):
+                    oldest_uncovered_at = str(finding.get("created_at") or "")
+            rule_entry = rule_stats.setdefault(
+                rule_id,
+                {
+                    "category": category,
+                    "finding_count": 0,
+                    "rule_id": rule_id,
+                    "severity": severity,
+                    "severe_finding_count": 0,
+                },
+            )
+            rule_entry["finding_count"] += 1
+            rule_entry["severity"] = (
+                severity
+                if severity_rank(severity) > severity_rank(rule_entry.get("severity"))
+                else rule_entry.get("severity")
+            )
+            if is_severe:
+                rule_entry["severe_finding_count"] += 1
+
+    repository_ranking = sorted(
+        (
+            {**entry, "branch_count": len(entry["branch_count"])}
+            for entry in repository_stats.values()
+        ),
+        key=lambda item: (
+            -int(item["severe_finding_count"]),
+            -int(item["finding_count"]),
+            str(item.get("repository_name") or ""),
+        ),
+    )[:5]
+    branch_ranking = sorted(
+        branch_stats.values(),
+        key=lambda item: (
+            -int(item["severe_finding_count"]),
+            -int(item["finding_count"]),
+            str(item.get("branch") or ""),
+        ),
+    )[:5]
+    committer_ranking = sorted(
+        committer_stats.values(),
+        key=lambda item: (
+            -int(item["severe_finding_count"]),
+            -int(item["finding_count"]),
+            str(item.get("email") or item.get("username") or item.get("name") or ""),
+        ),
+    )[:5]
+    rule_distribution = sorted(
+        rule_stats.values(),
+        key=lambda item: (
+            -int(item["severe_finding_count"]),
+            -int(item["finding_count"]),
+            str(item["rule_id"]),
+        ),
+    )[:10]
+    trend = sorted(trend_stats.values(), key=lambda item: str(item["date"]))[
+        -DEFAULT_DASHBOARD_TREND_DAYS:
+    ]
+    bug_coverage_rate = (
+        round(covered_by_bug_count / severe_finding_count, 4)
+        if severe_finding_count
+        else 1
+    )
+    return {
+        "branch_ranking": branch_ranking,
+        "category_distribution": counter_rows(category_counts, key_name="category"),
+        "committer_ranking": committer_ranking,
+        "query": {
+            "product_id": product_id,
+            "repository_id": repository_id,
+            "risk_level": risk_level,
+            "status": status,
+        },
+        "repository_ranking": repository_ranking,
+        "risk_distribution": counter_rows(risk_counts, key_name="risk_level"),
+        "rule_distribution": rule_distribution,
+        "severity_distribution": counter_rows(severity_counts, key_name="severity"),
+        "sla": {
+            "bug_coverage_rate": bug_coverage_rate,
+            "covered_by_bug_count": covered_by_bug_count,
+            "oldest_uncovered_at": oldest_uncovered_at,
+            "severe_finding_count": severe_finding_count,
+            "severe_threshold": SEVERE_FINDING_THRESHOLD,
+            "status": "healthy" if bug_coverage_rate >= 0.8 else "at_risk",
+            "uncovered_severe_finding_count": severe_finding_count - covered_by_bug_count,
+        },
+        "summary": {
+            "bug_created_count": sum(
+                len(report.get("created_bug_ids") or []) for report in reports
+            ),
+            "critical_finding_count": severity_counts["critical"],
+            "failed_report_count": sum(1 for report in reports if report.get("status") == "failed"),
+            "finding_count": sum(int(report.get("finding_count") or 0) for report in reports),
+            "high_finding_count": severity_counts["high"],
+            "repository_count": len(
+                {
+                    report.get("repository_id")
+                    for report in reports
+                    if report.get("repository_id")
+                }
+            ),
+            "report_count": len(reports),
+            "severe_finding_count": sum(
+                int(report.get("severe_finding_count") or 0) for report in reports
+            ),
+        },
+        "trend": trend,
+    }
+
+
+def list_code_inspection_reports_response(
+    *,
+    committer: str | None,
+    current_store: Any,
+    page: int | None,
+    page_size: int | None,
+    product_id: str | None,
+    repository_id: str | None,
+    risk_level: str | None,
+    sort_by: str | None,
+    sort_order: str,
+    started_at: float | None,
+    status: str | None,
+    title: str | None,
+    trace_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_code_inspection_read(user)
+    if risk_level is not None:
+        ensure_enum(risk_level, CODE_INSPECTION_RISK_LEVELS, "risk_level")
+    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    resolved_sort_by = sort_by or "created_at"
+    if resolved_sort_by not in CODE_INSPECTION_SORT_FIELDS:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    filters = {
+        "product_id": product_id,
+        "repository_id": repository_id,
+        "risk_level": risk_level,
+        "status": status,
+        "title": title,
+        "committer": committer,
+    }
+    global_access, product_scope_ids = user_product_access(user)
+    if not global_access and product_id is not None and str(product_id) not in product_scope_ids:
+        items = []
+        payload = paginated_list_payload(
+            items,
+            filters=filters,
+            list_name="code_inspections",
+            observed=True,
+            page=page,
+            page_size=page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+            trace_id=trace_id,
+        )["data"]
+        return add_list_observability(
+            payload,
+            filters=filters,
+            list_name="code_inspections",
+            page=payload.get("page"),
+            page_size=payload.get("page_size"),
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
     items = [
-        public_code_inspection_report(item, current_store)
-        for item in items
+        item
+        for item in scoped_code_inspection_reports(
+            current_store=current_store,
+            product_id=product_id,
+            repository_id=repository_id,
+            risk_level=risk_level,
+            status=status,
+            user=user,
+        )
         if list_text_matches(item, title, ("id", "summary", "repository_id"))
         and report_matches_committer(item, committer)
     ]

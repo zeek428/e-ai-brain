@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
+from app.services.scheduled_job_observability import scheduled_job_run_observability_response
+from app.services.scheduled_job_templates import list_scheduled_job_templates_response
 from app.services.scheduled_jobs import (
     cancel_scheduled_job_run_response,
     create_ai_agent_response,
@@ -133,6 +135,11 @@ class ScheduledJobPatchRequest(BaseModel):
     source_system: str | None = None
     timeout_seconds: int | None = None
     timezone: str | None = None
+
+
+class ScheduledJobRunRequest(BaseModel):
+    source_run_id: str | None = None
+    trigger_type: str = "manual"
 
 
 @router.get("/api/system/ai-skills")
@@ -272,6 +279,17 @@ def list_scheduled_jobs(
     )
 
 
+@router.get("/api/system/scheduled-job-templates")
+def list_scheduled_job_templates(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        list_scheduled_job_templates_response(current_store=store(request), user=user),
+        get_trace_id(request),
+    )
+
+
 @router.post("/api/system/scheduled-jobs")
 def create_scheduled_job(
     payload: ScheduledJobRequest,
@@ -322,13 +340,15 @@ def delete_scheduled_job(
 def run_scheduled_job(
     job_id: str,
     request: Request,
+    payload: ScheduledJobRunRequest | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     return envelope(
         run_scheduled_job_response(
             current_store=store(request),
             job_id=job_id,
-            trigger_type="manual",
+            source_run_id=(payload.source_run_id if payload else None),
+            trigger_type=(payload.trigger_type if payload else "manual"),
             user=user,
         ),
         get_trace_id(request),
@@ -348,6 +368,17 @@ def list_scheduled_job_runs(
             scheduled_job_id=scheduled_job_id,
             status=status,
         ),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/scheduled-job-runs/observability")
+def scheduled_job_run_observability(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        scheduled_job_run_observability_response(current_store=store(request)),
         get_trace_id(request),
     )
 

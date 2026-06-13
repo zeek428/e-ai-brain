@@ -151,7 +151,8 @@ class ScheduledAiJobReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, scheduled_job_id, collector_run_id, trigger_type, status,
+                    SELECT id, scheduled_job_id, collector_run_id, source_run_id,
+                           trigger_type, status,
                            scheduled_for, started_at, finished_at, records_imported,
                            error_code, error_message, config_snapshot,
                            resolved_agent_snapshot, resolved_skill_snapshots,
@@ -387,7 +388,7 @@ class ScheduledAiJobReadRepository:
             cursor.execute(
                 """
                 INSERT INTO scheduled_job_runs (
-                  id, scheduled_job_id, collector_run_id, trigger_type, status,
+                  id, scheduled_job_id, collector_run_id, source_run_id, trigger_type, status,
                   scheduled_for, started_at, finished_at, records_imported,
                   error_code, error_message, config_snapshot, resolved_agent_snapshot,
                   resolved_skill_snapshots, resolved_prompt_snapshot, tool_policy_snapshot,
@@ -395,7 +396,7 @@ class ScheduledAiJobReadRepository:
                   plugin_invocation_log_id
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s, %s,
                   %s::timestamptz, %s::timestamptz, %s::timestamptz, %s,
                   %s, %s, %s::jsonb, %s::jsonb,
                   %s::jsonb, %s::jsonb, %s::jsonb,
@@ -405,6 +406,7 @@ class ScheduledAiJobReadRepository:
                 ON CONFLICT (id) DO UPDATE SET
                   scheduled_job_id = EXCLUDED.scheduled_job_id,
                   collector_run_id = EXCLUDED.collector_run_id,
+                  source_run_id = EXCLUDED.source_run_id,
                   trigger_type = EXCLUDED.trigger_type,
                   status = EXCLUDED.status,
                   scheduled_for = EXCLUDED.scheduled_for,
@@ -427,6 +429,7 @@ class ScheduledAiJobReadRepository:
                     run["id"],
                     run["scheduled_job_id"],
                     run.get("collector_run_id"),
+                    run.get("source_run_id"),
                     run.get("trigger_type", "manual"),
                     run.get("status", "queued"),
                     run.get("scheduled_for"),
@@ -549,22 +552,23 @@ class ScheduledAiJobReadRepository:
             "id": row[0],
             "scheduled_job_id": row[1],
             "collector_run_id": row[2],
-            "trigger_type": row[3],
-            "status": row[4],
-            "scheduled_for": row[5].isoformat() if row[5] else None,
-            "started_at": row[6].isoformat() if row[6] else None,
-            "finished_at": row[7].isoformat() if row[7] else None,
-            "records_imported": row[8],
-            "error_code": row[9],
-            "error_message": row[10],
-            "config_snapshot": row[11] or {},
-            "resolved_agent_snapshot": row[12] or {},
-            "resolved_skill_snapshots": row[13] or [],
-            "resolved_prompt_snapshot": row[14] or {},
-            "tool_policy_snapshot": row[15] or {},
-            "result_summary": row[16] or {},
-            "created_at": row[17].isoformat() if row[17] else None,
-            "updated_at": row[18].isoformat() if row[18] else None,
-            "resolved_plugin_snapshot": row[19] or {},
-            "plugin_invocation_log_id": row[20],
+            "source_run_id": row[3],
+            "trigger_type": row[4],
+            "status": row[5],
+            "scheduled_for": row[6].isoformat() if row[6] else None,
+            "started_at": row[7].isoformat() if row[7] else None,
+            "finished_at": row[8].isoformat() if row[8] else None,
+            "records_imported": row[9],
+            "error_code": row[10],
+            "error_message": row[11],
+            "config_snapshot": row[12] or {},
+            "resolved_agent_snapshot": row[13] or {},
+            "resolved_skill_snapshots": row[14] or [],
+            "resolved_prompt_snapshot": row[15] or {},
+            "tool_policy_snapshot": row[16] or {},
+            "result_summary": row[17] or {},
+            "created_at": row[18].isoformat() if row[18] else None,
+            "updated_at": row[19].isoformat() if row[19] else None,
+            "resolved_plugin_snapshot": row[20] or {},
+            "plugin_invocation_log_id": row[21],
         }

@@ -15,6 +15,7 @@ type FilterField = {
 };
 
 type ManagementListPageProps<Row extends Record<string, unknown>> = {
+  beforeTable?: ReactNode;
   breadcrumbGroup: string;
   columns: ProColumns<Row>[];
   dataSource: Row[];
@@ -175,6 +176,7 @@ function toValueEnum(options?: Array<{ label: string; value: string }>) {
 }
 
 export function ManagementListPage<Row extends Record<string, unknown>>({
+  beforeTable,
   breadcrumbGroup,
   columns,
   dataSource,
@@ -301,6 +303,7 @@ export function ManagementListPage<Row extends Record<string, unknown>>({
       title={false}
     >
       {notice ? <Alert className="management-list-alert" showIcon title={notice} type="warning" /> : null}
+      {beforeTable}
       <ProTable<Row>
         cardBordered
         className="management-list-table"

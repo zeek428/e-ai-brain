@@ -10,12 +10,26 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.api.deps import api_error, require_roles
+from app.services.connection_diagnostics import ConnectionDiagnosticsService
 from app.services.dynamic_parameters import (
     dynamic_parameter_preview,
+    dynamic_parameter_resolution_trace,
     dynamic_time_parameters,
     resolve_dynamic_parameter_value,
 )
 from app.services.operational_records import record_audit_event, save_single_repository_record
+from app.services.plugin_templates import (
+    STANDARD_PLUGIN_CONNECTION_TEMPLATE_VERSION,
+    STANDARD_PLUGIN_MARKETPLACE_METADATA,
+    STANDARD_PLUGINS,
+    standard_plugin_action_templates,
+    standard_plugin_connection_defaults,
+)
+from app.services.result_write_targets import (
+    result_write_target_default_mapping,
+    result_write_target_label,
+    result_write_targets,
+)
 
 PLUGIN_PROTOCOLS = {"http", "mcp_http", "mcp_stdio"}
 PLUGIN_CATEGORIES = {
@@ -35,50 +49,6 @@ PLUGIN_ACTION_TYPES = {"http_request", "mcp_tool"}
 PLUGIN_CONNECTION_ENVIRONMENTS = {"default", "dev", "test", "staging", "prod", "sandbox"}
 PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
 MASKED_SECRET_PLACEHOLDER = "***"
-STANDARD_PLUGINS = [
-    {
-        "category": "devops",
-        "code": "gitlab",
-        "description": (
-            "官方标准 GitLab 插件，用于连接 GitLab API、读取项目、分支、"
-            "提交、MR 和代码质量数据。"
-        ),
-        "id": "plugin_standard_gitlab",
-        "is_system": True,
-        "name": "GitLab",
-        "protocol": "http",
-        "risk_level": "medium",
-        "status": "active",
-    },
-    {
-        "category": "devops",
-        "code": "github",
-        "description": (
-            "官方标准 GitHub 插件，用于连接 GitHub API、读取仓库、分支、"
-            "提交、PR 和代码质量数据。"
-        ),
-        "id": "plugin_standard_github",
-        "is_system": True,
-        "name": "GitHub",
-        "protocol": "http",
-        "risk_level": "medium",
-        "status": "active",
-    },
-    {
-        "category": "collaboration",
-        "code": "email",
-        "description": (
-            "官方标准邮箱插件，用于连接企业邮件网关或邮件 API，发送代码巡检、"
-            "定时作业和业务通知。"
-        ),
-        "id": "plugin_standard_email",
-        "is_system": True,
-        "name": "邮箱",
-        "protocol": "http",
-        "risk_level": "medium",
-        "status": "active",
-    },
-]
 
 
 def require_admin(user: dict[str, Any]) -> None:
@@ -142,6 +112,7 @@ def sync_plugin_store(
 def sync_plugin_connection_store(
     current_store: Any,
     *,
+    environment: str | None = None,
     plugin_id: str | None = None,
     status: str | None = None,
 ) -> None:
@@ -151,7 +122,11 @@ def sync_plugin_connection_store(
     replace_collection(
         current_store,
         "plugin_connections",
-        repository.list_plugin_connections(plugin_id=plugin_id, status=status),
+        repository.list_plugin_connections(
+            environment=environment,
+            plugin_id=plugin_id,
+            status=status,
+        ),
     )
 
 
@@ -220,6 +195,13 @@ def persist_record(
     )
 
 
+def persist_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
+    repository = getattr(current_store, "repository", None)
+    append_audit_event = getattr(repository, "append_audit_event", None)
+    if callable(append_audit_event):
+        append_audit_event(audit_event)
+
+
 def ensure_standard_plugins(current_store: Any) -> None:
     now = datetime.now(UTC).isoformat()
     existing_by_code = {
@@ -284,23 +266,6 @@ def compact_preview_value(value: Any) -> Any:
     return value if len(encoded) <= 400 else f"{encoded[:400]}..."
 
 
-def diagnostic_step(
-    name: str,
-    *,
-    detail: str | None = None,
-    latency_ms: int | None = None,
-    status: str = "succeeded",
-    **extra: Any,
-) -> dict[str, Any]:
-    step = {"name": name, "status": status}
-    if detail is not None:
-        step["detail"] = detail
-    if latency_ms is not None:
-        step["latency_ms"] = latency_ms
-    step.update({key: value for key, value in extra.items() if value is not None})
-    return step
-
-
 def _is_masked_secret_placeholder(value: Any) -> bool:
     return isinstance(value, str) and value.strip() == MASKED_SECRET_PLACEHOLDER
 
@@ -326,15 +291,6 @@ def _set_header(
         sources.pop(existing_key, None)
     headers[header_name] = str(value)
     sources[header_name] = source
-
-
-def _response_summary_from_http_error(exc: HTTPError) -> dict[str, Any]:
-    body = exc.read(2048).decode("utf-8", errors="replace")
-    return {
-        "body_preview": body,
-        "reason": getattr(exc, "reason", None),
-        "status_code": exc.code,
-    }
 
 
 def public_plugin(plugin: dict[str, Any]) -> dict[str, Any]:
@@ -482,6 +438,91 @@ def list_plugins_response(
     return {"items": items, "total": len(items)}
 
 
+def list_plugin_marketplace_response(
+    *,
+    current_store: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    sync_plugin_dependency_store(current_store)
+    ensure_standard_plugins(current_store)
+    connections = list(current_store.plugin_connections.values())
+    actions = list(current_store.plugin_actions.values())
+    plugins_by_code = {
+        str(plugin.get("code")): plugin
+        for plugin in current_store.integration_plugins.values()
+    }
+    items: list[dict[str, Any]] = []
+    for template in STANDARD_PLUGINS:
+        plugin = plugins_by_code.get(str(template["code"]))
+        plugin_id = plugin.get("id") if plugin else template["id"]
+        metadata = STANDARD_PLUGIN_MARKETPLACE_METADATA.get(str(template["code"]), {})
+        plugin_connections = [
+            connection for connection in connections if connection.get("plugin_id") == plugin_id
+        ]
+        plugin_actions = [action for action in actions if action.get("plugin_id") == plugin_id]
+        items.append(
+            {
+                "action_count": len(plugin_actions),
+                "action_templates": metadata.get("action_templates", []),
+                "category": template["category"],
+                "code": template["code"],
+                "connection_defaults": standard_plugin_connection_defaults(str(template["code"])),
+                "connection_count": len(plugin_connections),
+                "connection_template_version": STANDARD_PLUGIN_CONNECTION_TEMPLATE_VERSION,
+                "description": template["description"],
+                "id": f"marketplace_{template['code']}",
+                "installed": plugin is not None,
+                "is_system": True,
+                "name": template["name"],
+                "plugin_id": plugin_id if plugin is not None else None,
+                "protocol": template["protocol"],
+                "publisher": metadata.get("publisher", "AI Brain 官方"),
+                "recommended_scenarios": metadata.get("recommended_scenarios", []),
+                "risk_level": template["risk_level"],
+                "status": plugin.get("status") if plugin else "not_installed",
+                "summary": metadata.get("summary") or template["description"],
+            },
+        )
+    items.sort(key=lambda item: (item["category"], item["code"]))
+    return {"items": items, "total": len(items)}
+
+
+def list_plugin_action_templates_response(
+    *,
+    current_store: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    sync_plugin_store(current_store)
+    ensure_standard_plugins(current_store)
+    plugins_by_code = {
+        str(plugin.get("code")): plugin
+        for plugin in current_store.integration_plugins.values()
+    }
+    items = []
+    for template in standard_plugin_action_templates():
+        plugin = plugins_by_code.get(str(template["plugin_code"]))
+        items.append(
+            {
+                **template,
+                "plugin_id": plugin.get("id") if plugin else None,
+            },
+        )
+    items.sort(key=lambda item: (str(item.get("plugin_code")), str(item.get("code"))))
+    return {"items": items, "total": len(items)}
+
+
+def list_result_write_targets_response(
+    *,
+    current_store: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    items = result_write_targets()
+    return {"items": items, "total": len(items)}
+
+
 def create_plugin_response(
     *,
     current_store: Any,
@@ -610,14 +651,24 @@ def ensure_active_plugin(current_store: Any, plugin_id: str) -> dict[str, Any]:
 def list_plugin_connections_response(
     *,
     current_store: Any,
+    environment: str | None,
     plugin_id: str | None,
     status: str | None,
 ) -> dict[str, Any]:
+    if environment is not None:
+        ensure_enum(environment, PLUGIN_CONNECTION_ENVIRONMENTS, "environment")
     if status is not None:
         ensure_enum(status, PLUGIN_STATUSES, "status")
-    sync_plugin_connection_store(current_store, plugin_id=plugin_id, status=status)
+    sync_plugin_connection_store(
+        current_store,
+        environment=environment,
+        plugin_id=plugin_id,
+        status=status,
+    )
     items = []
     for connection in current_store.plugin_connections.values():
+        if environment is not None and connection.get("environment") != environment:
+            continue
         if plugin_id is not None and connection.get("plugin_id") != plugin_id:
             continue
         if status is not None and connection.get("status") != status:
@@ -783,14 +834,14 @@ def test_plugin_connection_response(
     mocked = False
     parsed_endpoint = urlparse(str(connection.get("endpoint_url") or ""))
     diagnostics.append(
-        diagnostic_step(
+        ConnectionDiagnosticsService.diagnostic_step(
             "endpoint_configured",
             detail=parsed_endpoint.netloc or parsed_endpoint.path or "未配置 Endpoint",
             status="succeeded" if connection.get("endpoint_url") else "failed",
         ),
     )
     diagnostics.append(
-        diagnostic_step(
+        ConnectionDiagnosticsService.diagnostic_step(
             "protocol_supported",
             detail=str(plugin.get("protocol")),
             status="failed" if plugin.get("protocol") == "mcp_stdio" else "succeeded",
@@ -798,7 +849,12 @@ def test_plugin_connection_response(
     )
     auth_type = str(connection.get("auth_type") or "none")
     auth_config = connection.get("auth_config") or {}
-    request_config = resolve_connection_request_config(connection)
+    resolution_now = datetime.now(UTC)
+    request_config = resolve_connection_request_config(connection, now=resolution_now)
+    variable_resolutions, variable_timezone = connection_request_variable_resolutions(
+        connection,
+        now=resolution_now,
+    )
     request_query = _dict_config_section(request_config.get("query"))
     request_method = "POST" if plugin.get("protocol") == "mcp_http" else "GET"
     request_url = _url_with_query(str(connection.get("endpoint_url") or ""), request_query)
@@ -823,7 +879,7 @@ def test_plugin_connection_response(
     ]
     response_summary: dict[str, Any] = {}
     diagnostics.append(
-        diagnostic_step(
+        ConnectionDiagnosticsService.diagnostic_step(
             "auth_configured",
             detail=auth_type,
             status="warning" if auth_type != "none" and not auth_config else "succeeded",
@@ -833,7 +889,7 @@ def test_plugin_connection_response(
         if "mock_test_response" in auth_config:
             mocked = True
             diagnostics.append(
-                diagnostic_step(
+                ConnectionDiagnosticsService.diagnostic_step(
                     "network_request",
                     detail="使用 mock_test_response，未发起真实网络请求",
                     status="mocked",
@@ -861,7 +917,7 @@ def test_plugin_connection_response(
                     "status_code": getattr(response, "status", None),
                 }
                 diagnostics.append(
-                    diagnostic_step(
+                    ConnectionDiagnosticsService.diagnostic_step(
                         "mcp_tools_list",
                         detail="tools/list 调用完成",
                         latency_ms=int((perf_counter() - step_start) * 1000),
@@ -883,7 +939,7 @@ def test_plugin_connection_response(
                     "status_code": getattr(response, "status", None),
                 }
                 diagnostics.append(
-                    diagnostic_step(
+                    ConnectionDiagnosticsService.diagnostic_step(
                         "network_request",
                         detail="HTTP GET 调用完成",
                         latency_ms=int((perf_counter() - step_start) * 1000),
@@ -894,9 +950,9 @@ def test_plugin_connection_response(
         status = "failed"
         error_code = exc.__class__.__name__
         error_message = str(exc)
-        response_summary = _response_summary_from_http_error(exc)
+        response_summary = ConnectionDiagnosticsService.response_summary_from_http_error(exc)
         diagnostics.append(
-            diagnostic_step(
+            ConnectionDiagnosticsService.diagnostic_step(
                 "network_request" if plugin.get("protocol") != "mcp_http" else "mcp_tools_list",
                 detail=error_message,
                 status="failed",
@@ -912,7 +968,7 @@ def test_plugin_connection_response(
             error_code = exc.detail.get("code", error_code)
             error_message = exc.detail.get("message", error_message)
         diagnostics.append(
-            diagnostic_step(
+            ConnectionDiagnosticsService.diagnostic_step(
                 "network_request" if plugin.get("protocol") != "mcp_http" else "mcp_tools_list",
                 detail=error_message,
                 status="failed",
@@ -920,7 +976,34 @@ def test_plugin_connection_response(
             ),
         )
     latency_ms = int((perf_counter() - start) * 1000)
+    request_summary = {
+        "auth_config": auth_config,
+        "auth_type": auth_type,
+        "body": request_body,
+        "header_sources": header_sources,
+        "headers": request_headers,
+        "host": parsed_endpoint.netloc,
+        "masked_placeholder_headers": masked_placeholder_headers,
+        "method": request_method,
+        "original_request_config": connection.get("request_config") or {},
+        "protocol": plugin.get("protocol"),
+        "query": request_query,
+        "request_config": request_config,
+        "scheme": parsed_endpoint.scheme,
+        "url": request_url,
+        "variable_resolution_timezone": variable_timezone,
+        "variable_resolutions": variable_resolutions,
+    }
+    request_summary["curl_command"] = (
+        ConnectionDiagnosticsService.curl_command_from_request_summary(request_summary)
+    )
+    action_template_draft = ConnectionDiagnosticsService.action_template_draft(
+        connection,
+        plugin,
+        request_summary,
+    )
     result = {
+        "action_template_draft": action_template_draft,
         "checked_at": datetime.now(UTC).isoformat(),
         "connection_id": connection_id,
         "diagnostics": diagnostics,
@@ -932,24 +1015,21 @@ def test_plugin_connection_response(
         "mocked": mocked,
         "plugin_id": plugin["id"],
         "protocol": plugin.get("protocol"),
-        "request_summary": {
-            "auth_config": auth_config,
-            "auth_type": auth_type,
-            "body": request_body,
-            "header_sources": header_sources,
-            "headers": request_headers,
-            "host": parsed_endpoint.netloc,
-            "masked_placeholder_headers": masked_placeholder_headers,
-            "method": request_method,
-            "protocol": plugin.get("protocol"),
-            "query": request_query,
-            "request_config": request_config,
-            "scheme": parsed_endpoint.scheme,
-            "url": request_url,
-        },
+        "request_summary": request_summary,
         "response_summary": response_summary,
         "status": status,
     }
+    result["repair_suggestions"] = ConnectionDiagnosticsService.repair_suggestions(result)
+    test_history = ConnectionDiagnosticsService.append_test_history(connection, result)
+    result["test_history"] = test_history
+    last_test_summary = ConnectionDiagnosticsService.test_summary(result)
+    connection = {
+        **connection,
+        "last_test_summary": last_test_summary,
+        "test_history": test_history,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    current_store.plugin_connections[connection_id] = connection
     audit_event = record_audit_event(
         current_store,
         event_type=f"plugin_connection.test_{status}",
@@ -966,7 +1046,7 @@ def test_plugin_connection_response(
     persist_record(
         current_store,
         "save_plugin_connection_record",
-        {**connection, "updated_at": datetime.now(UTC).isoformat()},
+        connection,
         audit_event=audit_event,
     )
     return result
@@ -1263,6 +1343,24 @@ def resolve_connection_request_config(
     )
 
 
+def connection_request_variable_resolutions(
+    connection: dict[str, Any],
+    input_payload: dict[str, Any] | None = None,
+    *,
+    now: datetime | None = None,
+) -> tuple[list[dict[str, Any]], str]:
+    timezone = plugin_invocation_timezone(input_payload)
+    return (
+        dynamic_parameter_resolution_trace(
+            connection.get("request_config") or {},
+            dynamic_time_parameters(now=now, timezone=timezone),
+            now=now,
+            timezone=timezone,
+        ),
+        str(timezone),
+    )
+
+
 def _dict_config_section(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -1494,31 +1592,40 @@ def result_write_preview(
     mapping: dict[str, Any],
 ) -> dict[str, Any]:
     write_target = str(mapping.get("write_target") or "scheduled_job_result")
+    default_mapping = result_write_target_default_mapping(write_target)
     raw_json = response_summary.get("json")
-    labels = {
-        "code_inspection_reports": "代码巡检报告",
-        "scheduled_job_result": "定时作业结果",
-        "user_feedback_insights": "用户洞察表",
-    }
+    write_target_label = result_write_target_label(write_target)
 
     if write_target == "code_inspection_reports":
-        findings = json_path_value(raw_json, str(mapping.get("findings_path") or "$.findings"))
+        findings = json_path_value(
+            raw_json,
+            str(mapping.get("findings_path") or default_mapping.get("findings_path")),
+        )
         sample_records = findings[:3] if isinstance(findings, list) else []
         report_preview = {
-            "branch": json_path_value(raw_json, str(mapping.get("branch_path") or "$.branch")),
+            "branch": json_path_value(
+                raw_json,
+                str(mapping.get("branch_path") or default_mapping.get("branch_path")),
+            ),
             "commit_sha": json_path_value(
                 raw_json,
-                str(mapping.get("commit_sha_path") or "$.commit_sha"),
+                str(mapping.get("commit_sha_path") or default_mapping.get("commit_sha_path")),
             ),
             "repository_id": json_path_value(
                 raw_json,
-                str(mapping.get("repository_id_path") or "$.repository_id"),
+                str(
+                    mapping.get("repository_id_path")
+                    or default_mapping.get("repository_id_path"),
+                ),
             ),
             "risk_level": json_path_value(
                 raw_json,
-                str(mapping.get("risk_level_path") or "$.risk_level"),
+                str(mapping.get("risk_level_path") or default_mapping.get("risk_level_path")),
             ),
-            "summary": json_path_value(raw_json, str(mapping.get("summary_path") or "$.summary")),
+            "summary": json_path_value(
+                raw_json,
+                str(mapping.get("summary_path") or default_mapping.get("summary_path")),
+            ),
         }
         return {
             "candidate_count": len(findings) if isinstance(findings, list) else 0,
@@ -1530,12 +1637,18 @@ def result_write_preview(
             },
             "sample_records": [compact_preview_value(record) for record in sample_records],
             "write_target": write_target,
-            "write_target_label": labels[write_target],
+            "write_target_label": write_target_label,
         }
 
     if write_target == "user_feedback_insights":
-        insights = json_path_value(raw_json, str(mapping.get("insights_path") or "$.insights"))
-        rows = json_path_value(raw_json, str(mapping.get("rows_path") or "$.rows"))
+        insights = json_path_value(
+            raw_json,
+            str(mapping.get("insights_path") or default_mapping.get("insights_path")),
+        )
+        rows = json_path_value(
+            raw_json,
+            str(mapping.get("rows_path") or default_mapping.get("rows_path")),
+        )
         sample_records = insights[:3] if isinstance(insights, list) else []
         return {
             "candidate_count": len(insights) if isinstance(insights, list) else 0,
@@ -1543,7 +1656,47 @@ def result_write_preview(
             "sample_records": [compact_preview_value(record) for record in sample_records],
             "source_row_count": len(rows) if isinstance(rows, list) else None,
             "write_target": write_target,
-            "write_target_label": labels[write_target],
+            "write_target_label": write_target_label,
+        }
+
+    if write_target == "email_notifications":
+        recipients = json_path_value(
+            raw_json,
+            str(mapping.get("recipients_path") or default_mapping.get("recipients_path")),
+        )
+        sample_records = recipients[:3] if isinstance(recipients, list) else []
+        if not sample_records and recipients is not None:
+            sample_records = [recipients]
+        delivery_id = json_path_value(
+            raw_json,
+            str(mapping.get("delivery_id_path") or default_mapping.get("delivery_id_path")),
+        )
+        delivery_status = json_path_value(
+            raw_json,
+            str(
+                mapping.get("delivery_status_path")
+                or default_mapping.get("delivery_status_path"),
+            ),
+        )
+        subject = json_path_value(
+            raw_json,
+            str(mapping.get("subject_path") or default_mapping.get("subject_path")),
+        )
+        records_imported = records_imported_from_mapping(response_summary, mapping)
+        if records_imported == 0 and (delivery_id is not None or delivery_status is not None):
+            records_imported = 1
+        candidate_count = len(recipients) if isinstance(recipients, list) else 0
+        if candidate_count == 0 and recipients:
+            candidate_count = 1
+        return {
+            "candidate_count": candidate_count,
+            "delivery_id": compact_preview_value(delivery_id),
+            "delivery_status": compact_preview_value(delivery_status),
+            "records_imported": records_imported,
+            "sample_records": [compact_preview_value(record) for record in sample_records],
+            "subject": compact_preview_value(subject),
+            "write_target": write_target,
+            "write_target_label": write_target_label,
         }
 
     preview_value = json_path_value(raw_json, mapping.get("records_imported_path"))
@@ -1554,7 +1707,7 @@ def result_write_preview(
         "records_imported": records_imported_from_mapping(response_summary, mapping),
         "sample_records": [compact_preview_value(record) for record in sample_records],
         "write_target": write_target,
-        "write_target_label": labels.get(write_target, write_target),
+        "write_target_label": write_target_label,
     }
 
 
@@ -1589,21 +1742,47 @@ def trial_plugin_action_response(
             error_code = exc.detail.get("code", error_code)
             error_message = exc.detail.get("message", error_message)
     latency_ms = int((perf_counter() - start) * 1000)
+    mapping_hits = result_mapping_hits(response_summary, action.get("result_mapping") or {})
+    write_preview = result_write_preview(
+        response_summary,
+        action.get("result_mapping") or {},
+    )
+    audit_event = record_audit_event(
+        current_store,
+        event_type=f"plugin_action.trial_{status}",
+        actor_id=user["id"],
+        subject_type="plugin_action",
+        subject_id=action["id"],
+        payload={
+            "action_code": action.get("code"),
+            "action_id": action["id"],
+            "connection_environment": connection.get("environment"),
+            "connection_id": connection["id"],
+            "error_code": error_code,
+            "input_keys": sorted(payload.keys()),
+            "latency_ms": latency_ms,
+            "plugin_code": plugin.get("code"),
+            "plugin_id": plugin["id"],
+            "status": status,
+            "write_target": (action.get("result_mapping") or {}).get(
+                "write_target",
+                "scheduled_job_result",
+            ),
+        },
+    )
+    persist_audit_event(current_store, audit_event)
     return {
         "action_id": action["id"],
         "connection_id": connection["id"],
         "error_code": error_code,
         "error_message": error_message,
         "latency_ms": latency_ms,
-        "mapping_hits": result_mapping_hits(response_summary, action.get("result_mapping") or {}),
+        "mapping_hits": mapping_hits,
         "plugin_id": plugin["id"],
         "request_preview": request_preview,
         "response_summary": response_summary,
         "status": status,
-        "write_preview": result_write_preview(
-            response_summary,
-            action.get("result_mapping") or {},
-        ),
+        "write_preview": write_preview,
     }
 
 

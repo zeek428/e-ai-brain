@@ -6,6 +6,9 @@ import './proComponentsMock';
 
 import AssistantPage from '../src/pages/Assistant';
 import {
+  ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
+  ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+  ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   chatWithAssistant,
   fetchAssistantConversationMessages,
   fetchAssistantConversations,
@@ -16,10 +19,38 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   window.localStorage.clear();
+  window.sessionStorage.clear();
   void message.destroy();
   notification.destroy();
   Modal.destroyAll();
 });
+
+function resultWriteTargetsResponse() {
+  return new Response(
+    JSON.stringify({
+      data: {
+        items: [
+          {
+            code: 'code_inspection_reports',
+            default_result_mapping: { write_target: 'code_inspection_reports' },
+            form_label: '代码巡检报告',
+            label: '代码巡检报告',
+            mapping_fields: [],
+          },
+          {
+            code: 'email_notifications',
+            default_result_mapping: { write_target: 'email_notifications' },
+            form_label: '邮件通知记录',
+            label: '邮件通知记录',
+            mapping_fields: [],
+          },
+        ],
+        total: 2,
+      },
+    }),
+    { headers: { 'Content-Type': 'application/json' }, status: 200 },
+  );
+}
 
 describe('AssistantPage', () => {
   it('renders an AI assistant chat surface that can answer AI Brain progress questions', async () => {
@@ -185,6 +216,586 @@ describe('AssistantPage', () => {
     ]);
   });
 
+  it('renders assistant action drafts as configuration cards', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_draft',
+              latency_ms: 198,
+              message: {
+                content: '我已生成一个待确认的代码巡检定时作业草案。',
+                id: 'assistant_message_draft',
+                references: [
+                  {
+                    id: 'assistant_draft_code_repository_inspection',
+                    title: '代码仓库质量安全规范巡检',
+                    type: 'assistant_action_draft',
+                    url: '/assistant?draft_id=assistant_draft_code_repository_inspection',
+                  },
+                ],
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        draft_id: 'assistant_draft_code_repository_inspection',
+                        payload: {
+                          agent_id: 'agent_code_inspection',
+                          cron_expression: '0 2 * * MON',
+                          execution_mode: 'ai_generated',
+                          job_type: 'code_repository_inspection',
+                          model_gateway_config_id: 'model_gateway_code',
+                          plugin_action_id: 'plugin_action_github_scan',
+                          plugin_connection_id: 'connection_github_prod',
+                          skill_ids: ['skill_code_inspection'],
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: '代码仓库质量安全规范巡检',
+                      },
+                    ],
+                    summary: {
+                      draft_count: 1,
+                      requires_confirmation: true,
+                      target: 'scheduled_jobs',
+                    },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我创建每周代码巡检定时作业' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('我已生成一个待确认的代码巡检定时作业草案。')).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入作业定义')).toBeInTheDocument();
+    expect(screen.getByText('作业类型')).toBeInTheDocument();
+    expect(screen.getByText('code_repository_inspection')).toBeInTheDocument();
+    expect(screen.getByText('执行模式')).toBeInTheDocument();
+    expect(screen.getByText('ai_generated')).toBeInTheDocument();
+    expect(screen.getByText('AI 模型')).toBeInTheDocument();
+    expect(screen.getByText('model_gateway_code')).toBeInTheDocument();
+    expect(screen.getByText('Agent')).toBeInTheDocument();
+    expect(screen.getByText('agent_code_inspection')).toBeInTheDocument();
+    expect(screen.getByText('Skills')).toBeInTheDocument();
+    expect(screen.getByText('skill_code_inspection')).toBeInTheDocument();
+    expect(screen.getByText('connection_github_prod')).toBeInTheDocument();
+    const applyDraftLink = screen.getByRole('link', { name: '应用到定时作业表单' });
+    expect(applyDraftLink).toHaveAttribute(
+      'href',
+      '/tasks/scheduled-jobs',
+    );
+    fireEvent.mouseDown(applyDraftLink);
+    expect(JSON.parse(window.sessionStorage.getItem(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY) ?? '{}')).toEqual({
+      draftId: 'assistant_draft_code_repository_inspection',
+      payload: {
+        agent_id: 'agent_code_inspection',
+        cron_expression: '0 2 * * MON',
+        execution_mode: 'ai_generated',
+        job_type: 'code_repository_inspection',
+        model_gateway_config_id: 'model_gateway_code',
+        plugin_action_id: 'plugin_action_github_scan',
+        plugin_connection_id: 'connection_github_prod',
+        skill_ids: ['skill_code_inspection'],
+      },
+      title: '代码仓库质量安全规范巡检',
+    });
+    expect(screen.getByRole('link', { name: '查看草案' })).toHaveAttribute(
+      'href',
+      '/assistant?draft_id=assistant_draft_code_repository_inspection',
+    );
+  });
+
+  it('renders assistant plugin action drafts as configuration cards', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/system/result-write-targets') {
+        expect(init?.method ?? 'GET').toBe('GET');
+        return resultWriteTargetsResponse();
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_plugin_action_draft',
+              latency_ms: 168,
+              message: {
+                content: '我已生成一个待确认的 GitHub 代码巡检动作草案。',
+                id: 'assistant_message_plugin_action_draft',
+                references: [
+                  {
+                    id: 'assistant_draft_github_plugin_action',
+                    title: 'GitHub 代码巡检动作',
+                    type: 'assistant_action_draft',
+                    url: '/assistant?draft_id=assistant_draft_github_plugin_action',
+                  },
+                ],
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'plugin_action_draft',
+                    items: [
+                      {
+                        action: 'create_plugin_action',
+                        draft_id: 'assistant_draft_github_plugin_action',
+                        payload: {
+                          action_type: 'http_request',
+                          code: 'scan_github_code_inspection',
+                          connection_id: 'connection_github_prod',
+                          name: 'GitHub 代码巡检',
+                          plugin_id: 'plugin_standard_github',
+                          request_config: {
+                            method: 'GET',
+                            path: '/repos/{{owner}}/{{repo}}/code-scanning/alerts',
+                            query: { per_page: 100, state: 'open' },
+                          },
+                          result_mapping: { write_target: 'code_inspection_reports' },
+                          status: 'active',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: 'GitHub 代码巡检动作',
+                      },
+                    ],
+                    summary: {
+                      draft_count: 1,
+                      requires_confirmation: true,
+                      target: 'plugin_actions',
+                    },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我新增 GitHub 代码巡检插件动作' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('我已生成一个待确认的 GitHub 代码巡检动作草案。')).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入插件动作')).toBeInTheDocument();
+    expect(screen.getByText('动作类型')).toBeInTheDocument();
+    expect(screen.getByText('http_request')).toBeInTheDocument();
+    expect(screen.getByText('scan_github_code_inspection')).toBeInTheDocument();
+    expect(screen.getByText('/repos/{{owner}}/{{repo}}/code-scanning/alerts')).toBeInTheDocument();
+    expect(await screen.findByText('代码巡检报告')).toBeInTheDocument();
+    const applyDraftLink = screen.getByRole('link', { name: '应用到插件动作表单' });
+    expect(applyDraftLink).toHaveAttribute('href', '/tasks/plugins');
+    fireEvent.mouseDown(applyDraftLink);
+    expect(JSON.parse(window.sessionStorage.getItem(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY) ?? '{}')).toEqual({
+      draftId: 'assistant_draft_github_plugin_action',
+      payload: {
+        action_type: 'http_request',
+        code: 'scan_github_code_inspection',
+        connection_id: 'connection_github_prod',
+        name: 'GitHub 代码巡检',
+        plugin_id: 'plugin_standard_github',
+        request_config: {
+          method: 'GET',
+          path: '/repos/{{owner}}/{{repo}}/code-scanning/alerts',
+          query: { per_page: 100, state: 'open' },
+        },
+        result_mapping: { write_target: 'code_inspection_reports' },
+        status: 'active',
+      },
+      title: 'GitHub 代码巡检动作',
+    });
+  });
+
+  it('renders assistant email action drafts with the notification write target label', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/system/result-write-targets') {
+        expect(init?.method ?? 'GET').toBe('GET');
+        return resultWriteTargetsResponse();
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_email_action_draft',
+              latency_ms: 141,
+              message: {
+                content: '我已生成一个待确认的邮箱通知动作草案。',
+                id: 'assistant_message_email_action_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'plugin_action_draft',
+                    items: [
+                      {
+                        action: 'create_plugin_action',
+                        draft_id: 'assistant_draft_email_plugin_action',
+                        payload: {
+                          action_type: 'http_request',
+                          code: 'send_email_notification',
+                          connection_id: 'connection_email_prod',
+                          name: '发送邮件通知',
+                          plugin_id: 'plugin_standard_email',
+                          request_config: {
+                            headers: { 'Content-Type': 'application/json' },
+                            method: 'POST',
+                            path: '/messages/send',
+                            query: {
+                              body_template: '{{result_summary}}',
+                              subject_template: '{{subject_template}}',
+                              to: '{{default_to}}',
+                            },
+                          },
+                          result_mapping: {
+                            delivery_id_path: '$.message_id',
+                            delivery_status_path: '$.status',
+                            recipients_path: '$.recipients',
+                            subject_path: '$.subject',
+                            write_target: 'email_notifications',
+                          },
+                          status: 'active',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: '邮箱通知发送动作',
+                      },
+                    ],
+                    summary: {
+                      draft_count: 1,
+                      requires_confirmation: true,
+                      target: 'plugin_actions',
+                    },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我新增邮箱通知动作' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('我已生成一个待确认的邮箱通知动作草案。')).toBeInTheDocument();
+    expect(await screen.findByText('邮件通知记录')).toBeInTheDocument();
+    expect(screen.getByText('/messages/send')).toBeInTheDocument();
+    const applyDraftLink = screen.getByRole('link', { name: '应用到插件动作表单' });
+    fireEvent.mouseDown(applyDraftLink);
+    expect(JSON.parse(window.sessionStorage.getItem(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY) ?? '{}')).toMatchObject({
+      draftId: 'assistant_draft_email_plugin_action',
+      payload: {
+        result_mapping: {
+          delivery_id_path: '$.message_id',
+          delivery_status_path: '$.status',
+          recipients_path: '$.recipients',
+          subject_path: '$.subject',
+          write_target: 'email_notifications',
+        },
+      },
+      title: '邮箱通知发送动作',
+    });
+  });
+
+  it('renders assistant plugin connection drafts as configuration cards', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_plugin_connection_draft',
+              latency_ms: 171,
+              message: {
+                content: '我已生成一个待确认的 GitHub API 连接草案。',
+                id: 'assistant_message_plugin_connection_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'plugin_connection_draft',
+                    items: [
+                      {
+                        action: 'create_plugin_connection',
+                        draft_id: 'assistant_draft_github_plugin_connection',
+                        payload: {
+                          auth_config: { token_ref: 'vault/github/token' },
+                          auth_type: 'bearer',
+                          endpoint_url: 'https://api.github.com',
+                          environment: 'prod',
+                          max_retries: 1,
+                          name: '生产 GitHub 连接',
+                          plugin_id: 'plugin_standard_github',
+                          request_config: {
+                            headers: {
+                              Accept: 'application/vnd.github+json',
+                              'X-GitHub-Api-Version': '2022-11-28',
+                            },
+                            query: { owner: '', repo: '' },
+                          },
+                          status: 'active',
+                          timeout_seconds: 30,
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: 'GitHub API 连接',
+                      },
+                    ],
+                    summary: {
+                      draft_count: 1,
+                      requires_confirmation: true,
+                      target: 'plugin_connections',
+                    },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我新增 GitHub 插件连接' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('我已生成一个待确认的 GitHub API 连接草案。')).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入插件连接')).toBeInTheDocument();
+    expect(screen.getByText('Endpoint')).toBeInTheDocument();
+    expect(screen.getByText('https://api.github.com')).toBeInTheDocument();
+    expect(screen.getByText('认证')).toBeInTheDocument();
+    expect(screen.getByText('bearer')).toBeInTheDocument();
+    expect(screen.getByText('Headers')).toBeInTheDocument();
+    expect(screen.getByText('{"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}')).toBeInTheDocument();
+    const applyDraftLink = screen.getByRole('link', { name: '应用到插件连接表单' });
+    expect(applyDraftLink).toHaveAttribute('href', '/tasks/plugins');
+    fireEvent.mouseDown(applyDraftLink);
+    expect(JSON.parse(window.sessionStorage.getItem(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY) ?? '{}')).toEqual({
+      draftId: 'assistant_draft_github_plugin_connection',
+      payload: {
+        auth_config: { token_ref: 'vault/github/token' },
+        auth_type: 'bearer',
+        endpoint_url: 'https://api.github.com',
+        environment: 'prod',
+        max_retries: 1,
+        name: '生产 GitHub 连接',
+        plugin_id: 'plugin_standard_github',
+        request_config: {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+          query: { owner: '', repo: '' },
+        },
+        status: 'active',
+        timeout_seconds: 30,
+      },
+      title: 'GitHub API 连接',
+    });
+  });
+
+  it('renders assistant code inspection setup drafts as ordered configuration cards', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/system/result-write-targets') {
+        expect(init?.method ?? 'GET').toBe('GET');
+        return resultWriteTargetsResponse();
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_code_inspection_setup_draft',
+              latency_ms: 183,
+              message: {
+                content: '我已生成 GitHub 代码巡检的一组待确认配置草案。',
+                id: 'assistant_message_code_inspection_setup_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'code_inspection_setup_draft',
+                    items: [
+                      {
+                        action: 'create_plugin_connection',
+                        draft_id: 'assistant_draft_github_plugin_connection',
+                        payload: {
+                          auth_type: 'bearer',
+                          endpoint_url: 'https://api.github.com',
+                          environment: 'prod',
+                          name: '生产 GitHub 连接',
+                          plugin_id: 'plugin_standard_github',
+                          request_config: {
+                            headers: { Accept: 'application/vnd.github+json' },
+                            query: { owner: '', repo: '' },
+                          },
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: 'GitHub API 连接',
+                      },
+                      {
+                        action: 'create_plugin_action',
+                        draft_id: 'assistant_draft_github_plugin_action',
+                        payload: {
+                          action_type: 'http_request',
+                          code: 'scan_github_code_inspection',
+                          connection_id: null,
+                          name: 'GitHub 代码巡检',
+                          plugin_id: 'plugin_standard_github',
+                          request_config: {
+                            method: 'GET',
+                            path: '/repos/{{owner}}/{{repo}}/code-scanning/alerts',
+                          },
+                          result_mapping: { write_target: 'code_inspection_reports' },
+                          status: 'active',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: 'GitHub 代码巡检动作',
+                      },
+                      {
+                        action: 'create_scheduled_job',
+                        draft_id: 'assistant_draft_code_repository_inspection',
+                        payload: {
+                          assistant_prerequisite_draft_ids: [
+                            'assistant_draft_github_plugin_connection',
+                            'assistant_draft_github_plugin_action',
+                          ],
+                          cron_expression: '0 2 * * MON',
+                          execution_mode: 'deterministic',
+                          job_type: 'code_repository_inspection',
+                          plugin_action_id: null,
+                          plugin_connection_id: null,
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: '代码仓库质量安全规范巡检',
+                      },
+                    ],
+                    summary: {
+                      draft_count: 3,
+                      requires_confirmation: true,
+                      target: 'code_inspection_setup',
+                    },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我配置 GitHub 代码巡检定时作业' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('我已生成 GitHub 代码巡检的一组待确认配置草案。')).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入插件连接')).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入插件动作')).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入作业定义')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '应用到插件连接表单' })).toHaveAttribute('href', '/tasks/plugins');
+    expect(screen.getByRole('link', { name: '应用到插件动作表单' })).toHaveAttribute('href', '/tasks/plugins');
+    expect(screen.getByRole('link', { name: '应用到定时作业表单' })).toHaveAttribute('href', '/tasks/scheduled-jobs');
+    expect(await screen.findByText('代码巡检报告')).toBeInTheDocument();
+    expect(screen.getByText('前置草案')).toBeInTheDocument();
+    expect(screen.getByText('assistant_draft_github_plugin_connection、assistant_draft_github_plugin_action')).toBeInTheDocument();
+  });
+
   it('posts AI assistant chat messages to the assistant API', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(input).toBe('/api/assistant/chat');
@@ -334,6 +945,7 @@ describe('AssistantPage', () => {
         references: [],
         role: 'user',
         suggestions: [],
+        toolResults: [],
       },
       {
         content: '当前已进入 AI 助手迭代开发。',
@@ -351,6 +963,7 @@ describe('AssistantPage', () => {
         ],
         role: 'assistant',
         suggestions: ['查看任务中心'],
+        toolResults: [],
       },
     ]);
   });

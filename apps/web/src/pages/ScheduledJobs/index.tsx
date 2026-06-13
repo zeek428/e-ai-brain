@@ -1,9 +1,38 @@
-import { DeleteOutlined, EditOutlined, EyeOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  CopyOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  EyeOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { Button, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Tabs, Tag, Switch, Typography, message } from 'antd';
+import {
+  Button,
+  Card,
+  Col,
+  Descriptions,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Row,
+  Select,
+  Space,
+  Statistic,
+  Table,
+  Tabs,
+  Tag,
+  Switch,
+  Typography,
+  message,
+} from 'antd';
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
+  ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   createScheduledJob,
   deleteScheduledJob,
   fetchActiveProductOptions,
@@ -13,24 +42,34 @@ import {
   fetchModelGatewayConfigs,
   fetchPluginActions,
   fetchPluginConnections,
+  fetchScheduledJobTemplates,
+  fetchScheduledJobRunObservability,
   fetchScheduledJobRuns,
   fetchScheduledJobs,
+  resolveAssistantDraftResourceId,
   runScheduledJob,
+  testPluginConnection,
   updateScheduledJob,
   type AiAgentRecord,
   type AiSkillRecord,
+  type AssistantScheduledJobDraft,
   type PluginActionRecord,
+  type PluginConnectionTestResult,
   type PluginConnectionRecord,
   type ProductFilterOption,
   type ScheduledJobRecord,
   type ScheduledJobResultAction,
+  type ScheduledJobRunObservability,
   type ScheduledJobRunRecord,
+  type ScheduledJobTemplateRecord,
 } from '../../services/aiBrain';
 import type { ModelGatewayConfigRecord } from '../../data/management';
 import type { KnowledgeRecord } from '../../data/management';
 
 type ScheduledJobFormValues = {
   agent_id?: string;
+  connection_environment?: string;
+  config_json?: Record<string, unknown>;
   cron_expression?: string;
   enabled: boolean;
   execution_mode: string;
@@ -41,13 +80,44 @@ type ScheduledJobFormValues = {
   name: string;
   plugin_action_id?: string;
   plugin_connection_id?: string;
-  plugin_input_mapping?: string;
-  plugin_output_mapping?: string;
+  plugin_input_mapping?: Record<string, unknown>;
+  plugin_output_mapping?: Record<string, unknown>;
   product_id?: string;
   result_actions?: ScheduledJobResultAction[];
   schedule_type: string;
   skill_ids?: string[];
   source_system: string;
+  template?: string;
+};
+
+type DraftBackedScheduledJobFormValues = ScheduledJobFormValues & {
+  plugin_input_mapping?: Record<string, unknown>;
+  plugin_output_mapping?: Record<string, unknown>;
+};
+
+type ScheduledJobTemplateSource = {
+  sourceId: string;
+  sourceType: 'scheduled_job' | 'scheduled_job_run';
+  title: string;
+  values: Partial<ScheduledJobFormValues>;
+};
+
+type TemplateSourceView = {
+  sourceId?: string;
+  sourceType?: string;
+  title?: string;
+};
+
+type ScheduledJobPageTab = 'jobs' | 'runs';
+
+type ScheduledJobOrchestrationNode = {
+  action?: ReactNode;
+  details: string[];
+  key: string;
+  required?: boolean;
+  status: string;
+  statusColor: string;
+  title: string;
 };
 
 const jobTypeOptions = [
@@ -84,9 +154,37 @@ const scheduleTypeOptions = [
 
 const scheduleTypeLabelByValue = new Map(scheduleTypeOptions.map((option) => [option.value, option.label]));
 
+const connectionEnvironmentOptions = [
+  { label: '默认', value: 'default' },
+  { label: '开发', value: 'dev' },
+  { label: '测试', value: 'test' },
+  { label: '预发', value: 'staging' },
+  { label: '生产', value: 'prod' },
+  { label: '沙箱', value: 'sandbox' },
+];
+
+const productRequiredJobTypes = ['code_repository_inspection', 'user_feedback_insight_extract'];
+const pluginRequiredJobTypes = ['code_repository_inspection', 'plugin_action_invoke', 'user_feedback_insight_extract'];
+const aiProcessingRequiredJobTypes = [
+  'iteration_plan_suggestion_generate',
+  'online_log_ai_analysis',
+  'user_feedback_insight_extract',
+];
+
 const statusLabelByValue = new Map([
   ['active', '启用'],
   ['disabled', '停用'],
+]);
+
+const runTriggerTypeLabelByValue = new Map([
+  ['manual', '手动触发'],
+  ['manual_rerun', '运行记录复跑'],
+  ['scheduler', '调度触发'],
+]);
+
+const templateSourceTypeLabelByValue = new Map([
+  ['scheduled_job', '作业'],
+  ['scheduled_job_run', '运行快照'],
 ]);
 
 const codeInspectionResultActionOptions = [
@@ -113,6 +211,174 @@ const defaultCodeInspectionResultActions: ScheduledJobResultAction[] = [
   { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
   { channels: ['email'], recipients: [], type: 'send_notification' },
 ];
+
+function cloneResultActions(actions: ScheduledJobResultAction[]): ScheduledJobResultAction[] {
+  return actions.map((action) => ({
+    ...action,
+    ...(action.channels ? { channels: [...action.channels] } : {}),
+    ...(action.recipients ? { recipients: [...action.recipients] } : {}),
+  }));
+}
+
+function templatePayloadRecord(template: ScheduledJobTemplateRecord | undefined) {
+  return (template?.payload_defaults ?? {}) as Record<string, unknown>;
+}
+
+function templatePayloadString(template: ScheduledJobTemplateRecord | undefined, key: string) {
+  const value = templatePayloadRecord(template)[key];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function templatePayloadBoolean(
+  template: ScheduledJobTemplateRecord | undefined,
+  key: string,
+  fallback: boolean,
+) {
+  const value = templatePayloadRecord(template)[key];
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function templatePayloadNumber(template: ScheduledJobTemplateRecord | undefined, key: string) {
+  const value = templatePayloadRecord(template)[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function templatePayloadList(template: ScheduledJobTemplateRecord | undefined, key: string) {
+  const value = templatePayloadRecord(template)[key];
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : undefined;
+}
+
+function templatePayloadRecordValue(template: ScheduledJobTemplateRecord | undefined, key: string) {
+  const value = templatePayloadRecord(template)[key];
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function templatePayloadResultActions(template: ScheduledJobTemplateRecord | undefined) {
+  const value = templatePayloadRecord(template).result_actions;
+  return Array.isArray(value) ? cloneResultActions(value as ScheduledJobResultAction[]) : undefined;
+}
+
+function templateSelector(template: ScheduledJobTemplateRecord | undefined, key: string) {
+  const selectors = template?.resource_selectors;
+  const value = selectors?.[key];
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringArrayFromUnknown(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function hasRequiredFormValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return value !== undefined && value !== null && value !== '';
+}
+
+function requiredForJobTypes(jobTypes: string[], message: string) {
+  return ({ getFieldValue }: { getFieldValue: (field: string) => unknown }) => ({
+    validator(_: unknown, value: unknown) {
+      if (jobTypes.includes(String(getFieldValue('job_type') ?? '')) && !hasRequiredFormValue(value)) {
+        return Promise.reject(new Error(message));
+      }
+      return Promise.resolve();
+    },
+  });
+}
+
+function requiresAiAssembly(jobType: unknown, executionMode: unknown): boolean {
+  return (
+    aiProcessingRequiredJobTypes.includes(String(jobType ?? ''))
+    || ['ai_assisted', 'ai_generated'].includes(String(executionMode ?? ''))
+  );
+}
+
+function requiredForAiAssembly(message: string) {
+  return ({ getFieldValue }: { getFieldValue: (field: string) => unknown }) => ({
+    validator(_: unknown, value: unknown) {
+      if (
+        requiresAiAssembly(getFieldValue('job_type'), getFieldValue('execution_mode'))
+        && !hasRequiredFormValue(value)
+      ) {
+        return Promise.reject(new Error(message));
+      }
+      return Promise.resolve();
+    },
+  });
+}
+
+function stringFromDraftPayload(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function booleanFromDraftPayload(payload: Record<string, unknown>, key: string, fallback: boolean) {
+  const value = payload[key];
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function numberFromDraftPayload(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function stringListFromDraftPayload(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function recordFromDraftPayload(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function resultActionsFromDraftPayload(payload: Record<string, unknown>) {
+  const value = payload.result_actions;
+  return Array.isArray(value) ? (value as ScheduledJobResultAction[]) : undefined;
+}
+
+function scheduledJobValuesFromAssistantDraft(
+  draft: AssistantScheduledJobDraft,
+): DraftBackedScheduledJobFormValues {
+  const payload = draft.payload;
+  const jobType = stringFromDraftPayload(payload, 'job_type') ?? 'user_feedback_insight_extract';
+  const resolvedPluginActionId =
+    stringFromDraftPayload(payload, 'plugin_action_id')
+    ?? resolveAssistantDraftResourceId(payload, 'plugin_action');
+  const resolvedPluginConnectionId =
+    stringFromDraftPayload(payload, 'plugin_connection_id')
+    ?? resolveAssistantDraftResourceId(payload, 'plugin_connection');
+  return {
+    agent_id: stringFromDraftPayload(payload, 'agent_id'),
+    config_json: recordFromDraftPayload(payload, 'config_json'),
+    cron_expression: stringFromDraftPayload(payload, 'cron_expression'),
+    enabled: booleanFromDraftPayload(payload, 'enabled', true),
+    execution_mode:
+      stringFromDraftPayload(payload, 'execution_mode')
+      ?? (jobType === 'code_repository_inspection' ? 'deterministic' : 'ai_generated'),
+    interval_seconds: numberFromDraftPayload(payload, 'interval_seconds'),
+    job_type: jobType,
+    knowledge_document_ids: stringListFromDraftPayload(payload, 'knowledge_document_ids'),
+    model_gateway_config_id: stringFromDraftPayload(payload, 'model_gateway_config_id'),
+    name: stringFromDraftPayload(payload, 'name') ?? draft.title ?? 'AI 助手生成定时作业草案',
+    plugin_action_id: resolvedPluginActionId,
+    plugin_connection_id: resolvedPluginConnectionId,
+    plugin_input_mapping: recordFromDraftPayload(payload, 'plugin_input_mapping'),
+    plugin_output_mapping: recordFromDraftPayload(payload, 'plugin_output_mapping'),
+    product_id: stringFromDraftPayload(payload, 'product_id'),
+    result_actions: resultActionsFromDraftPayload(payload),
+    schedule_type: stringFromDraftPayload(payload, 'schedule_type') ?? 'manual',
+    skill_ids: stringListFromDraftPayload(payload, 'skill_ids'),
+    source_system: stringFromDraftPayload(payload, 'source_system') ?? 'ai-brain',
+    template: undefined,
+  };
+}
 
 function resultActionLabels(actions?: ScheduledJobResultAction[]) {
   const labels = (actions ?? []).map((action) => resultActionLabelByValue.get(action.type) ?? action.type);
@@ -168,6 +434,75 @@ function JsonPreview({ title, value }: { title: string; value: unknown }) {
   );
 }
 
+function ScheduledJobOrchestrationFlow({ nodes }: { nodes: ScheduledJobOrchestrationNode[] }) {
+  return (
+    <Space
+      aria-label="任务编排流程"
+      orientation="vertical"
+      size={10}
+      style={{
+        background: '#f8fafc',
+        border: '1px solid #e5e7eb',
+        borderRadius: 8,
+        marginBottom: 16,
+        padding: 12,
+        width: '100%',
+      }}
+    >
+      <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }} wrap>
+        <Typography.Text strong>任务编排流程</Typography.Text>
+        <Typography.Text type="secondary">数据连接 → AI 处理 → 知识引用 → 结果动作</Typography.Text>
+      </Space>
+      <div
+        style={{
+          display: 'grid',
+          gap: 10,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))',
+        }}
+      >
+        {nodes.map((node) => (
+          <div
+            aria-label={`编排节点 ${node.title}`}
+            key={node.key}
+            style={{
+              background: '#fff',
+              border: '1px solid #e5e7eb',
+              borderRadius: 8,
+              minHeight: 142,
+              padding: 10,
+            }}
+          >
+            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+              <Space align="center" wrap>
+                <Tag color={node.statusColor}>{node.status}</Tag>
+                <Typography.Text strong>{node.title}</Typography.Text>
+                {node.required ? <Tag color="orange">必填</Tag> : <Tag>可选</Tag>}
+              </Space>
+              <Space orientation="vertical" size={4} style={{ minHeight: 46, width: '100%' }}>
+                {node.details.length > 0 ? (
+                  node.details.map((detail) => (
+                    <Typography.Text
+                      ellipsis={{ tooltip: detail }}
+                      key={`${node.key}-${detail}`}
+                      style={{ maxWidth: '100%' }}
+                      type="secondary"
+                    >
+                      {detail}
+                    </Typography.Text>
+                  ))
+                ) : (
+                  <Typography.Text type="secondary">尚未选择</Typography.Text>
+                )}
+              </Space>
+              {node.action}
+            </Space>
+          </div>
+        ))}
+      </div>
+    </Space>
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -190,6 +525,29 @@ function nodeFieldText(value: unknown): string | undefined {
   return undefined;
 }
 
+function nodeNestedValue(node: Record<string, unknown>, path: string): unknown {
+  return path.split('.').reduce<unknown>((current, key) => {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+    return current[key];
+  }, node);
+}
+
+function nodeNestedFieldText(node: Record<string, unknown>, path: string): string | undefined {
+  const value = nodeNestedValue(node, path);
+  if (Array.isArray(value)) {
+    const primitiveValues = value.filter((item) => ['string', 'number', 'boolean'].includes(typeof item));
+    return primitiveValues.length ? primitiveValues.join('、') : undefined;
+  }
+  return nodeFieldText(value);
+}
+
+function nodeNestedArrayCountText(node: Record<string, unknown>, path: string): string | undefined {
+  const value = nodeNestedValue(node, path);
+  return Array.isArray(value) ? String(value.length) : undefined;
+}
+
 function runNodeTagColor(status: string | undefined): string {
   if (status === 'succeeded') {
     return 'green';
@@ -201,6 +559,44 @@ function runNodeTagColor(status: string | undefined): string {
     return 'default';
   }
   return 'blue';
+}
+
+function templateSourceFromConfig(configJson: Record<string, unknown> | undefined): TemplateSourceView | undefined {
+  const rawTemplateSource = configJson?.template_source;
+  if (!isRecord(rawTemplateSource)) {
+    return undefined;
+  }
+  const source = {
+    sourceId: nodeFieldText(rawTemplateSource.source_id),
+    sourceType: nodeFieldText(rawTemplateSource.source_type),
+    title: nodeFieldText(rawTemplateSource.title),
+  };
+  return source.sourceId || source.sourceType || source.title ? source : undefined;
+}
+
+function templateSourceDisplayText(source: TemplateSourceView): string {
+  const title = source.title || source.sourceId || '-';
+  return source.sourceId && source.sourceId !== title ? `${title} (${source.sourceId})` : title;
+}
+
+function TemplateSourceSummary({ source }: { source: TemplateSourceView | undefined }) {
+  if (!source) {
+    return <Typography.Text type="secondary">-</Typography.Text>;
+  }
+  const typeLabel = templateSourceTypeLabelByValue.get(String(source.sourceType ?? '')) ?? source.sourceType ?? '模板';
+  const displayText = templateSourceDisplayText(source);
+  return (
+    <Space
+      aria-label={`模板来源 ${source.sourceId ?? source.title ?? source.sourceType ?? 'unknown'}`}
+      size={6}
+      style={{ maxWidth: '100%' }}
+    >
+      <Tag color={source.sourceType === 'scheduled_job_run' ? 'purple' : 'blue'}>{typeLabel}</Tag>
+      <Typography.Text ellipsis={{ tooltip: displayText }} style={{ maxWidth: 180 }}>
+        {displayText}
+      </Typography.Text>
+    </Space>
+  );
 }
 
 function RunExecutionNodeCard({
@@ -215,14 +611,32 @@ function RunExecutionNodeCard({
   const node = isRecord(value) ? value : {};
   const status = nodeFieldText(node.status) ?? (isEmptyJsonValue(value) ? '暂无数据' : 'available');
   const metrics = [
+    { label: '请求方法', value: nodeFieldText(node.request_method) ?? nodeNestedFieldText(node, 'request_summary.method') ?? nodeNestedFieldText(node, 'request_summary.request_preview.method') },
+    { label: '请求 URL', value: nodeFieldText(node.request_url) ?? nodeNestedFieldText(node, 'request_summary.url') ?? nodeNestedFieldText(node, 'request_summary.request_preview.url') },
+    { label: 'HTTP 状态', value: nodeFieldText(node.response_status_code) ?? nodeNestedFieldText(node, 'response_summary.status_code') },
+    { label: '耗时 ms', value: nodeFieldText(node.latency_ms) },
     { label: '模型调用', value: typeof node.model_gateway_called === 'boolean' ? (node.model_gateway_called ? '已调用' : '未调用') : undefined },
     { label: '处理模式', value: nodeFieldText(node.processing_mode) },
+    { label: '模型配置', value: nodeFieldText(node.model_gateway_config_id) },
     { label: '模型日志', value: nodeFieldText(node.model_log_id) },
-    { label: '写入目标', value: nodeFieldText(node.write_target) },
-    { label: '写入数量', value: nodeFieldText(node.records_imported) },
+    { label: '知识引用', value: nodeNestedArrayCountText(node, 'input.knowledge_references') },
+    { label: '候选结果', value: nodeNestedFieldText(node, 'output.candidate_count') ?? nodeNestedFieldText(node, 'output.finding_count') },
+    { label: '风险等级', value: nodeNestedFieldText(node, 'output.risk_level') },
+    { label: '写入目标', value: nodeFieldText(node.write_target_label) ?? nodeFieldText(node.write_target) },
+    { label: nodeKey === 'data_connection' ? '行数' : '写入数量', value: nodeFieldText(node.records_imported) },
+    { label: '跳过数量', value: nodeFieldText(node.skipped_insights) ?? nodeNestedFieldText(node, 'feedback.skipped_insights') },
+    { label: '报告 ID', value: nodeNestedFieldText(node, 'feedback.report_id') ?? nodeFieldText(node.report_id) },
+    { label: '创建记录', value: nodeNestedFieldText(node, 'feedback.created_ids') ?? nodeNestedFieldText(node, 'created_ids') },
+    { label: 'Bug 数量', value: nodeNestedArrayCountText(node, 'feedback.bug_ids') ?? nodeNestedArrayCountText(node, 'created_bug_ids') },
+    { label: '通知数量', value: nodeNestedArrayCountText(node, 'feedback.notification_ids') ?? nodeNestedArrayCountText(node, 'created_notification_ids') },
+    { label: '投递 ID', value: nodeNestedFieldText(node, 'feedback.delivery_id') },
+    { label: '投递状态', value: nodeNestedFieldText(node, 'feedback.delivery_status') },
+    { label: '收件人', value: nodeNestedFieldText(node, 'feedback.sample_records') },
     { label: '源数据量', value: nodeFieldText(node.source_row_count) ?? nodeFieldText(node.row_count) },
     { label: '连接', value: nodeFieldText(node.connection_id) },
+    { label: '环境', value: nodeFieldText(node.connection_environment) },
     { label: '动作', value: nodeFieldText(node.action_id) },
+    { label: '失败原因', value: nodeFieldText(node.error_message) },
   ].filter((item) => item.value);
 
   return (
@@ -291,6 +705,204 @@ function RunExecutionChain({ run }: { run: ScheduledJobRunRecord }) {
   );
 }
 
+function RunSourceComparison({ run }: { run: ScheduledJobRunRecord }) {
+  const source = run.source_run_summary;
+  if (!source) {
+    return null;
+  }
+  return (
+    <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+      <Typography.Text strong>复跑对比</Typography.Text>
+      <Descriptions
+        bordered
+        column={2}
+        size="small"
+        items={[
+          { key: 'source_id', label: '来源运行', children: source.id || run.source_run_id || '-' },
+          {
+            key: 'source_trigger_type',
+            label: '来源触发',
+            children: runTriggerTypeLabelByValue.get(String(source.trigger_type ?? '')) ?? source.trigger_type ?? '-',
+          },
+          { key: 'source_status', label: '来源状态', children: source.status || '-' },
+          { key: 'current_status', label: '本次状态', children: run.status || '-' },
+          { key: 'source_records_imported', label: '来源导入数', children: source.records_imported ?? 0 },
+          { key: 'current_records_imported', label: '本次导入数', children: run.records_imported ?? 0 },
+          { key: 'source_error_code', label: '来源错误码', children: source.error_code || '-' },
+          { key: 'source_latency_ms', label: '来源耗时 ms', children: source.latency_ms ?? '-' },
+        ]}
+      />
+    </Space>
+  );
+}
+
+function metricNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function distributionText(items: Array<Record<string, unknown>> | undefined, key: string): string {
+  if (!items?.length) {
+    return '-';
+  }
+  return items
+    .slice(0, 3)
+    .map((item) => `${String(item[key] ?? '-')}: ${String(item.count ?? 0)}`)
+    .join(' / ');
+}
+
+type ObservabilityFailureRow = NonNullable<ScheduledJobRunObservability['recent_failures']>[number];
+type ObservabilitySlowRunRow = NonNullable<ScheduledJobRunObservability['slow_runs']>[number];
+
+function ScheduledJobRunObservabilityOverview({
+  loading,
+  observability,
+}: {
+  loading: boolean;
+  observability?: ScheduledJobRunObservability;
+}) {
+  const summary = observability?.summary ?? {};
+  const recentFailures = observability?.recent_failures ?? [];
+  const slowRuns = observability?.slow_runs ?? [];
+
+  return (
+    <Space orientation="vertical" size={12} style={{ marginBottom: 16, width: '100%' }}>
+      <Row gutter={[12, 12]}>
+        <Col lg={6} md={12} xs={24}>
+          <Card size="small" loading={loading}>
+            <Statistic title="总运行数" value={metricNumber(summary.total_runs)} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card size="small" loading={loading}>
+            <Statistic precision={2} suffix="%" title="成功率" value={metricNumber(summary.success_rate)} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card size="small" loading={loading}>
+            <Statistic precision={2} suffix="%" title="失败率" value={metricNumber(summary.failure_rate)} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card size="small" loading={loading}>
+            <Statistic precision={0} suffix="ms" title="平均耗时" value={metricNumber(summary.average_latency_ms)} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card size="small" loading={loading}>
+            <Statistic title="AI 调用次数" value={metricNumber(summary.model_gateway_called_runs)} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card size="small" loading={loading}>
+            <Statistic title="Token 总量" value={metricNumber(summary.model_gateway_token_total)} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card size="small" loading={loading}>
+            <Statistic title="插件调用次数" value={metricNumber(summary.plugin_invocation_runs)} />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card size="small" loading={loading}>
+            <Statistic
+              precision={2}
+              suffix="%"
+              title="动作写入成功率"
+              value={metricNumber(summary.action_write_success_rate)}
+            />
+          </Card>
+        </Col>
+      </Row>
+      <Card
+        size="small"
+        title="运行健康概览"
+        loading={loading}
+      >
+        <Descriptions
+          column={{ lg: 3, md: 2, xs: 1 }}
+          size="small"
+          items={[
+            {
+              key: 'status_distribution',
+              label: '状态分布',
+              children: distributionText(observability?.status_distribution, 'status'),
+            },
+            {
+              key: 'job_type_distribution',
+              label: '作业类型',
+              children: distributionText(observability?.job_type_distribution, 'job_type'),
+            },
+            {
+              key: 'trigger_type_distribution',
+              label: '触发方式',
+              children: distributionText(observability?.trigger_type_distribution, 'trigger_type'),
+            },
+            {
+              key: 'write_target_distribution',
+              label: '写入目标',
+              children: distributionText(observability?.write_target_distribution, 'write_target'),
+            },
+            {
+              key: 'error_distribution',
+              label: '失败原因',
+              children: distributionText(observability?.error_distribution, 'error'),
+            },
+            {
+              key: 'average_records_imported',
+              label: '平均导入数',
+              children: metricNumber(summary.average_records_imported),
+            },
+          ]}
+        />
+      </Card>
+      <Row gutter={[12, 12]}>
+        <Col lg={12} xs={24}>
+          <Card size="small" title="最近失败">
+            <Table<ObservabilityFailureRow>
+              columns={[
+                { dataIndex: 'id', ellipsis: true, title: '运行 ID', width: 190 },
+                { dataIndex: 'job_name', ellipsis: true, title: '作业', width: 170 },
+                { dataIndex: 'error_code', ellipsis: true, title: '错误码', width: 140, render: (value) => value || '-' },
+                { dataIndex: 'error_message', ellipsis: true, title: '错误信息', render: (value) => value || '-' },
+              ]}
+              dataSource={recentFailures}
+              locale={{ emptyText: '暂无失败记录' }}
+              pagination={false}
+              rowKey="id"
+              scroll={{ x: 680 }}
+              size="small"
+            />
+          </Card>
+        </Col>
+        <Col lg={12} xs={24}>
+          <Card size="small" title="慢运行">
+            <Table<ObservabilitySlowRunRow>
+              columns={[
+                { dataIndex: 'id', ellipsis: true, title: '运行 ID', width: 190 },
+                { dataIndex: 'job_name', ellipsis: true, title: '作业', width: 170 },
+                { dataIndex: 'latency_ms', title: '耗时 ms', width: 110, render: (value) => value ?? '-' },
+                { dataIndex: 'records_imported', title: '导入数', width: 90, render: (value) => value ?? 0 },
+                {
+                  dataIndex: 'status',
+                  title: '状态',
+                  width: 100,
+                  render: (value) => <Tag color={runNodeTagColor(String(value ?? ''))}>{String(value ?? '-')}</Tag>,
+                },
+              ]}
+              dataSource={slowRuns}
+              locale={{ emptyText: '暂无慢运行记录' }}
+              pagination={false}
+              rowKey="id"
+              scroll={{ x: 660 }}
+              size="small"
+            />
+          </Card>
+        </Col>
+      </Row>
+    </Space>
+  );
+}
+
 function snapshotStringValue(snapshot: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = snapshot?.[key];
   return typeof value === 'string' && value ? value : undefined;
@@ -301,10 +913,102 @@ function snapshotStringListValue(snapshot: Record<string, unknown> | undefined, 
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+function recordStringValue(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function recordNumberValue(record: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = record?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function recordBooleanValue(
+  record: Record<string, unknown> | undefined,
+  key: string,
+  fallback: boolean,
+): boolean {
+  const value = record?.[key];
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function scheduledJobTemplateValuesFromRecord(
+  record: Record<string, unknown>,
+  {
+    fallback,
+    nameSuffix = '副本',
+    pluginConnectionById,
+  }: {
+    fallback?: Partial<ScheduledJobRecord>;
+    nameSuffix?: string;
+    pluginConnectionById: Map<string, PluginConnectionRecord>;
+  },
+): Partial<ScheduledJobFormValues> {
+  const pluginConnectionId =
+    recordStringValue(record, 'plugin_connection_id') ?? fallback?.plugin_connection_id ?? undefined;
+  const connectionEnvironment = pluginConnectionId
+    ? pluginConnectionById.get(pluginConnectionId)?.environment ?? 'default'
+    : undefined;
+  const name = recordStringValue(record, 'name') ?? fallback?.name ?? '定时作业';
+  const resultActions = Array.isArray(record.result_actions)
+    ? (record.result_actions as ScheduledJobResultAction[])
+    : fallback?.result_actions;
+  const knowledgeDocumentIds = snapshotStringListValue(record, 'knowledge_document_ids');
+  const skillIds = snapshotStringListValue(record, 'skill_ids');
+  return {
+    agent_id: recordStringValue(record, 'agent_id') ?? fallback?.agent_id ?? undefined,
+    config_json: recordValue(record.config_json) ?? fallback?.config_json ?? {},
+    connection_environment: connectionEnvironment,
+    cron_expression: recordStringValue(record, 'cron_expression') ?? fallback?.cron_expression ?? undefined,
+    enabled: recordBooleanValue(record, 'enabled', fallback?.enabled ?? true),
+    execution_mode: recordStringValue(record, 'execution_mode') ?? fallback?.execution_mode ?? 'deterministic',
+    interval_seconds: recordNumberValue(record, 'interval_seconds') ?? fallback?.interval_seconds ?? undefined,
+    job_type: recordStringValue(record, 'job_type') ?? fallback?.job_type ?? 'plugin_action_invoke',
+    knowledge_document_ids: knowledgeDocumentIds.length ? knowledgeDocumentIds : fallback?.knowledge_document_ids ?? [],
+    model_gateway_config_id:
+      recordStringValue(record, 'model_gateway_config_id')
+      ?? fallback?.model_gateway_config_id
+      ?? undefined,
+    name: `${name} ${nameSuffix}`,
+    plugin_action_id: recordStringValue(record, 'plugin_action_id') ?? fallback?.plugin_action_id ?? undefined,
+    plugin_connection_id: pluginConnectionId,
+    plugin_input_mapping: recordValue(record.plugin_input_mapping) ?? fallback?.plugin_input_mapping ?? {},
+    plugin_output_mapping: recordValue(record.plugin_output_mapping) ?? fallback?.plugin_output_mapping ?? {},
+    product_id: recordStringValue(record, 'product_id') ?? fallback?.product_id ?? undefined,
+    result_actions: resultActions?.length ? cloneResultActions(resultActions) : undefined,
+    schedule_type: recordStringValue(record, 'schedule_type') ?? fallback?.schedule_type ?? 'manual',
+    skill_ids: skillIds.length ? skillIds : fallback?.skill_ids ?? [],
+    source_system: recordStringValue(record, 'source_system') ?? fallback?.source_system ?? 'ai-brain',
+    template: undefined,
+  };
+}
+
+function scheduledJobRouteParams(): { runId?: string; tab?: ScheduledJobPageTab } {
+  if (typeof window === 'undefined') {
+    return { runId: undefined, tab: undefined };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get('tab') === 'runs' ? 'runs' : params.get('tab') === 'jobs' ? 'jobs' : undefined;
+  return {
+    runId: params.get('run_id') ?? undefined,
+    tab,
+  };
+}
+
+function initialScheduledJobPageTab(): ScheduledJobPageTab {
+  return scheduledJobRouteParams().tab ?? 'jobs';
+}
+
 export default function ScheduledJobsPage() {
   const [form] = Form.useForm<ScheduledJobFormValues>();
   const [jobs, setJobs] = useState<ScheduledJobRecord[]>([]);
   const [runs, setRuns] = useState<ScheduledJobRunRecord[]>([]);
+  const [runObservability, setRunObservability] = useState<ScheduledJobRunObservability | undefined>();
+  const [jobTemplates, setJobTemplates] = useState<ScheduledJobTemplateRecord[]>([]);
   const [pluginActions, setPluginActions] = useState<PluginActionRecord[]>([]);
   const [pluginConnections, setPluginConnections] = useState<PluginConnectionRecord[]>([]);
   const [products, setProducts] = useState<ProductFilterOption[]>([]);
@@ -315,12 +1019,34 @@ export default function ScheduledJobsPage() {
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<ScheduledJobRecord | undefined>();
+  const [assistantDraftPayload, setAssistantDraftPayload] = useState<Record<string, unknown> | undefined>();
+  const [assistantDraftSource, setAssistantDraftSource] = useState<
+    Pick<AssistantScheduledJobDraft, 'draftId' | 'title'> | undefined
+  >();
+  const [activeTab, setActiveTab] = useState<ScheduledJobPageTab>(initialScheduledJobPageTab);
+  const [handledRouteRunId, setHandledRouteRunId] = useState<string | undefined>();
+  const [templateSource, setTemplateSource] = useState<ScheduledJobTemplateSource | undefined>();
   const [selectedRun, setSelectedRun] = useState<ScheduledJobRunRecord | undefined>();
   const [runningJobId, setRunningJobId] = useState<string | undefined>();
+  const [connectionTestResult, setConnectionTestResult] = useState<PluginConnectionTestResult | undefined>();
+  const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
+  const selectedConnectionEnvironment = Form.useWatch('connection_environment', form);
+  const selectedPluginConnectionId = Form.useWatch('plugin_connection_id', form);
+  const selectedPluginActionId = Form.useWatch('plugin_action_id', form);
+  const selectedExecutionMode = Form.useWatch('execution_mode', form);
+  const selectedModelGatewayConfigId = Form.useWatch('model_gateway_config_id', form);
+  const selectedAgentId = Form.useWatch('agent_id', form);
+  const selectedSkillIds = Form.useWatch('skill_ids', form);
+  const selectedKnowledgeDocumentIds = Form.useWatch('knowledge_document_ids', form);
+  const selectedResultActions = Form.useWatch('result_actions', form);
   const selectedJobType = Form.useWatch('job_type', form);
-  const aiProcessingRequired = selectedJobType === 'user_feedback_insight_extract';
-  const pluginActionRequired = ['code_repository_inspection', 'plugin_action_invoke', 'user_feedback_insight_extract'].includes(
-    selectedJobType ?? '',
+  const jobTemplateOptions = useMemo(
+    () =>
+      jobTemplates.map((template) => ({
+        label: template.name,
+        value: template.code,
+      })),
+    [jobTemplates],
   );
   const pluginActionById = useMemo(
     () => new Map(pluginActions.map((action) => [action.id, action])),
@@ -329,6 +1055,19 @@ export default function ScheduledJobsPage() {
   const pluginConnectionById = useMemo(
     () => new Map(pluginConnections.map((connection) => [connection.id, connection])),
     [pluginConnections],
+  );
+  const jobById = useMemo(
+    () => new Map(jobs.map((job) => [job.id, job])),
+    [jobs],
+  );
+  const filteredPluginConnections = useMemo(
+    () =>
+      pluginConnections.filter(
+        (connection) =>
+          !selectedConnectionEnvironment
+          || (connection.environment ?? 'default') === selectedConnectionEnvironment,
+      ),
+    [pluginConnections, selectedConnectionEnvironment],
   );
   const modelGatewayConfigById = useMemo(
     () => new Map(modelGatewayConfigs.map((config) => [config.id, config])),
@@ -341,6 +1080,10 @@ export default function ScheduledJobsPage() {
   const skillById = useMemo(
     () => new Map(skills.map((skill) => [skill.id, skill])),
     [skills],
+  );
+  const knowledgeDocumentById = useMemo(
+    () => new Map(knowledgeDocuments.map((document) => [document.id, document])),
+    [knowledgeDocuments],
   );
   const selectedRunConfigSnapshot = selectedRun?.config_snapshot;
   const selectedRunAgentId = snapshotStringValue(selectedRunConfigSnapshot, 'agent_id');
@@ -363,12 +1106,262 @@ export default function ScheduledJobsPage() {
     || selectedRunSkillIds.map((skillId) => skillById.get(skillId)?.name ?? skillId).join('、')
     || '-';
 
+  useEffect(() => {
+    if (!selectedConnectionEnvironment || !selectedPluginConnectionId) {
+      return;
+    }
+    const connection = pluginConnectionById.get(selectedPluginConnectionId);
+    if (connection && (connection.environment ?? 'default') !== selectedConnectionEnvironment) {
+      form.setFieldValue('plugin_connection_id', undefined);
+    }
+  }, [form, pluginConnectionById, selectedConnectionEnvironment, selectedPluginConnectionId]);
+
+  useEffect(() => {
+    setConnectionTestResult(undefined);
+  }, [selectedPluginConnectionId]);
+
+  const testSelectedConnection = useCallback(async () => {
+    if (!selectedPluginConnectionId) {
+      message.warning('请先选择数据连接');
+      return;
+    }
+    const hide = message.loading('正在测试数据连接，请稍候...', 0);
+    setTestingConnectionId(selectedPluginConnectionId);
+    try {
+      const result = await testPluginConnection(selectedPluginConnectionId);
+      setConnectionTestResult(result);
+      if (result.status === 'succeeded') {
+        message.success(`连接测试成功，耗时 ${result.latency_ms}ms`);
+      } else {
+        message.error(result.error_message || `连接测试 ${result.status}`);
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '连接测试失败');
+    } finally {
+      hide();
+      setTestingConnectionId(undefined);
+    }
+  }, [selectedPluginConnectionId]);
+
+  const orchestrationNodes = useMemo<ScheduledJobOrchestrationNode[]>(() => {
+    const selectedConnection = selectedPluginConnectionId
+      ? pluginConnectionById.get(String(selectedPluginConnectionId))
+      : undefined;
+    const selectedAction = selectedPluginActionId ? pluginActionById.get(String(selectedPluginActionId)) : undefined;
+    const selectedModel = selectedModelGatewayConfigId
+      ? modelGatewayConfigById.get(String(selectedModelGatewayConfigId))
+      : undefined;
+    const selectedAgent = selectedAgentId ? agentById.get(String(selectedAgentId)) : undefined;
+    const normalizedSkillIds = Array.isArray(selectedSkillIds) ? selectedSkillIds.map(String) : [];
+    const normalizedKnowledgeDocumentIds = Array.isArray(selectedKnowledgeDocumentIds)
+      ? selectedKnowledgeDocumentIds.map(String)
+      : [];
+    const normalizedResultActions = Array.isArray(selectedResultActions)
+      ? (selectedResultActions as ScheduledJobResultAction[])
+      : [];
+    const skillLabels = normalizedSkillIds
+      .map((skillId) => skillById.get(skillId)?.name ?? skillId)
+      .filter(Boolean);
+    const knowledgeLabels = normalizedKnowledgeDocumentIds
+      .map((documentId) => knowledgeDocumentById.get(documentId)?.title ?? documentId)
+      .filter(Boolean);
+    const jobType = String(selectedJobType ?? '');
+    const connectionRequired = pluginRequiredJobTypes.includes(jobType);
+    const actionRequired = pluginRequiredJobTypes.includes(jobType);
+    const aiRequired = requiresAiAssembly(selectedJobType, selectedExecutionMode);
+    const dataStatus = selectedConnection ? '已配置' : connectionRequired ? '待配置' : '可选';
+    const aiStatus =
+      selectedModel && selectedAgent && skillLabels.length > 0
+        ? '已配置'
+        : aiRequired
+          ? '待配置'
+          : '可选';
+    const knowledgeStatus = knowledgeLabels.length > 0 ? '已选择' : '可选';
+    const actionStatus = selectedAction ? '已配置' : actionRequired ? '待配置' : '可选';
+    const requestSummary = connectionTestResult?.request_summary;
+    const requestUrl = typeof requestSummary?.url === 'string' ? requestSummary.url : undefined;
+    const actionDetails = [
+      selectedAction?.name,
+      normalizedResultActions.length ? resultActionLabels(normalizedResultActions) : undefined,
+    ].filter((detail): detail is string => Boolean(detail));
+
+    return [
+      {
+        action: (
+          <Button
+            block
+            disabled={!selectedPluginConnectionId}
+            loading={testingConnectionId === selectedPluginConnectionId}
+            onClick={testSelectedConnection}
+            size="small"
+          >
+            测试数据连接
+          </Button>
+        ),
+        details: [
+          selectedConnection?.name,
+          selectedConnection?.environment ? `环境 ${selectedConnection.environment}` : undefined,
+          connectionTestResult ? `连接测试 ${connectionTestResult.status}` : undefined,
+          connectionTestResult ? `${connectionTestResult.latency_ms}ms` : undefined,
+          requestUrl,
+        ].filter((detail): detail is string => Boolean(detail)),
+        key: 'data_connection',
+        required: connectionRequired,
+        status: dataStatus,
+        statusColor: dataStatus === '已配置' ? 'green' : connectionRequired ? 'orange' : 'default',
+        title: '数据连接',
+      },
+      {
+        details: [
+          selectedModel?.name,
+          selectedAgent?.name,
+          skillLabels.length ? skillLabels.join('、') : undefined,
+        ].filter((detail): detail is string => Boolean(detail)),
+        key: 'ai_processing',
+        required: aiRequired,
+        status: aiStatus,
+        statusColor: aiStatus === '已配置' ? 'green' : aiRequired ? 'orange' : 'default',
+        title: 'AI 处理',
+      },
+      {
+        details: knowledgeLabels,
+        key: 'knowledge_reference',
+        required: false,
+        status: knowledgeStatus,
+        statusColor: knowledgeStatus === '已选择' ? 'blue' : 'default',
+        title: '知识引用',
+      },
+      {
+        details: actionDetails,
+        key: 'result_action',
+        required: actionRequired,
+        status: actionStatus,
+        statusColor: actionStatus === '已配置' ? 'green' : actionRequired ? 'orange' : 'default',
+        title: '结果动作',
+      },
+    ];
+  }, [
+    agentById,
+    connectionTestResult,
+    knowledgeDocumentById,
+    modelGatewayConfigById,
+    pluginActionById,
+    pluginConnectionById,
+    selectedAgentId,
+    selectedExecutionMode,
+    selectedJobType,
+    selectedKnowledgeDocumentIds,
+    selectedModelGatewayConfigId,
+    selectedPluginActionId,
+    selectedPluginConnectionId,
+    selectedResultActions,
+    selectedSkillIds,
+    skillById,
+    testingConnectionId,
+    testSelectedConnection,
+  ]);
+
+  const findConnectionForAction = useCallback(
+    (action: PluginActionRecord | undefined) => {
+      if (!action) {
+        return undefined;
+      }
+      return (
+        pluginConnections.find((connection) => connection.plugin_id === action.plugin_id && connection.status === 'active')
+        ?? pluginConnections.find((connection) => connection.plugin_id === action.plugin_id)
+      );
+    },
+    [pluginConnections],
+  );
+
+  const findActionForTemplate = useCallback(
+    (template: ScheduledJobTemplateRecord | undefined) => {
+      const selector = templateSelector(template, 'plugin_action');
+      const codeCandidates = stringArrayFromUnknown(selector.code_candidates);
+      const textCandidates = stringArrayFromUnknown(selector.text_candidates).map((candidate) =>
+        candidate.toLowerCase(),
+      );
+      return (
+        pluginActions.find(
+          (action) => action.status === 'active' && codeCandidates.includes(action.code),
+        )
+        ?? pluginActions.find((action) => codeCandidates.includes(action.code))
+        ?? pluginActions.find((action) => {
+          const text = `${action.code} ${action.name}`.toLowerCase();
+          return action.status === 'active' && textCandidates.some((candidate) => text.includes(candidate));
+        })
+        ?? pluginActions.find((action) => {
+          const text = `${action.code} ${action.name}`.toLowerCase();
+          return textCandidates.some((candidate) => text.includes(candidate));
+        })
+      );
+    },
+    [pluginActions],
+  );
+
+  const applyJobTemplate = useCallback(
+    (templateCode?: string) => {
+      const template = jobTemplates.find((item) => item.code === templateCode);
+      if (!template) {
+        return;
+      }
+      const productId = products[0]?.id;
+      const modelGatewayConfigId = modelGatewayConfigs[0]?.id;
+      const agentId = agents[0]?.id;
+      const skillIds = skills[0]?.id ? [skills[0].id] : [];
+      const knowledgeDocumentIds = knowledgeDocuments[0]?.id ? [knowledgeDocuments[0].id] : [];
+
+      const action = findActionForTemplate(template);
+      const connection = findConnectionForAction(action);
+      const jobType = templatePayloadString(template, 'job_type') ?? 'plugin_action_invoke';
+      const executionMode = templatePayloadString(template, 'execution_mode') ?? 'deterministic';
+      const aiRequired = requiresAiAssembly(jobType, executionMode);
+      form.setFieldsValue({
+        agent_id: aiRequired ? agentId : undefined,
+        connection_environment: connection?.environment ?? undefined,
+        cron_expression: templatePayloadString(template, 'cron_expression'),
+        enabled: templatePayloadBoolean(template, 'enabled', true),
+        execution_mode: executionMode,
+        interval_seconds: templatePayloadNumber(template, 'interval_seconds'),
+        job_type: jobType,
+        knowledge_document_ids:
+          templatePayloadList(template, 'knowledge_document_ids')
+          ?? (aiRequired ? knowledgeDocumentIds : []),
+        model_gateway_config_id: aiRequired ? modelGatewayConfigId : undefined,
+        name: templatePayloadString(template, 'name') ?? template.name,
+        plugin_action_id: action?.id,
+        plugin_connection_id: connection?.id,
+        plugin_input_mapping: templatePayloadRecordValue(template, 'plugin_input_mapping'),
+        plugin_output_mapping: templatePayloadRecordValue(template, 'plugin_output_mapping'),
+        product_id: productId,
+        result_actions: templatePayloadResultActions(template) ?? [],
+        schedule_type: templatePayloadString(template, 'schedule_type') ?? 'manual',
+        skill_ids: templatePayloadList(template, 'skill_ids') ?? (aiRequired ? skillIds : []),
+        source_system: templatePayloadString(template, 'source_system') ?? 'ai-brain',
+        template: template.code,
+      });
+    },
+    [
+      agents,
+      findActionForTemplate,
+      findConnectionForAction,
+      form,
+      jobTemplates,
+      knowledgeDocuments,
+      modelGatewayConfigs,
+      products,
+      skills,
+    ],
+  );
+
   const reload = useCallback(async () => {
     setLoading(true);
     try {
       const [
         nextJobs,
         nextRuns,
+        nextRunObservability,
+        nextJobTemplates,
         nextPluginActions,
         nextPluginConnections,
         nextProducts,
@@ -380,6 +1373,8 @@ export default function ScheduledJobsPage() {
         await Promise.all([
           fetchScheduledJobs(),
           fetchScheduledJobRuns(),
+          fetchScheduledJobRunObservability(),
+          fetchScheduledJobTemplates(),
           fetchPluginActions(),
           fetchPluginConnections(),
           fetchActiveProductOptions(),
@@ -390,6 +1385,8 @@ export default function ScheduledJobsPage() {
         ]);
       setJobs(nextJobs);
       setRuns(nextRuns);
+      setRunObservability(nextRunObservability);
+      setJobTemplates(nextJobTemplates);
       setPluginActions(nextPluginActions);
       setPluginConnections(nextPluginConnections);
       setProducts(nextProducts);
@@ -412,8 +1409,59 @@ export default function ScheduledJobsPage() {
     void reload();
   }, [reload]);
 
+  useEffect(() => {
+    const routeParams = scheduledJobRouteParams();
+    if (routeParams.tab) {
+      setActiveTab(routeParams.tab);
+    }
+    if (!routeParams.runId || handledRouteRunId === routeParams.runId) {
+      return;
+    }
+    const routeRun = runs.find((run) => run.id === routeParams.runId);
+    if (!routeRun) {
+      return;
+    }
+    setActiveTab('runs');
+    setSelectedRun(routeRun);
+    setHandledRouteRunId(routeParams.runId);
+  }, [handledRouteRunId, runs]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || modalOpen || editingJob) {
+      return;
+    }
+    const rawDraft = window.sessionStorage.getItem(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY);
+    if (!rawDraft) {
+      return;
+    }
+    window.sessionStorage.removeItem(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY);
+    try {
+      const draft = JSON.parse(rawDraft) as AssistantScheduledJobDraft;
+      if (!draft.payload || typeof draft.payload !== 'object' || Array.isArray(draft.payload)) {
+        throw new Error('Invalid scheduled job draft payload');
+      }
+      const draftValues = scheduledJobValuesFromAssistantDraft(draft);
+      setEditingJob(undefined);
+      setAssistantDraftPayload(draft.payload);
+      setAssistantDraftSource({ draftId: draft.draftId, title: draft.title });
+      setConnectionTestResult(undefined);
+      form.resetFields();
+      form.setFieldsValue(draftValues);
+      setModalOpen(true);
+      message.success('已载入 AI 助手生成的定时作业草案，请确认后保存');
+    } catch {
+      setAssistantDraftPayload(undefined);
+      setAssistantDraftSource(undefined);
+      message.error('AI 助手定时作业草案格式无效');
+    }
+  }, [editingJob, form, modalOpen]);
+
   const openCreateJobModal = () => {
     setEditingJob(undefined);
+    setAssistantDraftPayload(undefined);
+    setAssistantDraftSource(undefined);
+    setTemplateSource(undefined);
+    setConnectionTestResult(undefined);
     form.resetFields();
     form.setFieldsValue({
       enabled: true,
@@ -421,15 +1469,70 @@ export default function ScheduledJobsPage() {
       job_type: 'user_feedback_insight_extract',
       schedule_type: 'manual',
       source_system: 'ai-brain',
+      template: undefined,
     });
     setModalOpen(true);
   };
 
+  const openCopyJobModal = (job: ScheduledJobRecord) => {
+    const values = scheduledJobTemplateValuesFromRecord(job as unknown as Record<string, unknown>, {
+      fallback: job,
+      pluginConnectionById,
+    });
+    setEditingJob(undefined);
+    setAssistantDraftPayload(undefined);
+    setAssistantDraftSource(undefined);
+    setConnectionTestResult(undefined);
+    setTemplateSource({
+      sourceId: job.id,
+      sourceType: 'scheduled_job',
+      title: job.name,
+      values,
+    });
+    form.resetFields();
+    form.setFieldsValue(values);
+    setModalOpen(true);
+    message.success('已复制为新作业草稿，请确认后保存');
+  };
+
+  const openCopyRunModal = (run: ScheduledJobRunRecord) => {
+    const sourceJob = run.scheduled_job_id ? jobById.get(run.scheduled_job_id) : undefined;
+    const snapshot = run.config_snapshot ?? {};
+    const values = scheduledJobTemplateValuesFromRecord(snapshot, {
+      fallback: sourceJob,
+      nameSuffix: '运行快照副本',
+      pluginConnectionById,
+    });
+    setSelectedRun(undefined);
+    setEditingJob(undefined);
+    setAssistantDraftPayload(undefined);
+    setAssistantDraftSource(undefined);
+    setConnectionTestResult(undefined);
+    setTemplateSource({
+      sourceId: run.id,
+      sourceType: 'scheduled_job_run',
+      title: run.scheduled_job_id ?? run.id,
+      values,
+    });
+    form.resetFields();
+    form.setFieldsValue(values);
+    setModalOpen(true);
+    message.success('已按本次运行快照生成新作业草稿，请确认后保存');
+  };
+
   const openEditJobModal = (job: ScheduledJobRecord) => {
     setEditingJob(job);
+    setAssistantDraftPayload(undefined);
+    setAssistantDraftSource(undefined);
+    setTemplateSource(undefined);
+    setConnectionTestResult(undefined);
     form.resetFields();
     form.setFieldsValue({
       agent_id: job.agent_id ?? undefined,
+      connection_environment: job.plugin_connection_id
+        ? pluginConnectionById.get(job.plugin_connection_id)?.environment ?? 'default'
+        : undefined,
+      config_json: job.config_json ?? {},
       cron_expression: job.cron_expression ?? undefined,
       enabled: job.enabled ?? true,
       execution_mode: job.execution_mode ?? 'deterministic',
@@ -445,6 +1548,7 @@ export default function ScheduledJobsPage() {
       schedule_type: job.schedule_type ?? 'manual',
       skill_ids: job.skill_ids ?? [],
       source_system: job.source_system ?? 'ai-brain',
+      template: undefined,
     });
     setModalOpen(true);
   };
@@ -452,21 +1556,75 @@ export default function ScheduledJobsPage() {
   const closeJobModal = () => {
     setModalOpen(false);
     setEditingJob(undefined);
+    setAssistantDraftPayload(undefined);
+    setAssistantDraftSource(undefined);
+    setTemplateSource(undefined);
+    setConnectionTestResult(undefined);
     form.resetFields();
   };
 
   const submitJob = async () => {
-    const values = await form.validateFields();
+    let values: ScheduledJobFormValues;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return;
+    }
+    const { template, ...jobValues } = values;
+    const selectedTemplate = jobTemplates.find((item) => item.code === template);
+    delete jobValues.connection_environment;
+    const draftConfigJson = recordFromDraftPayload(assistantDraftPayload ?? {}, 'config_json') ?? {};
+    const templateConfigJson = templateSource?.values.config_json ?? {};
+    const templateSourceConfig =
+      templateSource && !editingJob
+        ? {
+            template_source: {
+              source_id: templateSource.sourceId,
+              source_type: templateSource.sourceType,
+              title: templateSource.title,
+            },
+          }
+        : {};
+    const assistantDraftConfig =
+      assistantDraftPayload && !editingJob
+        ? {
+            assistant_draft: {
+              draft_id: assistantDraftSource?.draftId,
+              source: 'assistant.action_draft',
+              title: assistantDraftSource?.title,
+            },
+          }
+        : {};
     const requestPayload: Partial<ScheduledJobRecord> = {
-      ...values,
-      plugin_input_mapping: editingJob?.plugin_input_mapping ?? {},
-      plugin_output_mapping: editingJob?.plugin_output_mapping ?? {},
+      ...jobValues,
+      config_json: {
+        ...(editingJob?.config_json ?? {}),
+        ...templateConfigJson,
+        ...draftConfigJson,
+        ...(values.config_json ?? {}),
+        ...templateSourceConfig,
+        ...assistantDraftConfig,
+      },
+      plugin_input_mapping:
+        editingJob?.plugin_input_mapping
+        ?? templateSource?.values.plugin_input_mapping
+        ?? values.plugin_input_mapping
+        ?? recordFromDraftPayload(assistantDraftPayload ?? {}, 'plugin_input_mapping')
+        ?? templatePayloadRecordValue(selectedTemplate, 'plugin_input_mapping')
+        ?? {},
+      plugin_output_mapping:
+        editingJob?.plugin_output_mapping
+        ?? templateSource?.values.plugin_output_mapping
+        ?? values.plugin_output_mapping
+        ?? recordFromDraftPayload(assistantDraftPayload ?? {}, 'plugin_output_mapping')
+        ?? templatePayloadRecordValue(selectedTemplate, 'plugin_output_mapping')
+        ?? {},
       knowledge_document_ids: values.knowledge_document_ids ?? [],
       result_actions:
         values.job_type === 'code_repository_inspection'
           ? values.result_actions?.length
             ? values.result_actions
-            : defaultCodeInspectionResultActions
+            : templatePayloadResultActions(selectedTemplate) ?? cloneResultActions(defaultCodeInspectionResultActions)
           : [],
       skill_ids: values.skill_ids ?? [],
     };
@@ -481,11 +1639,15 @@ export default function ScheduledJobsPage() {
     await reload();
   };
 
-  const triggerJobRun = async (jobId: string) => {
+  const triggerJobRun = async (
+    jobId: string,
+    triggerType: 'manual' | 'manual_rerun' = 'manual',
+    sourceRunId?: string,
+  ) => {
     const hide = message.loading('作业执行中，请稍候...', 0);
     setRunningJobId(jobId);
     try {
-      const run = await runScheduledJob(jobId);
+      const run = await runScheduledJob(jobId, triggerType, sourceRunId);
       setSelectedRun(run);
       message.success('作业运行完成');
       await reload();
@@ -519,6 +1681,8 @@ export default function ScheduledJobsPage() {
   return (
     <PageContainer title="定时作业">
       <Tabs
+        activeKey={activeTab}
+        onChange={(key) => setActiveTab(key === 'runs' ? 'runs' : 'jobs')}
         items={[
           {
             key: 'jobs',
@@ -541,7 +1705,7 @@ export default function ScheduledJobsPage() {
                   showTotal: (total) => `共 ${total} 条`,
                 }}
                 rowKey="id"
-                scroll={{ x: 1860 }}
+                scroll={{ x: 2080 }}
                 search={false}
                 dataSource={jobs}
                 tableLayout="fixed"
@@ -555,6 +1719,12 @@ export default function ScheduledJobsPage() {
                 ]}
                 columns={[
                   { dataIndex: 'name', title: '名称', width: 220, render: (value) => ellipsisText(String(value ?? '')) },
+                  {
+                    key: 'template_source',
+                    title: '来源',
+                    width: 220,
+                    render: (_, row) => <TemplateSourceSummary source={templateSourceFromConfig(row.config_json)} />,
+                  },
                   {
                     dataIndex: 'job_type',
                     title: '类型',
@@ -642,7 +1812,7 @@ export default function ScheduledJobsPage() {
                     key: 'actions',
                     title: '操作',
                     valueType: 'option',
-                    width: 260,
+                    width: 330,
                     render: (_, row) => (
                       <Space className="management-row-actions" size={0}>
                         <Button
@@ -652,6 +1822,14 @@ export default function ScheduledJobsPage() {
                           type="link"
                         >
                           编辑
+                        </Button>
+                        <Button
+                          aria-label={`复制作业 ${row.name}`}
+                          icon={<CopyOutlined />}
+                          onClick={() => openCopyJobModal(row)}
+                          type="link"
+                        >
+                          复制
                         </Button>
                         <Button
                           aria-label={`运行作业 ${row.name}`}
@@ -683,71 +1861,88 @@ export default function ScheduledJobsPage() {
             key: 'runs',
             label: '运行记录',
             children: (
-              <ProTable<ScheduledJobRunRecord>
-                cardBordered
-                className="management-list-table"
-                dateFormatter="string"
-                headerTitle="运行记录"
-                loading={loading}
-                options={{
-                  density: true,
-                  fullScreen: true,
-                  reload,
-                  setting: true,
-                }}
-                pagination={{
-                  showSizeChanger: true,
-                  showTotal: (total) => `共 ${total} 条`,
-                }}
-                rowKey="id"
-                scroll={{ x: 1340 }}
-                search={false}
-                dataSource={runs}
-                tableLayout="fixed"
-                columns={[
-                  { dataIndex: 'id', title: '运行 ID', ellipsis: true, width: 220 },
-                  { dataIndex: 'scheduled_job_id', title: '作业 ID', ellipsis: true, width: 220 },
-                  { dataIndex: 'status', title: '状态', width: 120 },
-                  { dataIndex: 'trigger_type', title: '触发方式', width: 120 },
-                  { dataIndex: 'collector_run_id', title: '采集运行', ellipsis: true, width: 220, render: (value) => value || '-' },
-                  { dataIndex: 'plugin_invocation_log_id', title: '插件调用', ellipsis: true, width: 220, render: (value) => value || '-' },
-                  { dataIndex: 'records_imported', title: '导入数', width: 100 },
-                  { dataIndex: 'error_message', title: '错误', ellipsis: true, width: 180, render: (value) => value || '-' },
-                  {
-                    fixed: 'right',
-                    key: 'actions',
-                    title: '操作',
-                    valueType: 'option',
-                    width: 190,
-                    render: (_, row) => (
-                      <Space size={4}>
-                        <Button
-                          aria-label={`查看运行结果 ${row.id}`}
-                          icon={<EyeOutlined />}
-                          onClick={() => setSelectedRun(row)}
-                          type="link"
-                        >
-                          详情
-                        </Button>
-                        <Button
-                          aria-label={`复跑运行 ${row.id}`}
-                          disabled={Boolean(runningJobId) || !row.scheduled_job_id}
-                          icon={<ReloadOutlined />}
-                          loading={runningJobId === row.scheduled_job_id}
-                          onClick={() => {
-                            if (row.scheduled_job_id) {
-                              triggerJobRun(row.scheduled_job_id);
-                            }
-                          }}
-                          type="link"
-                        >
-                          复跑
-                        </Button>
-                      </Space>
-                    ),
-                  },
-                ]}
-              />
+              <>
+                <ScheduledJobRunObservabilityOverview loading={loading} observability={runObservability} />
+                <ProTable<ScheduledJobRunRecord>
+                  cardBordered
+                  className="management-list-table"
+                  dateFormatter="string"
+                  headerTitle="运行记录"
+                  loading={loading}
+                  options={{
+                    density: true,
+                    fullScreen: true,
+                    reload,
+                    setting: true,
+                  }}
+                  pagination={{
+                    showSizeChanger: true,
+                    showTotal: (total) => `共 ${total} 条`,
+                  }}
+                  rowKey="id"
+                  scroll={{ x: 1500 }}
+                  search={false}
+                  dataSource={runs}
+                  tableLayout="fixed"
+                  columns={[
+                    { dataIndex: 'id', title: '运行 ID', ellipsis: true, width: 220 },
+                    { dataIndex: 'scheduled_job_id', title: '作业 ID', ellipsis: true, width: 220 },
+                    { dataIndex: 'status', title: '状态', width: 120 },
+                    {
+                      dataIndex: 'trigger_type',
+                      title: '触发方式',
+                      width: 130,
+                      render: (value) => runTriggerTypeLabelByValue.get(String(value ?? '')) ?? value ?? '-',
+                    },
+                    { dataIndex: 'source_run_id', title: '复跑来源', ellipsis: true, width: 200, render: (value) => value || '-' },
+                    { dataIndex: 'collector_run_id', title: '采集运行', ellipsis: true, width: 220, render: (value) => value || '-' },
+                    { dataIndex: 'plugin_invocation_log_id', title: '插件调用', ellipsis: true, width: 220, render: (value) => value || '-' },
+                    { dataIndex: 'records_imported', title: '导入数', width: 100 },
+                    { dataIndex: 'error_message', title: '错误', ellipsis: true, width: 180, render: (value) => value || '-' },
+                    {
+                      fixed: 'right',
+                      key: 'actions',
+                      title: '操作',
+                      valueType: 'option',
+                      width: 270,
+                      render: (_, row) => (
+                        <Space size={4}>
+                          <Button
+                            aria-label={`查看运行结果 ${row.id}`}
+                            icon={<EyeOutlined />}
+                            onClick={() => setSelectedRun(row)}
+                            type="link"
+                          >
+                            详情
+                          </Button>
+                          <Button
+                            aria-label={`复制运行配置 ${row.id}`}
+                            icon={<CopyOutlined />}
+                            onClick={() => openCopyRunModal(row)}
+                            type="link"
+                          >
+                            复制配置
+                          </Button>
+                          <Button
+                            aria-label={`复跑运行 ${row.id}`}
+                            disabled={Boolean(runningJobId) || !row.scheduled_job_id}
+                            icon={<ReloadOutlined />}
+                            loading={runningJobId === row.scheduled_job_id}
+                            onClick={() => {
+                              if (row.scheduled_job_id) {
+                                triggerJobRun(row.scheduled_job_id, 'manual_rerun', row.id);
+                              }
+                            }}
+                            type="link"
+                          >
+                            复跑
+                          </Button>
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
+              </>
             ),
           },
         ]}
@@ -760,6 +1955,23 @@ export default function ScheduledJobsPage() {
         onCancel={closeJobModal}
         onOk={submitJob}
       >
+        {templateSource ? (
+          <div
+            aria-label="当前复制来源"
+            style={{
+              background: '#f8fafc',
+              border: '1px solid #e5e7eb',
+              borderRadius: 6,
+              marginBottom: 16,
+              padding: '10px 12px',
+            }}
+          >
+            <Space wrap>
+              <Typography.Text type="secondary">复制来源</Typography.Text>
+              <TemplateSourceSummary source={templateSource} />
+            </Space>
+          </div>
+        ) : null}
         <Form
           form={form}
           layout="vertical"
@@ -771,6 +1983,17 @@ export default function ScheduledJobsPage() {
             source_system: 'ai-brain',
           }}
         >
+          {!editingJob ? (
+            <Form.Item label="作业模板" name="template">
+              <Select
+                allowClear
+                options={jobTemplateOptions}
+                placeholder="请选择场景模板快速生成配置"
+                onChange={applyJobTemplate}
+              />
+            </Form.Item>
+          ) : null}
+          <ScheduledJobOrchestrationFlow nodes={orchestrationNodes} />
           <Form.Item label="名称" name="name" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -783,7 +2006,7 @@ export default function ScheduledJobsPage() {
                     execution_mode: 'deterministic',
                     result_actions: form.getFieldValue('result_actions')?.length
                       ? form.getFieldValue('result_actions')
-                      : defaultCodeInspectionResultActions,
+                      : cloneResultActions(defaultCodeInspectionResultActions),
                   });
                 }
               }}
@@ -803,11 +2026,7 @@ export default function ScheduledJobsPage() {
           <Form.Item
             label="所属产品"
             name="product_id"
-            rules={
-              aiProcessingRequired || selectedJobType === 'code_repository_inspection'
-                ? [{ required: true, message: '请选择产品' }]
-                : []
-            }
+            rules={[requiredForJobTypes(productRequiredJobTypes, '请选择产品')]}
           >
             <Select
               allowClear
@@ -820,34 +2039,35 @@ export default function ScheduledJobsPage() {
               }))}
             />
           </Form.Item>
+          <Form.Item label="连接环境" name="connection_environment">
+            <Select
+              allowClear
+              options={connectionEnvironmentOptions}
+              placeholder="筛选数据连接环境"
+              onChange={() => form.setFieldValue('plugin_connection_id', undefined)}
+            />
+          </Form.Item>
           <Form.Item
             label="数据连接"
             name="plugin_connection_id"
-            rules={
-              pluginActionRequired
-                ? [{ required: true, message: '请选择数据连接' }]
-                : []
-            }
+            rules={[requiredForJobTypes(pluginRequiredJobTypes, '请选择数据连接')]}
           >
             <Select
               allowClear
               optionFilterProp="label"
               placeholder="请选择取数连接"
               showSearch
-              options={pluginConnections.map((connection) => ({
+              options={filteredPluginConnections.map((connection) => ({
                 label: `${connection.name} (${connection.environment ?? 'default'})`,
                 value: connection.id,
               }))}
             />
           </Form.Item>
           <Form.Item
+            dependencies={['execution_mode', 'job_type']}
             label="AI 模型"
             name="model_gateway_config_id"
-            rules={
-              aiProcessingRequired
-                ? [{ required: true, message: '请选择 AI 模型' }]
-                : []
-            }
+            rules={[requiredForAiAssembly('请选择 AI 模型')]}
           >
             <Select
               allowClear
@@ -861,13 +2081,10 @@ export default function ScheduledJobsPage() {
             />
           </Form.Item>
           <Form.Item
+            dependencies={['execution_mode', 'job_type']}
             label="Agent"
             name="agent_id"
-            rules={
-              aiProcessingRequired
-                ? [{ required: true, message: '请选择 Agent' }]
-                : []
-            }
+            rules={[requiredForAiAssembly('请选择 Agent')]}
           >
             <Select
               allowClear
@@ -881,13 +2098,10 @@ export default function ScheduledJobsPage() {
             />
           </Form.Item>
           <Form.Item
+            dependencies={['execution_mode', 'job_type']}
             label="Skills"
             name="skill_ids"
-            rules={
-              aiProcessingRequired
-                ? [{ required: true, message: '请选择 Skills' }]
-                : []
-            }
+            rules={[requiredForAiAssembly('请选择 Skills')]}
           >
             <Select
               allowClear
@@ -917,11 +2131,7 @@ export default function ScheduledJobsPage() {
           <Form.Item
             label={selectedJobType === 'code_repository_inspection' ? '插件扫描动作' : '结果动作'}
             name="plugin_action_id"
-            rules={
-              pluginActionRequired
-                ? [{ required: true, message: '请选择插件动作' }]
-                : []
-            }
+            rules={[requiredForJobTypes(pluginRequiredJobTypes, '请选择插件动作')]}
           >
             <Select
               allowClear
@@ -937,10 +2147,10 @@ export default function ScheduledJobsPage() {
           {selectedJobType === 'code_repository_inspection' ? (
             <Form.List name="result_actions">
               {(fields, { add, remove }) => (
-                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <Space orientation="vertical" size={8} style={{ width: '100%' }}>
                   <Typography.Text strong>结果动作</Typography.Text>
-                  {fields.map((field) => (
-                    <Space key={field.key} align="start" size={8} style={{ width: '100%' }}>
+                  {fields.map(({ key, ...field }) => (
+                    <Space key={key} align="start" size={8} style={{ width: '100%' }}>
                       <Form.Item
                         {...field}
                         name={[field.name, 'type']}
@@ -964,7 +2174,7 @@ export default function ScheduledJobsPage() {
                           }
                           if (actionType === 'send_notification') {
                             return (
-                              <Space direction="vertical" size={8} style={{ width: 360 }}>
+                              <Space orientation="vertical" size={8} style={{ width: 360 }}>
                                 <Form.Item
                                   name={[field.name, 'channels']}
                                   rules={[{ required: true, message: '请选择通知渠道' }]}
@@ -1007,7 +2217,16 @@ export default function ScheduledJobsPage() {
       </Modal>
 
       <Modal
-        footer={<Button onClick={() => setSelectedRun(undefined)}>关闭</Button>}
+        footer={(
+          <Space>
+            <Button onClick={() => setSelectedRun(undefined)}>关闭</Button>
+            {selectedRun ? (
+              <Button icon={<CopyOutlined />} type="primary" onClick={() => openCopyRunModal(selectedRun)}>
+                复制本次配置
+              </Button>
+            ) : null}
+          </Space>
+        )}
         open={Boolean(selectedRun)}
         title="运行结果详情"
         width={980}
@@ -1037,8 +2256,22 @@ export default function ScheduledJobsPage() {
                 { key: 'model_gateway_config_id', label: 'AI 模型', children: selectedRunModelLabel },
                 { key: 'agent_id', label: 'Agent', children: selectedRunAgentLabel },
                 { key: 'skill_ids', label: 'Skills', children: selectedRunSkillLabels },
-                { key: 'trigger_type', label: '触发方式', children: selectedRun.trigger_type || '-' },
+                {
+                  key: 'trigger_type',
+                  label: '触发方式',
+                  children: runTriggerTypeLabelByValue.get(String(selectedRun.trigger_type ?? '')) ?? selectedRun.trigger_type ?? '-',
+                },
                 { key: 'records_imported', label: '导入数', children: selectedRun.records_imported ?? 0 },
+                { key: 'source_run_id', label: '复跑来源', children: selectedRun.source_run_id || '-' },
+                {
+                  key: 'template_source',
+                  label: '模板来源',
+                  children: (
+                    <TemplateSourceSummary
+                      source={templateSourceFromConfig(recordValue(selectedRun.config_snapshot?.config_json))}
+                    />
+                  ),
+                },
                 { key: 'collector_run_id', label: '采集运行', children: selectedRun.collector_run_id || '-' },
                 { key: 'plugin_invocation_log_id', label: '插件调用', children: selectedRun.plugin_invocation_log_id || '-' },
                 { key: 'scheduled_job_id', label: '作业 ID', children: selectedRun.scheduled_job_id || '-' },
@@ -1052,6 +2285,7 @@ export default function ScheduledJobsPage() {
                 },
               ]}
             />
+            <RunSourceComparison run={selectedRun} />
             <RunExecutionChain run={selectedRun} />
             <JsonPreview
               title="数据连接获取内容"

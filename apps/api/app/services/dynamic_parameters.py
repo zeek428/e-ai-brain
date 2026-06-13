@@ -108,6 +108,104 @@ def _resolve_token(match: re.Match[str], *, now: datetime | None, timezone: Zone
     return _format_dynamic_parameter(name, value)
 
 
+def _dynamic_parameter_token_resolution(
+    match: re.Match[str],
+    parameters: dict[str, str] | None,
+    *,
+    now: datetime | None,
+    timezone: ZoneInfo | None,
+) -> dict[str, Any]:
+    name = match.group("name")
+    days = match.group("days")
+    sign = match.group("sign")
+    values = _dynamic_parameter_datetimes(now=now, timezone=timezone)
+    offset_days = None
+    if days is not None:
+        offset_days = (-1 if sign == "-" else 1) * int(days)
+    if name in values:
+        resolved_value = _resolve_token(match, now=now, timezone=timezone)
+        status = "resolved"
+    elif parameters and name in parameters and offset_days is None:
+        resolved_value = parameters[name]
+        status = "resolved"
+    else:
+        resolved_value = match.group(0)
+        status = "unresolved"
+    return {
+        "name": name,
+        "offset_days": offset_days,
+        "resolved_value": str(resolved_value),
+        "status": status,
+        "token": match.group(0),
+    }
+
+
+def dynamic_parameter_resolution_trace(
+    value: Any,
+    parameters: dict[str, str] | None = None,
+    *,
+    now: datetime | None = None,
+    path: str = "",
+    timezone: ZoneInfo | None = None,
+) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        traces: list[dict[str, Any]] = []
+        for key, item in value.items():
+            next_path = f"{path}.{key}" if path else str(key)
+            traces.extend(
+                dynamic_parameter_resolution_trace(
+                    item,
+                    parameters,
+                    now=now,
+                    path=next_path,
+                    timezone=timezone,
+                ),
+            )
+        return traces
+    if isinstance(value, list):
+        traces: list[dict[str, Any]] = []
+        for index, item in enumerate(value):
+            next_path = f"{path}[{index}]" if path else f"[{index}]"
+            traces.extend(
+                dynamic_parameter_resolution_trace(
+                    item,
+                    parameters,
+                    now=now,
+                    path=next_path,
+                    timezone=timezone,
+                ),
+            )
+        return traces
+    if not isinstance(value, str):
+        return []
+
+    expression = LEGACY_TIME_PARAMETER_ALIASES.get(value, value)
+    matches = list(_TOKEN_PATTERN.finditer(expression))
+    if not matches:
+        return []
+    final_value = resolve_dynamic_parameter_value(
+        value,
+        parameters,
+        now=now,
+        timezone=timezone,
+    )
+    return [
+        {
+            **_dynamic_parameter_token_resolution(
+                match,
+                parameters,
+                now=now,
+                timezone=timezone,
+            ),
+            "expression": value,
+            "normalized_expression": expression,
+            "path": path,
+            "resolved_text": str(final_value),
+        }
+        for match in matches
+    ]
+
+
 def resolve_dynamic_parameter_value(
     value: Any,
     parameters: dict[str, str] | None = None,

@@ -129,6 +129,163 @@ def test_plugins_connections_and_actions_are_admin_managed_plaintext_and_audited
     assert "vault/gitlab/token" not in str(audit_events)
 
 
+def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    marketplace = client.get(
+        "/api/system/plugin-marketplace",
+        headers=admin_headers,
+    )
+
+    assert marketplace.status_code == 200
+    items = marketplace.json()["data"]["items"]
+    by_code = {item["code"]: item for item in items}
+    assert set(by_code) == {"email", "github", "gitlab"}
+    assert by_code["github"]["installed"] is True
+    assert by_code["github"]["is_system"] is True
+    assert by_code["github"]["plugin_id"] == "plugin_standard_github"
+    assert by_code["github"]["publisher"] == "AI Brain 官方"
+    assert "GitHub 代码巡检" in by_code["github"]["action_templates"]
+    assert by_code["github"]["connection_template_version"] == "v1"
+    assert by_code["github"]["connection_defaults"]["auth_type"] == "bearer"
+    assert by_code["github"]["connection_defaults"]["endpoint_url"] == "https://api.github.com"
+    assert (
+        by_code["github"]["connection_defaults"]["request_config"]["headers"][
+            "X-GitHub-Api-Version"
+        ]
+        == "2022-11-28"
+    )
+    assert by_code["gitlab"]["connection_defaults"]["auth_config"]["header_name"] == "PRIVATE-TOKEN"
+    assert by_code["email"]["connection_defaults"]["request_config"]["headers"] == {
+        "Content-Type": "application/json",
+    }
+    assert by_code["github"]["connection_count"] == 0
+    assert by_code["github"]["action_count"] == 0
+
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {"token_ref": "vault/github/token"},
+            "auth_type": "bearer",
+            "endpoint_url": "https://api.github.com",
+            "environment": "prod",
+            "name": "生产 GitHub 组织",
+            "plugin_id": "plugin_standard_github",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "scan_github_code_inspection",
+            "connection_id": connection["id"],
+            "name": "GitHub 代码巡检",
+            "plugin_id": "plugin_standard_github",
+            "request_config": {
+                "method": "GET",
+                "path": "/repos/{{owner}}/{{repo}}/code-scanning/alerts",
+            },
+            "result_mapping": {
+                "findings_path": "$.alerts",
+                "write_target": "code_inspection_reports",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+
+    marketplace = client.get(
+        "/api/system/plugin-marketplace",
+        headers=admin_headers,
+    ).json()["data"]
+    github_item = {item["code"]: item for item in marketplace["items"]}["github"]
+    assert github_item["connection_count"] == 1
+    assert github_item["action_count"] == 1
+
+
+def test_plugin_action_templates_are_structured_for_dynamic_forms():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    response = client.get(
+        "/api/system/plugin-action-templates",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    by_code = {item["code"]: item for item in items}
+    assert set(by_code) >= {
+        "email_notification",
+        "github_code_inspection",
+        "gitlab_code_inspection",
+        "maxcompute_weekly_feedback",
+    }
+    github_template = by_code["github_code_inspection"]
+    assert github_template["template_version"] == "v1"
+    assert github_template["plugin_code"] == "github"
+    assert github_template["action_type"] == "http_request"
+    assert github_template["request_config"]["path"] == (
+        "/repos/{{owner}}/{{repo}}/code-scanning/alerts"
+    )
+    assert github_template["request_config"]["query"]["state"] == "open"
+    assert github_template["result_mapping"]["write_target"] == "code_inspection_reports"
+    email_template = by_code["email_notification"]
+    assert email_template["template_version"] == "v1"
+    assert email_template["request_config"]["path"] == "/messages/send"
+    assert email_template["request_config"]["headers"]["Content-Type"] == "application/json"
+    assert email_template["result_mapping"]["write_target"] == "email_notifications"
+    maxcompute_template = by_code["maxcompute_weekly_feedback"]
+    assert maxcompute_template["action_type"] == "mcp_tool"
+    assert maxcompute_template["form_defaults"]["table_name"] == "ods_user_feedback"
+    assert maxcompute_template["result_mapping"]["write_target"] == "user_feedback_insights"
+
+
+def test_result_write_targets_registry_drives_action_mapping_forms():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    response = client.get(
+        "/api/system/result-write-targets",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    by_code = {item["code"]: item for item in items}
+    assert set(by_code) >= {
+        "code_inspection_reports",
+        "email_notifications",
+        "scheduled_job_result",
+        "user_feedback_insights",
+    }
+    code_inspection = by_code["code_inspection_reports"]
+    assert code_inspection["label"] == "代码巡检报告"
+    assert code_inspection["form_label"] == "代码巡检报告"
+    assert code_inspection["default_result_mapping"] == {
+        "branch_path": "$.branch",
+        "commit_sha_path": "$.commit_sha",
+        "findings_path": "$.findings",
+        "repository_id_path": "$.repository_id",
+        "risk_level_path": "$.risk_level",
+        "summary_path": "$.summary",
+        "write_target": "code_inspection_reports",
+    }
+    assert code_inspection["mapping_fields"][0] == {
+        "description": "代码问题列表所在路径。",
+        "key": "findings_path",
+        "label": "Finding 列表 JSONPath",
+        "placeholder": "$.findings",
+        "required": True,
+    }
+    email = by_code["email_notifications"]
+    assert email["default_result_mapping"]["recipients_path"] == "$.recipients"
+    assert email["mapping_fields"][0]["required"] is True
+
+
 def test_plugin_resources_delete_requires_unused_dependencies():
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -380,6 +537,43 @@ def test_plugin_connection_environment_must_use_predefined_values():
     assert "Unsupported environment" in response.text
 
 
+def test_plugin_connections_can_be_filtered_by_environment():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, test_connection, _ = create_plugin_bundle(admin_headers)
+    prod_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://gitlab-prod.example.com",
+            "environment": "prod",
+            "name": "生产 GitLab",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.get(
+        f"/api/system/plugin-connections?plugin_id={plugin['id']}&environment=prod",
+        headers=admin_headers,
+    )
+    payload = response.json()["data"]
+
+    assert response.status_code == 200
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == prod_connection["id"]
+    assert payload["items"][0]["environment"] == "prod"
+    assert test_connection["id"] not in {item["id"] for item in payload["items"]}
+
+    invalid = client.get(
+        "/api/system/plugin-connections?environment=production-cn",
+        headers=admin_headers,
+    )
+    assert invalid.status_code == 400
+    assert "Unsupported environment" in invalid.text
+
+
 def test_plugin_connection_can_be_tested_with_structured_result_and_audit():
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -424,8 +618,56 @@ def test_plugin_connection_can_be_tested_with_structured_result_and_audit():
         result["request_summary"]["header_sources"]["X-Request-Source"]
         == "request_config.headers"
     )
+    assert (
+        result["request_summary"]["curl_command"]
+        == "curl -X GET -H 'X-Request-Source: connection-test' "
+        "'https://maxcompute.example.com/mcp?appCode=demo&start_pt="
+        f"{result['request_summary']['query']['start_pt']}'"
+    )
     assert result["request_summary"]["masked_placeholder_headers"] == []
     assert result["request_summary"]["query"]["start_pt"].isdigit()
+    assert (
+        result["request_summary"]["original_request_config"]["query"]["start_pt"]
+        == "{{current_date-7}}"
+    )
+    assert result["request_summary"]["variable_resolution_timezone"] == "UTC"
+    assert result["request_summary"]["variable_resolutions"] == [
+        {
+            "expression": "{{current_date-7}}",
+            "name": "current_date",
+            "normalized_expression": "{{current_date-7}}",
+            "offset_days": -7,
+            "path": "query.start_pt",
+            "resolved_text": result["request_summary"]["query"]["start_pt"],
+            "resolved_value": result["request_summary"]["query"]["start_pt"],
+            "status": "resolved",
+            "token": "{{current_date-7}}",
+        },
+    ]
+    assert result["action_template_draft"] == {
+        "action_type": "http_request",
+        "code": "test_sandbox_maxcompute",
+        "connection_id": connection["id"],
+        "description": "由连接测试请求回放生成，请确认请求路径、Params、Headers 和结果映射后保存。",
+        "name": "沙箱 MaxCompute 请求动作",
+        "plugin_id": plugin["id"],
+        "request_config": {
+            "headers": {"X-Request-Source": "connection-test"},
+            "method": "GET",
+            "path": "/mcp",
+            "query": {"appCode": "demo", "start_pt": "{{current_date-7}}"},
+        },
+        "requires_human_review": False,
+        "result_mapping": {"write_target": "scheduled_job_result"},
+        "status": "draft",
+    }
+    assert result["repair_suggestions"] == []
+    assert result["test_history"][0]["checked_at"] == result["checked_at"]
+    assert result["test_history"][0]["status"] == "succeeded"
+    history_request = result["test_history"][0]["request_summary"]
+    assert history_request["url"] == result["request_summary"]["url"]
+    assert history_request["original_request_config"]["query"]["start_pt"] == "{{current_date-7}}"
+    assert result["test_history"][0]["action_template_draft"]["code"] == "test_sandbox_maxcompute"
     assert "{{" not in result["request_summary"]["url"]
     assert result["response_summary"] == {}
     assert [step["name"] for step in result["diagnostics"]] == [
@@ -436,8 +678,89 @@ def test_plugin_connection_can_be_tested_with_structured_result_and_audit():
     ]
     assert result["diagnostics"][-1]["status"] == "mocked"
 
+    listed_after_test = client.get(
+        f"/api/system/plugin-connections?plugin_id={plugin['id']}",
+        headers=admin_headers,
+    ).json()["data"]
+    listed_connection = listed_after_test["items"][0]
+    assert listed_connection["last_test_summary"] == {
+        "checked_at": result["checked_at"],
+        "error_code": None,
+        "error_message": None,
+        "failed_step": None,
+        "latency_ms": result["latency_ms"],
+        "mocked": True,
+        "response_status_code": None,
+        "status": "succeeded",
+    }
+    assert listed_connection["test_history"][0]["checked_at"] == result["checked_at"]
+    listed_history_request = listed_connection["test_history"][0]["request_summary"]
+    assert listed_history_request["url"] == result["request_summary"]["url"]
+
     audit_events = client.get("/api/audit/events", headers=admin_headers).json()["data"]["items"]
     assert "plugin_connection.test_succeeded" in [event["event_type"] for event in audit_events]
+
+
+def test_plugin_connection_test_generates_repair_suggestions_for_failed_response(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, _, _ = create_plugin_bundle(admin_headers)
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {},
+            "auth_type": "none",
+            "endpoint_url": "https://maxcompute.example.com/api",
+            "environment": "prod",
+            "name": "生产 MaxCompute API",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "headers": {"Authorization": "***"},
+                "query": {"start_pt": "{{current_date-7}}"},
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    def fake_urlopen(request, timeout):
+        raise plugin_services.HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            hdrs={},
+            fp=None,
+        )
+
+    monkeypatch.setattr(plugin_services, "urlopen", fake_urlopen)
+
+    response = client.post(
+        f"/api/system/plugin-connections/{connection['id']}/test",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    result = response.json()["data"]
+    assert result["status"] == "failed"
+    assert result["repair_suggestions"] == [
+        {
+            "code": "masked_header_placeholder",
+            "detail": (
+                "最终请求 Header 仍包含 *** 占位，请填写真实 Header 值，"
+                "或把 Authorization/API Key 放到认证配置中统一生成。"
+            ),
+            "title": "替换脱敏 Header 占位",
+        },
+        {
+            "code": "http_400_request_parameters",
+            "detail": (
+                "远端返回 HTTP 400，优先检查 Params、Headers、动态日期分区"
+                "和请求路径是否符合第三方接口要求。"
+            ),
+            "title": "检查请求参数和日期分区",
+        },
+    ]
+    assert result["test_history"][0]["repair_suggestions"] == result["repair_suggestions"]
 
 
 def test_plugin_connection_test_auth_config_overrides_masked_authorization_header(monkeypatch):
@@ -717,6 +1040,110 @@ def test_plugin_action_trial_returns_request_preview_and_mapping_hits():
         "write_target": "scheduled_job_result",
         "write_target_label": "定时作业结果",
     }
+    audit_events = client.get(
+        f"/api/audit/events?event_type=plugin_action.trial_succeeded&subject_id={action['id']}",
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert len(audit_events) == 1
+    audit_payload = audit_events[0]["payload"]
+    assert audit_payload == {
+        "action_code": "fetch_daily_metrics",
+        "action_id": action["id"],
+        "connection_environment": "test",
+        "connection_id": connection["id"],
+        "error_code": None,
+        "input_keys": ["timezone"],
+        "latency_ms": audit_payload["latency_ms"],
+        "plugin_code": "gitlab_metrics",
+        "plugin_id": action["plugin_id"],
+        "status": "succeeded",
+        "write_target": "scheduled_job_result",
+    }
+    assert isinstance(audit_payload["latency_ms"], int)
+    assert "vault/gitlab/token" not in str(audit_events)
+    assert "PRIVATE-TOKEN" not in str(audit_events)
+
+
+def test_plugin_action_trial_failure_writes_lightweight_audit():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "devops",
+            "code": "local_scanner",
+            "name": "本地扫描器",
+            "protocol": "mcp_stdio",
+            "risk_level": "high",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "stdio://local-scanner",
+            "environment": "sandbox",
+            "name": "沙箱本地扫描器",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "scan_local_repository",
+            "connection_id": connection["id"],
+            "name": "扫描本地仓库",
+            "plugin_id": plugin["id"],
+            "request_config": {"tool_name": "scanner.scan_repository"},
+            "result_mapping": {"write_target": "code_inspection_reports"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/trial",
+        json={
+            "connection_id": connection["id"],
+            "input_payload": {"repository": "rd-brain", "secret": "do-not-persist"},
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    result = response.json()["data"]
+    assert result["status"] == "failed"
+    assert result["error_code"] == "PLUGIN_PROTOCOL_UNSUPPORTED"
+    assert result["write_preview"]["write_target"] == "code_inspection_reports"
+
+    audit_events = client.get(
+        f"/api/audit/events?event_type=plugin_action.trial_failed&subject_id={action['id']}",
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert len(audit_events) == 1
+    audit_payload = audit_events[0]["payload"]
+    assert audit_payload == {
+        "action_code": "scan_local_repository",
+        "action_id": action["id"],
+        "connection_environment": "sandbox",
+        "connection_id": connection["id"],
+        "error_code": "PLUGIN_PROTOCOL_UNSUPPORTED",
+        "input_keys": ["repository", "secret"],
+        "latency_ms": audit_payload["latency_ms"],
+        "plugin_code": "local_scanner",
+        "plugin_id": plugin["id"],
+        "status": "failed",
+        "write_target": "code_inspection_reports",
+    }
+    assert isinstance(audit_payload["latency_ms"], int)
+    assert "do-not-persist" not in str(audit_events)
+    assert "scanner.scan_repository" not in str(audit_events)
 
 
 def test_plugin_action_trial_returns_write_preview_for_code_inspection_mapping():
@@ -802,6 +1229,85 @@ def test_plugin_action_trial_returns_write_preview_for_code_inspection_mapping()
     }
 
 
+def test_plugin_action_trial_returns_write_preview_for_email_notification_mapping():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugins = client.get("/api/system/plugins", headers=admin_headers).json()["data"]["items"]
+    email_plugin = {plugin["code"]: plugin for plugin in plugins}["email"]
+
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {
+                "header_name": "Authorization",
+                "secret_ref": "vault/email/prod-token",
+            },
+            "auth_type": "api_key_header",
+            "endpoint_url": "https://mail-gateway.example.com/api",
+            "environment": "prod",
+            "name": "生产邮件网关",
+            "plugin_id": email_plugin["id"],
+            "request_config": {
+                "headers": {"Content-Type": "application/json"},
+                "query": {
+                    "default_to": "owner@example.com",
+                    "mail_provider": "enterprise_mail_gateway",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "send_email_notification",
+            "connection_id": connection["id"],
+            "name": "发送邮件通知",
+            "plugin_id": email_plugin["id"],
+            "request_config": {
+                "method": "POST",
+                "mock_response_json": {
+                    "message_id": "mail_001",
+                    "recipients": ["owner@example.com", "security@example.com"],
+                    "status": "queued",
+                    "subject": "代码巡检完成",
+                },
+                "path": "/messages/send",
+            },
+            "result_mapping": {
+                "delivery_id_path": "$.message_id",
+                "delivery_status_path": "$.status",
+                "recipients_path": "$.recipients",
+                "subject_path": "$.subject",
+                "write_target": "email_notifications",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/trial",
+        headers=admin_headers,
+        json={"connection_id": connection["id"], "input_payload": {}},
+    )
+
+    assert response.status_code == 200
+    result = response.json()["data"]
+    assert result["write_preview"] == {
+        "candidate_count": 2,
+        "delivery_id": "mail_001",
+        "delivery_status": "queued",
+        "records_imported": 1,
+        "sample_records": ["owner@example.com", "security@example.com"],
+        "subject": "代码巡检完成",
+        "write_target": "email_notifications",
+        "write_target_label": "邮件通知记录",
+    }
+
+
 def test_scheduled_job_can_invoke_configured_plugin_action_with_snapshots_and_logs():
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -853,6 +1359,100 @@ def test_scheduled_job_can_invoke_configured_plugin_action_with_snapshots_and_lo
     assert logs["total"] == 1
     assert logs["items"][0]["id"] == run["plugin_invocation_log_id"]
     assert logs["items"][0]["status"] == "succeeded"
+
+
+def test_scheduled_email_action_run_exposes_notification_write_preview():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugins = client.get("/api/system/plugins", headers=admin_headers).json()["data"]["items"]
+    email_plugin = {plugin["code"]: plugin for plugin in plugins}["email"]
+
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {
+                "header_name": "Authorization",
+                "secret_ref": "vault/email/prod-token",
+            },
+            "auth_type": "api_key_header",
+            "endpoint_url": "https://mail-gateway.example.com/api",
+            "environment": "prod",
+            "name": "生产邮件网关",
+            "plugin_id": email_plugin["id"],
+            "request_config": {
+                "headers": {"Content-Type": "application/json"},
+                "query": {"default_to": "owner@example.com"},
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "send_email_notification",
+            "connection_id": connection["id"],
+            "name": "发送邮件通知",
+            "plugin_id": email_plugin["id"],
+            "request_config": {
+                "headers": {"Content-Type": "application/json"},
+                "method": "POST",
+                "mock_response_json": {
+                    "message_id": "mail_001",
+                    "recipients": ["owner@example.com"],
+                    "status": "queued",
+                    "subject": "定时作业完成",
+                },
+                "path": "/messages/send",
+                "query": {
+                    "body_template": "{{result_summary}}",
+                    "subject_template": "{{subject_template}}",
+                    "to": "{{default_to}}",
+                },
+            },
+            "result_mapping": {
+                "delivery_id_path": "$.message_id",
+                "delivery_status_path": "$.status",
+                "recipients_path": "$.recipients",
+                "subject_path": "$.subject",
+                "write_target": "email_notifications",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "定时发送运行通知",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "schedule_type": "manual",
+            "source_system": "email",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    result_action = run["result_summary"]["execution_nodes"]["result_action"]
+    assert run["records_imported"] == 1
+    assert result_action["records_imported"] == 1
+    assert result_action["write_target"] == "email_notifications"
+    assert result_action["write_target_label"] == "邮件通知记录"
+    assert result_action["feedback"]["delivery_id"] == "mail_001"
+    assert result_action["feedback"]["delivery_status"] == "queued"
+    assert result_action["feedback"]["subject"] == "定时作业完成"
+    assert result_action["feedback"]["sample_records"] == ["owner@example.com"]
 
 
 def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypatch):
@@ -1086,6 +1686,7 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     assert user_payload["knowledge_references"][0]["document_id"] == knowledge["id"]
     assert "支付页提交后无响应" in user_payload["knowledge_references"][0]["content"]
     execution_nodes = run["result_summary"]["execution_nodes"]
+    assert execution_nodes["data_connection"]["connection_environment"] == "prod"
     assert execution_nodes["data_connection"]["records_imported"] == 18
     assert execution_nodes["data_connection"]["input_mapping"]["time_field"] == "created_at"
     request_preview = execution_nodes["data_connection"]["request_summary"]["request_preview"]
@@ -1113,3 +1714,27 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     assert feedback_items["total"] == 1
     assert feedback_items["items"][0]["source_channel"] == "maxcompute_weekly_ai"
     assert "AI 分析发现支付页提交后无响应" in feedback_items["items"][0]["content"]
+
+    run_audit_events = client.get(
+        f"/api/audit/events?event_type=scheduled_job_run.succeeded&subject_id={run['id']}",
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    audit_payload = run_audit_events[0]["payload"]
+    assert audit_payload["agent_id"] == agent["id"]
+    assert audit_payload["execution_mode"] == "ai_generated"
+    assert audit_payload["job_type"] == "user_feedback_insight_extract"
+    assert audit_payload["knowledge_document_ids"] == [knowledge["id"]]
+    assert audit_payload["model_gateway_called"] is True
+    assert audit_payload["model_gateway_config_id"] == model_gateway["id"]
+    assert audit_payload["plugin_action_code"] == "fetch_weekly_user_feedback"
+    assert audit_payload["plugin_action_id"] == action["id"]
+    assert audit_payload["plugin_code"] == "aliyun_maxcompute"
+    assert audit_payload["plugin_connection_environment"] == "prod"
+    assert audit_payload["plugin_connection_id"] == connection["id"]
+    assert audit_payload["plugin_invocation_log_id"] == run["plugin_invocation_log_id"]
+    assert audit_payload["records_imported"] == 1
+    assert audit_payload["result_write_target"] == "user_feedback_insights"
+    assert audit_payload["scheduled_job_id"] == job["id"]
+    assert audit_payload["skill_ids"] == [skill["id"]]
+    assert audit_payload["status"] == "succeeded"
+    assert audit_payload["trigger_type"] == "manual"
