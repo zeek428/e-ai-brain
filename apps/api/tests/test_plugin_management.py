@@ -141,7 +141,7 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert marketplace.status_code == 200
     items = marketplace.json()["data"]["items"]
     by_code = {item["code"]: item for item in items}
-    assert set(by_code) == {"ai_executor", "email", "github", "gitlab"}
+    assert set(by_code) == {"ai_executor", "aliyun_maxcompute", "email", "github", "gitlab"}
     assert by_code["ai_executor"]["installed"] is True
     assert by_code["ai_executor"]["is_system"] is True
     assert by_code["ai_executor"]["plugin_id"] == "plugin_standard_ai_executor"
@@ -164,6 +164,21 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     ]
     assert ai_executor_query["result_callback_url"] == ""
     assert ai_executor_query["workspace_root"] == "/workspace"
+    ai_executor_schema = by_code["ai_executor"]["connection_schema"]
+    assert ai_executor_schema["sections"][0]["title"] == "Runner 调用配置"
+    assert ai_executor_schema["sections"][0]["fields"][0]["key"] == "runner_id"
+    assert ai_executor_schema["sections"][0]["fields"][1]["options"] == [
+        "codex",
+        "claude",
+        "hermes",
+        "openclaw",
+    ]
+    maxcompute_defaults = by_code["aliyun_maxcompute"]["connection_defaults"]
+    assert maxcompute_defaults["protocol"] == "mcp_http"
+    assert maxcompute_defaults["request_config"]["query"]["project"] == ""
+    assert by_code["aliyun_maxcompute"]["connection_schema"]["sections"][0]["fields"][0][
+        "key"
+    ] == "project"
     assert by_code["github"]["installed"] is True
     assert by_code["github"]["is_system"] is True
     assert by_code["github"]["plugin_id"] == "plugin_standard_github"
@@ -172,6 +187,7 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert by_code["github"]["connection_template_version"] == "v1"
     assert by_code["github"]["connection_defaults"]["auth_type"] == "bearer"
     assert by_code["github"]["connection_defaults"]["endpoint_url"] == "https://api.github.com"
+    assert by_code["github"]["connection_schema"]["sections"][0]["fields"][0]["key"] == "owner"
     assert (
         by_code["github"]["connection_defaults"]["request_config"]["headers"][
             "X-GitHub-Api-Version"
@@ -192,6 +208,7 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert email_query["imap_port"] == 993
     assert email_query["mailbox_folder"] == "INBOX"
     assert email_query["poll_since"] == "{{current_date-7}}"
+    assert by_code["email"]["connection_schema"]["sections"][1]["title"] == "收件配置"
     assert by_code["github"]["connection_count"] == 0
     assert by_code["github"]["action_count"] == 0
 
@@ -428,7 +445,11 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
         headers=admin_headers,
     ).json()["data"]
     assert listed_runners["total"] == 1
-    assert listed_runners["items"][0]["token_configured"] is True
+    listed_runner = listed_runners["items"][0]
+    assert listed_runner["token_configured"] is True
+    assert listed_runner["health_status"] == "online"
+    assert isinstance(listed_runner["heartbeat_age_seconds"], int)
+    assert "ai-brain-runner" in listed_runner["setup_command"]
 
 
 def test_scheduled_ai_executor_runner_completion_updates_run_detail():

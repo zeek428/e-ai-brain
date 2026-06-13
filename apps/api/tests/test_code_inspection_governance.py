@@ -232,6 +232,10 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
                     "type": "create_bug_for_severe_findings",
                 },
                 {
+                    "severity_threshold": "high",
+                    "type": "create_task_for_severe_findings",
+                },
+                {
                     "channels": ["email", "dingtalk"],
                     "recipients": ["quality@example.com"],
                     "type": "send_notification",
@@ -264,6 +268,7 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
         "code_inspection_report_",
     )
     assert execution_nodes["bug_creation"]["created_bug_ids"][0].startswith("bug_")
+    assert execution_nodes["task_creation"]["created_task_ids"][0].startswith("task_")
     assert execution_nodes["notifications"]["created_notification_ids"]
 
     report_id = execution_nodes["code_inspection_report"]["report_id"]
@@ -299,9 +304,11 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     assert detail_payload["report"]["plugin_invocation_log_id"].startswith(
         "plugin_invocation_log_",
     )
+    assert detail_payload["report"]["created_task_ids"][0].startswith("task_")
     assert detail_payload["report"]["committer_summary"][0]["email"] == "alice@example.com"
     assert detail_payload["findings"][0]["severity"] == "critical"
     assert detail_payload["findings"][0]["committer_email"] == "alice@example.com"
+    assert detail_payload["findings"][0]["created_task_id"].startswith("task_")
     assert detail_payload["notifications"][0]["channel"] in {"email", "dingtalk"}
 
     bugs = client.get(
@@ -315,6 +322,18 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     assert bug_items[0]["source"] == "code_inspection"
     assert bug_items[0]["evidence"]["code_inspection_report_id"] == report_id
     assert bug_items[0]["evidence"]["committer_email"] == "alice@example.com"
+
+    tasks = client.get(
+        f"/api/ai-tasks?product_id={product['id']}&task_type=code_inspection_remediation",
+        headers=headers,
+    )
+    assert tasks.status_code == 200
+    task_items = tasks.json()["data"]["items"]
+    assert len(task_items) == 1
+    assert task_items[0]["title"].startswith("[Code Inspection Remediation]")
+    task_detail = client.get(f"/api/ai-tasks/{task_items[0]['id']}", headers=headers)
+    assert task_detail.status_code == 200
+    assert task_detail.json()["data"]["input"]["code_inspection_report_id"] == report_id
 
 
 def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():

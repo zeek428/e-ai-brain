@@ -5,6 +5,39 @@ from typing import Any
 
 from app.api.deps import require_roles
 
+STANDARD_WIZARD_STEPS = [
+    {
+        "description": "选择数据连接和执行模板，负责获取原始输入数据。",
+        "key": "data_connection",
+        "required": True,
+        "title": "数据连接",
+    },
+    {
+        "description": "选择 AI 模型、Agent、Skill；无 Skill 时不会调用大模型。",
+        "key": "ai_processing",
+        "required": False,
+        "title": "AI 处理",
+    },
+    {
+        "description": "按需引用知识文档，作为 AI 处理前置上下文。",
+        "key": "knowledge_reference",
+        "required": False,
+        "title": "知识引用",
+    },
+    {
+        "description": "选择写入目标、通知渠道或治理闭环动作。",
+        "key": "result_write",
+        "required": True,
+        "title": "结果写入",
+    },
+    {
+        "description": "配置手动、Cron 或固定间隔触发。",
+        "key": "schedule",
+        "required": True,
+        "title": "调度",
+    },
+]
+
 STANDARD_SCHEDULED_JOB_TEMPLATES = [
     {
         "category": "insights",
@@ -36,6 +69,7 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
             "skill": {"strategy": "first_active"},
         },
         "template_version": "v1",
+        "wizard_steps": STANDARD_WIZARD_STEPS,
     },
     {
         "category": "governance",
@@ -74,6 +108,92 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
             "product": {"strategy": "first_active"},
         },
         "template_version": "v1",
+        "wizard_steps": STANDARD_WIZARD_STEPS,
+    },
+    {
+        "category": "collaboration",
+        "code": "email_digest",
+        "description": "定期从邮箱收取邮件，后续可交给 AI 汇总摘要或直接归档运行结果。",
+        "name": "邮件摘要收取",
+        "payload_defaults": {
+            "cron_expression": "0 8 * * MON-FRI",
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "每日邮件摘要收取",
+            "plugin_input_mapping": {
+                "poll_since": "{{current_date-1}}",
+            },
+            "result_actions": [],
+            "schedule_type": "cron",
+            "source_system": "email",
+        },
+        "recommended_scenarios": ["邮件摘要", "邮件工单收取", "业务反馈收取"],
+        "resource_selectors": {
+            "plugin_action": {"code_candidates": ["receive_email_messages"]},
+            "plugin_connection": {"strategy": "same_plugin_as_action"},
+        },
+        "template_version": "v1",
+        "wizard_steps": STANDARD_WIZARD_STEPS,
+    },
+    {
+        "category": "governance",
+        "code": "gitlab_mr_review",
+        "description": "读取 GitLab MR 或项目扫描数据，经 AI 复核后写入代码巡检报告。",
+        "name": "GitLab MR AI 审查",
+        "payload_defaults": {
+            "cron_expression": "0 */4 * * *",
+            "enabled": True,
+            "execution_mode": "ai_assisted",
+            "job_type": "code_repository_inspection",
+            "knowledge_document_ids": [],
+            "name": "GitLab MR AI 审查",
+            "result_actions": [
+                {"type": "write_code_inspection_report"},
+                {"severity_threshold": "critical", "type": "create_bug_for_severe_findings"},
+                {"severity_threshold": "high", "type": "create_task_for_severe_findings"},
+            ],
+            "schedule_type": "cron",
+            "skill_ids": [],
+            "source_system": "gitlab",
+        },
+        "recommended_scenarios": ["GitLab MR 审查", "代码规范复核", "安全变更巡检"],
+        "resource_selectors": {
+            "agent": {"strategy": "first_active"},
+            "model_gateway_config": {"strategy": "default_or_first_active"},
+            "plugin_action": {"code_candidates": ["scan_gitlab_code_inspection"]},
+            "plugin_connection": {"strategy": "same_plugin_as_action"},
+            "product": {"strategy": "first_active"},
+            "skill": {"strategy": "first_active"},
+        },
+        "template_version": "v1",
+        "wizard_steps": STANDARD_WIZARD_STEPS,
+    },
+    {
+        "category": "ai_service",
+        "code": "ai_executor_repository_task",
+        "description": (
+            "通过本地 Runner 调用 Codex、Claude、Hermes 或 OpenClaw "
+            "执行仓库任务并回写结果。"
+        ),
+        "name": "AI 执行器仓库任务",
+        "payload_defaults": {
+            "cron_expression": "0 3 * * MON",
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "AI 执行器仓库巡检",
+            "result_actions": [],
+            "schedule_type": "cron",
+            "source_system": "ai_executor",
+        },
+        "recommended_scenarios": ["本地 Codex 执行", "OpenClaw 仓库扫描", "AI 执行器自动回写"],
+        "resource_selectors": {
+            "plugin_action": {"code_candidates": ["run_ai_executor_instruction"]},
+            "plugin_connection": {"strategy": "same_plugin_as_action"},
+        },
+        "template_version": "v1",
+        "wizard_steps": STANDARD_WIZARD_STEPS,
     },
 ]
 

@@ -69,8 +69,8 @@ class CodeInspectionReadRepository:
                            plugin_action_id, plugin_connection_id, source_system, branch,
                            commit_sha, summary, risk_level,
                            finding_count, severe_finding_count, status, result_actions,
-                           created_bug_ids, notification_ids, committer_count,
-                           committer_summary, created_by, created_at, updated_at
+                           created_bug_ids, notification_ids, created_task_ids,
+                           committer_count, committer_summary, created_by, created_at, updated_at
                     FROM code_inspection_reports
                     {where}
                     ORDER BY created_at DESC, id DESC
@@ -89,8 +89,8 @@ class CodeInspectionReadRepository:
                            plugin_action_id, plugin_connection_id, source_system, branch,
                            commit_sha, summary, risk_level,
                            finding_count, severe_finding_count, status, result_actions,
-                           created_bug_ids, notification_ids, committer_count,
-                           committer_summary, created_by, created_at, updated_at
+                           created_bug_ids, notification_ids, created_task_ids,
+                           committer_count, committer_summary, created_by, created_at, updated_at
                     FROM code_inspection_reports
                     WHERE id = %s
                     """,
@@ -104,8 +104,8 @@ class CodeInspectionReadRepository:
                     """
                     SELECT id, report_id, rule_id, category, severity, title, description,
                            file_path, line_number, recommendation, raw, committer_name,
-                           committer_email, committer_username, created_bug_id, created_at,
-                           updated_at
+                           committer_email, committer_username, created_bug_id,
+                           created_task_id, created_at, updated_at
                     FROM code_inspection_findings
                     WHERE report_id = %s
                     ORDER BY
@@ -150,15 +150,15 @@ class CodeInspectionReadRepository:
                   plugin_action_id, plugin_connection_id, source_system, branch,
                   commit_sha, summary, risk_level, finding_count,
                   severe_finding_count, status, result_actions, created_bug_ids,
-                  notification_ids, committer_count, committer_summary, created_by,
-                  created_at, updated_at
+                  notification_ids, created_task_ids, committer_count,
+                  committer_summary, created_by, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s::jsonb, %s,
                   %s, %s, %s,
                   %s, %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s::jsonb, %s::jsonb,
-                  %s::jsonb, %s, %s::jsonb, %s,
+                  %s::jsonb, %s::jsonb, %s, %s::jsonb, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -182,6 +182,7 @@ class CodeInspectionReadRepository:
                   result_actions = EXCLUDED.result_actions,
                   created_bug_ids = EXCLUDED.created_bug_ids,
                   notification_ids = EXCLUDED.notification_ids,
+                  created_task_ids = EXCLUDED.created_task_ids,
                   committer_count = EXCLUDED.committer_count,
                   committer_summary = EXCLUDED.committer_summary,
                   updated_at = EXCLUDED.updated_at
@@ -208,6 +209,7 @@ class CodeInspectionReadRepository:
                     _json(report.get("result_actions"), []),
                     _json(report.get("created_bug_ids"), []),
                     _json(report.get("notification_ids"), []),
+                    _json(report.get("created_task_ids"), []),
                     report.get("committer_count", 0),
                     _json(report.get("committer_summary"), []),
                     report.get("created_by"),
@@ -227,13 +229,13 @@ class CodeInspectionReadRepository:
                 INSERT INTO code_inspection_findings (
                   id, report_id, rule_id, category, severity, title, description,
                   file_path, line_number, recommendation, raw, committer_name,
-                  committer_email, committer_username, created_bug_id, created_at,
-                  updated_at
+                  committer_email, committer_username, created_bug_id,
+                  created_task_id, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s::jsonb, %s,
-                  %s, %s, %s, COALESCE(%s::timestamptz, now()),
+                  %s, %s, %s, %s, COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -250,6 +252,7 @@ class CodeInspectionReadRepository:
                   committer_email = EXCLUDED.committer_email,
                   committer_username = EXCLUDED.committer_username,
                   created_bug_id = EXCLUDED.created_bug_id,
+                  created_task_id = EXCLUDED.created_task_id,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -268,6 +271,7 @@ class CodeInspectionReadRepository:
                     finding.get("committer_email"),
                     finding.get("committer_username"),
                     finding.get("created_bug_id"),
+                    finding.get("created_task_id"),
                     finding.get("created_at"),
                     finding.get("updated_at") or finding.get("created_at"),
                 ),
@@ -347,11 +351,12 @@ class CodeInspectionReadRepository:
             "result_actions": row[18] or [],
             "created_bug_ids": row[19] or [],
             "notification_ids": row[20] or [],
-            "committer_count": row[21] or 0,
-            "committer_summary": row[22] or [],
-            "created_by": row[23],
-            "created_at": row[24].isoformat() if row[24] else None,
-            "updated_at": row[25].isoformat() if row[25] else None,
+            "created_task_ids": row[21] or [],
+            "committer_count": row[22] or 0,
+            "committer_summary": row[23] or [],
+            "created_by": row[24],
+            "created_at": row[25].isoformat() if row[25] else None,
+            "updated_at": row[26].isoformat() if row[26] else None,
         }
 
     def _finding_from_row(self, row: Any) -> dict[str, Any]:
@@ -371,8 +376,9 @@ class CodeInspectionReadRepository:
             "committer_email": row[12],
             "committer_username": row[13],
             "created_bug_id": row[14],
-            "created_at": row[15].isoformat() if row[15] else None,
-            "updated_at": row[16].isoformat() if row[16] else None,
+            "created_task_id": row[15],
+            "created_at": row[16].isoformat() if row[16] else None,
+            "updated_at": row[17].isoformat() if row[17] else None,
         }
 
     def _notification_from_row(self, row: Any) -> dict[str, Any]:

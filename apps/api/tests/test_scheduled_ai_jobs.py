@@ -63,7 +63,7 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     response = client.get("/api/system/scheduled-job-templates", headers=admin_headers)
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["total"] == 2
+    assert data["total"] == 5
     by_code = {item["code"]: item for item in data["items"]}
 
     weekly = by_code["weekly_feedback_insight"]
@@ -87,6 +87,29 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     assert code_inspection["resource_selectors"]["plugin_action"]["code_candidates"] == [
         "scan_github_code_inspection",
         "scan_gitlab_code_inspection",
+    ]
+    assert code_inspection["wizard_steps"][0]["key"] == "data_connection"
+    assert code_inspection["wizard_steps"][1]["key"] == "ai_processing"
+
+    email_digest = by_code["email_digest"]
+    assert email_digest["payload_defaults"]["job_type"] == "plugin_action_invoke"
+    assert email_digest["payload_defaults"]["source_system"] == "email"
+    assert email_digest["resource_selectors"]["plugin_action"]["code_candidates"] == [
+        "receive_email_messages",
+    ]
+
+    mr_review = by_code["gitlab_mr_review"]
+    assert mr_review["payload_defaults"]["job_type"] == "code_repository_inspection"
+    assert mr_review["payload_defaults"]["execution_mode"] == "ai_assisted"
+    assert mr_review["resource_selectors"]["plugin_action"]["code_candidates"] == [
+        "scan_gitlab_code_inspection",
+    ]
+
+    ai_executor = by_code["ai_executor_repository_task"]
+    assert ai_executor["payload_defaults"]["job_type"] == "plugin_action_invoke"
+    assert ai_executor["payload_defaults"]["source_system"] == "ai_executor"
+    assert ai_executor["resource_selectors"]["plugin_action"]["code_candidates"] == [
+        "run_ai_executor_instruction",
     ]
 
 

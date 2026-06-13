@@ -222,7 +222,7 @@ const OFFICIAL_PLUGIN_LABEL = '官方标准';
 const genericIntegrationChainSteps = [
   { color: 'blue', label: '插件', text: '定义三方系统能力与协议' },
   { color: 'cyan', label: '连接', text: '维护环境、Endpoint、认证和公共参数' },
-  { color: 'purple', label: '动作', text: '定义请求、变量和结果映射' },
+  { color: 'purple', label: '执行', text: '定义请求、变量和结果映射' },
   { color: 'green', label: '定时作业', text: '编排取数、AI 处理和结果写入' },
 ];
 
@@ -748,6 +748,66 @@ function pluginConnectionTemplateFormValues(
   });
 }
 
+function marketplaceConnectionSchemaFields(item: PluginMarketplaceItem) {
+  return (item.connection_schema?.sections ?? []).flatMap((section) =>
+    (section.fields ?? []).map((field) => ({
+      ...field,
+      sectionTitle: section.title,
+    })),
+  );
+}
+
+function MarketplaceConnectionSchemaSummary({ item }: { item: PluginMarketplaceItem }) {
+  const fields = marketplaceConnectionSchemaFields(item);
+  if (!fields.length) {
+    return <Typography.Text type="secondary">按默认连接模板配置</Typography.Text>;
+  }
+  return (
+    <Space wrap size={4}>
+      {fields.slice(0, 5).map((field) => (
+        <Tag color={field.required ? 'orange' : 'default'} key={`${field.sectionTitle}-${field.key}`}>
+          {field.label}
+        </Tag>
+      ))}
+      {fields.length > 5 ? <Tag>+{fields.length - 5}</Tag> : null}
+    </Space>
+  );
+}
+
+function MarketplaceConnectionSchemaDetail({ item }: { item: PluginMarketplaceItem }) {
+  const fields = marketplaceConnectionSchemaFields(item);
+  if (!fields.length) {
+    return <Typography.Text type="secondary">该官方插件暂未声明连接表单 schema，将使用默认连接模板。</Typography.Text>;
+  }
+  return (
+    <Table
+      columns={[
+        { dataIndex: 'sectionTitle', title: '分组', width: 160 },
+        {
+          dataIndex: 'label',
+          title: '字段',
+          width: 180,
+          render: (value, row) => (
+            <Space size={4}>
+              <Typography.Text>{String(value)}</Typography.Text>
+              {row.required ? <Tag color="orange">必填</Tag> : null}
+              {row.supports_system_variables ? <Tag color="blue">变量</Tag> : null}
+            </Space>
+          ),
+        },
+        { dataIndex: 'path', title: '写入路径', width: 260 },
+        { dataIndex: 'type', title: '类型', width: 120 },
+        { dataIndex: 'description', title: '说明', ellipsis: true },
+      ]}
+      dataSource={fields}
+      pagination={false}
+      rowKey={(row) => `${row.sectionTitle}-${row.key}`}
+      scroll={{ x: 920 }}
+      size="small"
+    />
+  );
+}
+
 function pluginActionDraftFormValues(
   payload: Record<string, unknown>,
   writeTargets: ResultWriteTargetRecord[] = [],
@@ -795,6 +855,22 @@ function connectionTestStatusColor(status: string) {
     return 'red';
   }
   return 'default';
+}
+
+function runnerHealthStatusColor(status: string | undefined) {
+  if (status === 'online') {
+    return 'green';
+  }
+  if (status === 'offline') {
+    return 'orange';
+  }
+  if (status === 'never_connected') {
+    return 'default';
+  }
+  if (status === 'disabled') {
+    return 'red';
+  }
+  return 'blue';
 }
 
 function ConnectionLastTestSummary({ connection }: { connection: PluginConnectionRecord }) {
@@ -936,7 +1012,7 @@ function ConnectionRequestDebugPanel({
           </Space>
           {onCopyAsActionTemplate ? (
             <Button size="small" onClick={onCopyAsActionTemplate}>
-              复制为动作模板
+              复制为执行模板
             </Button>
           ) : null}
         </Space>
@@ -984,7 +1060,7 @@ function ConnectionRequestDebugPanel({
                   ) : null}
                   <JsonDiagnosticsBlock title="历史完整请求 JSON" value={record.request_summary} />
                   <JsonDiagnosticsBlock title="历史远端响应信息" value={record.response_summary} />
-                  <JsonDiagnosticsBlock title="历史动作模板草案" value={record.action_template_draft} />
+                  <JsonDiagnosticsBlock title="历史执行模板草案" value={record.action_template_draft} />
                 </Space>
               ),
               rowExpandable: () => true,
@@ -1576,7 +1652,7 @@ export default function PluginsPage() {
     const actionIds = new Set(pluginActions.map((action) => action.id));
     return [
       { items: pluginConnections.map(usageItemName), label: '连接' },
-      { items: pluginActions.map(usageItemName), label: '动作' },
+      { items: pluginActions.map(usageItemName), label: '执行' },
       {
         items: scheduledJobs
           .filter((job) => (
@@ -1604,7 +1680,7 @@ export default function PluginsPage() {
       items: actions
         .filter((action) => action.connection_id === connection.id)
         .map(usageItemName),
-      label: '动作',
+      label: '执行',
     },
     {
       items: scheduledJobs
@@ -1690,22 +1766,22 @@ export default function PluginsPage() {
   const confirmDeleteAction = (action: PluginActionRecord) => {
     const usageGroups = actionDeleteUsageGroups(action);
     if (hasDeleteUsage(usageGroups)) {
-      warnDeleteUsage(`动作「${action.name}」正在使用中`, usageGroups);
+      warnDeleteUsage(`执行「${action.name}」正在使用中`, usageGroups);
       return;
     }
     Modal.confirm({
       cancelText: '取消',
-      content: `确定删除动作「${action.name}」吗？`,
+      content: `确定删除执行「${action.name}」吗？`,
       okText: '删除',
       okType: 'danger',
-      title: '删除动作',
+      title: '删除执行',
       onOk: async () => {
         try {
           await deletePluginAction(action.id);
-          message.success('动作已删除');
+          message.success('执行已删除');
           await reload();
         } catch (error) {
-          message.error(error instanceof Error ? error.message : '动作删除失败');
+          message.error(error instanceof Error ? error.message : '执行删除失败');
         }
       },
     });
@@ -1864,7 +1940,7 @@ export default function PluginsPage() {
       const payload = buildActionPayload(values, requestConfig, resultMapping);
       if (editingAction) {
         await updatePluginAction(editingAction.id, payload);
-        message.success('动作已更新');
+        message.success('执行已更新');
       } else {
         const createdAction = await createPluginAction(payload);
         rememberAssistantDraftResolution({
@@ -1873,12 +1949,12 @@ export default function PluginsPage() {
           resourceType: 'plugin_action',
           title: assistantActionDraftSource?.title,
         });
-        message.success('动作已创建');
+        message.success('执行已创建');
       }
       closeActionModal();
       await reload();
     } catch (error) {
-      message.error(error instanceof Error ? error.message : editingAction ? '动作更新失败' : '动作创建失败');
+      message.error(error instanceof Error ? error.message : editingAction ? '执行更新失败' : '执行创建失败');
     }
   };
 
@@ -1911,7 +1987,7 @@ export default function PluginsPage() {
   const openCreateActionForMarketplacePlugin = (item: PluginMarketplaceItem) => {
     const scenario = marketplaceActionScenario(item);
     if (!scenario) {
-      message.warning('动作模板目录未返回该官方插件模板，请刷新服务端模板目录后重试');
+      message.warning('执行模板目录未返回该官方插件模板，请刷新服务端模板目录后重试');
       return;
     }
     openCreateActionModal();
@@ -1965,9 +2041,9 @@ export default function PluginsPage() {
         openCreateActionModal();
         setAssistantActionDraftSource({ draftId: draft.draftId, title: draft.title });
         actionForm.setFieldsValue(pluginActionDraftFormValues(draft.payload, resultWriteTargets));
-        message.success(`已应用助手草案：${draft.title || '插件动作'}`);
+        message.success(`已应用助手草案：${draft.title || '插件执行'}`);
       } catch (error) {
-        message.error(error instanceof Error ? error.message : '助手插件动作草案解析失败');
+        message.error(error instanceof Error ? error.message : '助手插件执行草案解析失败');
       }
     }, 0);
     return () => window.clearTimeout(timeoutId);
@@ -2074,7 +2150,7 @@ export default function PluginsPage() {
       return;
     }
     if (scenario) {
-      message.warning('动作模板目录未返回该场景，请刷新后重试');
+      message.warning('执行模板目录未返回该场景，请刷新后重试');
     }
   };
 
@@ -2180,7 +2256,7 @@ export default function PluginsPage() {
 
   const runAction = async (action: PluginActionRecord) => {
     await invokePluginAction(action.id);
-    message.success('插件动作已执行');
+    message.success('插件执行已完成');
     await reload();
   };
 
@@ -2190,7 +2266,7 @@ export default function PluginsPage() {
   ) => {
     const draft = result.action_template_draft;
     if (!draft) {
-      message.warning('当前测试结果缺少动作模板草案');
+      message.warning('当前测试结果缺少执行模板草案');
       return;
     }
     Modal.destroyAll();
@@ -2381,7 +2457,7 @@ export default function PluginsPage() {
                 </Button>
               </Space>
               <Typography.Text type="secondary">
-                可复制表达式到连接 Params、Headers 或动作参数值，支持类似 {'{{current_date-7}}'} 的天数偏移。
+                可复制表达式到连接 Params、Headers 或执行参数值，支持类似 {'{{current_date-7}}'} 的天数偏移。
               </Typography.Text>
             </Space>
           }
@@ -2454,10 +2530,18 @@ export default function PluginsPage() {
                   showTotal: (total) => `共 ${total} 条`,
                 }}
                 rowKey="id"
-                scroll={{ x: 1320 }}
+                scroll={{ x: 1600 }}
                 search={false}
                 dataSource={marketplaceItems}
                 tableLayout="fixed"
+                expandable={{
+                  expandedRowRender: (record) => (
+                    <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+                      <Typography.Text strong>连接表单 schema</Typography.Text>
+                      <MarketplaceConnectionSchemaDetail item={record} />
+                    </Space>
+                  ),
+                }}
                 columns={[
                   {
                     dataIndex: 'name',
@@ -2514,7 +2598,7 @@ export default function PluginsPage() {
                   },
                   {
                     dataIndex: 'action_templates',
-                    title: '动作模板',
+                    title: '执行模板',
                     width: 230,
                     render: (value) => (
                       <Space wrap size={4}>
@@ -2525,6 +2609,12 @@ export default function PluginsPage() {
                     ),
                   },
                   {
+                    dataIndex: 'connection_schema',
+                    title: '连接表单字段',
+                    width: 280,
+                    render: (_, row) => <MarketplaceConnectionSchemaSummary item={row} />,
+                  },
+                  {
                     dataIndex: 'connection_count',
                     key: 'runtime',
                     title: '已配置',
@@ -2532,7 +2622,7 @@ export default function PluginsPage() {
                     render: (_, row) => (
                       <Space orientation="vertical" size={2}>
                         <Typography.Text>连接 {row.connection_count}</Typography.Text>
-                        <Typography.Text>动作 {row.action_count}</Typography.Text>
+                        <Typography.Text>执行 {row.action_count}</Typography.Text>
                       </Space>
                     ),
                   },
@@ -2556,13 +2646,13 @@ export default function PluginsPage() {
                             配置连接
                           </Button>
                           <Button
-                            aria-label={`从市场插件 ${row.name} 创建动作`}
+                            aria-label={`从市场插件 ${row.name} 创建执行`}
                             disabled={!row.plugin_id}
                             icon={<PlusOutlined />}
                             onClick={() => openCreateActionForMarketplacePlugin(row)}
                             type="link"
                           >
-                            创建动作
+                            创建执行
                           </Button>
                         </Space>
                       );
@@ -2825,10 +2915,24 @@ export default function PluginsPage() {
                   showTotal: (total) => `共 ${total} 条`,
                 }}
                 rowKey="id"
-                scroll={{ x: 1460 }}
+                scroll={{ x: 1900 }}
                 search={false}
                 dataSource={runners}
                 tableLayout="fixed"
+                expandable={{
+                  expandedRowRender: (record) => (
+                    <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+                      <Typography.Text strong>本地 Runner 启动命令</Typography.Text>
+                      {record.setup_command ? (
+                        <Typography.Text code copyable={{ text: record.setup_command }}>
+                          {record.setup_command}
+                        </Typography.Text>
+                      ) : (
+                        <Typography.Text type="secondary">创建或刷新 Runner 后由后端生成启动命令。</Typography.Text>
+                      )}
+                    </Space>
+                  ),
+                }}
                 toolBarRender={() => [
                   <Button key="create-runner" aria-label="新增执行器" icon={<PlusOutlined />} type="primary" onClick={openCreateRunnerModal}>
                     新增执行器
@@ -2840,6 +2944,19 @@ export default function PluginsPage() {
                 columns={[
                   { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
                   { dataIndex: 'protocol', title: '协议', width: 150 },
+                  {
+                    dataIndex: 'health_status',
+                    title: '健康状态',
+                    width: 130,
+                    render: (_, row) => (
+                      <Space orientation="vertical" size={2}>
+                        <Tag color={runnerHealthStatusColor(row.health_status)}>{row.health_status ?? 'unknown'}</Tag>
+                        {typeof row.heartbeat_age_seconds === 'number' ? (
+                          <Typography.Text type="secondary">{row.heartbeat_age_seconds}s</Typography.Text>
+                        ) : null}
+                      </Space>
+                    ),
+                  },
                   {
                     dataIndex: 'executor_types',
                     title: '执行器类型',
@@ -2879,6 +2996,17 @@ export default function PluginsPage() {
                     render: (value) => <Tag color={value === 'active' ? 'green' : value === 'offline' ? 'orange' : 'default'}>{String(value)}</Tag>,
                   },
                   {
+                    dataIndex: 'setup_command',
+                    title: '启动命令',
+                    ellipsis: true,
+                    width: 320,
+                    render: (value) => value ? (
+                      <Typography.Text code copyable={{ text: String(value) }} ellipsis={{ tooltip: String(value) }}>
+                        {String(value)}
+                      </Typography.Text>
+                    ) : '-',
+                  },
+                  {
                     fixed: 'right',
                     key: 'actions',
                     title: '操作',
@@ -2912,13 +3040,13 @@ export default function PluginsPage() {
           },
           {
             key: 'actions',
-            label: '动作',
+            label: '执行',
             children: (
               <ProTable<PluginActionRecord>
                 cardBordered
                 className="management-list-table"
                 dateFormatter="string"
-                headerTitle="动作"
+                headerTitle="执行"
                 loading={loading}
                 options={{
                   density: true,
@@ -2936,8 +3064,8 @@ export default function PluginsPage() {
                 dataSource={actions}
                 tableLayout="fixed"
                 toolBarRender={() => [
-                  <Button key="create-action" aria-label="新增动作" icon={<PlusOutlined />} type="primary" onClick={openCreateActionModal}>
-                    新增动作
+                  <Button key="create-action" aria-label="新增执行" icon={<PlusOutlined />} type="primary" onClick={openCreateActionModal}>
+                    新增执行
                   </Button>,
                   <Button key="reload-actions" icon={<ReloadOutlined />} onClick={reload}>
                     刷新
@@ -2985,7 +3113,7 @@ export default function PluginsPage() {
                     render: (_, row) => (
                       <Space className="management-row-actions" size={0}>
                         <Button
-                          aria-label={`编辑动作 ${row.name}`}
+                          aria-label={`编辑执行 ${row.name}`}
                           icon={<EditOutlined />}
                           onClick={() => openEditActionModal(row)}
                           type="link"
@@ -2997,7 +3125,7 @@ export default function PluginsPage() {
                         </Button>
                         <Button onClick={() => runAction(row)} type="link">运行</Button>
                         <Button
-                          aria-label={`删除动作 ${row.name}`}
+                          aria-label={`删除执行 ${row.name}`}
                           danger
                           icon={<DeleteOutlined />}
                           onClick={() => confirmDeleteAction(row)}
@@ -3039,7 +3167,7 @@ export default function PluginsPage() {
                 tableLayout="fixed"
                 columns={[
                   { dataIndex: 'id', title: '日志 ID', ellipsis: true, width: 240 },
-                  { dataIndex: 'action_id', title: '动作 ID', ellipsis: true, width: 240 },
+                  { dataIndex: 'action_id', title: '执行 ID', ellipsis: true, width: 240 },
                   { dataIndex: 'scheduled_job_id', title: '定时作业', ellipsis: true, width: 240, render: (value) => value || '-' },
                   { dataIndex: 'status', title: '状态', width: 110 },
                   { dataIndex: 'latency_ms', title: '耗时 ms', width: 110 },
@@ -3313,7 +3441,7 @@ export default function PluginsPage() {
         cancelText="取消"
         okText="确定"
         open={actionModalOpen}
-        title={editingAction ? '编辑动作' : '新增动作'}
+        title={editingAction ? '编辑执行' : '新增执行'}
         onCancel={closeActionModal}
         onOk={submitAction}
       >
@@ -3378,7 +3506,7 @@ export default function PluginsPage() {
             <Input />
           </Form.Item>
           <Space>
-            <Form.Item label="动作类型" name="action_type">
+            <Form.Item label="执行类型" name="action_type">
               <Select
                 options={[
                   { label: 'http_request', value: 'http_request' },
@@ -3474,7 +3602,7 @@ export default function PluginsPage() {
         confirmLoading={trialRunning}
         okText="试运行"
         open={trialModalOpen}
-        title={`动作试运行${trialAction ? `：${trialAction.name}` : ''}`}
+        title={`执行试运行${trialAction ? `：${trialAction.name}` : ''}`}
         width={820}
         onCancel={() => setTrialModalOpen(false)}
         onOk={runActionTrial}

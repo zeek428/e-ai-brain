@@ -75,11 +75,51 @@ def _runner_public(runner: dict[str, Any]) -> dict[str, Any]:
     public = dict(runner)
     public.pop("token_hash", None)
     public["token_configured"] = bool(runner.get("token_hash"))
+    heartbeat_age = _heartbeat_age_seconds(runner.get("last_heartbeat_at"))
+    public["heartbeat_age_seconds"] = heartbeat_age
+    public["health_status"] = _runner_health_status(runner, heartbeat_age)
+    public["setup_command"] = _runner_setup_command(runner)
     return public
 
 
 def _task_public(task: dict[str, Any]) -> dict[str, Any]:
     return dict(task)
+
+
+def _heartbeat_age_seconds(value: Any) -> int | None:
+    if not value:
+        return None
+    try:
+        heartbeat_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if heartbeat_at.tzinfo is None:
+        heartbeat_at = heartbeat_at.replace(tzinfo=UTC)
+    return max(0, int((datetime.now(UTC) - heartbeat_at.astimezone(UTC)).total_seconds()))
+
+
+def _runner_health_status(runner: dict[str, Any], heartbeat_age: int | None) -> str:
+    if runner.get("status") == "disabled":
+        return "disabled"
+    if runner.get("status") == "offline":
+        return "offline"
+    if heartbeat_age is None:
+        return "never_connected"
+    timeout_seconds = int(runner.get("heartbeat_timeout_seconds") or 120)
+    return "online" if heartbeat_age <= timeout_seconds else "offline"
+
+
+def _runner_setup_command(runner: dict[str, Any]) -> str:
+    executor_types = ",".join(str(item) for item in runner.get("executor_types") or ["codex"])
+    workspace_roots = ",".join(str(item) for item in runner.get("workspace_roots") or ["*"])
+    return (
+        "ai-brain-runner start "
+        f"--runner-id {runner.get('id')} "
+        "--token <runner_token> "
+        f"--endpoint {runner.get('endpoint_url') or 'runner://local'} "
+        f"--executors {executor_types} "
+        f"--workspace-roots {workspace_roots}"
+    )
 
 
 def _repository(current_store: Any) -> Any | None:

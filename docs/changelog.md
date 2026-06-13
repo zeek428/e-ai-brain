@@ -8,6 +8,10 @@
 ## [Unreleased]
 
 ### Added
+- 任务编排平台升级：定时作业模板新增 `wizard_steps`，内置每周反馈洞察、代码巡检、邮件摘要、GitLab MR AI 审查和 AI 执行器仓库任务五类模板；新增作业页展示任务创建向导，并把用户侧“动作”文案收敛为“执行/结果写入”。
+- 官方插件 schema 化：`/api/system/plugin-marketplace` 为 MaxCompute、GitLab、GitHub、邮箱和 AI 执行器返回 `connection_schema`，插件市场展示连接表单字段，JSON 保留为高级修改入口。
+- Runner 产品化增强：AI 执行器 Runner 列表返回并展示 `health_status`、`heartbeat_age_seconds` 和可复制 `setup_command`，便于本地 Codex/Claude/Hermes/OpenClaw Runner 接入远程 AI Brain。
+- 代码巡检闭环增强：`result_actions` 新增 `create_task_for_severe_findings`，严重 finding 可自动创建 `code_inspection_remediation` AI 任务，报告和 finding 保存整改任务反链，运行详情展示 `task_creation` 节点。
 - AI 执行器 Runner/OpenClaw 闭环：新增 Runner 管理、心跳、任务认领和完成回写接口，官方 `ai_executor` 插件使用 `runner_polling` 下发 Codex/Claude/Hermes/OpenClaw 指令；定时作业在 Runner 排队或执行中保持 `running`，Runner 完成后回写插件调用日志、运行详情 `runner_execution` 节点、结果动作反馈、collector run 和作业最近运行状态。
 - 定时作业运行详情新增结果写入记录：`/api/system/result-write-records` 支持按 `scheduled_job_run_id` 精确查询单次运行的最终写入反馈；页面在“运行记录 -> 详情”里展示写入目标、状态、写入数、插件调用日志、摘要字段、写入预览和执行反馈。插件管理回归配置中心，只保留插件、连接、动作和调用日志。
 - 官方插件市场补充 AI 执行器标准插件：内置 `ai_executor` 不可编辑/删除，连接模板提供 `codex/claude/hermes/openclaw` 执行器选择、Runner、workspace、超时和结果回写地址；动作模板提供下达指令和结果同步契约，真实执行须接入隔离 Runner。

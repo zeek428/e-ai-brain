@@ -3797,6 +3797,13 @@ export type ScheduledJobResultAction = {
   webhook_url?: string;
 };
 
+export type ScheduledJobTemplateWizardStepRecord = {
+  description?: string;
+  key: string;
+  required?: boolean;
+  title: string;
+};
+
 export type ScheduledJobTemplateRecord = {
   available_resource_counts?: Record<string, number>;
   category?: string;
@@ -3809,6 +3816,7 @@ export type ScheduledJobTemplateRecord = {
   recommended_scenarios?: string[];
   resource_selectors?: Record<string, unknown>;
   template_version?: string;
+  wizard_steps?: ScheduledJobTemplateWizardStepRecord[];
 };
 
 export type ScheduledJobRunRecord = {
@@ -3905,6 +3913,7 @@ export type PluginMarketplaceItem = {
   action_templates?: string[];
   category: string;
   code: string;
+  connection_schema?: PluginConnectionSchemaRecord;
   connection_defaults?: Record<string, unknown>;
   connection_count: number;
   connection_template_version?: string;
@@ -3920,6 +3929,29 @@ export type PluginMarketplaceItem = {
   risk_level?: string;
   status: string;
   summary?: string;
+};
+
+export type PluginConnectionSchemaFieldRecord = {
+  description?: string;
+  key: string;
+  label: string;
+  options?: Array<{ label: string; value: string }>;
+  path?: string;
+  placeholder?: string;
+  required?: boolean;
+  supports_system_variables?: boolean;
+  type?: string;
+};
+
+export type PluginConnectionSchemaSectionRecord = {
+  fields: PluginConnectionSchemaFieldRecord[];
+  key: string;
+  title: string;
+};
+
+export type PluginConnectionSchemaRecord = {
+  schema_version?: string;
+  sections?: PluginConnectionSchemaSectionRecord[];
 };
 
 export type PluginActionTemplateRecord = {
@@ -4104,7 +4136,9 @@ export type AiExecutorRunnerRecord = {
   created_at?: string | null;
   endpoint_url?: string;
   executor_types?: string[];
+  heartbeat_age_seconds?: number | null;
   heartbeat_timeout_seconds?: number;
+  health_status?: string;
   id: string;
   last_heartbeat_at?: string | null;
   max_concurrent_tasks?: number;
@@ -4112,6 +4146,7 @@ export type AiExecutorRunnerRecord = {
   name: string;
   protocol?: string;
   runner_token?: string;
+  setup_command?: string;
   status: string;
   token_configured?: boolean;
   updated_at?: string | null;

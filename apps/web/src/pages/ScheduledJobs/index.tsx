@@ -21,6 +21,7 @@ import {
   Select,
   Space,
   Statistic,
+  Steps,
   Table,
   Tabs,
   Tag,
@@ -122,6 +123,8 @@ type ScheduledJobOrchestrationNode = {
   title: string;
 };
 
+type ScheduledJobTemplateWizardStep = NonNullable<ScheduledJobTemplateRecord['wizard_steps']>[number];
+
 const jobTypeOptions = [
   { label: '代码仓库巡检（质量 / 安全 / 规范）', value: 'code_repository_inspection' },
   { label: '用户反馈洞察抽取（取数 + AI 分析 + 写入）', value: 'user_feedback_insight_extract' },
@@ -132,7 +135,7 @@ const jobTypeOptions = [
   { label: '线上日志指标采集', value: 'online_log_metric_collect' },
   { label: 'GitLab 每日代码指标采集', value: 'gitlab_daily_code_metric_collect' },
   { label: 'Jenkins 发布记录采集', value: 'jenkins_release_collect' },
-  { label: '插件动作调用', value: 'plugin_action_invoke' },
+  { label: '插件执行调用', value: 'plugin_action_invoke' },
   { label: '看板快照刷新', value: 'dashboard_snapshot_refresh' },
   { label: '生命周期上下文刷新', value: 'lifecycle_context_refresh' },
   { label: '待归属数据重试', value: 'pending_attribution_retry' },
@@ -192,6 +195,7 @@ const templateSourceTypeLabelByValue = new Map([
 const codeInspectionResultActionOptions = [
   { label: '写入代码巡检报告', value: 'write_code_inspection_report' },
   { label: '严重问题自动创建 Bug', value: 'create_bug_for_severe_findings' },
+  { label: '严重问题自动创建整改任务', value: 'create_task_for_severe_findings' },
   { label: '发送问题消息通知', value: 'send_notification' },
 ];
 
@@ -211,7 +215,41 @@ const notificationChannelOptions = [
 const defaultCodeInspectionResultActions: ScheduledJobResultAction[] = [
   { type: 'write_code_inspection_report' },
   { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
+  { severity_threshold: 'high', type: 'create_task_for_severe_findings' },
   { channels: ['email'], recipients: [], type: 'send_notification' },
+];
+
+const defaultScheduledJobWizardSteps: ScheduledJobTemplateWizardStep[] = [
+  {
+    description: '选择插件连接并完成取数测试',
+    key: 'data_connection',
+    required: true,
+    title: '数据连接',
+  },
+  {
+    description: '选择模型、Agent 和 Skill',
+    key: 'ai_processing',
+    required: false,
+    title: 'AI 处理',
+  },
+  {
+    description: '可选引用知识内容',
+    key: 'knowledge_reference',
+    required: false,
+    title: '知识引用',
+  },
+  {
+    description: '配置写入目标或通知目标',
+    key: 'result_write',
+    required: true,
+    title: '结果写入',
+  },
+  {
+    description: '设置手动、Cron 或固定间隔',
+    key: 'schedule',
+    required: true,
+    title: '调度',
+  },
 ];
 
 function cloneResultActions(actions: ScheduledJobResultAction[]): ScheduledJobResultAction[] {
@@ -565,10 +603,41 @@ function RunResultWriteRecords({
   );
 }
 
-function ScheduledJobOrchestrationFlow({ nodes }: { nodes: ScheduledJobOrchestrationNode[] }) {
+function wizardStepNodeKey(stepKey: string): string {
+  if (stepKey === 'result_write') {
+    return 'result_action';
+  }
+  return stepKey;
+}
+
+function wizardStepCurrentIndex(
+  steps: ScheduledJobTemplateWizardStep[],
+  nodes: ScheduledJobOrchestrationNode[],
+) {
+  const firstPendingIndex = steps.findIndex((step) => {
+    if (!step.required) {
+      return false;
+    }
+    if (step.key === 'schedule') {
+      return false;
+    }
+    const node = nodes.find((item) => item.key === wizardStepNodeKey(step.key));
+    return Boolean(node && node.status !== '已配置' && node.status !== '已选择');
+  });
+  return firstPendingIndex >= 0 ? firstPendingIndex : Math.max(steps.length - 1, 0);
+}
+
+function ScheduledJobOrchestrationFlow({
+  nodes,
+  wizardSteps = defaultScheduledJobWizardSteps,
+}: {
+  nodes: ScheduledJobOrchestrationNode[];
+  wizardSteps?: ScheduledJobTemplateWizardStep[];
+}) {
+  const steps = wizardSteps.length ? wizardSteps : defaultScheduledJobWizardSteps;
   return (
     <Space
-      aria-label="任务编排流程"
+      aria-label="任务创建向导"
       orientation="vertical"
       size={10}
       style={{
@@ -581,9 +650,22 @@ function ScheduledJobOrchestrationFlow({ nodes }: { nodes: ScheduledJobOrchestra
       }}
     >
       <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }} wrap>
-        <Typography.Text strong>任务编排流程</Typography.Text>
-        <Typography.Text type="secondary">数据连接 → AI 处理 → 知识引用 → 结果动作</Typography.Text>
+        <Typography.Text strong>任务创建向导</Typography.Text>
+        <Typography.Text type="secondary">任务编排流程：数据连接 → AI 处理 → 知识引用 → 结果写入 → 运行记录</Typography.Text>
       </Space>
+      <Steps
+        current={wizardStepCurrentIndex(steps, nodes)}
+        items={steps.map((step) => ({
+          content: (
+            <Space size={4} wrap>
+              <Tag color={step.required ? 'orange' : 'default'}>{step.required ? '必填' : '可选'}</Tag>
+              {step.description ? <Typography.Text type="secondary">{step.description}</Typography.Text> : null}
+            </Space>
+          ),
+          title: step.title,
+        }))}
+        size="small"
+      />
       <div
         style={{
           display: 'grid',
@@ -759,6 +841,8 @@ function RunExecutionNodeCard({
     { label: '报告 ID', value: nodeNestedFieldText(node, 'feedback.report_id') ?? nodeFieldText(node.report_id) },
     { label: '创建记录', value: nodeNestedFieldText(node, 'feedback.created_ids') ?? nodeNestedFieldText(node, 'created_ids') },
     { label: 'Bug 数量', value: nodeNestedArrayCountText(node, 'feedback.bug_ids') ?? nodeNestedArrayCountText(node, 'created_bug_ids') },
+    { label: '任务数量', value: nodeNestedArrayCountText(node, 'feedback.task_ids') ?? nodeNestedArrayCountText(node, 'created_task_ids') },
+    { label: '整改任务', value: nodeNestedFieldText(node, 'feedback.task_ids') ?? nodeNestedFieldText(node, 'created_task_ids') },
     { label: '通知数量', value: nodeNestedArrayCountText(node, 'feedback.notification_ids') ?? nodeNestedArrayCountText(node, 'created_notification_ids') },
     { label: '投递 ID', value: nodeNestedFieldText(node, 'feedback.delivery_id') },
     { label: '投递状态', value: nodeNestedFieldText(node, 'feedback.delivery_status') },
@@ -772,7 +856,7 @@ function RunExecutionNodeCard({
     { label: '源数据量', value: nodeFieldText(node.source_row_count) ?? nodeFieldText(node.row_count) },
     { label: '连接', value: nodeFieldText(node.connection_id) },
     { label: '环境', value: nodeFieldText(node.connection_environment) },
-    { label: '动作', value: nodeFieldText(node.action_id) },
+    { label: '执行', value: nodeFieldText(node.action_id) },
     { label: '失败原因', value: nodeFieldText(node.error_message) },
   ].filter((item) => item.value);
 
@@ -820,7 +904,10 @@ function RunExecutionChain({ run }: { run: ScheduledJobRunRecord }) {
       ? [{ key: 'runner_execution', title: 'AI 执行器执行内容' }]
       : []),
     { key: 'skill_processing', title: '经过 Skill 处理后的内容' },
-    { key: 'result_action', title: '结果动作反馈内容' },
+    { key: 'result_action', title: '结果写入反馈内容' },
+    ...(getRunExecutionNode(run, 'task_creation')
+      ? [{ key: 'task_creation', title: '整改任务创建反馈' }]
+      : []),
   ];
   return (
     <Space orientation="vertical" size={10} style={{ width: '100%' }}>
@@ -947,7 +1034,7 @@ function ScheduledJobRunObservabilityOverview({
             <Statistic
               precision={2}
               suffix="%"
-              title="动作写入成功率"
+              title="结果写入成功率"
               value={metricNumber(summary.action_write_success_rate)}
             />
           </Card>
@@ -1182,6 +1269,11 @@ export default function ScheduledJobsPage() {
   const selectedKnowledgeDocumentIds = Form.useWatch('knowledge_document_ids', form);
   const selectedResultActions = Form.useWatch('result_actions', form);
   const selectedJobType = Form.useWatch('job_type', form);
+  const selectedTemplateCode = Form.useWatch('template', form);
+  const selectedJobTemplate = useMemo(
+    () => jobTemplates.find((template) => template.code === selectedTemplateCode),
+    [jobTemplates, selectedTemplateCode],
+  );
   const jobTemplateOptions = useMemo(
     () =>
       jobTemplates.map((template) => ({
@@ -1379,7 +1471,7 @@ export default function ScheduledJobsPage() {
         required: actionRequired,
         status: actionStatus,
         statusColor: actionStatus === '已配置' ? 'green' : actionRequired ? 'orange' : 'default',
-        title: '结果动作',
+        title: '结果写入',
       },
     ];
   }, [
@@ -1943,7 +2035,7 @@ export default function ScheduledJobsPage() {
                   },
                   {
                     dataIndex: 'plugin_action_id',
-                    title: '插件动作',
+                    title: '数据扫描执行',
                     width: 220,
                     render: (value) => {
                       const action = value ? pluginActionById.get(String(value)) : undefined;
@@ -1952,7 +2044,7 @@ export default function ScheduledJobsPage() {
                   },
                   {
                     dataIndex: 'result_actions',
-                    title: '结果动作',
+                    title: '结果写入执行',
                     width: 240,
                     render: (value) => ellipsisText(resultActionLabels(value as ScheduledJobResultAction[])),
                   },
@@ -2165,7 +2257,10 @@ export default function ScheduledJobsPage() {
               />
             </Form.Item>
           ) : null}
-          <ScheduledJobOrchestrationFlow nodes={orchestrationNodes} />
+          <ScheduledJobOrchestrationFlow
+            nodes={orchestrationNodes}
+            wizardSteps={selectedJobTemplate?.wizard_steps}
+          />
           <Form.Item label="名称" name="name" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -2301,14 +2396,14 @@ export default function ScheduledJobsPage() {
             />
           </Form.Item>
           <Form.Item
-            label={selectedJobType === 'code_repository_inspection' ? '插件扫描动作' : '结果动作'}
+            label={selectedJobType === 'code_repository_inspection' ? '数据扫描执行' : '结果写入执行'}
             name="plugin_action_id"
-            rules={[requiredForJobTypes(pluginRequiredJobTypes, '请选择插件动作')]}
+            rules={[requiredForJobTypes(pluginRequiredJobTypes, '请选择执行模板')]}
           >
             <Select
               allowClear
               optionFilterProp="label"
-              placeholder="请选择结果动作"
+              placeholder="请选择执行模板"
               showSearch
               options={pluginActions.map((action) => ({
                 label: `${action.name} (${action.code})`,
@@ -2320,21 +2415,24 @@ export default function ScheduledJobsPage() {
             <Form.List name="result_actions">
               {(fields, { add, remove }) => (
                 <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-                  <Typography.Text strong>结果动作</Typography.Text>
+                  <Typography.Text strong>结果写入执行</Typography.Text>
                   {fields.map(({ key, ...field }) => (
                     <Space key={key} align="start" size={8} style={{ width: '100%' }}>
                       <Form.Item
                         {...field}
                         name={[field.name, 'type']}
-                        rules={[{ required: true, message: '请选择结果动作' }]}
+                        rules={[{ required: true, message: '请选择结果写入执行' }]}
                         style={{ flex: 1, marginBottom: 8 }}
                       >
-                        <Select options={codeInspectionResultActionOptions} placeholder="请选择结果动作" />
+                        <Select options={codeInspectionResultActionOptions} placeholder="请选择结果写入执行" />
                       </Form.Item>
                       <Form.Item noStyle shouldUpdate>
                         {({ getFieldValue }) => {
                           const actionType = getFieldValue(['result_actions', field.name, 'type']);
-                          if (actionType === 'create_bug_for_severe_findings') {
+                          if (
+                            actionType === 'create_bug_for_severe_findings'
+                            || actionType === 'create_task_for_severe_findings'
+                          ) {
                             return (
                               <Form.Item
                                 name={[field.name, 'severity_threshold']}
@@ -2370,7 +2468,7 @@ export default function ScheduledJobsPage() {
                     </Space>
                   ))}
                   <Button icon={<PlusOutlined />} onClick={() => add({ type: 'write_code_inspection_report' })}>
-                    新增结果动作
+                    新增结果写入执行
                   </Button>
                 </Space>
               )}
@@ -2472,7 +2570,7 @@ export default function ScheduledJobsPage() {
               value={getRunExecutionNode(selectedRun, 'skill_processing')}
             />
             <JsonPreview
-              title="结果动作反馈内容"
+              title="结果写入反馈内容"
               value={getRunExecutionNode(selectedRun, 'result_action')}
             />
             <JsonPreview
@@ -2484,11 +2582,15 @@ export default function ScheduledJobsPage() {
               value={getRunExecutionNode(selectedRun, 'bug_creation')}
             />
             <JsonPreview
+              title="严重问题自动创建整改任务"
+              value={getRunExecutionNode(selectedRun, 'task_creation')}
+            />
+            <JsonPreview
               title="问题消息通知"
               value={getRunExecutionNode(selectedRun, 'notifications')}
             />
             <JsonPreview
-              title="结果动作状态"
+              title="结果写入状态"
               value={getRunExecutionNode(selectedRun, 'result_actions')}
             />
             <JsonPreview title="结果摘要" value={selectedRun.result_summary} />

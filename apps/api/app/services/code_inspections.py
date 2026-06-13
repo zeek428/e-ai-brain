@@ -15,12 +15,14 @@ from app.core.listing import (
     paginated_list_payload,
     sort_list_items,
 )
+from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.bugs import create_bug_result
-from app.services.operational_records import record_audit_event
+from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.plugins import json_path_value
 
 CODE_INSPECTION_ACTION_TYPES = {
     "create_bug_for_severe_findings",
+    "create_task_for_severe_findings",
     "send_notification",
     "write_code_inspection_report",
 }
@@ -145,7 +147,7 @@ def validate_code_inspection_result_actions(actions: Any) -> list[dict[str, Any]
             raise api_error(400, "VALIDATION_ERROR", "result action must be an object")
         action_type = str(action.get("type") or "")
         ensure_enum(action_type, CODE_INSPECTION_ACTION_TYPES, "result action type")
-        if action_type == "create_bug_for_severe_findings":
+        if action_type in {"create_bug_for_severe_findings", "create_task_for_severe_findings"}:
             threshold = normalize_severity(action.get("severity_threshold"), fallback="critical")
             normalized.append({**action, "severity_threshold": threshold, "type": action_type})
         elif action_type == "send_notification":
@@ -354,6 +356,7 @@ def normalized_findings(
             "committer_username": committer_field(raw, "username"),
             "created_at": now,
             "created_bug_id": None,
+            "created_task_id": None,
             "description": str(raw.get("description") or ""),
             "file_path": str(raw.get("file_path") or ""),
             "id": finding_id,
@@ -440,6 +443,7 @@ def create_code_inspection_report_records(
         "commit_sha": source_json.get("commit_sha"),
         "created_at": now,
         "created_bug_ids": [],
+        "created_task_ids": [],
         "created_by": user["id"],
         "committer_count": committer_count(findings),
         "committer_summary": committer_summary(findings),
@@ -634,6 +638,114 @@ def create_bugs_for_findings(
     return {"created_ids": created_ids, "deduplicated_ids": deduplicated_ids}
 
 
+def persist_ai_task_record(
+    current_store: Any,
+    *,
+    audit_event: dict[str, Any],
+    task: dict[str, Any],
+) -> None:
+    save_single_repository_record(
+        current_store,
+        "save_ai_task_record",
+        task,
+        audit_event=audit_event,
+    )
+
+
+def finding_task_input(finding: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "branch": report.get("branch"),
+        "code_inspection_finding_id": finding["id"],
+        "code_inspection_report_id": report["id"],
+        "commit_sha": report.get("commit_sha"),
+        "committer_email": finding.get("committer_email"),
+        "committer_name": finding.get("committer_name"),
+        "committer_username": finding.get("committer_username"),
+        "description": finding.get("description"),
+        "file_path": finding.get("file_path"),
+        "line_number": finding.get("line_number"),
+        "recommendation": finding.get("recommendation"),
+        "repository": report.get("repository") or {},
+        "repository_id": report.get("repository_id"),
+        "risk_level": report.get("risk_level"),
+        "rule_id": finding.get("rule_id"),
+        "severity": finding.get("severity"),
+        "title": finding.get("title"),
+    }
+
+
+def create_tasks_for_findings(
+    current_store: Any,
+    *,
+    findings: list[dict[str, Any]],
+    report: dict[str, Any],
+    severity_threshold: str,
+    user: dict[str, Any],
+) -> list[str]:
+    created_ids: list[str] = []
+    threshold_rank = severity_rank(severity_threshold)
+    now = datetime.now(UTC).isoformat()
+    for finding in findings:
+        if severity_rank(finding.get("severity")) < threshold_rank:
+            continue
+        if finding.get("created_task_id"):
+            continue
+        task_id = current_store.new_id("task")
+        task = {
+            "brain_app_id": DEFAULT_BRAIN_APP_ID,
+            "created_at": now,
+            "created_by": user["id"],
+            "current_step": "draft",
+            "error_code": None,
+            "error_message": None,
+            "graph_run_ids": [],
+            "id": task_id,
+            "input_json": finding_task_input(finding, report),
+            "module_code": None,
+            "output_json": None,
+            "product_context": {
+                "repository": report.get("repository") or {},
+                "source": "code_inspection",
+            },
+            "product_id": report["product_id"],
+            "requirement_id": None,
+            "requirement_snapshot": None,
+            "review_ids": [],
+            "status": "draft",
+            "task_type": "code_inspection_remediation",
+            "title": f"[Code Inspection Remediation] {finding['title']}",
+            "updated_at": now,
+            "version_id": None,
+        }
+        current_store.ai_tasks[task_id] = task
+        finding["created_task_id"] = task_id
+        current_store.code_inspection_findings[finding["id"]] = finding
+        created_ids.append(task_id)
+        audit_event = record_audit_event(
+            current_store,
+            event_type="code_inspection_remediation_task.created",
+            actor_id=user["id"],
+            subject_type="ai_task",
+            subject_id=task_id,
+            payload={
+                "code_inspection_finding_id": finding["id"],
+                "code_inspection_report_id": report["id"],
+                "severity": finding.get("severity"),
+            },
+        )
+        persist_ai_task_record(current_store, task=task, audit_event=audit_event)
+    report["created_task_ids"] = [*report.get("created_task_ids", []), *created_ids]
+    report["updated_at"] = datetime.now(UTC).isoformat()
+    current_store.code_inspection_reports[report["id"]] = report
+    persist_code_inspection_records(
+        current_store,
+        report=report,
+        findings=findings,
+        notifications=[],
+    )
+    return created_ids
+
+
 def create_code_inspection_notifications(
     current_store: Any,
     *,
@@ -702,6 +814,7 @@ def execute_code_inspection_result_actions(
     bug_ids: list[str] = []
     deduplicated_bug_ids: list[str] = []
     notification_ids: list[str] = []
+    task_ids: list[str] = []
     action_results: list[dict[str, Any]] = []
     report_written = False
     for action in actions:
@@ -760,6 +873,42 @@ def execute_code_inspection_result_actions(
                     "created_bug_ids": bug_result["created_ids"],
                     "deduplicated_bug_ids": bug_result["deduplicated_ids"],
                     "severity_threshold": action.get("severity_threshold") or "critical",
+                    "status": "succeeded",
+                }
+            )
+        elif action_type == "create_task_for_severe_findings":
+            if report is None:
+                report, findings = create_code_inspection_report_records(
+                    current_store,
+                    collector_run_id=collector_run_id,
+                    job=job,
+                    plugin_summary=plugin_summary,
+                    result_actions=actions,
+                    run_id=run_id,
+                    user=user,
+                )
+                report_written = True
+                action_results.append(
+                    {
+                        "action_type": "write_code_inspection_report",
+                        "finding_count": len(findings),
+                        "report_id": report["id"],
+                        "status": "succeeded",
+                    }
+                )
+            created_task_ids = create_tasks_for_findings(
+                current_store,
+                findings=findings,
+                report=report,
+                severity_threshold=action.get("severity_threshold") or "high",
+                user=user,
+            )
+            task_ids.extend(created_task_ids)
+            action_results.append(
+                {
+                    "action_type": action_type,
+                    "created_task_ids": created_task_ids,
+                    "severity_threshold": action.get("severity_threshold") or "high",
                     "status": "succeeded",
                 }
             )
@@ -827,6 +976,7 @@ def execute_code_inspection_result_actions(
         "report": report,
         "report_written": report_written,
         "result_actions": actions,
+        "task_ids": task_ids,
     }
 
 

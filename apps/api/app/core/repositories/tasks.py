@@ -41,6 +41,19 @@ class TaskReadRepository:
     def save_ai_tasks(self, payload: dict[str, Any]) -> None:
         self._write_repository.save_ai_tasks(payload)
 
+    def save_ai_task_record(
+        self,
+        task: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self.upsert_ai_tasks(cursor, {task["id"]: task})
+                if audit_event is not None:
+                    self._require_callback(self._upsert_audit_events, "audit upsert")
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def upsert_ai_tasks(self, cursor, ai_tasks: dict[str, dict[str, Any]]) -> None:
         self._write_repository.upsert_ai_tasks(cursor, ai_tasks)
 

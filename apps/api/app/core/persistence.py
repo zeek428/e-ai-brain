@@ -145,6 +145,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "049_ai_executor_runners.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "050_code_inspection_remediation_tasks.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1207,6 +1211,17 @@ class PostgresSnapshotRepository:
 
     def save_ai_tasks(self, payload: dict[str, Any]) -> None:
         self._task_read_repository.save_ai_tasks(payload)
+
+    def save_ai_task_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._task_read_repository.save_ai_task_record(
+            record,
+            audit_event=audit_event,
+        )
 
     def save_requirement_and_ai_task_records(
         self,

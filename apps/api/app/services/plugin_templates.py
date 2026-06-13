@@ -21,6 +21,20 @@ STANDARD_PLUGINS = [
         "status": "active",
     },
     {
+        "category": "data_warehouse",
+        "code": "aliyun_maxcompute",
+        "description": (
+            "官方标准阿里云 MaxCompute 插件，用于连接数据仓库、执行 SQL "
+            "并把结果交给定时作业或 AI Skill 分析。"
+        ),
+        "id": "plugin_standard_aliyun_maxcompute",
+        "is_system": True,
+        "name": "阿里云 MaxCompute",
+        "protocol": "mcp_http",
+        "risk_level": "high",
+        "status": "active",
+    },
+    {
         "category": "devops",
         "code": "gitlab",
         "description": (
@@ -94,6 +108,16 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
         ],
         "summary": "连接企业邮件网关、SMTP/IMAP/POP3 或邮件 API，用于邮件收取和发送。",
     },
+    "aliyun_maxcompute": {
+        "action_templates": ["MaxCompute 每周用户反馈"],
+        "publisher": "AI Brain 官方",
+        "recommended_scenarios": [
+            "每周用户反馈分析",
+            "数据仓库取数",
+            "用户洞察生成",
+        ],
+        "summary": "连接阿里云 MaxCompute 项目，按时间窗口执行 SQL 并返回结构化数据。",
+    },
     "github": {
         "action_templates": ["GitHub 代码巡检", "GitHub PR / 仓库读取"],
         "publisher": "AI Brain 官方",
@@ -134,6 +158,29 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         },
         "status": "active",
         "timeout_seconds": 30,
+    },
+    "aliyun_maxcompute": {
+        "auth_config": {
+            "access_key_id_ref": "vault/maxcompute/access_key_id",
+            "access_key_secret_ref": "vault/maxcompute/access_key_secret",
+        },
+        "auth_type": "bearer",
+        "endpoint_url": "https://maxcompute.aliyuncs.com",
+        "environment": "prod",
+        "max_retries": 1,
+        "name": "生产 MaxCompute 连接",
+        "protocol": "mcp_http",
+        "request_config": {
+            "query": {
+                "endpoint": "https://service.cn-hangzhou.maxcompute.aliyun.com/api",
+                "project": "",
+                "region": "cn-hangzhou",
+                "table_name": "ods_user_feedback",
+                "tunnel_endpoint": "",
+            },
+        },
+        "status": "active",
+        "timeout_seconds": 60,
     },
     "email": {
         "auth_config": {
@@ -208,6 +255,231 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         },
         "status": "active",
         "timeout_seconds": 30,
+    },
+}
+
+STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
+    "ai_executor": {
+        "schema_version": "v1",
+        "sections": [
+            {
+                "key": "runner",
+                "title": "Runner 调用配置",
+                "fields": [
+                    {
+                        "description": "留空时由平台按执行器类型和工作区自动选择在线 Runner。",
+                        "key": "runner_id",
+                        "label": "Runner",
+                        "path": "request_config.query.runner_id",
+                        "placeholder": "ai_executor_runner_xxx",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "executor_type",
+                        "label": "执行器类型",
+                        "options": ["codex", "claude", "hermes", "openclaw"],
+                        "path": "request_config.query.executor_type",
+                        "required": True,
+                        "type": "select",
+                    },
+                    {
+                        "key": "workspace_root",
+                        "label": "工作区",
+                        "path": "request_config.query.workspace_root",
+                        "placeholder": "/workspace",
+                        "required": True,
+                        "type": "text",
+                    },
+                    {
+                        "key": "instruction_timeout_seconds",
+                        "label": "指令超时秒数",
+                        "path": "request_config.query.instruction_timeout_seconds",
+                        "required": True,
+                        "type": "number",
+                    },
+                    {
+                        "key": "result_callback_url",
+                        "label": "结果回写地址",
+                        "path": "request_config.query.result_callback_url",
+                        "required": False,
+                        "type": "text",
+                    },
+                ],
+            },
+        ],
+    },
+    "aliyun_maxcompute": {
+        "schema_version": "v1",
+        "sections": [
+            {
+                "key": "project",
+                "title": "项目与表配置",
+                "fields": [
+                    {
+                        "key": "project",
+                        "label": "Project",
+                        "path": "request_config.query.project",
+                        "required": True,
+                        "type": "text",
+                    },
+                    {
+                        "key": "region",
+                        "label": "地域",
+                        "path": "request_config.query.region",
+                        "required": True,
+                        "type": "text",
+                    },
+                    {
+                        "key": "table_name",
+                        "label": "默认表名",
+                        "path": "request_config.query.table_name",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "endpoint",
+                        "label": "Endpoint",
+                        "path": "request_config.query.endpoint",
+                        "required": True,
+                        "type": "text",
+                    },
+                    {
+                        "key": "tunnel_endpoint",
+                        "label": "Tunnel Endpoint",
+                        "path": "request_config.query.tunnel_endpoint",
+                        "required": False,
+                        "type": "text",
+                    },
+                ],
+            },
+        ],
+    },
+    "email": {
+        "schema_version": "v1",
+        "sections": [
+            {
+                "key": "send",
+                "title": "发件配置",
+                "fields": [
+                    {
+                        "key": "default_from",
+                        "label": "默认发件人",
+                        "path": "request_config.query.default_from",
+                        "required": True,
+                        "type": "text",
+                    },
+                    {
+                        "key": "default_to",
+                        "label": "默认收件人",
+                        "path": "request_config.query.default_to",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "smtp_host",
+                        "label": "SMTP Host",
+                        "path": "request_config.query.smtp_host",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "smtp_port",
+                        "label": "SMTP Port",
+                        "path": "request_config.query.smtp_port",
+                        "required": False,
+                        "type": "number",
+                    },
+                ],
+            },
+            {
+                "key": "receive",
+                "title": "收件配置",
+                "fields": [
+                    {
+                        "key": "receive_protocol",
+                        "label": "收件协议",
+                        "options": ["imap", "pop3", "mail_api"],
+                        "path": "request_config.query.receive_protocol",
+                        "required": True,
+                        "type": "select",
+                    },
+                    {
+                        "key": "mailbox_folder",
+                        "label": "邮箱文件夹",
+                        "path": "request_config.query.mailbox_folder",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "description": "支持 {{current_date-7}} 等系统变量。",
+                        "key": "poll_since",
+                        "label": "收取起始时间",
+                        "path": "request_config.query.poll_since",
+                        "required": False,
+                        "supports_system_variables": True,
+                        "type": "text",
+                    },
+                ],
+            },
+        ],
+    },
+    "github": {
+        "schema_version": "v1",
+        "sections": [
+            {
+                "key": "repository",
+                "title": "仓库配置",
+                "fields": [
+                    {
+                        "key": "owner",
+                        "label": "Owner / Org",
+                        "path": "request_config.query.owner",
+                        "required": True,
+                        "type": "text",
+                    },
+                    {
+                        "key": "repo",
+                        "label": "Repository",
+                        "path": "request_config.query.repo",
+                        "required": True,
+                        "type": "text",
+                    },
+                ],
+            },
+        ],
+    },
+    "gitlab": {
+        "schema_version": "v1",
+        "sections": [
+            {
+                "key": "project",
+                "title": "项目配置",
+                "fields": [
+                    {
+                        "key": "project_id",
+                        "label": "Project ID",
+                        "path": "request_config.query.project_id",
+                        "required": True,
+                        "type": "text",
+                    },
+                    {
+                        "key": "group_id",
+                        "label": "Group ID",
+                        "path": "request_config.query.group_id",
+                        "required": False,
+                        "type": "text",
+                    },
+                    {
+                        "key": "api_version",
+                        "label": "API 版本",
+                        "path": "request_config.query.api_version",
+                        "required": True,
+                        "type": "text",
+                    },
+                ],
+            },
+        ],
     },
 }
 
@@ -456,6 +728,10 @@ def plugin_action_payload_from_template(
 
 def standard_plugin_connection_defaults(plugin_code: str | None) -> dict[str, Any]:
     return deepcopy(STANDARD_PLUGIN_CONNECTION_DEFAULTS.get(str(plugin_code or ""), {}))
+
+
+def standard_plugin_connection_schema(plugin_code: str | None) -> dict[str, Any]:
+    return deepcopy(STANDARD_PLUGIN_CONNECTION_SCHEMAS.get(str(plugin_code or ""), {}))
 
 
 def plugin_connection_payload_from_template(

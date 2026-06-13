@@ -29,6 +29,7 @@ from app.services.plugin_templates import (
     STANDARD_PLUGINS,
     standard_plugin_action_templates,
     standard_plugin_connection_defaults,
+    standard_plugin_connection_schema,
 )
 from app.services.result_write_targets import (
     result_write_target_default_mapping,
@@ -487,6 +488,7 @@ def list_plugin_marketplace_response(
                 "category": template["category"],
                 "code": template["code"],
                 "connection_defaults": standard_plugin_connection_defaults(str(template["code"])),
+                "connection_schema": standard_plugin_connection_schema(str(template["code"])),
                 "connection_count": len(plugin_connections),
                 "connection_template_version": STANDARD_PLUGIN_CONNECTION_TEMPLATE_VERSION,
                 "description": template["description"],

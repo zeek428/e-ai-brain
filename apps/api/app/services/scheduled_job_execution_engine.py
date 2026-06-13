@@ -246,6 +246,7 @@ class ScheduledJobExecutionEngine:
                 "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
                 "notification_ids": inspection_result["notification_ids"],
                 "report_id": report["id"],
+                "task_ids": inspection_result.get("task_ids") or [],
             },
             "label": "结果动作反馈内容",
             "records_imported": int(report.get("finding_count") or 0),

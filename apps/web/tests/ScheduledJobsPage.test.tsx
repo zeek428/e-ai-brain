@@ -87,6 +87,13 @@ function installScheduledJobsFetchMock(
                 plugin_action: { code_candidates: ['fetch_weekly_user_feedback'] },
               },
               template_version: 'v1',
+              wizard_steps: [
+                { key: 'data_connection', required: true, title: '数据连接' },
+                { key: 'ai_processing', required: true, title: 'AI 处理' },
+                { key: 'knowledge_reference', required: false, title: '知识引用' },
+                { key: 'result_write', required: true, title: '结果写入' },
+                { key: 'schedule', required: true, title: '调度' },
+              ],
             },
             {
               code: 'code_repository_inspection',
@@ -101,6 +108,7 @@ function installScheduledJobsFetchMock(
                 result_actions: [
                   { type: 'write_code_inspection_report' },
                   { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
+                  { severity_threshold: 'high', type: 'create_task_for_severe_findings' },
                   { channels: ['email'], recipients: [], type: 'send_notification' },
                 ],
                 schedule_type: 'cron',
@@ -114,9 +122,88 @@ function installScheduledJobsFetchMock(
                 },
               },
               template_version: 'v1',
+              wizard_steps: [
+                { key: 'data_connection', required: true, title: '数据连接' },
+                { key: 'ai_processing', required: false, title: 'AI 处理' },
+                { key: 'knowledge_reference', required: false, title: '知识引用' },
+                { key: 'result_write', required: true, title: '结果写入' },
+                { key: 'schedule', required: true, title: '调度' },
+              ],
+            },
+            {
+              code: 'email_digest',
+              name: '邮件摘要收取',
+              payload_defaults: {
+                enabled: true,
+                execution_mode: 'ai_assisted',
+                job_type: 'plugin_action_invoke',
+                name: '每日邮件摘要收取',
+                result_actions: [],
+                schedule_type: 'cron',
+                source_system: 'email',
+              },
+              resource_selectors: {
+                plugin_action: { code_candidates: ['receive_email_messages'] },
+              },
+              template_version: 'v1',
+              wizard_steps: [
+                { key: 'data_connection', required: true, title: '数据连接' },
+                { key: 'ai_processing', required: false, title: 'AI 处理' },
+                { key: 'result_write', required: true, title: '结果写入' },
+                { key: 'schedule', required: true, title: '调度' },
+              ],
+            },
+            {
+              code: 'gitlab_mr_review',
+              name: 'GitLab MR AI 审查',
+              payload_defaults: {
+                enabled: true,
+                execution_mode: 'ai_assisted',
+                job_type: 'code_repository_inspection',
+                name: 'GitLab MR AI 审查',
+                result_actions: [
+                  { type: 'write_code_inspection_report' },
+                  { severity_threshold: 'high', type: 'create_task_for_severe_findings' },
+                ],
+                schedule_type: 'manual',
+                source_system: 'gitlab',
+              },
+              resource_selectors: {
+                plugin_action: { code_candidates: ['scan_gitlab_code_inspection'] },
+              },
+              template_version: 'v1',
+              wizard_steps: [
+                { key: 'data_connection', required: true, title: '数据连接' },
+                { key: 'ai_processing', required: true, title: 'AI 处理' },
+                { key: 'result_write', required: true, title: '结果写入' },
+                { key: 'schedule', required: true, title: '调度' },
+              ],
+            },
+            {
+              code: 'ai_executor_repository_task',
+              name: 'AI 执行器仓库任务',
+              payload_defaults: {
+                enabled: true,
+                execution_mode: 'ai_assisted',
+                job_type: 'plugin_action_invoke',
+                name: 'AI 执行器仓库任务',
+                result_actions: [],
+                schedule_type: 'manual',
+                source_system: 'ai-executor',
+              },
+              resource_selectors: {
+                plugin_action: { code_candidates: ['run_ai_executor_instruction'] },
+              },
+              template_version: 'v1',
+              wizard_steps: [
+                { key: 'data_connection', required: true, title: '数据连接' },
+                { key: 'ai_processing', required: false, title: 'AI 处理' },
+                { key: 'result_write', required: true, title: '结果写入' },
+                { key: 'schedule', required: true, title: '调度' },
+              ],
             },
           ],
-          total: 2,
+          total: 5,
         },
       });
     }
@@ -347,7 +434,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('Agent')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Skills')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('知识引用')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('结果动作')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('结果写入执行')).toBeInTheDocument();
     expect(consoleError).not.toHaveBeenCalled();
   });
 
@@ -407,7 +494,7 @@ describe('ScheduledJobsPage', () => {
     expect(screen.getByText('总运行数')).toBeInTheDocument();
     expect(screen.getByText('AI 调用次数')).toBeInTheDocument();
     expect(screen.getByText('Token 总量')).toBeInTheDocument();
-    expect(screen.getByText('动作写入成功率')).toBeInTheDocument();
+    expect(screen.getByText('结果写入成功率')).toBeInTheDocument();
     expect(screen.getAllByText('MODEL_GATEWAY_FAILED').length).toBeGreaterThan(0);
     expect(screen.getByText('模型处理失败')).toBeInTheDocument();
     expect(screen.getByText('scheduled_job_run_slow')).toBeInTheDocument();
@@ -422,14 +509,18 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
 
     const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
-    await waitFor(() => expect(within(dialog).getByText('任务编排流程')).toBeInTheDocument());
+    await waitFor(() => expect(within(dialog).getByText('任务创建向导')).toBeInTheDocument());
+    expect(within(dialog).getByText('任务编排流程：数据连接 → AI 处理 → 知识引用 → 结果写入 → 运行记录')).toBeInTheDocument();
 
     expect(within(dialog).getByLabelText('编排节点 数据连接')).toHaveTextContent('待配置');
     expect(within(dialog).getByLabelText('编排节点 AI 处理')).toHaveTextContent('待配置');
     expect(within(dialog).getByLabelText('编排节点 知识引用')).toHaveTextContent('可选');
-    expect(within(dialog).getByLabelText('编排节点 结果动作')).toHaveTextContent('待配置');
+    expect(within(dialog).getByLabelText('编排节点 结果写入')).toHaveTextContent('待配置');
 
     fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
+    expect(await screen.findByText('邮件摘要收取')).toBeInTheDocument();
+    expect(screen.getByText('GitLab MR AI 审查')).toBeInTheDocument();
+    expect(screen.getByText('AI 执行器仓库任务')).toBeInTheDocument();
     fireEvent.click(await screen.findByText('每周用户反馈洞察抽取'));
 
     await waitFor(() =>
@@ -439,8 +530,8 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('编排节点 AI 处理')).toHaveTextContent('已配置');
     expect(within(dialog).getByLabelText('编排节点 AI 处理')).toHaveTextContent('定时作业模型');
     expect(within(dialog).getByLabelText('编排节点 知识引用')).toHaveTextContent('已选择');
-    expect(within(dialog).getByLabelText('编排节点 结果动作')).toHaveTextContent('已配置');
-    expect(within(dialog).getByLabelText('编排节点 结果动作')).toHaveTextContent('获取本周用户反馈数据');
+    expect(within(dialog).getByLabelText('编排节点 结果写入')).toHaveTextContent('已配置');
+    expect(within(dialog).getByLabelText('编排节点 结果写入')).toHaveTextContent('获取本周用户反馈数据');
 
     fireEvent.click(within(dialog).getByRole('button', { name: '测试数据连接' }));
 
@@ -555,6 +646,7 @@ describe('ScheduledJobsPage', () => {
         result_actions: [
           { type: 'write_code_inspection_report' },
           { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
+          { severity_threshold: 'high', type: 'create_task_for_severe_findings' },
           { channels: ['email'], recipients: [], type: 'send_notification' },
         ],
         schedule_type: 'cron',
@@ -644,7 +736,7 @@ describe('ScheduledJobsPage', () => {
         assistant_draft_github_plugin_action: {
           resource_id: 'plugin_action_github_scan',
           resource_type: 'plugin_action',
-          title: 'GitHub 代码巡检动作',
+          title: 'GitHub 代码巡检执行',
         },
         assistant_draft_github_plugin_connection: {
           resource_id: 'connection_github_prod',
@@ -1115,7 +1207,7 @@ describe('ScheduledJobsPage', () => {
               skill_processing: {
                 model_gateway_called: true,
                 model_log_id: 'model_log_weekly_feedback',
-                note: '数据连接返回内容已通过平台 AI 大模型处理为结果动作可消费的结构化 JSON。',
+                note: '数据连接返回内容已通过平台 AI 大模型处理为结果写入可消费的结构化 JSON。',
                 output: {
                   candidate_count: 1,
                   insights_created: 1,
@@ -1155,12 +1247,12 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('maxcompute.example.com');
     expect(within(dialog).getByLabelText('流程节点 经过 Skill 处理后的内容')).toHaveTextContent('已调用');
     expect(within(dialog).getByLabelText('流程节点 经过 Skill 处理后的内容')).toHaveTextContent('1');
-    expect(within(dialog).getByLabelText('流程节点 结果动作反馈内容')).toHaveTextContent('user_feedback_insights');
-    expect(within(dialog).getByLabelText('流程节点 结果动作反馈内容')).toHaveTextContent('insight_001');
+    expect(within(dialog).getByLabelText('流程节点 结果写入反馈内容')).toHaveTextContent('user_feedback_insights');
+    expect(within(dialog).getByLabelText('流程节点 结果写入反馈内容')).toHaveTextContent('insight_001');
     expect(within(dialog).getAllByText('数据连接获取内容').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('经过 Skill 处理后的内容').length).toBeGreaterThan(0);
-    expect(within(dialog).getAllByText('结果动作反馈内容').length).toBeGreaterThan(0);
-    expect(within(dialog).getByText('结果动作状态')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('结果写入反馈内容').length).toBeGreaterThan(0);
+    expect(within(dialog).getByText('结果写入状态')).toBeInTheDocument();
     expect(within(dialog).getByText('结果摘要')).toBeInTheDocument();
     expect(dialog).toHaveTextContent('用户反馈洞察抽取（取数 + AI 分析 + 写入）');
     expect(dialog).toHaveTextContent('AI 生成');
@@ -1247,7 +1339,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('ai_executor_task_openclaw_scan');
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('/Users/zeek/source/e-ai-brain');
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('1');
-    expect(within(dialog).getByLabelText('流程节点 结果动作反馈内容')).toHaveTextContent('scheduled_job_result');
+    expect(within(dialog).getByLabelText('流程节点 结果写入反馈内容')).toHaveTextContent('scheduled_job_result');
     expect(dialog).toHaveTextContent('发现 2 个中风险规范问题');
   });
 
@@ -1314,7 +1406,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_email_notification' }));
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
-    const resultActionNode = within(dialog).getByLabelText('流程节点 结果动作反馈内容');
+    const resultActionNode = within(dialog).getByLabelText('流程节点 结果写入反馈内容');
     expect(resultActionNode).toHaveTextContent('邮件通知记录');
     expect(resultActionNode).toHaveTextContent('mail_001');
     expect(resultActionNode).toHaveTextContent('queued');
@@ -1402,10 +1494,19 @@ describe('ScheduledJobsPage', () => {
                 skill_codes: ['code_inspection_analysis'],
                 status: 'succeeded',
               },
+              task_creation: {
+                created_task_ids: ['task_code_fix_001'],
+                feedback: {
+                  task_ids: ['task_code_fix_001'],
+                },
+                records_imported: 1,
+                status: 'succeeded',
+              },
             },
             finding_count: 1,
             report_id: 'code_inspection_report_ai',
             risk_level: 'critical',
+            task_ids: ['task_code_fix_001'],
             write_target: 'code_inspection_reports',
           },
           scheduled_job_id: 'scheduled_job_code_inspection_ai',
@@ -1425,9 +1526,11 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByText('三段式执行链路')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('succeeded');
     expect(within(dialog).getByLabelText('流程节点 经过 Skill 处理后的内容')).toHaveTextContent('已调用');
-    expect(within(dialog).getByLabelText('流程节点 结果动作反馈内容')).toHaveTextContent('code_inspection_reports');
+    expect(within(dialog).getByLabelText('流程节点 结果写入反馈内容')).toHaveTextContent('code_inspection_reports');
     expect(dialog).toHaveTextContent('代码仓库巡检');
     expect(dialog).toHaveTextContent('代码巡检报告写入结果');
+    expect(dialog).toHaveTextContent('严重问题自动创建整改任务');
+    expect(dialog).toHaveTextContent('task_code_fix_001');
     expect(dialog).toHaveTextContent('code_inspection_report_ai');
     expect(dialog).toHaveTextContent('model_log_code_inspection');
     expect(dialog).toHaveTextContent('write_code_inspection_report');
