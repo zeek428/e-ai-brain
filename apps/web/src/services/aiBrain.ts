@@ -3955,6 +3955,37 @@ export type ResultWriteTargetRecord = {
   supported_job_types?: string[];
 };
 
+export type ResultWriteRecord = {
+  created_at?: string | null;
+  feedback?: Record<string, unknown>;
+  id: string;
+  plugin_action_id?: string | null;
+  plugin_code?: string | null;
+  plugin_connection_id?: string | null;
+  plugin_id?: string | null;
+  plugin_invocation_log_id?: string | null;
+  preview?: Record<string, unknown>;
+  records_imported?: number;
+  scheduled_job_id?: string | null;
+  scheduled_job_name?: string | null;
+  scheduled_job_run_id?: string | null;
+  source_type?: string;
+  status: string;
+  summary_fields?: {
+    candidate_count?: number;
+    delivery_id?: unknown;
+    delivery_status?: unknown;
+    preview_value?: unknown;
+    report_preview?: unknown;
+    sample_records?: unknown[];
+    source_row_count?: number | null;
+    subject?: unknown;
+  };
+  updated_at?: string | null;
+  write_target: string;
+  write_target_label?: string;
+};
+
 export type PluginConnectionRecord = {
   auth_config?: Record<string, unknown>;
   auth_type?: string;
@@ -4069,6 +4100,24 @@ export type PluginInvocationLogRecord = {
   trigger_type?: string;
 };
 
+export type AiExecutorRunnerRecord = {
+  created_at?: string | null;
+  endpoint_url?: string;
+  executor_types?: string[];
+  heartbeat_timeout_seconds?: number;
+  id: string;
+  last_heartbeat_at?: string | null;
+  max_concurrent_tasks?: number;
+  metadata?: Record<string, unknown>;
+  name: string;
+  protocol?: string;
+  runner_token?: string;
+  status: string;
+  token_configured?: boolean;
+  updated_at?: string | null;
+  workspace_roots?: string[];
+};
+
 export type PluginSystemVariableRecord = {
   description?: string;
   expression: string;
@@ -4122,9 +4171,63 @@ export async function fetchPluginActionTemplates(): Promise<PluginActionTemplate
   return response.items;
 }
 
+export async function fetchAiExecutorRunners(query: { status?: string } = {}): Promise<AiExecutorRunnerRecord[]> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'status', query.status);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiRequest<ListResponse<AiExecutorRunnerRecord>>(`/api/system/ai-executor-runners${suffix}`, { token });
+  return response.items;
+}
+
+export async function createAiExecutorRunner(payload: Partial<AiExecutorRunnerRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<AiExecutorRunnerRecord>('/api/system/ai-executor-runners', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateAiExecutorRunner(runnerId: string, payload: Partial<AiExecutorRunnerRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<AiExecutorRunnerRecord>(`/api/system/ai-executor-runners/${runnerId}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function deleteAiExecutorRunner(runnerId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(`/api/system/ai-executor-runners/${runnerId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
 export async function fetchResultWriteTargets(): Promise<ResultWriteTargetRecord[]> {
   const token = requireAccessToken();
   const response = await apiRequest<ListResponse<ResultWriteTargetRecord>>('/api/system/result-write-targets', { token });
+  return response.items;
+}
+
+export async function fetchResultWriteRecords(query: {
+  pluginActionId?: string;
+  scheduledJobId?: string;
+  scheduledJobRunId?: string;
+  status?: string;
+  writeTarget?: string;
+} = {}): Promise<ResultWriteRecord[]> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'plugin_action_id', query.pluginActionId);
+  appendQueryParam(params, 'scheduled_job_id', query.scheduledJobId);
+  appendQueryParam(params, 'scheduled_job_run_id', query.scheduledJobRunId);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'write_target', query.writeTarget);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiRequest<ListResponse<ResultWriteRecord>>(`/api/system/result-write-records${suffix}`, { token });
   return response.items;
 }
 

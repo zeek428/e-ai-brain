@@ -129,6 +129,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
 
     repository._ensure_schema_compatibility()
 
+    assert "028_assistant_message_references.sql" in applied_migrations
     assert "036_integration_plugins.sql" in applied_migrations
     assert "038_plugin_connection_request_config.sql" in applied_migrations
     assert "039_task_center_operational_menus.sql" in applied_migrations

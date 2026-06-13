@@ -42,6 +42,7 @@ import {
   fetchModelGatewayConfigs,
   fetchPluginActions,
   fetchPluginConnections,
+  fetchResultWriteRecords,
   fetchScheduledJobTemplates,
   fetchScheduledJobRunObservability,
   fetchScheduledJobRuns,
@@ -57,6 +58,7 @@ import {
   type PluginConnectionTestResult,
   type PluginConnectionRecord,
   type ProductFilterOption,
+  type ResultWriteRecord,
   type ScheduledJobRecord,
   type ScheduledJobResultAction,
   type ScheduledJobRunObservability,
@@ -434,6 +436,135 @@ function JsonPreview({ title, value }: { title: string; value: unknown }) {
   );
 }
 
+function resultWriteRecordFieldText(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return '-';
+  }
+  if (Array.isArray(value)) {
+    return value.length ? value.map((item) => resultWriteRecordFieldText(item)).join('、') : '-';
+  }
+  if (typeof value === 'object') {
+    return formatJsonValue(value);
+  }
+  return String(value);
+}
+
+function resultWriteRecordSummaryText(record: ResultWriteRecord) {
+  const fields = record.summary_fields ?? {};
+  const parts = [
+    fields.subject ? `主题：${resultWriteRecordFieldText(fields.subject)}` : undefined,
+    fields.delivery_status ? `状态：${resultWriteRecordFieldText(fields.delivery_status)}` : undefined,
+    fields.delivery_id ? `ID：${resultWriteRecordFieldText(fields.delivery_id)}` : undefined,
+    fields.sample_records?.length
+      ? `样例：${resultWriteRecordFieldText(fields.sample_records)}`
+      : undefined,
+    fields.preview_value !== undefined
+      ? `预览：${resultWriteRecordFieldText(fields.preview_value)}`
+      : undefined,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' / ') : '-';
+}
+
+function resultWriteRecordSourceLabel(sourceType?: string) {
+  if (sourceType === 'scheduled_job_run') {
+    return '定时作业运行';
+  }
+  if (sourceType === 'plugin_invocation_log') {
+    return '插件调用日志';
+  }
+  return sourceType || '-';
+}
+
+function resultWriteRecordStatusColor(status?: string) {
+  if (status === 'succeeded') {
+    return 'green';
+  }
+  if (status === 'failed') {
+    return 'red';
+  }
+  if (status === 'not_run') {
+    return 'default';
+  }
+  return 'blue';
+}
+
+function RunResultWriteRecords({
+  loading,
+  records,
+}: {
+  loading: boolean;
+  records: ResultWriteRecord[];
+}) {
+  return (
+    <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+      <Typography.Text strong>结果写入记录</Typography.Text>
+      <Table<ResultWriteRecord>
+        columns={[
+          {
+            dataIndex: 'write_target_label',
+            title: '写入目标',
+            width: 160,
+            render: (_, record) => (
+              <Tag color="blue">{record.write_target_label || record.write_target}</Tag>
+            ),
+          },
+          {
+            dataIndex: 'status',
+            title: '状态',
+            width: 110,
+            render: (value) => (
+              <Tag color={resultWriteRecordStatusColor(String(value ?? ''))}>{String(value ?? '-')}</Tag>
+            ),
+          },
+          {
+            key: 'source',
+            title: '来源',
+            width: 180,
+            render: (_, record) => resultWriteRecordSourceLabel(record.source_type),
+          },
+          {
+            key: 'summary',
+            title: '写入摘要',
+            ellipsis: true,
+            render: (_, record) => resultWriteRecordSummaryText(record),
+          },
+          { dataIndex: 'records_imported', title: '写入数', width: 90 },
+          {
+            dataIndex: 'plugin_invocation_log_id',
+            title: '调用日志',
+            ellipsis: true,
+            width: 190,
+            render: (value) => value || '-',
+          },
+          {
+            dataIndex: 'created_at',
+            title: '时间',
+            ellipsis: true,
+            width: 210,
+            render: (value) => value || '-',
+          },
+        ]}
+        dataSource={records}
+        expandable={{
+          expandedRowRender: (record) => (
+            <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+              <JsonPreview title="结果摘要字段" value={record.summary_fields} />
+              <JsonPreview title="写入预览" value={record.preview} />
+              <JsonPreview title="执行反馈" value={record.feedback} />
+            </Space>
+          ),
+        }}
+        loading={loading}
+        locale={{ emptyText: '暂无结果写入记录' }}
+        pagination={false}
+        rowKey="id"
+        scroll={{ x: 1040 }}
+        size="small"
+      />
+    </Space>
+  );
+}
+
 function ScheduledJobOrchestrationFlow({ nodes }: { nodes: ScheduledJobOrchestrationNode[] }) {
   return (
     <Space
@@ -632,6 +763,12 @@ function RunExecutionNodeCard({
     { label: '投递 ID', value: nodeNestedFieldText(node, 'feedback.delivery_id') },
     { label: '投递状态', value: nodeNestedFieldText(node, 'feedback.delivery_status') },
     { label: '收件人', value: nodeNestedFieldText(node, 'feedback.sample_records') },
+    { label: '执行器', value: nodeFieldText(node.executor_type) },
+    { label: 'Runner', value: nodeFieldText(node.runner_id) },
+    { label: '任务 ID', value: nodeFieldText(node.runner_task_id) },
+    { label: '工作区', value: nodeFieldText(node.workspace_root) },
+    { label: '完成时间', value: nodeFieldText(node.finished_at) },
+    { label: '日志条数', value: nodeNestedArrayCountText(node, 'logs') },
     { label: '源数据量', value: nodeFieldText(node.source_row_count) ?? nodeFieldText(node.row_count) },
     { label: '连接', value: nodeFieldText(node.connection_id) },
     { label: '环境', value: nodeFieldText(node.connection_environment) },
@@ -679,6 +816,9 @@ function RunExecutionNodeCard({
 function RunExecutionChain({ run }: { run: ScheduledJobRunRecord }) {
   const nodes = [
     { key: 'data_connection', title: '数据连接获取内容' },
+    ...(getRunExecutionNode(run, 'runner_execution')
+      ? [{ key: 'runner_execution', title: 'AI 执行器执行内容' }]
+      : []),
     { key: 'skill_processing', title: '经过 Skill 处理后的内容' },
     { key: 'result_action', title: '结果动作反馈内容' },
   ];
@@ -1027,6 +1167,8 @@ export default function ScheduledJobsPage() {
   const [handledRouteRunId, setHandledRouteRunId] = useState<string | undefined>();
   const [templateSource, setTemplateSource] = useState<ScheduledJobTemplateSource | undefined>();
   const [selectedRun, setSelectedRun] = useState<ScheduledJobRunRecord | undefined>();
+  const [selectedRunResultWriteRecords, setSelectedRunResultWriteRecords] = useState<ResultWriteRecord[]>([]);
+  const [selectedRunResultWriteRecordsLoading, setSelectedRunResultWriteRecordsLoading] = useState(false);
   const [runningJobId, setRunningJobId] = useState<string | undefined>();
   const [connectionTestResult, setConnectionTestResult] = useState<PluginConnectionTestResult | undefined>();
   const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
@@ -1425,6 +1567,36 @@ export default function ScheduledJobsPage() {
     setSelectedRun(routeRun);
     setHandledRouteRunId(routeParams.runId);
   }, [handledRouteRunId, runs]);
+
+  useEffect(() => {
+    if (!selectedRun?.id) {
+      setSelectedRunResultWriteRecords([]);
+      setSelectedRunResultWriteRecordsLoading(false);
+      return;
+    }
+    let ignore = false;
+    setSelectedRunResultWriteRecordsLoading(true);
+    fetchResultWriteRecords({ scheduledJobRunId: selectedRun.id })
+      .then((records) => {
+        if (!ignore) {
+          setSelectedRunResultWriteRecords(records);
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setSelectedRunResultWriteRecords([]);
+          message.error(error instanceof Error ? error.message : '结果写入记录加载失败');
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setSelectedRunResultWriteRecordsLoading(false);
+        }
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [selectedRun?.id]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || modalOpen || editingJob) {
@@ -2287,6 +2459,10 @@ export default function ScheduledJobsPage() {
             />
             <RunSourceComparison run={selectedRun} />
             <RunExecutionChain run={selectedRun} />
+            <RunResultWriteRecords
+              loading={selectedRunResultWriteRecordsLoading}
+              records={selectedRunResultWriteRecords}
+            />
             <JsonPreview
               title="数据连接获取内容"
               value={getRunExecutionNode(selectedRun, 'data_connection')}

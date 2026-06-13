@@ -87,6 +87,10 @@ class PostgresSnapshotRepository:
                 )
                 self._apply_additive_migration(
                     cursor,
+                    "028_assistant_message_references.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
                     "036_integration_plugins.sql",
                 )
                 self._apply_additive_migration(
@@ -136,6 +140,10 @@ class PostgresSnapshotRepository:
                 self._apply_additive_migration(
                     cursor,
                     "048_plugin_connection_test_history.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "049_ai_executor_runners.sql",
                 )
 
     def next_id(self, prefix: str) -> str:
@@ -1087,6 +1095,26 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def list_ai_executor_runners(
+        self,
+        *,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_ai_executor_runners(status=status)
+
+    def list_ai_executor_tasks(
+        self,
+        *,
+        runner_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_ai_executor_tasks(
+            runner_id=runner_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+        )
+
     def list_model_gateway_logs(
         self,
         *,
@@ -1592,6 +1620,39 @@ class PostgresSnapshotRepository:
     ) -> None:
         self._plugin_read_repository.save_plugin_invocation_log_record(
             log,
+            audit_event=audit_event,
+        )
+
+    def save_ai_executor_runner_record(
+        self,
+        runner: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.save_ai_executor_runner_record(
+            runner,
+            audit_event=audit_event,
+        )
+
+    def delete_ai_executor_runner_record(
+        self,
+        runner_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.delete_ai_executor_runner_record(
+            runner_id,
+            audit_event=audit_event,
+        )
+
+    def save_ai_executor_task_record(
+        self,
+        task: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.save_ai_executor_task_record(
+            task,
             audit_event=audit_event,
         )
 

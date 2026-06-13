@@ -7,6 +7,20 @@ from app.services.result_write_targets import result_write_target_default_mappin
 
 STANDARD_PLUGINS = [
     {
+        "category": "ai_service",
+        "code": "ai_executor",
+        "description": (
+            "官方标准 AI 执行器插件，用于通过受控 Runner 向 Codex、Claude、"
+            "Hermes、OpenClaw 等执行器下达指令、等待执行结果并同步回写。"
+        ),
+        "id": "plugin_standard_ai_executor",
+        "is_system": True,
+        "name": "AI 执行器",
+        "protocol": "runner_polling",
+        "risk_level": "high",
+        "status": "active",
+    },
+    {
         "category": "devops",
         "code": "gitlab",
         "description": (
@@ -56,11 +70,29 @@ STANDARD_PLUGIN_IDS_BY_CODE = {
 }
 
 STANDARD_PLUGIN_MARKETPLACE_METADATA = {
-    "email": {
-        "action_templates": ["邮件通知发送"],
+    "ai_executor": {
+        "action_templates": ["AI 执行器下达指令", "AI 执行器结果同步"],
         "publisher": "AI Brain 官方",
-        "recommended_scenarios": ["代码巡检通知", "定时作业结果通知", "业务异常提醒"],
-        "summary": "连接企业邮件网关或邮件 API，用于任务结果和巡检问题通知。",
+        "recommended_scenarios": [
+            "代码巡检自动执行",
+            "定时任务委派给 Codex/Claude/Hermes/OpenClaw",
+            "执行完成后同步回写",
+        ],
+        "summary": (
+            "通过受控 Runner 对接 Codex、Claude、Hermes、OpenClaw 等执行器，"
+            "支持下达指令、等待完成、拉取结果和回写同步。"
+        ),
+    },
+    "email": {
+        "action_templates": ["邮件通知发送", "邮件收取"],
+        "publisher": "AI Brain 官方",
+        "recommended_scenarios": [
+            "代码巡检通知",
+            "定时作业结果通知",
+            "业务异常提醒",
+            "邮件工单或反馈收取",
+        ],
+        "summary": "连接企业邮件网关、SMTP/IMAP/POP3 或邮件 API，用于邮件收取和发送。",
     },
     "github": {
         "action_templates": ["GitHub 代码巡检", "GitHub PR / 仓库读取"],
@@ -79,6 +111,30 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
 STANDARD_PLUGIN_CONNECTION_TEMPLATE_VERSION = "v1"
 
 STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
+    "ai_executor": {
+        "auth_config": {
+            "token_ref": "vault/ai-executor/token",
+        },
+        "auth_type": "bearer",
+        "endpoint_url": "runner://ai-executor",
+        "environment": "prod",
+        "max_retries": 0,
+        "name": "生产 AI 执行器连接",
+        "protocol": "runner_polling",
+        "request_config": {
+            "query": {
+                "executor_type": "codex",
+                "instruction_timeout_seconds": 1800,
+                "runner_id": "",
+                "result_callback_url": "",
+                "runner_profile": "default",
+                "supported_executor_types": ["codex", "claude", "hermes", "openclaw"],
+                "workspace_root": "/workspace",
+            },
+        },
+        "status": "active",
+        "timeout_seconds": 30,
+    },
     "email": {
         "auth_config": {
             "header_name": "Authorization",
@@ -88,13 +144,25 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         "endpoint_url": "https://mail-gateway.example.com/api",
         "environment": "prod",
         "max_retries": 1,
-        "name": "生产邮箱通知连接",
+        "name": "生产邮箱连接",
         "request_config": {
             "headers": {"Content-Type": "application/json"},
             "query": {
-                "default_from": "",
+                "default_from": "noreply@example.com",
                 "default_to": "",
+                "imap_host": "imap.example.com",
+                "imap_port": 993,
                 "mail_provider": "enterprise_mail_gateway",
+                "mailbox_folder": "INBOX",
+                "poll_since": "{{current_date-7}}",
+                "pop3_host": "pop3.example.com",
+                "pop3_port": 995,
+                "receive_protocol": "imap",
+                "reply_to": "",
+                "send_protocol": "smtp",
+                "smtp_host": "smtp.example.com",
+                "smtp_port": 465,
+                "smtp_tls": "ssl",
                 "subject_template": "[AI Brain] {{job_name}} 执行结果",
             },
         },
@@ -144,6 +212,65 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
 }
 
 STANDARD_PLUGIN_ACTION_TEMPLATES = [
+    {
+        "action_type": "mcp_tool",
+        "code": "ai_executor_command",
+        "default_code": "run_ai_executor_instruction",
+        "default_name": "AI 执行器下达指令",
+        "description": (
+            "向 Codex、Claude、Hermes、OpenClaw 等受控执行器下达任务指令，等待完成后"
+            "返回结构化结果。"
+        ),
+        "form_defaults": {
+            "executor_type": "codex",
+            "instruction": "请检查仓库质量、安全和规范问题，并输出结构化报告。",
+            "instruction_timeout_seconds": 1800,
+            "result_callback_url": "",
+            "runner_id": "",
+            "workspace_root": "/workspace",
+        },
+        "name": "AI 执行器下达指令",
+        "plugin_code": "ai_executor",
+        "request_config": {
+            "executor_type": "{{executor_type}}",
+            "instruction": "{{instruction}}",
+            "instruction_timeout_seconds": "{{instruction_timeout_seconds}}",
+            "query": {
+                "result_callback_url": "{{result_callback_url}}",
+                "runner_id": "{{runner_id}}",
+            },
+            "runner_id": "{{runner_id}}",
+            "tool_name": "ai_executor.run_instruction",
+            "wait_for_completion": True,
+            "workspace_root": "{{workspace_root}}",
+        },
+        "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
+        "template_version": "v1",
+    },
+    {
+        "action_type": "mcp_tool",
+        "code": "ai_executor_result_sync",
+        "default_code": "sync_ai_executor_result",
+        "default_name": "AI 执行器结果同步",
+        "description": "拉取执行器运行结果，并通过配置的回写地址同步到平台或外部系统。",
+        "form_defaults": {
+            "executor_type": "codex",
+            "result_callback_url": "",
+            "run_id": "",
+        },
+        "name": "AI 执行器结果同步",
+        "plugin_code": "ai_executor",
+        "request_config": {
+            "executor_type": "{{executor_type}}",
+            "query": {
+                "result_callback_url": "{{result_callback_url}}",
+                "run_id": "{{run_id}}",
+            },
+            "tool_name": "ai_executor.sync_result",
+        },
+        "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
+        "template_version": "v1",
+    },
     {
         "action_type": "mcp_tool",
         "code": "maxcompute_weekly_feedback",
@@ -228,6 +355,34 @@ STANDARD_PLUGIN_ACTION_TEMPLATES = [
     },
     {
         "action_type": "http_request",
+        "code": "email_receive",
+        "default_code": "receive_email_messages",
+        "default_name": "收取邮箱邮件",
+        "description": "从企业邮箱网关或邮件 API 按文件夹和时间窗口收取邮件，供定时作业后续分析。",
+        "form_defaults": {
+            "folder": "INBOX",
+            "since": "{{current_date-7}}",
+        },
+        "name": "邮件收取",
+        "plugin_code": "email",
+        "request_config": {
+            "headers": {
+                "Content-Type": "application/json",
+            },
+            "method": "GET",
+            "path": "/messages/search",
+            "query": {
+                "folder": "{{mailbox_folder}}",
+                "from": "{{receive_from}}",
+                "since": "{{poll_since}}",
+                "subject_keyword": "{{subject_keyword}}",
+            },
+        },
+        "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
+        "template_version": "v1",
+    },
+    {
+        "action_type": "http_request",
         "code": "email_notification",
         "default_code": "send_email_notification",
         "default_name": "发送邮件通知",
@@ -253,6 +408,7 @@ STANDARD_PLUGIN_ACTION_TEMPLATES = [
 ]
 
 DEFAULT_ACTION_TEMPLATE_BY_PLUGIN_CODE = {
+    "ai_executor": "ai_executor_command",
     "email": "email_notification",
     "github": "github_code_inspection",
     "gitlab": "gitlab_code_inspection",

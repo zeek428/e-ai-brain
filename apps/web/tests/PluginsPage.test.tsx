@@ -149,6 +149,9 @@ function installPluginsFetchMock(
   const connectionTestCalls: string[] = [];
   const pluginDeleteIds: string[] = [];
   const pluginUpdateBodies: unknown[] = [];
+  const runnerBodies: unknown[] = [];
+  const runnerDeleteIds: string[] = [];
+  const runnerUpdateBodies: unknown[] = [];
   const connectionTestDeferred = options.deferConnectionTest
     ? createDeferred<Response>()
     : undefined;
@@ -578,6 +581,49 @@ function installPluginsFetchMock(
         },
       });
     }
+    if (input === '/api/system/ai-executor-runners' && init?.method === 'GET') {
+      return jsonResponse({
+        data: {
+          items: [
+            {
+              endpoint_url: 'runner://local',
+              executor_types: ['codex', 'openclaw'],
+              heartbeat_timeout_seconds: 120,
+              id: 'ai_executor_runner_001',
+              last_heartbeat_at: '2026-06-13T09:00:00Z',
+              max_concurrent_tasks: 1,
+              metadata: { codex_path: '/Applications/Codex.app/Contents/Resources/codex' },
+              name: 'Zeek Mac 本地执行器',
+              protocol: 'runner_polling',
+              status: 'active',
+              token_configured: true,
+              workspace_roots: ['/Users/zeek/source/e-ai-brain'],
+            },
+          ],
+          total: 1,
+        },
+      });
+    }
+    if (input === '/api/system/ai-executor-runners' && init?.method === 'POST') {
+      runnerBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({
+        data: {
+          id: 'ai_executor_runner_created',
+          name: '本地 OpenClaw 执行器',
+          runner_token: 'runner-token-created',
+          status: 'active',
+          token_configured: true,
+        },
+      });
+    }
+    if (input === '/api/system/ai-executor-runners/ai_executor_runner_001' && init?.method === 'PATCH') {
+      runnerUpdateBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({ data: { id: 'ai_executor_runner_001', status: 'active' } });
+    }
+    if (input === '/api/system/ai-executor-runners/ai_executor_runner_001' && init?.method === 'DELETE') {
+      runnerDeleteIds.push('ai_executor_runner_001');
+      return jsonResponse({ data: { deleted: true, id: 'ai_executor_runner_001' } });
+    }
     if (input === '/api/system/plugins/plugin_maxcompute' && init?.method === 'PATCH') {
       pluginUpdateBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'plugin_maxcompute', status: 'active' } });
@@ -776,6 +822,9 @@ function installPluginsFetchMock(
     resolveConnectionTest: () => {
       connectionTestDeferred?.resolve(jsonResponse(pluginConnectionTestBody()));
     },
+    runnerBodies,
+    runnerDeleteIds,
+    runnerUpdateBodies,
   };
 }
 
@@ -805,6 +854,58 @@ describe('PluginsPage', () => {
     expect((await screen.findAllByText('数据仓库 / BI')).length).toBeGreaterThan(0);
     expect(screen.getByText('DevOps / 代码平台')).toBeInTheDocument();
     expect(screen.getByText('日志 / 监控')).toBeInTheDocument();
+  });
+
+  it('renders a compact system variable preview and opens the full table on demand', async () => {
+    installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    expect(await screen.findByText('系统变量预览')).toBeInTheDocument();
+    expect(screen.getByText('常用变量')).toBeInTheDocument();
+    expect(screen.getAllByText(/{{current_date-7}}/).length).toBeGreaterThan(0);
+    expect(screen.queryByText('当前解析值')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '查看全部变量' }));
+
+    const dialog = await findDialogByTitle('全部系统变量');
+    expect(within(dialog).getAllByText('表达式').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('当前解析值').length).toBeGreaterThan(0);
+    expect(within(dialog).getByText('YYYYMMDD 格式，适合近 7 天起始分区')).toBeInTheDocument();
+    expect(within(dialog).getByText('20260603')).toBeInTheDocument();
+  });
+
+  it('manages AI executor runners with OpenClaw support', async () => {
+    const { runnerBodies } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '执行器' }));
+
+    expect(await screen.findByText('AI 执行器 Runner')).toBeInTheDocument();
+    expect(screen.getByText('Zeek Mac 本地执行器')).toBeInTheDocument();
+    expect(screen.getByText('openclaw')).toBeInTheDocument();
+    expect(screen.getByText('/Users/zeek/source/e-ai-brain')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '新增执行器' }));
+
+    const dialog = await findDialogByTitle('新增执行器');
+    fireEvent.change(within(dialog).getByLabelText('名称'), {
+      target: { value: '本地 OpenClaw 执行器' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
+
+    await waitFor(() =>
+      expect(runnerBodies).toEqual([
+        expect.objectContaining({
+          executor_types: ['codex', 'openclaw'],
+          name: '本地 OpenClaw 执行器',
+          protocol: 'runner_polling',
+          workspace_roots: ['/Users/zeek/source/e-ai-brain'],
+        }),
+      ]),
+    );
+    expect(await screen.findByText('runner-token-created')).toBeInTheDocument();
   });
 
   it('shows the official plugin marketplace and opens guided connection setup', async () => {
@@ -1137,7 +1238,7 @@ describe('PluginsPage', () => {
     expect(screen.getByText('最终请求 URL')).toBeInTheDocument();
     expect(screen.getByText('可复制 cURL')).toBeInTheDocument();
     expect(screen.getByText('动态变量解析')).toBeInTheDocument();
-    expect(screen.getByText('Timezone: Asia/Shanghai')).toBeInTheDocument();
+    expect(screen.getAllByText('Timezone: Asia/Shanghai').length).toBeGreaterThan(0);
     expect(screen.getAllByText('query.start_pt').length).toBeGreaterThan(0);
     expect(screen.getAllByText('{{current_date-7}}').length).toBeGreaterThan(0);
     expect(screen.getByText('-7')).toBeInTheDocument();
@@ -1473,7 +1574,7 @@ describe('PluginsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /添加 Params/ }));
     fireEvent.change(within(dialog).getByPlaceholderText('参数名'), { target: { value: 'start_pt' } });
     fireEvent.mouseDown(within(dialog).getByText('系统变量'));
-    fireEvent.click(await screen.findByText('当前日期 - 7 天'));
+    fireEvent.click((await screen.findAllByText('当前日期 - 7 天')).at(-1)!);
 
     fireEvent.click(within(dialog).getByRole('button', { name: /添加 Headers/ }));
     fireEvent.change(within(dialog).getByPlaceholderText('Header 名'), { target: { value: 'Authorization' } });

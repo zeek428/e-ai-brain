@@ -10,6 +10,11 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.api.deps import api_error, require_roles
+from app.services.ai_executor_runners import (
+    AI_EXECUTOR_TYPES,
+    create_ai_executor_task,
+    find_available_runner,
+)
 from app.services.connection_diagnostics import ConnectionDiagnosticsService
 from app.services.dynamic_parameters import (
     dynamic_parameter_preview,
@@ -31,7 +36,7 @@ from app.services.result_write_targets import (
     result_write_targets,
 )
 
-PLUGIN_PROTOCOLS = {"http", "mcp_http", "mcp_stdio"}
+PLUGIN_PROTOCOLS = {"http", "mcp_http", "mcp_stdio", "runner_polling", "runner_websocket"}
 PLUGIN_CATEGORIES = {
     "ai_service",
     "business_system",
@@ -48,6 +53,8 @@ PLUGIN_AUTH_TYPES = {"none", "bearer", "api_key_header", "basic"}
 PLUGIN_ACTION_TYPES = {"http_request", "mcp_tool"}
 PLUGIN_CONNECTION_ENVIRONMENTS = {"default", "dev", "test", "staging", "prod", "sandbox"}
 PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
+AI_EXECUTOR_RUNNER_PROTOCOLS = {"runner_polling", "runner_websocket"}
+RESULT_WRITE_RECORD_STATUSES = {"cancelled", "failed", "not_run", "running", "succeeded"}
 MASKED_SECRET_PLACEHOLDER = "***"
 
 
@@ -178,6 +185,18 @@ def sync_plugin_dependency_store(current_store: Any) -> None:
     list_scheduled_jobs = getattr(repository, "list_scheduled_jobs", None)
     if callable(list_scheduled_jobs):
         replace_collection(current_store, "scheduled_jobs", list_scheduled_jobs())
+
+
+def sync_result_write_record_store(current_store: Any) -> None:
+    sync_plugin_dependency_store(current_store)
+    repository = getattr(current_store, "repository", None)
+    list_scheduled_job_runs = getattr(repository, "list_scheduled_job_runs", None)
+    if callable(list_scheduled_job_runs):
+        replace_collection(
+            current_store,
+            "scheduled_job_runs",
+            list_scheduled_job_runs(scheduled_job_id=None, status=None),
+        )
 
 
 def persist_record(
@@ -521,6 +540,220 @@ def list_result_write_targets_response(
     require_admin(user)
     items = result_write_targets()
     return {"items": items, "total": len(items)}
+
+
+def result_write_record_summary_fields(
+    *,
+    feedback: dict[str, Any],
+    preview: dict[str, Any],
+) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for key in (
+        "candidate_count",
+        "delivery_id",
+        "delivery_status",
+        "preview_value",
+        "report_preview",
+        "sample_records",
+        "source_row_count",
+        "subject",
+    ):
+        if key in feedback:
+            fields[key] = feedback[key]
+        elif key in preview:
+            fields[key] = preview[key]
+    return fields
+
+
+def result_write_record_from_scheduled_run(
+    current_store: Any,
+    run: dict[str, Any],
+) -> dict[str, Any] | None:
+    result_summary = (
+        run.get("result_summary")
+        if isinstance(run.get("result_summary"), dict)
+        else {}
+    )
+    execution_nodes = (
+        result_summary.get("execution_nodes")
+        if isinstance(result_summary.get("execution_nodes"), dict)
+        else {}
+    )
+    result_action = (
+        execution_nodes.get("result_action")
+        if isinstance(execution_nodes.get("result_action"), dict)
+        else {}
+    )
+    if not result_action:
+        return None
+    feedback = (
+        result_action.get("feedback")
+        if isinstance(result_action.get("feedback"), dict)
+        else {}
+    )
+    preview = (
+        feedback.get("write_preview")
+        if isinstance(feedback.get("write_preview"), dict)
+        else {}
+    )
+    write_target = str(
+        result_action.get("write_target")
+        or feedback.get("write_target")
+        or preview.get("write_target")
+        or result_summary.get("write_target")
+        or "scheduled_job_result",
+    )
+    snapshot = (
+        run.get("resolved_plugin_snapshot")
+        if isinstance(run.get("resolved_plugin_snapshot"), dict)
+        else {}
+    )
+    snapshot_plugin = snapshot.get("plugin") if isinstance(snapshot.get("plugin"), dict) else {}
+    snapshot_connection = (
+        snapshot.get("connection") if isinstance(snapshot.get("connection"), dict) else {}
+    )
+    snapshot_action = snapshot.get("action") if isinstance(snapshot.get("action"), dict) else {}
+    scheduled_job_id = run.get("scheduled_job_id")
+    job = current_store.scheduled_jobs.get(str(scheduled_job_id)) if scheduled_job_id else None
+    return {
+        "created_at": run.get("finished_at") or run.get("started_at"),
+        "feedback": feedback,
+        "id": f"result_write_record_{run['id']}",
+        "plugin_action_id": (
+            result_action.get("action_id")
+            or snapshot_action.get("id")
+            or run.get("plugin_action_id")
+        ),
+        "plugin_code": snapshot_plugin.get("code"),
+        "plugin_connection_id": (
+            snapshot_connection.get("id")
+            or run.get("plugin_connection_id")
+        ),
+        "plugin_id": snapshot_plugin.get("id"),
+        "plugin_invocation_log_id": (
+            feedback.get("plugin_invocation_log_id")
+            or run.get("plugin_invocation_log_id")
+        ),
+        "preview": preview,
+        "records_imported": (
+            result_action.get("records_imported")
+            or feedback.get("records_imported")
+            or preview.get("records_imported")
+            or run.get("records_imported")
+            or 0
+        ),
+        "scheduled_job_id": scheduled_job_id,
+        "scheduled_job_name": job.get("name") if isinstance(job, dict) else None,
+        "scheduled_job_run_id": run.get("id"),
+        "source_type": "scheduled_job_run",
+        "status": result_action.get("status") or run.get("status"),
+        "summary_fields": result_write_record_summary_fields(
+            feedback=feedback,
+            preview=preview,
+        ),
+        "updated_at": run.get("finished_at") or run.get("updated_at"),
+        "write_target": write_target,
+        "write_target_label": (
+            result_action.get("write_target_label")
+            or preview.get("write_target_label")
+            or result_write_target_label(write_target)
+        ),
+    }
+
+
+def result_write_record_from_invocation_log(
+    current_store: Any,
+    log: dict[str, Any],
+) -> dict[str, Any] | None:
+    if log.get("scheduled_job_run_id"):
+        return None
+    action = current_store.plugin_actions.get(str(log.get("action_id")))
+    if not isinstance(action, dict):
+        return None
+    mapping = action.get("result_mapping") if isinstance(action.get("result_mapping"), dict) else {}
+    response_summary = (
+        log.get("response_summary") if isinstance(log.get("response_summary"), dict) else {}
+    )
+    preview = result_write_preview(response_summary, mapping)
+    write_target = str(
+        preview.get("write_target")
+        or mapping.get("write_target")
+        or "scheduled_job_result",
+    )
+    plugin = current_store.integration_plugins.get(str(log.get("plugin_id")))
+    return {
+        "created_at": log.get("created_at"),
+        "feedback": {
+            "plugin_invocation_log_id": log.get("id"),
+            "response_summary": response_summary,
+            "write_preview": preview,
+        },
+        "id": f"result_write_record_{log['id']}",
+        "plugin_action_id": log.get("action_id"),
+        "plugin_code": plugin.get("code") if isinstance(plugin, dict) else None,
+        "plugin_connection_id": log.get("connection_id"),
+        "plugin_id": log.get("plugin_id"),
+        "plugin_invocation_log_id": log.get("id"),
+        "preview": preview,
+        "records_imported": preview.get("records_imported") or 0,
+        "scheduled_job_id": log.get("scheduled_job_id"),
+        "scheduled_job_name": None,
+        "scheduled_job_run_id": None,
+        "source_type": "plugin_invocation_log",
+        "status": log.get("status"),
+        "summary_fields": result_write_record_summary_fields(
+            feedback={},
+            preview=preview,
+        ),
+        "updated_at": log.get("updated_at") or log.get("created_at"),
+        "write_target": write_target,
+        "write_target_label": preview.get("write_target_label")
+        or result_write_target_label(write_target),
+    }
+
+
+def list_result_write_records_response(
+    *,
+    current_store: Any,
+    plugin_action_id: str | None,
+    scheduled_job_id: str | None,
+    scheduled_job_run_id: str | None,
+    status: str | None,
+    user: dict[str, Any],
+    write_target: str | None,
+) -> dict[str, Any]:
+    require_admin(user)
+    if status is not None:
+        ensure_enum(status, RESULT_WRITE_RECORD_STATUSES, "status")
+    sync_result_write_record_store(current_store)
+    records: list[dict[str, Any]] = []
+    for run in current_store.scheduled_job_runs.values():
+        record = result_write_record_from_scheduled_run(current_store, run)
+        if record is not None:
+            records.append(record)
+    for log in current_store.plugin_invocation_logs.values():
+        record = result_write_record_from_invocation_log(current_store, log)
+        if record is not None:
+            records.append(record)
+
+    filtered = []
+    for record in records:
+        if write_target is not None and record.get("write_target") != write_target:
+            continue
+        if status is not None and record.get("status") != status:
+            continue
+        if scheduled_job_id is not None and record.get("scheduled_job_id") != scheduled_job_id:
+            continue
+        if (
+            scheduled_job_run_id is not None
+            and record.get("scheduled_job_run_id") != scheduled_job_run_id
+        ):
+            continue
+        if plugin_action_id is not None and record.get("plugin_action_id") != plugin_action_id:
+            continue
+        filtered.append(record)
+    filtered.sort(key=lambda item: (item.get("created_at") or "", item["id"]), reverse=True)
+    return {"items": filtered, "total": len(filtered)}
 
 
 def create_plugin_response(
@@ -1512,6 +1745,95 @@ def _invoke_mcp_http(
     return {"json": json.loads(raw) if raw else {}, "mocked": False}
 
 
+def _config_value(config: dict[str, Any], key: str, default: Any = None) -> Any:
+    if key in config:
+        return config.get(key)
+    query = config.get("query") if isinstance(config.get("query"), dict) else {}
+    return query.get(key, default)
+
+
+def _invoke_ai_executor_runner(
+    current_store: Any,
+    *,
+    action: dict[str, Any],
+    connection: dict[str, Any],
+    input_payload: dict[str, Any],
+    scheduled_job_id: str | None,
+    scheduled_job_run_id: str | None,
+    user: dict[str, Any],
+) -> tuple[dict[str, Any], str | None]:
+    request_config = resolve_plugin_request_config(connection, action, input_payload)
+    mock_response = _config_value(request_config, "mock_response_json")
+    if isinstance(mock_response, dict):
+        return {
+            "json": mock_response,
+            "mocked": True,
+            "runner": {"status": "mocked"},
+        }, None
+
+    executor_type = str(_config_value(request_config, "executor_type", "codex") or "codex").lower()
+    if executor_type not in AI_EXECUTOR_TYPES:
+        raise api_error(400, "AI_EXECUTOR_TYPE_UNSUPPORTED", "Unsupported AI executor type")
+    workspace_root = ensure_non_blank(
+        str(_config_value(request_config, "workspace_root", "") or ""),
+        "workspace_root",
+    )
+    instruction = str(
+        _config_value(request_config, "instruction")
+        or input_payload.get("instruction")
+        or input_payload.get("prompt")
+        or "",
+    ).strip()
+    if not instruction:
+        raise api_error(400, "AI_EXECUTOR_INSTRUCTION_REQUIRED", "instruction is required")
+    timeout_seconds = int(
+        _config_value(request_config, "instruction_timeout_seconds")
+        or _config_value(request_config, "timeout_seconds")
+        or connection.get("timeout_seconds")
+        or 1800,
+    )
+    requested_runner_id = str(_config_value(request_config, "runner_id", "") or "").strip() or None
+    runner = find_available_runner(
+        current_store,
+        executor_type=executor_type,
+        runner_id=requested_runner_id,
+        workspace_root=workspace_root,
+    )
+    task = create_ai_executor_task(
+        current_store,
+        action_id=action.get("id"),
+        connection_id=connection.get("id"),
+        created_by=user["id"],
+        executor_type=executor_type,
+        input_payload=input_payload,
+        instruction=instruction,
+        plugin_invocation_log_id=None,
+        request_config=request_config,
+        runner_id=runner["id"],
+        scheduled_job_id=scheduled_job_id,
+        scheduled_job_run_id=scheduled_job_run_id,
+        timeout_seconds=timeout_seconds,
+        workspace_root=workspace_root,
+    )
+    return {
+        "json": {
+            "executor_type": executor_type,
+            "runner_id": runner["id"],
+            "runner_task_id": task["id"],
+            "status": "queued",
+            "workspace_root": workspace_root,
+        },
+        "mocked": False,
+        "runner": {
+            "executor_type": executor_type,
+            "runner_id": runner["id"],
+            "runner_task_id": task["id"],
+            "status": "queued",
+            "workspace_root": workspace_root,
+        },
+    }, task["id"]
+
+
 def _invoke_action(
     plugin: dict[str, Any],
     connection: dict[str, Any],
@@ -1537,6 +1859,24 @@ def plugin_action_request_preview(
 ) -> dict[str, Any]:
     request_config = resolve_plugin_request_config(connection, action, input_payload)
     headers = _build_headers(connection, action, input_payload)
+    if plugin["protocol"] in AI_EXECUTOR_RUNNER_PROTOCOLS or (
+        plugin.get("code") == "ai_executor" and plugin["protocol"] == "mcp_stdio"
+    ):
+        return {
+            "arguments": input_payload,
+            "endpoint_url": connection.get("endpoint_url"),
+            "executor_type": _config_value(request_config, "executor_type", "codex"),
+            "instruction_timeout_seconds": _config_value(
+                request_config,
+                "instruction_timeout_seconds",
+                _config_value(request_config, "timeout_seconds"),
+            ),
+            "method": "RUNNER_CLAIM",
+            "protocol": plugin["protocol"],
+            "runner_id": _config_value(request_config, "runner_id"),
+            "tool_name": request_config.get("tool_name"),
+            "workspace_root": _config_value(request_config, "workspace_root"),
+        }
     if plugin["protocol"] == "mcp_http":
         query = _dict_config_section(request_config.get("query"))
         endpoint_url = str(connection.get("endpoint_url") or "")
@@ -1826,8 +2166,22 @@ def invoke_plugin_action_response(
     error_code = None
     error_message = None
     status = "succeeded"
+    runner_task_id: str | None = None
     try:
-        response_summary = _invoke_action(plugin, connection, action, input_payload or {})
+        if plugin["protocol"] in AI_EXECUTOR_RUNNER_PROTOCOLS or (
+            plugin.get("code") == "ai_executor" and plugin["protocol"] == "mcp_stdio"
+        ):
+            response_summary, runner_task_id = _invoke_ai_executor_runner(
+                current_store,
+                action=action,
+                connection=connection,
+                input_payload=input_payload or {},
+                scheduled_job_id=scheduled_job_id,
+                scheduled_job_run_id=scheduled_job_run_id,
+                user=user,
+            )
+        else:
+            response_summary = _invoke_action(plugin, connection, action, input_payload or {})
     except Exception as exc:
         status = "failed"
         error_code = exc.__class__.__name__
@@ -1889,6 +2243,18 @@ def invoke_plugin_action_response(
         log,
         audit_event=audit_event,
     )
+    if runner_task_id and runner_task_id in current_store.ai_executor_tasks:
+        runner_task = {
+            **current_store.ai_executor_tasks[runner_task_id],
+            "plugin_invocation_log_id": log_id,
+            "updated_at": now,
+        }
+        current_store.ai_executor_tasks[runner_task_id] = runner_task
+        save_single_repository_record(
+            current_store,
+            "save_ai_executor_task_record",
+            runner_task,
+        )
     if status == "failed":
         raise api_error(
             502,

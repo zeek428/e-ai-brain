@@ -8,7 +8,13 @@ import ScheduledJobsPage from '../src/pages/ScheduledJobs';
 import { ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY } from '../src/services/aiBrain';
 
 function installScheduledJobsFetchMock(
-  options: { jobs?: unknown[]; observability?: unknown; runResponse?: Promise<unknown>; runs?: unknown[] } = {},
+  options: {
+    jobs?: unknown[];
+    observability?: unknown;
+    resultWriteRecords?: unknown[];
+    runResponse?: Promise<unknown>;
+    runs?: unknown[];
+  } = {},
 ) {
   const jobCreateBodies: unknown[] = [];
   const jobDeleteIds: string[] = [];
@@ -16,7 +22,9 @@ function installScheduledJobsFetchMock(
   const connectionTestIds: string[] = [];
   const runJobBodies: unknown[] = [];
   const runJobIds: string[] = [];
+  const resultWriteRecordCalls: string[] = [];
   const jobs = options.jobs ?? [];
+  const resultWriteRecords = options.resultWriteRecords ?? [];
   const runs = options.runs ?? [];
   const observability = options.observability ?? {
     error_distribution: [],
@@ -145,6 +153,14 @@ function installScheduledJobsFetchMock(
     }
     if (input === '/api/system/scheduled-job-runs/observability' && init?.method === 'GET') {
       return jsonResponse({ data: observability });
+    }
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/system/result-write-records')
+      && init?.method === 'GET'
+    ) {
+      resultWriteRecordCalls.push(input);
+      return jsonResponse({ data: { items: resultWriteRecords, total: resultWriteRecords.length } });
     }
     if (input === '/api/system/plugin-actions' && init?.method === 'GET') {
       return jsonResponse({
@@ -284,7 +300,15 @@ function installScheduledJobsFetchMock(
   });
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
   vi.stubGlobal('fetch', fetchMock);
-  return { connectionTestIds, jobCreateBodies, jobDeleteIds, jobUpdateBodies, runJobBodies, runJobIds };
+  return {
+    connectionTestIds,
+    jobCreateBodies,
+    jobDeleteIds,
+    jobUpdateBodies,
+    resultWriteRecordCalls,
+    runJobBodies,
+    runJobIds,
+  };
 }
 
 describe('ScheduledJobsPage', () => {
@@ -1153,8 +1177,109 @@ describe('ScheduledJobsPage', () => {
     expect(dialog).toHaveTextContent('write_result');
   });
 
-  it('shows email notification feedback in the result action node', async () => {
+  it('shows AI executor runner details in scheduled job run results', async () => {
     installScheduledJobsFetchMock({
+      runs: [
+        {
+          collector_run_id: 'collector_run_openclaw_scan',
+          config_snapshot: {
+            execution_mode: 'deterministic',
+            job_type: 'plugin_action_invoke',
+          },
+          finished_at: '2026-06-11T10:00:10Z',
+          id: 'scheduled_job_run_openclaw_scan',
+          plugin_invocation_log_id: 'plugin_invocation_log_openclaw_scan',
+          records_imported: 2,
+          result_summary: {
+            execution_nodes: {
+              data_connection: {
+                connection_environment: 'dev',
+                records_imported: 0,
+                status: 'succeeded',
+              },
+              result_action: {
+                feedback: {
+                  runner_result: {
+                    finding_count: 2,
+                    summary: '发现 2 个中风险规范问题',
+                  },
+                },
+                records_imported: 2,
+                status: 'succeeded',
+                write_target: 'scheduled_job_result',
+              },
+              runner_execution: {
+                executor_type: 'openclaw',
+                finished_at: '2026-06-11T10:00:09Z',
+                logs: [{ level: 'info', message: 'openclaw scan finished' }],
+                result_json: {
+                  finding_count: 2,
+                  summary: '发现 2 个中风险规范问题',
+                },
+                runner_id: 'ai_executor_runner_local',
+                runner_task_id: 'ai_executor_task_openclaw_scan',
+                status: 'succeeded',
+                workspace_root: '/Users/zeek/source/e-ai-brain',
+              },
+              skill_processing: {
+                model_gateway_called: false,
+                processing_mode: 'plugin_structured_output',
+                status: 'not_run',
+              },
+            },
+          },
+          scheduled_job_id: 'scheduled_job_openclaw_scan',
+          started_at: '2026-06-11T10:00:00Z',
+          status: 'succeeded',
+          trigger_type: 'manual',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_openclaw_scan' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('openclaw');
+    expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('ai_executor_runner_local');
+    expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('ai_executor_task_openclaw_scan');
+    expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('/Users/zeek/source/e-ai-brain');
+    expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('1');
+    expect(within(dialog).getByLabelText('流程节点 结果动作反馈内容')).toHaveTextContent('scheduled_job_result');
+    expect(dialog).toHaveTextContent('发现 2 个中风险规范问题');
+  });
+
+  it('shows email notification feedback in the result action node', async () => {
+    const { resultWriteRecordCalls } = installScheduledJobsFetchMock({
+      resultWriteRecords: [
+        {
+          created_at: '2026-06-13T10:00:00Z',
+          feedback: {
+            delivery_id: 'mail_001',
+            delivery_status: 'queued',
+            sample_records: ['owner@example.com'],
+            subject: '定时作业完成',
+          },
+          id: 'result_write_record_scheduled_job_run_email_notification',
+          plugin_action_id: 'plugin_action_email_notification',
+          plugin_invocation_log_id: 'plugin_invocation_log_email_notification',
+          records_imported: 1,
+          scheduled_job_id: 'scheduled_job_email_notification',
+          scheduled_job_run_id: 'scheduled_job_run_email_notification',
+          source_type: 'scheduled_job_run',
+          status: 'succeeded',
+          summary_fields: {
+            delivery_id: 'mail_001',
+            delivery_status: 'queued',
+            sample_records: ['owner@example.com'],
+            subject: '定时作业完成',
+          },
+          write_target: 'email_notifications',
+          write_target_label: '邮件通知记录',
+        },
+      ],
       runs: [
         {
           id: 'scheduled_job_run_email_notification',
@@ -1194,6 +1319,14 @@ describe('ScheduledJobsPage', () => {
     expect(resultActionNode).toHaveTextContent('mail_001');
     expect(resultActionNode).toHaveTextContent('queued');
     expect(resultActionNode).toHaveTextContent('owner@example.com');
+    expect(within(dialog).getByText('结果写入记录')).toBeInTheDocument();
+    expect(await within(dialog).findByText('plugin_invocation_log_email_notification')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('邮件通知记录').length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(resultWriteRecordCalls).toContain(
+        '/api/system/result-write-records?scheduled_job_run_id=scheduled_job_run_email_notification',
+      ),
+    );
   });
 
   it('shows AI code inspection run results in the same three-stage detail chain', async () => {

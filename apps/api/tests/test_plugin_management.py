@@ -141,7 +141,29 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert marketplace.status_code == 200
     items = marketplace.json()["data"]["items"]
     by_code = {item["code"]: item for item in items}
-    assert set(by_code) == {"email", "github", "gitlab"}
+    assert set(by_code) == {"ai_executor", "email", "github", "gitlab"}
+    assert by_code["ai_executor"]["installed"] is True
+    assert by_code["ai_executor"]["is_system"] is True
+    assert by_code["ai_executor"]["plugin_id"] == "plugin_standard_ai_executor"
+    assert "AI 执行器下达指令" in by_code["ai_executor"]["action_templates"]
+    assert "执行完成后同步回写" in by_code["ai_executor"]["recommended_scenarios"]
+    assert by_code["ai_executor"]["connection_defaults"]["protocol"] == "runner_polling"
+    assert by_code["ai_executor"]["connection_defaults"]["endpoint_url"] == "runner://ai-executor"
+    assert (
+        by_code["ai_executor"]["connection_defaults"]["auth_config"]["token_ref"]
+        == "vault/ai-executor/token"
+    )
+    ai_executor_query = by_code["ai_executor"]["connection_defaults"]["request_config"]["query"]
+    assert ai_executor_query["executor_type"] == "codex"
+    assert ai_executor_query["runner_id"] == ""
+    assert ai_executor_query["supported_executor_types"] == [
+        "codex",
+        "claude",
+        "hermes",
+        "openclaw",
+    ]
+    assert ai_executor_query["result_callback_url"] == ""
+    assert ai_executor_query["workspace_root"] == "/workspace"
     assert by_code["github"]["installed"] is True
     assert by_code["github"]["is_system"] is True
     assert by_code["github"]["plugin_id"] == "plugin_standard_github"
@@ -157,9 +179,19 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
         == "2022-11-28"
     )
     assert by_code["gitlab"]["connection_defaults"]["auth_config"]["header_name"] == "PRIVATE-TOKEN"
-    assert by_code["email"]["connection_defaults"]["request_config"]["headers"] == {
+    email_defaults = by_code["email"]["connection_defaults"]
+    assert email_defaults["request_config"]["headers"] == {
         "Content-Type": "application/json",
     }
+    email_query = email_defaults["request_config"]["query"]
+    assert email_query["send_protocol"] == "smtp"
+    assert email_query["receive_protocol"] == "imap"
+    assert email_query["smtp_host"] == "smtp.example.com"
+    assert email_query["smtp_port"] == 465
+    assert email_query["imap_host"] == "imap.example.com"
+    assert email_query["imap_port"] == 993
+    assert email_query["mailbox_folder"] == "INBOX"
+    assert email_query["poll_since"] == "{{current_date-7}}"
     assert by_code["github"]["connection_count"] == 0
     assert by_code["github"]["action_count"] == 0
 
@@ -219,11 +251,36 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
     items = response.json()["data"]["items"]
     by_code = {item["code"]: item for item in items}
     assert set(by_code) >= {
+        "ai_executor_command",
+        "ai_executor_result_sync",
         "email_notification",
+        "email_receive",
         "github_code_inspection",
         "gitlab_code_inspection",
         "maxcompute_weekly_feedback",
     }
+    ai_command_template = by_code["ai_executor_command"]
+    assert ai_command_template["template_version"] == "v1"
+    assert ai_command_template["plugin_code"] == "ai_executor"
+    assert ai_command_template["action_type"] == "mcp_tool"
+    assert "OpenClaw" in ai_command_template["description"]
+    assert ai_command_template["form_defaults"]["runner_id"] == ""
+    assert ai_command_template["form_defaults"]["instruction_timeout_seconds"] == 1800
+    assert ai_command_template["request_config"]["tool_name"] == "ai_executor.run_instruction"
+    assert ai_command_template["request_config"]["executor_type"] == "{{executor_type}}"
+    assert ai_command_template["request_config"]["runner_id"] == "{{runner_id}}"
+    assert ai_command_template["request_config"]["instruction_timeout_seconds"] == (
+        "{{instruction_timeout_seconds}}"
+    )
+    assert ai_command_template["request_config"]["query"]["runner_id"] == "{{runner_id}}"
+    assert ai_command_template["request_config"]["wait_for_completion"] is True
+    assert ai_command_template["result_mapping"]["write_target"] == "scheduled_job_result"
+    ai_sync_template = by_code["ai_executor_result_sync"]
+    assert ai_sync_template["plugin_code"] == "ai_executor"
+    assert ai_sync_template["request_config"]["tool_name"] == "ai_executor.sync_result"
+    assert ai_sync_template["request_config"]["query"]["result_callback_url"] == (
+        "{{result_callback_url}}"
+    )
     github_template = by_code["github_code_inspection"]
     assert github_template["template_version"] == "v1"
     assert github_template["plugin_code"] == "github"
@@ -238,10 +295,261 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
     assert email_template["request_config"]["path"] == "/messages/send"
     assert email_template["request_config"]["headers"]["Content-Type"] == "application/json"
     assert email_template["result_mapping"]["write_target"] == "email_notifications"
+    email_receive_template = by_code["email_receive"]
+    assert email_receive_template["plugin_code"] == "email"
+    assert email_receive_template["request_config"]["path"] == "/messages/search"
+    assert email_receive_template["request_config"]["query"]["folder"] == "{{mailbox_folder}}"
+    assert email_receive_template["request_config"]["query"]["since"] == "{{poll_since}}"
     maxcompute_template = by_code["maxcompute_weekly_feedback"]
     assert maxcompute_template["action_type"] == "mcp_tool"
     assert maxcompute_template["form_defaults"]["table_name"] == "ods_user_feedback"
     assert maxcompute_template["result_mapping"]["write_target"] == "user_feedback_insights"
+
+
+def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+
+    created_runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["codex", "openclaw"],
+            "name": "Zeek Mac 本地执行器",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    )
+    assert created_runner.status_code == 200
+    runner = created_runner.json()["data"]
+    assert runner["executor_types"] == ["codex", "openclaw"]
+    assert runner["runner_token"] == "runner-secret"
+    assert runner["token_configured"] is True
+    assert "token_hash" not in runner
+
+    bad_heartbeat = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        json={"metadata": {"codex_path": "/Applications/Codex.app/Contents/Resources/codex"}},
+        headers={"X-Runner-Token": "wrong"},
+    )
+    assert bad_heartbeat.status_code == 401
+    assert bad_heartbeat.json()["detail"]["code"] == "AI_EXECUTOR_RUNNER_TOKEN_INVALID"
+
+    heartbeat = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        json={"metadata": {"openclaw_path": "/usr/local/bin/openclaw"}},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert heartbeat.status_code == 200
+    assert heartbeat.json()["data"]["metadata"]["openclaw_path"] == "/usr/local/bin/openclaw"
+    assert heartbeat.json()["data"]["last_heartbeat_at"]
+
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "runner://ai-executor",
+            "environment": "dev",
+            "name": "本地 OpenClaw Runner",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "openclaw",
+                    "instruction_timeout_seconds": 900,
+                    "runner_id": runner["id"],
+                    "workspace_root": "/Users/zeek/source/e-ai-brain",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "run_openclaw_instruction",
+            "connection_id": connection["id"],
+            "name": "OpenClaw 执行指令",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "instruction": "扫描仓库质量、安全和规范问题，输出 JSON。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    invoked = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"source": "manual"}},
+        headers=admin_headers,
+    )
+    assert invoked.status_code == 200
+    log = invoked.json()["data"]
+    assert log["status"] == "succeeded"
+    assert log["response_summary"]["json"]["executor_type"] == "openclaw"
+    assert log["response_summary"]["json"]["status"] == "queued"
+    task_id = log["response_summary"]["json"]["runner_task_id"]
+
+    claimed = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert claimed.status_code == 200
+    task = claimed.json()["data"]["task"]
+    assert task["id"] == task_id
+    assert task["executor_type"] == "openclaw"
+    assert task["instruction"].startswith("扫描仓库质量")
+    assert task["plugin_invocation_log_id"] == log["id"]
+
+    completed = client.post(
+        f"/api/system/ai-executor-tasks/{task_id}/complete",
+        json={
+            "logs": [{"level": "info", "message": "openclaw finished"}],
+            "result_json": {"finding_count": 0, "summary": "未发现高风险问题"},
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert completed.status_code == 200
+    completed_task = completed.json()["data"]["task"]
+    assert completed_task["status"] == "succeeded"
+    assert completed_task["result_json"]["summary"] == "未发现高风险问题"
+
+    listed_runners = client.get(
+        "/api/system/ai-executor-runners",
+        headers=admin_headers,
+    ).json()["data"]
+    assert listed_runners["total"] == 1
+    assert listed_runners["items"][0]["token_configured"] is True
+
+
+def test_scheduled_ai_executor_runner_completion_updates_run_detail():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["openclaw"],
+            "name": "OpenClaw 本地执行器",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "runner://ai-executor",
+            "environment": "dev",
+            "name": "OpenClaw Runner 连接",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "openclaw",
+                    "runner_id": runner["id"],
+                    "workspace_root": "/Users/zeek/source/e-ai-brain",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "openclaw_code_scan",
+            "connection_id": connection["id"],
+            "name": "OpenClaw 代码扫描",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "instruction": "定期扫描仓库质量、安全和规范问题，输出 JSON。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "OpenClaw 定时巡检",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "schedule_type": "manual",
+            "source_system": "ai_executor",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    )
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "running"
+    assert run["finished_at"] is None
+    runner_node = run["result_summary"]["execution_nodes"]["runner_execution"]
+    assert runner_node["executor_type"] == "openclaw"
+    assert runner_node["status"] == "queued"
+    assert run["result_summary"]["execution_nodes"]["result_action"]["status"] == "waiting_runner"
+    task_id = runner_node["runner_task_id"]
+
+    claimed = client.post(
+        "/api/system/ai-executor-tasks/claim",
+        json={"executor_type": "openclaw", "runner_id": runner["id"]},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert claimed.status_code == 200
+    assert claimed.json()["data"]["task"]["id"] == task_id
+
+    completed = client.post(
+        f"/api/system/ai-executor-tasks/{task_id}/complete",
+        json={
+            "logs": [{"level": "info", "message": "openclaw scan finished"}],
+            "result_json": {
+                "finding_count": 2,
+                "records_imported": 2,
+                "summary": "发现 2 个中风险规范问题",
+            },
+            "runner_id": runner["id"],
+            "status": "succeeded",
+        },
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert completed.status_code == 200
+
+    runs = client.get(
+        f"/api/system/scheduled-job-runs?scheduled_job_id={job['id']}",
+        headers=admin_headers,
+    ).json()["data"]
+    completed_run = runs["items"][0]
+    assert completed_run["id"] == run["id"]
+    assert completed_run["status"] == "succeeded"
+    assert completed_run["records_imported"] == 2
+    completed_runner_node = completed_run["result_summary"]["execution_nodes"]["runner_execution"]
+    assert completed_runner_node["status"] == "succeeded"
+    assert completed_runner_node["result_json"]["summary"] == "发现 2 个中风险规范问题"
+    result_action = completed_run["result_summary"]["execution_nodes"]["result_action"]
+    assert result_action["status"] == "succeeded"
+    assert result_action["feedback"]["runner_result"]["finding_count"] == 2
 
 
 def test_result_write_targets_registry_drives_action_mapping_forms():
@@ -405,6 +713,9 @@ def test_standard_plugins_are_seeded_and_immutable():
     assert by_code["email"]["is_system"] is True
     assert by_code["email"]["category"] == "collaboration"
     assert by_code["email"]["protocol"] == "http"
+    assert by_code["ai_executor"]["is_system"] is True
+    assert by_code["ai_executor"]["category"] == "ai_service"
+    assert by_code["ai_executor"]["protocol"] == "runner_polling"
 
     patch_response = client.patch(
         f"/api/system/plugins/{by_code['gitlab']['id']}",
@@ -428,6 +739,14 @@ def test_standard_plugins_are_seeded_and_immutable():
     )
     assert email_patch_response.status_code == 409
     assert "官方标准插件" in email_patch_response.text
+
+    ai_executor_patch_response = client.patch(
+        f"/api/system/plugins/{by_code['ai_executor']['id']}",
+        json={"name": "被修改的 AI 执行器"},
+        headers=admin_headers,
+    )
+    assert ai_executor_patch_response.status_code == 409
+    assert "官方标准插件" in ai_executor_patch_response.text
 
 
 def test_standard_plugin_connections_store_platform_parameters():
@@ -1453,6 +1772,77 @@ def test_scheduled_email_action_run_exposes_notification_write_preview():
     assert result_action["feedback"]["delivery_status"] == "queued"
     assert result_action["feedback"]["subject"] == "定时作业完成"
     assert result_action["feedback"]["sample_records"] == ["owner@example.com"]
+
+    records_response = client.get(
+        "/api/system/result-write-records?write_target=email_notifications",
+        headers=admin_headers,
+    )
+
+    assert records_response.status_code == 200
+    records_payload = records_response.json()["data"]
+    assert records_payload["total"] == 1
+    record = records_payload["items"][0]
+    assert record["id"] == f"result_write_record_{run['id']}"
+    assert record["write_target"] == "email_notifications"
+    assert record["write_target_label"] == "邮件通知记录"
+    assert record["status"] == "succeeded"
+    assert record["source_type"] == "scheduled_job_run"
+    assert record["scheduled_job_id"] == job["id"]
+    assert record["scheduled_job_run_id"] == run["id"]
+    assert record["plugin_action_id"] == action["id"]
+    assert record["plugin_invocation_log_id"] == run["plugin_invocation_log_id"]
+    assert record["records_imported"] == 1
+    assert record["summary_fields"]["delivery_id"] == "mail_001"
+    assert record["summary_fields"]["delivery_status"] == "queued"
+    assert record["summary_fields"]["subject"] == "定时作业完成"
+    assert record["summary_fields"]["sample_records"] == ["owner@example.com"]
+
+    run_records_response = client.get(
+        f"/api/system/result-write-records?scheduled_job_run_id={run['id']}",
+        headers=admin_headers,
+    )
+
+    assert run_records_response.status_code == 200
+    run_records_payload = run_records_response.json()["data"]
+    assert run_records_payload["total"] == 1
+    assert run_records_payload["items"][0]["id"] == f"result_write_record_{run['id']}"
+
+
+def test_result_write_records_support_future_write_targets_from_action_logs():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, connection, action = create_plugin_bundle(admin_headers)
+    action["result_mapping"] = {
+        "records_imported_path": "$.external_ticket_id",
+        "write_target": "external_ticket_records",
+    }
+    app.state.store.plugin_actions[action["id"]] = action
+
+    invoke_response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        headers=admin_headers,
+        json={"connection_id": connection["id"], "input_payload": {}},
+    )
+    assert invoke_response.status_code == 200
+    invocation_log = invoke_response.json()["data"]
+
+    records_response = client.get(
+        "/api/system/result-write-records?write_target=external_ticket_records",
+        headers=admin_headers,
+    )
+
+    assert records_response.status_code == 200
+    payload = records_response.json()["data"]
+    assert payload["total"] == 1
+    record = payload["items"][0]
+    assert record["id"] == f"result_write_record_{invocation_log['id']}"
+    assert record["write_target"] == "external_ticket_records"
+    assert record["write_target_label"] == "external_ticket_records"
+    assert record["source_type"] == "plugin_invocation_log"
+    assert record["plugin_action_id"] == action["id"]
+    assert record["plugin_invocation_log_id"] == invocation_log["id"]
+    assert record["status"] == "succeeded"
+    assert record["preview"]["write_target"] == "external_ticket_records"
 
 
 def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypatch):

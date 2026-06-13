@@ -8,6 +8,10 @@
 ## [Unreleased]
 
 ### Added
+- AI 执行器 Runner/OpenClaw 闭环：新增 Runner 管理、心跳、任务认领和完成回写接口，官方 `ai_executor` 插件使用 `runner_polling` 下发 Codex/Claude/Hermes/OpenClaw 指令；定时作业在 Runner 排队或执行中保持 `running`，Runner 完成后回写插件调用日志、运行详情 `runner_execution` 节点、结果动作反馈、collector run 和作业最近运行状态。
+- 定时作业运行详情新增结果写入记录：`/api/system/result-write-records` 支持按 `scheduled_job_run_id` 精确查询单次运行的最终写入反馈；页面在“运行记录 -> 详情”里展示写入目标、状态、写入数、插件调用日志、摘要字段、写入预览和执行反馈。插件管理回归配置中心，只保留插件、连接、动作和调用日志。
+- 官方插件市场补充 AI 执行器标准插件：内置 `ai_executor` 不可编辑/删除，连接模板提供 `codex/claude/hermes/openclaw` 执行器选择、Runner、workspace、超时和结果回写地址；动作模板提供下达指令和结果同步契约，真实执行须接入隔离 Runner。
+- 邮箱官方插件连接模板扩展为收发两用：默认参数补齐 SMTP/IMAP/POP3/API 主机端口、收件文件夹、轮询时间窗口、默认发件人/收件人和主题模板，并新增邮件收取动作模板。
 - 官方插件连接模板服务端化：`/api/system/plugin-marketplace` 返回 GitHub/GitLab/邮箱 `connection_defaults` 和 `connection_template_version`，插件页新增连接和 AI 助手连接草案复用同一服务端模板生成 endpoint、认证、Params 和 Headers。
 - 定时作业模板市场化：新增 `/api/system/scheduled-job-templates` 和 `scheduled_job_templates` 服务端目录，统一周反馈洞察、代码巡检模板的默认 payload、资源选择规则和 `template_version`，任务中心页面与 AI 助手草案共用该目录生成配置。
 - 定时作业运行可观测性：新增 `/api/system/scheduled-job-runs/observability`，运行记录页签顶部展示总运行数、成功率、失败率、平均耗时、AI/Token/插件调用、动作写入成功率、失败原因、最近失败和慢运行。

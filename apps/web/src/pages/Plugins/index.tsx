@@ -1,17 +1,20 @@
 import { ApiOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+  createAiExecutorRunner,
   createPlugin,
   createPluginAction,
   createPluginConnection,
   deletePlugin,
   deletePluginAction,
   deletePluginConnection,
+  deleteAiExecutorRunner,
+  fetchAiExecutorRunners,
   fetchPluginActions,
   fetchPluginActionTemplates,
   fetchPluginConnections,
@@ -26,11 +29,13 @@ import {
   resolveAssistantDraftResourceId,
   testPluginConnection,
   trialPluginAction,
+  updateAiExecutorRunner,
   updatePlugin,
   updatePluginAction,
   updatePluginConnection,
   type AssistantPluginActionDraft,
   type AssistantPluginConnectionDraft,
+  type AiExecutorRunnerRecord,
   type PluginActionTrialResult,
   type PluginActionRecord,
   type PluginActionTemplateRecord,
@@ -112,6 +117,19 @@ type ActionFormValues = {
   write_target?: string;
 };
 
+type AiExecutorRunnerFormValues = {
+  endpoint_url: string;
+  executor_types: string[];
+  heartbeat_timeout_seconds: number;
+  max_concurrent_tasks: number;
+  metadata?: string;
+  name: string;
+  protocol: string;
+  runner_token?: string;
+  status: string;
+  workspace_roots?: string;
+};
+
 type RequestParameterRow = {
   description?: string;
   enabled?: boolean;
@@ -141,17 +159,35 @@ const requestParameterTypeOptions = [
   { label: 'boolean', value: 'boolean' },
 ];
 
-const systemVariableOptions = [
-  { label: '当前日期 YYYYMMDD', value: '{{current_date}}' },
-  { label: '当前日期 - 7 天', value: '{{current_date-7}}' },
-  { label: '当前日期 ISO', value: '{{date_iso}}' },
-  { label: '当前日期 ISO - 7 天', value: '{{date_iso-7}}' },
-  { label: '当前时间', value: '{{now}}' },
-  { label: '今天开始', value: '{{today.start}}' },
-  { label: '今天开始 - 7 天', value: '{{today.start-7}}' },
-  { label: '上一完整周开始', value: '{{last_full_week.start}}' },
-  { label: '上一完整周结束', value: '{{last_full_week.end}}' },
+const aiExecutorTypeOptions = [
+  { label: 'Codex', value: 'codex' },
+  { label: 'Claude', value: 'claude' },
+  { label: 'Hermes', value: 'hermes' },
+  { label: 'OpenClaw', value: 'openclaw' },
 ];
+
+const aiExecutorRunnerProtocolOptions = [
+  { label: 'Runner Polling', value: 'runner_polling' },
+  { label: 'Runner WebSocket', value: 'runner_websocket' },
+  { label: 'MCP HTTP', value: 'mcp_http' },
+  { label: 'MCP Stdio', value: 'mcp_stdio' },
+];
+
+const systemVariableOptions = [
+  { description: 'YYYYMMDD 格式，适合分区字段', label: '当前日期', value: '{{current_date}}' },
+  { description: '当前日期前 7 天，适合近 7 天起始分区', label: '当前日期 - 7 天', value: '{{current_date-7}}' },
+  { description: 'YYYY-MM-DD 格式，适合 API 日期参数', label: '当前日期 ISO', value: '{{date_iso}}' },
+  { description: 'ISO 日期前 7 天', label: '当前日期 ISO - 7 天', value: '{{date_iso-7}}' },
+  { description: '当前时间，带时区偏移', label: '当前时间', value: '{{now}}' },
+  { description: '今天 00:00:00', label: '今天开始', value: '{{today.start}}' },
+  { description: '今天 00:00:00 前 7 天', label: '今天开始 - 7 天', value: '{{today.start-7}}' },
+  { description: '上一完整自然周周一 00:00:00', label: '上一完整周开始', value: '{{last_full_week.start}}' },
+  { description: '本周一 00:00:00', label: '上一完整周结束', value: '{{last_full_week.end}}' },
+];
+
+const systemVariableDescriptionByExpression = new Map(
+  systemVariableOptions.map((option) => [option.value, option.description]),
+);
 
 const pluginCategoryOptions = [
   { label: '通用集成', value: 'general' },
@@ -183,9 +219,41 @@ const connectionEnvironmentLabelByValue = new Map(
 );
 
 const OFFICIAL_PLUGIN_LABEL = '官方标准';
+const genericIntegrationChainSteps = [
+  { color: 'blue', label: '插件', text: '定义三方系统能力与协议' },
+  { color: 'cyan', label: '连接', text: '维护环境、Endpoint、认证和公共参数' },
+  { color: 'purple', label: '动作', text: '定义请求、变量和结果映射' },
+  { color: 'green', label: '定时作业', text: '编排取数、AI 处理和结果写入' },
+];
 
 function stableJson(value: Record<string, unknown>): string {
   return JSON.stringify(value, null, 2);
+}
+
+function linesToArray(value?: string): string[] {
+  return (value ?? '')
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function arrayToLines(value?: string[]): string {
+  return (value ?? []).join('\n');
+}
+
+function runnerPayload(values: AiExecutorRunnerFormValues): Partial<AiExecutorRunnerRecord> {
+  return {
+    endpoint_url: values.endpoint_url,
+    executor_types: values.executor_types,
+    heartbeat_timeout_seconds: values.heartbeat_timeout_seconds,
+    max_concurrent_tasks: values.max_concurrent_tasks,
+    metadata: values.metadata ? parseJsonObject(values.metadata, 'Runner Metadata') : {},
+    name: values.name,
+    protocol: values.protocol,
+    ...(values.runner_token ? { runner_token: values.runner_token } : {}),
+    status: values.status,
+    workspace_roots: linesToArray(values.workspace_roots),
+  };
 }
 
 function usageItemName(item: { code?: string; id?: string; name?: string | null }) {
@@ -1146,22 +1214,28 @@ export default function PluginsPage() {
   const [pluginForm] = Form.useForm<PluginFormValues>();
   const [connectionForm] = Form.useForm<ConnectionFormValues>();
   const [actionForm] = Form.useForm<ActionFormValues>();
+  const [runnerForm] = Form.useForm<AiExecutorRunnerFormValues>();
   const [plugins, setPlugins] = useState<PluginRecord[]>([]);
   const [marketplaceItems, setMarketplaceItems] = useState<PluginMarketplaceItem[]>([]);
   const [actionTemplates, setActionTemplates] = useState<PluginActionTemplateRecord[]>([]);
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
+  const [runners, setRunners] = useState<AiExecutorRunnerRecord[]>([]);
   const [connections, setConnections] = useState<PluginConnectionRecord[]>([]);
   const [actions, setActions] = useState<PluginActionRecord[]>([]);
   const [logs, setLogs] = useState<PluginInvocationLogRecord[]>([]);
   const [scheduledJobs, setScheduledJobs] = useState<ScheduledJobRecord[]>([]);
   const [systemVariables, setSystemVariables] = useState<PluginSystemVariableRecord[]>([]);
+  const [systemVariableTimezone, setSystemVariableTimezone] = useState('Asia/Shanghai');
+  const [systemVariableModalOpen, setSystemVariableModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [pluginModalOpen, setPluginModalOpen] = useState(false);
   const [connectionModalOpen, setConnectionModalOpen] = useState(false);
   const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [runnerModalOpen, setRunnerModalOpen] = useState(false);
   const [editingPlugin, setEditingPlugin] = useState<PluginRecord | undefined>();
   const [editingConnection, setEditingConnection] = useState<PluginConnectionRecord | undefined>();
   const [editingAction, setEditingAction] = useState<PluginActionRecord | undefined>();
+  const [editingRunner, setEditingRunner] = useState<AiExecutorRunnerRecord | undefined>();
   const [assistantConnectionDraftSource, setAssistantConnectionDraftSource] = useState<
     { draftId?: string; title?: string } | undefined
   >();
@@ -1212,7 +1286,6 @@ export default function PluginsPage() {
     ),
     [marketplaceItems],
   );
-  const actionById = useMemo(() => new Map(actions.map((action) => [action.id, action])), [actions]);
   const actionTemplateOptions = useMemo(
     () => actionTemplates.map((template) => ({ label: template.name, value: template.code })),
     [actionTemplates],
@@ -1224,31 +1297,70 @@ export default function PluginsPage() {
     })),
     [resultWriteTargets],
   );
+  const systemVariablePreviewItems = useMemo<PluginSystemVariableRecord[]>(() => {
+    const items = systemVariables.length > 0
+      ? systemVariables
+      : systemVariableOptions.map((item) => ({
+        description: item.description,
+        expression: item.value,
+        label: item.label,
+        value: '加载后显示',
+      }));
+    return items.map((item) => ({
+      ...item,
+      description: item.description ?? systemVariableDescriptionByExpression.get(item.expression),
+    }));
+  }, [systemVariables]);
+  const compactSystemVariablePreviewItems = useMemo(() => {
+    const preferredExpressions = ['{{current_date}}', '{{current_date-7}}', '{{last_full_week.start}}'];
+    const itemByExpression = new Map(systemVariablePreviewItems.map((item) => [item.expression, item]));
+    const preferredItems = preferredExpressions
+      .map((expression) => itemByExpression.get(expression))
+      .filter((item): item is PluginSystemVariableRecord => Boolean(item));
+    return preferredItems.length > 0 ? preferredItems : systemVariablePreviewItems.slice(0, 3);
+  }, [systemVariablePreviewItems]);
+  const systemVariablePreviewColumns = useMemo(() => [
+    {
+      dataIndex: 'label',
+      key: 'label',
+      title: '变量',
+      width: 180,
+      render: (value: string, record: PluginSystemVariableRecord) => (
+        <Space orientation="vertical" size={0}>
+          <Typography.Text strong>{value}</Typography.Text>
+          {record.description ? (
+            <Typography.Text type="secondary">{record.description}</Typography.Text>
+          ) : null}
+        </Space>
+      ),
+    },
+    {
+      dataIndex: 'expression',
+      key: 'expression',
+      title: '表达式',
+      width: 220,
+      render: (value: string) => (
+        <Typography.Text code copyable={{ text: value }}>
+          {value}
+        </Typography.Text>
+      ),
+    },
+    {
+      dataIndex: 'value',
+      key: 'value',
+      title: '当前解析值',
+      width: 260,
+      render: (value: string) => (
+        <Typography.Text code copyable={value !== '加载后显示' ? { text: value } : false}>
+          {value}
+        </Typography.Text>
+      ),
+    },
+  ], []);
   const requestPreview = useMemo(
     () => buildActionRequestPreview(actionFormValues, connectionById.get(actionFormValues?.connection_id ?? '')),
     [actionFormValues, connectionById],
   );
-  const integrationChains = useMemo(() => {
-    const chains = scheduledJobs
-      .filter((job) => job.plugin_action_id)
-      .map((job) => {
-        const action = actionById.get(String(job.plugin_action_id));
-        const connection = action?.connection_id ? connectionById.get(action.connection_id) : undefined;
-        const plugin = action?.plugin_id ? pluginById.get(action.plugin_id) : undefined;
-        return { action, connection, job, plugin };
-      })
-      .filter((chain) => chain.action);
-    if (chains.length > 0) {
-      return chains;
-    }
-    return actions.slice(0, 3).map((action) => ({
-      action,
-      connection: action.connection_id ? connectionById.get(action.connection_id) : undefined,
-      job: undefined,
-      plugin: pluginById.get(action.plugin_id),
-    }));
-  }, [actionById, actions, connectionById, pluginById, scheduledJobs]);
-
   const connectionDefaultsForPlugin = useCallback((plugin?: PluginRecord) => {
     const item = plugin
       ? marketplaceItemByPluginCode.get(plugin.code) ?? marketplaceItemByPluginId.get(plugin.id)
@@ -1264,6 +1376,7 @@ export default function PluginsPage() {
         nextMarketplaceItems,
         nextActionTemplates,
         nextResultWriteTargets,
+        nextRunners,
         nextConnections,
         nextActions,
         nextLogs,
@@ -1273,6 +1386,7 @@ export default function PluginsPage() {
         fetchPluginMarketplace(),
         fetchPluginActionTemplates(),
         fetchResultWriteTargets(),
+        fetchAiExecutorRunners(),
         fetchPluginConnections({ environment: connectionEnvironmentFilter }),
         fetchPluginActions(),
         fetchPluginInvocationLogs(),
@@ -1282,6 +1396,7 @@ export default function PluginsPage() {
       setMarketplaceItems(nextMarketplaceItems);
       setActionTemplates(nextActionTemplates);
       setResultWriteTargets(nextResultWriteTargets);
+      setRunners(nextRunners);
       setConnections(nextConnections);
       setActions(nextActions);
       setLogs(nextLogs);
@@ -1302,8 +1417,14 @@ export default function PluginsPage() {
 
   useEffect(() => {
     fetchPluginSystemVariables('Asia/Shanghai')
-      .then((result) => setSystemVariables(result.items))
-      .catch(() => setSystemVariables([]));
+      .then((result) => {
+        setSystemVariables(result.items);
+        setSystemVariableTimezone(result.timezone || 'Asia/Shanghai');
+      })
+      .catch(() => {
+        setSystemVariables([]);
+        setSystemVariableTimezone('Asia/Shanghai');
+      });
   }, []);
 
   const openCreatePluginModal = () => {
@@ -1354,6 +1475,89 @@ export default function PluginsPage() {
     }
     closePluginModal();
     await reload();
+  };
+
+  const openCreateRunnerModal = () => {
+    setEditingRunner(undefined);
+    runnerForm.resetFields();
+    runnerForm.setFieldsValue({
+      endpoint_url: 'runner://local',
+      executor_types: ['codex', 'openclaw'],
+      heartbeat_timeout_seconds: 120,
+      max_concurrent_tasks: 1,
+      metadata: '{}',
+      protocol: 'runner_polling',
+      status: 'active',
+      workspace_roots: '/Users/zeek/source/e-ai-brain',
+    });
+    setRunnerModalOpen(true);
+  };
+
+  const openEditRunnerModal = (runner: AiExecutorRunnerRecord) => {
+    setEditingRunner(runner);
+    runnerForm.resetFields();
+    runnerForm.setFieldsValue({
+      endpoint_url: runner.endpoint_url ?? 'runner://local',
+      executor_types: runner.executor_types ?? ['codex'],
+      heartbeat_timeout_seconds: runner.heartbeat_timeout_seconds ?? 120,
+      max_concurrent_tasks: runner.max_concurrent_tasks ?? 1,
+      metadata: stableJson(runner.metadata ?? {}),
+      name: runner.name,
+      protocol: runner.protocol ?? 'runner_polling',
+      status: runner.status,
+      workspace_roots: arrayToLines(runner.workspace_roots),
+    });
+    setRunnerModalOpen(true);
+  };
+
+  const closeRunnerModal = () => {
+    setRunnerModalOpen(false);
+    setEditingRunner(undefined);
+    runnerForm.resetFields();
+  };
+
+  const submitRunner = async () => {
+    const values = await runnerForm.validateFields();
+    const payload = runnerPayload(values);
+    if (editingRunner) {
+      await updateAiExecutorRunner(editingRunner.id, payload);
+      message.success('执行器已更新');
+    } else {
+      const created = await createAiExecutorRunner(payload);
+      message.success('执行器已创建');
+      if (created.runner_token) {
+        Modal.info({
+          content: (
+            <Space orientation="vertical" size={8}>
+              <Typography.Text>Runner Token 仅在创建时返回，请配置到本地 Runner。</Typography.Text>
+              <Typography.Text code copyable={{ text: created.runner_token }}>
+                {created.runner_token}
+              </Typography.Text>
+            </Space>
+          ),
+          title: 'Runner Token',
+        });
+      }
+    }
+    closeRunnerModal();
+    await reload();
+  };
+
+  const confirmDeleteRunner = (runner: AiExecutorRunnerRecord) => {
+    Modal.confirm({
+      content: `确定删除执行器「${runner.name}」吗？有未完成任务时后端会拒绝删除。`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await deleteAiExecutorRunner(runner.id);
+          message.success('执行器已删除');
+          await reload();
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '执行器删除失败');
+        }
+      },
+      title: '删除执行器',
+    });
   };
 
   const warnDeleteUsage = (title: string, groups: DeleteUsageGroup[]) => {
@@ -2157,42 +2361,75 @@ export default function PluginsPage() {
     <PageContainer title="插件管理">
       <Space orientation="vertical" size={12} style={{ width: '100%', marginBottom: 16 }}>
         <Alert
-          title="系统变量预览"
-          description={
+          title={
             <Space wrap>
-              {(systemVariables.length > 0 ? systemVariables : systemVariableOptions.map((item) => ({
-                expression: item.value,
-                label: item.label,
-                value: item.value,
-              }))).map((item) => (
-                <Tag key={item.expression}>
-                  {item.label}: {item.expression} = {item.value}
-                </Tag>
-              ))}
+              <Typography.Text strong>系统变量预览</Typography.Text>
+              <Tag color="blue">Timezone: {systemVariableTimezone}</Tag>
+            </Space>
+          }
+          description={
+            <Space orientation="vertical" size={10} style={{ display: 'flex', width: '100%' }}>
+              <Space wrap size={[8, 8]}>
+                <Typography.Text type="secondary">常用变量</Typography.Text>
+                {compactSystemVariablePreviewItems.map((item) => (
+                  <Tag key={item.expression}>
+                    {item.label}：{item.expression} = {item.value}
+                  </Tag>
+                ))}
+                <Button onClick={() => setSystemVariableModalOpen(true)} size="small" type="link">
+                  查看全部变量
+                </Button>
+              </Space>
+              <Typography.Text type="secondary">
+                可复制表达式到连接 Params、Headers 或动作参数值，支持类似 {'{{current_date-7}}'} 的天数偏移。
+              </Typography.Text>
             </Space>
           }
           showIcon
           type="info"
         />
         <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 12 }}>
-          <Typography.Text strong>调用链路</Typography.Text>
+          <Typography.Text strong>通用调用链路</Typography.Text>
           <Space orientation="vertical" size={8} style={{ display: 'flex', marginTop: 10 }}>
-            {integrationChains.length > 0 ? integrationChains.map((chain, index) => (
-              <Space key={`${chain.action?.id ?? index}-${chain.job?.id ?? 'action'}`} wrap>
-                <Tag color="blue">插件：{chain.plugin?.name ?? chain.action?.plugin_id}</Tag>
-                <Typography.Text type="secondary">→</Typography.Text>
-                <Tag color="cyan">连接：{chain.connection?.name ?? chain.action?.connection_id ?? '未绑定'}</Tag>
-                <Typography.Text type="secondary">→</Typography.Text>
-                <Tag color="purple">动作：{chain.action?.name}</Tag>
-                <Typography.Text type="secondary">→</Typography.Text>
-                <Tag color={chain.job ? 'green' : 'default'}>定时作业：{chain.job?.name ?? '未绑定'}</Tag>
-              </Space>
-            )) : (
-              <Typography.Text type="secondary">暂无可展示链路</Typography.Text>
-            )}
+            <Space wrap>
+              {genericIntegrationChainSteps.map((step, index) => (
+                <Fragment key={step.label}>
+                  {index > 0 ? <Typography.Text type="secondary">→</Typography.Text> : null}
+                  <Tag color={step.color}>
+                    {step.label}：{step.text}
+                  </Tag>
+                </Fragment>
+              ))}
+            </Space>
+            <Typography.Text type="secondary">
+              适用于 MaxCompute、GitHub、GitLab、邮箱和自定义 HTTP/MCP 集成场景。
+            </Typography.Text>
           </Space>
         </div>
       </Space>
+      {systemVariableModalOpen ? (
+        <Modal
+          footer={null}
+          onCancel={() => setSystemVariableModalOpen(false)}
+          open={systemVariableModalOpen}
+          title="全部系统变量"
+          width={920}
+        >
+          <Space orientation="vertical" size={12} style={{ display: 'flex' }}>
+            <Typography.Text type="secondary">
+              解析时区：{systemVariableTimezone}。表达式和值都可以复制，保存配置时保留表达式，运行时再按时区解析。
+            </Typography.Text>
+            <Table<PluginSystemVariableRecord>
+              columns={systemVariablePreviewColumns}
+              dataSource={systemVariablePreviewItems}
+              pagination={false}
+              rowKey="expression"
+              scroll={{ x: 720 }}
+              size="small"
+            />
+          </Space>
+        </Modal>
+      ) : null}
       <Tabs
         defaultActiveKey="plugins"
         items={[
@@ -2568,6 +2805,112 @@ export default function PluginsPage() {
             ),
           },
           {
+            key: 'runners',
+            label: '执行器',
+            children: (
+              <ProTable<AiExecutorRunnerRecord>
+                cardBordered
+                className="management-list-table"
+                dateFormatter="string"
+                headerTitle="AI 执行器 Runner"
+                loading={loading}
+                options={{
+                  density: true,
+                  fullScreen: true,
+                  reload,
+                  setting: true,
+                }}
+                pagination={{
+                  showSizeChanger: true,
+                  showTotal: (total) => `共 ${total} 条`,
+                }}
+                rowKey="id"
+                scroll={{ x: 1460 }}
+                search={false}
+                dataSource={runners}
+                tableLayout="fixed"
+                toolBarRender={() => [
+                  <Button key="create-runner" aria-label="新增执行器" icon={<PlusOutlined />} type="primary" onClick={openCreateRunnerModal}>
+                    新增执行器
+                  </Button>,
+                  <Button key="reload-runners" icon={<ReloadOutlined />} onClick={reload}>
+                    刷新
+                  </Button>,
+                ]}
+                columns={[
+                  { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
+                  { dataIndex: 'protocol', title: '协议', width: 150 },
+                  {
+                    dataIndex: 'executor_types',
+                    title: '执行器类型',
+                    width: 240,
+                    render: (value) => Array.isArray(value)
+                      ? (
+                        <Space wrap size={4}>
+                          {value.map((item) => <Tag key={String(item)}>{String(item)}</Tag>)}
+                        </Space>
+                      )
+                      : '-',
+                  },
+                  {
+                    dataIndex: 'workspace_roots',
+                    title: '工作区白名单',
+                    ellipsis: true,
+                    width: 280,
+                    render: (value) => Array.isArray(value) && value.length > 0 ? value.join(', ') : '*',
+                  },
+                  {
+                    dataIndex: 'last_heartbeat_at',
+                    title: '最后心跳',
+                    ellipsis: true,
+                    width: 220,
+                    render: (value) => value || '-',
+                  },
+                  {
+                    dataIndex: 'token_configured',
+                    title: 'Token',
+                    width: 100,
+                    render: (value) => <Tag color={value ? 'green' : 'default'}>{value ? '已配置' : '未配置'}</Tag>,
+                  },
+                  {
+                    dataIndex: 'status',
+                    title: '状态',
+                    width: 110,
+                    render: (value) => <Tag color={value === 'active' ? 'green' : value === 'offline' ? 'orange' : 'default'}>{String(value)}</Tag>,
+                  },
+                  {
+                    fixed: 'right',
+                    key: 'actions',
+                    title: '操作',
+                    valueType: 'option',
+                    width: 170,
+                    render: (_, row) => (
+                      <Space className="management-row-actions" size={0}>
+                        <Button
+                          aria-label={`编辑执行器 ${row.name}`}
+                          icon={<EditOutlined />}
+                          onClick={() => openEditRunnerModal(row)}
+                          type="link"
+                        >
+                          编辑
+                        </Button>
+                        <Button
+                          aria-label={`删除执行器 ${row.name}`}
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => confirmDeleteRunner(row)}
+                          type="link"
+                        >
+                          删除
+                        </Button>
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+            ),
+          },
+          {
             key: 'actions',
             label: '动作',
             children: (
@@ -2731,6 +3074,8 @@ export default function PluginsPage() {
                 { label: 'HTTP', value: 'http' },
                 { label: 'MCP HTTP', value: 'mcp_http' },
                 { label: 'MCP Stdio', value: 'mcp_stdio' },
+                { label: 'Runner Polling', value: 'runner_polling' },
+                { label: 'Runner WebSocket', value: 'runner_websocket' },
               ]}
             />
           </Form.Item>
@@ -2757,6 +3102,73 @@ export default function PluginsPage() {
           </Form.Item>
           <Form.Item label="说明" name="description">
             <Input.TextArea rows={3} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        open={runnerModalOpen}
+        title={editingRunner ? '编辑执行器' : '新增执行器'}
+        width={760}
+        cancelText="取消"
+        okText="确定"
+        onCancel={closeRunnerModal}
+        onOk={submitRunner}
+      >
+        <Form
+          form={runnerForm}
+          layout="vertical"
+          initialValues={{
+            endpoint_url: 'runner://local',
+            executor_types: ['codex', 'openclaw'],
+            heartbeat_timeout_seconds: 120,
+            max_concurrent_tasks: 1,
+            metadata: '{}',
+            protocol: 'runner_polling',
+            status: 'active',
+          }}
+        >
+          <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入执行器名称' }]}>
+            <Input placeholder="Zeek Mac 本地执行器" />
+          </Form.Item>
+          <Space wrap>
+            <Form.Item label="协议" name="protocol" rules={[{ required: true }]}>
+              <Select options={aiExecutorRunnerProtocolOptions} style={{ width: 180 }} />
+            </Form.Item>
+            <Form.Item label="状态" name="status" rules={[{ required: true }]}>
+              <Select
+                options={[
+                  { label: 'active', value: 'active' },
+                  { label: 'offline', value: 'offline' },
+                  { label: 'disabled', value: 'disabled' },
+                ]}
+                style={{ width: 150 }}
+              />
+            </Form.Item>
+            <Form.Item label="心跳超时秒数" name="heartbeat_timeout_seconds">
+              <InputNumber min={10} style={{ width: 160 }} />
+            </Form.Item>
+            <Form.Item label="最大并发" name="max_concurrent_tasks">
+              <InputNumber min={1} style={{ width: 130 }} />
+            </Form.Item>
+          </Space>
+          <Form.Item label="Endpoint" name="endpoint_url" rules={[{ required: true }]}>
+            <Input placeholder="runner://local 或 mcp://runner" />
+          </Form.Item>
+          <Form.Item label="执行器类型" name="executor_types" rules={[{ required: true, message: '请选择至少一个执行器类型' }]}>
+            <Select mode="multiple" options={aiExecutorTypeOptions} />
+          </Form.Item>
+          <Form.Item label="工作区白名单" name="workspace_roots">
+            <Input.TextArea
+              placeholder="/Users/zeek/source/e-ai-brain"
+              rows={3}
+            />
+          </Form.Item>
+          <Form.Item label="Runner Token" name="runner_token">
+            <Input.Password placeholder={editingRunner ? '留空表示不修改 Token' : '留空自动生成'} />
+          </Form.Item>
+          <Form.Item label="Metadata JSON" name="metadata">
+            <Input.TextArea rows={4} placeholder='{"codex_path":"/Applications/Codex.app/Contents/Resources/codex"}' />
           </Form.Item>
         </Form>
       </Modal>

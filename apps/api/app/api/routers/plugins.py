@@ -7,6 +7,15 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
+from app.services.ai_executor_runners import (
+    claim_ai_executor_task_response,
+    complete_ai_executor_task_response,
+    create_ai_executor_runner_response,
+    delete_ai_executor_runner_response,
+    list_ai_executor_runners_response,
+    patch_ai_executor_runner_response,
+    runner_heartbeat_response,
+)
 from app.services.plugins import (
     create_plugin_action_response,
     create_plugin_connection_response,
@@ -21,6 +30,7 @@ from app.services.plugins import (
     list_plugin_invocation_logs_response,
     list_plugin_marketplace_response,
     list_plugins_response,
+    list_result_write_records_response,
     list_result_write_targets_response,
     patch_plugin_action_response,
     patch_plugin_connection_response,
@@ -120,6 +130,166 @@ class PluginActionTrialRequest(BaseModel):
     input_payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class AiExecutorRunnerRequest(BaseModel):
+    endpoint_url: str = "runner://local"
+    executor_types: list[str] = Field(default_factory=lambda: ["codex"])
+    heartbeat_timeout_seconds: int = 120
+    max_concurrent_tasks: int = 1
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    name: str
+    protocol: str = "runner_polling"
+    runner_token: str | None = None
+    status: str = "active"
+    workspace_roots: list[str] = Field(default_factory=list)
+
+
+class AiExecutorRunnerPatchRequest(BaseModel):
+    endpoint_url: str | None = None
+    executor_types: list[str] | None = None
+    heartbeat_timeout_seconds: int | None = None
+    max_concurrent_tasks: int | None = None
+    metadata: dict[str, Any] | None = None
+    name: str | None = None
+    protocol: str | None = None
+    runner_token: str | None = None
+    status: str | None = None
+    workspace_roots: list[str] | None = None
+
+
+class AiExecutorRunnerHeartbeatRequest(BaseModel):
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AiExecutorTaskClaimRequest(BaseModel):
+    executor_type: str | None = None
+    runner_id: str
+
+
+class AiExecutorTaskCompleteRequest(BaseModel):
+    error_code: str | None = None
+    error_message: str | None = None
+    logs: list[dict[str, Any]] = Field(default_factory=list)
+    result_json: dict[str, Any] = Field(default_factory=dict)
+    runner_id: str
+    status: str
+
+
+@router.get("/api/system/ai-executor-runners")
+def list_ai_executor_runners(
+    request: Request,
+    status: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        list_ai_executor_runners_response(
+            current_store=store(request),
+            status=status,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-runners")
+def create_ai_executor_runner(
+    payload: AiExecutorRunnerRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        create_ai_executor_runner_response(
+            current_store=store(request),
+            payload=payload,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.patch("/api/system/ai-executor-runners/{runner_id}")
+def patch_ai_executor_runner(
+    payload: AiExecutorRunnerPatchRequest,
+    request: Request,
+    runner_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        patch_ai_executor_runner_response(
+            current_store=store(request),
+            payload=payload,
+            runner_id=runner_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.delete("/api/system/ai-executor-runners/{runner_id}")
+def delete_ai_executor_runner(
+    request: Request,
+    runner_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        delete_ai_executor_runner_response(
+            current_store=store(request),
+            runner_id=runner_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-runners/{runner_id}/heartbeat")
+def ai_executor_runner_heartbeat(
+    payload: AiExecutorRunnerHeartbeatRequest,
+    request: Request,
+    runner_id: str,
+) -> dict[str, Any]:
+    return envelope(
+        runner_heartbeat_response(
+            current_store=store(request),
+            metadata=payload.metadata,
+            request=request,
+            runner_id=runner_id,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-tasks/claim")
+def claim_ai_executor_task(
+    payload: AiExecutorTaskClaimRequest,
+    request: Request,
+) -> dict[str, Any]:
+    return envelope(
+        claim_ai_executor_task_response(
+            current_store=store(request),
+            executor_type=payload.executor_type,
+            request=request,
+            runner_id=payload.runner_id,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-tasks/{task_id}/complete")
+def complete_ai_executor_task(
+    payload: AiExecutorTaskCompleteRequest,
+    request: Request,
+    task_id: str,
+) -> dict[str, Any]:
+    return envelope(
+        complete_ai_executor_task_response(
+            current_store=store(request),
+            payload=payload,
+            request=request,
+            task_id=task_id,
+        ),
+        get_trace_id(request),
+    )
+
+
 @router.get("/api/system/plugins")
 def list_plugins(
     request: Request,
@@ -162,6 +332,30 @@ def list_result_write_targets(
 ) -> dict[str, Any]:
     return envelope(
         list_result_write_targets_response(current_store=store(request), user=user),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/result-write-records")
+def list_result_write_records(
+    request: Request,
+    plugin_action_id: str | None = None,
+    scheduled_job_id: str | None = None,
+    scheduled_job_run_id: str | None = None,
+    status: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+    write_target: str | None = None,
+) -> dict[str, Any]:
+    return envelope(
+        list_result_write_records_response(
+            current_store=store(request),
+            plugin_action_id=plugin_action_id,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+            user=user,
+            write_target=write_target,
+        ),
         get_trace_id(request),
     )
 

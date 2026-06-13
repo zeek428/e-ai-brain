@@ -2191,7 +2191,10 @@ def run_scheduled_job_response(
                 "write_target": "code_inspection_reports",
             }
         records_imported = 0
-    finished_at = datetime.now(UTC).isoformat()
+    if status == "succeeded" and JobExecutionEngine.has_pending_runner(plugin_summary):
+        status = "running"
+    finished_at = None if status == "running" else datetime.now(UTC).isoformat()
+    updated_at = datetime.now(UTC).isoformat()
     run = {
         **run,
         "error_code": error_code,
@@ -2200,24 +2203,25 @@ def run_scheduled_job_response(
         "records_imported": records_imported,
         "result_summary": result_summary,
         "status": status,
-        "updated_at": finished_at,
+        "updated_at": updated_at,
     }
     current_store.scheduled_job_runs[run_id] = run
-    complete_collector_run(
-        current_store,
-        collector_run=collector_run,
-        error_message=error_message,
-        records_imported=records_imported,
-        status=status,
-        user=user,
-    )
+    if status in SCHEDULED_JOB_RUN_TERMINAL_STATUSES:
+        complete_collector_run(
+            current_store,
+            collector_run=collector_run,
+            error_message=error_message,
+            records_imported=records_imported,
+            status=status,
+            user=user,
+        )
     job_update = {
         **job,
         "last_error_message": error_message,
         "last_failure_at": finished_at if status == "failed" else job.get("last_failure_at"),
-        "last_run_at": finished_at,
+        "last_run_at": finished_at or updated_at,
         "last_success_at": finished_at if status == "succeeded" else job.get("last_success_at"),
-        "updated_at": finished_at,
+        "updated_at": updated_at,
     }
     current_store.scheduled_jobs[job_id] = job_update
     persist_record(

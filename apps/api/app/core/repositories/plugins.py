@@ -188,6 +188,91 @@ class PluginReadRepository:
                 )
                 return [self._invocation_log_from_row(row) for row in cursor.fetchall()]
 
+    def list_ai_executor_runners(
+        self,
+        *,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._where({"status": status})
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, name, protocol, endpoint_url, executor_types, workspace_roots,
+                           token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
+                           last_heartbeat_at, metadata, created_by, created_at, updated_at
+                    FROM ai_executor_runners
+                    {where}
+                    ORDER BY updated_at DESC, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._ai_executor_runner_from_row(row) for row in cursor.fetchall()]
+
+    def save_ai_executor_runner_record(
+        self,
+        runner: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self.upsert_ai_executor_runners(cursor, {runner["id"]: runner})
+                self._upsert_audit(cursor, audit_event)
+
+    def delete_ai_executor_runner_record(
+        self,
+        runner_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM ai_executor_runners WHERE id = %s", (runner_id,))
+                self._upsert_audit(cursor, audit_event)
+
+    def list_ai_executor_tasks(
+        self,
+        *,
+        runner_id: str | None = None,
+        scheduled_job_run_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._where(
+            {
+                "runner_id": runner_id,
+                "scheduled_job_run_id": scheduled_job_run_id,
+                "status": status,
+            },
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, runner_id, plugin_invocation_log_id, scheduled_job_id,
+                           scheduled_job_run_id, executor_type, instruction, workspace_root,
+                           timeout_seconds, input_payload, request_config, result_json, logs,
+                           status, error_code, error_message, claimed_at, finished_at,
+                           created_by, created_at, updated_at
+                    FROM ai_executor_tasks
+                    {where}
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._ai_executor_task_from_row(row) for row in cursor.fetchall()]
+
+    def save_ai_executor_task_record(
+        self,
+        task: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self.upsert_ai_executor_tasks(cursor, {task["id"]: task})
+                self._upsert_audit(cursor, audit_event)
+
     def save_plugin_invocation_log_record(
         self,
         log: dict[str, Any],
@@ -396,6 +481,117 @@ class PluginReadRepository:
                 ),
             )
 
+    def upsert_ai_executor_runners(self, cursor, runners: dict[str, dict[str, Any]]) -> None:
+        for runner in runners.values():
+            cursor.execute(
+                """
+                INSERT INTO ai_executor_runners (
+                  id, name, protocol, endpoint_url, executor_types, workspace_roots,
+                  token_hash, heartbeat_timeout_seconds, max_concurrent_tasks, status,
+                  last_heartbeat_at, metadata, created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s::jsonb, %s::jsonb,
+                  %s, %s, %s, %s,
+                  %s::timestamptz, %s::jsonb, %s, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  name = EXCLUDED.name,
+                  protocol = EXCLUDED.protocol,
+                  endpoint_url = EXCLUDED.endpoint_url,
+                  executor_types = EXCLUDED.executor_types,
+                  workspace_roots = EXCLUDED.workspace_roots,
+                  token_hash = EXCLUDED.token_hash,
+                  heartbeat_timeout_seconds = EXCLUDED.heartbeat_timeout_seconds,
+                  max_concurrent_tasks = EXCLUDED.max_concurrent_tasks,
+                  status = EXCLUDED.status,
+                  last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+                  metadata = EXCLUDED.metadata,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    runner["id"],
+                    runner["name"],
+                    runner.get("protocol", "runner_polling"),
+                    runner.get("endpoint_url", "runner://local"),
+                    _json(runner.get("executor_types"), []),
+                    _json(runner.get("workspace_roots"), []),
+                    runner["token_hash"],
+                    runner.get("heartbeat_timeout_seconds", 120),
+                    runner.get("max_concurrent_tasks", 1),
+                    runner.get("status", "active"),
+                    runner.get("last_heartbeat_at"),
+                    _json(runner.get("metadata"), {}),
+                    runner.get("created_by"),
+                    runner.get("created_at"),
+                    runner.get("updated_at") or runner.get("created_at"),
+                ),
+            )
+
+    def upsert_ai_executor_tasks(self, cursor, tasks: dict[str, dict[str, Any]]) -> None:
+        for task in tasks.values():
+            cursor.execute(
+                """
+                INSERT INTO ai_executor_tasks (
+                  id, runner_id, plugin_invocation_log_id, scheduled_job_id,
+                  scheduled_job_run_id, executor_type, instruction, workspace_root,
+                  timeout_seconds, input_payload, request_config, result_json, logs,
+                  status, error_code, error_message, claimed_at, finished_at,
+                  created_by, created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s,
+                  %s, %s, %s, %s,
+                  %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
+                  %s, %s, %s, %s::timestamptz, %s::timestamptz,
+                  %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  runner_id = EXCLUDED.runner_id,
+                  plugin_invocation_log_id = EXCLUDED.plugin_invocation_log_id,
+                  scheduled_job_id = EXCLUDED.scheduled_job_id,
+                  scheduled_job_run_id = EXCLUDED.scheduled_job_run_id,
+                  executor_type = EXCLUDED.executor_type,
+                  instruction = EXCLUDED.instruction,
+                  workspace_root = EXCLUDED.workspace_root,
+                  timeout_seconds = EXCLUDED.timeout_seconds,
+                  input_payload = EXCLUDED.input_payload,
+                  request_config = EXCLUDED.request_config,
+                  result_json = EXCLUDED.result_json,
+                  logs = EXCLUDED.logs,
+                  status = EXCLUDED.status,
+                  error_code = EXCLUDED.error_code,
+                  error_message = EXCLUDED.error_message,
+                  claimed_at = EXCLUDED.claimed_at,
+                  finished_at = EXCLUDED.finished_at,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    task["id"],
+                    task.get("runner_id"),
+                    task.get("plugin_invocation_log_id"),
+                    task.get("scheduled_job_id"),
+                    task.get("scheduled_job_run_id"),
+                    task["executor_type"],
+                    task["instruction"],
+                    task["workspace_root"],
+                    task.get("timeout_seconds", 1800),
+                    _json(task.get("input_payload"), {}),
+                    _json(task.get("request_config"), {}),
+                    _json(task.get("result_json"), {}),
+                    _json(task.get("logs"), []),
+                    task.get("status", "queued"),
+                    task.get("error_code"),
+                    task.get("error_message"),
+                    task.get("claimed_at"),
+                    task.get("finished_at"),
+                    task.get("created_by"),
+                    task.get("created_at"),
+                    task.get("updated_at") or task.get("created_at"),
+                ),
+            )
+
     def _upsert_audit(self, cursor, audit_event: dict[str, Any] | None) -> None:
         if audit_event is not None and self._upsert_audit_events is not None:
             self._upsert_audit_events(cursor, [audit_event])
@@ -485,4 +681,48 @@ class PluginReadRepository:
             "created_by": row[14],
             "created_at": row[15].isoformat() if row[15] else None,
             "updated_at": row[16].isoformat() if row[16] else None,
+        }
+
+    def _ai_executor_runner_from_row(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "name": row[1],
+            "protocol": row[2],
+            "endpoint_url": row[3],
+            "executor_types": row[4] or [],
+            "workspace_roots": row[5] or [],
+            "token_hash": row[6],
+            "heartbeat_timeout_seconds": row[7],
+            "max_concurrent_tasks": row[8],
+            "status": row[9],
+            "last_heartbeat_at": row[10].isoformat() if row[10] else None,
+            "metadata": row[11] or {},
+            "created_by": row[12],
+            "created_at": row[13].isoformat() if row[13] else None,
+            "updated_at": row[14].isoformat() if row[14] else None,
+        }
+
+    def _ai_executor_task_from_row(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row[0],
+            "runner_id": row[1],
+            "plugin_invocation_log_id": row[2],
+            "scheduled_job_id": row[3],
+            "scheduled_job_run_id": row[4],
+            "executor_type": row[5],
+            "instruction": row[6],
+            "workspace_root": row[7],
+            "timeout_seconds": row[8],
+            "input_payload": row[9] or {},
+            "request_config": row[10] or {},
+            "result_json": row[11] or {},
+            "logs": row[12] or [],
+            "status": row[13],
+            "error_code": row[14],
+            "error_message": row[15],
+            "claimed_at": row[16].isoformat() if row[16] else None,
+            "finished_at": row[17].isoformat() if row[17] else None,
+            "created_by": row[18],
+            "created_at": row[19].isoformat() if row[19] else None,
+            "updated_at": row[20].isoformat() if row[20] else None,
         }

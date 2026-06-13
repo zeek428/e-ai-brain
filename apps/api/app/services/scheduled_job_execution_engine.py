@@ -77,6 +77,33 @@ class ScheduledJobExecutionEngine:
             "status": plugin_summary.get("status") or "unknown",
         }
 
+    @staticmethod
+    def runner_execution_node(plugin_summary: dict[str, Any]) -> dict[str, Any] | None:
+        response_summary = plugin_summary.get("response_summary") or {}
+        runner = response_summary.get("runner")
+        if not isinstance(runner, dict):
+            return None
+        return {
+            "error_code": runner.get("error_code"),
+            "error_message": runner.get("error_message"),
+            "executor_type": runner.get("executor_type"),
+            "finished_at": runner.get("finished_at"),
+            "label": "AI 执行器执行内容",
+            "logs": runner.get("logs") or [],
+            "result_json": runner.get("result_json") or {},
+            "runner_id": runner.get("runner_id"),
+            "runner_task_id": runner.get("runner_task_id"),
+            "status": runner.get("status") or "unknown",
+            "workspace_root": runner.get("workspace_root"),
+        }
+
+    @classmethod
+    def has_pending_runner(cls, plugin_summary: dict[str, Any] | None) -> bool:
+        if plugin_summary is None:
+            return False
+        node = cls.runner_execution_node(plugin_summary)
+        return bool(node and node.get("status") in {"queued", "claimed", "running"})
+
     @classmethod
     def plugin_action_execution_nodes(
         cls,
@@ -104,7 +131,11 @@ class ScheduledJobExecutionEngine:
         ):
             if key in write_preview:
                 result_action_feedback[key] = write_preview[key]
-        return {
+        runner_node = cls.runner_execution_node(plugin_summary)
+        result_action_status = plugin_summary.get("status") or "unknown"
+        if runner_node and runner_node.get("status") in {"queued", "claimed", "running"}:
+            result_action_status = "waiting_runner"
+        nodes = {
             "data_connection": cls.data_connection_execution_node(
                 job=job,
                 plugin_summary=plugin_summary,
@@ -116,7 +147,7 @@ class ScheduledJobExecutionEngine:
                 "feedback": result_action_feedback,
                 "label": "结果动作反馈内容",
                 "records_imported": plugin_records_imported,
-                "status": plugin_summary.get("status") or "unknown",
+                "status": result_action_status,
                 "write_target": plugin_output_mapping.get("write_target")
                 or "scheduled_job_result",
                 "write_target_label": write_preview.get("write_target_label")
@@ -133,6 +164,9 @@ class ScheduledJobExecutionEngine:
                 "status": "not_configured" if not skill_ids else "not_run",
             },
         }
+        if runner_node is not None:
+            nodes["runner_execution"] = runner_node
+        return nodes
 
     @staticmethod
     def code_inspection_plugin_summary_for_ai_output(
