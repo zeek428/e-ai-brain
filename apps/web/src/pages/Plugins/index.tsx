@@ -17,6 +17,7 @@ import {
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
   createAiExecutorRunner,
+  copyPlugin,
   createPlugin,
   createPluginAction,
   createPluginConnection,
@@ -234,12 +235,30 @@ const connectionEnvironmentLabelByValue = new Map(
 );
 
 const OFFICIAL_PLUGIN_LABEL = '官方标准';
+const pluginVersionStatusLabelByValue = new Map([
+  ['custom', '自定义'],
+  ['latest', '最新'],
+  ['upgrade_available', '可升级'],
+]);
+
 const genericIntegrationChainSteps = [
   { color: 'blue', label: '插件', text: '定义三方系统能力与协议' },
   { color: 'cyan', label: '连接', text: '维护环境、Endpoint、认证和公共参数' },
   { color: 'purple', label: '动作', text: '定义请求、变量和结果映射' },
   { color: 'green', label: '定时作业', text: '编排取数、AI 处理和结果写入' },
 ];
+
+function pluginVersionStatusTag(record: {
+  template_version?: string;
+  upgrade_available?: boolean;
+  version_status?: string;
+}) {
+  const version = record.template_version ?? '-';
+  const status = record.upgrade_available ? 'upgrade_available' : record.version_status ?? 'custom';
+  const label = pluginVersionStatusLabelByValue.get(status) ?? status;
+  const color = status === 'upgrade_available' ? 'orange' : status === 'latest' ? 'green' : 'default';
+  return <Tag color={color}>{`${version} ${label}`}</Tag>;
+}
 
 function stableJson(value: Record<string, unknown>): string {
   return JSON.stringify(value, null, 2);
@@ -1580,6 +1599,15 @@ export default function PluginsPage() {
     await reload();
   };
 
+  const copyOfficialPlugin = async (plugin: PluginRecord) => {
+    await copyPlugin(plugin.id, {
+      code: `${plugin.code}_custom`,
+      name: `${plugin.name} 副本`,
+    });
+    message.success('官方插件已复制为自定义插件');
+    await reload();
+  };
+
   const openCreateRunnerModal = () => {
     setEditingRunner(undefined);
     runnerForm.resetFields();
@@ -2603,7 +2631,7 @@ export default function PluginsPage() {
                   showTotal: (total) => `共 ${total} 条`,
                 }}
                 rowKey="id"
-                scroll={{ x: 1600 }}
+                scroll={{ x: 1720 }}
                 search={false}
                 dataSource={marketplaceItems}
                 tableLayout="fixed"
@@ -2649,6 +2677,12 @@ export default function PluginsPage() {
                         {row.installed ? '已内置' : '未内置'}
                       </Tag>
                     ),
+                  },
+                  {
+                    dataIndex: 'template_version',
+                    title: '模板版本',
+                    width: 120,
+                    render: (_, row) => pluginVersionStatusTag(row),
                   },
                   {
                     dataIndex: 'summary',
@@ -2756,7 +2790,7 @@ export default function PluginsPage() {
                   showTotal: (total) => `共 ${total} 条`,
                 }}
                 rowKey="id"
-                scroll={{ x: 1132 }}
+                scroll={{ x: 1252 }}
                 search={false}
                 dataSource={plugins}
                 tableLayout="fixed"
@@ -2786,6 +2820,12 @@ export default function PluginsPage() {
                   { dataIndex: 'code', title: '编码', ellipsis: true, width: 200 },
                   { dataIndex: 'protocol', title: '协议', width: 120 },
                   {
+                    dataIndex: 'template_version',
+                    title: '模板版本',
+                    width: 120,
+                    render: (_, row) => pluginVersionStatusTag(row),
+                  },
+                  {
                     dataIndex: 'category',
                     title: '分类',
                     width: 150,
@@ -2806,7 +2846,18 @@ export default function PluginsPage() {
                     width: 164,
                     render: (_, row) => {
                       if (row.is_system) {
-                        return <Tag color="blue">{OFFICIAL_PLUGIN_LABEL}</Tag>;
+                        return (
+                          <Space className="management-row-actions" size={0}>
+                            <Button
+                              aria-label={`复制官方插件 ${row.name}`}
+                              icon={<PlusOutlined />}
+                              onClick={() => void copyOfficialPlugin(row)}
+                              type="link"
+                            >
+                              复制
+                            </Button>
+                          </Space>
+                        );
                       }
                       return (
                         <Space className="management-row-actions" size={0}>

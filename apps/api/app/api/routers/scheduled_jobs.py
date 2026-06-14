@@ -16,6 +16,7 @@ from app.services.scheduled_jobs import (
     create_ai_skill_response,
     create_scheduled_job_response,
     delete_scheduled_job_response,
+    dry_run_scheduled_job_response,
     list_ai_agents_response,
     list_ai_skills_response,
     list_scheduled_job_runs_response,
@@ -303,6 +304,18 @@ def create_scheduled_job(
 ) -> dict[str, Any]:
     return envelope(
         create_scheduled_job_response(current_store=store(request), payload=payload, user=user),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/scheduled-jobs/dry-run")
+def dry_run_scheduled_job(
+    payload: ScheduledJobRequest,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        dry_run_scheduled_job_response(current_store=store(request), payload=payload, user=user),
         get_trace_id(request),
     )
 

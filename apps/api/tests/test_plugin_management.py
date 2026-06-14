@@ -144,6 +144,10 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert set(by_code) == {"ai_executor", "aliyun_maxcompute", "email", "github", "gitlab"}
     assert by_code["ai_executor"]["installed"] is True
     assert by_code["ai_executor"]["is_system"] is True
+    assert by_code["ai_executor"]["latest_template_version"] == "v1"
+    assert by_code["ai_executor"]["template_version"] == "v1"
+    assert by_code["ai_executor"]["upgrade_available"] is False
+    assert by_code["ai_executor"]["version_status"] == "latest"
     assert by_code["ai_executor"]["plugin_id"] == "plugin_standard_ai_executor"
     assert "AI 执行器下达指令" in by_code["ai_executor"]["action_templates"]
     assert "执行完成后同步回写" in by_code["ai_executor"]["recommended_scenarios"]
@@ -185,6 +189,9 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert by_code["github"]["publisher"] == "AI Brain 官方"
     assert "GitHub 代码巡检" in by_code["github"]["action_templates"]
     assert by_code["github"]["connection_template_version"] == "v1"
+    assert by_code["github"]["latest_template_version"] == "v1"
+    assert by_code["github"]["template_version"] == "v1"
+    assert by_code["github"]["version_status"] == "latest"
     assert by_code["github"]["connection_defaults"]["auth_type"] == "bearer"
     assert by_code["github"]["connection_defaults"]["endpoint_url"] == "https://api.github.com"
     assert by_code["github"]["connection_schema"]["sections"][0]["fields"][0]["key"] == "owner"
@@ -1044,6 +1051,36 @@ def test_standard_plugins_are_seeded_and_immutable():
     )
     assert ai_executor_patch_response.status_code == 409
     assert "官方标准插件" in ai_executor_patch_response.text
+
+
+def test_standard_plugin_can_be_copied_as_custom_plugin_for_extension():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugins = client.get("/api/system/plugins", headers=admin_headers).json()["data"]["items"]
+    github = {plugin["code"]: plugin for plugin in plugins}["github"]
+
+    copy_response = client.post(
+        f"/api/system/plugins/{github['id']}/copy",
+        json={"code": "github_enterprise_custom", "name": "GitHub 企业版扩展"},
+        headers=admin_headers,
+    )
+
+    assert copy_response.status_code == 200
+    copied = copy_response.json()["data"]
+    assert copied["code"] == "github_enterprise_custom"
+    assert copied["name"] == "GitHub 企业版扩展"
+    assert copied["is_system"] is False
+    assert copied["source_plugin_id"] == github["id"]
+    assert copied["template_version"] == "v1"
+    assert copied["version_status"] == "custom"
+
+    patch_response = client.patch(
+        f"/api/system/plugins/{copied['id']}",
+        json={"description": "可按企业规范自定义"},
+        headers=admin_headers,
+    )
+    assert patch_response.status_code == 200
+    assert patch_response.json()["data"]["description"] == "可按企业规范自定义"
 
 
 def test_standard_plugin_connections_store_platform_parameters():

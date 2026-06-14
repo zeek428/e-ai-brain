@@ -23,7 +23,16 @@ function installCapabilitiesFetchMock() {
             {
               code: 'user_insight_collect',
               id: 'skill_001',
+              input_schema: {
+                properties: { rows: { type: 'array' } },
+                type: 'object',
+              },
               name: '用户洞察采集',
+              output_schema: {
+                properties: { insights: { type: 'array' } },
+                required: ['insights'],
+                type: 'object',
+              },
               prompt_template: '采集用户反馈',
               requires_human_review: true,
               risk_level: 'high',
@@ -182,6 +191,36 @@ describe('AI capabilities page', () => {
     const skillDialog = await screen.findByRole('dialog', { name: '编辑 Skill' });
     expect(within(skillDialog).getByLabelText('名称')).toHaveValue('用户洞察采集');
     expect(within(skillDialog).getByLabelText('Prompt 模板')).toHaveValue('采集用户反馈');
+    expect(within(skillDialog).getByLabelText('输入 Schema JSON')).toHaveValue(
+      JSON.stringify({ properties: { rows: { type: 'array' } }, type: 'object' }, null, 2),
+    );
+    expect(within(skillDialog).getByLabelText('输出 Schema JSON')).toHaveValue(
+      JSON.stringify(
+        {
+          properties: { insights: { type: 'array' } },
+          required: ['insights'],
+          type: 'object',
+        },
+        null,
+        2,
+      ),
+    );
+    fireEvent.change(within(skillDialog).getByLabelText('输出 Schema JSON'), {
+      target: {
+        value: JSON.stringify(
+          {
+            properties: {
+              insights: { type: 'array' },
+              summary: { type: 'string' },
+            },
+            required: ['insights', 'summary'],
+            type: 'object',
+          },
+          null,
+          2,
+        ),
+      },
+    });
     expect(within(skillDialog).getByText('启用')).toBeInTheDocument();
     fireEvent.click(within(skillDialog).getByRole('button', { name: /保\s*存/ }));
 
@@ -189,7 +228,19 @@ describe('AI capabilities page', () => {
       expect(skillPatchBodies).toEqual([
         expect.objectContaining({
           code: 'user_insight_collect',
+          input_schema: {
+            properties: { rows: { type: 'array' } },
+            type: 'object',
+          },
           name: '用户洞察采集',
+          output_schema: {
+            properties: {
+              insights: { type: 'array' },
+              summary: { type: 'string' },
+            },
+            required: ['insights', 'summary'],
+            type: 'object',
+          },
           prompt_template: '采集用户反馈',
           status: 'active',
           version: '1.0.0',

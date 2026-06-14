@@ -43,6 +43,7 @@ from app.services.plugins import (
     invoke_plugin_action_response,
     json_path_value,
     records_imported_from_mapping,
+    result_write_preview,
     resolve_plugin_snapshot,
 )
 from app.services.scheduled_job_execution_engine import (
@@ -84,6 +85,15 @@ SCHEDULED_JOB_RUN_STATUSES = {"cancelled", "failed", "queued", "running", "skipp
 SCHEDULED_JOB_RUN_TERMINAL_STATUSES = {"cancelled", "failed", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TRIGGER_TYPES = {"manual", "manual_rerun", "scheduler"}
 USER_FEEDBACK_INSIGHT_WRITE_TARGETS = {"scheduled_job_result", "user_feedback_insights"}
+DEFAULT_DATA_CONNECTION_POLICY = {
+    "failure_policy": "fail_fast",
+    "merge_strategy": "append_json_arrays",
+    "mode": "sequential",
+}
+DEFAULT_RESULT_ACTION_POLICY = {
+    "failure_policy": "continue_on_error",
+    "mode": "sequential",
+}
 
 
 def ensure_non_blank(value: str | None, field: str) -> str:
@@ -679,12 +689,42 @@ def scheduled_job_config_with_multi_refs(
     plugin_connection_ids: list[str],
 ) -> dict[str, Any]:
     config = dict(config_json) if isinstance(config_json, dict) else {}
+    existing_orchestration = scheduled_job_orchestration_config(config)
     config["orchestration"] = {
-        **scheduled_job_orchestration_config(config),
+        **existing_orchestration,
+        "data_connections": {
+            **DEFAULT_DATA_CONNECTION_POLICY,
+            **(
+                existing_orchestration.get("data_connections")
+                if isinstance(existing_orchestration.get("data_connections"), dict)
+                else {}
+            ),
+        },
         "plugin_action_ids": list(plugin_action_ids),
         "plugin_connection_ids": list(plugin_connection_ids),
+        "result_actions": {
+            **DEFAULT_RESULT_ACTION_POLICY,
+            **(
+                existing_orchestration.get("result_actions")
+                if isinstance(existing_orchestration.get("result_actions"), dict)
+                else {}
+            ),
+        },
     }
     return config
+
+
+def scheduled_job_data_connection_policy(job: dict[str, Any]) -> dict[str, str]:
+    policy = scheduled_job_orchestration_config(job.get("config_json") or {}).get(
+        "data_connections",
+    )
+    if not isinstance(policy, dict):
+        return dict(DEFAULT_DATA_CONNECTION_POLICY)
+    return {
+        "failure_policy": str(policy.get("failure_policy") or "fail_fast"),
+        "merge_strategy": str(policy.get("merge_strategy") or "append_json_arrays"),
+        "mode": str(policy.get("mode") or "sequential"),
+    }
 
 
 def scheduled_job_with_multi_refs(job: dict[str, Any]) -> dict[str, Any]:
@@ -1243,6 +1283,133 @@ def create_scheduled_job_response(
     return scheduled_job_with_multi_refs(job)
 
 
+def dry_run_scheduled_job_response(
+    *,
+    current_store: Any,
+    payload: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    (
+        agent_id,
+        skill_ids,
+        model_gateway_config_id,
+        job_type,
+        execution_mode,
+    ) = validate_job_refs(current_store, payload)
+    (
+        plugin_action_id,
+        plugin_connection_id,
+        plugin_action_ids,
+        plugin_connection_ids,
+    ) = validate_plugin_refs(current_store, payload)
+    job = {
+        "agent_id": agent_id,
+        "config_json": scheduled_job_config_with_multi_refs(
+            payload.config_json,
+            plugin_action_ids=plugin_action_ids,
+            plugin_connection_ids=plugin_connection_ids,
+        ),
+        "execution_mode": execution_mode,
+        "id": current_store.new_id("scheduled_job_dry_run"),
+        "job_type": job_type,
+        "knowledge_document_ids": validate_knowledge_document_ids(
+            current_store,
+            payload.knowledge_document_ids,
+            user=user,
+        ),
+        "model_gateway_config_id": model_gateway_config_id,
+        "name": ensure_non_blank(payload.name, "name"),
+        "plugin_action_id": plugin_action_id,
+        "plugin_action_ids": plugin_action_ids,
+        "plugin_connection_id": plugin_connection_id,
+        "plugin_connection_ids": plugin_connection_ids,
+        "plugin_input_mapping": payload.plugin_input_mapping,
+        "plugin_output_mapping": payload.plugin_output_mapping,
+        "product_id": payload.product_id,
+        "skill_ids": skill_ids,
+        "source_system": payload.source_system,
+        "timezone": payload.timezone,
+    }
+    resolved_input_mapping = resolve_plugin_input_mapping(
+        payload.plugin_input_mapping or {},
+        job,
+    )
+    plugin_summary, _plugin_summaries = invoke_job_data_connections(
+        current_store,
+        job=job,
+        resolved_plugin_input_mapping=resolved_input_mapping,
+        run_id=job["id"],
+        trigger_type="manual",
+        user=user,
+    )
+    output_mapping = resolve_job_plugin_output_mapping(current_store, job)
+    records_imported = (
+        JobExecutionEngine.plugin_records_imported_from_result(plugin_summary, output_mapping)
+        if plugin_summary is not None
+        else 0
+    )
+    will_call_model_gateway = JobExecutionEngine.uses_ai_processing(
+        job,
+        ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
+    )
+    output_schema = {}
+    mapping_status = "not_required"
+    if will_call_model_gateway:
+        output_schema = validate_skill_output_mapping_contract(
+            current_store,
+            job=job,
+            output_mapping=output_mapping,
+        )
+        mapping_status = "succeeded"
+    response_summary = plugin_summary.get("response_summary") if plugin_summary else {}
+    result_actions = []
+    for action_id in plugin_action_ids:
+        action = current_store.plugin_actions.get(action_id) or {}
+        action_mapping = action.get("result_mapping") if isinstance(action, dict) else {}
+        mapping = action_mapping if isinstance(action_mapping, dict) else {}
+        preview = result_write_preview(response_summary or {}, mapping or output_mapping)
+        result_actions.append(
+            {
+                "action_code": action.get("code"),
+                "action_id": action_id,
+                "action_name": action.get("name"),
+                "write_preview": preview,
+                "write_target": (mapping or output_mapping).get(
+                    "write_target",
+                    "scheduled_job_result",
+                ),
+                "write_target_label": preview.get("write_target_label"),
+            },
+        )
+    data_node = (
+        JobExecutionEngine.data_connection_execution_node(
+            job=job,
+            plugin_summary=plugin_summary,
+            records_imported=records_imported,
+            resolved_plugin_input_mapping=resolved_input_mapping,
+        )
+        if plugin_summary is not None
+        else {"label": "数据连接获取内容", "records_imported": 0, "status": "not_configured"}
+    )
+    return {
+        "job_type": job_type,
+        "status": "succeeded" if plugin_summary is None or plugin_summary.get("status") == "succeeded" else "failed",
+        "stages": {
+            "ai_processing": {
+                "agent_id": agent_id,
+                "mapping_status": mapping_status,
+                "model_gateway_config_id": model_gateway_config_id,
+                "output_schema": output_schema,
+                "skill_ids": skill_ids,
+                "will_call_model_gateway": will_call_model_gateway,
+            },
+            "data_connection": data_node,
+            "result_actions": result_actions,
+        },
+    }
+
+
 def patch_scheduled_job_response(
     *,
     current_store: Any,
@@ -1529,6 +1696,103 @@ def skill_codes_for_job(current_store: Any, job: dict[str, Any]) -> list[str]:
     return codes
 
 
+def merged_skill_output_schema(current_store: Any, job: dict[str, Any]) -> dict[str, Any]:
+    sync_ai_skill_store(current_store)
+    required: list[str] = []
+    properties: dict[str, Any] = {}
+    for skill_id in job.get("skill_ids") or []:
+        skill = current_store.ai_skills.get(skill_id)
+        schema = skill.get("output_schema") if isinstance(skill, dict) else None
+        if not isinstance(schema, dict) or not schema:
+            continue
+        schema_properties = schema.get("properties")
+        if isinstance(schema_properties, dict):
+            properties.update(schema_properties)
+        schema_required = schema.get("required")
+        if isinstance(schema_required, list):
+            for item in schema_required:
+                if isinstance(item, str) and item not in required:
+                    required.append(item)
+    if not properties and not required:
+        return {}
+    return {
+        "properties": properties,
+        "required": required,
+        "type": "object",
+    }
+
+
+def schema_supports_json_path(schema: dict[str, Any], path: str | None) -> bool:
+    if not schema or path in {None, "$"}:
+        return True
+    if not isinstance(path, str) or not path.startswith("$."):
+        return True
+    current_schema: Any = schema
+    for part in path[2:].split("."):
+        if not isinstance(current_schema, dict):
+            return False
+        properties = current_schema.get("properties")
+        if not isinstance(properties, dict) or part not in properties:
+            return False
+        current_schema = properties[part]
+        if isinstance(current_schema, dict) and current_schema.get("type") == "array":
+            items = current_schema.get("items")
+            if isinstance(items, dict):
+                current_schema = items
+    return True
+
+
+def validate_skill_output_mapping_contract(
+    current_store: Any,
+    *,
+    job: dict[str, Any],
+    output_mapping: dict[str, Any],
+) -> dict[str, Any]:
+    schema = merged_skill_output_schema(current_store, job)
+    if not schema:
+        return {}
+    path_keys = (
+        "branch_path",
+        "commit_sha_path",
+        "findings_path",
+        "insights_path",
+        "repository_id_path",
+        "risk_level_path",
+        "summary_path",
+    )
+    invalid = [
+        key
+        for key in path_keys
+        if key in output_mapping and not schema_supports_json_path(schema, output_mapping.get(key))
+    ]
+    if invalid:
+        raise api_error(
+            400,
+            "SKILL_OUTPUT_MAPPING_INVALID",
+            f"Skill output schema does not contain mapped field(s): {', '.join(invalid)}",
+        )
+    return schema
+
+
+def validate_skill_output_json_contract(output_json: dict[str, Any], schema: dict[str, Any]) -> None:
+    if not schema:
+        return
+    required = schema.get("required")
+    if not isinstance(required, list):
+        return
+    missing = [
+        item
+        for item in required
+        if isinstance(item, str) and item not in output_json
+    ]
+    if missing:
+        raise api_error(
+            400,
+            "SKILL_OUTPUT_SCHEMA_INVALID",
+            f"AI output is missing required field(s): {', '.join(missing)}",
+        )
+
+
 def selected_model_gateway_config(current_store: Any, job: dict[str, Any]) -> dict[str, Any]:
     sync_reference_store(current_store)
     config_id = job.get("model_gateway_config_id")
@@ -1737,6 +2001,11 @@ def run_scheduled_job_ai_processing(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     config = selected_model_gateway_config(current_store, job)
+    output_schema = validate_skill_output_mapping_contract(
+        current_store,
+        job=job,
+        output_mapping=output_mapping,
+    )
     knowledge_references = scheduled_job_knowledge_references(
         current_store,
         job=job,
@@ -1770,6 +2039,7 @@ def run_scheduled_job_ai_processing(
         with urlopen(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
             response_payload = json.loads(response.read().decode("utf-8"))
         output_json = model_json_content(response_payload)
+        validate_skill_output_json_contract(output_json, output_schema)
         latency_ms = int((perf_counter() - started) * 1000)
         model_log = model_gateway_log(
             current_store,
@@ -2008,6 +2278,71 @@ def run_user_feedback_insight_extract_job(
     return summary, len(created_ids)
 
 
+def plugin_summary_from_log(current_store: Any, plugin_log: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action_id": plugin_log.get("action_id"),
+        "connection_environment": (
+            current_store.plugin_connections.get(plugin_log.get("connection_id")) or {}
+        ).get("environment"),
+        "connection_id": plugin_log.get("connection_id"),
+        "invocation_log_id": plugin_log["id"],
+        "latency_ms": plugin_log.get("latency_ms"),
+        "request_summary": plugin_log.get("request_summary") or {},
+        "response_summary": plugin_log.get("response_summary") or {},
+        "status": plugin_log["status"],
+    }
+
+
+def invoke_job_data_connections(
+    current_store: Any,
+    *,
+    job: dict[str, Any],
+    resolved_plugin_input_mapping: dict[str, Any],
+    run_id: str,
+    trigger_type: str,
+    user: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    if not job.get("plugin_action_id"):
+        return None, []
+    connection_ids = scheduled_job_multi_ids(
+        job,
+        "plugin_connection_ids",
+        "plugin_connection_id",
+    )
+    if not connection_ids and job.get("plugin_connection_id"):
+        connection_ids = [str(job["plugin_connection_id"])]
+    policy = scheduled_job_data_connection_policy(job)
+    summaries: list[dict[str, Any]] = []
+    for connection_id in connection_ids or [None]:
+        plugin_log = invoke_plugin_action_response(
+            action_id=job["plugin_action_id"],
+            connection_id=connection_id,
+            current_store=current_store,
+            input_payload={
+                "config": job.get("config_json") or {},
+                "input_mapping": resolved_plugin_input_mapping,
+                "job_id": job["id"],
+                "product_id": job.get("product_id"),
+                "timezone": job.get("timezone") or "UTC",
+            },
+            scheduled_job_id=job["id"],
+            scheduled_job_run_id=run_id,
+            trigger_type=trigger_type,
+            user=user,
+        )
+        summary = plugin_summary_from_log(current_store, plugin_log)
+        summaries.append(summary)
+        if summary["status"] != "succeeded" and policy["failure_policy"] == "fail_fast":
+            break
+    merged = JobExecutionEngine.merged_plugin_summary(
+        summaries,
+        failure_policy=policy["failure_policy"],
+        merge_strategy=policy["merge_strategy"],
+        resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+    )
+    return merged, summaries
+
+
 def run_scheduled_job_response(
     *,
     current_store: Any,
@@ -2103,42 +2438,23 @@ def run_scheduled_job_response(
                 job.get("plugin_input_mapping") or {},
                 job,
             )
-            plugin_log = invoke_plugin_action_response(
-                action_id=job["plugin_action_id"],
-                connection_id=job.get("plugin_connection_id"),
-                current_store=current_store,
-                input_payload={
-                    "config": job.get("config_json") or {},
-                    "input_mapping": resolved_plugin_input_mapping,
-                    "job_id": job["id"],
-                    "product_id": job.get("product_id"),
-                    "timezone": job.get("timezone") or "UTC",
-                },
-                scheduled_job_id=job_id,
-                scheduled_job_run_id=run_id,
+            plugin_summary, _plugin_summaries = invoke_job_data_connections(
+                current_store,
+                job=job,
+                resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                run_id=run_id,
                 trigger_type=trigger_type,
                 user=user,
             )
-            plugin_summary = {
-                "action_id": plugin_log.get("action_id"),
-                "connection_environment": (
-                    current_store.plugin_connections.get(plugin_log.get("connection_id")) or {}
-                ).get("environment"),
-                "connection_id": plugin_log.get("connection_id"),
-                "invocation_log_id": plugin_log["id"],
-                "latency_ms": plugin_log.get("latency_ms"),
-                "request_summary": plugin_log.get("request_summary") or {},
-                "response_summary": plugin_log.get("response_summary") or {},
-                "status": plugin_log["status"],
-            }
             plugin_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
-            plugin_records_imported = (
-                JobExecutionEngine.plugin_records_imported_from_result(
-                    plugin_summary,
-                    plugin_output_mapping,
+            if plugin_summary is not None:
+                plugin_records_imported = (
+                    JobExecutionEngine.plugin_records_imported_from_result(
+                        plugin_summary,
+                        plugin_output_mapping,
+                    )
                 )
-            )
-            run["plugin_invocation_log_id"] = plugin_log["id"]
+                run["plugin_invocation_log_id"] = plugin_summary.get("invocation_log_id")
         if job["job_type"] == "iteration_plan_suggestion_generate":
             result_summary, records_imported = run_iteration_plan_job(
                 current_store,

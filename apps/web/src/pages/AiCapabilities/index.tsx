@@ -21,7 +21,9 @@ import {
 
 type SkillFormValues = {
   code: string;
+  input_schema_json?: string;
   name: string;
+  output_schema_json?: string;
   prompt_template: string;
   requires_human_review: boolean;
   risk_level: string;
@@ -137,6 +139,24 @@ const modelGatewayLabelFromReference = (value: unknown): string | undefined => {
   return model ? `${name} (${model})` : name;
 };
 
+const prettyJson = (value: unknown) => JSON.stringify(value && typeof value === 'object' ? value : {}, null, 2);
+
+const parseJsonObject = (value: string | undefined, label: string): Record<string, unknown> => {
+  const rawValue = value?.trim() || '{}';
+  try {
+    const parsed = JSON.parse(rawValue) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${label} 必须是 JSON 对象`);
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('必须是 JSON 对象')) {
+      throw error;
+    }
+    throw new Error(`${label} 不是合法 JSON`);
+  }
+};
+
 export default function AiCapabilitiesPage() {
   const [skillForm] = Form.useForm<SkillFormValues>();
   const [skillPackageForm] = Form.useForm<SkillPackageFormValues>();
@@ -178,6 +198,8 @@ export default function AiCapabilitiesPage() {
     setEditingSkill(undefined);
     skillForm.resetFields();
     skillForm.setFieldsValue({
+      input_schema_json: prettyJson({}),
+      output_schema_json: prettyJson({}),
       requires_human_review: false,
       risk_level: 'medium',
       status: 'active',
@@ -190,7 +212,9 @@ export default function AiCapabilitiesPage() {
     setEditingSkill(record);
     skillForm.setFieldsValue({
       code: record.code,
+      input_schema_json: prettyJson(record.input_schema),
       name: record.name,
+      output_schema_json: prettyJson(record.output_schema),
       prompt_template: record.prompt_template ?? '',
       requires_human_review: Boolean(record.requires_human_review),
       risk_level: record.risk_level ?? 'medium',
@@ -234,11 +258,31 @@ export default function AiCapabilitiesPage() {
 
   const submitSkill = async () => {
     const values = await skillForm.validateFields();
+    let schemaPayload: Pick<AiSkillRecord, 'input_schema' | 'output_schema'>;
+    try {
+      schemaPayload = {
+        input_schema: parseJsonObject(values.input_schema_json, '输入 Schema JSON'),
+        output_schema: parseJsonObject(values.output_schema_json, '输出 Schema JSON'),
+      };
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Schema JSON 不合法');
+      return;
+    }
+    const payload = {
+      code: values.code,
+      name: values.name,
+      prompt_template: values.prompt_template,
+      requires_human_review: values.requires_human_review,
+      risk_level: values.risk_level,
+      status: values.status,
+      version: values.version,
+      ...schemaPayload,
+    };
     if (editingSkill) {
-      await updateAiSkill(editingSkill.id, values);
+      await updateAiSkill(editingSkill.id, payload);
       message.success('Skill 已更新');
     } else {
-      await createAiSkill(values);
+      await createAiSkill(payload);
       message.success('Skill 已创建');
     }
     closeSkillModal();
@@ -524,6 +568,7 @@ export default function AiCapabilitiesPage() {
         okText="保存"
         onCancel={closeSkillModal}
         onOk={submitSkill}
+        width={760}
       >
         <Form form={skillForm} layout="vertical" initialValues={{ requires_human_review: false, risk_level: 'medium', status: 'active', version: '1.0.0' }}>
           <Form.Item label="名称" name="name" rules={[{ required: true }]}>
@@ -537,6 +582,20 @@ export default function AiCapabilitiesPage() {
           </Form.Item>
           <Form.Item label="Prompt 模板" name="prompt_template" rules={[{ required: true }]}>
             <Input.TextArea rows={4} />
+          </Form.Item>
+          <Form.Item
+            extra="声明 Skill 需要的输入结构，定时作业运行前会用于链路校验。"
+            label="输入 Schema JSON"
+            name="input_schema_json"
+          >
+            <Input.TextArea rows={5} />
+          </Form.Item>
+          <Form.Item
+            extra="声明 Skill 输出结构，结果写入映射必须能从该结构中取到字段。"
+            label="输出 Schema JSON"
+            name="output_schema_json"
+          >
+            <Input.TextArea rows={5} />
           </Form.Item>
           <Space>
             <Form.Item label="需要人工确认" name="requires_human_review" valuePropName="checked">

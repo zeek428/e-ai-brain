@@ -3789,8 +3789,10 @@ export type AiSkillRecord = {
   allowed_tools?: string[];
   code: string;
   id: string;
+  input_schema?: Record<string, unknown>;
   manifest?: Record<string, unknown>;
   name: string;
+  output_schema?: Record<string, unknown>;
   package_checksum?: string | null;
   package_entry?: string | null;
   package_files?: string[];
@@ -3893,6 +3895,16 @@ export type ScheduledJobTemplateRecord = {
   wizard_steps?: ScheduledJobTemplateWizardStepRecord[];
 };
 
+export type ScheduledJobDryRunResult = {
+  job_type?: string;
+  stages?: {
+    ai_processing?: Record<string, unknown>;
+    data_connection?: Record<string, unknown>;
+    result_actions?: Array<Record<string, unknown>>;
+  };
+  status: string;
+};
+
 export type ScheduledJobRunRecord = {
   config_snapshot?: Record<string, unknown>;
   collector_run_id?: string | null;
@@ -3976,10 +3988,16 @@ export type PluginRecord = {
   description?: string | null;
   id: string;
   is_system?: boolean;
+  latest_template_version?: string;
   name: string;
   protocol: string;
   risk_level?: string;
+  source_plugin_code?: string | null;
+  source_plugin_id?: string | null;
   status: string;
+  template_version?: string;
+  upgrade_available?: boolean;
+  version_status?: string;
 };
 
 export type PluginMarketplaceItem = {
@@ -3995,6 +4013,7 @@ export type PluginMarketplaceItem = {
   id: string;
   installed: boolean;
   is_system?: boolean;
+  latest_template_version?: string;
   name: string;
   plugin_id?: string | null;
   protocol: string;
@@ -4003,6 +4022,9 @@ export type PluginMarketplaceItem = {
   risk_level?: string;
   status: string;
   summary?: string;
+  template_version?: string;
+  upgrade_available?: boolean;
+  version_status?: string;
 };
 
 export type PluginConnectionSchemaFieldRecord = {
@@ -4419,6 +4441,15 @@ export async function createPlugin(payload: Partial<PluginRecord>) {
   });
 }
 
+export async function copyPlugin(pluginId: string, payload: Partial<PluginRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<PluginRecord>(`/api/system/plugins/${pluginId}/copy`, {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
 export async function updatePlugin(pluginId: string, payload: Partial<PluginRecord>) {
   const token = requireAccessToken();
   return apiRequest<PluginRecord>(`/api/system/plugins/${pluginId}`, {
@@ -4702,6 +4733,15 @@ export async function generateScheduledJobTemplateFromRun(runId: string): Promis
 export async function createScheduledJob(payload: Partial<ScheduledJobRecord>) {
   const token = requireAccessToken();
   return apiRequest<ScheduledJobRecord>('/api/system/scheduled-jobs', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function dryRunScheduledJob(payload: Partial<ScheduledJobRecord>) {
+  const token = requireAccessToken();
+  return apiRequest<ScheduledJobDryRunResult>('/api/system/scheduled-jobs/dry-run', {
     body: payload,
     method: 'POST',
     token,

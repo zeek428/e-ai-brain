@@ -71,6 +71,30 @@ def require_admin(user: dict[str, Any]) -> None:
     require_roles(user, {"admin"})
 
 
+def latest_standard_plugin_template_version(plugin_code: str | None = None) -> str:
+    return STANDARD_PLUGIN_CONNECTION_TEMPLATE_VERSION
+
+
+def plugin_version_metadata(plugin: dict[str, Any]) -> dict[str, Any]:
+    latest_version = latest_standard_plugin_template_version(str(plugin.get("code") or ""))
+    template_version = str(plugin.get("template_version") or latest_version)
+    if plugin.get("is_system"):
+        version_status = "latest" if template_version == latest_version else "upgrade_available"
+        upgrade_available = version_status == "upgrade_available"
+    elif plugin.get("source_plugin_id") or plugin.get("source_plugin_code"):
+        version_status = "custom"
+        upgrade_available = False
+    else:
+        version_status = "custom"
+        upgrade_available = False
+    return {
+        "latest_template_version": latest_version,
+        "template_version": template_version,
+        "upgrade_available": upgrade_available,
+        "version_status": version_status,
+    }
+
+
 def ensure_non_blank(value: str | None, field: str) -> str:
     if value is None or not value.strip():
         raise api_error(400, "VALIDATION_ERROR", f"{field} is required")
@@ -238,10 +262,14 @@ def ensure_standard_plugins(current_store: Any) -> None:
     }
     for template in STANDARD_PLUGINS:
         existing = existing_by_code.get(template["code"])
-        if existing and all(existing.get(key) == value for key, value in template.items()):
+        standard_record = {
+            **template,
+            "template_version": latest_standard_plugin_template_version(str(template["code"])),
+        }
+        if existing and all(existing.get(key) == value for key, value in standard_record.items()):
             continue
         plugin = {
-            **template,
+            **standard_record,
             "created_at": existing.get("created_at") if existing else now,
             "created_by": existing.get("created_by") if existing else "system",
             "updated_at": now,
@@ -322,7 +350,7 @@ def _set_header(
 
 
 def public_plugin(plugin: dict[str, Any]) -> dict[str, Any]:
-    return dict(plugin)
+    return {**plugin, **plugin_version_metadata(plugin)}
 
 
 def public_connection(connection: dict[str, Any]) -> dict[str, Any]:
@@ -489,6 +517,7 @@ def list_plugin_marketplace_response(
             connection for connection in connections if connection.get("plugin_id") == plugin_id
         ]
         plugin_actions = [action for action in actions if action.get("plugin_id") == plugin_id]
+        version_metadata = plugin_version_metadata(plugin or template)
         items.append(
             {
                 "action_count": len(plugin_actions),
@@ -503,6 +532,7 @@ def list_plugin_marketplace_response(
                 "id": f"marketplace_{template['code']}",
                 "installed": plugin is not None,
                 "is_system": True,
+                "latest_template_version": version_metadata["latest_template_version"],
                 "name": template["name"],
                 "plugin_id": plugin_id if plugin is not None else None,
                 "protocol": template["protocol"],
@@ -511,6 +541,9 @@ def list_plugin_marketplace_response(
                 "risk_level": template["risk_level"],
                 "status": plugin.get("status") if plugin else "not_installed",
                 "summary": metadata.get("summary") or template["description"],
+                "template_version": version_metadata["template_version"],
+                "upgrade_available": version_metadata["upgrade_available"],
+                "version_status": version_metadata["version_status"],
             },
         )
     items.sort(key=lambda item: (item["category"], item["code"]))
@@ -809,6 +842,68 @@ def create_plugin_response(
     )
     persist_record(current_store, "save_plugin_record", plugin, audit_event=audit_event)
     return public_plugin(plugin)
+
+
+def copy_plugin_response(
+    *,
+    current_store: Any,
+    payload: Any,
+    plugin_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    sync_plugin_store(current_store)
+    ensure_standard_plugins(current_store)
+    source = current_store.integration_plugins.get(plugin_id)
+    if source is None:
+        raise api_error(404, "NOT_FOUND", "Plugin not found")
+    updates = payload.model_dump(exclude_unset=True)
+    base_code = ensure_non_blank(str(source.get("code") or plugin_id), "code")
+    code = ensure_non_blank(updates.get("code") or f"{base_code}_custom", "code")
+    if any(
+        plugin.get("code") == code
+        for plugin in current_store.integration_plugins.values()
+    ):
+        raise api_error(409, "PLUGIN_CODE_EXISTS", f"Plugin code already exists: {code}")
+    name = ensure_non_blank(updates.get("name") or f"{source.get('name') or base_code} 副本", "name")
+    now = datetime.now(UTC).isoformat()
+    copied_id = current_store.new_id("plugin")
+    copied = {
+        "category": ensure_non_blank(updates.get("category") or source.get("category") or "general", "category"),
+        "code": code,
+        "created_at": now,
+        "created_by": user["id"],
+        "description": updates.get("description", source.get("description")),
+        "id": copied_id,
+        "is_system": False,
+        "name": name,
+        "protocol": updates.get("protocol") or source.get("protocol") or "http",
+        "risk_level": updates.get("risk_level") or source.get("risk_level") or "medium",
+        "source_plugin_code": source.get("code"),
+        "source_plugin_id": source["id"],
+        "status": updates.get("status") or source.get("status") or "active",
+        "template_version": source.get("template_version")
+        or latest_standard_plugin_template_version(str(source.get("code") or "")),
+        "updated_at": now,
+    }
+    ensure_enum(copied["category"], PLUGIN_CATEGORIES, "category")
+    ensure_enum(copied["protocol"], PLUGIN_PROTOCOLS, "protocol")
+    ensure_enum(copied["status"], PLUGIN_STATUSES, "status")
+    current_store.integration_plugins[copied_id] = copied
+    audit_event = record_audit_event(
+        current_store,
+        event_type="plugin.copied",
+        actor_id=user["id"],
+        subject_type="plugin",
+        subject_id=copied_id,
+        payload={
+            "code": copied["code"],
+            "source_plugin_id": source["id"],
+            "source_plugin_code": source.get("code"),
+        },
+    )
+    persist_record(current_store, "save_plugin_record", copied, audit_event=audit_event)
+    return public_plugin(copied)
 
 
 def patch_plugin_response(

@@ -3,6 +3,7 @@ from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 
+import app.services.scheduled_jobs as scheduled_jobs_service
 from app.main import app
 from app.services.scheduled_job_execution_engine import ScheduledJobExecutionEngine
 
@@ -348,6 +349,15 @@ def test_scheduled_job_preserves_multiple_plugin_connections_and_actions():
         primary_connection["id"],
         backup_connection["id"],
     ]
+    assert job["config_json"]["orchestration"]["data_connections"] == {
+        "failure_policy": "fail_fast",
+        "merge_strategy": "append_json_arrays",
+        "mode": "sequential",
+    }
+    assert job["config_json"]["orchestration"]["result_actions"] == {
+        "failure_policy": "continue_on_error",
+        "mode": "sequential",
+    }
 
     listed = client.get("/api/system/scheduled-jobs", headers=admin_headers).json()["data"]["items"]
     listed_job = next(item for item in listed if item["id"] == job["id"])
@@ -356,6 +366,342 @@ def test_scheduled_job_preserves_multiple_plugin_connections_and_actions():
         primary_connection["id"],
         backup_connection["id"],
     ]
+
+
+def test_scheduled_job_runs_multiple_data_connections_with_merged_dag_node():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "multi_run_warehouse_reader",
+            "name": "多连接运行读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    primary_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://primary-run-warehouse.example.com",
+            "environment": "prod",
+            "name": "主运行仓库",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    backup_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://backup-run-warehouse.example.com",
+            "environment": "prod",
+            "name": "备运行仓库",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_multi_connection_rows",
+            "connection_id": primary_connection["id"],
+            "name": "多连接取数",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {
+                    "row_count": 2,
+                    "rows": [{"id": "a"}, {"id": "b"}],
+                },
+                "path": "/weekly",
+            },
+            "result_mapping": {
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "多连接运行作业",
+            "plugin_action_id": action["id"],
+            "plugin_connection_ids": [primary_connection["id"], backup_connection["id"]],
+            "schedule_type": "manual",
+            "source_system": "warehouse",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    assert run["records_imported"] == 4
+    data_node = run["result_summary"]["execution_nodes"]["data_connection"]
+    assert data_node["connection_count"] == 2
+    assert data_node["successful_count"] == 2
+    assert data_node["failed_count"] == 0
+    assert data_node["merge_strategy"] == "append_json_arrays"
+    assert data_node["failure_policy"] == "fail_fast"
+    assert [item["connection_id"] for item in data_node["items"]] == [
+        primary_connection["id"],
+        backup_connection["id"],
+    ]
+    assert data_node["response_summary"]["json"]["row_count"] == 4
+    assert len(data_node["response_summary"]["json"]["rows"]) == 4
+    trace_data_node = next(
+        node for node in run["result_summary"]["trace_graph"]["nodes"] if node["id"] == "data_connection"
+    )
+    assert trace_data_node["output"]["records_imported"] == 4
+    assert trace_data_node["output"]["connection_count"] == 2
+
+
+def test_scheduled_job_validates_skill_output_schema_before_ai_processing(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product = create_product(admin_headers)
+    model_gateway = create_model_gateway(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "feedback_schema_skill",
+            "input_schema": {"type": "object"},
+            "name": "反馈 Schema Skill",
+            "output_schema": {
+                "properties": {"insights": {"type": "array"}},
+                "required": ["insights"],
+                "type": "object",
+            },
+            "prompt_template": "把反馈输出为 insights 数组。",
+            "status": "active",
+            "version": "1.0.0",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "feedback_schema_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈 Schema AI角色",
+            "status": "active",
+            "system_prompt": "输出结构化反馈洞察。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "schema_feedback_reader",
+            "name": "Schema 反馈读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://schema-feedback.example.com",
+            "environment": "prod",
+            "name": "Schema 反馈连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_schema_feedback",
+            "connection_id": connection["id"],
+            "name": "拉取 Schema 反馈",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {"row_count": 1, "rows": [{"content": "卡顿"}]},
+                "path": "/feedback",
+            },
+            "result_mapping": {
+                "insights_path": "$.missing",
+                "records_imported_path": "$.row_count",
+                "write_target": "user_feedback_insights",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "user_feedback_insight_extract",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "Schema 映射预检作业",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    model_called = False
+
+    def fail_if_model_called(*_args, **_kwargs):
+        nonlocal model_called
+        model_called = True
+        raise AssertionError("model gateway should not be called when mapping preflight fails")
+
+    monkeypatch.setattr(scheduled_jobs_service, "urlopen", fail_if_model_called)
+
+    run = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=admin_headers,
+    ).json()["data"]
+
+    assert model_called is False
+    assert run["status"] == "failed"
+    assert run["error_code"] == "SKILL_OUTPUT_MAPPING_INVALID"
+    skill_node = run["result_summary"]["execution_nodes"]["skill_processing"]
+    assert skill_node["status"] == "failed"
+    assert "insights_path" in skill_node["error_message"]
+
+
+def test_scheduled_job_dry_run_previews_data_ai_contract_and_write_mapping():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    product = create_product(admin_headers)
+    model_gateway = create_model_gateway(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "feedback_dry_run_skill",
+            "input_schema": {"type": "object"},
+            "name": "反馈试运行 Skill",
+            "output_schema": {
+                "properties": {"insights": {"type": "array"}},
+                "required": ["insights"],
+                "type": "object",
+            },
+            "prompt_template": "输出 insights 数组。",
+            "status": "active",
+            "version": "1.0.0",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "feedback_dry_run_agent",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈试运行 AI角色",
+            "status": "active",
+            "system_prompt": "分析反馈。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "dry_run_feedback_reader",
+            "name": "试运行反馈读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://dry-run-feedback.example.com",
+            "environment": "prod",
+            "name": "试运行反馈连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_dry_run_feedback",
+            "connection_id": connection["id"],
+            "name": "拉取试运行反馈",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {"row_count": 2, "rows": [{"id": 1}, {"id": 2}]},
+                "path": "/feedback",
+            },
+            "result_mapping": {
+                "insights_path": "$.insights",
+                "records_imported_path": "$.row_count",
+                "write_target": "user_feedback_insights",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        "/api/system/scheduled-jobs/dry-run",
+        json={
+            "agent_id": agent["id"],
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "user_feedback_insight_extract",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "反馈试运行草稿",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "schedule_type": "manual",
+            "skill_ids": [skill["id"]],
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "succeeded"
+    assert data["stages"]["data_connection"]["connection_id"] == connection["id"]
+    assert data["stages"]["data_connection"]["records_imported"] == 2
+    assert data["stages"]["ai_processing"]["will_call_model_gateway"] is True
+    assert data["stages"]["ai_processing"]["mapping_status"] == "succeeded"
+    assert data["stages"]["ai_processing"]["output_schema"]["required"] == ["insights"]
+    assert data["stages"]["result_actions"][0]["write_target"] == "user_feedback_insights"
+    assert data["stages"]["result_actions"][0]["write_preview"]["records_imported"] == 2
 
 
 def build_skill_package() -> bytes:

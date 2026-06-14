@@ -36,6 +36,7 @@ import {
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   createScheduledJob,
   deleteScheduledJob,
+  dryRunScheduledJob,
   fetchActiveProductOptions,
   fetchAiAgents,
   fetchAiSkills,
@@ -62,6 +63,7 @@ import {
   type ProductFilterOption,
   type ResultWriteRecord,
   type ScheduledJobRecord,
+  type ScheduledJobDryRunResult,
   type ScheduledJobResultAction,
   type ScheduledJobRunObservability,
   type ScheduledJobRunRecord,
@@ -566,6 +568,14 @@ function resultWriteRecordFieldText(value: unknown): string {
     return formatJsonValue(value);
   }
   return String(value);
+}
+
+function writeStrategyLabelFromAction(action: PluginActionRecord): string {
+  const mapping = action.result_mapping ?? {};
+  const writeTargetLabel = typeof mapping.write_target_label === 'string' ? mapping.write_target_label : undefined;
+  const writeTarget = typeof mapping.write_target === 'string' ? mapping.write_target : undefined;
+  const strategyLabel = writeTargetLabel ?? writeTarget ?? action.name;
+  return `${strategyLabel} (${action.code})`;
 }
 
 function resultWriteRecordSummaryText(record: ResultWriteRecord) {
@@ -1469,6 +1479,8 @@ export default function ScheduledJobsPage() {
   const [runningJobId, setRunningJobId] = useState<string | undefined>();
   const [connectionTestResult, setConnectionTestResult] = useState<PluginConnectionTestResult | undefined>();
   const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
+  const [dryRunResult, setDryRunResult] = useState<ScheduledJobDryRunResult | undefined>();
+  const [dryRunning, setDryRunning] = useState(false);
   const selectedConnectionEnvironment = Form.useWatch('connection_environment', form);
   const selectedPluginConnectionIds = Form.useWatch('plugin_connection_ids', form);
   const selectedPluginActionIds = Form.useWatch('plugin_action_ids', form);
@@ -1989,6 +2001,7 @@ export default function ScheduledJobsPage() {
     setTemplateSource(undefined);
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
+    setDryRunResult(undefined);
     form.resetFields();
     form.setFieldsValue({
       enabled: true,
@@ -2011,6 +2024,7 @@ export default function ScheduledJobsPage() {
     setAssistantDraftSource(undefined);
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
+    setDryRunResult(undefined);
     setTemplateSource({
       sourceId: job.id,
       sourceType: 'scheduled_job',
@@ -2037,6 +2051,7 @@ export default function ScheduledJobsPage() {
     setAssistantDraftSource(undefined);
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
+    setDryRunResult(undefined);
     setTemplateSource({
       sourceId: run.id,
       sourceType: 'scheduled_job_run',
@@ -2080,6 +2095,7 @@ export default function ScheduledJobsPage() {
       setAssistantDraftPayload(undefined);
       setAssistantDraftSource(undefined);
       setConnectionTestResult(undefined);
+      setDryRunResult(undefined);
       setGeneratedRunTemplate(template);
       setTemplateSource({
         sourceId: run.id,
@@ -2109,6 +2125,7 @@ export default function ScheduledJobsPage() {
     setTemplateSource(undefined);
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
+    setDryRunResult(undefined);
     form.resetFields();
     form.setFieldsValue({
       agent_id: job.agent_id ?? undefined,
@@ -2146,17 +2163,12 @@ export default function ScheduledJobsPage() {
     setTemplateSource(undefined);
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
+    setDryRunning(false);
+    setDryRunResult(undefined);
     form.resetFields();
   };
 
-  const submitJob = async () => {
-    let values: ScheduledJobFormValues;
-    try {
-      await form.validateFields();
-      values = form.getFieldsValue(true) as ScheduledJobFormValues;
-    } catch {
-      return;
-    }
+  const buildJobRequestPayload = (values: ScheduledJobFormValues): Partial<ScheduledJobRecord> => {
     const { template, ...jobValues } = values;
     const selectedTemplate = availableJobTemplates.find((item) => item.code === template);
     delete jobValues.connection_environment;
@@ -2231,6 +2243,46 @@ export default function ScheduledJobsPage() {
           : [],
       skill_ids: values.skill_ids ?? [],
     };
+    return requestPayload;
+  };
+
+  const currentValidatedJobPayload = async () => {
+    await form.validateFields();
+    return buildJobRequestPayload(form.getFieldsValue(true) as ScheduledJobFormValues);
+  };
+
+  const dryRunJob = async () => {
+    let requestPayload: Partial<ScheduledJobRecord>;
+    try {
+      requestPayload = await currentValidatedJobPayload();
+    } catch {
+      return;
+    }
+    const hide = message.loading('正在进行全链路试运行，请稍候...', 0);
+    setDryRunning(true);
+    try {
+      const result = await dryRunScheduledJob(requestPayload);
+      setDryRunResult(result);
+      if (result.status === 'succeeded') {
+        message.success('全链路试运行完成');
+      } else {
+        message.error(`全链路试运行 ${result.status}`);
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '全链路试运行失败');
+    } finally {
+      hide();
+      setDryRunning(false);
+    }
+  };
+
+  const submitJob = async () => {
+    let requestPayload: Partial<ScheduledJobRecord>;
+    try {
+      requestPayload = await currentValidatedJobPayload();
+    } catch {
+      return;
+    }
     if (editingJob) {
       await updateScheduledJob(editingJob.id, requestPayload);
       message.success('定时作业已更新');
@@ -2549,11 +2601,29 @@ export default function ScheduledJobsPage() {
       <Modal
         aria-label={editingJob ? '编辑定时作业' : '新增定时作业'}
         destroyOnHidden
+        footer={(
+          <Space>
+            <Button htmlType="button" onClick={closeJobModal}>取消</Button>
+            <Button
+              htmlType="button"
+              loading={dryRunning}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void dryRunJob();
+              }}
+            >
+              全链路试运行
+            </Button>
+            <Button htmlType="button" type="primary" onClick={() => void submitJob()}>
+              确定
+            </Button>
+          </Space>
+        )}
         open={modalOpen}
         title={editingJob ? '编辑定时作业' : '新增定时作业'}
         width={820}
         onCancel={closeJobModal}
-        onOk={submitJob}
       >
         {templateSource ? (
           <div
@@ -2771,20 +2841,20 @@ export default function ScheduledJobsPage() {
           </FormSection>
           <FormSection label="动作配置" marker="输出">
             <Form.Item
-              label="结果动作"
+              label="写入策略"
               name="plugin_action_ids"
-              rules={[requiredForJobTypes(pluginRequiredJobTypes, '请选择结果动作')]}
-              extra="可选择多个结果动作，按配置顺序执行写入或通知"
+              rules={[requiredForJobTypes(pluginRequiredJobTypes, '请选择写入策略')]}
+              extra="选择结果写到哪里或通知到哪里，后台按配置顺序执行对应动作"
             >
               <Select
                 allowClear
                 mode="multiple"
                 maxTagCount={2}
                 optionFilterProp="label"
-                placeholder="请选择写入或通知动作"
+                placeholder="请选择写入策略"
                 showSearch
                 options={pluginActions.map((action) => ({
-                  label: `${action.name} (${action.code})`,
+                  label: writeStrategyLabelFromAction(action),
                   value: action.id,
                 }))}
               />
@@ -2866,6 +2936,29 @@ export default function ScheduledJobsPage() {
               </Form.Item>
             </Space>
           </FormSection>
+          {dryRunResult ? (
+            <div
+              aria-label="全链路试运行结果"
+              style={{
+                background: '#f8fafc',
+                border: '1px solid #dbeafe',
+                borderRadius: 6,
+                marginTop: 16,
+                padding: 16,
+              }}
+            >
+              <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+                <Space>
+                  <Typography.Text strong>全链路试运行结果</Typography.Text>
+                  <Tag color={dryRunResult.status === 'succeeded' ? 'green' : 'red'}>{dryRunResult.status}</Tag>
+                  <Typography.Text type="secondary">{dryRunResult.job_type}</Typography.Text>
+                </Space>
+                <JsonPreview title="数据连接预览" value={dryRunResult.stages?.data_connection} />
+                <JsonPreview title="AI契约校验" value={dryRunResult.stages?.ai_processing} />
+                <JsonPreview title="结果写入预览" value={dryRunResult.stages?.result_actions} />
+              </Space>
+            </div>
+          ) : null}
         </Form>
       </Modal>
 

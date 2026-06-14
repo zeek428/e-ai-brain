@@ -18,6 +18,7 @@ function installScheduledJobsFetchMock(
 ) {
   const jobCreateBodies: unknown[] = [];
   const jobDeleteIds: string[] = [];
+  const jobDryRunBodies: unknown[] = [];
   const jobUpdateBodies: unknown[] = [];
   const connectionTestIds: string[] = [];
   const generatedTemplateRequests: string[] = [];
@@ -222,6 +223,36 @@ function installScheduledJobsFetchMock(
       const body = JSON.parse(String(init.body));
       jobCreateBodies.push(body);
       return jsonResponse({ data: { id: `scheduled_job_${jobCreateBodies.length}`, ...body, status: 'active' } });
+    }
+    if (input === '/api/system/scheduled-jobs/dry-run' && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body));
+      jobDryRunBodies.push(body);
+      return jsonResponse({
+        data: {
+          job_type: body.job_type,
+          stages: {
+            ai_processing: {
+              mapping_status: 'succeeded',
+              output_schema: { required: ['insights'], type: 'object' },
+              will_call_model_gateway: true,
+            },
+            data_connection: {
+              connection_id: 'connection_maxcompute_prod',
+              records_imported: 18,
+              request_url: 'https://maxcompute.example.com/api?week_start=20260601',
+              status: 'succeeded',
+            },
+            result_actions: [
+              {
+                action_id: 'plugin_action_maxcompute',
+                write_preview: { records_imported: 18, write_target_label: '用户洞察表' },
+                write_target: 'user_feedback_insights',
+              },
+            ],
+          },
+          status: 'succeeded',
+        },
+      });
     }
     if (input === '/api/system/scheduled-jobs/scheduled_job_weekly_feedback' && init?.method === 'PATCH') {
       jobUpdateBodies.push(JSON.parse(String(init.body)));
@@ -472,6 +503,7 @@ function installScheduledJobsFetchMock(
     generatedTemplateRequests,
     jobCreateBodies,
     jobDeleteIds,
+    jobDryRunBodies,
     jobUpdateBodies,
     resultWriteRecordCalls,
     runJobBodies,
@@ -533,8 +565,8 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('Skills')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('知识引用')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('动作配置')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('结果动作')).toBeInTheDocument();
-    expect(within(dialog).getByText('可选择多个结果动作，按配置顺序执行写入或通知')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('写入策略')).toBeInTheDocument();
+    expect(within(dialog).getByText('选择结果写到哪里或通知到哪里，后台按配置顺序执行对应动作')).toBeInTheDocument();
     expect(within(dialog).queryByText('数据扫描执行')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('结果写入执行')).not.toBeInTheDocument();
     expect(consoleError).not.toHaveBeenCalled();
@@ -642,6 +674,38 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('编排节点 数据连接')).toHaveTextContent('128ms');
   });
 
+  it('runs a full scheduled job draft dry-run from the create dialog', async () => {
+    const { jobDryRunBodies } = installScheduledJobsFetchMock();
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+    await waitFor(() => expect(within(dialog).getByLabelText('作业模板')).toBeInTheDocument());
+    fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
+    fireEvent.click(await screen.findByText('每周用户反馈洞察抽取'));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '全链路试运行' }));
+
+    await waitFor(() =>
+      expect(jobDryRunBodies[0]).toMatchObject({
+        agent_id: 'agent_insight',
+        job_type: 'user_feedback_insight_extract',
+        model_gateway_config_id: 'model_gateway_scheduled_job',
+        plugin_action_id: 'plugin_action_maxcompute',
+        plugin_connection_id: 'connection_maxcompute_prod',
+        skill_ids: ['skill_feedback'],
+      }),
+    );
+    const dryRunResult = await within(dialog).findByLabelText('全链路试运行结果');
+    expect(within(dryRunResult).getByText('数据连接预览')).toBeInTheDocument();
+    expect(within(dryRunResult).getByText('AI契约校验')).toBeInTheDocument();
+    expect(within(dryRunResult).getByText('结果写入预览')).toBeInTheDocument();
+    expect(within(dryRunResult).getByText(/connection_maxcompute_prod/)).toBeInTheDocument();
+    expect(within(dryRunResult).getByText(/user_feedback_insights/)).toBeInTheDocument();
+  });
+
   it('filters data connection options by selected environment without submitting the filter field', async () => {
     const { jobCreateBodies } = installScheduledJobsFetchMock();
 
@@ -697,7 +761,7 @@ describe('ScheduledJobsPage', () => {
 
     fireEvent.mouseDown(within(feedbackDialog).getByLabelText('数据连接'));
     fireEvent.click(await screen.findByText('备用 MaxCompute 项目 (prod)'));
-    fireEvent.mouseDown(within(feedbackDialog).getByLabelText('结果动作'));
+    fireEvent.mouseDown(within(feedbackDialog).getByLabelText('写入策略'));
     fireEvent.click(await screen.findByText('写入用户洞察表 (write_weekly_user_feedback_insights)'));
 
     fireEvent.click(within(feedbackDialog).getByRole('button', { name: /OK|确\s*定/ }));

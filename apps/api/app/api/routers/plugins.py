@@ -22,6 +22,7 @@ from app.services.ai_executor_runners import (
     timeout_ai_executor_tasks_response,
 )
 from app.services.plugins import (
+    copy_plugin_response,
     create_plugin_action_response,
     create_plugin_connection_response,
     create_plugin_response,
@@ -59,6 +60,16 @@ class PluginRequest(BaseModel):
 
 
 class PluginPatchRequest(BaseModel):
+    category: str | None = None
+    code: str | None = None
+    description: str | None = None
+    name: str | None = None
+    protocol: str | None = None
+    risk_level: str | None = None
+    status: str | None = None
+
+
+class PluginCopyRequest(BaseModel):
     category: str | None = None
     code: str | None = None
     description: str | None = None
@@ -476,6 +487,24 @@ def create_plugin(
 ) -> dict[str, Any]:
     return envelope(
         create_plugin_response(current_store=store(request), payload=payload, user=user),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/plugins/{plugin_id}/copy")
+def copy_plugin(
+    payload: PluginCopyRequest,
+    plugin_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        copy_plugin_response(
+            current_store=store(request),
+            payload=payload,
+            plugin_id=plugin_id,
+            user=user,
+        ),
         get_trace_id(request),
     )
 

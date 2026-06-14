@@ -147,6 +147,7 @@ function installPluginsFetchMock(
   const connectionListCalls: string[] = [];
   const connectionUpdateBodies: unknown[] = [];
   const connectionTestCalls: string[] = [];
+  const pluginCopyBodies: unknown[] = [];
   const pluginDeleteIds: string[] = [];
   const pluginUpdateBodies: unknown[] = [];
   const runnerBodies: unknown[] = [];
@@ -187,6 +188,8 @@ function installPluginsFetchMock(
                 protocol: 'http',
                 risk_level: 'medium',
                 status: 'active',
+                template_version: 'v1',
+                version_status: 'latest',
               },
               {
                 category: 'devops',
@@ -197,6 +200,8 @@ function installPluginsFetchMock(
                 protocol: 'http',
                 risk_level: 'medium',
                 status: 'active',
+                template_version: 'v1',
+                version_status: 'latest',
               },
               {
                 category: 'collaboration',
@@ -207,6 +212,8 @@ function installPluginsFetchMock(
                 protocol: 'http',
                 risk_level: 'medium',
                 status: 'active',
+                template_version: 'v1',
+                version_status: 'latest',
               },
             ]
           : []),
@@ -265,6 +272,7 @@ function installPluginsFetchMock(
               id: 'marketplace_gitlab',
               installed: true,
               is_system: true,
+              latest_template_version: 'v1',
               name: 'GitLab',
               plugin_id: 'plugin_standard_gitlab',
               protocol: 'http',
@@ -273,6 +281,9 @@ function installPluginsFetchMock(
               risk_level: 'medium',
               status: 'active',
               summary: '连接 GitLab API，读取项目、MR 和代码质量数据。',
+              template_version: 'v1',
+              upgrade_available: false,
+              version_status: 'latest',
             },
             {
               action_count: 0,
@@ -317,6 +328,7 @@ function installPluginsFetchMock(
               id: 'marketplace_github',
               installed: true,
               is_system: true,
+              latest_template_version: 'v1',
               name: 'GitHub',
               plugin_id: 'plugin_standard_github',
               protocol: 'http',
@@ -325,6 +337,9 @@ function installPluginsFetchMock(
               risk_level: 'medium',
               status: 'active',
               summary: '连接 GitHub API，读取仓库、PR 和代码扫描数据。',
+              template_version: 'v1',
+              upgrade_available: false,
+              version_status: 'latest',
             },
             {
               action_count: 0,
@@ -371,6 +386,7 @@ function installPluginsFetchMock(
               id: 'marketplace_email',
               installed: true,
               is_system: true,
+              latest_template_version: 'v1',
               name: '邮箱',
               plugin_id: 'plugin_standard_email',
               protocol: 'http',
@@ -379,6 +395,9 @@ function installPluginsFetchMock(
               risk_level: 'medium',
               status: 'active',
               summary: '连接企业邮件网关或邮件 API。',
+              template_version: 'v1',
+              upgrade_available: false,
+              version_status: 'latest',
             },
           ],
           total: 3,
@@ -752,6 +771,24 @@ function installPluginsFetchMock(
       pluginDeleteIds.push('plugin_maxcompute');
       return jsonResponse({ data: { deleted: true, id: 'plugin_maxcompute' } });
     }
+    if (input === '/api/system/plugins/plugin_standard_github/copy' && init?.method === 'POST') {
+      pluginCopyBodies.push(JSON.parse(String(init.body)));
+      return jsonResponse({
+        data: {
+          category: 'devops',
+          code: 'github_custom',
+          id: 'plugin_github_custom',
+          is_system: false,
+          name: 'GitHub 副本',
+          protocol: 'http',
+          risk_level: 'medium',
+          source_plugin_id: 'plugin_standard_github',
+          status: 'active',
+          template_version: 'v1',
+          version_status: 'custom',
+        },
+      });
+    }
     if (
       typeof input === 'string'
       && input.startsWith('/api/system/plugin-connections')
@@ -939,6 +976,7 @@ function installPluginsFetchMock(
     connectionUpdateBodies,
     fetchMock,
     pluginDeleteIds,
+    pluginCopyBodies,
     pluginUpdateBodies,
     resolveConnectionTest: () => {
       connectionTestDeferred?.resolve(jsonResponse(pluginConnectionTestBody()));
@@ -1128,6 +1166,27 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByDisplayValue('owner')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('repo')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('application/vnd.github+json')).toBeInTheDocument();
+  });
+
+  it('shows template version status and copies an official plugin as custom', async () => {
+    const { pluginCopyBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
+
+    render(<PluginsPage />);
+
+    expect(await screen.findByText('GitHub')).toBeInTheDocument();
+    expect(screen.getAllByText('v1 最新').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: '复制官方插件 GitHub' }));
+
+    await waitFor(() =>
+      expect(pluginCopyBodies).toEqual([
+        {
+          code: 'github_custom',
+          name: 'GitHub 副本',
+        },
+      ]),
+    );
+    expect(await screen.findByText('官方插件已复制为自定义插件')).toBeInTheDocument();
   });
 
   it('opens official action templates from the plugin marketplace', async () => {

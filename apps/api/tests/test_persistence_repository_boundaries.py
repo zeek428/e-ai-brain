@@ -139,6 +139,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "047_plugin_connection_last_test_summary.sql" in applied_migrations
     assert "048_plugin_connection_test_history.sql" in applied_migrations
     assert "050_code_inspection_remediation_tasks.sql" in applied_migrations
+    assert "053_menu_management.sql" in applied_migrations
 
 
 def test_postgres_brain_app_read_models_delegate_to_domain_repository(monkeypatch):

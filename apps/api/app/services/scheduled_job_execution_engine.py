@@ -58,7 +58,7 @@ class ScheduledJobExecutionEngine:
         request_summary = plugin_summary.get("request_summary") or {}
         request_preview = request_summary.get("request_preview") or {}
         response_summary = plugin_summary.get("response_summary") or {}
-        return {
+        node = {
             "action_id": plugin_summary.get("action_id") or job.get("plugin_action_id"),
             "connection_environment": plugin_summary.get("connection_environment"),
             "connection_id": plugin_summary.get("connection_id")
@@ -75,6 +75,125 @@ class ScheduledJobExecutionEngine:
             "response_status_code": response_summary.get("status_code"),
             "response_summary": response_summary,
             "status": plugin_summary.get("status") or "unknown",
+        }
+        items = plugin_summary.get("items")
+        if isinstance(items, list):
+            node["connection_count"] = int(plugin_summary.get("connection_count") or len(items))
+            node["failed_count"] = int(plugin_summary.get("failed_count") or 0)
+            node["failure_policy"] = plugin_summary.get("failure_policy")
+            node["invocation_log_ids"] = [
+                item.get("plugin_invocation_log_id")
+                for item in items
+                if isinstance(item, dict) and item.get("plugin_invocation_log_id")
+            ]
+            node["items"] = items
+            node["merge_strategy"] = plugin_summary.get("merge_strategy")
+            node["successful_count"] = int(plugin_summary.get("successful_count") or 0)
+        return node
+
+    @classmethod
+    def merged_plugin_summary(
+        cls,
+        summaries: list[dict[str, Any]],
+        *,
+        failure_policy: str,
+        merge_strategy: str,
+        resolved_plugin_input_mapping: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not summaries:
+            return None
+        if len(summaries) == 1:
+            return summaries[0]
+        merged_json = cls._merged_response_json(
+            [
+                (summary.get("response_summary") or {}).get("json")
+                for summary in summaries
+            ],
+            merge_strategy=merge_strategy,
+        )
+        first = summaries[0]
+        first_response_summary = first.get("response_summary") or {}
+        statuses = [str(summary.get("status") or "unknown") for summary in summaries]
+        successful_count = sum(1 for status in statuses if status == "succeeded")
+        failed_count = sum(1 for status in statuses if status != "succeeded")
+        status = (
+            "succeeded"
+            if failed_count == 0
+            else "failed"
+            if successful_count == 0
+            else "partial_failed"
+        )
+        items = [
+            cls._plugin_summary_item(
+                summary,
+                resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+            )
+            for summary in summaries
+        ]
+        return {
+            **first,
+            "connection_count": len(summaries),
+            "failed_count": failed_count,
+            "failure_policy": failure_policy,
+            "items": items,
+            "latency_ms": sum(
+                int(summary.get("latency_ms") or 0)
+                for summary in summaries
+                if isinstance(summary.get("latency_ms"), int | float)
+            ),
+            "merge_strategy": merge_strategy,
+            "response_summary": {
+                **first_response_summary,
+                "json": merged_json,
+                "merged_from_connection_count": len(summaries),
+            },
+            "status": status,
+            "successful_count": successful_count,
+        }
+
+    @staticmethod
+    def _merged_response_json(values: list[Any], *, merge_strategy: str) -> Any:
+        dict_values = [value for value in values if isinstance(value, dict)]
+        if merge_strategy != "append_json_arrays" or not dict_values:
+            return dict_values[0] if dict_values else {}
+        merged: dict[str, Any] = {}
+        for value in dict_values:
+            for key, item in value.items():
+                if isinstance(item, list):
+                    merged.setdefault(key, [])
+                    if isinstance(merged[key], list):
+                        merged[key].extend(item)
+                    continue
+                if isinstance(item, int | float) and key.endswith("count"):
+                    current = merged.get(key)
+                    merged[key] = (current if isinstance(current, int | float) else 0) + item
+                    continue
+                if key not in merged:
+                    merged[key] = item
+        return merged
+
+    @staticmethod
+    def _plugin_summary_item(
+        summary: dict[str, Any],
+        *,
+        resolved_plugin_input_mapping: dict[str, Any],
+    ) -> dict[str, Any]:
+        request_summary = summary.get("request_summary") or {}
+        request_preview = request_summary.get("request_preview") or {}
+        response_summary = summary.get("response_summary") or {}
+        return {
+            "action_id": summary.get("action_id"),
+            "connection_environment": summary.get("connection_environment"),
+            "connection_id": summary.get("connection_id"),
+            "input_mapping": resolved_plugin_input_mapping,
+            "latency_ms": summary.get("latency_ms"),
+            "plugin_invocation_log_id": summary.get("invocation_log_id"),
+            "request_method": request_summary.get("method") or request_preview.get("method"),
+            "request_summary": request_summary,
+            "request_url": request_summary.get("url") or request_preview.get("url"),
+            "response_status_code": response_summary.get("status_code"),
+            "response_summary": response_summary,
+            "status": summary.get("status") or "unknown",
         }
 
     @staticmethod
@@ -341,6 +460,7 @@ class ScheduledJobExecutionEngine:
     def _trace_node_output(node_id: str, node: dict[str, Any]) -> dict[str, Any]:
         if node_id == "data_connection":
             return {
+                "connection_count": node.get("connection_count"),
                 "records_imported": node.get("records_imported"),
                 "response_status_code": node.get("response_status_code"),
             }
