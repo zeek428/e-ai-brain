@@ -10,14 +10,17 @@ import './global.css';
 
 type InitialState = {
   currentUser: {
+    id?: string;
     isAuthenticated?: boolean;
     menuTree?: MenuTreeNode[];
     name: string;
     role: string;
+    username?: string;
   };
 };
 
 type MenuRoute = {
+  children?: MenuRoute[];
   hideInMenu?: boolean;
   path?: string;
   routes?: MenuRoute[];
@@ -36,6 +39,52 @@ function collectAuthorizedMenuPaths(menuTree: MenuTreeNode[] | undefined) {
   return paths;
 }
 
+function collectMenuPathOrder(menuTree: MenuTreeNode[] | undefined) {
+  const orderByPath = new Map<string, number>();
+  let order = 0;
+  const visit = (node: MenuTreeNode) => {
+    if (node.path && !orderByPath.has(node.path)) {
+      orderByPath.set(node.path, order);
+      order += 1;
+    }
+    node.children?.forEach(visit);
+  };
+  menuTree?.forEach(visit);
+  return orderByPath;
+}
+
+function sortRoutesByMenuTreeOrder(menuData: MenuRoute[], orderByPath: Map<string, number>) {
+  return [...menuData].sort((left, right) => {
+    const leftOrder = left.path ? orderByPath.get(left.path) : undefined;
+    const rightOrder = right.path ? orderByPath.get(right.path) : undefined;
+    const leftValue = leftOrder ?? Number.MAX_SAFE_INTEGER;
+    const rightValue = rightOrder ?? Number.MAX_SAFE_INTEGER;
+    return leftValue - rightValue;
+  });
+}
+
+function selectCurrentMenuTree(
+  initialUser: InitialState['currentUser'] | undefined,
+  storedUser: Awaited<ReturnType<typeof getStoredCurrentUser>>,
+) {
+  if (!storedUser) {
+    return initialUser?.menuTree;
+  }
+  if (!initialUser?.isAuthenticated) {
+    return storedUser.menu_tree;
+  }
+  if (!initialUser.id && !initialUser.username) {
+    return storedUser.menu_tree ?? initialUser.menuTree;
+  }
+  if (initialUser.id && storedUser.id && initialUser.id !== storedUser.id) {
+    return storedUser.menu_tree;
+  }
+  if (initialUser.username && storedUser.username && initialUser.username !== storedUser.username) {
+    return storedUser.menu_tree;
+  }
+  return storedUser.menu_tree ?? initialUser.menuTree;
+}
+
 function filterMenuDataByAuthorization(
   menuData: MenuRoute[],
   menuTree: MenuTreeNode[] | undefined,
@@ -45,21 +94,28 @@ function filterMenuDataByAuthorization(
     return isAuthenticated ? [] : menuData;
   }
   const authorizedPaths = collectAuthorizedMenuPaths(menuTree);
+  const orderByPath = collectMenuPathOrder(menuTree);
   const filterRoute = (route: MenuRoute): MenuRoute | undefined => {
     if (route.hideInMenu) {
       return route;
     }
-    const children = route.routes?.map(filterRoute).filter(Boolean) as MenuRoute[] | undefined;
+    const sourceChildren = route.routes ?? route.children;
+    const children = sourceChildren?.map(filterRoute).filter(Boolean) as MenuRoute[] | undefined;
     const isAuthorized = route.path ? authorizedPaths.has(route.path) : false;
     if (!isAuthorized && !children?.length) {
       return undefined;
     }
+    const sortedChildren = children?.length ? sortRoutesByMenuTreeOrder(children, orderByPath) : undefined;
     return {
       ...route,
-      routes: children?.length ? children : route.routes,
+      ...(route.children ? { children: sortedChildren ?? route.children } : {}),
+      ...(route.routes ? { routes: sortedChildren ?? route.routes } : {}),
     };
   };
-  return menuData.map(filterRoute).filter(Boolean) as MenuRoute[];
+  return sortRoutesByMenuTreeOrder(
+    menuData.map(filterRoute).filter(Boolean) as MenuRoute[],
+    orderByPath,
+  );
 }
 
 export async function getInitialState(): Promise<InitialState> {
@@ -68,10 +124,12 @@ export async function getInitialState(): Promise<InitialState> {
       const currentUser = await fetchCurrentUser();
       return {
         currentUser: {
+          id: currentUser.id,
           isAuthenticated: true,
           menuTree: currentUser.menu_tree,
           name: currentUser.display_name,
           role: currentUser.roles.join(', ') || 'viewer',
+          username: currentUser.username,
         },
       };
     } catch {
@@ -82,10 +140,12 @@ export async function getInitialState(): Promise<InitialState> {
   if (storedUser) {
     return {
       currentUser: {
+        id: storedUser.id,
         isAuthenticated: true,
         menuTree: storedUser.menu_tree,
         name: storedUser.display_name,
         role: storedUser.roles.join(', ') || 'viewer',
+        username: storedUser.username,
       },
     };
   }
@@ -140,9 +200,10 @@ export const layout = ({ initialState }: { initialState?: InitialState }) => ({
   },
   menuDataRender: (menuData: MenuRoute[]) => {
     const storedUser = getStoredCurrentUser();
+    const currentMenuTree = selectCurrentMenuTree(initialState?.currentUser, storedUser);
     return filterMenuDataByAuthorization(
       menuData,
-      storedUser?.menu_tree ?? initialState?.currentUser?.menuTree,
+      currentMenuTree,
       Boolean(storedUser) || initialState?.currentUser?.isAuthenticated,
     );
   },

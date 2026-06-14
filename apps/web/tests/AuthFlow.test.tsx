@@ -168,10 +168,12 @@ describe('AI Brain auth flow and routes', () => {
 
     await expect(getInitialState()).resolves.toEqual({
       currentUser: {
+        id: 'user_real',
         isAuthenticated: true,
         menuTree: [{ code: 'workspace.dashboard', name: '团队看板', path: '/welcome' }],
         name: '真实用户',
         role: 'product_owner, rd_owner',
+        username: 'real@example.com',
       },
     });
     expect(window.localStorage.getItem('ai_brain_current_user')).toContain('real@example.com');
@@ -223,6 +225,73 @@ describe('AI Brain auth flow and routes', () => {
       name: '需求交付',
       routes: [{ name: 'Bug 管理', path: '/delivery/bugs' }],
     });
+  });
+
+  it('sorts the left menu using the authorized menu tree order', () => {
+    const menuConfig = layout({
+      initialState: {
+        currentUser: {
+          menuTree: [
+            {
+              children: [{ code: 'system.roles', name: '角色管理', path: '/system/roles' }],
+              code: 'system',
+              name: '系统管理',
+              path: '/system',
+            },
+            {
+              children: [
+                {
+                  code: 'system.scheduled_jobs',
+                  name: '定时作业',
+                  path: '/tasks/scheduled-jobs',
+                },
+                {
+                  code: 'system.ai_capabilities',
+                  name: 'AI 能力配置',
+                  path: '/tasks/ai-capabilities',
+                },
+              ],
+              code: 'task',
+              name: '任务中心',
+              path: '/tasks',
+            },
+          ],
+          isAuthenticated: true,
+          name: '系统管理员',
+          role: 'admin',
+        },
+      },
+    });
+    const menuDataRender = menuConfig.menuDataRender as (routes: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
+    const filteredMenu = menuDataRender([
+      {
+        name: '任务中心',
+        path: '/tasks',
+        children: [
+          { name: 'AI 能力配置', path: '/tasks/ai-capabilities' },
+          { name: '定时作业', path: '/tasks/scheduled-jobs' },
+        ],
+        routes: [
+          { name: 'AI 能力配置', path: '/tasks/ai-capabilities' },
+          { name: '定时作业', path: '/tasks/scheduled-jobs' },
+        ],
+      },
+      {
+        name: '系统管理',
+        path: '/system',
+        routes: [{ name: '角色管理', path: '/system/roles' }],
+      },
+    ]);
+
+    expect(filteredMenu.map((item) => item.name)).toEqual(['系统管理', '任务中心']);
+    expect((filteredMenu[1].routes as Array<Record<string, unknown>>).map((item) => item.name)).toEqual([
+      '定时作业',
+      'AI 能力配置',
+    ]);
+    expect((filteredMenu[1].children as Array<Record<string, unknown>>).map((item) => item.name)).toEqual([
+      '定时作业',
+      'AI 能力配置',
+    ]);
   });
 
   it('uses the latest stored menu tree instead of stale initial state menus', () => {
