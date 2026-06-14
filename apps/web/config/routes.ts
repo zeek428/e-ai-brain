@@ -31,16 +31,16 @@ const routes = [
         redirect: '/tasks/scheduled-jobs',
       },
       {
-        path: '/tasks/ai-capabilities',
-        name: 'AI 能力配置',
-        icon: 'RobotOutlined',
-        component: './AiCapabilities',
-      },
-      {
         path: '/tasks/scheduled-jobs',
         name: '定时作业',
         icon: 'ClockCircleOutlined',
         component: './ScheduledJobs',
+      },
+      {
+        path: '/tasks/ai-capabilities',
+        name: 'AI 能力配置',
+        icon: 'RobotOutlined',
+        component: './AiCapabilities',
       },
       {
         path: '/tasks/plugins',

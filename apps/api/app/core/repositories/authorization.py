@@ -256,6 +256,16 @@ COMPATIBILITY_MENU_RESOURCES: list[dict[str, Any]] = [
         "status": "active",
     },
     {
+        "code": "system.scheduled_jobs",
+        "name": "定时作业",
+        "path": "/tasks/scheduled-jobs",
+        "parent_code": "task",
+        "menu_type": "page",
+        "sort_order": 21,
+        "required_permissions": ["system.scheduled_jobs.manage"],
+        "status": "active",
+    },
+    {
         "code": "system.ai_capabilities",
         "name": "AI 能力配置",
         "path": "/tasks/ai-capabilities",
@@ -263,16 +273,6 @@ COMPATIBILITY_MENU_RESOURCES: list[dict[str, Any]] = [
         "menu_type": "page",
         "sort_order": 22,
         "required_permissions": ["system.ai_capabilities.manage"],
-        "status": "active",
-    },
-    {
-        "code": "system.scheduled_jobs",
-        "name": "定时作业",
-        "path": "/tasks/scheduled-jobs",
-        "parent_code": "task",
-        "menu_type": "page",
-        "sort_order": 23,
-        "required_permissions": ["system.scheduled_jobs.manage"],
         "status": "active",
     },
     {

@@ -1062,6 +1062,9 @@ function pluginConnectionTemplateFormValues(
   item: PluginMarketplaceItem | undefined,
   options: { pluginId?: string } = {},
 ): Partial<ConnectionFormValues> | undefined {
+  if (!item) {
+    return undefined;
+  }
   const defaults = isPlainRecord(item?.connection_defaults) ? item.connection_defaults : undefined;
   if (!defaults) {
     return undefined;
@@ -1682,7 +1685,7 @@ function ConnectionSchemaFields({
                   }]
                   : []),
               ];
-              const fieldName = ['schema_values', field.key] as const;
+              const fieldName = ['schema_values', field.key];
               const schemaOptions = normalizeSchemaOptions(field);
               const control = field.type === 'select' && schemaOptions.length > 0 ? (
                 <Select

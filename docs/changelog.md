@@ -45,6 +45,7 @@
 - 插件连接最近测试摘要：连接测试后保存轻量 `last_test_summary`，连接列表展示最近测试状态、耗时和错误码，方便关闭调试弹窗后继续排障。
 
 ### Fixed
+- 任务中心菜单默认顺序调整为“定时作业 -> AI 能力配置 -> 插件管理”，并修正旧库兼容迁移避免系统管理员看到错序菜单。
 - MaxCompute 从官方标准插件和官方动作模板目录移除，历史官方 MaxCompute 插件自动降级为普通 HTTP 插件；编辑 MaxCompute 连接时不再出现“项目与表配置”，仅保留通用 Endpoint、认证、Params/Headers 和高级 JSON。
 - GitLab 官方连接改为直接填写“GitLab 地址”，支持本地自建 GitLab 项目 URL；页面自动同步 Endpoint，后端自动解析 `project_id/project_path`，高级 Params 不再暴露 Project ID / Group ID / API 版本拆分字段。
 - GitHub 官方连接改为直接填写“仓库地址”，支持 HTTPS、SSH 和 `owner/repo` 简写；页面和后端自动解析 `owner/repo`，高级 Params 不再暴露拆分字段。

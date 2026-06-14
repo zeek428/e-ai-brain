@@ -115,7 +115,14 @@ def test_task_center_contains_ai_jobs_and_plugin_menus():
     response = client.get("/api/system/menus", headers=auth_headers())
 
     assert response.status_code == 200
-    menus = {item["code"]: item for item in response.json()["data"]["items"]}
+    items = response.json()["data"]["items"]
+    menus = {item["code"]: item for item in items}
+    task_menu_codes = [item["code"] for item in items if item.get("parent_code") == "task"]
+    assert task_menu_codes == [
+        "system.scheduled_jobs",
+        "system.ai_capabilities",
+        "system.plugins",
+    ]
     assert menus["system.menus"]["parent_code"] == "system"
     assert menus["system.menus"]["path"] == "/system/menus"
     assert menus["system.menus"]["required_permissions"] == ["system.menus.manage"]
