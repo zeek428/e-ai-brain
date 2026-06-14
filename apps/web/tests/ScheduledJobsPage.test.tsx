@@ -1015,6 +1015,36 @@ describe('ScheduledJobsPage', () => {
     expect(jobCreateBodies).toEqual([]);
   });
 
+  it('requires Skills even when the other AI job references are selected', async () => {
+    const { jobCreateBodies } = installScheduledJobsFetchMock();
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+    await waitFor(() => expect(within(dialog).getByLabelText('名称')).toBeInTheDocument());
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '每周反馈 AI 洞察' } });
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('所属产品'));
+    fireEvent.click(await screen.findByText('AI Brain (ai-brain)'));
+    fireEvent.mouseDown(within(dialog).getByLabelText('数据连接'));
+    fireEvent.click(await screen.findByText('生产 MaxCompute 项目 (prod)'));
+    fireEvent.mouseDown(within(dialog).getByLabelText('AI 模型'));
+    fireEvent.click(await screen.findByText('定时作业模型 (scheduled-job-model)'));
+    fireEvent.mouseDown(within(dialog).getByLabelText('AI角色'));
+    fireEvent.click(await screen.findByText('洞察 Agent (insight_agent)'));
+    fireEvent.mouseDown(within(dialog).getByLabelText('写入策略'));
+    fireEvent.click(await screen.findByText('写入用户洞察表 (write_weekly_user_feedback_insights)'));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() => expect(within(dialog).getByText('请选择 Skills')).toBeInTheDocument());
+    expect(within(dialog).queryByText('请选择 AI 模型')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('请选择 AI角色')).not.toBeInTheDocument();
+    expect(jobCreateBodies).toEqual([]);
+  });
+
   it('requires AI assembly when code inspection switches to AI execution mode', async () => {
     const { jobCreateBodies } = installScheduledJobsFetchMock();
 

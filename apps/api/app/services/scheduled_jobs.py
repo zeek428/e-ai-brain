@@ -43,8 +43,8 @@ from app.services.plugins import (
     invoke_plugin_action_response,
     json_path_value,
     records_imported_from_mapping,
-    result_write_preview,
     resolve_plugin_snapshot,
+    result_write_preview,
 )
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
@@ -884,8 +884,6 @@ def validate_job_refs(
         if agent.get("status") != "active":
             raise api_error(400, "AI_AGENT_INACTIVE", "AI agent is inactive")
         if not skill_ids:
-            skill_ids = list(agent.get("default_skill_ids") or [])
-        if ai_required_job and not skill_ids:
             raise api_error(400, "AI_SKILL_REQUIRED", "AI processing job requires skill_ids")
         ensure_active_skills(current_store, skill_ids)
         model_gateway_config_id = ensure_active_model_gateway(
@@ -1394,7 +1392,11 @@ def dry_run_scheduled_job_response(
     )
     return {
         "job_type": job_type,
-        "status": "succeeded" if plugin_summary is None or plugin_summary.get("status") == "succeeded" else "failed",
+        "status": (
+            "succeeded"
+            if plugin_summary is None or plugin_summary.get("status") == "succeeded"
+            else "failed"
+        ),
         "stages": {
             "ai_processing": {
                 "agent_id": agent_id,
@@ -1774,7 +1776,10 @@ def validate_skill_output_mapping_contract(
     return schema
 
 
-def validate_skill_output_json_contract(output_json: dict[str, Any], schema: dict[str, Any]) -> None:
+def validate_skill_output_json_contract(
+    output_json: dict[str, Any],
+    schema: dict[str, Any],
+) -> None:
     if not schema:
         return
     required = schema.get("required")

@@ -468,7 +468,9 @@ def test_scheduled_job_runs_multiple_data_connections_with_merged_dag_node():
     assert data_node["response_summary"]["json"]["row_count"] == 4
     assert len(data_node["response_summary"]["json"]["rows"]) == 4
     trace_data_node = next(
-        node for node in run["result_summary"]["trace_graph"]["nodes"] if node["id"] == "data_connection"
+        node
+        for node in run["result_summary"]["trace_graph"]["nodes"]
+        if node["id"] == "data_connection"
     )
     assert trace_data_node["output"]["records_imported"] == 4
     assert trace_data_node["output"]["connection_count"] == 2
@@ -1334,6 +1336,54 @@ def test_online_log_ai_analysis_requires_ai_runtime_configuration():
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "AI_AGENT_REQUIRED"
     assert "AI job requires agent_id" in response.text
+
+
+def test_ai_scheduled_job_requires_explicit_skill_ids_even_when_agent_has_defaults():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    model_gateway = create_model_gateway(admin_headers)
+    skill = client.post(
+        "/api/system/ai-skills",
+        json={
+            "code": "iteration_planning_default",
+            "name": "默认迭代规划 Skill",
+            "prompt_template": "根据真实证据生成迭代建议",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    agent = client.post(
+        "/api/system/ai-agents",
+        json={
+            "brain_app_id": "rd_brain",
+            "code": "iteration_planner_with_default_skill",
+            "default_skill_ids": [skill["id"]],
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "带默认 Skill 的迭代规划 Agent",
+            "status": "active",
+            "system_prompt": "你是产品迭代规划助手。",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "agent_id": agent["id"],
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "iteration_plan_suggestion_generate",
+            "model_gateway_config_id": model_gateway["id"],
+            "name": "每周迭代建议",
+            "schedule_type": "manual",
+            "source_system": "ai-brain",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "AI_SKILL_REQUIRED"
+    assert "AI processing job requires skill_ids" in response.text
 
 
 def test_manual_scheduled_ai_job_run_creates_snapshot_collector_run_and_suggestion():
