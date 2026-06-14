@@ -3756,8 +3756,11 @@ export type AiAgentRecord = {
   code: string;
   default_skill_ids?: string[];
   id: string;
-  model_gateway_config_id?: string | null;
+  model_gateway_config?: Record<string, unknown> | null;
+  model_gateway_config_id?: string | Record<string, unknown> | null;
+  model_gateway_config_snapshot?: Record<string, unknown> | null;
   name: string;
+  resolved_model_gateway_config?: Record<string, unknown> | null;
   status: string;
   system_prompt?: string;
   tool_policy?: Record<string, unknown>;

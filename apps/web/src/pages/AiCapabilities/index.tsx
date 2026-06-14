@@ -70,6 +70,73 @@ const STATUS_COLORS: Record<string, string> = {
   draft: 'gold',
 };
 
+const stringValue = (value: unknown) => {
+  if (typeof value === 'string') {
+    return value.trim() || undefined;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return undefined;
+};
+
+const modelGatewayIdFromReference = (value: unknown): string | undefined => {
+  const primitive = stringValue(value);
+  if (primitive) {
+    return primitive;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    stringValue(record.id)
+    ?? stringValue(record.config_id)
+    ?? stringValue(record.model_gateway_config_id)
+  );
+};
+
+const modelGatewayReferenceCandidates = (agent: AiAgentRecord) => {
+  const record = agent as AiAgentRecord & Record<string, unknown>;
+  return [
+    record.model_gateway_config_id,
+    record.model_gateway_config,
+    record.model_gateway_config_snapshot,
+    record.resolved_model_gateway_config,
+  ];
+};
+
+const modelGatewayIdFromAgent = (agent: AiAgentRecord) => {
+  for (const candidate of modelGatewayReferenceCandidates(agent)) {
+    const configId = modelGatewayIdFromReference(candidate);
+    if (configId) {
+      return configId;
+    }
+  }
+  return undefined;
+};
+
+const modelGatewayLabelFromReference = (value: unknown): string | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const name =
+    stringValue(record.name)
+    ?? stringValue(record.label)
+    ?? stringValue(record.title)
+    ?? modelGatewayIdFromReference(record);
+  if (!name) {
+    return undefined;
+  }
+  const model =
+    stringValue(record.defaultChatModel)
+    ?? stringValue(record.default_chat_model)
+    ?? stringValue(record.chat_model)
+    ?? stringValue(record.model);
+  return model ? `${name} (${model})` : name;
+};
+
 export default function AiCapabilitiesPage() {
   const [skillForm] = Form.useForm<SkillFormValues>();
   const [skillPackageForm] = Form.useForm<SkillPackageFormValues>();
@@ -151,7 +218,7 @@ export default function AiCapabilitiesPage() {
     agentForm.setFieldsValue({
       code: record.code,
       default_skill_ids: Array.isArray(record.default_skill_ids) ? record.default_skill_ids.join(', ') : '',
-      model_gateway_config_id: record.model_gateway_config_id ?? '',
+      model_gateway_config_id: modelGatewayIdFromAgent(record) ?? '',
       name: record.name,
       status: record.status,
       system_prompt: record.system_prompt ?? '',
@@ -237,12 +304,26 @@ export default function AiCapabilitiesPage() {
     return <StatusTag color={STATUS_COLORS[status] ?? 'default'} label={STATUS_LABELS[status] ?? status} />;
   };
 
-  const modelGatewayConfigName = (configId?: string | null) => {
+  const modelGatewayConfigName = (agent: AiAgentRecord) => {
+    const candidates = modelGatewayReferenceCandidates(agent);
+    for (const candidate of candidates) {
+      const configId = modelGatewayIdFromReference(candidate);
+      const config = configId ? modelGatewayConfigs.find((item) => item.id === configId) : undefined;
+      if (config) {
+        return `${config.name} (${config.defaultChatModel})`;
+      }
+    }
+    for (const candidate of candidates) {
+      const label = modelGatewayLabelFromReference(candidate);
+      if (label) {
+        return label;
+      }
+    }
+    const configId = modelGatewayIdFromAgent(agent);
     if (!configId) {
       return '-';
     }
-    const config = modelGatewayConfigs.find((item) => item.id === configId);
-    return config ? `${config.name} (${config.defaultChatModel})` : configId;
+    return configId;
   };
 
   const modelGatewayOptions = [
@@ -263,7 +344,7 @@ export default function AiCapabilitiesPage() {
         ellipsis: true,
         title: '模型网关',
         width: 240,
-        render: (value) => modelGatewayConfigName(value ? String(value) : undefined),
+        render: (_, record) => modelGatewayConfigName(record),
       },
       {
         dataIndex: 'default_skill_ids',
