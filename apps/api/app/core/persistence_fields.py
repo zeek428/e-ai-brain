@@ -71,6 +71,8 @@ MODEL_GATEWAY_FIELDS = [
     "model_gateway_logs",
 ]
 ASSISTANT_CHAT_FIELDS = [
+    "assistant_action_drafts",
+    "assistant_action_runs",
     "assistant_conversations",
     "assistant_messages",
 ]
@@ -89,6 +91,8 @@ ID_COUNTER_SOURCE_TABLES = [
     "related_systems",
     "model_gateway_configs",
     "model_gateway_logs",
+    "assistant_action_drafts",
+    "assistant_action_runs",
     "assistant_conversations",
     "assistant_messages",
     "gitlab_mr_snapshots",
@@ -125,6 +129,8 @@ COLLECTION_FIELDS = [
     "related_systems",
     "model_gateway_configs",
     "model_gateway_logs",
+    "assistant_action_drafts",
+    "assistant_action_runs",
     "assistant_conversations",
     "assistant_messages",
     "gitlab_mr_snapshots",

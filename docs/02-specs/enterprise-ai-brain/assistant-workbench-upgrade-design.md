@@ -5,8 +5,8 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.0 |
-| 日期 | 2026-06-11 |
+| 功能版本 | v1.1.1 |
+| 日期 | 2026-06-14 |
 | 文档状态 | Draft |
 
 ## 背景与目标
@@ -35,12 +35,11 @@
 - `plugins`：HTTP/MCP 插件、连接、动作、动态参数、试运行、调用日志和删除保护。
 - `model_gateway`：OpenAI-compatible Chat/Embedding 配置、连接测试、模型调用日志和密钥脱敏。
 
-关键缺口：
+关键缺口与当前落地状态：
 
-- `@` 还不是显式协议，当前引用主要由服务端候选和模型兜底生成。
-- 助手聊天只做问答，不持久化“待确认动作草案”。
-- 知识库可被定时作业引用，但聊天侧还不能由用户显式选择知识范围并注入。
-- AI 能力、插件、定时作业已有后台页面，但没有助理内的统一配置草案、确认和执行结果回传。
+- P0 已落地 `knowledge_document` 显式引用协议：前端通过 `@` 提交 `references`，后端提供候选、解析、权限校验和限量知识 chunk 注入。
+- P0 已落地服务端动作草案：聊天返回的 `assistant.action_draft` 可持久化为 `assistant_action_drafts`，并通过确认/取消 API 执行或关闭。
+- P0 已落地插件连接、动作和定时作业三类创建草案确认闭环；AI 能力配置、作业运行、删除/停用和更多引用类型按后续切片扩展。
 
 ## 目标交互
 
@@ -224,7 +223,7 @@ assistant orchestration services
 草案状态：
 
 ```text
-draft | awaiting_confirmation | confirmed | applied | cancelled | expired | failed
+pending | confirmed | cancelled | failed
 ```
 
 动作类型：
@@ -271,17 +270,17 @@ draft | awaiting_confirmation | confirmed | applied | cancelled | expired | fail
 
 ## API 目标
 
-新增目标接口：
+已落地与目标接口：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可引用对象。 |
 | POST | `/api/assistant/references/resolve` | 解析并校验结构化引用，返回可进入上下文的引用快照。 |
 | POST | `/api/assistant/chat` | 扩展 `references` 字段，聊天时注入显式引用和知识上下文。 |
-| POST | `/api/assistant/actions/draft` | 根据用户意图和引用生成待确认动作草案。 |
-| GET | `/api/assistant/actions/{draft_id}` | 查询草案详情、diff、风险、状态和可执行权限。 |
-| POST | `/api/assistant/actions/{draft_id}/confirm` | 确认执行草案，调度到对应领域 service。 |
-| POST | `/api/assistant/actions/{draft_id}/cancel` | 取消草案。 |
+| POST | `/api/assistant/action-drafts` | 创建待确认动作草案。 |
+| GET | `/api/assistant/action-drafts/{draft_id}` | 查询草案详情、风险、状态和可执行权限。 |
+| POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认执行草案，调度到对应领域 service。 |
+| POST | `/api/assistant/action-drafts/{draft_id}/cancel` | 取消草案。 |
 
 已存在接口继续作为实际执行边界：
 

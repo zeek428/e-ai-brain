@@ -252,6 +252,20 @@ class RepositoryCallbackHub:
     ) -> None:
         self._assistant_chat_read_repository.upsert_assistant_messages(cursor, messages)
 
+    def upsert_assistant_action_drafts(
+        self,
+        cursor,
+        drafts: dict[str, dict[str, Any]],
+    ) -> None:
+        self._assistant_chat_read_repository.upsert_assistant_action_drafts(cursor, drafts)
+
+    def upsert_assistant_action_runs(
+        self,
+        cursor,
+        runs: dict[str, dict[str, Any]],
+    ) -> None:
+        self._assistant_chat_read_repository.upsert_assistant_action_runs(cursor, runs)
+
     def mock_issue_rows(
         self,
         writebacks: dict[str, dict[str, Any]],

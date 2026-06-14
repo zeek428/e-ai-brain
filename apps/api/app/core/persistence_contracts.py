@@ -728,6 +728,10 @@ class AssistantChatRepository(Protocol):
         user_id: str,
     ) -> list[dict[str, Any]] | None: ...
 
+    def list_assistant_action_drafts(self, *, user_id: str) -> list[dict[str, Any]]: ...
+
+    def get_assistant_action_draft(self, *, draft_id: str) -> dict[str, Any] | None: ...
+
     def save_assistant_chat(self, payload: dict[str, Any]) -> None: ...
 
     def save_assistant_chat_records(
@@ -737,6 +741,14 @@ class AssistantChatRepository(Protocol):
         messages: list[dict[str, Any]],
         audit_events: list[dict[str, Any]],
         model_log: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def save_assistant_action_records(
+        self,
+        *,
+        draft: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+        run: dict[str, Any] | None = None,
     ) -> None: ...
 
 

@@ -1,5 +1,7 @@
 import {
+  CheckCircleOutlined,
   ClockCircleOutlined,
+  CloseCircleOutlined,
   DatabaseOutlined,
   ExclamationCircleOutlined,
   FileTextOutlined,
@@ -18,10 +20,14 @@ import {
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+  cancelAssistantActionDraft,
   chatWithAssistant,
+  confirmAssistantActionDraft,
   fetchAssistantConversationMessages,
   fetchAssistantConversations,
+  fetchAssistantReferenceCandidates,
   fetchResultWriteTargets,
+  rememberAssistantDraftResolution,
   type AssistantChatResponse,
   type AssistantConversationMessage,
   type AssistantReference,
@@ -117,6 +123,32 @@ function draftPayloadLabel(
   return value;
 }
 
+function activeMentionQuery(value: string) {
+  const markerIndex = value.lastIndexOf('@');
+  if (markerIndex < 0) {
+    return undefined;
+  }
+  const tail = value.slice(markerIndex + 1);
+  if (tail.includes('\n')) {
+    return undefined;
+  }
+  const query = tail.trim();
+  return query.length ? query : undefined;
+}
+
+function draftStatusLabel(status?: string) {
+  if (status === 'confirmed') {
+    return { color: 'green', text: '已确认' };
+  }
+  if (status === 'cancelled') {
+    return { color: 'default', text: '已取消' };
+  }
+  if (status === 'failed') {
+    return { color: 'red', text: '失败' };
+  }
+  return { color: 'blue', text: '待确认' };
+}
+
 function storeScheduledJobDraft(draft: AssistantToolResultItem) {
   if (!draft.payload || typeof window === 'undefined') {
     return;
@@ -161,9 +193,17 @@ function storePluginConnectionDraft(draft: AssistantToolResultItem) {
 
 function AssistantActionDraftCards({
   drafts,
+  draftMutationId,
+  draftStatusById,
+  onCancelDraft,
+  onConfirmDraft,
   resultWriteTargetLabels,
 }: {
+  draftMutationId?: string;
   drafts: AssistantToolResultItem[];
+  draftStatusById: Record<string, string>;
+  onCancelDraft: (draft: AssistantToolResultItem) => void;
+  onConfirmDraft: (draft: AssistantToolResultItem) => void;
   resultWriteTargetLabels: Map<string, string>;
 }) {
   if (!drafts.length) {
@@ -175,14 +215,18 @@ function AssistantActionDraftCards({
         const payload = draft.payload;
         const isPluginActionDraft = draft.action === 'create_plugin_action';
         const isPluginConnectionDraft = draft.action === 'create_plugin_connection';
+        const draftId = draft.draft_id;
+        const currentStatus = (draftId ? draftStatusById[draftId] : undefined) ?? draft.status ?? 'pending';
+        const statusLabel = draftStatusLabel(currentStatus);
+        const isPending = currentStatus === 'pending';
         return (
-          <div className="assistant-action-draft-card" key={draft.draft_id}>
+          <div className="assistant-action-draft-card" key={draftId}>
             <div className="assistant-action-draft-header">
               <Space size={8} wrap>
                 <FileTextOutlined />
                 <Text strong>{draft.title ?? '配置草案'}</Text>
                 {draft.risk_level ? <Tag color="orange">风险：{draft.risk_level}</Tag> : null}
-                {draft.requires_confirmation ? <Tag color="blue">待确认</Tag> : null}
+                {draft.requires_confirmation ? <Tag color={statusLabel.color}>{statusLabel.text}</Tag> : null}
               </Space>
               <Text type="secondary">
                 {isPluginConnectionDraft
@@ -295,6 +339,27 @@ function AssistantActionDraftCards({
               )}
             </div>
             <Space size={8} wrap>
+              {draftId && isPending ? (
+                <>
+                  <Button
+                    icon={<CheckCircleOutlined />}
+                    loading={draftMutationId === draftId}
+                    size="small"
+                    type="primary"
+                    onClick={() => onConfirmDraft(draft)}
+                  >
+                    确认创建
+                  </Button>
+                  <Button
+                    icon={<CloseCircleOutlined />}
+                    loading={draftMutationId === draftId}
+                    size="small"
+                    onClick={() => onCancelDraft(draft)}
+                  >
+                    取消
+                  </Button>
+                </>
+              ) : null}
               {isPluginConnectionDraft ? (
                 <Button
                   href="/tasks/plugins"
@@ -338,10 +403,18 @@ function AssistantActionDraftCards({
 }
 
 function AssistantBubble({
+  draftMutationId,
+  draftStatusById,
   message,
+  onCancelDraft,
+  onConfirmDraft,
   resultWriteTargetLabels,
 }: {
+  draftMutationId?: string;
+  draftStatusById: Record<string, string>;
   message: ChatMessage;
+  onCancelDraft: (draft: AssistantToolResultItem) => void;
+  onConfirmDraft: (draft: AssistantToolResultItem) => void;
   resultWriteTargetLabels: Map<string, string>;
 }) {
   const drafts = actionDraftItems(message.toolResults);
@@ -367,7 +440,14 @@ function AssistantBubble({
             ))}
           </div>
         ) : null}
-        <AssistantActionDraftCards drafts={drafts} resultWriteTargetLabels={resultWriteTargetLabels} />
+        <AssistantActionDraftCards
+          draftMutationId={draftMutationId}
+          drafts={drafts}
+          draftStatusById={draftStatusById}
+          onCancelDraft={onCancelDraft}
+          onConfirmDraft={onConfirmDraft}
+          resultWriteTargetLabels={resultWriteTargetLabels}
+        />
       </div>
     </div>
   );
@@ -377,12 +457,17 @@ export default function AssistantPage() {
   const [conversationId, setConversationId] = useState<string>();
   const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
   const [inputValue, setInputValue] = useState('');
+  const [draftMutationId, setDraftMutationId] = useState<string>();
+  const [draftStatusById, setDraftStatusById] = useState<Record<string, string>>({});
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [isLoadingReferences, setIsLoadingReferences] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
+  const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
+  const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
   const resultWriteTargetsLoadRequestedRef = useRef(false);
 
   const canSend = useMemo(() => inputValue.trim().length > 0 && !isSending, [inputValue, isSending]);
@@ -394,6 +479,47 @@ export default function AssistantPage() {
     () => new Map(resultWriteTargets.map((target) => [target.code, target.form_label || target.label])),
     [resultWriteTargets],
   );
+  const selectedReferenceKeys = useMemo(
+    () => new Set(selectedReferences.map((reference) => `${reference.type}:${reference.id}`)),
+    [selectedReferences],
+  );
+
+  useEffect(() => {
+    const query = activeMentionQuery(inputValue);
+    if (!query) {
+      setReferenceCandidates([]);
+      setIsLoadingReferences(false);
+      return;
+    }
+    let didCancel = false;
+    setIsLoadingReferences(true);
+    fetchAssistantReferenceCandidates({
+      limit: 6,
+      query,
+      type: 'knowledge_document',
+    })
+      .then((items) => {
+        if (!didCancel) {
+          setReferenceCandidates(
+            items.filter((reference) => !selectedReferenceKeys.has(`${reference.type}:${reference.id}`)),
+          );
+        }
+      })
+      .catch((error) => {
+        if (!didCancel) {
+          toast.error(formatMutationError(error));
+          setReferenceCandidates([]);
+        }
+      })
+      .finally(() => {
+        if (!didCancel) {
+          setIsLoadingReferences(false);
+        }
+      });
+    return () => {
+      didCancel = true;
+    };
+  }, [inputValue, selectedReferenceKeys]);
 
   const loadConversations = useCallback(async () => {
     setIsLoadingConversations(true);
@@ -436,6 +562,23 @@ export default function AssistantPage() {
     setConversationId(undefined);
     setLastResponse(undefined);
     setMessages(welcomeMessages);
+    setReferenceCandidates([]);
+    setSelectedReferences([]);
+  };
+
+  const addSelectedReference = (reference: AssistantReference) => {
+    setSelectedReferences((items) => (
+      items.some((item) => item.id === reference.id && item.type === reference.type)
+        ? items
+        : [...items, reference]
+    ));
+    setReferenceCandidates([]);
+  };
+
+  const removeSelectedReference = (reference: AssistantReference) => {
+    setSelectedReferences((items) => (
+      items.filter((item) => !(item.id === reference.id && item.type === reference.type))
+    ));
   };
 
   const openConversation = async (targetConversationId: string) => {
@@ -481,9 +624,11 @@ export default function AssistantPage() {
     if (!content || isSending) {
       return;
     }
+    const referencesForRequest = selectedReferences;
     const userMessage: ChatMessage = {
       content,
       id: `user-${Date.now()}`,
+      references: referencesForRequest,
       role: 'user',
     };
     setMessages((items) => [...items, userMessage]);
@@ -494,9 +639,12 @@ export default function AssistantPage() {
         context: { source: 'assistant-page' },
         conversationId,
         message: content,
+        references: referencesForRequest,
       });
       setConversationId(response.conversationId);
       setLastResponse(response);
+      setSelectedReferences([]);
+      setReferenceCandidates([]);
       setMessages((items) => [
         ...items,
         {
@@ -520,6 +668,77 @@ export default function AssistantPage() {
       ]);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const rememberDraftResolution = (
+    draft: AssistantToolResultItem,
+    resourceId?: string,
+    resourceType?: string,
+    title?: string,
+  ) => {
+    if (!resourceId) {
+      return;
+    }
+    if (
+      resourceType !== 'plugin_action'
+      && resourceType !== 'plugin_connection'
+      && resourceType !== 'scheduled_job'
+    ) {
+      return;
+    }
+    const draftIds = new Set(
+      [draft.draft_id, draft.client_draft_id, draft.server_draft_id]
+        .map((value) => (value ? String(value) : undefined))
+        .filter(Boolean) as string[],
+    );
+    draftIds.forEach((draftId) => {
+      rememberAssistantDraftResolution({
+        draftId,
+        resourceId,
+        resourceType,
+        title,
+      });
+    });
+  };
+
+  const confirmDraft = async (draft: AssistantToolResultItem) => {
+    if (!draft.draft_id) {
+      return;
+    }
+    const draftId = String(draft.draft_id);
+    setDraftMutationId(draftId);
+    try {
+      const result = await confirmAssistantActionDraft(draftId);
+      setDraftStatusById((items) => ({ ...items, [draftId]: result.draft.status }));
+      rememberDraftResolution(
+        draft,
+        result.run.result_id,
+        result.run.result_type,
+        result.draft.title,
+      );
+      toast.success('草案已确认');
+    } catch (error) {
+      toast.error(formatMutationError(error));
+    } finally {
+      setDraftMutationId(undefined);
+    }
+  };
+
+  const cancelDraft = async (draft: AssistantToolResultItem) => {
+    if (!draft.draft_id) {
+      return;
+    }
+    const draftId = String(draft.draft_id);
+    setDraftMutationId(draftId);
+    try {
+      const result = await cancelAssistantActionDraft(draftId, '用户在 AI 助手取消');
+      setDraftStatusById((items) => ({ ...items, [draftId]: result.status }));
+      toast.success('草案已取消');
+    } catch (error) {
+      toast.error(formatMutationError(error));
+    } finally {
+      setDraftMutationId(undefined);
     }
   };
 
@@ -599,8 +818,12 @@ export default function AssistantPage() {
           <div className="assistant-message-list" aria-live="polite">
             {messages.map((item) => (
               <AssistantBubble
+                draftMutationId={draftMutationId}
+                draftStatusById={draftStatusById}
                 key={item.id}
                 message={item}
+                onCancelDraft={cancelDraft}
+                onConfirmDraft={confirmDraft}
                 resultWriteTargetLabels={resultWriteTargetLabels}
               />
             ))}
@@ -622,6 +845,35 @@ export default function AssistantPage() {
               {lastResponse.suggestions.map((suggestion) => (
                 <Button key={suggestion} size="small" onClick={() => setInputValue(suggestion)}>
                   {suggestion}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+          {selectedReferences.length ? (
+            <div className="assistant-selected-reference-list">
+              {selectedReferences.map((reference) => (
+                <Tag
+                  closable
+                  color="blue"
+                  key={`${reference.type}:${reference.id}`}
+                  onClose={() => removeSelectedReference(reference)}
+                >
+                  {reference.title}
+                </Tag>
+              ))}
+            </div>
+          ) : null}
+          {referenceCandidates.length || isLoadingReferences ? (
+            <div className="assistant-reference-candidates">
+              {isLoadingReferences ? <Spin size="small" /> : null}
+              {referenceCandidates.map((reference) => (
+                <Button
+                  icon={<LinkOutlined />}
+                  key={`${reference.type}:${reference.id}`}
+                  size="small"
+                  onClick={() => addSelectedReference(reference)}
+                >
+                  {reference.title}
                 </Button>
               ))}
             </div>

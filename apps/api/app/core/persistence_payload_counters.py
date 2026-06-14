@@ -231,6 +231,20 @@ def _sync_model_gateway_counters(payload: dict[str, Any]) -> None:
 
 def _sync_assistant_chat_counters(payload: dict[str, Any]) -> None:
     counters = deepcopy(payload.get("counters", {}))
+    counters["assistant_action_draft"] = max(
+        counters.get("assistant_action_draft", 0),
+        _max_numeric_suffix(
+            payload.get("assistant_action_drafts", {}),
+            "assistant_action_draft",
+        ),
+    )
+    counters["assistant_action_run"] = max(
+        counters.get("assistant_action_run", 0),
+        _max_numeric_suffix(
+            payload.get("assistant_action_runs", {}),
+            "assistant_action_run",
+        ),
+    )
     counters["conversation"] = max(
         counters.get("conversation", 0),
         _max_numeric_suffix(payload.get("assistant_conversations", {}), "conversation"),

@@ -108,6 +108,8 @@ def _model_gateway_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _assistant_chat_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
+        "assistant_action_drafts": deepcopy(payload.get("assistant_action_drafts", {})),
+        "assistant_action_runs": deepcopy(payload.get("assistant_action_runs", {})),
         "assistant_conversations": deepcopy(payload.get("assistant_conversations", {})),
         "assistant_messages": deepcopy(payload.get("assistant_messages", {})),
     }

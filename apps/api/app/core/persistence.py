@@ -161,6 +161,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "053_menu_management.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "054_assistant_action_drafts.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1159,6 +1163,29 @@ class PostgresSnapshotRepository:
         return self._assistant_chat_read_repository.list_assistant_conversation_messages(
             conversation_id=conversation_id,
             user_id=user_id,
+        )
+
+    def list_assistant_action_drafts(self, *, user_id: str) -> list[dict[str, Any]]:
+        return self._assistant_chat_read_repository.list_assistant_action_drafts(
+            user_id=user_id,
+        )
+
+    def get_assistant_action_draft(self, *, draft_id: str) -> dict[str, Any] | None:
+        return self._assistant_chat_read_repository.get_assistant_action_draft(
+            draft_id=draft_id,
+        )
+
+    def save_assistant_action_records(
+        self,
+        *,
+        draft: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+        run: dict[str, Any] | None = None,
+    ) -> None:
+        self._assistant_chat_read_repository.save_assistant_action_records(
+            draft=draft,
+            audit_events=audit_events,
+            run=run,
         )
 
     def load_gitlab_review(self) -> dict[str, Any]:

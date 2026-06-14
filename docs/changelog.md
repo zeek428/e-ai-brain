@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手工作台 P0 升级：支持在输入框通过 `@` 选择知识文档并随聊天提交结构化 `references`，后端按权限解析并限量注入知识 chunk；新增 `/api/assistant/reference-candidates`、`/api/assistant/references/resolve` 和 `/api/assistant/action-drafts` 创建/查询/确认/取消接口，草案确认复用定时作业、插件连接和动作领域 service。
 - 任务编排平台 5 项优化：定时作业运行层支持多数据连接顺序执行、失败策略和 JSON 数组合并；Skill 输入/输出 Schema 可配置并在运行前校验动作映射；新增作业全链路试运行预览数据连接、AI 契约和写入策略；定时作业配置页将结果动作选择升级为“写入策略”；官方插件市场和插件列表展示模板版本状态，并支持复制官方插件为可维护的自定义插件。
 - 系统管理新增菜单管理：`menu_resources` 支持数据库维护菜单名称、父级、路由、图标、排序、启停状态和访问权限点，新增 `/api/system/menus` 创建/编辑/删除/启停/重排序接口与前端菜单管理页；前端仍以静态路由注册表限制页面组件加载，数据库菜单只控制导航元数据和可见性。
 - 定时作业支持多数据连接和多动作配置：新增/编辑表单的数据连接、动作改为多选并显示顺序提示，作业列表展示多项摘要，API 支持 `plugin_connection_ids` / `plugin_action_ids` 并保存到 `config_json.orchestration`，旧单字段继续取第一项兼容当前执行入口。

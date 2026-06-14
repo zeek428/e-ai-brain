@@ -20,6 +20,8 @@ class AssistantRepositoryRequestContext:
         self.model_gateway_logs: list[dict[str, Any]] = []
         self.assistant_conversations: dict[str, dict[str, Any]] = {}
         self.assistant_messages: dict[str, dict[str, Any]] = {}
+        self.assistant_action_drafts: dict[str, dict[str, Any]] = {}
+        self.assistant_action_runs: dict[str, dict[str, Any]] = {}
         self.gitlab_mr_snapshots: dict[str, dict[str, Any]] = {}
         self.code_review_reports: dict[str, dict[str, Any]] = {}
         self.knowledge_deposits: dict[str, dict[str, Any]] = {}

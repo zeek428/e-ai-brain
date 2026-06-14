@@ -163,7 +163,9 @@ export type AssistantChatResponse = {
 };
 
 export type AssistantReference = {
+  chunk_count?: number;
   id: string;
+  index_status?: string;
   title: string;
   type: string;
   url: string;
@@ -171,10 +173,13 @@ export type AssistantReference = {
 
 export type AssistantToolResultItem = {
   action?: string;
+  client_draft_id?: string;
   draft_id?: string;
   payload?: Record<string, unknown>;
   requires_confirmation?: boolean;
   risk_level?: string;
+  server_draft_id?: string;
+  status?: string;
   title?: string;
   [key: string]: unknown;
 };
@@ -335,6 +340,38 @@ export type AssistantChatPayload = {
   conversationId?: string;
   message: string;
   productId?: string;
+  references?: AssistantReference[];
+};
+
+export type AssistantActionDraftRecord = {
+  action: string;
+  cancel_reason?: string;
+  client_draft_id?: string;
+  created_at?: string;
+  created_by?: string;
+  id: string;
+  payload: Record<string, unknown>;
+  result_run_id?: string;
+  risk_level?: string;
+  source_message_id?: string;
+  status: string;
+  title: string;
+  updated_at?: string;
+};
+
+export type AssistantActionRunRecord = {
+  action: string;
+  draft_id: string;
+  id: string;
+  result?: Record<string, unknown>;
+  result_id?: string;
+  result_type?: string;
+  status: string;
+};
+
+export type AssistantActionDraftConfirmResponse = {
+  draft: AssistantActionDraftRecord;
+  run: AssistantActionRunRecord;
 };
 
 export type ProductResponse = {
@@ -2202,6 +2239,10 @@ export async function chatWithAssistant(
       conversation_id: payload.conversationId,
       message: payload.message,
       product_id: payload.productId,
+      references: payload.references?.map((reference) => ({
+        id: reference.id,
+        type: reference.type,
+      })) ?? [],
     },
     method: 'POST',
     token,
@@ -2216,6 +2257,68 @@ export async function chatWithAssistant(
     suggestions: response.suggestions ?? [],
     toolResults: response.message.tool_results ?? response.tool_results ?? [],
   };
+}
+
+export async function fetchAssistantReferenceCandidates(params: {
+  limit?: number;
+  query: string;
+  type?: string;
+}): Promise<AssistantReference[]> {
+  const token = requireAccessToken();
+  const searchParams = new URLSearchParams();
+  searchParams.set('query', params.query);
+  if (params.type) {
+    searchParams.set('type', params.type);
+  }
+  if (params.limit) {
+    searchParams.set('limit', String(params.limit));
+  }
+  const response = await apiRequest<ListResponse<AssistantReference>>(
+    `/api/assistant/reference-candidates?${searchParams.toString()}`,
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return response.items;
+}
+
+export async function getAssistantActionDraft(
+  draftId: string,
+): Promise<AssistantActionDraftRecord> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionDraftRecord>(`/api/assistant/action-drafts/${draftId}`, {
+    method: 'GET',
+    token,
+  });
+}
+
+export async function confirmAssistantActionDraft(
+  draftId: string,
+): Promise<AssistantActionDraftConfirmResponse> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionDraftConfirmResponse>(
+    `/api/assistant/action-drafts/${draftId}/confirm`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function cancelAssistantActionDraft(
+  draftId: string,
+  reason?: string,
+): Promise<AssistantActionDraftRecord> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionDraftRecord>(
+    `/api/assistant/action-drafts/${draftId}/cancel`,
+    {
+      body: { reason },
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 export async function fetchAssistantConversations(): Promise<AssistantConversationSummary[]> {

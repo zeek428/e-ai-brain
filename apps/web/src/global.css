@@ -687,6 +687,27 @@ body {
   padding-bottom: 12px;
 }
 
+.assistant-selected-reference-list,
+.assistant-reference-candidates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.assistant-reference-candidates {
+  align-items: center;
+}
+
+.assistant-reference-candidates .ant-btn {
+  max-width: 260px;
+}
+
+.assistant-reference-candidates .ant-btn > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .assistant-composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

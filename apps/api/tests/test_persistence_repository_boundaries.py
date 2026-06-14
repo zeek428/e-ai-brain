@@ -140,6 +140,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "048_plugin_connection_test_history.sql" in applied_migrations
     assert "050_code_inspection_remediation_tasks.sql" in applied_migrations
     assert "053_menu_management.sql" in applied_migrations
+    assert "054_assistant_action_drafts.sql" in applied_migrations
 
 
 def test_postgres_brain_app_read_models_delegate_to_domain_repository(monkeypatch):
@@ -1599,7 +1600,12 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
         "load_assistant_chat",
         record_call(
             "load_assistant_chat",
-            {"assistant_conversations": {}, "assistant_messages": {}},
+            {
+                "assistant_action_drafts": {},
+                "assistant_action_runs": {},
+                "assistant_conversations": {},
+                "assistant_messages": {},
+            },
         ),
     )
     monkeypatch.setattr(
@@ -1615,8 +1621,22 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
             [{"source": "list_assistant_conversation_messages"}],
         ),
     )
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
+        "list_assistant_action_drafts",
+        record_call("list_assistant_action_drafts", [{"source": "list_assistant_action_drafts"}]),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
+        "get_assistant_action_draft",
+        record_call("get_assistant_action_draft", {"source": "get_assistant_action_draft"}),
+        raising=False,
+    )
 
     assert repository.load_assistant_chat() == {
+        "assistant_action_drafts": {},
+        "assistant_action_runs": {},
         "assistant_conversations": {},
         "assistant_messages": {},
     }
@@ -1627,6 +1647,12 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
         conversation_id="conversation_001",
         user_id="user_admin",
     )[0]["source"] == "list_assistant_conversation_messages"
+    assert repository.list_assistant_action_drafts(user_id="user_admin")[0]["source"] == (
+        "list_assistant_action_drafts"
+    )
+    assert repository.get_assistant_action_draft(draft_id="assistant_action_draft_001") == {
+        "source": "get_assistant_action_draft"
+    }
 
     assert calls == [
         ("load_assistant_chat", {}),
@@ -1635,6 +1661,8 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
             "list_assistant_conversation_messages",
             {"conversation_id": "conversation_001", "user_id": "user_admin"},
         ),
+        ("list_assistant_action_drafts", {"user_id": "user_admin"}),
+        ("get_assistant_action_draft", {"draft_id": "assistant_action_draft_001"}),
     ]
 
 
@@ -1675,6 +1703,12 @@ def test_postgres_assistant_chat_writes_delegate_to_domain_repository(monkeypatc
     )
     monkeypatch.setattr(
         AssistantChatReadRepository,
+        "save_assistant_action_records",
+        record_save("save_assistant_action_records"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
         "upsert_assistant_conversations",
         record_conversation_upsert,
     )
@@ -1690,6 +1724,8 @@ def test_postgres_assistant_chat_writes_delegate_to_domain_repository(monkeypatc
     }
     conversation = {"id": "conversation_002"}
     messages = [{"id": "message_002"}]
+    draft = {"id": "assistant_action_draft_001"}
+    run = {"id": "assistant_action_run_001"}
     audit_events = [{"id": "audit_001"}]
     model_log = {"id": "model_log_001"}
     cursor = object()
@@ -1700,6 +1736,11 @@ def test_postgres_assistant_chat_writes_delegate_to_domain_repository(monkeypatc
         messages=messages,
         audit_events=audit_events,
         model_log=model_log,
+    )
+    repository.save_assistant_action_records(
+        draft=draft,
+        run=run,
+        audit_events=audit_events,
     )
     repository._upsert_assistant_conversations(cursor, payload["assistant_conversations"])
     repository._upsert_assistant_messages(cursor, payload["assistant_messages"])
@@ -1714,6 +1755,10 @@ def test_postgres_assistant_chat_writes_delegate_to_domain_repository(monkeypatc
                 "audit_events": audit_events,
                 "model_log": model_log,
             },
+        ),
+        (
+            "save_assistant_action_records",
+            {"draft": draft, "run": run, "audit_events": audit_events},
         ),
         (
             "upsert_assistant_conversations",

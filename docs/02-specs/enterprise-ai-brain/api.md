@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.304 |
+| 功能版本 | v1.1.305 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.305 | 2026-06-14 | AI 助手 API 落地显式知识引用和服务端动作草案：聊天请求支持 `references`，新增引用候选/解析接口和 `/api/assistant/action-drafts` 创建、查询、确认、取消接口 | Codex |
 | v1.1.304 | 2026-06-14 | MaxCompute 从官方标准插件与官方动作模板目录移除，历史官方 MaxCompute 插件自动降级为普通 HTTP 插件；连接编辑不再展示项目与表配置 schema | Codex |
 | v1.1.303 | 2026-06-14 | GitLab 官方连接表单改为单字段“GitLab 地址”，支持本地自建 GitLab 项目 URL，保存时自动同步 `endpoint_url` 并解析 `request_config.query.project_id/project_path/api_version`，用户不再手工填写 Project ID / Group ID / API 版本 | Codex |
 | v1.1.302 | 2026-06-14 | GitHub 官方连接表单改为单字段“仓库地址”，支持 HTTPS、SSH 和 `owner/repo` 简写，前端与后端自动解析并保存 `request_config.query.owner/repo`，用户不再手工拆分 Owner 和仓库名 | Codex |
@@ -541,10 +542,12 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题。 |
-| Assistant Target | GET | `/api/assistant/reference-candidates` | 目标态：按 query/type/product_id 返回当前用户可通过 `@` 引用的对象。 |
-| Assistant Target | POST | `/api/assistant/references/resolve` | 目标态：解析并校验显式引用，返回可进入上下文的脱敏引用快照。 |
-| Assistant Target | POST | `/api/assistant/actions/draft` | 目标态：生成 AI 能力、插件、定时作业或运行操作的待确认草案。 |
-| Assistant Target | GET/POST | `/api/assistant/actions/{draft_id}` | 目标态：查询草案详情、确认执行或取消草案；确认后调度到已有领域 service。 |
+| Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；首批落地 `knowledge_document`。 |
+| Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
+| Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持定时作业、插件连接和动作配置。 |
+| Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情。 |
+| Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service。 |
+| Assistant | POST | `/api/assistant/action-drafts/{draft_id}/cancel` | 取消 pending 草案，不产生领域写入。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |
@@ -1282,6 +1285,9 @@ POST /api/assistant/chat
   "conversation_id": "conversation_001",
   "message": "AI Brain 项目现在开发到哪里了？",
   "product_id": "product_001",
+  "references": [
+    {"type": "knowledge_document", "id": "knowledge_doc_001"}
+  ],
   "context": {
     "source": "assistant-page"
   }
@@ -1338,31 +1344,14 @@ POST /api/assistant/chat
 }
 ```
 
-助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway` 和 `assistant.action_draft`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report` 和 `knowledge_deposit`。当用户要求创建每周用户反馈洞察定时作业时，`assistant.action_draft` 返回 `create_scheduled_job` 草案，包含 `job_type=user_feedback_insight_extract`、数据连接、AI 模型、AI角色、Skills、知识引用、Cron 和 `{{last_full_week.*}}` 输入映射；当用户要求创建代码巡检定时作业时，草案包含 `job_type=code_repository_inspection`、代码巡检动作、数据连接、Cron 和写报告/建 Bug/通知三类默认 `result_actions`，`source_system` 作为内部来源标识隐藏保存；若缺少可用代码巡检动作或同插件连接，`assistant.action_draft.items[]` 必须按连接、动作、作业顺序返回一组草案，动作 payload 和作业 payload 通过 `assistant_prerequisite_draft_ids` 标记前置连接/动作草案，避免用户直接应用无法保存的半成品作业；若用户明确要求 AI/大模型/智能分析代码巡检结果，草案 payload 还必须设置 `execution_mode=ai_generated`，并尽量填充 `model_gateway_config_id`、`agent_id` 和 `skill_ids`；当用户要求创建 GitHub/GitLab/邮箱插件连接时，`assistant.action_draft` 返回 `create_plugin_connection` 草案，包含 `plugin_id/name/endpoint_url/environment/auth_type/auth_config/request_config/status/timeout_seconds/max_retries` 等插件连接请求体，并默认带出官方连接的 Params/Headers；当用户要求创建 GitHub/GitLab 代码巡检动作或邮箱通知动作时，`assistant.action_draft` 返回 `create_plugin_action` 草案，包含 `action_type/code/name/plugin_id/connection_id/request_config/result_mapping/status` 等动作请求体，邮箱通知动作草案的 `result_mapping.write_target` 必须为 `email_notifications`，并包含 `recipients_path/subject_path/delivery_status_path/delivery_id_path`。草案只随消息 metadata 返回，前端助手页以待确认草案卡片展示标题、风险和核心字段，动作草案的写入目标按中文标签展示；定时作业草案可带入任务中心 / 定时作业新增表单，插件连接草案可带入任务中心 / 插件管理新增连接表单，动作草案可带入任务中心 / 插件管理新增动作表单，由用户确认保存；当前实现不新增草案确认 API，前端在当前浏览器会话中保存 `assistant_draft_id -> resource_id/resource_type` 临时映射，保存连接草案后依赖动作草案可回填真实 `connection_id`，保存动作草案后依赖作业草案可回填真实 `plugin_action_id` 和 `plugin_connection_id`；保存作业请求会把草案来源写入 `config_json.assistant_draft`，领域审计事件 `scheduled_job.created/updated` 的 `payload.assistant_draft` 输出 `draft_id/source/title`；确认前不得写入 `scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用。助手消息 `references` 返回可跳转链接；若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录元数据，审计事件为 `assistant.chat_completed`。
+助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway` 和 `assistant.action_draft`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit` 和已落地的 `knowledge_document`。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
 
-目标态 AI 助手工作台会在现有聊天接口上扩展结构化显式引用。请求体新增可选 `references`，由前端 `@` 选择器提交，不要求后端从自然语言中猜测 ID：
+显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。当前已落地 `knowledge_document` 引用：候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。未授权、不可读、不可检索或不存在的引用返回 `404 REFERENCE_NOT_FOUND`，不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
 
-```json
-{
-  "conversation_id": "conversation_001",
-  "message": "基于这些知识，帮我生成每周反馈洞察定时任务草案。",
-  "product_id": "product_001",
-  "references": [
-    {"type": "knowledge_document", "id": "knowledge_doc_001"},
-    {"type": "plugin_action", "id": "plugin_action_maxcompute_feedback"},
-    {"type": "ai_agent", "id": "agent_user_insight"},
-    {"type": "ai_skill", "id": "skill_feedback_summary"}
-  ],
-  "context": {"source": "assistant-page"}
-}
-```
-
-服务端必须先通过引用解析流程校验所有显式引用，未授权、不可读、不可检索或不存在的引用不得进入模型上下文。知识引用支持 `knowledge_space`、`knowledge_folder`、`knowledge_document` 和 `knowledge_chunk`；空间/目录级引用必须结合用户问题做权限过滤检索，不得把全空间正文注入模型。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
-
-目标态 `@` 引用候选：
+`@` 引用候选：
 
 ```http
-GET /api/assistant/reference-candidates?query=反馈&type=knowledge_document&product_id=product_001
+GET /api/assistant/reference-candidates?query=反馈&type=knowledge_document&product_id=product_001&limit=10
 ```
 
 响应：
@@ -1374,57 +1363,90 @@ GET /api/assistant/reference-candidates?query=反馈&type=knowledge_document&pro
       "id": "knowledge_doc_001",
       "type": "knowledge_document",
       "title": "反馈分类标准",
-      "url": "/assets/knowledge?document_id=knowledge_doc_001",
-      "metadata": {
-        "knowledge_space_id": "knowledge_space_001",
-        "index_status": "vector_indexed"
-      }
+      "url": "/knowledge/documents?document_id=knowledge_doc_001",
+      "chunk_count": 12,
+      "index_status": "vector_indexed"
     }
   ],
   "total": 1
 }
 ```
 
-目标态引用解析：
+引用解析：
 
 ```http
 POST /api/assistant/references/resolve
 ```
 
+请求：
+
 ```json
 {
   "references": [
-    {"type": "scheduled_job", "id": "scheduled_job_001"},
     {"type": "knowledge_document", "id": "knowledge_doc_001"}
   ],
   "product_id": "product_001"
 }
 ```
 
-响应返回 `items` 与 `errors`。`items` 是可进入上下文的脱敏快照；`errors` 包含 `type`、`id`、`code` 和 `message`，用于前端标记失效引用。后端必须按当前用户权限过滤候选和解析结果，不能只依赖前端隐藏。
+响应：
 
-目标态助理动作草案：
-
-```http
-POST /api/assistant/actions/draft
-GET /api/assistant/actions/assistant_action_draft_001
-POST /api/assistant/actions/assistant_action_draft_001/confirm
-POST /api/assistant/actions/assistant_action_draft_001/cancel
+```json
+{
+  "items": [
+    {
+      "id": "knowledge_doc_001",
+      "type": "knowledge_document",
+      "title": "反馈分类标准",
+      "url": "/knowledge/documents?document_id=knowledge_doc_001"
+    }
+  ],
+  "knowledge_context": [
+    {
+      "document_id": "knowledge_doc_001",
+      "document_title": "反馈分类标准",
+      "chunk_id": "knowledge_chunk_001",
+      "text": "用于模型上下文的有限 chunk 文本",
+      "metadata": {"chunk_index": 0}
+    }
+  ],
+  "total": 1
+}
 ```
 
-草案请求：
+助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_scheduled_job`、`create_plugin_connection` 和 `create_plugin_action`；状态为 `pending`、`confirmed`、`cancelled` 或 `failed`。确认前不得写入 `scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用。
+
+助理动作草案接口：
+
+```http
+POST /api/assistant/action-drafts
+GET /api/assistant/action-drafts/{draft_id}
+POST /api/assistant/action-drafts/{draft_id}/confirm
+POST /api/assistant/action-drafts/{draft_id}/cancel
+```
+
+创建草案请求：
 
 ```json
 {
   "conversation_id": "conversation_001",
-  "intent": "scheduled_job.create",
-  "message": "每周一 9 点拉取上周反馈，AI 分析后写入用户洞察。",
-  "references": [
-    {"type": "plugin_action", "id": "plugin_action_maxcompute_feedback"},
-    {"type": "knowledge_document", "id": "knowledge_doc_001"},
-    {"type": "ai_agent", "id": "agent_user_insight"},
-    {"type": "ai_skill", "id": "skill_feedback_summary"}
-  ]
+  "source_message_id": "assistant_message_001",
+  "client_draft_id": "draft_weekly_feedback",
+  "action": "create_scheduled_job",
+  "title": "每周用户反馈洞察",
+  "risk_level": "high",
+  "payload": {
+    "name": "每周用户反馈洞察",
+    "job_type": "user_feedback_insight_extract",
+    "schedule_type": "cron",
+    "cron_expression": "0 9 * * MON",
+    "timezone": "Asia/Shanghai",
+    "knowledge_document_ids": ["knowledge_doc_001"],
+    "execution_mode": "ai_generated"
+  },
+  "metadata_json": {
+    "references": [{"type": "knowledge_document", "id": "knowledge_doc_001"}]
+  }
 }
 ```
 
@@ -1433,35 +1455,25 @@ POST /api/assistant/actions/assistant_action_draft_001/cancel
 ```json
 {
   "id": "assistant_action_draft_001",
-  "action_type": "scheduled_job.create",
-  "status": "awaiting_confirmation",
+  "client_draft_id": "draft_weekly_feedback",
+  "action": "create_scheduled_job",
+  "title": "每周用户反馈洞察",
   "risk_level": "high",
-  "requires_confirmation": true,
-  "subject_type": "scheduled_job",
+  "status": "pending",
   "payload": {
     "name": "每周用户反馈洞察",
-    "job_type": "user_feedback_insight_extract",
-    "schedule_type": "cron",
-    "cron_expression": "0 9 * * MON",
-    "timezone": "Asia/Shanghai",
-    "plugin_action_id": "plugin_action_maxcompute_feedback",
-    "agent_id": "agent_user_insight",
-    "skill_ids": ["skill_feedback_summary"],
-    "knowledge_document_ids": ["knowledge_doc_001"],
-    "execution_mode": "ai_generated"
+    "job_type": "user_feedback_insight_extract"
   },
-  "diff": {
-    "created": ["scheduled_job"]
+  "metadata_json": {
+    "references": [{"type": "knowledge_document", "id": "knowledge_doc_001"}]
   },
-  "warnings": [
-    "确认后将创建启用状态的定时作业。"
-  ]
+  "created_by": "user_admin",
+  "created_at": "2026-06-14T09:00:00+08:00",
+  "updated_at": "2026-06-14T09:00:00+08:00"
 }
 ```
 
-`confirm` 只接受仍处于 `awaiting_confirmation` 且未过期的草案。确认后必须重新校验用户权限和引用状态，再调用对应领域 service，例如 AI 能力配置调用 `/api/system/ai-skills` 或 `/api/system/ai-agents` 的 service，插件配置调用 plugins service，定时作业配置或运行调用 scheduled_jobs service。确认成功写入 `assistant_action.confirmed` 和领域审计事件；失败写入 `assistant_action.failed`，不得部分绕过领域 service。删除、停用、插件试运行、定时作业运行和会写入业务数据的动作必须在草案中标记 `risk_level=high` 并展示影响摘要。
-
-当前已落地的首批草案能力先通过 `/api/assistant/chat` 的 `tool_results` 返回，不新增持久化草案表：`assistant.action_draft.items[].payload` 为待确认的领域请求体，前端已渲染待确认草案卡片，并可通过临时前端草案传递把 `create_scheduled_job` payload 回填到定时作业新增表单、把 `create_plugin_connection` payload 回填到插件管理新增连接表单、把 `create_plugin_action` payload 回填到插件管理新增动作表单；当前浏览器会话内会记录已保存草案对应的真实资源 ID，用于解析后续草案里的 `assistant_prerequisite_draft_ids`；独立 `/api/assistant/actions/draft`、查询、确认和取消接口仍按目标态推进。
+`confirm` 只接受仍处于 `pending` 的草案。确认时必须重新走对应领域 service：`create_scheduled_job` 调用 scheduled_jobs service 并把 `config_json.assistant_draft` 写入作业配置，`create_plugin_connection` 调用插件连接 service，`create_plugin_action` 调用动作 service。确认成功返回 `{"draft": ..., "run": ...}`，`run.result_type/result_id/result` 指向创建出的领域资源；确认失败不得绕过领域 service。取消接口只把草案置为 `cancelled` 并记录原因，不产生领域写入。草案创建、确认和取消分别写入 `assistant_action_draft.created`、`assistant_action_draft.confirmed` 和 `assistant_action_draft.cancelled` 审计事件。
 
 `conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
 

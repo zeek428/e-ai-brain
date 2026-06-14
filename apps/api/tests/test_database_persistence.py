@@ -927,6 +927,21 @@ class FakeSnapshotRepository:
     def save_assistant_chat(self, payload: dict) -> None:
         self.assistant_chat_payload = payload
 
+    def list_assistant_action_drafts(self, *, user_id: str) -> list[dict]:
+        payload = self.assistant_chat_payload or {}
+        drafts = [
+            dict(draft)
+            for draft in payload.get("assistant_action_drafts", {}).values()
+            if draft.get("created_by") == user_id or draft.get("user_id") == user_id
+        ]
+        drafts.sort(key=lambda item: (item.get("updated_at", ""), item["id"]), reverse=True)
+        return drafts
+
+    def get_assistant_action_draft(self, *, draft_id: str) -> dict | None:
+        payload = self.assistant_chat_payload or {}
+        draft = payload.get("assistant_action_drafts", {}).get(draft_id)
+        return dict(draft) if draft is not None else None
+
     def save_assistant_chat_records(
         self,
         *,
@@ -947,6 +962,26 @@ class FakeSnapshotRepository:
             payload.setdefault("assistant_messages", {})[message["id"]] = dict(message)
         self.assistant_chat_payload = payload
         self._append_direct_model_logs([model_log] if model_log is not None else [])
+        for audit_event in audit_events:
+            self._append_direct_audit_event(audit_event)
+
+    def save_assistant_action_records(
+        self,
+        *,
+        draft: dict,
+        audit_events: list[dict],
+        run: dict | None = None,
+    ) -> None:
+        payload = self.assistant_chat_payload or {
+            "assistant_action_drafts": {},
+            "assistant_action_runs": {},
+            "assistant_conversations": {},
+            "assistant_messages": {},
+        }
+        payload.setdefault("assistant_action_drafts", {})[draft["id"]] = dict(draft)
+        if run is not None:
+            payload.setdefault("assistant_action_runs", {})[run["id"]] = dict(run)
+        self.assistant_chat_payload = payload
         for audit_event in audit_events:
             self._append_direct_audit_event(audit_event)
 

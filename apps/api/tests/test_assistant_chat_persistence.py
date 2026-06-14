@@ -3,6 +3,7 @@ import json
 from test_database_persistence import FakeSnapshotRepository, app, auth_headers, client
 
 import app.api.routers.assistant as assistant_router
+import app.services.assistant_action_drafts as assistant_action_drafts_service
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.users import MemoryUserRepository
 
@@ -93,6 +94,8 @@ def test_assistant_chat_history_is_persisted_through_fine_grained_repository_pay
     current_store.persist()
 
     assert repository.assistant_chat_payload == {
+        "assistant_action_drafts": {},
+        "assistant_action_runs": {},
         "assistant_conversations": current_store.assistant_conversations,
         "assistant_messages": current_store.assistant_messages,
     }
@@ -390,6 +393,72 @@ def test_assistant_history_uses_repository_when_runtime_store_is_stale():
             headers=auth_headers("reviewer@example.com", "reviewer123"),
         )
         assert cross_user_messages.status_code == 404
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_assistant_action_draft_confirm_uses_runtime_store_under_postgres(monkeypatch):
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    repository.assistant_chat_payload = {
+        "assistant_action_drafts": {
+            "assistant_action_draft_repo_001": {
+                "action": "create_scheduled_job",
+                "created_at": "2026-06-14T08:00:00+00:00",
+                "created_by": "user_admin",
+                "id": "assistant_action_draft_repo_001",
+                "metadata_json": {},
+                "payload": {
+                    "job_type": "dashboard_snapshot_refresh",
+                    "name": "仓储上下文确认草案",
+                    "schedule_type": "manual",
+                },
+                "risk_level": "medium",
+                "status": "pending",
+                "title": "确认仓储上下文草案",
+                "updated_at": "2026-06-14T08:00:00+00:00",
+            }
+        },
+        "assistant_action_runs": {},
+        "assistant_conversations": {},
+        "assistant_messages": {},
+    }
+    app.state.store = PostgresRuntimeStore(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    def fake_create_scheduled_job_response(*, current_store, payload, user):
+        assert isinstance(current_store, PostgresRuntimeStore)
+        assert payload.config_json["assistant_draft"]["draft_id"] == (
+            "assistant_action_draft_repo_001"
+        )
+        assert user["id"] == "user_admin"
+        return {
+            "config_json": payload.config_json,
+            "id": "scheduled_job_from_assistant_draft",
+            "name": payload.name,
+        }
+
+    monkeypatch.setattr(
+        assistant_action_drafts_service,
+        "create_scheduled_job_response",
+        fake_create_scheduled_job_response,
+    )
+    try:
+        response = client.post(
+            "/api/assistant/action-drafts/assistant_action_draft_repo_001/confirm",
+            headers=auth_headers(),
+        )
+
+        assert response.status_code == 200
+        payload = response.json()["data"]
+        assert payload["draft"]["status"] == "confirmed"
+        assert payload["run"]["result_id"] == "scheduled_job_from_assistant_draft"
+        saved_draft = repository.assistant_chat_payload["assistant_action_drafts"][
+            "assistant_action_draft_repo_001"
+        ]
+        assert saved_draft["status"] == "confirmed"
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users

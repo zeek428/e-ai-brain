@@ -141,6 +141,85 @@ describe('AssistantPage', () => {
     ).toBe(false);
   });
 
+  it('selects knowledge references with @ candidates and sends them to chat', async () => {
+    let chatRequestBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        expect(init?.method ?? 'GET').toBe('GET');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  chunk_count: 1,
+                  id: 'knowledge_payment_runbook',
+                  index_status: 'indexed',
+                  title: '支付页超时排障手册',
+                  type: 'knowledge_document',
+                  url: '/knowledge/documents?document_id=knowledge_payment_runbook',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        chatRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_reference',
+              latency_ms: 218,
+              message: {
+                content: '支付页应先检查网关超时和回调幂等键。',
+                id: 'assistant_message_reference',
+                references: [
+                  {
+                    id: 'knowledge_payment_runbook',
+                    title: '支付页超时排障手册',
+                    type: 'knowledge_document',
+                    url: '/knowledge/documents?document_id=knowledge_payment_runbook',
+                  },
+                ],
+                role: 'assistant',
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '基于 @支付 分析提交无响应' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /支付页超时排障手册/ }));
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('支付页应先检查网关超时和回调幂等键。')).toBeInTheDocument();
+    expect(chatRequestBody).toMatchObject({
+      message: '基于 @支付 分析提交无响应',
+      references: [{ id: 'knowledge_payment_runbook', type: 'knowledge_document' }],
+    });
+  });
+
   it('loads current-user AI assistant conversations and opens historical messages', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
@@ -331,6 +410,104 @@ describe('AssistantPage', () => {
       'href',
       '/assistant?draft_id=assistant_draft_code_repository_inspection',
     );
+  });
+
+  it('confirms server-side assistant action drafts from the draft card', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_server_draft',
+              latency_ms: 128,
+              message: {
+                content: '我已生成一个服务端草案。',
+                id: 'assistant_message_server_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        client_draft_id: 'assistant_draft_weekly_feedback_insight',
+                        draft_id: 'assistant_action_draft_001',
+                        payload: {
+                          execution_mode: 'deterministic',
+                          job_type: 'dashboard_snapshot_refresh',
+                          name: 'AI 助手草案仪表盘刷新',
+                          schedule_type: 'manual',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        server_draft_id: 'assistant_action_draft_001',
+                        status: 'pending',
+                        title: '创建仪表盘刷新定时任务',
+                      },
+                    ],
+                    summary: { draft_count: 1, requires_confirmation: true },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_001/confirm') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              draft: {
+                action: 'create_scheduled_job',
+                id: 'assistant_action_draft_001',
+                payload: {},
+                status: 'confirmed',
+                title: '创建仪表盘刷新定时任务',
+              },
+              run: {
+                action: 'create_scheduled_job',
+                draft_id: 'assistant_action_draft_001',
+                id: 'assistant_action_run_001',
+                result_id: 'scheduled_job_001',
+                result_type: 'scheduled_job',
+                status: 'succeeded',
+              },
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我创建仪表盘刷新草案' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /确认创建/ }));
+
+    expect(await screen.findByText('已确认')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+      '/api/assistant/action-drafts/assistant_action_draft_001/confirm',
+      'POST',
+    ]);
   });
 
   it('renders assistant plugin action drafts as configuration cards', async () => {
@@ -806,6 +983,7 @@ describe('AssistantPage', () => {
         conversation_id: 'conversation_api',
         message: '系统进展如何？',
         product_id: 'product_118',
+        references: [],
       });
       return new Response(
         JSON.stringify({

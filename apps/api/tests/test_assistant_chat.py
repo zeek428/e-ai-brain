@@ -14,6 +14,371 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     return {"Authorization": f"Bearer {token}"}
 
 
+def seed_assistant_knowledge_reference_documents() -> None:
+    now = "2026-06-14T08:00:00+00:00"
+    app.state.store.knowledge_documents["knowledge_payment_runbook"] = {
+        "brain_app_id": "rd_brain",
+        "content": "支付页提交无响应时，先检查网关超时、回调状态和前端埋点。",
+        "created_at": now,
+        "created_by": "knowledge_owner@example.com",
+        "doc_type": "manual",
+        "id": "knowledge_payment_runbook",
+        "index_status": "indexed",
+        "permission_roles": ["reviewer"],
+        "permission_scope": {},
+        "product_id": None,
+        "source_type": "manual",
+        "tags": ["payment"],
+        "title": "支付页超时排障手册",
+        "updated_at": now,
+        "vector_index_error": None,
+        "version_id": None,
+    }
+    app.state.store.knowledge_documents["knowledge_private_runbook"] = {
+        "brain_app_id": "rd_brain",
+        "content": "非授权知识：内部成本和供应商账号。",
+        "created_at": now,
+        "created_by": "knowledge_owner@example.com",
+        "doc_type": "manual",
+        "id": "knowledge_private_runbook",
+        "index_status": "indexed",
+        "permission_roles": ["knowledge_owner"],
+        "permission_scope": {},
+        "product_id": None,
+        "source_type": "manual",
+        "tags": ["private"],
+        "title": "非授权支付内部手册",
+        "updated_at": now,
+        "vector_index_error": None,
+        "version_id": None,
+    }
+    app.state.store.knowledge_chunks["knowledge_payment_runbook_chunk_001"] = {
+        "chunk_index": 0,
+        "content": "支付页提交无响应：检查网关 30 秒超时、回调幂等键和前端 loading 状态。",
+        "document_id": "knowledge_payment_runbook",
+        "embedding": [0.1, 0.2, 0.3],
+        "id": "knowledge_payment_runbook_chunk_001",
+        "metadata": {},
+        "permission_roles": ["reviewer"],
+        "permission_scope": {"roles": ["reviewer"]},
+    }
+    app.state.store.knowledge_chunks["knowledge_private_runbook_chunk_001"] = {
+        "chunk_index": 0,
+        "content": "非授权知识：供应商账号和内部成本。",
+        "document_id": "knowledge_private_runbook",
+        "embedding": [0.4, 0.5, 0.6],
+        "id": "knowledge_private_runbook_chunk_001",
+        "metadata": {},
+        "permission_roles": ["knowledge_owner"],
+        "permission_scope": {"roles": ["knowledge_owner"]},
+    }
+
+
+def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents():
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_knowledge_reference_documents()
+
+    response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "支付", "type": "knowledge_document", "limit": 5},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["total"] == 1
+    assert payload["items"] == [
+        {
+            "chunk_count": 1,
+            "id": "knowledge_payment_runbook",
+            "index_status": "indexed",
+            "title": "支付页超时排障手册",
+            "type": "knowledge_document",
+            "url": "/knowledge/documents?document_id=knowledge_payment_runbook",
+        }
+    ]
+
+
+def test_ai_assistant_resolve_rejects_unreadable_knowledge_reference():
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_knowledge_reference_documents()
+
+    response = client.post(
+        "/api/assistant/references/resolve",
+        json={
+            "references": [
+                {"id": "knowledge_private_runbook", "type": "knowledge_document"},
+            ]
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "REFERENCE_NOT_FOUND"
+
+
+def test_ai_assistant_chat_injects_selected_knowledge_chunks_without_logging_content(
+    monkeypatch,
+):
+    admin_headers = auth_headers()
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_knowledge_reference_documents()
+    captured_messages: list[dict[str, str]] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": (
+                                            "应优先检查网关超时、回调幂等键"
+                                            "和前端 loading 状态。"
+                                        ),
+                                        "suggestions": ["生成支付页排障任务"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 13, "prompt_tokens": 31, "total_tokens": 44},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        del timeout
+        request_body = json.loads(request.data.decode("utf-8"))
+        captured_messages.extend(request_body["messages"])
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "基于 @支付页超时排障手册 说明如何定位支付页提交无响应。",
+            "references": [
+                {"id": "knowledge_payment_runbook", "type": "knowledge_document"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assistant_message = response.json()["data"]["message"]
+    assert assistant_message["references"][0] == {
+        "id": "knowledge_payment_runbook",
+        "title": "支付页超时排障手册",
+        "type": "knowledge_document",
+        "url": "/knowledge/documents?document_id=knowledge_payment_runbook",
+    }
+    user_payload = json.loads(captured_messages[1]["content"])
+    assert user_payload["system_context"]["selected_references"] == [
+        {
+            "id": "knowledge_payment_runbook",
+            "title": "支付页超时排障手册",
+            "type": "knowledge_document",
+            "url": "/knowledge/documents?document_id=knowledge_payment_runbook",
+        }
+    ]
+    assert user_payload["system_context"]["knowledge_context"][0] == {
+        "chunk_id": "knowledge_payment_runbook_chunk_001",
+        "chunk_index": 0,
+        "content": "支付页提交无响应：检查网关 30 秒超时、回调幂等键和前端 loading 状态。",
+        "document_id": "knowledge_payment_runbook",
+        "document_title": "支付页超时排障手册",
+        "source": {
+            "doc_type": "manual",
+            "knowledge_space_id": None,
+        },
+    }
+    assert "非授权知识" not in captured_messages[1]["content"]
+
+    logs = client.get(
+        "/api/model-gateway/logs?purpose=assistant_chat",
+        headers=admin_headers,
+    ).json()["data"]["items"]
+    assert logs[0]["purpose"] == "assistant_chat"
+    assert "支付页提交无响应" not in str(logs[0])
+
+
+def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "enabled": False,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "AI 助手草案仪表盘刷新",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": "创建仪表盘刷新定时任务",
+        },
+        headers=headers,
+    )
+
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    assert draft["action"] == "create_scheduled_job"
+    assert draft["status"] == "pending"
+    assert draft["created_by"] == "user_admin"
+    assert draft["payload"]["name"] == "AI 助手草案仪表盘刷新"
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 200
+    payload = confirm_response.json()["data"]
+    assert payload["draft"]["id"] == draft["id"]
+    assert payload["draft"]["status"] == "confirmed"
+    assert payload["run"]["action"] == "create_scheduled_job"
+    assert payload["run"]["status"] == "succeeded"
+    assert payload["run"]["result_type"] == "scheduled_job"
+    scheduled_job = payload["run"]["result"]
+    assert scheduled_job["name"] == "AI 助手草案仪表盘刷新"
+    assert scheduled_job["config_json"]["assistant_draft"] == {
+        "draft_id": draft["id"],
+        "source": "ai_assistant",
+        "title": "创建仪表盘刷新定时任务",
+    }
+
+    get_response = client.get(f"/api/assistant/action-drafts/{draft['id']}", headers=headers)
+    assert get_response.status_code == 200
+    assert get_response.json()["data"]["status"] == "confirmed"
+
+    audit_events = client.get(
+        "/api/audit/events?subject_type=assistant_action_draft",
+        headers=headers,
+    ).json()["data"]["items"]
+    audit_events = sorted(audit_events, key=lambda item: item["sequence"])
+    assert [item["event_type"] for item in audit_events] == [
+        "assistant_action_draft.created",
+        "assistant_action_draft.confirmed",
+    ]
+
+
+def test_ai_assistant_action_draft_cancel_prevents_confirmation():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "enabled": False,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "待取消定时任务",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "title": "取消用草案",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    cancel_response = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/cancel",
+        json={"reason": "用户决定暂不创建"},
+        headers=headers,
+    )
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["data"]["status"] == "cancelled"
+    assert cancel_response.json()["data"]["cancel_reason"] == "用户决定暂不创建"
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/confirm",
+        headers=headers,
+    )
+    assert confirm_response.status_code == 409
+    assert confirm_response.json()["detail"]["code"] == "DRAFT_NOT_PENDING"
+
+
+def test_ai_assistant_chat_persists_action_draft_tool_results(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "我已准备好定时任务草案，确认后再创建。",
+                                        "suggestions": ["查看草案"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "帮我配置每周用户反馈洞察定时任务草案"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    draft_item = message["tool_results"][0]["items"][0]
+    assert draft_item["client_draft_id"] == "assistant_draft_weekly_feedback_insight"
+    assert draft_item["draft_id"].startswith("assistant_action_draft_")
+    assert draft_item["server_draft_id"] == draft_item["draft_id"]
+    assert draft_item["status"] == "pending"
+
+    draft_response = client.get(
+        f"/api/assistant/action-drafts/{draft_item['draft_id']}",
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    assert draft["source_message_id"] == message["id"]
+    assert draft["client_draft_id"] == "assistant_draft_weekly_feedback_insight"
+    assert draft["action"] == "create_scheduled_job"
 def test_ai_assistant_chat_uses_model_gateway_without_logging_prompt_or_answer(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()

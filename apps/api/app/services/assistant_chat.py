@@ -12,6 +12,9 @@ from urllib.request import urlopen as default_urlopen
 from pydantic import BaseModel, Field
 
 from app.core.store import MemoryStore
+from app.services.assistant_action_drafts import (
+    persist_assistant_action_drafts_from_tool_results,
+)
 from app.services.assistant_context import (
     assistant_chat_messages as assistant_context_chat_messages,
 )
@@ -27,6 +30,10 @@ from app.services.assistant_history import (
     assistant_conversation_messages_response,
     assistant_conversations_response,
     ensure_assistant_conversation,
+)
+from app.services.assistant_references import (
+    AssistantReferenceError,
+    resolve_assistant_references,
 )
 from app.services.assistant_request_context import (
     assistant_request_store as assistant_context_request_store,
@@ -65,6 +72,7 @@ class AssistantChatRequest(BaseModel):
     conversation_id: str | None = None
     product_id: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
+    references: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class _AssistantGatewayRequestFailed(Exception):
@@ -94,6 +102,7 @@ def assistant_chat_response(
         conversation_id=payload.conversation_id,
         message=message,
         product_id=payload.product_id,
+        references=payload.references,
     )
     if (
         normalized_payload.product_id
@@ -117,6 +126,7 @@ def assistant_chat_response(
             model_gateway_status=model_gateway_status,
             payload=normalized_payload,
             urlopen_func=urlopen_func,
+            user=user,
         )
     except AssistantServiceError:
         raise
@@ -174,6 +184,7 @@ def assistant_chat_response(
         content=message,
         conversation=conversation,
         now=now,
+        references=assistant_output.get("selected_references") or [],
         role="user",
         user_id=user["id"],
     )
@@ -189,6 +200,13 @@ def assistant_chat_response(
         tool_results=assistant_output["tool_results"],
         user_id=user["id"],
     )
+    assistant_output["tool_results"] = persist_assistant_action_drafts_from_tool_results(
+        current_store,
+        source_message_id=assistant_message["id"],
+        tool_results=assistant_output["tool_results"],
+        user=user,
+    )
+    assistant_message["metadata_json"]["tool_results"] = assistant_output["tool_results"]
     current_store.audit(
         event_type="assistant.chat_completed",
         actor_id=user["id"],
@@ -271,6 +289,7 @@ def _assistant_chat_messages(
     *,
     model_gateway_status: str,
     payload: AssistantChatRequest,
+    resolved_references: dict[str, Any],
     tool_results: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
     default_gateway = _default_model_gateway_config(current_store)
@@ -281,12 +300,15 @@ def _assistant_chat_messages(
         product_id=payload.product_id,
     )
     system_context["tool_results"] = tool_results
+    system_context["selected_references"] = resolved_references["items"]
+    system_context["knowledge_context"] = resolved_references["knowledge_context"]
     system_context["reference_candidates"] = assistant_reference_candidates(
         current_store,
         message=payload.message,
         product_id=payload.product_id,
     )
     system_context["reference_candidates"] = _merge_assistant_references(
+        resolved_references["items"],
         [
             reference
             for tool_result in tool_results
@@ -312,6 +334,7 @@ def _call_model_gateway_for_assistant_chat(
     model_gateway_status: str,
     payload: AssistantChatRequest,
     urlopen_func: Callable[[Any, int], Any],
+    user: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     config = _assistant_model_gateway_config(
         current_store,
@@ -327,10 +350,19 @@ def _call_model_gateway_for_assistant_chat(
         message=payload.message,
         product_id=payload.product_id,
     )
+    try:
+        resolved_references = resolve_assistant_references(
+            current_store,
+            references=payload.references,
+            user=user,
+        )
+    except AssistantReferenceError as exc:
+        raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
     messages = _assistant_chat_messages(
         current_store,
         model_gateway_status=model_gateway_status,
         payload=payload,
+        resolved_references=resolved_references,
         tool_results=tool_results,
     )
     body = {
@@ -361,7 +393,9 @@ def _call_model_gateway_for_assistant_chat(
         assistant_output = assistant_response_content(message.get("content"))
         if not assistant_output["answer"]:
             raise ValueError("Assistant response is missing answer")
-        references = assistant_output.get("references") or _merge_assistant_references(
+        references = _merge_assistant_references(
+            resolved_references["items"],
+            assistant_output.get("references") or [],
             [
                 reference
                 for tool_result in tool_results
@@ -374,6 +408,7 @@ def _call_model_gateway_for_assistant_chat(
             ),
         )
         assistant_output["references"] = references
+        assistant_output["selected_references"] = resolved_references["items"]
         assistant_output["tool_results"] = tool_results
         latency_ms = int((perf_counter() - started) * 1000)
         log = model_gateway_log(
