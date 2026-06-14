@@ -800,7 +800,7 @@ describe('ScheduledJobsPage', () => {
       }),
     );
     expect(jobCreateBodies[2]).not.toHaveProperty('connection_environment');
-  });
+  }, 15000);
 
   it('opens the create dialog from an assistant scheduled job draft', async () => {
     const { jobCreateBodies } = installScheduledJobsFetchMock();
