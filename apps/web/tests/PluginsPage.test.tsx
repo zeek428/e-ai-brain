@@ -240,15 +240,15 @@ function installPluginsFetchMock(
                   secret_ref: 'vault/gitlab/token',
                 },
                 auth_type: 'api_key_header',
-                endpoint_url: 'https://gitlab.com',
+                endpoint_url: 'http://gitlab.local',
                 environment: 'prod',
                 max_retries: 1,
                 name: '生产 GitLab 连接',
                 request_config: {
                   query: {
                     api_version: 'v4',
-                    group_id: '',
                     project_id: '',
+                    project_path: '',
                   },
                 },
                 status: 'active',
@@ -259,8 +259,15 @@ function installPluginsFetchMock(
                 sections: [
                   {
                     fields: [
-                      { key: 'project_id', label: 'GitLab 项目 ID', path: 'request_config.query.project_id', required: true, type: 'string' },
-                      { key: 'api_version', label: 'API 版本', path: 'request_config.query.api_version', required: true, type: 'select' },
+                      {
+                        description: '填写本地 GitLab 项目地址。',
+                        key: 'gitlab_project_url',
+                        label: 'GitLab 地址',
+                        managed_query_keys: ['api_version', 'group_id', 'project_id', 'project_path'],
+                        placeholder: 'http://gitlab.local/acme/ai-brain.git',
+                        required: true,
+                        type: 'gitlab_project_url',
+                      },
                     ],
                     key: 'project',
                     title: '项目配置',
@@ -291,7 +298,7 @@ function installPluginsFetchMock(
               category: 'devops',
               code: 'github',
               connection_defaults: {
-                auth_config: { token_ref: 'vault/github/token' },
+                auth_config: {},
                 auth_type: 'bearer',
                 endpoint_url: 'https://api.github.com',
                 environment: 'prod',
@@ -315,8 +322,14 @@ function installPluginsFetchMock(
                 sections: [
                   {
                     fields: [
-                      { key: 'owner', label: '仓库 Owner', path: 'request_config.query.owner', required: true, type: 'string' },
-                      { key: 'repo', label: '仓库名称', path: 'request_config.query.repo', required: true, type: 'string' },
+                      {
+                        description: '可粘贴 HTTPS/SSH 仓库地址。',
+                        key: 'repository_url',
+                        label: '仓库地址',
+                        managed_query_keys: ['owner', 'repo'],
+                        required: true,
+                        type: 'github_repository_url',
+                      },
                     ],
                     key: 'repository',
                     title: '仓库配置',
@@ -408,46 +421,6 @@ function installPluginsFetchMock(
       return jsonResponse({
         data: {
           items: options.emptyActionTemplates ? [] : [
-            {
-              action_type: 'mcp_tool',
-              code: 'maxcompute_weekly_feedback',
-              default_code: 'fetch_weekly_user_feedback',
-              default_name: '获取本周用户反馈数据',
-              form_defaults: {
-                max_rows: 1000,
-                returned_fields:
-                  'feedback_id,user_id,product_id,module_code,feedback_type,content,sentiment,created_at',
-                table_name: 'ods_user_feedback',
-                time_field: 'created_at',
-              },
-              name: 'MaxCompute 每周用户反馈',
-              plugin_code: 'aliyun_maxcompute',
-              request_config: {
-                fields: [
-                  'feedback_id',
-                  'user_id',
-                  'product_id',
-                  'module_code',
-                  'feedback_type',
-                  'content',
-                  'sentiment',
-                  'created_at',
-                ],
-                limit: 1000,
-                sql_template:
-                  "SELECT feedback_id, user_id, product_id, module_code, feedback_type, content, sentiment, created_at FROM ods_user_feedback WHERE created_at >= '${week_start}' AND created_at < '${week_end}' LIMIT 1000",
-                table: 'ods_user_feedback',
-                time_field: 'created_at',
-                tool_name: 'maxcompute.execute_sql',
-              },
-              result_mapping: {
-                insights_path: '$.insights',
-                records_imported_path: '$.row_count',
-                rows_path: '$.rows',
-                write_target: 'user_feedback_insights',
-              },
-              template_version: 'v1',
-            },
             {
               action_type: 'http_request',
               code: 'github_code_inspection',
@@ -1144,7 +1117,7 @@ describe('PluginsPage', () => {
   });
 
   it('shows the official plugin marketplace and opens guided connection setup', async () => {
-    installPluginsFetchMock({ includeOfficialPlugins: true });
+    const { connectionBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
 
     render(<PluginsPage />);
 
@@ -1154,8 +1127,7 @@ describe('PluginsPage', () => {
     expect(screen.getByText('连接 GitHub API，读取仓库、PR 和代码扫描数据。')).toBeInTheDocument();
     expect(screen.getByText('安全告警同步')).toBeInTheDocument();
     expect(screen.getByText('GitHub 代码巡检')).toBeInTheDocument();
-    expect(screen.getByText('仓库 Owner')).toBeInTheDocument();
-    expect(screen.getByText('仓库名称')).toBeInTheDocument();
+    expect(screen.getByText('仓库地址')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '配置市场插件 GitHub' }));
 
@@ -1163,9 +1135,44 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByLabelText('名称')).toHaveValue('生产 GitHub 连接');
     expect(within(dialog).getByDisplayValue('https://api.github.com')).toBeInTheDocument();
     expect(within(dialog).getByText('GitHub (http)')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('owner')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('repo')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Token / 密钥引用')).toHaveValue('');
+    expect(within(dialog).getByText(/本地联调可直接填 ghp_xxx/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('仓库地址')).toBeInTheDocument();
+    expect(within(dialog).getByText(/只需要粘贴仓库地址/)).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('application/vnd.github+json')).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText('仓库地址'), {
+      target: { value: 'https://github.com/acme/ai-brain.git' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    expect(await screen.findByText('请填写 GitHub Token 或密钥引用')).toBeInTheDocument();
+    expect(connectionBodies).toEqual([]);
+
+    fireEvent.change(within(dialog).getByLabelText('Token / 密钥引用'), {
+      target: { value: 'ghp_test_token' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(connectionBodies).toEqual([
+        expect.objectContaining({
+          auth_config: { token_ref: 'ghp_test_token' },
+          auth_type: 'bearer',
+          plugin_id: 'plugin_standard_github',
+          request_config: {
+            headers: {
+              Accept: 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+            query: {
+              owner: 'acme',
+              repo: 'ai-brain',
+            },
+          },
+        }),
+      ]),
+    );
   });
 
   it('shows template version status and copies an official plugin as custom', async () => {
@@ -1346,9 +1353,11 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByDisplayValue('Accept')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('application/vnd.github+json')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('X-GitHub-Api-Version')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('owner')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('repo')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('仓库地址')).toBeInTheDocument();
 
+    fireEvent.change(within(dialog).getByLabelText('仓库地址'), {
+      target: { value: 'git@github.com:acme/ai-brain.git' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() =>
@@ -1366,7 +1375,7 @@ describe('PluginsPage', () => {
               Accept: 'application/vnd.github+json',
               'X-GitHub-Api-Version': '2022-11-28',
             },
-            query: { owner: '', repo: '' },
+            query: { owner: 'acme', repo: 'ai-brain' },
           },
           status: 'active',
           timeout_seconds: 30,
@@ -1399,6 +1408,10 @@ describe('PluginsPage', () => {
     render(<PluginsPage />);
 
     const connectionDialog = await findDialogByTitle('新增连接');
+    await waitFor(() => expect(within(connectionDialog).getByLabelText('仓库地址')).toBeInTheDocument());
+    fireEvent.change(within(connectionDialog).getByLabelText('仓库地址'), {
+      target: { value: 'acme/ai-brain' },
+    });
     fireEvent.click(within(connectionDialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() => expect(connectionBodies).toHaveLength(1));
@@ -1682,14 +1695,19 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
     fireEvent.click(await screen.findByText('GitLab (http)'));
 
-    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://gitlab.com');
+    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('http://gitlab.local');
     expect(await within(dialog).findByLabelText('Header 名')).toHaveValue('PRIVATE-TOKEN');
-    expect(within(dialog).getByDisplayValue('api_version')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('v4')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('group_id')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('project_id')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('GitLab 地址')).toBeInTheDocument();
+    expect(within(dialog).getByText(/只需要粘贴本地项目地址/)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('GitLab 项目 ID')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('API 版本')).not.toBeInTheDocument();
+    expect(within(dialog).queryByDisplayValue('group_id')).not.toBeInTheDocument();
 
     fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '生产 GitLab' } });
+    fireEvent.change(within(dialog).getByLabelText('GitLab 地址'), {
+      target: { value: 'http://gitlab.local/rd-platform/ai-brain.git' },
+    });
+    expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('http://gitlab.local');
     fireEvent.change(within(dialog).getByLabelText('Header 值/密钥引用'), {
       target: { value: 'vault/gitlab/prod-token' },
     });
@@ -1703,14 +1721,15 @@ describe('PluginsPage', () => {
             secret_ref: 'vault/gitlab/prod-token',
           },
           auth_type: 'api_key_header',
-          endpoint_url: 'https://gitlab.com',
+          endpoint_url: 'http://gitlab.local',
           name: '生产 GitLab',
           plugin_id: 'plugin_standard_gitlab',
           request_config: {
             query: {
               api_version: 'v4',
-              group_id: '',
-              project_id: '',
+              group_id: 'rd-platform',
+              project_id: 'rd-platform%2Fai-brain',
+              project_path: 'rd-platform/ai-brain',
             },
           },
         }),
@@ -1723,11 +1742,14 @@ describe('PluginsPage', () => {
     fireEvent.click(await screen.findByText('GitHub (http)'));
 
     expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://api.github.com');
-    expect(await within(dialog).findByLabelText('Token 引用')).toBeInTheDocument();
+    expect(await within(dialog).findByLabelText('Token / 密钥引用')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('Accept')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('application/vnd.github+json')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('X-GitHub-Api-Version')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('2022-11-28')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('仓库地址')).toBeInTheDocument();
+    expect(within(dialog).queryByDisplayValue('owner')).not.toBeInTheDocument();
+    expect(within(dialog).queryByDisplayValue('repo')).not.toBeInTheDocument();
 
     fireEvent.mouseDown(within(dialog).getByLabelText('插件'));
     fireEvent.click(await screen.findByText('邮箱 (http)'));
@@ -1738,8 +1760,8 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByDisplayValue('application/json')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('mail_provider')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('enterprise_mail_gateway')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('default_from')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('default_to')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('默认发件人')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('默认收件人')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('subject_template')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('[AI Brain] {{job_name}} 执行结果')).toBeInTheDocument();
   });
@@ -1923,8 +1945,8 @@ describe('PluginsPage', () => {
     );
   });
 
-  it('creates a MaxCompute weekly feedback action from guided fields while allowing advanced JSON edits', async () => {
-    const { actionBodies } = installPluginsFetchMock();
+  it('does not expose MaxCompute as an official action scene template', async () => {
+    installPluginsFetchMock();
 
     render(<PluginsPage />);
 
@@ -1933,49 +1955,9 @@ describe('PluginsPage', () => {
 
     const dialog = await findDialogByTitle('新增动作');
     fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
-    fireEvent.click(await screen.findByText('MaxCompute 每周用户反馈'));
 
-    expect(within(dialog).getByText('用户洞察表')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('洞察列表 JSONPath')).toHaveValue('$.insights');
-    fireEvent.change(within(dialog).getByLabelText('洞察列表 JSONPath'), {
-      target: { value: '$.analysis.insights' },
-    });
-    expect(within(dialog).getByLabelText('表名')).toHaveValue('ods_user_feedback');
-    expect(within(dialog).getByLabelText('时间字段')).toHaveValue('created_at');
-    expect(within(dialog).getByLabelText('返回字段')).toHaveValue(
-      'feedback_id,user_id,product_id,module_code,feedback_type,content,sentiment,created_at',
-    );
-
-    fireEvent.change(within(dialog).getByLabelText('最大行数'), { target: { value: '500' } });
-    fireEvent.click(within(dialog).getByText('高级 JSON 修改'));
-    fireEvent.change(within(dialog).getByLabelText('请求配置 JSON'), {
-      target: {
-        value:
-          '{"tool_name":"maxcompute.execute_sql","table":"ods_user_feedback","time_field":"created_at","limit":500,"sql_template":"SELECT feedback_id, content FROM ods_user_feedback LIMIT 500"}',
-      },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
-
-    await waitFor(() =>
-      expect(actionBodies).toEqual([
-        expect.objectContaining({
-          action_type: 'mcp_tool',
-          code: 'fetch_weekly_user_feedback',
-          name: '获取本周用户反馈数据',
-          request_config: expect.objectContaining({
-            limit: 500,
-            table: 'ods_user_feedback',
-            tool_name: 'maxcompute.execute_sql',
-          }),
-          result_mapping: {
-            insights_path: '$.analysis.insights',
-            records_imported_path: '$.row_count',
-            rows_path: '$.rows',
-            write_target: 'user_feedback_insights',
-          },
-        }),
-      ]),
-    );
+    expect(await screen.findByText('GitHub 代码巡检')).toBeInTheDocument();
+    expect(screen.queryByText('MaxCompute 每周用户反馈')).not.toBeInTheDocument();
   });
 
   it('creates official GitHub and GitLab code inspection actions from scene templates', async () => {

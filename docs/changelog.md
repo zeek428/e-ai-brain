@@ -22,7 +22,7 @@
 - 定时作业运行可视化增强：运行详情新增 Trace DAG，按数据连接、Runner 执行、Skill/AI 处理、结果写入、代码巡检报告、Bug/任务/通知等节点展示输入、输出、耗时、重试和错误定位。
 - 成功运行反向生成模板：新增从成功运行记录生成定时作业模板接口，前端可在运行详情中一键生成新作业草稿并保留 `config_json.template_source` 来源，降低重复配置成本。
 - 任务编排平台升级：定时作业模板新增 `wizard_steps`，内置每周反馈洞察、代码巡检、邮件摘要、GitLab MR AI 审查和 AI 执行器仓库任务五类模板；新增作业页展示任务创建向导，并把用户侧文案收敛为“动作/结果写入”。
-- 官方插件 schema 化：`/api/system/plugin-marketplace` 为 MaxCompute、GitLab、GitHub、邮箱和 AI 执行器返回 `connection_schema`，插件市场展示连接表单字段，JSON 保留为高级修改入口。
+- 官方插件 schema 化：`/api/system/plugin-marketplace` 为 GitLab、GitHub、邮箱和 AI 执行器返回 `connection_schema`，插件市场展示连接表单字段，JSON 保留为高级修改入口；MaxCompute 作为普通 HTTP 插件/连接维护。
 - Runner 产品化增强：AI 执行器 Runner 列表返回并展示 `health_status`、`heartbeat_age_seconds` 和可复制 `setup_command`，便于本地 Codex/Claude/Hermes/OpenClaw Runner 接入远程 AI Brain。
 - 代码巡检闭环增强：`result_actions` 新增 `create_task_for_severe_findings`，严重 finding 可自动创建 `code_inspection_remediation` AI 任务，报告和 finding 保存整改任务反链，运行详情展示 `task_creation` 节点。
 - AI 执行器 Runner/OpenClaw 闭环：新增 Runner 管理、心跳、任务认领和完成回写接口，官方 `ai_executor` 插件使用 `runner_polling` 下发 Codex/Claude/Hermes/OpenClaw 指令；定时作业在 Runner 排队或执行中保持 `running`，Runner 完成后回写插件调用日志、运行详情 `runner_execution` 节点、结果动作反馈、collector run 和作业最近运行状态。
@@ -39,12 +39,17 @@
 - 插件连接请求回放台：连接测试结果保存最近测试记录，诊断弹窗展示变量解析前/后差异和失败修复建议，并可一键复制当次请求为动作模板草案。
 - 定时作业新增/编辑弹窗增加“任务编排流程”预览，按数据连接、AI 处理、知识引用和结果动作展示配置状态、核心资源名称，并可直接在数据连接节点发起连接测试。
 - 动作模板唯一来源增强：后端新增 `plugin_templates` 模板目录模块，`/api/system/plugin-action-templates` 返回 `template_version`，AI 助手动作草案复用同一模板生成 payload 并携带 `template_code/template_version`。
-- 动作模板生成收口：前端新增动作表单和 AI 助手动作草案不再硬编码生成 MaxCompute/GitHub/GitLab/邮箱官方动作；模板缺失时提示缺失并要求刷新服务端模板目录。
+- 动作模板生成收口：前端新增动作表单和 AI 助手动作草案不再硬编码生成 GitHub/GitLab/邮箱/AI 执行器官方动作；模板缺失时提示缺失并要求刷新服务端模板目录。
 - 插件市场创建动作入口同步收口：市场项点击“创建动作”只使用 `/api/system/plugin-action-templates` 返回的模板，目录缺失时提示刷新服务端模板目录，不再按插件 code 兜底生成本地场景。
 - 动作动态模板目录：新增 `/api/system/plugin-action-templates`，前端新增动作表单优先使用服务端模板回填请求配置、Params/Headers 和结果映射，减少动作模板散落在页面硬编码中。
 - 插件连接最近测试摘要：连接测试后保存轻量 `last_test_summary`，连接列表展示最近测试状态、耗时和错误码，方便关闭调试弹窗后继续排障。
 
 ### Fixed
+- MaxCompute 从官方标准插件和官方动作模板目录移除，历史官方 MaxCompute 插件自动降级为普通 HTTP 插件；编辑 MaxCompute 连接时不再出现“项目与表配置”，仅保留通用 Endpoint、认证、Params/Headers 和高级 JSON。
+- GitLab 官方连接改为直接填写“GitLab 地址”，支持本地自建 GitLab 项目 URL；页面自动同步 Endpoint，后端自动解析 `project_id/project_path`，高级 Params 不再暴露 Project ID / Group ID / API 版本拆分字段。
+- GitHub 官方连接改为直接填写“仓库地址”，支持 HTTPS、SSH 和 `owner/repo` 简写；页面和后端自动解析 `owner/repo`，高级 Params 不再暴露拆分字段。
+- GitHub 官方连接的 Token 字段改为“Token / 密钥引用”并设为必填；官方模板不再预填 `vault/github/token` 这类假默认值，避免连接测试时把占位引用当成真实 Bearer Token 发送。
+- GitHub/GitLab 官方连接表单不再要求用户在 Params 中猜填仓库或项目参数；`connection_schema` 字段会以业务表单展示并写回 `request_config`，高级 Params 只保留额外 query，同时插件动作路径可从连接参数解析 `{{owner}}/{{repo}}/{{project_id}}` 等模板变量。
 - 旧 PostgreSQL 库启动时补跑菜单管理增量迁移，避免 `system.menus` 菜单资源和 `system.menus.read/manage` 权限未补齐导致系统管理员看不到“菜单管理”入口。
 - 定时作业复跑对比摘要：复跑创建响应和运行列表返回轻量 `source_run_summary`，运行详情展示来源运行状态、导入数、错误码和本次结果，方便验证复跑是否修复问题。
 - 代码巡检来源链路跳转增强：报告详情中的来源作业和来源运行可跳转任务中心 / 定时作业，带 `run_id` 的运行链接会自动打开对应运行结果详情。
@@ -101,7 +106,7 @@
 - 插件管理删除闭环增强：插件、连接和动作列表新增删除入口；删除前展示连接、动作、定时作业和调用日志使用清单，后端 DELETE 也会在资源被引用时返回 409，避免级联误删正在使用的集成配置。
 - 定时作业维护闭环增强：作业列表新增编辑和删除入口，编辑弹窗回填现有调度、AI 装配和插件映射配置；后端新增 `DELETE /api/system/scheduled-jobs/{job_id}` 并记录 `scheduled_job.deleted` 审计。
 - 动作结果映射表单联动：`结果写入目标` 变更后，下方可视化 JSONPath 字段会按目标切换；用户洞察表目标展示洞察列表、源表行数和原始行列表路径，高级 JSON 继续支持双向同步。
-- 动作写入目标收敛：动作配置新增“结果写入目标”可视化选择，MaxCompute 用户反馈场景默认写入用户洞察表；定时作业未单独设置输出映射时复用动作 `result_mapping`，运行摘要保留 Skill 处理信息和写入目标。
+- 动作写入目标收敛：动作配置新增“结果写入目标”可视化选择，用户反馈洞察场景默认写入用户洞察表；定时作业未单独设置输出映射时复用动作 `result_mapping`，运行摘要保留 Skill 处理信息和写入目标。
 - 插件连接测试交互增强：点击测试后按钮显示 `测试中` 并禁用重复操作，同时展示持续 loading 提示，避免第三方接口耗时较长时用户误以为没有触发。
 - 插件连接测试诊断改为明文调试：连接响应、测试弹窗、动作试运行预览和插件调用日志展示真实 auth/request/header 值；认证配置生成的 Authorization/API Key Header 仍优先于 Headers 表格同名值，最终请求若包含 `***` 会按明文发送并在诊断中标记，便于排查系统时间变量、Header 配置和第三方 400 错误。
 - 菜单归属调整：AI 能力配置、定时作业、插件管理统一移动到任务中心下，旧 `/system/...` 页面入口保留隐藏重定向，系统管理聚焦用户、角色和模型网关治理。
@@ -122,7 +127,7 @@
 - 动作配置体验增强：新增动作默认用 Params/Headers 表格配置 HTTP 请求参数和请求头，参数值可选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量并在运行时解析，提交时生成 `request_config.query/headers`，高级 JSON 仅作为完整配置精修入口。
 - 插件连接配置增强：连接环境收敛为 `default/dev/test/staging/prod/sandbox` 受控枚举，认证配置默认按认证方式展示 Token/Header/Basic 字段并只把 JSON 作为高级修改入口，连接列表新增测试按钮和后端测试接口；定时作业插件输入映射新增动态时间 token 模板，运行时按作业时区解析。
 - 插件分类收敛为受控枚举：新增插件页面改为下拉选择，后端创建/更新插件拒绝自由文本分类，并在 API/技术规格中约定分类值。
-- MaxCompute 每周用户反馈洞察场景落地：动作页新增引导式模板，可自动生成 MCP 查询配置并保留高级 JSON 编辑；定时作业新增 `user_feedback_insight_extract`，可将插件返回的 AI 洞察写入用户反馈洞察表。
+- MaxCompute 每周用户反馈洞察场景落地：通过普通 HTTP 插件连接和自定义 HTTP 动作配置取数接口，Params/Headers 可视化维护、高级 JSON 精修；定时作业新增 `user_feedback_insight_extract`，可将插件返回并经 AI 处理后的洞察写入用户反馈洞察表。
 - 插件管理第一阶段落地：新增系统插件、连接、动作和调用日志管理，支持 HTTP/MCP HTTP 协议配置、密钥配置、调用审计，并允许定时作业通过 `plugin_action_id` 调用动作和保存运行快照。
 - 定时系统作业与 AI 能力装配：PRD/API/技术规格/测试用例补充 AI角色、Skill、定时作业、运行实例、AI 配置快照、collector run 关联、锁租约、失败重试和人工确认边界，并落地基础 API、菜单和页面入口。
 - AI 能力配置第一阶段落地：AI角色（Agent）继续表单配置，Skill 支持 zip 文件包上传、本地存储、checksum/manifest 持久化，并在定时 AI 作业运行时加载本地 Skill 文件内容写入快照。

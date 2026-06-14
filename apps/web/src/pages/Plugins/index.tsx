@@ -56,6 +56,8 @@ import {
   type PluginActionTemplateRecord,
   type PluginConnectionRecord,
   type PluginConnectionRepairSuggestion,
+  type PluginConnectionSchemaFieldRecord,
+  type PluginConnectionSchemaRecord,
   type PluginConnectionTestHistoryRecord,
   type PluginConnectionTestResult,
   type PluginMarketplaceItem,
@@ -88,6 +90,7 @@ type ConnectionFormValues = {
   password_ref?: string;
   plugin_id: string;
   request_config?: string;
+  schema_values?: Record<string, unknown>;
   secret_ref?: string;
   status: string;
   timeout_seconds: number;
@@ -354,21 +357,270 @@ function rowsToRecord(rows: RequestParameterRow[] | undefined): Record<string, u
   }, {});
 }
 
-function recordToRows(record: unknown): RequestParameterRow[] {
+function recordToRows(record: unknown, excludeKeys: Set<string> = new Set()): RequestParameterRow[] {
   if (!record || typeof record !== 'object' || Array.isArray(record)) {
     return [];
   }
-  return Object.entries(record as Record<string, unknown>).map(([name, value]) => ({
-    enabled: true,
-    name,
-    type: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string',
-    value: typeof value === 'string' ? value : String(value),
-  }));
+  return Object.entries(record as Record<string, unknown>)
+    .filter(([name]) => !excludeKeys.has(name))
+    .map(([name, value]) => ({
+      enabled: true,
+      name,
+      type: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string',
+      value: typeof value === 'string' ? value : String(value),
+    }));
 }
 
 function configSection(config: Record<string, unknown> | undefined, key: string): unknown {
   const section = config?.[key];
   return section && typeof section === 'object' && !Array.isArray(section) ? section : undefined;
+}
+
+function schemaFields(schema?: PluginConnectionSchemaRecord): PluginConnectionSchemaFieldRecord[] {
+  return (schema?.sections ?? []).flatMap((section) => section.fields ?? []);
+}
+
+function schemaManagedRequestKeys(
+  schema: PluginConnectionSchemaRecord | undefined,
+  section: 'headers' | 'query',
+): Set<string> {
+  const keys = new Set<string>();
+  schemaFields(schema).forEach((field) => {
+    if (section === 'query') {
+      (field.managed_query_keys ?? []).forEach((key) => keys.add(key));
+    }
+    const key =
+      (() => {
+        const segments = pathSegments(field.path);
+        return segments[0] === 'request_config' && segments[1] === section ? segments[2] : undefined;
+      })();
+    if (key) {
+      keys.add(key);
+    }
+  });
+  return keys;
+}
+
+function pathSegments(path?: string): string[] {
+  return path ? path.split('.').map((segment) => segment.trim()).filter(Boolean) : [];
+}
+
+function valueAtPath(source: Record<string, unknown>, path?: string): unknown {
+  return pathSegments(path).reduce<unknown>((current, segment) => {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      return undefined;
+    }
+    return (current as Record<string, unknown>)[segment];
+  }, source);
+}
+
+function setValueAtPath(target: Record<string, unknown>, path: string | undefined, value: unknown) {
+  const segments = pathSegments(path);
+  if (segments.length === 0) {
+    return;
+  }
+  let cursor = target;
+  segments.slice(0, -1).forEach((segment) => {
+    const next = cursor[segment];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      cursor[segment] = {};
+    }
+    cursor = cursor[segment] as Record<string, unknown>;
+  });
+  cursor[segments[segments.length - 1]] = value;
+}
+
+function parseGitRepositoryAddress(value: unknown): { owner: string; repo: string } | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const sshMatch = trimmed.match(/^[^@\s]+@[^:\s]+:(.+)$/);
+  let path = sshMatch?.[1] ?? trimmed;
+  if (!sshMatch) {
+    const firstSegment = trimmed.split('/')[0] ?? '';
+    const looksLikeUrl = trimmed.includes('://') || firstSegment.includes('.');
+    try {
+      if (looksLikeUrl) {
+        const url = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+        path = url.pathname;
+      }
+    } catch {
+      path = trimmed;
+    }
+  }
+  const segments = path
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter(Boolean);
+  const repoSegments = segments[0] === 'repos' ? segments.slice(1) : segments;
+  const owner = repoSegments[0]?.trim();
+  const repo = repoSegments[1]?.replace(/\.git$/i, '').trim();
+  return owner && repo ? { owner, repo } : undefined;
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function parseGitLabProjectAddress(
+  value: unknown,
+): { endpointUrl?: string; projectId: string; projectPath: string } | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const sshMatch = trimmed.match(/^[^@\s]+@([^:\s]+):(.+)$/);
+  let endpointUrl: string | undefined;
+  let path = sshMatch?.[2] ?? trimmed;
+  if (sshMatch) {
+    endpointUrl = `https://${sshMatch[1]}`;
+  } else {
+    const firstSegment = trimmed.split('/')[0] ?? '';
+    const looksLikeUrl =
+      trimmed.includes('://')
+      || firstSegment.includes('.')
+      || firstSegment.includes(':')
+      || firstSegment === 'localhost';
+    try {
+      if (looksLikeUrl) {
+        const url = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
+        endpointUrl = `${url.protocol}//${url.host}`;
+        path = url.pathname;
+      }
+    } catch {
+      path = trimmed;
+    }
+  }
+  const normalizedPath = path.split('/-/', 1)[0] ?? path;
+  let segments = normalizedPath
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter(Boolean);
+  if (segments.length >= 4 && segments[0] === 'api' && segments[2] === 'projects') {
+    segments = [safeDecodeURIComponent(segments[3])];
+  }
+  const projectPath = safeDecodeURIComponent(segments.join('/')).replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '');
+  if (!projectPath || !projectPath.includes('/')) {
+    return undefined;
+  }
+  return {
+    endpointUrl,
+    projectId: encodeURIComponent(projectPath),
+    projectPath,
+  };
+}
+
+function buildGitRepositoryAddress(payload: Record<string, unknown>): string | undefined {
+  const requestConfig = isPlainRecord(payload.request_config) ? payload.request_config : {};
+  const query = isPlainRecord(requestConfig.query) ? requestConfig.query : {};
+  const explicitUrl = stringValue(query.repository_url).trim();
+  if (explicitUrl) {
+    return explicitUrl;
+  }
+  const owner = stringValue(query.owner).trim();
+  const repo = stringValue(query.repo).trim();
+  if (!owner || !repo) {
+    return undefined;
+  }
+  const endpointUrl = stringValue(payload.endpoint_url);
+  try {
+    const endpoint = endpointUrl ? new URL(endpointUrl) : undefined;
+    if (endpoint?.hostname === 'api.github.com') {
+      return `https://github.com/${owner}/${repo}.git`;
+    }
+  } catch {
+    // fall back to the portable owner/repo shorthand
+  }
+  return `${owner}/${repo}`;
+}
+
+function buildGitLabProjectAddress(payload: Record<string, unknown>): string | undefined {
+  const requestConfig = isPlainRecord(payload.request_config) ? payload.request_config : {};
+  const query = isPlainRecord(requestConfig.query) ? requestConfig.query : {};
+  const explicitUrl = stringValue(query.gitlab_project_url).trim()
+    || stringValue(query.repository_url).trim();
+  if (explicitUrl) {
+    return explicitUrl;
+  }
+  const projectPath = stringValue(query.project_path).trim();
+  if (projectPath) {
+    const endpointUrl = stringValue(payload.endpoint_url).replace(/\/+$/, '');
+    return endpointUrl ? `${endpointUrl}/${projectPath}.git` : projectPath;
+  }
+  const projectId = stringValue(query.project_id).trim();
+  if (!projectId) {
+    return undefined;
+  }
+  const decodedProjectId = safeDecodeURIComponent(projectId);
+  const endpointUrl = stringValue(payload.endpoint_url).replace(/\/+$/, '');
+  return endpointUrl ? `${endpointUrl}/${decodedProjectId}.git` : decodedProjectId;
+}
+
+function schemaValuesFromPayload(
+  payload: Record<string, unknown>,
+  schema?: PluginConnectionSchemaRecord,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    schemaFields(schema)
+      .map((field) => [
+        field.key,
+        field.type === 'github_repository_url'
+          ? buildGitRepositoryAddress(payload)
+          : field.type === 'gitlab_project_url'
+            ? buildGitLabProjectAddress(payload)
+          : valueAtPath(payload, field.path),
+      ])
+      .filter(([, value]) => value !== undefined),
+  );
+}
+
+function applySchemaValuesToRequestConfig(
+  requestConfig: Record<string, unknown>,
+  schema: PluginConnectionSchemaRecord | undefined,
+  schemaValues: Record<string, unknown> | undefined,
+) {
+  if (!schemaValues) {
+    return requestConfig;
+  }
+  const root: Record<string, unknown> = { request_config: { ...requestConfig } };
+  schemaFields(schema).forEach((field) => {
+    const value = schemaValues[field.key];
+    if (value === undefined) {
+      return;
+    }
+    if (field.type === 'github_repository_url') {
+      const parsed = parseGitRepositoryAddress(value);
+      setValueAtPath(root, 'request_config.query.owner', parsed?.owner ?? '');
+      setValueAtPath(root, 'request_config.query.repo', parsed?.repo ?? '');
+      return;
+    }
+    if (field.type === 'gitlab_project_url') {
+      const parsed = parseGitLabProjectAddress(value);
+      setValueAtPath(root, 'request_config.query.api_version', 'v4');
+      setValueAtPath(root, 'request_config.query.group_id', parsed?.projectPath.split('/', 1)[0] ?? '');
+      setValueAtPath(root, 'request_config.query.project_id', parsed?.projectId ?? '');
+      setValueAtPath(root, 'request_config.query.project_path', parsed?.projectPath ?? '');
+      return;
+    }
+    if (!field.path?.startsWith('request_config.')) {
+      return;
+    }
+    setValueAtPath(root, field.path, value);
+  });
+  return isPlainRecord(root.request_config) ? root.request_config : requestConfig;
 }
 
 function buildVisualRequestConfig(values: Partial<ActionFormValues>): Record<string, unknown> {
@@ -448,7 +700,10 @@ function buildConnectionAuthConfig(values: Partial<ConnectionFormValues>): Recor
   return {};
 }
 
-function buildConnectionRequestConfig(values: Partial<ConnectionFormValues>): Record<string, unknown> {
+function buildConnectionRequestConfig(
+  values: Partial<ConnectionFormValues>,
+  schema?: PluginConnectionSchemaRecord,
+): Record<string, unknown> {
   const config: Record<string, unknown> = {};
   const query = rowsToRecord(values.connection_param_rows);
   const headers = rowsToRecord(values.connection_header_rows);
@@ -458,18 +713,35 @@ function buildConnectionRequestConfig(values: Partial<ConnectionFormValues>): Re
   if (Object.keys(headers).length > 0) {
     config.headers = headers;
   }
-  return config;
+  return applySchemaValuesToRequestConfig(config, schema, values.schema_values);
+}
+
+function endpointUrlFromSchemaValues(
+  values: Partial<ConnectionFormValues>,
+  schema?: PluginConnectionSchemaRecord,
+): string | undefined {
+  for (const field of schemaFields(schema)) {
+    if (field.type !== 'gitlab_project_url') {
+      continue;
+    }
+    const parsed = parseGitLabProjectAddress(values.schema_values?.[field.key]);
+    if (parsed?.endpointUrl) {
+      return parsed.endpointUrl;
+    }
+  }
+  return values.endpoint_url;
 }
 
 function buildConnectionPayload(
   values: ConnectionFormValues,
   authConfig: Record<string, unknown>,
   requestConfig: Record<string, unknown>,
+  schema?: PluginConnectionSchemaRecord,
 ): Partial<PluginConnectionRecord> {
   return {
     auth_config: authConfig,
     auth_type: values.auth_type,
-    endpoint_url: values.endpoint_url,
+    endpoint_url: endpointUrlFromSchemaValues(values, schema) ?? values.endpoint_url,
     environment: values.environment,
     max_retries: values.max_retries,
     name: values.name,
@@ -512,6 +784,14 @@ function parseJsonObject(value: string | undefined, field: string): Record<strin
     // fall through to a consistent validation message
   }
   throw new Error(`${field} 必须是 JSON 对象`);
+}
+
+function isFormValidationError(error: unknown): error is { errorFields: Array<{ name?: Array<string | number> }> } {
+  return (
+    Boolean(error)
+    && typeof error === 'object'
+    && Array.isArray((error as { errorFields?: unknown }).errorFields)
+  );
 }
 
 function compactJson(value: unknown): string {
@@ -744,14 +1024,23 @@ function numberValue(value: unknown, fallback: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function pluginConnectionDraftFormValues(payload: Record<string, unknown>): Partial<ConnectionFormValues> {
+function pluginConnectionDraftFormValues(
+  payload: Record<string, unknown>,
+  schema?: PluginConnectionSchemaRecord,
+): Partial<ConnectionFormValues> {
   const authConfig = isPlainRecord(payload.auth_config) ? payload.auth_config : {};
   const requestConfig = isPlainRecord(payload.request_config) ? payload.request_config : {};
   return {
     auth_config: stableJson(authConfig),
     auth_type: stringValue(payload.auth_type, 'none'),
-    connection_header_rows: recordToRows(requestConfig.headers),
-    connection_param_rows: recordToRows(requestConfig.query),
+    connection_header_rows: recordToRows(
+      requestConfig.headers,
+      schemaManagedRequestKeys(schema, 'headers'),
+    ),
+    connection_param_rows: recordToRows(
+      requestConfig.query,
+      schemaManagedRequestKeys(schema, 'query'),
+    ),
     endpoint_url: stringValue(payload.endpoint_url),
     environment: stringValue(payload.environment, 'default'),
     header_name: stringValue(authConfig.header_name) || undefined,
@@ -760,6 +1049,7 @@ function pluginConnectionDraftFormValues(payload: Record<string, unknown>): Part
     password_ref: stringValue(authConfig.password_ref) || undefined,
     plugin_id: stringValue(payload.plugin_id),
     request_config: stableJson(requestConfig),
+    schema_values: schemaValuesFromPayload(payload, schema),
     secret_ref: stringValue(authConfig.secret_ref) || undefined,
     status: stringValue(payload.status, 'active'),
     timeout_seconds: numberValue(payload.timeout_seconds, 30),
@@ -779,7 +1069,7 @@ function pluginConnectionTemplateFormValues(
   return pluginConnectionDraftFormValues({
     ...defaults,
     plugin_id: options.pluginId || stringValue(defaults.plugin_id) || item?.plugin_id || undefined,
-  });
+  }, item.connection_schema);
 }
 
 function marketplaceConnectionSchemaFields(item: PluginMarketplaceItem) {
@@ -1084,7 +1374,7 @@ function ConnectionRequestDebugPanel({
                   <Space orientation="vertical" size={4} style={{ width: '100%' }}>
                     <Typography.Text strong>历史请求详情</Typography.Text>
                     {record.error_message !== '-' ? (
-                      <Alert description={record.error_message} message="历史错误信息" showIcon type="error" />
+                      <Alert description={record.error_message} showIcon title="历史错误信息" type="error" />
                     ) : null}
                   </Space>
                   {record.repair_suggestions.length > 0 ? (
@@ -1094,8 +1384,8 @@ function ConnectionRequestDebugPanel({
                         <Alert
                           description={suggestion.detail}
                           key={suggestion.code}
-                          message={suggestion.title}
                           showIcon
+                          title={suggestion.title}
                           type="warning"
                         />
                       ))}
@@ -1125,8 +1415,8 @@ function ConnectionRequestDebugPanel({
               <Alert
                 description={suggestion.detail}
                 key={suggestion.code}
-                message={suggestion.title}
                 showIcon
+                title={suggestion.title}
                 type="warning"
               />
             ))}
@@ -1329,6 +1619,123 @@ function RequestParameterRows({
   );
 }
 
+function normalizeSchemaOptions(field: PluginConnectionSchemaFieldRecord) {
+  return (field.options ?? []).map((option) => (
+    typeof option === 'string' ? { label: option, value: option } : option
+  ));
+}
+
+function ConnectionSchemaFields({
+  pluginCode,
+  schema,
+}: {
+  pluginCode?: string;
+  schema?: PluginConnectionSchemaRecord;
+}) {
+  const form = Form.useFormInstance();
+  const sections = schema?.sections ?? [];
+  if (!sections.length) {
+    return null;
+  }
+
+  return (
+    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+      {pluginCode === 'github' ? (
+        <Alert
+          description="Params 属于高级查询参数，只有需要补充 GitHub API query 时再填写，例如 state、per_page、ref。Headers 默认保留 Accept 和 X-GitHub-Api-Version。"
+          showIcon
+          title="GitHub 连接只需要粘贴仓库地址；系统会自动解析 owner/repo，Params 不用再填。"
+          type="info"
+        />
+      ) : null}
+      {pluginCode === 'gitlab' ? (
+        <Alert
+          description="填写本地 GitLab 项目地址后，系统会自动同步 Endpoint URL，并解析 project_id/project_path 给 GitLab API 使用。Params 只用于补充额外查询参数。"
+          showIcon
+          title="GitLab 连接只需要粘贴本地项目地址。"
+          type="info"
+        />
+      ) : null}
+      {sections.map((section) => (
+        <Space key={section.key} orientation="vertical" size={8} style={{ width: '100%' }}>
+          <div style={{ color: '#53627a', fontWeight: 600 }}>{section.title}</div>
+          <Space wrap align="start">
+            {(section.fields ?? []).map((field) => {
+              const rules = [
+                ...(field.required ? [{ required: true, message: `请输入${field.label}` }] : []),
+                ...(field.type === 'github_repository_url'
+                  ? [{
+                    validator: (_: unknown, value: unknown) => (
+                      !value || parseGitRepositoryAddress(value)
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('请输入有效的 GitHub 仓库地址，例如 https://github.com/acme/ai-brain.git'))
+                    ),
+                  }]
+                  : []),
+                ...(field.type === 'gitlab_project_url'
+                  ? [{
+                    validator: (_: unknown, value: unknown) => (
+                      !value || parseGitLabProjectAddress(value)
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('请输入有效的 GitLab 地址，例如 http://gitlab.local/acme/ai-brain.git'))
+                    ),
+                  }]
+                  : []),
+              ];
+              const fieldName = ['schema_values', field.key] as const;
+              const schemaOptions = normalizeSchemaOptions(field);
+              const control = field.type === 'select' && schemaOptions.length > 0 ? (
+                <Select
+                  allowClear={!field.required}
+                  options={schemaOptions}
+                  placeholder={field.placeholder || field.label}
+                  style={{ width: 240 }}
+                />
+              ) : field.type === 'number' ? (
+                <InputNumber placeholder={field.placeholder || field.label} style={{ width: 240 }} />
+              ) : field.type === 'boolean' ? (
+                <Switch />
+              ) : (
+                <Input
+                  placeholder={field.placeholder || field.label}
+                  style={{ width: ['github_repository_url', 'gitlab_project_url'].includes(field.type ?? '') ? 420 : 240 }}
+                />
+              );
+              return (
+                <Space key={field.key} align="baseline" size={6}>
+                  <Form.Item
+                    extra={field.description}
+                    label={field.label}
+                    name={fieldName}
+                    rules={rules.length ? rules : undefined}
+                    style={{ marginBottom: 8 }}
+                    valuePropName={field.type === 'boolean' ? 'checked' : 'value'}
+                  >
+                    {control}
+                  </Form.Item>
+                  {field.supports_system_variables ? (
+                    <Select
+                      allowClear
+                      options={systemVariableOptions}
+                      placeholder="系统变量"
+                      style={{ width: 190, marginTop: 30 }}
+                      onChange={(value) => {
+                        if (value) {
+                          form.setFieldValue(fieldName, value);
+                        }
+                      }}
+                    />
+                  ) : null}
+                </Space>
+              );
+            })}
+          </Space>
+        </Space>
+      ))}
+    </Space>
+  );
+}
+
 export default function PluginsPage() {
   const [pluginForm] = Form.useForm<PluginFormValues>();
   const [connectionForm] = Form.useForm<ConnectionFormValues>();
@@ -1380,6 +1787,7 @@ export default function PluginsPage() {
   const [advancedActionJsonOpen, setAdvancedActionJsonOpen] = useState(false);
   const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
   const selectedConnectionAuthType = Form.useWatch('auth_type', connectionForm);
+  const selectedConnectionPluginId = Form.useWatch('plugin_id', connectionForm);
   const actionFormValues = Form.useWatch([], actionForm) as ActionFormValues | undefined;
 
   const pluginOptions = useMemo(
@@ -1411,6 +1819,17 @@ export default function PluginsPage() {
     ),
     [marketplaceItems],
   );
+  const selectedConnectionPlugin = selectedConnectionPluginId
+    ? pluginById.get(String(selectedConnectionPluginId))
+    : undefined;
+  const selectedConnectionPluginCode = selectedConnectionPlugin?.code;
+  const selectedConnectionIsGithub = selectedConnectionPluginCode === 'github';
+  const selectedConnectionIsGitlab = selectedConnectionPluginCode === 'gitlab';
+  const selectedConnectionMarketplaceItem = selectedConnectionPlugin
+    ? marketplaceItemByPluginCode.get(selectedConnectionPlugin.code)
+      ?? marketplaceItemByPluginId.get(selectedConnectionPlugin.id)
+    : undefined;
+  const selectedConnectionSchema = selectedConnectionMarketplaceItem?.connection_schema;
   const actionTemplateOptions = useMemo(
     () => actionTemplates.map((template) => ({ label: template.name, value: template.code })),
     [actionTemplates],
@@ -1932,6 +2351,11 @@ export default function PluginsPage() {
   const openEditConnectionModal = (connection: PluginConnectionRecord) => {
     const authConfig = connection.auth_config ?? {};
     const requestConfig = connection.request_config ?? {};
+    const plugin = pluginById.get(connection.plugin_id);
+    const schema = plugin
+      ? marketplaceItemByPluginCode.get(plugin.code)?.connection_schema
+        ?? marketplaceItemByPluginId.get(plugin.id)?.connection_schema
+      : undefined;
     setEditingConnection(connection);
     setAssistantConnectionDraftSource(undefined);
     setAdvancedConnectionJsonOpen(false);
@@ -1940,8 +2364,14 @@ export default function PluginsPage() {
     connectionForm.setFieldsValue({
       auth_config: stableJson(authConfig),
       auth_type: connection.auth_type ?? 'none',
-      connection_header_rows: recordToRows(configSection(requestConfig, 'headers')),
-      connection_param_rows: recordToRows(configSection(requestConfig, 'query')),
+      connection_header_rows: recordToRows(
+        configSection(requestConfig, 'headers'),
+        schemaManagedRequestKeys(schema, 'headers'),
+      ),
+      connection_param_rows: recordToRows(
+        configSection(requestConfig, 'query'),
+        schemaManagedRequestKeys(schema, 'query'),
+      ),
       endpoint_url: connection.endpoint_url,
       environment: connection.environment ?? 'default',
       header_name: typeof authConfig.header_name === 'string' ? authConfig.header_name : undefined,
@@ -1950,6 +2380,7 @@ export default function PluginsPage() {
       password_ref: typeof authConfig.password_ref === 'string' ? authConfig.password_ref : undefined,
       plugin_id: connection.plugin_id,
       request_config: stableJson(requestConfig),
+      schema_values: schemaValuesFromPayload(connection, schema),
       secret_ref: typeof authConfig.secret_ref === 'string' ? authConfig.secret_ref : undefined,
       status: connection.status,
       timeout_seconds: connection.timeout_seconds ?? 30,
@@ -1971,6 +2402,10 @@ export default function PluginsPage() {
   const applyConnectionPluginDefaults = (pluginId: string) => {
     const plugin = pluginById.get(pluginId);
     const defaults = connectionDefaultsForPlugin(plugin);
+    const schema = plugin
+      ? marketplaceItemByPluginCode.get(plugin.code)?.connection_schema
+        ?? marketplaceItemByPluginId.get(plugin.id)?.connection_schema
+      : undefined;
     if (!defaults) {
       return;
     }
@@ -1978,6 +2413,7 @@ export default function PluginsPage() {
       header_name: undefined,
       password_ref: undefined,
       plugin_id: pluginId,
+      schema_values: {},
       secret_ref: undefined,
       token_ref: undefined,
       username_ref: undefined,
@@ -1991,7 +2427,7 @@ export default function PluginsPage() {
       nextValues.auth_config = stableJson(buildConnectionAuthConfig(mergedValues));
     }
     if (advancedConnectionRequestJsonOpen) {
-      nextValues.request_config = stableJson(buildConnectionRequestConfig(mergedValues));
+      nextValues.request_config = stableJson(buildConnectionRequestConfig(mergedValues, schema));
     }
     connectionForm.setFieldsValue(nextValues);
   };
@@ -2002,10 +2438,16 @@ export default function PluginsPage() {
       const authConfig = advancedConnectionJsonOpen
         ? parseJsonObject(values.auth_config, '认证配置')
         : buildConnectionAuthConfig(values);
+      if (selectedConnectionIsGithub) {
+        const tokenRef = typeof authConfig.token_ref === 'string' ? authConfig.token_ref.trim() : '';
+        if (values.auth_type !== 'bearer' || !tokenRef) {
+          throw new Error('GitHub 连接必须填写 Token 或密钥引用');
+        }
+      }
       const requestConfig = advancedConnectionRequestJsonOpen
         ? parseJsonObject(values.request_config, '请求配置')
-        : buildConnectionRequestConfig(values);
-      const payload = buildConnectionPayload(values, authConfig, requestConfig);
+        : buildConnectionRequestConfig(values, selectedConnectionSchema);
+      const payload = buildConnectionPayload(values, authConfig, requestConfig, selectedConnectionSchema);
       if (editingConnection) {
         await updatePluginConnection(editingConnection.id, payload);
         message.success('连接已更新');
@@ -2022,6 +2464,13 @@ export default function PluginsPage() {
       closeConnectionModal();
       await reload();
     } catch (error) {
+      if (isFormValidationError(error)) {
+        const firstField = error.errorFields[0]?.name;
+        if (firstField) {
+          connectionForm.scrollToField(firstField);
+        }
+        return;
+      }
       message.error(error instanceof Error ? error.message : editingConnection ? '连接更新失败' : '连接创建失败');
     }
   };
@@ -2112,14 +2561,26 @@ export default function PluginsPage() {
         }
         openCreateConnectionModal();
         setAssistantConnectionDraftSource({ draftId: draft.draftId, title: draft.title });
-        connectionForm.setFieldsValue(pluginConnectionDraftFormValues(draft.payload));
+        const pluginId = stringValue(draft.payload.plugin_id);
+        const plugin = pluginId ? pluginById.get(pluginId) : undefined;
+        const schema = plugin
+          ? marketplaceItemByPluginCode.get(plugin.code)?.connection_schema
+            ?? marketplaceItemByPluginId.get(plugin.id)?.connection_schema
+          : undefined;
+        connectionForm.setFieldsValue(pluginConnectionDraftFormValues(draft.payload, schema));
         message.success(`已应用助手草案：${draft.title || '插件连接'}`);
       } catch (error) {
         message.error(error instanceof Error ? error.message : '助手插件连接草案解析失败');
       }
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [connectionForm, openCreateConnectionModal]);
+  }, [
+    connectionForm,
+    marketplaceItemByPluginCode,
+    marketplaceItemByPluginId,
+    openCreateConnectionModal,
+    pluginById,
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2315,7 +2776,7 @@ export default function PluginsPage() {
 
   const syncConnectionRequestJsonFromVisual = () => {
     const values = connectionForm.getFieldsValue();
-    connectionForm.setFieldValue('request_config', stableJson(buildConnectionRequestConfig(values)));
+    connectionForm.setFieldValue('request_config', stableJson(buildConnectionRequestConfig(values, selectedConnectionSchema)));
   };
 
   const toggleAdvancedConnectionRequestJson = () => {
@@ -2346,8 +2807,15 @@ export default function PluginsPage() {
     try {
       const config = parseJsonObject(connectionForm.getFieldValue('request_config'), '请求配置');
       connectionForm.setFieldsValue({
-        connection_header_rows: recordToRows(config.headers),
-        connection_param_rows: recordToRows(config.query),
+        connection_header_rows: recordToRows(
+          config.headers,
+          schemaManagedRequestKeys(selectedConnectionSchema, 'headers'),
+        ),
+        connection_param_rows: recordToRows(
+          config.query,
+          schemaManagedRequestKeys(selectedConnectionSchema, 'query'),
+        ),
+        schema_values: schemaValuesFromPayload({ request_config: config }, selectedConnectionSchema),
       });
       message.success('已从请求 JSON 同步到 Params / Headers');
     } catch (error) {
@@ -2437,13 +2905,13 @@ export default function PluginsPage() {
             {placeholderHeaders.length > 0 ? (
               <Alert
                 description={`最终请求仍包含脱敏占位：${placeholderHeaders.join('、')}。请重新填写真实 Header 值，或改用认证配置字段维护 Authorization。`}
-                message="Authorization 等敏感 Header 不能使用 *** 占位发起请求"
                 showIcon
+                title="Authorization 等敏感 Header 不能使用 *** 占位发起请求"
                 type="error"
               />
             ) : null}
             {result.error_message ? (
-              <Alert description={result.error_message} message="错误信息" showIcon type="error" />
+              <Alert description={result.error_message} showIcon title="错误信息" type="error" />
             ) : null}
             <Table
               columns={[
@@ -3545,11 +4013,20 @@ export default function PluginsPage() {
           layout="vertical"
           initialValues={{ auth_type: 'none', environment: 'default', max_retries: 0, status: 'active', timeout_seconds: 30 }}
           onValuesChange={(changedValues, allValues) => {
+            if (selectedConnectionIsGitlab && Object.prototype.hasOwnProperty.call(changedValues, 'schema_values')) {
+              const nextEndpointUrl = endpointUrlFromSchemaValues(allValues, selectedConnectionSchema);
+              if (nextEndpointUrl && nextEndpointUrl !== allValues.endpoint_url) {
+                connectionForm.setFieldValue('endpoint_url', nextEndpointUrl);
+              }
+            }
             if (
               advancedConnectionRequestJsonOpen
               && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
             ) {
-              connectionForm.setFieldValue('request_config', stableJson(buildConnectionRequestConfig(allValues)));
+              connectionForm.setFieldValue(
+                'request_config',
+                stableJson(buildConnectionRequestConfig(allValues, selectedConnectionSchema)),
+              );
             }
           }}
         >
@@ -3588,8 +4065,21 @@ export default function PluginsPage() {
             </Space>
           ) : null}
           {!advancedConnectionJsonOpen && selectedConnectionAuthType === 'bearer' ? (
-            <Form.Item label="Token 引用" name="token_ref">
-              <Input placeholder="vault/path/to/token" />
+            <Form.Item
+              extra={
+                selectedConnectionIsGithub
+                  ? '填写 GitHub Personal Access Token，或平台可解析的密钥引用。本地联调可直接填 ghp_xxx；生产建议填 vault/github/token 或 env:GITHUB_TOKEN。'
+                  : '填写 Bearer Token 或平台可解析的密钥引用。'
+              }
+              label="Token / 密钥引用"
+              name="token_ref"
+              rules={
+                selectedConnectionIsGithub
+                  ? [{ required: true, message: '请填写 GitHub Token 或密钥引用' }]
+                  : undefined
+              }
+            >
+              <Input placeholder="ghp_xxx / vault/github/token / env:GITHUB_TOKEN" />
             </Form.Item>
           ) : null}
           {!advancedConnectionJsonOpen && selectedConnectionAuthType === 'basic' ? (
@@ -3621,11 +4111,15 @@ export default function PluginsPage() {
               </Form.Item>
             </>
           ) : null}
+          <ConnectionSchemaFields
+            pluginCode={selectedConnectionPluginCode}
+            schema={selectedConnectionSchema}
+          />
           <RequestParameterRows
             addText="添加 Params"
             name="connection_param_rows"
             namePlaceholder="参数名"
-            title="Params"
+            title="高级查询 Params"
             valuePlaceholder="参数值"
           />
           <RequestParameterRows

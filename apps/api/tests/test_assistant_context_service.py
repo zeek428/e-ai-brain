@@ -809,7 +809,7 @@ def test_assistant_tool_results_can_generate_plugin_connection_draft():
         "action": "create_plugin_connection",
         "draft_id": "assistant_draft_github_plugin_connection",
         "payload": {
-            "auth_config": {"token_ref": "vault/github/token"},
+            "auth_config": {},
             "auth_type": "bearer",
             "endpoint_url": "https://api.github.com",
             "environment": "prod",

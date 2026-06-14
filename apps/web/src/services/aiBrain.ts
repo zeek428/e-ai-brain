@@ -4031,7 +4031,8 @@ export type PluginConnectionSchemaFieldRecord = {
   description?: string;
   key: string;
   label: string;
-  options?: Array<{ label: string; value: string }>;
+  managed_query_keys?: string[];
+  options?: Array<{ label: string; value: string } | string>;
   path?: string;
   placeholder?: string;
   required?: boolean;

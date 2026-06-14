@@ -25,20 +25,6 @@ STANDARD_PLUGINS = [
         "status": "active",
     },
     {
-        "category": "data_warehouse",
-        "code": "aliyun_maxcompute",
-        "description": (
-            "官方标准阿里云 MaxCompute 插件，用于连接数据仓库、执行 SQL "
-            "并把结果交给定时作业或 AI Skill 分析。"
-        ),
-        "id": "plugin_standard_aliyun_maxcompute",
-        "is_system": True,
-        "name": "阿里云 MaxCompute",
-        "protocol": "mcp_http",
-        "risk_level": "high",
-        "status": "active",
-    },
-    {
         "category": "devops",
         "code": "gitlab",
         "description": (
@@ -113,16 +99,6 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
         ],
         "summary": "连接企业邮件网关、SMTP/IMAP/POP3 或邮件 API，用于邮件收取和发送。",
     },
-    "aliyun_maxcompute": {
-        "action_templates": ["MaxCompute 每周用户反馈"],
-        "publisher": "AI Brain 官方",
-        "recommended_scenarios": [
-            "每周用户反馈分析",
-            "数据仓库取数",
-            "用户洞察生成",
-        ],
-        "summary": "连接阿里云 MaxCompute 项目，按时间窗口执行 SQL 并返回结构化数据。",
-    },
     "github": {
         "action_templates": ["GitHub 代码巡检", "GitHub PR / 仓库读取"],
         "publisher": "AI Brain 官方",
@@ -168,29 +144,6 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         "status": "active",
         "timeout_seconds": 30,
     },
-    "aliyun_maxcompute": {
-        "auth_config": {
-            "access_key_id_ref": "vault/maxcompute/access_key_id",
-            "access_key_secret_ref": "vault/maxcompute/access_key_secret",
-        },
-        "auth_type": "bearer",
-        "endpoint_url": "https://maxcompute.aliyuncs.com",
-        "environment": "prod",
-        "max_retries": 1,
-        "name": "生产 MaxCompute 连接",
-        "protocol": "mcp_http",
-        "request_config": {
-            "query": {
-                "endpoint": "https://service.cn-hangzhou.maxcompute.aliyun.com/api",
-                "project": "",
-                "region": "cn-hangzhou",
-                "table_name": "ods_user_feedback",
-                "tunnel_endpoint": "",
-            },
-        },
-        "status": "active",
-        "timeout_seconds": 60,
-    },
     "email": {
         "auth_config": {
             "header_name": "Authorization",
@@ -226,7 +179,7 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
         "timeout_seconds": 30,
     },
     "github": {
-        "auth_config": {"token_ref": "vault/github/token"},
+        "auth_config": {},
         "auth_type": "bearer",
         "endpoint_url": "https://api.github.com",
         "environment": "prod",
@@ -251,15 +204,15 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
             "secret_ref": "vault/gitlab/token",
         },
         "auth_type": "api_key_header",
-        "endpoint_url": "https://gitlab.com",
+        "endpoint_url": "http://gitlab.local",
         "environment": "prod",
         "max_retries": 1,
         "name": "生产 GitLab 连接",
         "request_config": {
             "query": {
                 "api_version": "v4",
-                "group_id": "",
                 "project_id": "",
+                "project_path": "",
             },
         },
         "status": "active",
@@ -320,52 +273,6 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                         "key": "result_callback_url",
                         "label": "结果回写地址",
                         "path": "request_config.query.result_callback_url",
-                        "required": False,
-                        "type": "text",
-                    },
-                ],
-            },
-        ],
-    },
-    "aliyun_maxcompute": {
-        "schema_version": "v1",
-        "sections": [
-            {
-                "key": "project",
-                "title": "项目与表配置",
-                "fields": [
-                    {
-                        "key": "project",
-                        "label": "Project",
-                        "path": "request_config.query.project",
-                        "required": True,
-                        "type": "text",
-                    },
-                    {
-                        "key": "region",
-                        "label": "地域",
-                        "path": "request_config.query.region",
-                        "required": True,
-                        "type": "text",
-                    },
-                    {
-                        "key": "table_name",
-                        "label": "默认表名",
-                        "path": "request_config.query.table_name",
-                        "required": False,
-                        "type": "text",
-                    },
-                    {
-                        "key": "endpoint",
-                        "label": "Endpoint",
-                        "path": "request_config.query.endpoint",
-                        "required": True,
-                        "type": "text",
-                    },
-                    {
-                        "key": "tunnel_endpoint",
-                        "label": "Tunnel Endpoint",
-                        "path": "request_config.query.tunnel_endpoint",
                         "required": False,
                         "type": "text",
                     },
@@ -450,18 +357,16 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                 "title": "仓库配置",
                 "fields": [
                     {
-                        "key": "owner",
-                        "label": "Owner / Org",
-                        "path": "request_config.query.owner",
+                        "description": (
+                            "可粘贴 https://github.com/acme/ai-brain.git、"
+                            "git@github.com:acme/ai-brain.git，或直接填写 acme/ai-brain。"
+                        ),
+                        "key": "repository_url",
+                        "label": "仓库地址",
+                        "managed_query_keys": ["owner", "repo"],
+                        "placeholder": "https://github.com/acme/ai-brain.git",
                         "required": True,
-                        "type": "text",
-                    },
-                    {
-                        "key": "repo",
-                        "label": "Repository",
-                        "path": "request_config.query.repo",
-                        "required": True,
-                        "type": "text",
+                        "type": "github_repository_url",
                     },
                 ],
             },
@@ -475,25 +380,22 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
                 "title": "项目配置",
                 "fields": [
                     {
-                        "key": "project_id",
-                        "label": "Project ID",
-                        "path": "request_config.query.project_id",
+                        "description": (
+                            "填写本地 GitLab 项目地址，例如 "
+                            "http://gitlab.local/acme/ai-brain.git；"
+                            "系统会自动解析 Endpoint 和项目路径。"
+                        ),
+                        "key": "gitlab_project_url",
+                        "label": "GitLab 地址",
+                        "managed_query_keys": [
+                            "api_version",
+                            "group_id",
+                            "project_id",
+                            "project_path",
+                        ],
+                        "placeholder": "http://gitlab.local/acme/ai-brain.git",
                         "required": True,
-                        "type": "text",
-                    },
-                    {
-                        "key": "group_id",
-                        "label": "Group ID",
-                        "path": "request_config.query.group_id",
-                        "required": False,
-                        "type": "text",
-                    },
-                    {
-                        "key": "api_version",
-                        "label": "API 版本",
-                        "path": "request_config.query.api_version",
-                        "required": True,
-                        "type": "text",
+                        "type": "gitlab_project_url",
                     },
                 ],
             },
@@ -559,47 +461,6 @@ STANDARD_PLUGIN_ACTION_TEMPLATES = [
             "tool_name": "ai_executor.sync_result",
         },
         "result_mapping": result_write_target_default_mapping("scheduled_job_result"),
-        "template_version": "v1",
-    },
-    {
-        "action_type": "mcp_tool",
-        "code": "maxcompute_weekly_feedback",
-        "default_code": "fetch_weekly_user_feedback",
-        "default_name": "获取本周用户反馈数据",
-        "description": "从 MaxCompute 获取本周用户反馈明细，交给 Skill 提取用户洞察。",
-        "form_defaults": {
-            "max_rows": 1000,
-            "returned_fields": (
-                "feedback_id,user_id,product_id,module_code,feedback_type,"
-                "content,sentiment,created_at"
-            ),
-            "table_name": "ods_user_feedback",
-            "time_field": "created_at",
-        },
-        "name": "MaxCompute 每周用户反馈",
-        "plugin_code": "aliyun_maxcompute",
-        "request_config": {
-            "fields": [
-                "feedback_id",
-                "user_id",
-                "product_id",
-                "module_code",
-                "feedback_type",
-                "content",
-                "sentiment",
-                "created_at",
-            ],
-            "limit": 1000,
-            "sql_template": (
-                "SELECT feedback_id, user_id, product_id, module_code, feedback_type, "
-                "content, sentiment, created_at FROM ods_user_feedback "
-                "WHERE created_at >= '${week_start}' AND created_at < '${week_end}' LIMIT 1000"
-            ),
-            "table": "ods_user_feedback",
-            "time_field": "created_at",
-            "tool_name": "maxcompute.execute_sql",
-        },
-        "result_mapping": result_write_target_default_mapping("user_feedback_insights"),
         "template_version": "v1",
     },
     {

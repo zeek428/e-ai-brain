@@ -6,7 +6,11 @@ from fastapi.testclient import TestClient
 import app.services.plugins as plugin_services
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.main import app
-from app.services.plugins import records_imported_from_mapping, resolve_action_request_config
+from app.services.plugins import (
+    records_imported_from_mapping,
+    resolve_action_request_config,
+    resolve_plugin_request_config,
+)
 from app.services.scheduled_jobs import resolve_plugin_input_mapping
 
 client = TestClient(app)
@@ -141,7 +145,7 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert marketplace.status_code == 200
     items = marketplace.json()["data"]["items"]
     by_code = {item["code"]: item for item in items}
-    assert set(by_code) == {"ai_executor", "aliyun_maxcompute", "email", "github", "gitlab"}
+    assert set(by_code) == {"ai_executor", "email", "github", "gitlab"}
     assert by_code["ai_executor"]["installed"] is True
     assert by_code["ai_executor"]["is_system"] is True
     assert by_code["ai_executor"]["latest_template_version"] == "v1"
@@ -177,12 +181,7 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
         "hermes",
         "openclaw",
     ]
-    maxcompute_defaults = by_code["aliyun_maxcompute"]["connection_defaults"]
-    assert maxcompute_defaults["protocol"] == "mcp_http"
-    assert maxcompute_defaults["request_config"]["query"]["project"] == ""
-    assert by_code["aliyun_maxcompute"]["connection_schema"]["sections"][0]["fields"][0][
-        "key"
-    ] == "project"
+    assert "aliyun_maxcompute" not in by_code
     assert by_code["github"]["installed"] is True
     assert by_code["github"]["is_system"] is True
     assert by_code["github"]["plugin_id"] == "plugin_standard_github"
@@ -193,8 +192,12 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert by_code["github"]["template_version"] == "v1"
     assert by_code["github"]["version_status"] == "latest"
     assert by_code["github"]["connection_defaults"]["auth_type"] == "bearer"
+    assert by_code["github"]["connection_defaults"]["auth_config"] == {}
     assert by_code["github"]["connection_defaults"]["endpoint_url"] == "https://api.github.com"
-    assert by_code["github"]["connection_schema"]["sections"][0]["fields"][0]["key"] == "owner"
+    github_repository_field = by_code["github"]["connection_schema"]["sections"][0]["fields"][0]
+    assert github_repository_field["key"] == "repository_url"
+    assert github_repository_field["label"] == "仓库地址"
+    assert github_repository_field["managed_query_keys"] == ["owner", "repo"]
     assert (
         by_code["github"]["connection_defaults"]["request_config"]["headers"][
             "X-GitHub-Api-Version"
@@ -202,6 +205,16 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
         == "2022-11-28"
     )
     assert by_code["gitlab"]["connection_defaults"]["auth_config"]["header_name"] == "PRIVATE-TOKEN"
+    assert by_code["gitlab"]["connection_defaults"]["endpoint_url"] == "http://gitlab.local"
+    gitlab_project_field = by_code["gitlab"]["connection_schema"]["sections"][0]["fields"][0]
+    assert gitlab_project_field["key"] == "gitlab_project_url"
+    assert gitlab_project_field["label"] == "GitLab 地址"
+    assert gitlab_project_field["managed_query_keys"] == [
+        "api_version",
+        "group_id",
+        "project_id",
+        "project_path",
+    ]
     email_defaults = by_code["email"]["connection_defaults"]
     assert email_defaults["request_config"]["headers"] == {
         "Content-Type": "application/json",
@@ -218,6 +231,23 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert by_code["email"]["connection_schema"]["sections"][1]["title"] == "收件配置"
     assert by_code["github"]["connection_count"] == 0
     assert by_code["github"]["action_count"] == 0
+
+    missing_github_token = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_config": {},
+            "auth_type": "bearer",
+            "endpoint_url": "https://api.github.com",
+            "environment": "prod",
+            "name": "缺少 Token 的 GitHub 连接",
+            "plugin_id": "plugin_standard_github",
+            "status": "active",
+        },
+        headers=admin_headers,
+    )
+    assert missing_github_token.status_code == 400
+    assert missing_github_token.json()["detail"]["code"] == "VALIDATION_ERROR"
+    assert missing_github_token.json()["detail"]["message"] == "GitHub token_ref is required"
 
     connection = client.post(
         "/api/system/plugin-connections",
@@ -281,8 +311,8 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
         "email_receive",
         "github_code_inspection",
         "gitlab_code_inspection",
-        "maxcompute_weekly_feedback",
     }
+    assert "maxcompute_weekly_feedback" not in by_code
     ai_command_template = by_code["ai_executor_command"]
     assert ai_command_template["template_version"] == "v1"
     assert ai_command_template["plugin_code"] == "ai_executor"
@@ -325,10 +355,37 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
     assert email_receive_template["request_config"]["path"] == "/messages/search"
     assert email_receive_template["request_config"]["query"]["folder"] == "{{mailbox_folder}}"
     assert email_receive_template["request_config"]["query"]["since"] == "{{poll_since}}"
-    maxcompute_template = by_code["maxcompute_weekly_feedback"]
-    assert maxcompute_template["action_type"] == "mcp_tool"
-    assert maxcompute_template["form_defaults"]["table_name"] == "ods_user_feedback"
-    assert maxcompute_template["result_mapping"]["write_target"] == "user_feedback_insights"
+
+def test_plugin_request_config_replaces_path_templates_from_connection_params():
+    connection = {
+        "endpoint_url": "https://api.github.com",
+        "request_config": {
+            "query": {
+                "owner": "acme",
+                "repo": "ai-brain",
+            },
+        },
+    }
+    action = {
+        "request_config": {
+            "method": "GET",
+            "path": "/repos/{{owner}}/{{repo}}/code-scanning/alerts",
+            "query": {
+                "per_page": 100,
+                "state": "open",
+            },
+        },
+    }
+
+    request_config = resolve_plugin_request_config(connection, action)
+
+    assert request_config["path"] == "/repos/acme/ai-brain/code-scanning/alerts"
+    assert request_config["query"] == {
+        "owner": "acme",
+        "per_page": 100,
+        "repo": "ai-brain",
+        "state": "open",
+    }
 
 
 def test_ai_executor_runners_include_system_default_model_gateway_executor():
@@ -1053,6 +1110,41 @@ def test_standard_plugins_are_seeded_and_immutable():
     assert "官方标准插件" in ai_executor_patch_response.text
 
 
+def test_legacy_maxcompute_standard_plugin_is_demoted_to_custom_http_plugin():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    app.state.store.integration_plugins["plugin_standard_aliyun_maxcompute"] = {
+        "category": "data_warehouse",
+        "code": "aliyun_maxcompute",
+        "description": "官方标准阿里云 MaxCompute 插件",
+        "id": "plugin_standard_aliyun_maxcompute",
+        "is_system": True,
+        "name": "阿里云 MaxCompute",
+        "protocol": "mcp_http",
+        "risk_level": "high",
+        "status": "active",
+        "template_version": "v1",
+    }
+
+    response = client.get("/api/system/plugins", headers=admin_headers)
+
+    assert response.status_code == 200
+    by_code = {plugin["code"]: plugin for plugin in response.json()["data"]["items"]}
+    maxcompute = by_code["aliyun_maxcompute"]
+    assert maxcompute["is_system"] is False
+    assert maxcompute["protocol"] == "http"
+    assert maxcompute["version_status"] == "custom"
+
+    patch_response = client.patch(
+        f"/api/system/plugins/{maxcompute['id']}",
+        json={"name": "阿里云 MaxCompute HTTP"},
+        headers=admin_headers,
+    )
+
+    assert patch_response.status_code == 200
+    assert patch_response.json()["data"]["name"] == "阿里云 MaxCompute HTTP"
+
+
 def test_standard_plugin_can_be_copied_as_custom_plugin_for_extension():
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -1097,13 +1189,15 @@ def test_standard_plugin_connections_store_platform_parameters():
                 "secret_ref": "vault/gitlab/prod-token",
             },
             "auth_type": "api_key_header",
-            "endpoint_url": "https://gitlab.example.com",
+            "endpoint_url": "http://gitlab.local",
             "environment": "prod",
             "name": "生产 GitLab",
             "plugin_id": by_code["gitlab"]["id"],
             "request_config": {
                 "headers": {"X-GitLab-Instance": "corp"},
-                "query": {"api_version": "v4", "group_id": "rd-platform"},
+                "query": {
+                    "gitlab_project_url": "http://gitlab.local/rd-platform/ai-brain.git",
+                },
             },
             "status": "active",
         },
@@ -1111,8 +1205,13 @@ def test_standard_plugin_connections_store_platform_parameters():
     )
     assert gitlab_connection.status_code == 200
     assert gitlab_connection.json()["data"]["auth_config"]["header_name"] == "PRIVATE-TOKEN"
-    assert gitlab_connection.json()["data"]["request_config"]["query"]["api_version"] == "v4"
-    assert gitlab_connection.json()["data"]["request_config"]["query"]["group_id"] == "rd-platform"
+    assert gitlab_connection.json()["data"]["endpoint_url"] == "http://gitlab.local"
+    gitlab_query = gitlab_connection.json()["data"]["request_config"]["query"]
+    assert gitlab_query["api_version"] == "v4"
+    assert gitlab_query["group_id"] == "rd-platform"
+    assert gitlab_query["project_id"] == "rd-platform%2Fai-brain"
+    assert gitlab_query["project_path"] == "rd-platform/ai-brain"
+    assert "gitlab_project_url" not in gitlab_query
 
     github_connection = client.post(
         "/api/system/plugin-connections",
@@ -1125,7 +1224,10 @@ def test_standard_plugin_connections_store_platform_parameters():
             "plugin_id": by_code["github"]["id"],
             "request_config": {
                 "headers": {"Accept": "application/vnd.github+json"},
-                "query": {"api_version": "2022-11-28", "owner": "acme"},
+                "query": {
+                    "api_version": "2022-11-28",
+                    "repository_url": "https://github.com/acme/ai-brain.git",
+                },
             },
             "status": "active",
         },
@@ -1135,7 +1237,9 @@ def test_standard_plugin_connections_store_platform_parameters():
     assert github_connection.json()["data"]["auth_type"] == "bearer"
     github_query = github_connection.json()["data"]["request_config"]["query"]
     assert github_query["api_version"] == "2022-11-28"
-    assert github_connection.json()["data"]["request_config"]["query"]["owner"] == "acme"
+    assert github_query["owner"] == "acme"
+    assert github_query["repo"] == "ai-brain"
+    assert "repository_url" not in github_query
 
     email_connection = client.post(
         "/api/system/plugin-connections",
@@ -2295,9 +2399,9 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
         json={
             "category": "data_warehouse",
             "code": "aliyun_maxcompute",
-            "description": "通过 PyODPS 查询 MaxCompute 用户反馈表",
+            "description": "通过 HTTP 查询 MaxCompute 用户反馈表",
             "name": "阿里云 MaxCompute",
-            "protocol": "mcp_http",
+            "protocol": "http",
             "risk_level": "high",
             "status": "active",
         },
@@ -2306,15 +2410,12 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     connection = client.post(
         "/api/system/plugin-connections",
         json={
-            "auth_config": {
-                "header_name": "X-Internal-Token",
-                "secret_ref": "vault/ai-brain/maxcompute-mcp-token",
-            },
-            "auth_type": "api_key_header",
-            "endpoint_url": "https://ai-brain-maxcompute-mcp.internal/mcp",
+            "auth_config": {},
+            "auth_type": "none",
+            "endpoint_url": "https://ai-brain-maxcompute-http.internal/app_data",
             "environment": "prod",
             "max_retries": 1,
-            "name": "生产 MaxCompute 项目",
+            "name": "生产 MaxCompute HTTP",
             "plugin_id": plugin["id"],
             "status": "active",
             "timeout_seconds": 120,
@@ -2324,7 +2425,7 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     action = client.post(
         "/api/system/plugin-actions",
         json={
-            "action_type": "mcp_tool",
+            "action_type": "http_request",
             "code": "fetch_weekly_user_feedback",
             "connection_id": connection["id"],
             "input_schema": {"type": "object"},
@@ -2345,11 +2446,14 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
                     ],
                     "row_count": 18,
                 },
-                "sql_template": (
-                    "SELECT feedback_id, product_id, content, created_at FROM ods_user_feedback "
-                    "WHERE created_at >= '${week_start}' AND created_at < '${week_end}' LIMIT 1000"
-                ),
-                "tool_name": "maxcompute.execute_sql",
+                "method": "GET",
+                "path": "",
+                "query": {
+                    "end_pt": "{{current_date}}",
+                    "pageNum": "1",
+                    "pageSize": "100",
+                    "start_pt": "{{current_date-7}}",
+                },
             },
             "result_mapping": {
                 "insights_path": "$.insights",
@@ -2414,7 +2518,11 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
     assert execution_nodes["data_connection"]["records_imported"] == 18
     assert execution_nodes["data_connection"]["input_mapping"]["time_field"] == "created_at"
     request_preview = execution_nodes["data_connection"]["request_summary"]["request_preview"]
-    assert request_preview["tool_name"] == "maxcompute.execute_sql"
+    assert request_preview["method"] == "GET"
+    assert request_preview["protocol"] == "http"
+    assert str(request_preview["query"]["start_pt"]).isdigit()
+    assert str(request_preview["query"]["end_pt"]).isdigit()
+    assert request_preview["url"].startswith("https://ai-brain-maxcompute-http.internal/app_data")
     assert execution_nodes["data_connection"]["response_summary"]["json"]["row_count"] == 18
     assert execution_nodes["skill_processing"]["status"] == "succeeded"
     assert execution_nodes["skill_processing"]["model_gateway_called"] is True

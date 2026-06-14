@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
 from urllib.error import HTTPError
-from urllib.parse import urlencode, urljoin, urlparse
+from urllib.parse import quote, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -65,6 +65,7 @@ PLUGIN_INVOCATION_STATUSES = {"failed", "succeeded"}
 AI_EXECUTOR_RUNNER_PROTOCOLS = {"runner_polling", "runner_websocket"}
 RESULT_WRITE_RECORD_STATUSES = {"cancelled", "failed", "not_run", "running", "succeeded"}
 MASKED_SECRET_PLACEHOLDER = "***"
+DEPRECATED_STANDARD_PLUGIN_CODES = {"aliyun_maxcompute"}
 
 
 def require_admin(user: dict[str, Any]) -> None:
@@ -256,6 +257,30 @@ def persist_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None
 
 def ensure_standard_plugins(current_store: Any) -> None:
     now = datetime.now(UTC).isoformat()
+    for plugin in list(current_store.integration_plugins.values()):
+        if str(plugin.get("code")) in DEPRECATED_STANDARD_PLUGIN_CODES:
+            description = str(plugin.get("description") or "")
+            if "官方标准" in description:
+                description = description.replace("官方标准", "普通 HTTP ")
+            elif description.startswith("普通 HTTP阿里云"):
+                description = description.replace("普通 HTTP阿里云", "普通 HTTP 阿里云", 1)
+            protocol = plugin.get("protocol", "http")
+            normalized_protocol = "http" if protocol == "mcp_http" else protocol
+            if (
+                not plugin.get("is_system")
+                and description == plugin.get("description")
+                and normalized_protocol == protocol
+            ):
+                continue
+            demoted_plugin = {
+                **plugin,
+                "description": description,
+                "is_system": False,
+                "protocol": normalized_protocol,
+                "updated_at": now,
+            }
+            current_store.integration_plugins[demoted_plugin["id"]] = demoted_plugin
+            persist_record(current_store, "save_plugin_record", demoted_plugin)
     existing_by_code = {
         str(plugin.get("code")): plugin
         for plugin in current_store.integration_plugins.values()
@@ -865,11 +890,17 @@ def copy_plugin_response(
         for plugin in current_store.integration_plugins.values()
     ):
         raise api_error(409, "PLUGIN_CODE_EXISTS", f"Plugin code already exists: {code}")
-    name = ensure_non_blank(updates.get("name") or f"{source.get('name') or base_code} 副本", "name")
+    name = ensure_non_blank(
+        updates.get("name") or f"{source.get('name') or base_code} 副本",
+        "name",
+    )
     now = datetime.now(UTC).isoformat()
     copied_id = current_store.new_id("plugin")
     copied = {
-        "category": ensure_non_blank(updates.get("category") or source.get("category") or "general", "category"),
+        "category": ensure_non_blank(
+            updates.get("category") or source.get("category") or "general",
+            "category",
+        ),
         "code": code,
         "created_at": now,
         "created_by": user["id"],
@@ -986,6 +1017,147 @@ def ensure_active_plugin(current_store: Any, plugin_id: str) -> dict[str, Any]:
     return plugin
 
 
+def ensure_plugin_connection_auth_requirements(
+    *,
+    auth_config: dict[str, Any] | None,
+    auth_type: str,
+    plugin: dict[str, Any],
+) -> None:
+    if plugin.get("code") != "github":
+        return
+    if auth_type != "bearer":
+        raise api_error(400, "VALIDATION_ERROR", "GitHub connection requires bearer auth_type")
+    token_ref = (auth_config or {}).get("token_ref")
+    if not isinstance(token_ref, str) or not token_ref.strip():
+        raise api_error(400, "VALIDATION_ERROR", "GitHub token_ref is required")
+
+
+def parse_git_repository_address(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw_value = value.strip()
+    path = raw_value
+    if "@" in raw_value and ":" in raw_value and "://" not in raw_value:
+        path = raw_value.split(":", 1)[1]
+    else:
+        first_segment = raw_value.split("/", 1)[0]
+        looks_like_url = "://" in raw_value or "." in first_segment
+        if looks_like_url:
+            parsed = urlparse(raw_value if "://" in raw_value else f"https://{raw_value}")
+            path = parsed.path or raw_value
+    segments = [segment for segment in path.strip("/").split("/") if segment]
+    if segments and segments[0] == "repos":
+        segments = segments[1:]
+    if len(segments) < 2:
+        return None
+    owner = segments[0].strip()
+    repo = segments[1].removesuffix(".git").strip()
+    if not owner or not repo:
+        return None
+    return {"owner": owner, "repo": repo}
+
+
+def normalize_github_connection_request_config(
+    request_config: dict[str, Any],
+    plugin: dict[str, Any],
+) -> dict[str, Any]:
+    if plugin.get("code") != "github":
+        return request_config
+    query = request_config.get("query")
+    if not isinstance(query, dict):
+        return request_config
+    parsed = parse_git_repository_address(query.get("repository_url"))
+    if not parsed:
+        return request_config
+    query_without_repository_url = {
+        key: value for key, value in query.items() if key != "repository_url"
+    }
+    return {
+        **request_config,
+        "query": {
+            **query_without_repository_url,
+            "owner": parsed["owner"],
+            "repo": parsed["repo"],
+        },
+    }
+
+
+def parse_gitlab_project_address(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw_value = value.strip()
+    endpoint_url = ""
+    path = raw_value
+    if "@" in raw_value and ":" in raw_value and "://" not in raw_value:
+        host_part, path = raw_value.split(":", 1)
+        host = host_part.rsplit("@", 1)[-1].strip()
+        endpoint_url = f"https://{host}" if host else ""
+    else:
+        first_segment = raw_value.split("/", 1)[0]
+        looks_like_url = (
+            "://" in raw_value
+            or "." in first_segment
+            or ":" in first_segment
+            or first_segment == "localhost"
+        )
+        if looks_like_url:
+            parsed = urlparse(raw_value if "://" in raw_value else f"http://{raw_value}")
+            path = parsed.path or raw_value
+            if parsed.scheme and parsed.netloc:
+                endpoint_url = f"{parsed.scheme}://{parsed.netloc}"
+    path = path.split("/-/", 1)[0]
+    segments = [segment for segment in path.strip("/").split("/") if segment]
+    if len(segments) >= 4 and segments[0] == "api" and segments[2] == "projects":
+        segments = [unquote(segments[3])]
+    if not segments:
+        return None
+    project_path = unquote("/".join(segments)).removesuffix(".git").strip("/")
+    if not project_path or "/" not in project_path:
+        return None
+    return {
+        "endpoint_url": endpoint_url,
+        "project_id": quote(project_path, safe=""),
+        "project_path": project_path,
+    }
+
+
+def normalize_gitlab_connection_config(
+    *,
+    endpoint_url: str,
+    request_config: dict[str, Any],
+    plugin: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    if plugin.get("code") != "gitlab":
+        return endpoint_url, request_config
+    query = request_config.get("query")
+    if not isinstance(query, dict):
+        return endpoint_url, request_config
+    parsed = parse_gitlab_project_address(
+        query.get("gitlab_project_url") or query.get("repository_url")
+    )
+    if not parsed:
+        return endpoint_url, request_config
+    query_without_project_url = {
+        key: value
+        for key, value in query.items()
+        if key not in {"gitlab_project_url", "repository_url"}
+    }
+    project_path = parsed["project_path"]
+    return (
+        parsed["endpoint_url"] or endpoint_url,
+        {
+            **request_config,
+            "query": {
+                **query_without_project_url,
+                "api_version": str(query_without_project_url.get("api_version") or "v4"),
+                "group_id": project_path.split("/", 1)[0],
+                "project_id": parsed["project_id"],
+                "project_path": project_path,
+            },
+        },
+    )
+
+
 def list_plugin_connections_response(
     *,
     current_store: Any,
@@ -1025,24 +1197,36 @@ def create_plugin_connection_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_admin(user)
-    ensure_active_plugin(current_store, payload.plugin_id)
+    plugin = ensure_active_plugin(current_store, payload.plugin_id)
     ensure_enum(payload.auth_type, PLUGIN_AUTH_TYPES, "auth_type")
     ensure_enum(payload.environment or "default", PLUGIN_CONNECTION_ENVIRONMENTS, "environment")
     ensure_enum(payload.status, PLUGIN_STATUSES, "status")
+    ensure_plugin_connection_auth_requirements(
+        auth_config=payload.auth_config,
+        auth_type=payload.auth_type,
+        plugin=plugin,
+    )
     now = datetime.now(UTC).isoformat()
     connection_id = current_store.new_id("plugin_connection")
+    endpoint_url = ensure_non_blank(payload.endpoint_url, "endpoint_url")
+    request_config = normalize_github_connection_request_config(payload.request_config, plugin)
+    endpoint_url, request_config = normalize_gitlab_connection_config(
+        endpoint_url=endpoint_url,
+        request_config=request_config,
+        plugin=plugin,
+    )
     connection = {
         "auth_config": payload.auth_config,
         "auth_type": payload.auth_type,
         "created_at": now,
         "created_by": user["id"],
-        "endpoint_url": ensure_non_blank(payload.endpoint_url, "endpoint_url"),
+        "endpoint_url": endpoint_url,
         "environment": ensure_non_blank(payload.environment or "default", "environment"),
         "id": connection_id,
         "max_retries": payload.max_retries,
         "name": ensure_non_blank(payload.name, "name"),
         "plugin_id": payload.plugin_id,
-        "request_config": payload.request_config,
+        "request_config": request_config,
         "status": payload.status,
         "timeout_seconds": payload.timeout_seconds,
         "updated_at": now,
@@ -1078,8 +1262,10 @@ def patch_plugin_connection_response(
     if connection is None:
         raise api_error(404, "NOT_FOUND", "Plugin connection not found")
     updates = payload.model_dump(exclude_unset=True)
+    next_plugin = connection.get("plugin_id")
     if "plugin_id" in updates:
         ensure_active_plugin(current_store, updates["plugin_id"])
+        next_plugin = updates["plugin_id"]
     if "auth_type" in updates:
         ensure_enum(updates["auth_type"], PLUGIN_AUTH_TYPES, "auth_type")
     if "environment" in updates:
@@ -1100,6 +1286,23 @@ def patch_plugin_connection_response(
             updates["request_config"] or {},
         )
     connection = {**connection, **updates, "updated_at": datetime.now(UTC).isoformat()}
+    plugin = ensure_active_plugin(current_store, str(next_plugin))
+    connection["request_config"] = normalize_github_connection_request_config(
+        connection.get("request_config") or {},
+        plugin,
+    )
+    endpoint_url, request_config = normalize_gitlab_connection_config(
+        endpoint_url=str(connection.get("endpoint_url") or ""),
+        request_config=connection["request_config"],
+        plugin=plugin,
+    )
+    connection["endpoint_url"] = ensure_non_blank(endpoint_url, "endpoint_url")
+    connection["request_config"] = request_config
+    ensure_plugin_connection_auth_requirements(
+        auth_config=connection.get("auth_config") or {},
+        auth_type=str(connection.get("auth_type") or "none"),
+        plugin=plugin,
+    )
     current_store.plugin_connections[connection_id] = connection
     audit_event = record_audit_event(
         current_store,
@@ -1710,6 +1913,17 @@ def _url_with_query(url: str, query: dict[str, Any]) -> str:
     return f"{url}{separator}{urlencode(query)}"
 
 
+def _scalar_template_parameters(*sources: dict[str, Any] | None) -> dict[str, str]:
+    parameters: dict[str, str] = {}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key, value in source.items():
+            if isinstance(value, str | int | float | bool):
+                parameters[str(key)] = str(value)
+    return parameters
+
+
 def resolve_plugin_request_config(
     connection: dict[str, Any],
     action: dict[str, Any],
@@ -1723,15 +1937,24 @@ def resolve_plugin_request_config(
 
     connection_query = _dict_config_section(connection_config.get("query"))
     action_query = _dict_config_section(action_config.get("query"))
+    merged_query: dict[str, Any] = {}
     if connection_query or action_query:
-        merged["query"] = {**connection_query, **action_query}
+        merged_query = {**connection_query, **action_query}
+        merged["query"] = merged_query
 
     connection_headers = _dict_config_section(connection_config.get("headers"))
     action_headers = _dict_config_section(action_config.get("headers"))
     if connection_headers or action_headers:
         merged["headers"] = {**connection_headers, **action_headers}
 
-    return merged
+    timezone = plugin_invocation_timezone(input_payload)
+    return resolve_dynamic_parameter_value(
+        merged,
+        _scalar_template_parameters(input_payload, merged_query),
+        now=now,
+        timezone=timezone,
+    )
+
 
 
 def _build_headers(
