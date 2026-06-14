@@ -370,7 +370,7 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
         <Space orientation="vertical" size={10}>
           {fullChain.aiTasks.map((task) =>
             renderEntityDetail({
-              href: withQuery('/tasks/management', 'task_id', task.id),
+              href: withQuery('/delivery/rd-tasks', 'task_id', task.id),
               linkLabel: `查看任务 ${task.id}`,
               meta: `${taskTypeLabels[task.type] ?? task.type} · ${task.status} · ${task.createdAt}`,
               title: task.label,
@@ -388,7 +388,7 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
         <Space orientation="vertical" size={10}>
           {fullChain.reviews.map((review) =>
             renderEntityDetail({
-              href: withQuery('/tasks/management', 'review_id', review.id),
+              href: withQuery('/delivery/rd-tasks', 'review_id', review.id),
               linkLabel: `查看 Review ${review.id}`,
               meta: `${review.status} · ${review.createdAt}`,
               title: review.aiTaskId ? `人工确认：${review.aiTaskId}` : `人工确认：${review.id}`,
@@ -406,7 +406,7 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
         <Space orientation="vertical" size={10}>
           {fullChain.gitSnapshots.map((snapshot) =>
             renderEntityDetail({
-              href: withQuery('/tasks/management', 'git_snapshot_id', snapshot.id),
+              href: withQuery('/delivery/rd-tasks', 'git_snapshot_id', snapshot.id),
               linkLabel: `查看快照 ${snapshot.id}`,
               meta: `MR/PR ${snapshot.mrIid} · ${formatSnapshotRisk(snapshot)}`,
               title: `PR/MR 快照：${snapshot.id}`,
@@ -414,7 +414,7 @@ function buildStageDetailItems(fullChain: RequirementFullChainRecord) {
           )}
           {fullChain.codeReviewReports.map((report) =>
             renderEntityDetail({
-              href: withQuery('/tasks/management', 'code_review_report_id', report.id),
+              href: withQuery('/delivery/rd-tasks', 'code_review_report_id', report.id),
               linkLabel: `查看代码评审 ${report.id}`,
               meta: `${report.status} · ${formatRiskLevel(report.riskLevel)}风险`,
               title: report.summary || `代码评审：${report.id}`,

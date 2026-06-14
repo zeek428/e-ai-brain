@@ -538,7 +538,7 @@ export default function TaskCenterPage() {
     }
     try {
       const result = await batchCancelTaskCenterTasks({
-        reason: '任务管理批量取消',
+        reason: '研发任务批量取消',
         task_ids: selectedBatchCancellableTasks.map((task) => task.id),
       });
       showTaskBatchResult({
@@ -562,7 +562,7 @@ export default function TaskCenterPage() {
     }
     try {
       const result = await batchRetryTaskCenterTasks({
-        reason: '任务管理批量重试',
+        reason: '研发任务批量重试',
         task_ids: selectedBatchRetryableTasks.map((task) => task.id),
       });
       const failedRetryCount = Math.max(result.retriedCount - result.updatedCount, 0);
@@ -1220,7 +1220,7 @@ export default function TaskCenterPage() {
   return (
     <>
       <ManagementListPage<TaskCenterTaskRecord>
-        breadcrumbGroup="任务中心"
+        breadcrumbGroup="需求交付"
         columns={columns}
         dataSource={taskRowsState.rows}
         filters={[
@@ -1285,7 +1285,7 @@ export default function TaskCenterPage() {
           selectedRowKeys: selectedTaskRowKeys,
         }}
         tableTitle="任务列表"
-        title="任务管理"
+        title="研发任务"
         toolbarActions={[
           <Button
             disabled={!selectedBatchRetryableTasks.length}

@@ -10,7 +10,16 @@ from fastapi import Request
 from app.api.deps import api_error, require_roles
 from app.services.operational_records import record_audit_event, save_single_repository_record
 
-AI_EXECUTOR_TYPES = {"claude", "codex", "hermes", "openclaw"}
+SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID = "ai_executor_runner_system_default"
+SYSTEM_DEFAULT_AI_EXECUTOR_TYPE = "model_gateway"
+AI_EXECUTOR_TYPES = {
+    SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+    "claude",
+    "codex",
+    "hermes",
+    "openclaw",
+}
+AI_EXECUTOR_LOCAL_RUNNER_TYPES = AI_EXECUTOR_TYPES - {SYSTEM_DEFAULT_AI_EXECUTOR_TYPE}
 AI_EXECUTOR_RUNNER_PROTOCOLS = {"mcp_http", "mcp_stdio", "runner_polling", "runner_websocket"}
 AI_EXECUTOR_RUNNER_STATUSES = {"active", "disabled", "offline"}
 AI_EXECUTOR_TASK_STATUSES = {
@@ -63,7 +72,7 @@ def _normalized_executor_types(value: Any) -> list[str]:
     if not executor_types:
         executor_types = ["codex"]
     for executor_type in executor_types:
-        _ensure_enum(executor_type, AI_EXECUTOR_TYPES, "executor_type")
+        _ensure_enum(executor_type, AI_EXECUTOR_LOCAL_RUNNER_TYPES, "executor_type")
     return executor_types
 
 
@@ -71,10 +80,51 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _is_system_default_runner_id(runner_id: str | None) -> bool:
+    return runner_id == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
+
+
+def _is_system_default_runner(runner: dict[str, Any]) -> bool:
+    metadata = runner.get("metadata") if isinstance(runner.get("metadata"), dict) else {}
+    return (
+        runner.get("id") == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
+        or runner.get("protocol") == SYSTEM_DEFAULT_AI_EXECUTOR_TYPE
+        or metadata.get("is_system") is True
+    )
+
+
+def system_default_ai_executor_runner() -> dict[str, Any]:
+    return {
+        "created_at": "1970-01-01T00:00:00+00:00",
+        "created_by": "system",
+        "endpoint_url": "model-gateway://default",
+        "executor_types": [SYSTEM_DEFAULT_AI_EXECUTOR_TYPE],
+        "heartbeat_timeout_seconds": 0,
+        "id": SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
+        "last_heartbeat_at": None,
+        "max_concurrent_tasks": 0,
+        "metadata": {
+            "description": "使用系统默认 AI 大模型执行指令，无需本地 Runner。",
+            "is_system": True,
+            "managed_by": "ai_brain",
+        },
+        "name": "系统默认执行器",
+        "protocol": SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+        "status": "active",
+        "token_hash": "",
+        "token_rotated_at": None,
+        "token_version": 0,
+        "updated_at": "9999-12-31T00:00:00+00:00",
+        "workspace_roots": ["*"],
+    }
+
+
 def _runner_public(runner: dict[str, Any]) -> dict[str, Any]:
     public = dict(runner)
     public.pop("token_hash", None)
-    public["token_configured"] = bool(runner.get("token_hash"))
+    public["token_configured"] = (
+        False if _is_system_default_runner(runner) else bool(runner.get("token_hash"))
+    )
     heartbeat_age = _heartbeat_age_seconds(runner.get("last_heartbeat_at"))
     public["heartbeat_age_seconds"] = heartbeat_age
     public["health_status"] = _runner_health_status(runner, heartbeat_age)
@@ -101,6 +151,8 @@ def _heartbeat_age_seconds(value: Any) -> int | None:
 
 
 def _runner_health_status(runner: dict[str, Any], heartbeat_age: int | None) -> str:
+    if _is_system_default_runner(runner):
+        return "managed"
     if runner.get("status") == "disabled":
         return "disabled"
     if runner.get("status") == "offline":
@@ -112,6 +164,8 @@ def _runner_health_status(runner: dict[str, Any], heartbeat_age: int | None) -> 
 
 
 def _runner_setup_command(runner: dict[str, Any]) -> str:
+    if _is_system_default_runner(runner):
+        return "使用系统默认 AI 大模型执行，无需启动本地 Runner"
     executor_types = ",".join(str(item) for item in runner.get("executor_types") or ["codex"])
     workspace_roots = ",".join(str(item) for item in runner.get("workspace_roots") or ["*"])
     return (
@@ -504,7 +558,15 @@ def list_ai_executor_runners_response(
     sync_ai_executor_runner_store(current_store, status=status)
     sync_ai_executor_task_store(current_store)
     items = []
-    for runner in current_store.ai_executor_runners.values():
+    runners = [
+        system_default_ai_executor_runner(),
+        *[
+            runner
+            for runner in current_store.ai_executor_runners.values()
+            if runner.get("id") != SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
+        ],
+    ]
+    for runner in runners:
         if status is not None and runner.get("status") != status:
             continue
         latest_task = max(
@@ -536,6 +598,12 @@ def patch_ai_executor_runner_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     _ensure_admin(user)
+    if _is_system_default_runner_id(runner_id):
+        raise api_error(
+            409,
+            "AI_EXECUTOR_SYSTEM_RUNNER_LOCKED",
+            "系统默认执行器由平台托管，不能修改",
+        )
     sync_ai_executor_runner_store(current_store)
     runner = current_store.ai_executor_runners.get(runner_id)
     if runner is None:
@@ -606,6 +674,12 @@ def rotate_ai_executor_runner_token_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     _ensure_admin(user)
+    if _is_system_default_runner_id(runner_id):
+        raise api_error(
+            409,
+            "AI_EXECUTOR_SYSTEM_RUNNER_LOCKED",
+            "系统默认执行器由平台托管，不需要 Runner Token",
+        )
     sync_ai_executor_runner_store(current_store)
     runner = current_store.ai_executor_runners.get(runner_id)
     if runner is None:
@@ -644,6 +718,12 @@ def delete_ai_executor_runner_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     _ensure_admin(user)
+    if _is_system_default_runner_id(runner_id):
+        raise api_error(
+            409,
+            "AI_EXECUTOR_SYSTEM_RUNNER_LOCKED",
+            "系统默认执行器由平台托管，不能删除",
+        )
     sync_ai_executor_runner_store(current_store)
     sync_ai_executor_task_store(current_store, runner_id=runner_id)
     runner = current_store.ai_executor_runners.get(runner_id)
@@ -693,6 +773,12 @@ def _authenticated_runner(
     request: Request,
     runner_id: str,
 ) -> dict[str, Any]:
+    if _is_system_default_runner_id(runner_id):
+        raise api_error(
+            409,
+            "AI_EXECUTOR_SYSTEM_RUNNER_LOCKED",
+            "系统默认执行器由平台托管，不接收 Runner 心跳或任务领取",
+        )
     sync_ai_executor_runner_store(current_store)
     runner = current_store.ai_executor_runners.get(runner_id)
     if runner is None:
@@ -741,6 +827,20 @@ def find_available_runner(
     runner_id: str | None,
     workspace_root: str,
 ) -> dict[str, Any]:
+    if executor_type == SYSTEM_DEFAULT_AI_EXECUTOR_TYPE:
+        if runner_id and not _is_system_default_runner_id(runner_id):
+            raise api_error(
+                409,
+                "AI_EXECUTOR_RUNNER_UNAVAILABLE",
+                "System default executor must use the system default runner",
+            )
+        return system_default_ai_executor_runner()
+    if _is_system_default_runner_id(runner_id):
+        raise api_error(
+            409,
+            "AI_EXECUTOR_RUNNER_UNAVAILABLE",
+            "System default runner only supports the model_gateway executor type",
+        )
     sync_ai_executor_runner_store(current_store)
     candidates = list(current_store.ai_executor_runners.values())
     if runner_id:

@@ -4,6 +4,10 @@ from copy import deepcopy
 from typing import Any
 
 from app.api.deps import require_roles
+from app.services.ai_executor_runners import (
+    SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
+    SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+)
 
 STANDARD_WIZARD_STEPS = [
     {
@@ -173,11 +177,18 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
         "category": "ai_service",
         "code": "ai_executor_repository_task",
         "description": (
-            "通过本地 Runner 调用 Codex、Claude、Hermes 或 OpenClaw "
-            "执行仓库任务并回写结果。"
+            "默认使用系统默认 AI 大模型执行仓库任务，也可切换到本地 "
+            "Codex、Claude、Hermes 或 OpenClaw Runner 并回写结果。"
         ),
         "name": "AI 执行器仓库任务",
         "payload_defaults": {
+            "config_json": {
+                "ai_executor": {
+                    "executor_type": SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+                    "runner_id": SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
+                    "runner_label": "系统默认执行器",
+                },
+            },
             "cron_expression": "0 3 * * MON",
             "enabled": True,
             "execution_mode": "deterministic",
@@ -187,7 +198,11 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
             "schedule_type": "cron",
             "source_system": "ai_executor",
         },
-        "recommended_scenarios": ["本地 Codex 执行", "OpenClaw 仓库扫描", "AI 执行器自动回写"],
+        "recommended_scenarios": [
+            "系统默认执行器",
+            "系统 AI 大模型仓库分析",
+            "本地 Codex/OpenClaw Runner",
+        ],
         "resource_selectors": {
             "plugin_action": {"code_candidates": ["run_ai_executor_instruction"]},
             "plugin_connection": {"strategy": "same_plugin_as_action"},

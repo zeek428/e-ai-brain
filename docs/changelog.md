@@ -8,34 +8,40 @@
 ## [Unreleased]
 
 ### Added
+- AI 能力配置命名优化：用户侧将“Agent 管理”统一展示为“AI角色”，定时作业表单、运行详情和 AI 助手草案同步使用“AI角色”；后端 API、数据库和 payload 继续保留 `ai-agents` / `agent_id` 兼容契约。
+- 定时作业同步系统默认执行器：AI 执行器仓库任务模板默认保存 `config_json.ai_executor`，新增作业提交保留模板 JSON，运行详情的 `runner_execution` 节点展示系统默认执行器的模型日志和结果摘要。
+- AI 执行器新增系统默认执行器：`/api/system/ai-executor-runners` 返回只读 `ai_executor_runner_system_default`，官方 AI 执行器连接和下达指令模板默认使用 `executor_type=model_gateway`，动作调用可直接走系统默认 AI 大模型；本地 Codex/Claude/Hermes/OpenClaw Runner 保持可选扩展。
+- 插件管理命名收口：用户侧页签、按钮、动作模板、删除占用提示和文档统一展示为“动作”，不再用“执行”代指动作；AI 执行器 Runner 保持独立概念。
+- 菜单职责边界调整：任务中心的“任务管理”改名为“研发任务”并迁入“需求交付”，旧 `/tasks/management` 和 `/workspace/tasks` 保留隐藏重定向到 `/delivery/rd-tasks`，任务中心聚焦 AI 能力配置、定时作业和插件管理。
+- 插件管理回归配置中心：移除独立“调用日志”页签和页面端日志拉取，插件调用日志统一在定时作业运行详情、结果写入记录和运行排障 API 中体现。
 - Runner 控制台增强：AI 执行器 Runner 支持 Token 轮换、显示 Token 版本和最近任务状态，任务日志可在插件管理中查看并支持管理员取消运行中任务；后端补充 Runner 任务日志追加/查询、取消和超时扫描接口。
 - 定时作业运行可视化增强：运行详情新增 Trace DAG，按数据连接、Runner 执行、Skill/AI 处理、结果写入、代码巡检报告、Bug/任务/通知等节点展示输入、输出、耗时、重试和错误定位。
 - 成功运行反向生成模板：新增从成功运行记录生成定时作业模板接口，前端可在运行详情中一键生成新作业草稿并保留 `config_json.template_source` 来源，降低重复配置成本。
-- 任务编排平台升级：定时作业模板新增 `wizard_steps`，内置每周反馈洞察、代码巡检、邮件摘要、GitLab MR AI 审查和 AI 执行器仓库任务五类模板；新增作业页展示任务创建向导，并把用户侧“动作”文案收敛为“执行/结果写入”。
+- 任务编排平台升级：定时作业模板新增 `wizard_steps`，内置每周反馈洞察、代码巡检、邮件摘要、GitLab MR AI 审查和 AI 执行器仓库任务五类模板；新增作业页展示任务创建向导，并把用户侧文案收敛为“动作/结果写入”。
 - 官方插件 schema 化：`/api/system/plugin-marketplace` 为 MaxCompute、GitLab、GitHub、邮箱和 AI 执行器返回 `connection_schema`，插件市场展示连接表单字段，JSON 保留为高级修改入口。
 - Runner 产品化增强：AI 执行器 Runner 列表返回并展示 `health_status`、`heartbeat_age_seconds` 和可复制 `setup_command`，便于本地 Codex/Claude/Hermes/OpenClaw Runner 接入远程 AI Brain。
 - 代码巡检闭环增强：`result_actions` 新增 `create_task_for_severe_findings`，严重 finding 可自动创建 `code_inspection_remediation` AI 任务，报告和 finding 保存整改任务反链，运行详情展示 `task_creation` 节点。
 - AI 执行器 Runner/OpenClaw 闭环：新增 Runner 管理、心跳、任务认领和完成回写接口，官方 `ai_executor` 插件使用 `runner_polling` 下发 Codex/Claude/Hermes/OpenClaw 指令；定时作业在 Runner 排队或执行中保持 `running`，Runner 完成后回写插件调用日志、运行详情 `runner_execution` 节点、结果动作反馈、collector run 和作业最近运行状态。
-- 定时作业运行详情新增结果写入记录：`/api/system/result-write-records` 支持按 `scheduled_job_run_id` 精确查询单次运行的最终写入反馈；页面在“运行记录 -> 详情”里展示写入目标、状态、写入数、插件调用日志、摘要字段、写入预览和执行反馈。插件管理回归配置中心，只保留插件、连接、动作和调用日志。
+- 定时作业运行详情新增结果写入记录：`/api/system/result-write-records` 支持按 `scheduled_job_run_id` 精确查询单次运行的最终写入反馈；页面在“运行记录 -> 详情”里展示写入目标、状态、写入数、插件调用日志、摘要字段、写入预览和动作反馈。插件管理回归配置中心，只保留插件、连接和动作配置。
 - 官方插件市场补充 AI 执行器标准插件：内置 `ai_executor` 不可编辑/删除，连接模板提供 `codex/claude/hermes/openclaw` 执行器选择、Runner、workspace、超时和结果回写地址；动作模板提供下达指令和结果同步契约，真实执行须接入隔离 Runner。
 - 邮箱官方插件连接模板扩展为收发两用：默认参数补齐 SMTP/IMAP/POP3/API 主机端口、收件文件夹、轮询时间窗口、默认发件人/收件人和主题模板，并新增邮件收取动作模板。
 - 官方插件连接模板服务端化：`/api/system/plugin-marketplace` 返回 GitHub/GitLab/邮箱 `connection_defaults` 和 `connection_template_version`，插件页新增连接和 AI 助手连接草案复用同一服务端模板生成 endpoint、认证、Params 和 Headers。
 - 定时作业模板市场化：新增 `/api/system/scheduled-job-templates` 和 `scheduled_job_templates` 服务端目录，统一周反馈洞察、代码巡检模板的默认 payload、资源选择规则和 `template_version`，任务中心页面与 AI 助手草案共用该目录生成配置。
 - 定时作业运行可观测性：新增 `/api/system/scheduled-job-runs/observability`，运行记录页签顶部展示总运行数、成功率、失败率、平均耗时、AI/Token/插件调用、动作写入成功率、失败原因、最近失败和慢运行。
-- AI 助手动作草案写入目标收口：插件动作草案卡片从 `/api/system/result-write-targets` 懒加载 `form_label/label` 渲染中文写入目标，不再维护前端本地映射。
+- AI 助手动作草案写入目标收口：动作草案卡片从 `/api/system/result-write-targets` 懒加载 `form_label/label` 渲染中文写入目标，不再维护前端本地映射。
 - 定时作业运行详情和连接请求回放继续结构化：运行节点卡片展示请求方法、URL、HTTP 状态、耗时、候选/写入数量和业务记录 ID，插件连接最近测试记录可展开查看历史完整请求、响应、修复建议和动作模板草案。
 - 代码巡检治理概览：新增 `/api/governance/code-inspections/dashboard`，运营治理 / 代码巡检页面展示报告、问题、严重问题、Bug 覆盖 SLA、规则统计、仓库/分支/提交人排行和趋势摘要。
-- 结果写入目标注册表：新增 `/api/system/result-write-targets`，统一 `scheduled_job_result`、`user_feedback_insights`、`code_inspection_reports` 和 `email_notifications` 的标签、默认映射和可视化 JSONPath 字段，插件动作表单、写入预览和助手草案均使用服务端注册表，插件页不再维护本地写入目标文案和默认映射兜底。
-- 插件连接请求回放台：连接测试结果保存最近测试记录，诊断弹窗展示变量解析前/后差异和失败修复建议，并可一键复制当次请求为插件动作模板草案。
+- 结果写入目标注册表：新增 `/api/system/result-write-targets`，统一 `scheduled_job_result`、`user_feedback_insights`、`code_inspection_reports` 和 `email_notifications` 的标签、默认映射和可视化 JSONPath 字段，动作表单、写入预览和助手草案均使用服务端注册表，插件页不再维护本地写入目标文案和默认映射兜底。
+- 插件连接请求回放台：连接测试结果保存最近测试记录，诊断弹窗展示变量解析前/后差异和失败修复建议，并可一键复制当次请求为动作模板草案。
 - 定时作业新增/编辑弹窗增加“任务编排流程”预览，按数据连接、AI 处理、知识引用和结果动作展示配置状态、核心资源名称，并可直接在数据连接节点发起连接测试。
-- 插件动作模板唯一来源增强：后端新增 `plugin_templates` 模板目录模块，`/api/system/plugin-action-templates` 返回 `template_version`，AI 助手插件动作草案复用同一模板生成 payload 并携带 `template_code/template_version`。
-- 插件动作模板生成收口：前端新增动作表单和 AI 助手动作草案不再硬编码生成 MaxCompute/GitHub/GitLab/邮箱官方动作；模板缺失时提示缺失并要求刷新服务端模板目录。
+- 动作模板唯一来源增强：后端新增 `plugin_templates` 模板目录模块，`/api/system/plugin-action-templates` 返回 `template_version`，AI 助手动作草案复用同一模板生成 payload 并携带 `template_code/template_version`。
+- 动作模板生成收口：前端新增动作表单和 AI 助手动作草案不再硬编码生成 MaxCompute/GitHub/GitLab/邮箱官方动作；模板缺失时提示缺失并要求刷新服务端模板目录。
 - 插件市场创建动作入口同步收口：市场项点击“创建动作”只使用 `/api/system/plugin-action-templates` 返回的模板，目录缺失时提示刷新服务端模板目录，不再按插件 code 兜底生成本地场景。
-- 插件动作动态模板目录：新增 `/api/system/plugin-action-templates`，前端新增动作表单优先使用服务端模板回填请求配置、Params/Headers 和结果映射，减少动作模板散落在页面硬编码中。
+- 动作动态模板目录：新增 `/api/system/plugin-action-templates`，前端新增动作表单优先使用服务端模板回填请求配置、Params/Headers 和结果映射，减少动作模板散落在页面硬编码中。
 - 插件连接最近测试摘要：连接测试后保存轻量 `last_test_summary`，连接列表展示最近测试状态、耗时和错误码，方便关闭调试弹窗后继续排障。
 - 定时作业复跑对比摘要：复跑创建响应和运行列表返回轻量 `source_run_summary`，运行详情展示来源运行状态、导入数、错误码和本次结果，方便验证复跑是否修复问题。
 - 代码巡检来源链路跳转增强：报告详情中的来源作业和来源运行可跳转任务中心 / 定时作业，带 `run_id` 的运行链接会自动打开对应运行结果详情。
-- 代码巡检报告来源链路增强：报告列表和详情补充来源作业、来源运行、数据连接、结果动作和插件调用 ID，页面详情固定展示，便于从巡检结果反查定时作业和插件执行上下文。
+- 代码巡检报告来源链路增强：报告列表和详情补充来源作业、来源运行、数据连接、结果动作和插件调用 ID，页面详情固定展示，便于从巡检结果反查定时作业和动作执行上下文。
 - AI 助手草案组串联落地：保存插件连接草案后会记录草案 ID 到真实连接 ID 的会话映射，依赖该连接的动作草案和后续定时作业草案可自动回填真实资源 ID，减少手工重复选择。
 - AI 助手代码巡检配置草案组增强：用户要求配置 GitHub/GitLab 代码巡检定时作业但系统缺少连接或动作时，`assistant.action_draft` 会同时返回连接草案、动作草案和作业草案，作业卡片展示前置草案 ID，避免生成无法直接落库的半成品作业。
 - AI 助手插件连接草案落地：用户要求新增 GitHub/GitLab/邮箱连接时，`assistant.action_draft` 会生成 `create_plugin_connection` 草案；助手卡片展示连接字段并可带入插件管理新增连接表单，确认前不写入 `plugin_connections`。
@@ -44,15 +50,15 @@
 - 插件连接测试调试台补充原始请求配置和动态变量空状态：诊断弹窗现在可同时区分保存配置与最终发送值，即使当前连接未配置动态变量也会展示清晰提示。
 - 插件连接测试调试台补充动态变量解析明细：当 Params/Headers 使用 `{{current_date-7}}` 等系统变量时，页面展示变量位置、原始表达式、偏移天数、解析值、最终值和解析时区。
 - 定时作业复跑来源追踪：从运行记录复跑时请求体传入 `source_run_id`，新运行实例、详情页和 `scheduled_job_run.*` 审计 payload 都能看到来源运行。
-- AI 助手插件动作草案落地：用户要求新增 GitHub/GitLab 代码巡检动作或邮箱通知动作时，`assistant.action_draft` 会生成 `create_plugin_action` 草案；助手卡片展示动作字段并可带入插件管理新增动作表单，确认前不写入 `plugin_actions`。
-- AI 助手代码巡检草案增强：当用户明确要求 AI/大模型智能分析代码巡检结果时，`assistant.action_draft` 会生成 `ai_generated` 定时作业草案并自动带出模型网关、Agent 和 Skill，助手草案卡片同步展示执行模式和 AI 装配信息。
-- 插件动作试运行审计增强：管理员试运行动作会写入 `plugin_action.trial_succeeded/failed` 审计事件，记录插件、动作、连接、连接环境、写入目标、状态、耗时和错误码，不保存完整请求响应、输入 payload 或密钥。
+- AI 助手动作草案落地：用户要求新增 GitHub/GitLab 代码巡检动作或邮箱通知动作时，`assistant.action_draft` 会生成 `create_plugin_action` 草案；助手卡片展示动作字段并可带入插件管理新增动作表单，确认前不写入 `plugin_actions`。
+- AI 助手代码巡检草案增强：当用户明确要求 AI/大模型智能分析代码巡检结果时，`assistant.action_draft` 会生成 `ai_generated` 定时作业草案并自动带出模型网关、AI角色和 Skill，助手草案卡片同步展示执行模式和 AI 装配信息。
+- 动作试运行审计增强：管理员试运行动作会写入 `plugin_action.trial_succeeded/failed` 审计事件，记录插件、动作、连接、连接环境、写入目标、状态、耗时和错误码，不保存完整请求响应、输入 payload 或密钥。
 - 官方插件市场动作模板入口补齐：GitHub/GitLab/邮箱市场项现在不仅可引导配置连接，也可直接打开新增动作弹窗并套用官方动作模板，减少管理员在动作页二次选择场景。
-- 定时作业运行审计治理增强：插件 + AI + 知识链路的终态审计 payload 现在补充执行模式、Agent、Skills、模型网关、模型调用状态、知识引用、插件代码、动作、连接环境和结果写入目标等轻量上下文，便于多环境排障且不保存完整请求响应、Prompt、模型输出或密钥。
+- 定时作业运行审计治理增强：插件 + AI + 知识链路的终态审计 payload 现在补充执行模式、AI角色、Skills、模型网关、模型调用状态、知识引用、插件代码、动作、连接环境和结果写入目标等轻量上下文，便于多环境排障且不保存完整请求响应、Prompt、模型输出或密钥。
 - 定时作业三段式运行详情补充连接环境：数据连接节点现在展示 `connection_environment`，方便确认本次运行使用的是生产、测试还是沙箱连接。
-- 定时作业 AI 装配校验增强：前端现在按执行模式判断是否需要 AI 模型、Agent 和 Skills，代码巡检切换为 AI 辅助或 AI 生成时会在提交前拦截缺失配置。
+- 定时作业 AI 装配校验增强：前端现在按执行模式判断是否需要 AI 模型、AI角色 和 Skills，代码巡检切换为 AI 辅助或 AI 生成时会在提交前拦截缺失配置。
 - 定时作业新增/编辑弹窗增加连接环境筛选：可按默认、开发、测试、预发、生产和沙箱过滤数据连接，切换环境会清空不匹配连接，提交时不写入筛选字段。
-- 代码巡检定时作业支持 AI 执行模式：当作业选择 `ai_assisted` 或 `ai_generated` 时，运行时会先调用模型网关按 Agent/Skill 归一化扫描结果，再写入代码巡检报告；运行详情同步展示数据连接、Skill 处理和结果动作三段节点。
+- 代码巡检定时作业支持 AI 执行模式：当作业选择 `ai_assisted` 或 `ai_generated` 时，运行时会先调用模型网关按 AI角色/Skill 归一化扫描结果，再写入代码巡检报告；运行详情同步展示数据连接、Skill 处理和结果动作三段节点。
 - 插件连接列表新增环境筛选：前端连接页可按默认、开发、测试、预发、生产和沙箱查看连接，后端 `GET /api/system/plugin-connections` 支持 `environment` 查询并拒绝非法环境值。
 - 插件管理新增官方插件市场：后端提供 `/api/system/plugin-marketplace` 只读目录，前端新增“插件市场”页签，展示 GitLab/GitHub/邮箱标准插件的推荐场景、动作模板、安装状态和连接/动作数量，并可直接引导创建连接和动作。
 - 定时作业运行终态审计增强：`scheduled_job_run.succeeded/failed` payload 现在包含触发方式、状态、导入数量、collector run、插件调用、产品和错误码上下文，方便区分普通手动运行、复跑和调度触发。
@@ -63,32 +69,32 @@
 - AI 助手页面新增配置草案卡片：聊天响应和历史消息中的 `assistant.action_draft` 会显示为待确认草案，展示标题、风险、作业类型、调度、连接和结果动作摘要。
 - AI 助手聊天工具结果新增定时作业配置草案：用户要求创建每周用户反馈洞察或代码巡检作业时，返回待确认的 `create_scheduled_job` payload，确认前不写入 `scheduled_jobs`。
 - 定时作业新增场景模板：新增作业时可选择“每周用户反馈洞察抽取”或“代码仓库质量 / 安全 / 规范巡检”，自动带出数据连接、AI 能力、知识引用、调度、动态变量映射和结果动作。
-- 插件动作新增“邮箱通知发送”官方场景模板：自动带出官方邮箱插件、已配置邮箱连接、`POST /messages/send`、`Content-Type=application/json`、默认收件人/主题/正文模板参数和运行结果保存映射。
-- 插件动作试运行新增写入预览：展示写入目标、预计写入数量、候选数量、预览值、报告字段或样例记录，减少人工解读 JSON 的成本。
+- 动作新增“邮箱通知发送”官方场景模板：自动带出官方邮箱插件、已配置邮箱连接、`POST /messages/send`、`Content-Type=application/json`、默认收件人/主题/正文模板参数和运行结果保存映射。
+- 动作试运行新增写入预览：展示写入目标、预计写入数量、候选数量、预览值、报告字段或样例记录，减少人工解读 JSON 的成本。
 - 代码巡检作业写入报告时会应用动作/作业输出 `result_mapping`，支持从嵌套响应或 `$` 根数组提取仓库、分支、风险、摘要和 finding 列表。
-- 插件动作新增“邮件通知记录”结果写入目标：邮箱通知发送模板默认生成 `email_notifications` 映射，动作表单展示收件人、主题、投递状态和消息 ID JSONPath，试运行预览返回邮件投递反馈。
-- AI 助手邮箱通知动作草案同步使用“邮件通知记录”写入目标，草案卡片展示中文写入目标，并在应用到插件动作表单时保留投递字段映射。
-- 定时作业正式运行复用插件动作写入预览：邮件通知结果动作在三段式运行详情中展示“邮件通知记录”、投递 ID、投递状态和收件人。
-- 插件动作新增 GitHub/GitLab 代码巡检官方场景模板，自动带出官方插件、扫描请求路径、默认 Params 和代码巡检报告写入映射。
+- 动作新增“邮件通知记录”结果写入目标：邮箱通知发送模板默认生成 `email_notifications` 映射，动作表单展示收件人、主题、投递状态和消息 ID JSONPath，试运行预览返回邮件投递反馈。
+- AI 助手邮箱通知动作草案同步使用“邮件通知记录”写入目标，草案卡片展示中文写入目标，并在应用到动作表单时保留投递字段映射。
+- 定时作业正式运行复用动作写入预览：邮件通知结果动作在三段式运行详情中展示“邮件通知记录”、投递 ID、投递状态和收件人。
+- 动作新增 GitHub/GitLab 代码巡检官方场景模板，自动带出官方插件、扫描请求路径、默认 Params 和代码巡检报告写入映射。
 - 定时作业运行记录支持复跑：运行记录操作列可基于原作业重新触发，执行中禁用重复操作，并在完成后打开新的运行结果详情。
-- 定时作业和插件调试可观测性增强：AI 类型作业（用户反馈洞察抽取、线上日志 AI 分析、迭代规划建议）服务端强制校验 Agent/Skill/模型网关；运行详情新增三段式执行链路卡片；插件连接测试弹窗新增请求调试台，直接展示最终 URL、Header 来源、完整请求 JSON 和远端响应。
+- 定时作业和插件调试可观测性增强：AI 类型作业（用户反馈洞察抽取、线上日志 AI 分析、迭代规划建议）服务端强制校验 AI角色/Skill/模型网关；运行详情新增三段式执行链路卡片；插件连接测试弹窗新增请求调试台，直接展示最终 URL、Header 来源、完整请求 JSON 和远端响应。
 - 插件管理新增邮箱官方标准插件：系统自动种子化 `email` 插件并返回 `is_system=true`，页面不提供编辑/删除，连接表单可自动带出邮件网关/API endpoint、Authorization、Content-Type 和默认邮件参数。
 - 插件管理新增 GitLab/GitHub 官方标准插件：系统自动种子化 DevOps 标准插件并返回 `is_system=true`，页面显示官方标准标签且不提供编辑/删除，连接表单可自动带出 GitLab/GitHub endpoint、认证方式和平台 Params/Headers。
-- 插件动作新增“代码巡检报告”结果写入目标，新增动作/编辑动作时可通过可视化字段配置仓库 ID、分支、提交 SHA、风险级别、摘要和 finding 列表 JSONPath，高级 `result_mapping` 继续同步。
+- 动作新增“代码巡检报告”结果写入目标，新增动作/编辑动作时可通过可视化字段配置仓库 ID、分支、提交 SHA、风险级别、摘要和 finding 列表 JSONPath，高级 `result_mapping` 继续同步。
 - 代码巡检结果新增提交人维度：报告列表和详情展示提交人汇总，finding 保存提交人姓名、邮箱和用户名，支持按提交人筛选；严重 finding 自动建 Bug 增加 fingerprint 去重、severity mapping、产品范围读取控制和结果动作状态摘要。
 - 运营治理新增代码巡检闭环：定时作业支持 `code_repository_inspection` 和多 `result_actions`，可把仓库质量/安全/规范扫描结果写入代码巡检报告表、按严重级别自动创建 `code_inspection` 来源 Bug，并记录邮件/钉钉机器人通知反馈；新增运营治理 / 代码巡检页面查看报告、finding 和通知明细。
 - 产品和技术文档同步代码巡检闭环：PRD、技术规格、系统概览、API 和测试用例统一描述代码仓库巡检、多结果动作、代码巡检报告表、严重问题 Bug 派生和邮件/钉钉通知反馈。
 - AI 助手工作台升级整体方案：新增设计文档，规划 `@` 显式引用知识库/业务对象/插件/AI 能力/定时任务、助理内配置草案、确认执行、定时任务运行追踪和权限/审计边界。
-- 定时作业新增可选知识引用：作业可配置 `knowledge_document_ids`，运行时在调用模型网关前按权限读取可检索知识 chunk，并以 `knowledge_references` 注入 Agent/Skill 上下文；运行结果详情在 Skill 节点展示引用知识输入。
-- 定时作业配置和执行链路校正：作业表单按“数据连接 -> AI 模型 -> Agent -> Skills -> 结果动作”配置，隐藏时间参数、连接输入参数和输出覆盖 JSON；`user_feedback_insight_extract` 运行时必须先取数，再通过模型网关按 Agent/Skill 处理为结构化 JSON，最后执行结果动作写入。
-- 定时作业手动运行可观测性增强：点击运行后按钮进入执行中状态并禁用重复触发；运行结果详情顶部直接展示本次作业类型、执行模式、AI 模型、Agent 和 Skills，便于判断是否经过大模型处理。
+- 定时作业新增可选知识引用：作业可配置 `knowledge_document_ids`，运行时在调用模型网关前按权限读取可检索知识 chunk，并以 `knowledge_references` 注入 AI角色/Skill 上下文；运行结果详情在 Skill 节点展示引用知识输入。
+- 定时作业配置和执行链路校正：作业表单按“数据连接 -> AI 模型 -> AI角色 -> Skills -> 结果动作”配置，隐藏时间参数、连接输入参数和输出覆盖 JSON；`user_feedback_insight_extract` 运行时必须先取数，再通过模型网关按 AI角色/Skill 处理为结构化 JSON，最后执行结果动作写入。
+- 定时作业手动运行可观测性增强：点击运行后按钮进入执行中状态并禁用重复触发；运行结果详情顶部直接展示本次作业类型、执行模式、AI 模型、AI角色 和 Skills，便于判断是否经过大模型处理。
 - 定时作业运行结果详情补齐三段核心节点：详情弹窗优先展示数据连接获取内容、经过 Skill 处理后的内容和结果动作反馈内容；运行摘要新增 `execution_nodes`，并在 Skill 节点展示模型调用、处理输入输出和 `model_log_id`。
 - 任务中心后台配置列表风格统一：AI 能力配置、定时作业、插件管理改用与需求管理一致的管理表格样式，包含卡片边框、固定列宽、横向滚动、右侧固定操作列和紧凑行内操作。
 - 定时作业运行结果查看增强：运行记录列表新增详情入口，手动触发后自动打开本次运行详情，集中展示结果摘要、插件调用、Skill/Prompt 快照、作业配置快照和错误信息。
 - 插件管理删除闭环增强：插件、连接和动作列表新增删除入口；删除前展示连接、动作、定时作业和调用日志使用清单，后端 DELETE 也会在资源被引用时返回 409，避免级联误删正在使用的集成配置。
 - 定时作业维护闭环增强：作业列表新增编辑和删除入口，编辑弹窗回填现有调度、AI 装配和插件映射配置；后端新增 `DELETE /api/system/scheduled-jobs/{job_id}` 并记录 `scheduled_job.deleted` 审计。
-- 插件动作结果映射表单联动：`结果写入目标` 变更后，下方可视化 JSONPath 字段会按目标切换；用户洞察表目标展示洞察列表、源表行数和原始行列表路径，高级 JSON 继续支持双向同步。
-- 插件动作写入目标收敛：动作配置新增“结果写入目标”可视化选择，MaxCompute 用户反馈场景默认写入用户洞察表；定时作业未单独设置输出映射时复用动作 `result_mapping`，运行摘要保留 Skill 处理信息和写入目标。
+- 动作结果映射表单联动：`结果写入目标` 变更后，下方可视化 JSONPath 字段会按目标切换；用户洞察表目标展示洞察列表、源表行数和原始行列表路径，高级 JSON 继续支持双向同步。
+- 动作写入目标收敛：动作配置新增“结果写入目标”可视化选择，MaxCompute 用户反馈场景默认写入用户洞察表；定时作业未单独设置输出映射时复用动作 `result_mapping`，运行摘要保留 Skill 处理信息和写入目标。
 - 插件连接测试交互增强：点击测试后按钮显示 `测试中` 并禁用重复操作，同时展示持续 loading 提示，避免第三方接口耗时较长时用户误以为没有触发。
 - 插件连接测试诊断改为明文调试：连接响应、测试弹窗、动作试运行预览和插件调用日志展示真实 auth/request/header 值；认证配置生成的 Authorization/API Key Header 仍优先于 Headers 表格同名值，最终请求若包含 `***` 会按明文发送并在诊断中标记，便于排查系统时间变量、Header 配置和第三方 400 错误。
 - 菜单归属调整：AI 能力配置、定时作业、插件管理统一移动到任务中心下，旧 `/system/...` 页面入口保留隐藏重定向，系统管理聚焦用户、角色和模型网关治理。
@@ -106,13 +112,13 @@
 - 知识管理第一阶段落地：新增知识空间、空间成员、空间目录、MinIO/S3-compatible 对象存储抽象、知识资产、导入任务、chunk set、文件上传和资产预览能力；知识列表与检索支持空间/目录过滤并按空间成员权限隔离。
 - 知识管理升级设计文档：明确知识库按知识空间、目录、文档、MinIO/S3 资产、chunk/embedding 分层管理，吸收 KnowFlow 的解析任务、父子分块和治理思路，同时保持 PostgreSQL 作为业务事实源。
 - 插件连接请求配置增强：新增连接级 Params/Headers 可视化配置，提交为 `plugin_connections.request_config.query/headers`，高级请求 JSON 仅作为精修入口；连接测试、动作预览和实际调用会合并连接默认值与动作配置，同名参数由动作覆盖。
-- 插件动作配置体验增强：新增动作默认用 Params/Headers 表格配置 HTTP 请求参数和请求头，参数值可选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量并在运行时解析，提交时生成 `request_config.query/headers`，高级 JSON 仅作为完整配置精修入口。
+- 动作配置体验增强：新增动作默认用 Params/Headers 表格配置 HTTP 请求参数和请求头，参数值可选择 `{{current_date}}`、`{{current_date-7}}` 等系统变量并在运行时解析，提交时生成 `request_config.query/headers`，高级 JSON 仅作为完整配置精修入口。
 - 插件连接配置增强：连接环境收敛为 `default/dev/test/staging/prod/sandbox` 受控枚举，认证配置默认按认证方式展示 Token/Header/Basic 字段并只把 JSON 作为高级修改入口，连接列表新增测试按钮和后端测试接口；定时作业插件输入映射新增动态时间 token 模板，运行时按作业时区解析。
 - 插件分类收敛为受控枚举：新增插件页面改为下拉选择，后端创建/更新插件拒绝自由文本分类，并在 API/技术规格中约定分类值。
-- MaxCompute 每周用户反馈洞察场景落地：插件动作页新增引导式模板，可自动生成 MCP 查询配置并保留高级 JSON 编辑；定时作业新增 `user_feedback_insight_extract`，可将插件返回的 AI 洞察写入用户反馈洞察表。
-- 插件管理第一阶段落地：新增系统插件、连接、动作和调用日志管理，支持 HTTP/MCP HTTP 协议配置、密钥配置、调用审计，并允许定时作业通过 `plugin_action_id` 调用插件动作和保存运行快照。
-- 定时系统作业与 AI 能力装配：PRD/API/技术规格/测试用例补充 Agent、Skill、定时作业、运行实例、AI 配置快照、collector run 关联、锁租约、失败重试和人工确认边界，并落地基础 API、菜单和页面入口。
-- AI 能力配置第一阶段落地：Agent 继续表单配置，Skill 支持 zip 文件包上传、本地存储、checksum/manifest 持久化，并在定时 AI 作业运行时加载本地 Skill 文件内容写入快照。
+- MaxCompute 每周用户反馈洞察场景落地：动作页新增引导式模板，可自动生成 MCP 查询配置并保留高级 JSON 编辑；定时作业新增 `user_feedback_insight_extract`，可将插件返回的 AI 洞察写入用户反馈洞察表。
+- 插件管理第一阶段落地：新增系统插件、连接、动作和调用日志管理，支持 HTTP/MCP HTTP 协议配置、密钥配置、调用审计，并允许定时作业通过 `plugin_action_id` 调用动作和保存运行快照。
+- 定时系统作业与 AI 能力装配：PRD/API/技术规格/测试用例补充 AI角色、Skill、定时作业、运行实例、AI 配置快照、collector run 关联、锁租约、失败重试和人工确认边界，并落地基础 API、菜单和页面入口。
+- AI 能力配置第一阶段落地：AI角色（Agent）继续表单配置，Skill 支持 zip 文件包上传、本地存储、checksum/manifest 持久化，并在定时 AI 作业运行时加载本地 Skill 文件内容写入快照。
 - 迭代版本新增代码分支配置：版本页提供“代码分支”入口，可按同产品多个 GitHub/GitLab 代码库维护基准分支、开发分支、状态和创建来源；后端新增 `product_version_branch_configs` 结构表和对应 API，并纳入产品配置 DB-first 读写与审计。
 - Task 4 角色治理 UI 和动态菜单落地：角色管理页接入 `/api/system/roles`、权限点、菜单和范围授权接口，支持新增、复制、编辑、启停、权限/菜单/范围配置；前端布局根据 `/api/auth/me.menu_tree` 过滤左侧导航。
 - Task 3 系统 RBAC API 落地：新增权限点、菜单、角色治理、用户角色/范围授权和用户有效权限查询接口，角色变更同步写入 `role_change_events` 与 `audit_events`。
@@ -190,12 +196,12 @@
 
 ### Changed
 - 后端定时作业模块继续收口：执行期节点追踪、插件写入预览、代码巡检节点摘要和 AI 处理判断迁移到独立 `scheduled_job_execution_engine` service，`scheduled_jobs.py` 保留运行事务、插件/模型/结果动作编排、审计和持久化职责。
-- 后端助手模块继续收口：插件连接、插件动作、定时作业和代码巡检配置草案构造迁移到独立 `assistant_draft_builder` service，`assistant_tools.py` 保留意图识别、读模型工具和结果汇总职责。
+- 后端助手模块继续收口：插件连接、动作、定时作业和代码巡检配置草案构造迁移到独立 `assistant_draft_builder` service，`assistant_tools.py` 保留意图识别、读模型工具和结果汇总职责。
 - 后端插件模块继续收口：连接测试诊断、请求回放 cURL、动作模板草案、失败修复建议、最近测试历史和轻量测试摘要迁移到独立 `connection_diagnostics` service，`plugins.py` 保留测试编排、真实请求、审计和持久化职责。
 - 后端定时作业模块继续收口：运行可观测性聚合迁移到独立 `scheduled_job_observability` service，路由直接调用观测服务，`scheduled_jobs.py` 保持作业定义、运行和执行链路职责。
 
 ### Fixed
-- 修复已有 PostgreSQL 库访问代码巡检来源链路字段可能缺列的问题：启动兼容迁移现在会加载 `046_code_inspection_plugin_source.sql`，为旧 `code_inspection_reports` 表补齐插件动作和数据连接来源列。
+- 修复已有 PostgreSQL 库访问代码巡检来源链路字段可能缺列的问题：启动兼容迁移现在会加载 `046_code_inspection_plugin_source.sql`，为旧 `code_inspection_reports` 表补齐动作和数据连接来源列。
 - 修复定时作业运行写入 `collector_runs` 时的旧库约束不一致问题：`045_scheduled_job_collector_types.sql` 补齐 `code_inspection`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`，避免作业运行在 collector run 创建阶段返回 500。
 - 修复已有 PostgreSQL 库访问定时作业运行记录返回 500 的问题：启动兼容迁移现在会加载 `044_scheduled_job_run_source.sql`，为旧 `scheduled_job_runs` 表补齐 `source_run_id` 和来源运行索引。
 - 修复用户反馈定时作业配置了插件、模型和 Skill 但运行时未调用大模型的问题：后端会将这类 `user_feedback_collect` 兼容配置归一为 `user_feedback_insight_extract` 并使用 AI 生成模式，前端新增作业默认选择“用户反馈洞察抽取（取数 + AI 分析 + 写入）”，同时标明“用户反馈采集”仅取数、不调用 AI。

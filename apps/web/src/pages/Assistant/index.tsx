@@ -270,7 +270,7 @@ function AssistantActionDraftCards({
                     <Text>{draftPayloadText(payload, 'model_gateway_config_id')}</Text>
                   </span>
                   <span>
-                    <Text type="secondary">Agent</Text>
+                    <Text type="secondary">AI角色</Text>
                     <Text>{draftPayloadText(payload, 'agent_id')}</Text>
                   </span>
                   <span>

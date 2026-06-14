@@ -3,6 +3,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from app.services.ai_executor_runners import (
+    SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
+    SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+)
 from app.services.result_write_targets import result_write_target_default_mapping
 
 STANDARD_PLUGINS = [
@@ -10,8 +14,8 @@ STANDARD_PLUGINS = [
         "category": "ai_service",
         "code": "ai_executor",
         "description": (
-            "官方标准 AI 执行器插件，用于通过受控 Runner 向 Codex、Claude、"
-            "Hermes、OpenClaw 等执行器下达指令、等待执行结果并同步回写。"
+            "官方标准 AI 执行器插件，默认使用系统 AI 大模型执行，也支持通过受控 Runner "
+            "向 Codex、Claude、Hermes、OpenClaw 等执行器下达指令并同步回写。"
         ),
         "id": "plugin_standard_ai_executor",
         "is_system": True,
@@ -88,13 +92,14 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
         "action_templates": ["AI 执行器下达指令", "AI 执行器结果同步"],
         "publisher": "AI Brain 官方",
         "recommended_scenarios": [
+            "使用系统默认 AI 大模型执行任务",
             "代码巡检自动执行",
             "定时任务委派给 Codex/Claude/Hermes/OpenClaw",
             "执行完成后同步回写",
         ],
         "summary": (
-            "通过受控 Runner 对接 Codex、Claude、Hermes、OpenClaw 等执行器，"
-            "支持下达指令、等待完成、拉取结果和回写同步。"
+            "默认调用系统 AI 大模型，也可通过受控 Runner 对接 Codex、Claude、Hermes、OpenClaw "
+            "等执行器，支持下达指令、等待完成、拉取结果和回写同步。"
         ),
     },
     "email": {
@@ -136,23 +141,27 @@ STANDARD_PLUGIN_CONNECTION_TEMPLATE_VERSION = "v1"
 
 STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
     "ai_executor": {
-        "auth_config": {
-            "token_ref": "vault/ai-executor/token",
-        },
-        "auth_type": "bearer",
-        "endpoint_url": "runner://ai-executor",
+        "auth_config": {},
+        "auth_type": "none",
+        "endpoint_url": "model-gateway://default",
         "environment": "prod",
         "max_retries": 0,
-        "name": "生产 AI 执行器连接",
+        "name": "系统默认 AI 执行器连接",
         "protocol": "runner_polling",
         "request_config": {
             "query": {
-                "executor_type": "codex",
+                "executor_type": SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
                 "instruction_timeout_seconds": 1800,
-                "runner_id": "",
+                "runner_id": SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
                 "result_callback_url": "",
                 "runner_profile": "default",
-                "supported_executor_types": ["codex", "claude", "hermes", "openclaw"],
+                "supported_executor_types": [
+                    SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+                    "codex",
+                    "claude",
+                    "hermes",
+                    "openclaw",
+                ],
                 "workspace_root": "/workspace",
             },
         },
@@ -264,21 +273,30 @@ STANDARD_PLUGIN_CONNECTION_SCHEMAS = {
         "sections": [
             {
                 "key": "runner",
-                "title": "Runner 调用配置",
+                "title": "执行器调用配置",
                 "fields": [
                     {
-                        "description": "留空时由平台按执行器类型和工作区自动选择在线 Runner。",
+                        "description": (
+                            "系统默认执行器使用 ai_executor_runner_system_default；"
+                            "本地 Runner 可填写对应 Runner ID。"
+                        ),
                         "key": "runner_id",
                         "label": "Runner",
                         "path": "request_config.query.runner_id",
-                        "placeholder": "ai_executor_runner_xxx",
+                        "placeholder": SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
                         "required": False,
                         "type": "text",
                     },
                     {
                         "key": "executor_type",
                         "label": "执行器类型",
-                        "options": ["codex", "claude", "hermes", "openclaw"],
+                        "options": [
+                            SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+                            "codex",
+                            "claude",
+                            "hermes",
+                            "openclaw",
+                        ],
                         "path": "request_config.query.executor_type",
                         "required": True,
                         "type": "select",
@@ -490,15 +508,15 @@ STANDARD_PLUGIN_ACTION_TEMPLATES = [
         "default_code": "run_ai_executor_instruction",
         "default_name": "AI 执行器下达指令",
         "description": (
-            "向 Codex、Claude、Hermes、OpenClaw 等受控执行器下达任务指令，等待完成后"
-            "返回结构化结果。"
+            "默认向系统 AI 大模型下达任务指令，也可委派给 Codex、Claude、Hermes、OpenClaw "
+            "等受控执行器，返回结构化结果。"
         ),
         "form_defaults": {
-            "executor_type": "codex",
+            "executor_type": SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
             "instruction": "请检查仓库质量、安全和规范问题，并输出结构化报告。",
             "instruction_timeout_seconds": 1800,
             "result_callback_url": "",
-            "runner_id": "",
+            "runner_id": SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
             "workspace_root": "/workspace",
         },
         "name": "AI 执行器下达指令",

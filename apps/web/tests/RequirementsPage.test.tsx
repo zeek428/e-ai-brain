@@ -781,7 +781,7 @@ describe('RequirementsPage', () => {
     expect(within(stageDetails).getByText('Review 结论：补充用户级隔离测试。')).toBeInTheDocument();
     expect(within(stageDetails).getByRole('link', { name: '查看任务 task_design' })).toHaveAttribute(
       'href',
-      '/tasks/management?task_id=task_design',
+      '/delivery/rd-tasks?task_id=task_design',
     );
     expect(within(stageDetails).getByRole('link', { name: '查看 Bug bug_history' })).toHaveAttribute(
       'href',

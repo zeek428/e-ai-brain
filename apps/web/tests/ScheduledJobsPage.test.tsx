@@ -182,16 +182,26 @@ function installScheduledJobsFetchMock(
             },
             {
               code: 'ai_executor_repository_task',
+              description: '默认使用系统默认 AI 大模型执行仓库任务，也可切换到本地 Runner。',
               name: 'AI 执行器仓库任务',
               payload_defaults: {
+                config_json: {
+                  ai_executor: {
+                    executor_type: 'model_gateway',
+                    runner_id: 'ai_executor_runner_system_default',
+                    runner_label: '系统默认执行器',
+                  },
+                },
+                cron_expression: '0 3 * * MON',
                 enabled: true,
-                execution_mode: 'ai_assisted',
+                execution_mode: 'deterministic',
                 job_type: 'plugin_action_invoke',
-                name: 'AI 执行器仓库任务',
+                name: 'AI 执行器仓库巡检',
                 result_actions: [],
-                schedule_type: 'manual',
-                source_system: 'ai-executor',
+                schedule_type: 'cron',
+                source_system: 'ai_executor',
               },
+              recommended_scenarios: ['系统默认执行器', '系统 AI 大模型仓库分析', '本地 Codex/OpenClaw Runner'],
               resource_selectors: {
                 plugin_action: { code_candidates: ['run_ai_executor_instruction'] },
               },
@@ -309,8 +319,16 @@ function installScheduledJobsFetchMock(
               plugin_id: 'plugin_github',
               status: 'active',
             },
+            {
+              action_type: 'mcp_tool',
+              code: 'run_ai_executor_instruction',
+              id: 'plugin_action_ai_executor_command',
+              name: 'AI 执行器下达指令',
+              plugin_id: 'plugin_standard_ai_executor',
+              status: 'active',
+            },
           ],
-          total: 2,
+          total: 3,
         },
       });
     }
@@ -339,8 +357,15 @@ function installScheduledJobsFetchMock(
               plugin_id: 'plugin_github',
               status: 'active',
             },
+            {
+              environment: 'default',
+              id: 'connection_ai_executor_system',
+              name: '系统默认 AI 执行器',
+              plugin_id: 'plugin_standard_ai_executor',
+              status: 'active',
+            },
           ],
-          total: 2,
+          total: 4,
         },
       });
     }
@@ -465,6 +490,7 @@ describe('ScheduledJobsPage', () => {
 
     expect(within(dialog).queryByLabelText('产品 ID')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('Agent ID')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Agent')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('Skill IDs')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('时间参数')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('连接输入参数')).not.toBeInTheDocument();
@@ -472,7 +498,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('连接环境')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('数据连接')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('AI 模型')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('Agent')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('AI角色')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Skills')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('知识引用')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('结果写入执行')).toBeInTheDocument();
@@ -695,6 +721,43 @@ describe('ScheduledJobsPage', () => {
       }),
     );
     expect(jobCreateBodies[1]).not.toHaveProperty('connection_environment');
+
+    fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
+
+    const executorDialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+    await waitFor(() => expect(within(executorDialog).getByLabelText('作业模板')).toBeInTheDocument());
+    fireEvent.mouseDown(within(executorDialog).getByLabelText('作业模板'));
+    fireEvent.click(await screen.findByText('AI 执行器仓库任务'));
+
+    expect(within(executorDialog).getByLabelText('名称')).toHaveValue('AI 执行器仓库巡检');
+    expect(within(executorDialog).getByText('系统默认 AI 执行器 (default)')).toBeInTheDocument();
+    expect(within(executorDialog).getByText('AI 执行器下达指令 (run_ai_executor_instruction)')).toBeInTheDocument();
+    expect(within(executorDialog).getByDisplayValue('0 3 * * MON')).toBeInTheDocument();
+    expect(within(executorDialog).getByDisplayValue('ai_executor')).toBeInTheDocument();
+
+    fireEvent.click(within(executorDialog).getByRole('button', { name: /OK|确\s*定/ }));
+    await waitFor(() =>
+      expect(jobCreateBodies[2]).toMatchObject({
+        config_json: {
+          ai_executor: {
+            executor_type: 'model_gateway',
+            runner_id: 'ai_executor_runner_system_default',
+            runner_label: '系统默认执行器',
+          },
+        },
+        cron_expression: '0 3 * * MON',
+        enabled: true,
+        execution_mode: 'deterministic',
+        job_type: 'plugin_action_invoke',
+        name: 'AI 执行器仓库巡检',
+        plugin_action_id: 'plugin_action_ai_executor_command',
+        plugin_connection_id: 'connection_ai_executor_system',
+        product_id: 'product_ai_brain',
+        schedule_type: 'cron',
+        source_system: 'ai_executor',
+      }),
+    );
+    expect(jobCreateBodies[2]).not.toHaveProperty('connection_environment');
   });
 
   it('opens the create dialog from an assistant scheduled job draft', async () => {
@@ -841,7 +904,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() => expect(within(dialog).getByText('请选择 AI 模型')).toBeInTheDocument());
-    expect(within(dialog).getByText('请选择 Agent')).toBeInTheDocument();
+    expect(within(dialog).getByText('请选择 AI角色')).toBeInTheDocument();
     expect(within(dialog).getByText('请选择 Skills')).toBeInTheDocument();
     expect(jobCreateBodies).toEqual([]);
   });
@@ -865,7 +928,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() => expect(within(dialog).getByText('请选择 AI 模型')).toBeInTheDocument());
-    expect(within(dialog).getByText('请选择 Agent')).toBeInTheDocument();
+    expect(within(dialog).getByText('请选择 AI角色')).toBeInTheDocument();
     expect(within(dialog).getByText('请选择 Skills')).toBeInTheDocument();
     expect(jobCreateBodies).toEqual([]);
   });
@@ -1482,6 +1545,75 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('1');
     expect(within(dialog).getByLabelText('流程节点 结果写入反馈内容')).toHaveTextContent('scheduled_job_result');
     expect(dialog).toHaveTextContent('发现 2 个中风险规范问题');
+  });
+
+  it('shows system default AI executor model details in scheduled job run results', async () => {
+    installScheduledJobsFetchMock({
+      runs: [
+        {
+          collector_run_id: 'collector_run_system_executor_scan',
+          config_snapshot: {
+            execution_mode: 'deterministic',
+            job_type: 'plugin_action_invoke',
+          },
+          finished_at: '2026-06-14T10:00:05Z',
+          id: 'scheduled_job_run_system_executor_scan',
+          records_imported: 1,
+          result_summary: {
+            execution_nodes: {
+              data_connection: {
+                records_imported: 0,
+                status: 'succeeded',
+              },
+              result_action: {
+                feedback: {
+                  runner_result: {
+                    summary: '系统默认模型完成仓库分析',
+                  },
+                },
+                records_imported: 1,
+                status: 'succeeded',
+                write_target: 'scheduled_job_result',
+              },
+              runner_execution: {
+                executor_type: 'model_gateway',
+                model_gateway_log_id: 'model_gateway_log_system_executor',
+                result_json: {
+                  summary: '系统默认模型完成仓库分析',
+                },
+                runner_id: 'ai_executor_runner_system_default',
+                status: 'succeeded',
+                workspace_root: '/Users/zeek/source/e-ai-brain',
+              },
+              skill_processing: {
+                model_gateway_called: false,
+                processing_mode: 'plugin_structured_output',
+                status: 'not_run',
+              },
+            },
+          },
+          scheduled_job_id: 'scheduled_job_system_executor_scan',
+          started_at: '2026-06-14T10:00:00Z',
+          status: 'succeeded',
+          trigger_type: 'manual',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '运行记录' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_system_executor_scan' }),
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    const executorNode = within(dialog).getByLabelText('流程节点 AI 执行器执行内容');
+    expect(executorNode).toHaveTextContent('执行器实例');
+    expect(executorNode).toHaveTextContent('model_gateway');
+    expect(executorNode).toHaveTextContent('ai_executor_runner_system_default');
+    expect(executorNode).toHaveTextContent('model_gateway_log_system_executor');
+    expect(executorNode).toHaveTextContent('系统默认模型完成仓库分析');
   });
 
   it('shows email notification feedback in the result action node', async () => {

@@ -9,6 +9,7 @@ from app.core.roles import ROLE_DEFINITIONS
 
 MIGRATION = Path("app/db/migrations/031_rbac_foundation.sql")
 LEGACY_ROLE_BACKFILL_MIGRATION = Path("app/db/migrations/033_backfill_legacy_user_roles.sql")
+RD_TASK_MENU_MOVE_MIGRATION = Path("app/db/migrations/052_move_rd_tasks_menu.sql")
 
 
 def _role_permissions(role_code: str) -> set[str]:
@@ -93,6 +94,39 @@ def test_rbac_migration_seeds_current_menu_codes():
     assert "'group'" in sql
     assert "'page'" in sql
     assert "'hidden_page'" in sql
+
+
+def test_task_center_menu_resource_is_rd_task_under_delivery():
+    resources = {
+        resource["code"]: resource
+        for resource in authorization_repository.COMPATIBILITY_MENU_RESOURCES
+    }
+
+    assert resources["task.center"] == {
+        "code": "task.center",
+        "name": "研发任务",
+        "path": "/delivery/rd-tasks",
+        "parent_code": "delivery",
+        "menu_type": "page",
+        "sort_order": 35,
+        "required_permissions": ["task.read"],
+        "status": "active",
+    }
+    assert all(
+        resource["code"] != "task.center"
+        for resource in resources.values()
+        if resource["parent_code"] == "task"
+    )
+
+
+def test_rbac_menu_move_migration_moves_rd_tasks_under_delivery():
+    sql = RD_TASK_MENU_MOVE_MIGRATION.read_text(encoding="utf-8")
+
+    assert "UPDATE menu_resources" in sql
+    assert "name = '研发任务'" in sql
+    assert "path = '/delivery/rd-tasks'" in sql
+    assert "parent_code = 'delivery'" in sql
+    assert "code = 'task.center'" in sql
 
 
 def test_rbac_migration_declares_uniqueness_and_timestamps():

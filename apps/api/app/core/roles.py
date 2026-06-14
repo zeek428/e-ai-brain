@@ -51,7 +51,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "不能确认技术方案或代码 Review 报告。",
             "不能维护系统用户、角色或模型网关密钥。",
         ],
-        "menu_scope": ["需求管理", "产品管理", "任务管理", "Bug 管理", "首页 IT 团队看板"],
+        "menu_scope": ["需求管理", "产品管理", "研发任务", "Bug 管理", "首页 IT 团队看板"],
         "name": "产品负责人",
         "permissions": [
             "product.manage",
@@ -84,7 +84,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "不能维护系统用户、角色或模型网关密钥。",
             "产品优先级和迭代采纳仍由产品负责人确认。",
         ],
-        "menu_scope": ["任务管理", "Bug 管理", "知识中心", "日志监控", "首页 IT 团队看板"],
+        "menu_scope": ["研发任务", "Bug 管理", "知识中心", "日志监控", "首页 IT 团队看板"],
         "name": "研发负责人",
         "permissions": [
             "task.create",
@@ -117,7 +117,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "不能维护产品主数据或审批需求。",
             "不能启动非评审范围内的 AI 任务。",
         ],
-        "menu_scope": ["任务管理", "审计与运行"],
+        "menu_scope": ["研发任务", "审计与运行"],
         "name": "评审负责人",
         "permissions": ["review.decide", "task.read", "gitlab.review", "workspace.read"],
         "responsibilities": [
@@ -190,7 +190,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "不能维护系统用户、角色或模型网关密钥。",
             "不能审批需求或确认发布决策。",
         ],
-        "menu_scope": ["任务管理", "Bug 管理", "知识检索", "首页 IT 团队看板"],
+        "menu_scope": ["研发任务", "Bug 管理", "知识检索", "首页 IT 团队看板"],
         "name": "开发工程师",
         "permissions": [
             "task.read",
@@ -221,7 +221,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "不能维护系统用户、角色或模型网关密钥。",
             "不能替代发布负责人做发布确认。",
         ],
-        "menu_scope": ["任务管理", "Bug 管理", "首页 IT 团队看板"],
+        "menu_scope": ["研发任务", "Bug 管理", "首页 IT 团队看板"],
         "name": "测试负责人",
         "permissions": [
             "task.read",
@@ -254,7 +254,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "不能审批需求、发布或系统配置。",
             "只能在授权范围内验证 Bug。",
         ],
-        "menu_scope": ["任务管理", "Bug 管理", "首页 IT 团队看板"],
+        "menu_scope": ["研发任务", "Bug 管理", "首页 IT 团队看板"],
         "name": "测试人员",
             "permissions": [
             "task.read",
@@ -285,7 +285,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "不能维护系统用户、角色或模型网关密钥。",
             "不能替代产品负责人审批需求。",
         ],
-        "menu_scope": ["任务管理", "Bug 管理", "日志监控", "首页 IT 团队看板"],
+        "menu_scope": ["研发任务", "Bug 管理", "日志监控", "首页 IT 团队看板"],
         "name": "发布负责人",
         "permissions": [
             "task.read",

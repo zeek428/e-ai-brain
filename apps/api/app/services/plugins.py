@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.api.deps import api_error, require_roles
 from app.services.ai_executor_runners import (
     AI_EXECUTOR_TYPES,
+    SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
+    SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
     create_ai_executor_task,
     find_available_runner,
 )
@@ -21,6 +23,12 @@ from app.services.dynamic_parameters import (
     dynamic_parameter_resolution_trace,
     dynamic_time_parameters,
     resolve_dynamic_parameter_value,
+)
+from app.services.model_gateway import (
+    ModelGatewayCallError,
+    ModelGatewayConfigError,
+    call_model_gateway_for_task,
+    save_model_gateway_records,
 )
 from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.plugin_templates import (
@@ -339,7 +347,7 @@ def usage_summary(usages: dict[str, list[dict[str, Any]]]) -> str:
     labels = {
         "actions": "动作",
         "connections": "连接",
-        "logs": "调用日志",
+        "logs": "定时作业调用记录",
         "scheduled_jobs": "定时作业",
     }
     parts = [
@@ -1754,6 +1762,84 @@ def _config_value(config: dict[str, Any], key: str, default: Any = None) -> Any:
     return query.get(key, default)
 
 
+def _invoke_system_default_model_gateway_executor(
+    current_store: Any,
+    *,
+    action: dict[str, Any],
+    connection: dict[str, Any],
+    input_payload: dict[str, Any],
+    instruction: str,
+    request_config: dict[str, Any],
+    scheduled_job_id: str | None,
+    scheduled_job_run_id: str | None,
+    timeout_seconds: int,
+    user: dict[str, Any],
+    workspace_root: str,
+) -> tuple[dict[str, Any], str | None]:
+    task_id = current_store.new_id("ai_executor_task")
+    task = {
+        "action_id": action.get("id"),
+        "connection_id": connection.get("id"),
+        "created_by": user["id"],
+        "id": task_id,
+        "input_json": {
+            "expected_output_schema": {
+                "details": "object | array | string, optional",
+                "result": "object | array | string, optional",
+                "summary": "string",
+            },
+            "input_payload": input_payload,
+            "instruction": instruction,
+            "request_config": request_config,
+            "scheduled_job_id": scheduled_job_id,
+            "scheduled_job_run_id": scheduled_job_run_id,
+            "timeout_seconds": timeout_seconds,
+            "workspace_root": workspace_root,
+        },
+        "product_context": {},
+        "requirement_snapshot": {},
+        "task_type": "ai_executor_instruction",
+        "title": action.get("name") or "系统默认执行器指令",
+    }
+    try:
+        result_json, model_log = call_model_gateway_for_task(current_store, task=task)
+        save_model_gateway_records(current_store)
+    except ModelGatewayConfigError as exc:
+        raise api_error(
+            400,
+            "MODEL_GATEWAY_CONFIG_REQUIRED",
+            str(exc),
+        ) from exc
+    except ModelGatewayCallError as exc:
+        save_model_gateway_records(current_store)
+        raise api_error(
+            502,
+            "MODEL_GATEWAY_CALL_FAILED",
+            "System default executor model gateway request failed",
+        ) from exc
+
+    model_log_id = model_log.get("id") if isinstance(model_log, dict) else None
+    runner_summary = {
+        "executor_type": SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+        "finished_at": datetime.now(UTC).isoformat(),
+        "model_gateway_called": True,
+        "model_gateway_log_id": model_log_id,
+        "result_json": result_json,
+        "runner_id": SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
+        "runner_task_id": None,
+        "status": "succeeded",
+        "workspace_root": workspace_root,
+    }
+    return {
+        "json": {
+            **runner_summary,
+            "result_json": result_json,
+        },
+        "mocked": False,
+        "runner": runner_summary,
+    }, None
+
+
 def _invoke_ai_executor_runner(
     current_store: Any,
     *,
@@ -1773,7 +1859,14 @@ def _invoke_ai_executor_runner(
             "runner": {"status": "mocked"},
         }, None
 
-    executor_type = str(_config_value(request_config, "executor_type", "codex") or "codex").lower()
+    requested_runner_id = str(_config_value(request_config, "runner_id", "") or "").strip() or None
+    raw_executor_type = _config_value(request_config, "executor_type")
+    default_executor_type = (
+        SYSTEM_DEFAULT_AI_EXECUTOR_TYPE
+        if requested_runner_id == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
+        else "codex"
+    )
+    executor_type = str(raw_executor_type or default_executor_type).lower()
     if executor_type not in AI_EXECUTOR_TYPES:
         raise api_error(400, "AI_EXECUTOR_TYPE_UNSUPPORTED", "Unsupported AI executor type")
     workspace_root = ensure_non_blank(
@@ -1794,7 +1887,20 @@ def _invoke_ai_executor_runner(
         or connection.get("timeout_seconds")
         or 1800,
     )
-    requested_runner_id = str(_config_value(request_config, "runner_id", "") or "").strip() or None
+    if executor_type == SYSTEM_DEFAULT_AI_EXECUTOR_TYPE:
+        return _invoke_system_default_model_gateway_executor(
+            current_store,
+            action=action,
+            connection=connection,
+            input_payload=input_payload,
+            instruction=instruction,
+            request_config=request_config,
+            scheduled_job_id=scheduled_job_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            timeout_seconds=timeout_seconds,
+            user=user,
+            workspace_root=workspace_root,
+        )
     runner = find_available_runner(
         current_store,
         executor_type=executor_type,
@@ -1864,10 +1970,31 @@ def plugin_action_request_preview(
     if plugin["protocol"] in AI_EXECUTOR_RUNNER_PROTOCOLS or (
         plugin.get("code") == "ai_executor" and plugin["protocol"] == "mcp_stdio"
     ):
+        executor_type = _config_value(request_config, "executor_type", "codex")
+        runner_id = _config_value(request_config, "runner_id")
+        if (
+            executor_type == SYSTEM_DEFAULT_AI_EXECUTOR_TYPE
+            or runner_id == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
+        ):
+            return {
+                "arguments": input_payload,
+                "endpoint_url": connection.get("endpoint_url"),
+                "executor_type": SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+                "instruction_timeout_seconds": _config_value(
+                    request_config,
+                    "instruction_timeout_seconds",
+                    _config_value(request_config, "timeout_seconds"),
+                ),
+                "method": "MODEL_GATEWAY_CHAT",
+                "protocol": SYSTEM_DEFAULT_AI_EXECUTOR_TYPE,
+                "runner_id": SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
+                "tool_name": request_config.get("tool_name"),
+                "workspace_root": _config_value(request_config, "workspace_root"),
+            }
         return {
             "arguments": input_payload,
             "endpoint_url": connection.get("endpoint_url"),
-            "executor_type": _config_value(request_config, "executor_type", "codex"),
+            "executor_type": executor_type,
             "instruction_timeout_seconds": _config_value(
                 request_config,
                 "instruction_timeout_seconds",
@@ -1875,7 +2002,7 @@ def plugin_action_request_preview(
             ),
             "method": "RUNNER_CLAIM",
             "protocol": plugin["protocol"],
-            "runner_id": _config_value(request_config, "runner_id"),
+            "runner_id": runner_id,
             "tool_name": request_config.get("tool_name"),
             "workspace_root": _config_value(request_config, "workspace_root"),
         }

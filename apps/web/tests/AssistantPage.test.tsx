@@ -87,7 +87,7 @@ describe('AssistantPage', () => {
                     id: 'task_api',
                     title: 'AI 助手前端任务',
                     type: 'ai_task',
-                    url: '/tasks/management?task_id=task_api',
+                    url: '/delivery/rd-tasks?task_id=task_api',
                   },
                 ],
                 role: 'assistant',
@@ -128,7 +128,7 @@ describe('AssistantPage', () => {
     );
     expect(screen.getByRole('link', { name: /AI 助手前端任务/ })).toHaveAttribute(
       'href',
-      '/tasks/management?task_id=task_api',
+      '/delivery/rd-tasks?task_id=task_api',
     );
     expect(screen.getByText('codex-auto-review')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
@@ -302,7 +302,7 @@ describe('AssistantPage', () => {
     expect(screen.getByText('ai_generated')).toBeInTheDocument();
     expect(screen.getByText('AI 模型')).toBeInTheDocument();
     expect(screen.getByText('model_gateway_code')).toBeInTheDocument();
-    expect(screen.getByText('Agent')).toBeInTheDocument();
+    expect(screen.getByText('AI角色')).toBeInTheDocument();
     expect(screen.getByText('agent_code_inspection')).toBeInTheDocument();
     expect(screen.getByText('Skills')).toBeInTheDocument();
     expect(screen.getByText('skill_code_inspection')).toBeInTheDocument();
@@ -906,7 +906,7 @@ describe('AssistantPage', () => {
                       id: 'task_api',
                       title: 'AI 助手任务',
                       type: 'ai_task',
-                      url: '/tasks/management?task_id=task_api',
+                      url: '/delivery/rd-tasks?task_id=task_api',
                     },
                   ],
                   role: 'assistant',
@@ -958,7 +958,7 @@ describe('AssistantPage', () => {
             id: 'task_api',
             title: 'AI 助手任务',
             type: 'ai_task',
-            url: '/tasks/management?task_id=task_api',
+            url: '/delivery/rd-tasks?task_id=task_api',
           },
         ],
         role: 'assistant',

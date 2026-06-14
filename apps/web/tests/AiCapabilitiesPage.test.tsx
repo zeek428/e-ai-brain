@@ -104,18 +104,20 @@ describe('AI capabilities page', () => {
     vi.unstubAllGlobals();
   });
 
-  it('edits an existing Agent record from the list', async () => {
+  it('edits an existing AI role record from the list', async () => {
     const { agentPatchBodies } = installCapabilitiesFetchMock();
 
     render(<AiCapabilitiesPage />);
 
+    expect(await screen.findByRole('tab', { name: 'AI角色' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Agent 管理' })).not.toBeInTheDocument();
     expect(await screen.findByText('洞察 Agent')).toBeInTheDocument();
     expect(screen.getByText('默认模型网关 (gpt-4.1-mini)')).toBeInTheDocument();
     const agentRow = screen.getByText('洞察 Agent').closest('tr');
     expect(agentRow).not.toBeNull();
     fireEvent.click(within(agentRow as HTMLElement).getByRole('button', { name: '编辑' }));
 
-    const agentDialog = await screen.findByRole('dialog', { name: '编辑 Agent' });
+    const agentDialog = await screen.findByRole('dialog', { name: '编辑 AI角色' });
     expect(within(agentDialog).getByLabelText('名称')).toHaveValue('洞察 Agent');
     expect(within(agentDialog).getByLabelText('默认 Skill IDs')).toHaveValue('skill_001');
     expect(within(agentDialog).getByText('默认模型网关 / gpt-4.1-mini / 默认')).toBeInTheDocument();
@@ -165,7 +167,7 @@ describe('AI capabilities page', () => {
     );
   });
 
-  it('deletes an existing Agent by disabling it', async () => {
+  it('deletes an existing AI role by disabling it', async () => {
     const { agentPatchBodies } = installCapabilitiesFetchMock();
 
     render(<AiCapabilitiesPage />);
@@ -174,8 +176,8 @@ describe('AI capabilities page', () => {
     const agentRow = screen.getByText('洞察 Agent').closest('tr');
     expect(agentRow).not.toBeNull();
     fireEvent.click(within(agentRow as HTMLElement).getByRole('button', { name: '删除' }));
-    expect(await screen.findByText('确认删除该 Agent？')).toBeInTheDocument();
-    const agentConfirm = screen.getByText('确认删除该 Agent？').closest('.ant-popover');
+    expect(await screen.findByText('确认删除该 AI角色？')).toBeInTheDocument();
+    const agentConfirm = screen.getByText('确认删除该 AI角色？').closest('.ant-popover');
     expect(agentConfirm).not.toBeNull();
     fireEvent.click(within(agentConfirm as HTMLElement).getByRole('button', { name: /删\s*除/ }));
 

@@ -53,7 +53,7 @@ function pluginConnectionTestBody() {
         code: 'test_connection_maxcompute_prod',
         connection_id: 'connection_maxcompute_prod',
         description: '由连接测试请求回放生成，请确认请求路径、Params、Headers 和结果映射后保存。',
-        name: '生产 MaxCompute 项目 请求执行',
+        name: '生产 MaxCompute 项目 请求动作',
         plugin_id: 'plugin_maxcompute',
         request_config: {
           headers: { Authorization: 'APPCODE 208b5b1456ee445ca47a42c' },
@@ -100,7 +100,7 @@ function pluginConnectionTestBody() {
             action_type: 'http_request',
             code: 'test_connection_maxcompute_prod',
             connection_id: 'connection_maxcompute_prod',
-            name: '生产 MaxCompute 项目 请求执行',
+            name: '生产 MaxCompute 项目 请求动作',
             plugin_id: 'plugin_maxcompute',
             request_config: {
               method: 'POST',
@@ -627,6 +627,25 @@ function installPluginsFetchMock(
         data: {
           items: [
             {
+              endpoint_url: 'model-gateway://default',
+              executor_types: ['model_gateway'],
+              heartbeat_timeout_seconds: 0,
+              heartbeat_age_seconds: null,
+              health_status: 'managed',
+              id: 'ai_executor_runner_system_default',
+              last_heartbeat_at: null,
+              max_concurrent_tasks: 0,
+              metadata: { is_system: true, managed_by: 'ai_brain' },
+              name: '系统默认执行器',
+              protocol: 'model_gateway',
+              setup_command: '使用系统默认 AI 大模型执行，无需启动本地 Runner',
+              status: 'active',
+              token_configured: false,
+              token_rotated_at: null,
+              token_version: 0,
+              workspace_roots: ['*'],
+            },
+            {
               endpoint_url: 'runner://local',
               executor_types: ['codex', 'openclaw'],
               heartbeat_timeout_seconds: 120,
@@ -648,7 +667,7 @@ function installPluginsFetchMock(
               workspace_roots: ['/Users/zeek/source/e-ai-brain'],
             },
           ],
-          total: 1,
+          total: 2,
         },
       });
     }
@@ -918,6 +937,7 @@ function installPluginsFetchMock(
     connectionListCalls,
     connectionTestCalls,
     connectionUpdateBodies,
+    fetchMock,
     pluginDeleteIds,
     pluginUpdateBodies,
     resolveConnectionTest: () => {
@@ -959,6 +979,31 @@ describe('PluginsPage', () => {
     expect(screen.getByText('日志 / 监控')).toBeInTheDocument();
   });
 
+  it('keeps plugin management focused on configuration instead of invocation logs', async () => {
+    const { fetchMock } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    expect(await screen.findByRole('tab', { name: '插件' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '调用日志' })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock).not.toHaveBeenCalledWith('/api/system/plugin-invocation-logs', expect.anything()),
+    );
+  });
+
+  it('names plugin actions as actions while keeping AI executors distinct', async () => {
+    installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    expect(await screen.findByRole('tab', { name: '动作' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '执行器' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '执行' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: '动作' }));
+    expect(await screen.findByRole('button', { name: '新增动作' })).toBeInTheDocument();
+  });
+
   it('renders a compact system variable preview and opens the full table on demand', async () => {
     installPluginsFetchMock();
 
@@ -985,7 +1030,7 @@ describe('PluginsPage', () => {
 
     fireEvent.click(await screen.findByRole('tab', { name: '执行器' }));
 
-    expect(await screen.findByText('AI 执行器 Runner')).toBeInTheDocument();
+    expect(await screen.findByText('AI 执行器')).toBeInTheDocument();
     expect(screen.getByText('Zeek Mac 本地执行器')).toBeInTheDocument();
     expect(screen.getByText('online')).toBeInTheDocument();
     expect(screen.getByText('ai-brain-runner start --runner-id ai_executor_runner_001 --token <runner_token> --server http://127.0.0.1:8000')).toBeInTheDocument();
@@ -1011,6 +1056,23 @@ describe('PluginsPage', () => {
       ]),
     );
     expect(await screen.findByText('runner-token-created')).toBeInTheDocument();
+  });
+
+  it('shows the system default executor as a managed read-only executor', async () => {
+    installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '执行器' }));
+
+    expect(await screen.findByText('系统默认执行器')).toBeInTheDocument();
+    expect(screen.getAllByText('model_gateway').length).toBeGreaterThan(0);
+    expect(screen.getByText('managed')).toBeInTheDocument();
+    expect(screen.getByText('使用系统默认 AI 大模型执行，无需启动本地 Runner')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑执行器 系统默认执行器' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '删除执行器 系统默认执行器' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '轮换 Token 系统默认执行器' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看执行日志 系统默认执行器' })).not.toBeInTheDocument();
   });
 
   it('rotates runner tokens and shows streaming task logs with cancellation', async () => {
@@ -1074,9 +1136,9 @@ describe('PluginsPage', () => {
     render(<PluginsPage />);
 
     fireEvent.click(await screen.findByRole('tab', { name: '插件市场' }));
-    fireEvent.click(await screen.findByRole('button', { name: '从市场插件 GitHub 创建执行' }));
+    fireEvent.click(await screen.findByRole('button', { name: '从市场插件 GitHub 创建动作' }));
 
-    const dialog = await findDialogByTitle('新增执行');
+    const dialog = await findDialogByTitle('新增动作');
     expect(within(dialog).getByText('GitHub (http)')).toBeInTheDocument();
     expect(within(dialog).getByText('代码巡检报告')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/repos/{{owner}}/{{repo}}/dependabot/alerts');
@@ -1116,10 +1178,10 @@ describe('PluginsPage', () => {
     render(<PluginsPage />);
 
     fireEvent.click(await screen.findByRole('tab', { name: '插件市场' }));
-    fireEvent.click(await screen.findByRole('button', { name: '从市场插件 GitHub 创建执行' }));
+    fireEvent.click(await screen.findByRole('button', { name: '从市场插件 GitHub 创建动作' }));
 
-    expect(warningSpy).toHaveBeenCalledWith('执行模板目录未返回该官方插件模板，请刷新服务端模板目录后重试');
-    expect(screen.queryByText('新增执行')).not.toBeInTheDocument();
+    expect(warningSpy).toHaveBeenCalledWith('动作模板目录未返回该官方插件模板，请刷新服务端模板目录后重试');
+    expect(screen.queryByText('新增动作')).not.toBeInTheDocument();
     expect(actionBodies).toEqual([]);
   });
 
@@ -1145,13 +1207,13 @@ describe('PluginsPage', () => {
           },
           status: 'active',
         },
-        title: 'GitHub 代码巡检执行',
+        title: 'GitHub 代码巡检动作',
       }),
     );
 
     render(<PluginsPage />);
 
-    const dialog = await findDialogByTitle('新增执行');
+    const dialog = await findDialogByTitle('新增动作');
     expect(window.sessionStorage.getItem(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY)).toBeNull();
     expect(within(dialog).getByText('GitHub (http)')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('名称')).toHaveValue('GitHub 代码巡检');
@@ -1311,13 +1373,13 @@ describe('PluginsPage', () => {
           },
           status: 'active',
         },
-        title: 'GitHub 代码巡检执行',
+        title: 'GitHub 代码巡检动作',
       }),
     );
 
     render(<PluginsPage />);
 
-    const actionDialog = await findDialogByTitle('新增执行');
+    const actionDialog = await findDialogByTitle('新增动作');
     fireEvent.click(within(actionDialog).getByRole('button', { name: /确\s*定/ }));
 
     await waitFor(() =>
@@ -1341,14 +1403,14 @@ describe('PluginsPage', () => {
     expect(await screen.findByText('当前对象正在被使用，不能删除。请先解除下面的引用，或将其停用。')).toBeInTheDocument();
     expect(screen.getByText('连接：')).toBeInTheDocument();
     expect(screen.getByText('生产 MaxCompute 项目')).toBeInTheDocument();
-    expect(screen.getByText('执行：')).toBeInTheDocument();
+    expect(screen.getByText('动作：')).toBeInTheDocument();
     expect(screen.getByText('调用反馈 API')).toBeInTheDocument();
     expect(pluginDeleteIds).toEqual([]);
     fireEvent.click(screen.getByRole('button', { name: /知道了|OK|确\s*定/ }));
 
-    fireEvent.click(await screen.findByRole('tab', { name: '执行' }));
-    fireEvent.click(await screen.findByRole('button', { name: '删除执行 调用反馈 API' }));
-    await screen.findByText('确定删除执行「调用反馈 API」吗？');
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(await screen.findByRole('button', { name: '删除动作 调用反馈 API' }));
+    await screen.findByText('确定删除动作「调用反馈 API」吗？');
     fireEvent.click(screen.getAllByRole('button', { name: /删\s*除/ }).at(-1)!);
     await waitFor(() => expect(actionDeleteIds).toEqual(['action_feedback_api']));
   });
@@ -1371,7 +1433,7 @@ describe('PluginsPage', () => {
     expect(screen.getByText('变量解析前 / 后差异')).toBeInTheDocument();
     expect(screen.getAllByText('解析前').length).toBeGreaterThan(0);
     expect(screen.getAllByText('解析后').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: '复制为执行模板' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制为动作模板' })).toBeInTheDocument();
     expect(screen.getByText('最终请求 URL')).toBeInTheDocument();
     expect(screen.getByText('可复制 cURL')).toBeInTheDocument();
     expect(screen.getByText('动态变量解析')).toBeInTheDocument();
@@ -1403,10 +1465,10 @@ describe('PluginsPage', () => {
     expect(within(resolvedTestDialog).getByText('对比请求回放')).toBeInTheDocument();
     expect(within(resolvedTestDialog).getByText('历史完整请求 JSON')).toBeInTheDocument();
     expect(within(resolvedTestDialog).getByText('历史远端响应信息')).toBeInTheDocument();
-    expect(within(resolvedTestDialog).getByText('历史执行模板草案')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '复制为执行模板' }));
-    const actionDialogFromReplay = await findDialogByTitle('新增执行');
-    expect(within(actionDialogFromReplay).getByLabelText('名称')).toHaveValue('生产 MaxCompute 项目 请求执行');
+    expect(within(resolvedTestDialog).getByText('历史动作模板草案')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '复制为动作模板' }));
+    const actionDialogFromReplay = await findDialogByTitle('新增动作');
+    expect(within(actionDialogFromReplay).getByLabelText('名称')).toHaveValue('生产 MaxCompute 项目 请求动作');
     expect(within(actionDialogFromReplay).getByLabelText('编码')).toHaveValue('test_connection_maxcompute_prod');
     expect(within(actionDialogFromReplay).getByText('阿里云 MaxCompute (mcp_http)')).toBeInTheDocument();
     expect(within(actionDialogFromReplay).getByText('生产 MaxCompute 项目 (prod)')).toBeInTheDocument();
@@ -1665,11 +1727,11 @@ describe('PluginsPage', () => {
 
     render(<PluginsPage />);
 
-    const actionsTab = screen.getByRole('tab', { name: '执行' });
+    const actionsTab = screen.getByRole('tab', { name: '动作' });
     fireEvent.click(actionsTab);
     await waitFor(() => expect(actionsTab).toHaveAttribute('aria-selected', 'true'));
-    fireEvent.click(await screen.findByRole('button', { name: '编辑执行 调用反馈 API' }));
-    const dialog = await findDialogByTitle('编辑执行');
+    fireEvent.click(await screen.findByRole('button', { name: '编辑动作 调用反馈 API' }));
+    const dialog = await findDialogByTitle('编辑动作');
     fireEvent.change(within(dialog).getByLabelText('请求路径'), {
       target: { value: '/zqf_api/feedback/v2' },
     });
@@ -1694,10 +1756,10 @@ describe('PluginsPage', () => {
 
     render(<PluginsPage />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: '执行' }));
-    fireEvent.click(screen.getByRole('button', { name: '新增执行' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
 
-    const dialog = await findDialogByTitle('新增执行');
+    const dialog = await findDialogByTitle('新增动作');
     expect(within(dialog).getByLabelText('结果写入目标')).toBeInTheDocument();
     expect(within(dialog).getByText('仅保存运行结果')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('导入数量 JSONPath')).toBeInTheDocument();
@@ -1743,10 +1805,10 @@ describe('PluginsPage', () => {
 
     render(<PluginsPage />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: '执行' }));
-    fireEvent.click(screen.getByRole('button', { name: '新增执行' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
 
-    const dialog = await findDialogByTitle('新增执行');
+    const dialog = await findDialogByTitle('新增动作');
     expect(within(dialog).getByLabelText('导入数量 JSONPath')).toBeInTheDocument();
     expect(within(dialog).queryByLabelText('洞察列表 JSONPath')).not.toBeInTheDocument();
 
@@ -1764,10 +1826,10 @@ describe('PluginsPage', () => {
 
     render(<PluginsPage />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: '执行' }));
-    fireEvent.click(screen.getByRole('button', { name: '新增执行' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
 
-    const dialog = await findDialogByTitle('新增执行');
+    const dialog = await findDialogByTitle('新增动作');
     fireEvent.mouseDown(within(dialog).getByLabelText('结果写入目标'));
     fireEvent.click(await screen.findByText('代码巡检报告'));
 
@@ -1807,10 +1869,10 @@ describe('PluginsPage', () => {
 
     render(<PluginsPage />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: '执行' }));
-    fireEvent.click(screen.getByRole('button', { name: '新增执行' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
 
-    const dialog = await findDialogByTitle('新增执行');
+    const dialog = await findDialogByTitle('新增动作');
     fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
     fireEvent.click(await screen.findByText('MaxCompute 每周用户反馈'));
 
@@ -1862,10 +1924,10 @@ describe('PluginsPage', () => {
 
     render(<PluginsPage />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: '执行' }));
-    fireEvent.click(screen.getByRole('button', { name: '新增执行' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
 
-    const dialog = await findDialogByTitle('新增执行');
+    const dialog = await findDialogByTitle('新增动作');
     fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
     fireEvent.click(await screen.findByText('GitHub 代码巡检'));
 
@@ -1896,8 +1958,8 @@ describe('PluginsPage', () => {
       ]),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '新增执行' }));
-    const nextDialog = await findDialogByTitle('新增执行');
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
+    const nextDialog = await findDialogByTitle('新增动作');
     fireEvent.mouseDown(within(nextDialog).getByLabelText('配置场景'));
     fireEvent.click(await screen.findByText('GitLab 代码巡检'));
 
@@ -1932,10 +1994,10 @@ describe('PluginsPage', () => {
 
     render(<PluginsPage />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: '执行' }));
-    fireEvent.click(screen.getByRole('button', { name: '新增执行' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
+    fireEvent.click(screen.getByRole('button', { name: '新增动作' }));
 
-    const dialog = await findDialogByTitle('新增执行');
+    const dialog = await findDialogByTitle('新增动作');
     fireEvent.mouseDown(within(dialog).getByLabelText('配置场景'));
     fireEvent.click(await screen.findByText('邮箱通知发送'));
 
@@ -1990,10 +2052,10 @@ describe('PluginsPage', () => {
 
     render(<PluginsPage />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: '执行' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '动作' }));
     fireEvent.click(await screen.findByText('试运行'));
 
-    const dialog = await findDialogByTitle('执行试运行：调用反馈 API');
+    const dialog = await findDialogByTitle('动作试运行：调用反馈 API');
     fireEvent.click(within(dialog).getByRole('button', { name: '试运行' }));
 
     await waitFor(() =>

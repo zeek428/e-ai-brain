@@ -27,7 +27,7 @@ FastAPI 模块化单体
   ├─ knowledge：文档导入、chunk、检索和沉淀
   ├─ long_memory：GBrain 长期记忆、混合检索和知识图谱
   ├─ model_gateway：OpenAI-compatible 模型调用
-  ├─ plugin_management：插件、连接、动作和调用日志
+  ├─ plugin_management：插件、连接、动作配置和连接测试
   ├─ scheduled_jobs：定时作业定义、运行实例和 AI/插件装配快照
   ├─ code_inspection：周期性代码仓库巡检报告、finding、Bug 派生和通知反馈
   ├─ devops_metrics：GitLab、Jenkins 和线上日志指标采集
@@ -51,7 +51,7 @@ FastAPI 模块化单体
 
 | 模块 | 职责 | 技术栈 |
 |------|------|--------|
-| web | 团队看板、AI 助手、任务中心/任务管理、产品管理、需求管理、Bug 管理、研发运营看板、用户洞察、知识中心、审计与运行 | React + TypeScript + Ant Design Pro |
+| web | 团队看板、AI 助手、任务中心、研发任务、产品管理、需求管理、Bug 管理、研发运营看板、用户洞察、知识中心、审计与运行 | React + TypeScript + Ant Design Pro |
 | api | JSON API、认证、产品配置、需求审批、任务管理、Bug 管理、研发运营指标和模块化领域逻辑 | FastAPI + Python |
 | assistant | 基于服务端脱敏系统上下文回答 AI Brain 系统信息、项目进展、产品、任务、Git 仓库和模型网关状态问题 | FastAPI + 模型网关 Chat |
 | product_config | 产品、版本、模块、Git 资源、内部 GitLab 项目绑定和相关系统主数据 | PostgreSQL |
@@ -61,8 +61,8 @@ FastAPI 模块化单体
 | knowledge | Markdown 导入、向量/关键词混合检索、权限过滤 | PostgreSQL + pgvector |
 | long_memory | 长期记忆、答案合成、知识图谱和多跳查询 | GBrain |
 | model_gateway | 聊天/embedding 模型统一入口 | OpenAI-compatible API |
-| plugin_management | 三方系统插件、连接、动作、请求配置、试运行和调用日志 | PostgreSQL + HTTP/MCP HTTP |
-| scheduled_jobs | 采集、AI 分析、插件动作调用、代码仓库巡检、迭代建议和看板刷新调度 | PostgreSQL + Redis/worker |
+| plugin_management | 三方系统插件、连接、动作配置、请求配置和试运行；调用日志在定时作业运行详情体现 | PostgreSQL + HTTP/MCP HTTP |
+| scheduled_jobs | 采集、AI 分析、动作调用、代码仓库巡检、迭代建议和看板刷新调度 | PostgreSQL + Redis/worker |
 | code_inspection | 定期扫描仓库质量、安全和规范问题，按提交人沉淀代码巡检报告、finding 明细、严重问题 Bug 去重和通知反馈 | PostgreSQL + 插件扫描服务 |
 | devops_metrics | GitLab 提交与代码质量、Jenkins 发布、线上运行日志指标采集和归属映射 | PostgreSQL + 定时采集器 |
 | gitlab_review | 内部 GitLab MR 元信息、changes 只读读取、diff 快照、Review 报告归档和不回写 GitLab 约束 | GitLab API + PostgreSQL |

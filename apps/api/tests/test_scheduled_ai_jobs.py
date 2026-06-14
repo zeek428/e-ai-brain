@@ -4,6 +4,7 @@ from zipfile import ZipFile
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.scheduled_job_execution_engine import ScheduledJobExecutionEngine
 
 client = TestClient(app)
 
@@ -50,6 +51,31 @@ def create_feedback(headers: dict[str, str], product_id: str) -> dict:
         },
         headers=headers,
     ).json()["data"]
+
+
+def test_scheduled_job_runner_execution_node_keeps_system_executor_model_metadata():
+    node = ScheduledJobExecutionEngine.runner_execution_node(
+        {
+            "response_summary": {
+                "runner": {
+                    "executor_type": "model_gateway",
+                    "model_gateway_called": True,
+                    "model_gateway_log_id": "model_gateway_log_system_executor",
+                    "result_json": {"summary": "系统默认模型完成仓库分析"},
+                    "runner_id": "ai_executor_runner_system_default",
+                    "status": "succeeded",
+                    "workspace_root": "/Users/zeek/source/e-ai-brain",
+                },
+            },
+        },
+    )
+
+    assert node is not None
+    assert node["executor_type"] == "model_gateway"
+    assert node["model_gateway_called"] is True
+    assert node["model_gateway_log_id"] == "model_gateway_log_system_executor"
+    assert node["runner_id"] == "ai_executor_runner_system_default"
+    assert node["result_json"]["summary"] == "系统默认模型完成仓库分析"
 
 
 def test_scheduled_job_templates_are_admin_managed_and_versioned():
@@ -106,8 +132,15 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     ]
 
     ai_executor = by_code["ai_executor_repository_task"]
+    assert "系统默认 AI 大模型" in ai_executor["description"]
     assert ai_executor["payload_defaults"]["job_type"] == "plugin_action_invoke"
     assert ai_executor["payload_defaults"]["source_system"] == "ai_executor"
+    assert ai_executor["payload_defaults"]["config_json"]["ai_executor"] == {
+        "executor_type": "model_gateway",
+        "runner_id": "ai_executor_runner_system_default",
+        "runner_label": "系统默认执行器",
+    }
+    assert "系统默认执行器" in ai_executor["recommended_scenarios"]
     assert ai_executor["resource_selectors"]["plugin_action"]["code_candidates"] == [
         "run_ai_executor_instruction",
     ]

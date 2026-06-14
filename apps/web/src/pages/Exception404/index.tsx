@@ -7,8 +7,8 @@ export default function Exception404Page() {
       title="页面不存在"
       subTitle="当前路由未在 AI Brain Ant Design Pro 工作台中注册。"
       extra={
-        <Button type="primary" onClick={() => window.location.assign('/tasks/management')}>
-          回到任务中心
+        <Button type="primary" onClick={() => window.location.assign('/delivery/rd-tasks')}>
+          回到研发任务
         </Button>
       }
     />

@@ -38,12 +38,13 @@ describe('AI Brain auth flow and routes', () => {
     expect(routes).not.toContain("name: '欢迎'");
     expect(routes).toContain("path: '/tasks'");
     expect(routes).toContain("name: '任务中心'");
-    expect(routes).toContain("path: '/tasks/management'");
-    expect(routes).toContain("name: '任务管理'");
-    expect(routes).toContain("redirect: '/tasks/management'");
+    expect(routes).toContain("redirect: '/tasks/scheduled-jobs'");
+    expect(routes).not.toContain("name: '任务管理'");
     expect(routes).toContain("redirect: '/login'");
     expect(routes).not.toContain("name: '工作台'");
     expect(routes).toContain("name: '需求交付'");
+    expect(routes).toContain("path: '/delivery/rd-tasks'");
+    expect(routes).toContain("name: '研发任务'");
     expect(routes).toContain("name: '产品资产'");
     expect(routes).toContain("name: '运营治理'");
     expect(routes).toContain("name: '系统管理'");
@@ -80,6 +81,9 @@ describe('AI Brain auth flow and routes', () => {
     expect(routes).toContain("redirect: '/tasks/scheduled-jobs'");
     expect(routes).toContain("path: '/system/plugins'");
     expect(routes).toContain("redirect: '/tasks/plugins'");
+    expect(routes).toContain("path: '/tasks/management'");
+    expect(routes).toContain("redirect: '/delivery/rd-tasks'");
+    expect(routes).toContain("path: '/workspace/tasks'");
     expect(routes).toContain("component: './TaskCenter'");
   });
 

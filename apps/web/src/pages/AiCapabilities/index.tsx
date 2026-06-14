@@ -211,10 +211,10 @@ export default function AiCapabilitiesPage() {
     };
     if (editingAgent) {
       await updateAiAgent(editingAgent.id, payload);
-      message.success('Agent 已更新');
+      message.success('AI角色已更新');
     } else {
       await createAiAgent(payload);
-      message.success('Agent 已创建');
+      message.success('AI角色已创建');
     }
     closeAgentModal();
     await reload();
@@ -228,7 +228,7 @@ export default function AiCapabilitiesPage() {
 
   const disableAgent = async (record: AiAgentRecord) => {
     await updateAiAgent(record.id, { status: 'disabled' });
-    message.success('Agent 已删除');
+    message.success('AI角色已删除');
     await reload();
   };
 
@@ -290,7 +290,7 @@ export default function AiCapabilitiesPage() {
               编辑
             </Button>
             <Popconfirm
-              title="确认删除该 Agent？"
+              title="确认删除该 AI角色？"
               description="删除后状态将变为停用，已有运行记录不会被移除。"
               okText="删除"
               cancelText="取消"
@@ -365,14 +365,14 @@ export default function AiCapabilitiesPage() {
         items={[
           {
             key: 'agents',
-            label: 'Agent 管理',
+            label: 'AI角色',
             children: (
               <ProTable<AiAgentRecord>
                 cardBordered
                 className="management-list-table"
                 columns={agentColumns}
                 dateFormatter="string"
-                headerTitle="Agent 管理"
+                headerTitle="AI角色配置"
                 loading={loading}
                 options={{
                   density: true,
@@ -391,7 +391,7 @@ export default function AiCapabilitiesPage() {
                 tableLayout="fixed"
                 toolBarRender={() => [
                   <Button key="create-agent" icon={<PlusOutlined />} type="primary" onClick={openCreateAgent}>
-                    新增 Agent
+                    新增 AI角色
                   </Button>,
                 ]}
               />
@@ -523,7 +523,7 @@ export default function AiCapabilitiesPage() {
 
       <Modal
         open={agentModalOpen}
-        title={editingAgent ? '编辑 Agent' : '新增 Agent'}
+        title={editingAgent ? '编辑 AI角色' : '新增 AI角色'}
         okText="保存"
         onCancel={closeAgentModal}
         onOk={submitAgent}

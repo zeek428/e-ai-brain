@@ -90,6 +90,8 @@ class ScheduledJobExecutionEngine:
             "finished_at": runner.get("finished_at"),
             "label": "AI 执行器执行内容",
             "logs": runner.get("logs") or [],
+            "model_gateway_called": runner.get("model_gateway_called"),
+            "model_gateway_log_id": runner.get("model_gateway_log_id"),
             "result_json": runner.get("result_json") or {},
             "runner_id": runner.get("runner_id"),
             "runner_task_id": runner.get("runner_task_id"),

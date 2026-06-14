@@ -153,6 +153,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "051_ai_executor_runner_controls.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "052_move_rd_tasks_menu.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

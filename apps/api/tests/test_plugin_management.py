@@ -148,15 +148,14 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert "AI 执行器下达指令" in by_code["ai_executor"]["action_templates"]
     assert "执行完成后同步回写" in by_code["ai_executor"]["recommended_scenarios"]
     assert by_code["ai_executor"]["connection_defaults"]["protocol"] == "runner_polling"
-    assert by_code["ai_executor"]["connection_defaults"]["endpoint_url"] == "runner://ai-executor"
-    assert (
-        by_code["ai_executor"]["connection_defaults"]["auth_config"]["token_ref"]
-        == "vault/ai-executor/token"
-    )
+    assert by_code["ai_executor"]["connection_defaults"]["endpoint_url"] == "model-gateway://default"
+    assert by_code["ai_executor"]["connection_defaults"]["auth_type"] == "none"
+    assert by_code["ai_executor"]["connection_defaults"]["auth_config"] == {}
     ai_executor_query = by_code["ai_executor"]["connection_defaults"]["request_config"]["query"]
-    assert ai_executor_query["executor_type"] == "codex"
-    assert ai_executor_query["runner_id"] == ""
+    assert ai_executor_query["executor_type"] == "model_gateway"
+    assert ai_executor_query["runner_id"] == "ai_executor_runner_system_default"
     assert ai_executor_query["supported_executor_types"] == [
+        "model_gateway",
         "codex",
         "claude",
         "hermes",
@@ -165,9 +164,10 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert ai_executor_query["result_callback_url"] == ""
     assert ai_executor_query["workspace_root"] == "/workspace"
     ai_executor_schema = by_code["ai_executor"]["connection_schema"]
-    assert ai_executor_schema["sections"][0]["title"] == "Runner 调用配置"
+    assert ai_executor_schema["sections"][0]["title"] == "执行器调用配置"
     assert ai_executor_schema["sections"][0]["fields"][0]["key"] == "runner_id"
     assert ai_executor_schema["sections"][0]["fields"][1]["options"] == [
+        "model_gateway",
         "codex",
         "claude",
         "hermes",
@@ -281,7 +281,8 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
     assert ai_command_template["plugin_code"] == "ai_executor"
     assert ai_command_template["action_type"] == "mcp_tool"
     assert "OpenClaw" in ai_command_template["description"]
-    assert ai_command_template["form_defaults"]["runner_id"] == ""
+    assert ai_command_template["form_defaults"]["executor_type"] == "model_gateway"
+    assert ai_command_template["form_defaults"]["runner_id"] == "ai_executor_runner_system_default"
     assert ai_command_template["form_defaults"]["instruction_timeout_seconds"] == 1800
     assert ai_command_template["request_config"]["tool_name"] == "ai_executor.run_instruction"
     assert ai_command_template["request_config"]["executor_type"] == "{{executor_type}}"
@@ -321,6 +322,133 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
     assert maxcompute_template["action_type"] == "mcp_tool"
     assert maxcompute_template["form_defaults"]["table_name"] == "ods_user_feedback"
     assert maxcompute_template["result_mapping"]["write_target"] == "user_feedback_insights"
+
+
+def test_ai_executor_runners_include_system_default_model_gateway_executor():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    response = client.get(
+        "/api/system/ai-executor-runners",
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    runners = {item["id"]: item for item in payload["items"]}
+    system_runner = runners["ai_executor_runner_system_default"]
+    assert system_runner["name"] == "系统默认执行器"
+    assert system_runner["protocol"] == "model_gateway"
+    assert system_runner["endpoint_url"] == "model-gateway://default"
+    assert system_runner["executor_types"] == ["model_gateway"]
+    assert system_runner["workspace_roots"] == ["*"]
+    assert system_runner["health_status"] == "managed"
+    assert system_runner["metadata"]["is_system"] is True
+    assert system_runner["token_configured"] is False
+    assert "无需启动本地 Runner" in system_runner["setup_command"]
+    assert payload["total"] == len(payload["items"])
+
+    delete_response = client.delete(
+        "/api/system/ai-executor-runners/ai_executor_runner_system_default",
+        headers=admin_headers,
+    )
+
+    assert delete_response.status_code == 409
+    assert delete_response.json()["detail"]["code"] == "AI_EXECUTOR_SYSTEM_RUNNER_LOCKED"
+
+
+def test_ai_executor_action_invokes_system_default_model_gateway_executor(monkeypatch):
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    client.get("/api/system/plugin-marketplace", headers=admin_headers)
+    captured_tasks = []
+
+    def fake_call_model_gateway_for_task(
+        current_store,
+        *,
+        code_review_payload=None,
+        opener=None,
+        task,
+    ):
+        captured_tasks.append(task)
+        log = {
+            "config_id": "model_gateway_default",
+            "id": current_store.new_id("model_gateway_log"),
+            "latency_ms": 8,
+            "model": "system-default-chat",
+            "provider": "openai_compatible",
+            "status": "succeeded",
+            "task_id": task["id"],
+        }
+        current_store.model_gateway_logs.append(log)
+        return {"summary": "默认模型已完成分析", "insights": ["发现 1 个可优化项"]}, log
+
+    monkeypatch.setattr(
+        plugin_services,
+        "call_model_gateway_for_task",
+        fake_call_model_gateway_for_task,
+        raising=False,
+    )
+
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "model-gateway://default",
+            "environment": "prod",
+            "name": "系统默认模型执行器",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "query": {
+                    "executor_type": "model_gateway",
+                    "instruction_timeout_seconds": 600,
+                    "runner_id": "ai_executor_runner_system_default",
+                    "workspace_root": "/workspace",
+                },
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "mcp_tool",
+            "code": "run_system_model_instruction",
+            "connection_id": connection["id"],
+            "name": "系统默认模型执行",
+            "plugin_id": "plugin_standard_ai_executor",
+            "request_config": {
+                "instruction": "分析输入数据并输出结构化结论。",
+                "tool_name": "ai_executor.run_instruction",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    invoked = client.post(
+        f"/api/system/plugin-actions/{action['id']}/invoke",
+        json={"input_payload": {"rows": [{"feedback": "导出体验慢"}]}},
+        headers=admin_headers,
+    )
+
+    assert invoked.status_code == 200
+    log = invoked.json()["data"]
+    assert log["status"] == "succeeded"
+    response_json = log["response_summary"]["json"]
+    assert response_json["executor_type"] == "model_gateway"
+    assert response_json["runner_id"] == "ai_executor_runner_system_default"
+    assert response_json["status"] == "succeeded"
+    assert response_json["model_gateway_called"] is True
+    assert response_json["result_json"]["summary"] == "默认模型已完成分析"
+    runner_node = log["response_summary"]["runner"]
+    assert runner_node["status"] == "succeeded"
+    assert runner_node["result_json"]["insights"] == ["发现 1 个可优化项"]
+    assert captured_tasks[0]["task_type"] == "ai_executor_instruction"
+    assert captured_tasks[0]["input_json"]["instruction"] == "分析输入数据并输出结构化结论。"
+    assert captured_tasks[0]["input_json"]["input_payload"]["rows"][0]["feedback"] == "导出体验慢"
 
 
 def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
@@ -444,8 +572,8 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
         "/api/system/ai-executor-runners",
         headers=admin_headers,
     ).json()["data"]
-    assert listed_runners["total"] == 1
-    listed_runner = listed_runners["items"][0]
+    assert listed_runners["total"] == 2
+    listed_runner = next(item for item in listed_runners["items"] if item["id"] == runner["id"])
     assert listed_runner["token_configured"] is True
     assert listed_runner["health_status"] == "online"
     assert isinstance(listed_runner["heartbeat_age_seconds"], int)

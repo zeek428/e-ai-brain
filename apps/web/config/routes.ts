@@ -28,13 +28,7 @@ const routes = [
     routes: [
       {
         path: '/tasks',
-        redirect: '/tasks/management',
-      },
-      {
-        path: '/tasks/management',
-        name: '任务管理',
-        icon: 'UnorderedListOutlined',
-        component: './TaskCenter',
+        redirect: '/tasks/scheduled-jobs',
       },
       {
         path: '/tasks/ai-capabilities',
@@ -75,6 +69,12 @@ const routes = [
         path: '/delivery/requirements/:requirementId/full-chain',
         component: './RequirementFullChain',
         hideInMenu: true,
+      },
+      {
+        path: '/delivery/rd-tasks',
+        name: '研发任务',
+        icon: 'UnorderedListOutlined',
+        component: './TaskCenter',
       },
       {
         path: '/delivery/versions',
@@ -183,8 +183,13 @@ const routes = [
     hideInMenu: true,
   },
   {
+    path: '/tasks/management',
+    redirect: '/delivery/rd-tasks',
+    hideInMenu: true,
+  },
+  {
     path: '/workspace/tasks',
-    redirect: '/tasks/management',
+    redirect: '/delivery/rd-tasks',
     hideInMenu: true,
   },
   {

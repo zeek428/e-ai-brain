@@ -172,10 +172,10 @@ def _assistant_reference_for_entity(
         or str(item_id)
     )
     route_map = {
-        "ai_task": f"/tasks/management?task_id={item_id}",
+        "ai_task": f"/delivery/rd-tasks?task_id={item_id}",
         "bug": f"/delivery/bugs?bug_id={item_id}",
-        "code_review_report": f"/tasks/management?code_review_report_id={item_id}",
-        "human_review": f"/tasks/management?review_id={item_id}",
+        "code_review_report": f"/delivery/rd-tasks?code_review_report_id={item_id}",
+        "human_review": f"/delivery/rd-tasks?review_id={item_id}",
         "iteration_version": f"/delivery/versions?version_id={item_id}",
         "knowledge_deposit": f"/knowledge/documents?deposit_id={item_id}",
         "product": f"/assets/products?product_id={item_id}",

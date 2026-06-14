@@ -190,7 +190,7 @@ def test_assistant_system_context_is_product_scoped_and_includes_delivery_signal
             "id": "review_001",
             "title": "review_001",
             "type": "human_review",
-            "url": "/tasks/management?review_id=review_001",
+            "url": "/delivery/rd-tasks?review_id=review_001",
         },
     ]
 
@@ -211,7 +211,7 @@ def test_assistant_system_context_is_product_scoped_and_includes_delivery_signal
         "id": "report_001",
         "title": "助手 Review 低风险",
         "type": "code_review_report",
-        "url": "/tasks/management?code_review_report_id=report_001",
+        "url": "/delivery/rd-tasks?code_review_report_id=report_001",
     }
 
 

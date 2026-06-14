@@ -204,7 +204,7 @@ describe('RequirementFullChainPage', () => {
     expect(within(stageDetails).getByText('阶段明细')).toBeInTheDocument();
     expect(within(stageDetails).getByRole('link', { name: '查看代码评审 report_history' })).toHaveAttribute(
       'href',
-      '/tasks/management?code_review_report_id=report_history',
+      '/delivery/rd-tasks?code_review_report_id=report_history',
     );
     const versionComparison = await screen.findByLabelText('版本内需求对比');
     await within(versionComparison).findByText('当前版本共 2 条需求，当前需求 requirement_084');

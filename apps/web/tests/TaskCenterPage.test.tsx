@@ -320,7 +320,8 @@ describe('TaskCenterPage', () => {
       screen.queryByText('研发大脑 v1 MVP：从需求审批到方案确认、GitLab 输入快照、内部 Review 和知识沉淀。'),
     ).not.toBeInTheDocument();
     expect(screen.getByText('任务列表')).toBeInTheDocument();
-    expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('任务中心');
+    expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('需求交付');
+    expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('研发任务');
     expect(screen.getByRole('form', { name: '查询表格' })).toBeInTheDocument();
     expect(screen.queryByText('MVP-A 基础 + GitLab 输入闭环')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '运行 MVP 演示流程' })).not.toBeInTheDocument();
@@ -342,7 +343,7 @@ describe('TaskCenterPage', () => {
       ([path, init]) => path === '/api/ai-tasks/batch-cancel' && init?.method === 'POST',
     );
     expect(JSON.parse(String(batchCancelCall?.[1]?.body))).toEqual({
-      reason: '任务管理批量取消',
+      reason: '研发任务批量取消',
       task_ids: ['task_api'],
     });
     expect(await screen.findByRole('dialog', { name: '批量取消结果' })).toBeInTheDocument();
@@ -363,7 +364,7 @@ describe('TaskCenterPage', () => {
       ([path, init]) => path === '/api/ai-tasks/batch-retry' && init?.method === 'POST',
     );
     expect(JSON.parse(String(batchRetryCall?.[1]?.body))).toEqual({
-      reason: '任务管理批量重试',
+      reason: '研发任务批量重试',
       task_ids: ['task_retry'],
     });
     expect(await screen.findByRole('dialog', { name: '批量重试结果' })).toBeInTheDocument();

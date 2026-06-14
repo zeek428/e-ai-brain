@@ -1,4 +1,4 @@
-# 需求交付与任务管理测试用例
+# 需求交付与研发任务测试用例
 
 > 来源：../test-case.md。该文件按业务域承接详细测试用例，主入口保留索引与通用规范。
 
@@ -299,12 +299,12 @@
 
 ---
 
-### TC-AIBRAIN-TASK-FUNC-020C: 任务管理批量取消
+### TC-AIBRAIN-TASK-FUNC-020C: 研发任务批量取消
 
 | 项目 | 内容 |
 |------|------|
 | 用例编号 | TC-AIBRAIN-TASK-FUNC-020C |
-| 用例名称 | 任务管理批量取消 |
+| 用例名称 | 研发任务批量取消 |
 | 优先级 | P1 |
 | 模块 | AI_TASK |
 | 创建人 | Codex |
@@ -317,24 +317,24 @@
 **测试步骤**:
 | 步骤 | 操作 | 预期结果 |
 |------|------|----------|
-| 1 | 在任务管理勾选可取消任务，点击“批量取消” | 前端只发送一次 `POST /api/ai-tasks/batch-cancel`，请求体包含 `task_ids` 和批量取消原因。 |
+| 1 | 在研发任务勾选可取消任务，点击“批量取消” | 前端只发送一次 `POST /api/ai-tasks/batch-cancel`，请求体包含 `task_ids` 和批量取消原因。 |
 | 2 | 通过 API 混入终态任务、重复任务 ID 和不存在任务 ID | 合法任务进入 `updated` 并变为 `cancelled`；终态、重复和不存在任务进入 `skipped`，code 分别稳定返回 `TASK_STATE_INVALID`、`DUPLICATE_TASK` 和 `NOT_FOUND`；前端结果弹窗展示批次号、取消数、跳过数和 skipped 原因。 |
 | 3 | 查询任务详情、待确认 Review 和审计列表 | 已取消任务状态为 `cancelled`，待处理 Review 被取消；审计包含批次级 `ai_task.batch_cancelled` 和逐任务 `ai_task.cancelled`，payload 带 `batch_id` 与 reason。 |
 
 **预期结果**:
-1. 任务管理可一次取消多条未完成任务，减少逐条进入操作弹窗的成本。
+1. 研发任务可一次取消多条未完成任务，减少逐条进入操作弹窗的成本。
 2. 部分失败不影响合法任务取消，并保留批次级与任务级审计。
 
-**状态**: 已自动化覆盖。见 `apps/api/tests/test_api_contract_completion.py::test_ai_task_batch_cancel_updates_valid_tasks_and_skips_terminal_tasks` 与 `apps/web/tests/App.test.tsx` 中任务管理批量取消页面用例；handler 防回退见 `apps/api/tests/test_router_boundaries.py::test_ai_task_batch_cancel_handler_does_not_call_legacy_main`。
+**状态**: 已自动化覆盖。见 `apps/api/tests/test_api_contract_completion.py::test_ai_task_batch_cancel_updates_valid_tasks_and_skips_terminal_tasks` 与 `apps/web/tests/App.test.tsx` 中研发任务批量取消页面用例；handler 防回退见 `apps/api/tests/test_router_boundaries.py::test_ai_task_batch_cancel_handler_does_not_call_legacy_main`。
 
 ---
 
-### TC-AIBRAIN-TASK-FUNC-020D: 任务管理批量重试
+### TC-AIBRAIN-TASK-FUNC-020D: 研发任务批量重试
 
 | 项目 | 内容 |
 |------|------|
 | 用例编号 | TC-AIBRAIN-TASK-FUNC-020D |
-| 用例名称 | 任务管理批量重试 |
+| 用例名称 | 研发任务批量重试 |
 | 优先级 | P1 |
 | 模块 | AI_TASK |
 | 创建人 | Codex |
@@ -347,7 +347,7 @@
 **测试步骤**:
 | 步骤 | 操作 | 预期结果 |
 |------|------|----------|
-| 1 | 在任务管理勾选可重试失败任务，点击“批量重试” | 前端只发送一次 `POST /api/ai-tasks/batch-retry`，请求体包含 `task_ids` 和批量重试原因。 |
+| 1 | 在研发任务勾选可重试失败任务，点击“批量重试” | 前端只发送一次 `POST /api/ai-tasks/batch-retry`，请求体包含 `task_ids` 和批量重试原因。 |
 | 2 | 通过 API 混入已完成任务、重复任务 ID 和不存在任务 ID | 可重试失败任务复用 `/start` 状态机进入 `waiting_review` 并返回 `updated`；仍失败任务保留在 `retried` 并携带错误码和错误信息；终态、重复和不存在任务进入 `skipped`，code 分别稳定返回 `TASK_STATE_INVALID`、`DUPLICATE_TASK` 和 `NOT_FOUND`；前端结果弹窗展示批次号、重试数、成功数、仍失败数、错误信息和 skipped 原因。 |
 | 3 | 查询任务详情、待确认 Review 和审计列表 | 已重试成功任务保留原 task id，新增待确认 Review；审计包含批次级 `ai_task.batch_retried` 和逐任务 `ai_task.retry_started`。 |
 
@@ -355,7 +355,7 @@
 1. 模型网关或代码评审执行器恢复后，可批量恢复失败任务，避免为同一阶段复制新任务。
 2. 批量重试部分失败不阻塞其他合法任务，响应能区分 `retried`、`updated` 和 `skipped`。
 
-**状态**: 已自动化覆盖。见 `apps/api/tests/test_api_contract_completion.py::test_ai_task_batch_retry_restarts_retryable_failed_tasks_and_skips_invalid_items` 与 `apps/web/tests/App.test.tsx` 中任务管理批量重试页面用例。
+**状态**: 已自动化覆盖。见 `apps/api/tests/test_api_contract_completion.py::test_ai_task_batch_retry_restarts_retryable_failed_tasks_and_skips_invalid_items` 与 `apps/web/tests/App.test.tsx` 中研发任务批量重试页面用例。
 
 ---
 

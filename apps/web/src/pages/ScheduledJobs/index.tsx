@@ -228,7 +228,7 @@ const defaultScheduledJobWizardSteps: ScheduledJobTemplateWizardStep[] = [
     title: '数据连接',
   },
   {
-    description: '选择模型、Agent 和 Skill',
+    description: '选择模型、AI角色 和 Skill',
     key: 'ai_processing',
     required: false,
     title: 'AI 处理',
@@ -832,7 +832,7 @@ function RunExecutionNodeCard({
     { label: '模型调用', value: typeof node.model_gateway_called === 'boolean' ? (node.model_gateway_called ? '已调用' : '未调用') : undefined },
     { label: '处理模式', value: nodeFieldText(node.processing_mode) },
     { label: '模型配置', value: nodeFieldText(node.model_gateway_config_id) },
-    { label: '模型日志', value: nodeFieldText(node.model_log_id) },
+    { label: '模型日志', value: nodeFieldText(node.model_log_id) ?? nodeFieldText(node.model_gateway_log_id) },
     { label: '知识引用', value: nodeNestedArrayCountText(node, 'input.knowledge_references') },
     { label: '候选结果', value: nodeNestedFieldText(node, 'output.candidate_count') ?? nodeNestedFieldText(node, 'output.finding_count') },
     { label: '风险等级', value: nodeNestedFieldText(node, 'output.risk_level') },
@@ -849,11 +849,12 @@ function RunExecutionNodeCard({
     { label: '投递状态', value: nodeNestedFieldText(node, 'feedback.delivery_status') },
     { label: '收件人', value: nodeNestedFieldText(node, 'feedback.sample_records') },
     { label: '执行器', value: nodeFieldText(node.executor_type) },
-    { label: 'Runner', value: nodeFieldText(node.runner_id) },
+    { label: '执行器实例', value: nodeFieldText(node.runner_id) },
     { label: '任务 ID', value: nodeFieldText(node.runner_task_id) },
     { label: '工作区', value: nodeFieldText(node.workspace_root) },
     { label: '完成时间', value: nodeFieldText(node.finished_at) },
     { label: '日志条数', value: nodeNestedArrayCountText(node, 'logs') },
+    { label: '执行结果', value: nodeNestedFieldText(node, 'result_json.summary') ?? nodeNestedFieldText(node, 'result_json.result') },
     { label: '源数据量', value: nodeFieldText(node.source_row_count) ?? nodeFieldText(node.row_count) },
     { label: '连接', value: nodeFieldText(node.connection_id) },
     { label: '环境', value: nodeFieldText(node.connection_environment) },
@@ -1645,6 +1646,7 @@ export default function ScheduledJobsPage() {
       const aiRequired = requiresAiAssembly(jobType, executionMode);
       form.setFieldsValue({
         agent_id: aiRequired ? agentId : undefined,
+        config_json: templatePayloadRecordValue(template, 'config_json') ?? {},
         connection_environment: connection?.environment ?? undefined,
         cron_expression: templatePayloadString(template, 'cron_expression'),
         enabled: templatePayloadBoolean(template, 'enabled', true),
@@ -1978,7 +1980,8 @@ export default function ScheduledJobsPage() {
   const submitJob = async () => {
     let values: ScheduledJobFormValues;
     try {
-      values = await form.validateFields();
+      await form.validateFields();
+      values = form.getFieldsValue(true) as ScheduledJobFormValues;
     } catch {
       return;
     }
@@ -2163,7 +2166,7 @@ export default function ScheduledJobsPage() {
                   },
                   {
                     dataIndex: 'agent_id',
-                    title: 'Agent',
+                    title: 'AI角色',
                     width: 180,
                     render: (value) => {
                       const agent = value ? agentById.get(String(value)) : undefined;
@@ -2499,14 +2502,14 @@ export default function ScheduledJobsPage() {
           </Form.Item>
           <Form.Item
             dependencies={['execution_mode', 'job_type']}
-            label="Agent"
+            label="AI角色"
             name="agent_id"
-            rules={[requiredForAiAssembly('请选择 Agent')]}
+            rules={[requiredForAiAssembly('请选择 AI角色')]}
           >
             <Select
               allowClear
               optionFilterProp="label"
-              placeholder="请选择 Agent"
+              placeholder="请选择 AI角色"
               showSearch
               options={agents.map((agent) => ({
                 label: `${agent.name} (${agent.code})`,
@@ -2680,7 +2683,7 @@ export default function ScheduledJobsPage() {
                     : '-',
                 },
                 { key: 'model_gateway_config_id', label: 'AI 模型', children: selectedRunModelLabel },
-                { key: 'agent_id', label: 'Agent', children: selectedRunAgentLabel },
+                { key: 'agent_id', label: 'AI角色', children: selectedRunAgentLabel },
                 { key: 'skill_ids', label: 'Skills', children: selectedRunSkillLabels },
                 {
                   key: 'trigger_type',

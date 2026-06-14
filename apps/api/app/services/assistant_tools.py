@@ -258,7 +258,7 @@ def _pending_reviews_tool(context: dict[str, Any], *, limit: int) -> dict[str, A
             "status": review.get("status"),
             "task_title": task_by_id.get(str(review.get("ai_task_id")), {}).get("title"),
             "title": review.get("title") or review["id"],
-            "url": f"/tasks/management?review_id={review['id']}",
+            "url": f"/delivery/rd-tasks?review_id={review['id']}",
         }
         for review in _latest(pending_reviews)[:limit]
     ]
@@ -284,7 +284,7 @@ def _code_review_tool(context: dict[str, Any], *, limit: int) -> dict[str, Any]:
             "task_id": report.get("task_id"),
             "task_title": task_by_id.get(str(report.get("task_id")), {}).get("title"),
             "title": report.get("summary") or report["id"],
-            "url": f"/tasks/management?code_review_report_id={report['id']}",
+            "url": f"/delivery/rd-tasks?code_review_report_id={report['id']}",
         }
         for report in _latest(reports)[:limit]
     ]
