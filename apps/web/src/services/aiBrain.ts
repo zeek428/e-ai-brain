@@ -3777,7 +3777,9 @@ export type ScheduledJobRecord = {
   name: string;
   next_run_at?: string | null;
   plugin_action_id?: string | null;
+  plugin_action_ids?: string[];
   plugin_connection_id?: string | null;
+  plugin_connection_ids?: string[];
   plugin_input_mapping?: Record<string, unknown>;
   plugin_output_mapping?: Record<string, unknown>;
   product_id?: string | null;

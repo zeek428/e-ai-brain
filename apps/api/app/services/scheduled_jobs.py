@@ -37,6 +37,8 @@ from app.services.model_gateway_logging import (
 from app.services.model_gateway_runtime import model_gateway_chat_completions_url
 from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.plugins import (
+    ensure_active_connection,
+    ensure_active_plugin,
     ensure_active_plugin_action,
     invoke_plugin_action_response,
     json_path_value,
@@ -629,6 +631,84 @@ def payload_field(payload: Any, name: str, default: Any = None) -> Any:
     return getattr(payload, name, default)
 
 
+def normalized_string_ids(value: Any) -> list[str]:
+    if value is None:
+        return []
+    values = value if isinstance(value, list) else [value]
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in values:
+        if item is None:
+            continue
+        item_id = str(item).strip()
+        if not item_id or item_id in seen:
+            continue
+        seen.add(item_id)
+        result.append(item_id)
+    return result
+
+
+def scheduled_job_orchestration_config(config_json: Any) -> dict[str, Any]:
+    if not isinstance(config_json, dict):
+        return {}
+    orchestration = config_json.get("orchestration")
+    return dict(orchestration) if isinstance(orchestration, dict) else {}
+
+
+def scheduled_job_multi_ids_from_config(config_json: Any, key: str) -> list[str]:
+    return normalized_string_ids(scheduled_job_orchestration_config(config_json).get(key))
+
+
+def scheduled_job_multi_ids(payload: Any, plural_key: str, singular_key: str) -> list[str]:
+    return normalized_string_ids(
+        [
+            *normalized_string_ids(payload_field(payload, plural_key, [])),
+            *scheduled_job_multi_ids_from_config(
+                payload_field(payload, "config_json", {}),
+                plural_key,
+            ),
+            payload_field(payload, singular_key),
+        ]
+    )
+
+
+def scheduled_job_config_with_multi_refs(
+    config_json: Any,
+    *,
+    plugin_action_ids: list[str],
+    plugin_connection_ids: list[str],
+) -> dict[str, Any]:
+    config = dict(config_json) if isinstance(config_json, dict) else {}
+    config["orchestration"] = {
+        **scheduled_job_orchestration_config(config),
+        "plugin_action_ids": list(plugin_action_ids),
+        "plugin_connection_ids": list(plugin_connection_ids),
+    }
+    return config
+
+
+def scheduled_job_with_multi_refs(job: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(job)
+    plugin_action_ids = scheduled_job_multi_ids(enriched, "plugin_action_ids", "plugin_action_id")
+    plugin_connection_ids = scheduled_job_multi_ids(
+        enriched,
+        "plugin_connection_ids",
+        "plugin_connection_id",
+    )
+    enriched["plugin_action_ids"] = plugin_action_ids
+    enriched["plugin_connection_ids"] = plugin_connection_ids
+    if plugin_action_ids:
+        enriched["plugin_action_id"] = plugin_action_ids[0]
+    if plugin_connection_ids:
+        enriched["plugin_connection_id"] = plugin_connection_ids[0]
+    enriched["config_json"] = scheduled_job_config_with_multi_refs(
+        enriched.get("config_json") or {},
+        plugin_action_ids=plugin_action_ids,
+        plugin_connection_ids=plugin_connection_ids,
+    )
+    return enriched
+
+
 def normalized_knowledge_document_ids(value: Any) -> list[str]:
     if value is None:
         return []
@@ -717,7 +797,7 @@ def effective_scheduled_job_type(payload: Any) -> str:
     skill_ids = list(payload_field(payload, "skill_ids", []) or [])
     if (
         job_type == "user_feedback_collect"
-        and payload_field(payload, "plugin_action_id") is not None
+        and bool(scheduled_job_multi_ids(payload, "plugin_action_ids", "plugin_action_id"))
         and (
             payload_field(payload, "agent_id") is not None
             or payload_field(payload, "model_gateway_config_id") is not None
@@ -781,15 +861,24 @@ def validate_job_refs(
     return agent_id, skill_ids, model_gateway_config_id, job_type, execution_mode
 
 
-def validate_plugin_refs(current_store: Any, payload: Any) -> tuple[str | None, str | None]:
-    action_id = getattr(payload, "plugin_action_id", None)
-    connection_id = getattr(payload, "plugin_connection_id", None)
+def validate_plugin_refs(
+    current_store: Any,
+    payload: Any,
+) -> tuple[str | None, str | None, list[str], list[str]]:
+    action_ids = scheduled_job_multi_ids(payload, "plugin_action_ids", "plugin_action_id")
+    connection_ids = scheduled_job_multi_ids(
+        payload,
+        "plugin_connection_ids",
+        "plugin_connection_id",
+    )
+    action_id = action_ids[0] if action_ids else None
+    connection_id = connection_ids[0] if connection_ids else None
     if action_id is None:
-        if connection_id is not None:
+        if connection_ids:
             raise api_error(
                 400,
                 "PLUGIN_ACTION_REQUIRED",
-                "plugin_connection_id requires plugin_action_id",
+                "plugin_connection_ids requires plugin_action_ids",
             )
         if effective_scheduled_job_type(payload) == "user_feedback_insight_extract":
             raise api_error(
@@ -803,13 +892,25 @@ def validate_plugin_refs(current_store: Any, payload: Any) -> tuple[str | None, 
                 "PLUGIN_ACTION_REQUIRED",
                 "code_repository_inspection requires plugin_action_id",
             )
-        return None, None
+        return None, None, [], []
     _, connection, _ = ensure_active_plugin_action(
         current_store,
         action_id,
         connection_id=connection_id,
     )
-    return action_id, connection["id"]
+    resolved_connection_id = str(connection["id"])
+    connection_ids = normalized_string_ids([resolved_connection_id, *connection_ids])
+
+    for extra_action_id in action_ids[1:]:
+        action = current_store.plugin_actions.get(extra_action_id)
+        if action is None:
+            raise api_error(404, "NOT_FOUND", "Plugin action not found")
+        if action.get("status") != "active":
+            raise api_error(400, "PLUGIN_ACTION_INACTIVE", "Plugin action is inactive")
+        ensure_active_plugin(current_store, str(action["plugin_id"]))
+    for extra_connection_id in connection_ids[1:]:
+        ensure_active_connection(current_store, extra_connection_id)
+    return action_id, resolved_connection_id, action_ids, connection_ids
 
 
 def list_scheduled_jobs_response(
@@ -835,13 +936,23 @@ def list_scheduled_jobs_response(
             continue
         if status is not None and job.get("status") != status:
             continue
-        items.append(dict(job))
+        items.append(scheduled_job_with_multi_refs(job))
     items.sort(key=lambda item: (item.get("next_run_at") or "", item["id"]), reverse=True)
     return {"items": items, "total": len(items)}
 
 
 def scheduled_job_audit_payload(job: dict[str, Any]) -> dict[str, Any]:
     payload = {"job_type": job["job_type"], "enabled": job["enabled"]}
+    plugin_action_ids = scheduled_job_multi_ids(job, "plugin_action_ids", "plugin_action_id")
+    plugin_connection_ids = scheduled_job_multi_ids(
+        job,
+        "plugin_connection_ids",
+        "plugin_connection_id",
+    )
+    if plugin_action_ids:
+        payload["plugin_action_ids"] = plugin_action_ids
+    if plugin_connection_ids:
+        payload["plugin_connection_ids"] = plugin_connection_ids
     assistant_draft = (job.get("config_json") or {}).get("assistant_draft")
     if isinstance(assistant_draft, dict):
         payload["assistant_draft"] = {
@@ -904,9 +1015,21 @@ def scheduled_job_run_audit_payload(
         "model_gateway_config_id": job.get("model_gateway_config_id"),
         "plugin_action_code": action.get("code"),
         "plugin_action_id": job.get("plugin_action_id"),
+        "plugin_action_ids": scheduled_job_multi_ids(
+            job,
+            "plugin_action_ids",
+            "plugin_action_id",
+        )
+        or None,
         "plugin_code": plugin.get("code"),
         "plugin_connection_environment": connection.get("environment"),
         "plugin_connection_id": job.get("plugin_connection_id"),
+        "plugin_connection_ids": scheduled_job_multi_ids(
+            job,
+            "plugin_connection_ids",
+            "plugin_connection_id",
+        )
+        or None,
         "plugin_invocation_log_id": run.get("plugin_invocation_log_id"),
         "product_id": job.get("product_id"),
         "records_imported": run.get("records_imported", 0),
@@ -989,7 +1112,9 @@ def scheduled_job_template_from_run_response(
         "max_retry_count",
         "model_gateway_config_id",
         "plugin_action_id",
+        "plugin_action_ids",
         "plugin_connection_id",
+        "plugin_connection_ids",
         "plugin_input_mapping",
         "plugin_output_mapping",
         "product_id",
@@ -1043,7 +1168,12 @@ def create_scheduled_job_response(
         job_type,
         execution_mode,
     ) = validate_job_refs(current_store, payload)
-    plugin_action_id, plugin_connection_id = validate_plugin_refs(current_store, payload)
+    (
+        plugin_action_id,
+        plugin_connection_id,
+        plugin_action_ids,
+        plugin_connection_ids,
+    ) = validate_plugin_refs(current_store, payload)
     result_actions = validate_code_inspection_result_actions(
         payload.result_actions if job_type == "code_repository_inspection" else [],
     )
@@ -1056,7 +1186,11 @@ def create_scheduled_job_response(
     job_id = current_store.new_id("scheduled_job")
     job = {
         "agent_id": agent_id,
-        "config_json": payload.config_json,
+        "config_json": scheduled_job_config_with_multi_refs(
+            payload.config_json,
+            plugin_action_ids=plugin_action_ids,
+            plugin_connection_ids=plugin_connection_ids,
+        ),
         "created_at": now,
         "created_by": user["id"],
         "cron_expression": payload.cron_expression,
@@ -1076,7 +1210,9 @@ def create_scheduled_job_response(
         "name": ensure_non_blank(payload.name, "name"),
         "next_run_at": next_run_at(payload),
         "plugin_action_id": plugin_action_id,
+        "plugin_action_ids": plugin_action_ids,
         "plugin_connection_id": plugin_connection_id,
+        "plugin_connection_ids": plugin_connection_ids,
         "plugin_input_mapping": payload.plugin_input_mapping,
         "plugin_output_mapping": payload.plugin_output_mapping,
         "product_id": payload.product_id,
@@ -1104,7 +1240,7 @@ def create_scheduled_job_response(
         job,
         audit_event=audit_event,
     )
-    return dict(job)
+    return scheduled_job_with_multi_refs(job)
 
 
 def patch_scheduled_job_response(
@@ -1128,7 +1264,12 @@ def patch_scheduled_job_response(
         job_type,
         execution_mode,
     ) = validate_job_refs(current_store, draft)
-    plugin_action_id, plugin_connection_id = validate_plugin_refs(current_store, draft)
+    (
+        plugin_action_id,
+        plugin_connection_id,
+        plugin_action_ids,
+        plugin_connection_ids,
+    ) = validate_plugin_refs(current_store, draft)
     draft_result_actions = (
         payload_field(draft, "result_actions", [])
         if job_type == "code_repository_inspection"
@@ -1151,7 +1292,14 @@ def patch_scheduled_job_response(
     updates["knowledge_document_ids"] = knowledge_document_ids
     updates["execution_mode"] = execution_mode
     updates["plugin_action_id"] = plugin_action_id
+    updates["plugin_action_ids"] = plugin_action_ids
     updates["plugin_connection_id"] = plugin_connection_id
+    updates["plugin_connection_ids"] = plugin_connection_ids
+    updates["config_json"] = scheduled_job_config_with_multi_refs(
+        payload_field(draft, "config_json", {}),
+        plugin_action_ids=plugin_action_ids,
+        plugin_connection_ids=plugin_connection_ids,
+    )
     updates["result_actions"] = result_actions
     if {"schedule_type", "interval_seconds", "cron_expression"} & updates.keys():
         updates["next_run_at"] = next_run_at(draft)
@@ -1173,7 +1321,7 @@ def patch_scheduled_job_response(
         job,
         audit_event=audit_event,
     )
-    return dict(job)
+    return scheduled_job_with_multi_refs(job)
 
 
 def delete_scheduled_job_response(

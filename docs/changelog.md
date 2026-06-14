@@ -8,6 +8,8 @@
 ## [Unreleased]
 
 ### Added
+- 定时作业支持多数据连接和多动作配置：新增/编辑表单的数据连接、动作改为多选并显示顺序提示，作业列表展示多项摘要，API 支持 `plugin_connection_ids` / `plugin_action_ids` 并保存到 `config_json.orchestration`，旧单字段继续取第一项兼容当前执行入口。
+- 定时作业配置页执行链路收口：新增/编辑表单按基础信息、数据连接、AI执行、动作和调度分区，列表合并展示“数据连接 / AI执行 / 动作 / 调度”，运行详情展示“数据连接获取内容 / AI执行处理内容 / 动作反馈内容”；调度方式、Cron 表达式和间隔秒数同组连续展示，“来源系统”改为隐藏的内部来源标识。
 - AI 能力配置命名优化：用户侧将“Agent 管理”统一展示为“AI角色”，定时作业表单、运行详情和 AI 助手草案同步使用“AI角色”；后端 API、数据库和 payload 继续保留 `ai-agents` / `agent_id` 兼容契约。
 - 定时作业同步系统默认执行器：AI 执行器仓库任务模板默认保存 `config_json.ai_executor`，新增作业提交保留模板 JSON，运行详情的 `runner_execution` 节点展示系统默认执行器的模型日志和结果摘要。
 - AI 执行器新增系统默认执行器：`/api/system/ai-executor-runners` 返回只读 `ai_executor_runner_system_default`，官方 AI 执行器连接和下达指令模板默认使用 `executor_type=model_gateway`，动作调用可直接走系统默认 AI 大模型；本地 Codex/Claude/Hermes/OpenClaw Runner 保持可选扩展。

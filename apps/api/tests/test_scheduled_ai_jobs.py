@@ -253,6 +253,111 @@ def test_successful_scheduled_job_run_can_generate_template_and_trace_graph():
     assert template["wizard_steps"][0]["key"] == "data_connection"
 
 
+def test_scheduled_job_preserves_multiple_plugin_connections_and_actions():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "multi_warehouse_reader",
+            "name": "多数据源读取",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    primary_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://primary-warehouse.example.com",
+            "environment": "prod",
+            "name": "主数据仓库",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    backup_connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://backup-warehouse.example.com",
+            "environment": "prod",
+            "name": "备用数据仓库",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    primary_action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_primary_weekly_rows",
+            "connection_id": primary_connection["id"],
+            "name": "拉取主库周数据",
+            "plugin_id": plugin["id"],
+            "request_config": {"method": "GET", "path": "/weekly/primary"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    backup_action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "write_backup_weekly_rows",
+            "connection_id": backup_connection["id"],
+            "name": "写入备用周数据",
+            "plugin_id": plugin["id"],
+            "request_config": {"method": "POST", "path": "/weekly/backup"},
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "多数据源每周同步",
+            "plugin_action_ids": [primary_action["id"], backup_action["id"]],
+            "plugin_connection_ids": [primary_connection["id"], backup_connection["id"]],
+            "schedule_type": "manual",
+            "source_system": "warehouse",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    job = response.json()["data"]
+    assert job["plugin_action_id"] == primary_action["id"]
+    assert job["plugin_action_ids"] == [primary_action["id"], backup_action["id"]]
+    assert job["plugin_connection_id"] == primary_connection["id"]
+    assert job["plugin_connection_ids"] == [primary_connection["id"], backup_connection["id"]]
+    assert job["config_json"]["orchestration"]["plugin_action_ids"] == [
+        primary_action["id"],
+        backup_action["id"],
+    ]
+    assert job["config_json"]["orchestration"]["plugin_connection_ids"] == [
+        primary_connection["id"],
+        backup_connection["id"],
+    ]
+
+    listed = client.get("/api/system/scheduled-jobs", headers=admin_headers).json()["data"]["items"]
+    listed_job = next(item for item in listed if item["id"] == job["id"])
+    assert listed_job["plugin_action_ids"] == [primary_action["id"], backup_action["id"]]
+    assert listed_job["plugin_connection_ids"] == [
+        primary_connection["id"],
+        backup_connection["id"],
+    ]
+
+
 def build_skill_package() -> bytes:
     buffer = BytesIO()
     with ZipFile(buffer, "w") as package:

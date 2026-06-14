@@ -313,6 +313,14 @@ function installScheduledJobsFetchMock(
             },
             {
               action_type: 'http_request',
+              code: 'write_weekly_user_feedback_insights',
+              id: 'plugin_action_feedback_write',
+              name: '写入用户洞察表',
+              plugin_id: 'plugin_maxcompute',
+              status: 'active',
+            },
+            {
+              action_type: 'http_request',
               code: 'scan_github_code_inspection',
               id: 'plugin_action_github_scan',
               name: 'GitHub 代码巡检',
@@ -328,7 +336,7 @@ function installScheduledJobsFetchMock(
               status: 'active',
             },
           ],
-          total: 3,
+          total: 4,
         },
       });
     }
@@ -340,6 +348,13 @@ function installScheduledJobsFetchMock(
               environment: 'prod',
               id: 'connection_maxcompute_prod',
               name: '生产 MaxCompute 项目',
+              plugin_id: 'plugin_maxcompute',
+              status: 'active',
+            },
+            {
+              environment: 'prod',
+              id: 'connection_maxcompute_backup',
+              name: '备用 MaxCompute 项目',
               plugin_id: 'plugin_maxcompute',
               status: 'active',
             },
@@ -495,13 +510,33 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).queryByLabelText('时间参数')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('连接输入参数')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('结果写入覆盖 JSON')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('来源系统')).not.toBeInTheDocument();
+    const scheduleGroup = within(dialog).getByLabelText('调度配置');
+    expect(within(scheduleGroup).getByLabelText('调度方式')).toBeInTheDocument();
+    expect(within(scheduleGroup).getByLabelText('Cron 表达式')).toBeInTheDocument();
+    expect(within(scheduleGroup).getByLabelText('间隔秒数')).toBeInTheDocument();
+    expect(within(scheduleGroup).getByLabelText('调度方式').compareDocumentPosition(
+      within(scheduleGroup).getByLabelText('Cron 表达式'),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(scheduleGroup).getByLabelText('Cron 表达式').compareDocumentPosition(
+      within(scheduleGroup).getByLabelText('间隔秒数'),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(dialog).getByLabelText('连接环境')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('数据连接')).toBeInTheDocument();
+    expect(within(dialog).getByText('可选择多个连接，运行时按配置顺序作为数据来源')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('执行链路')).toHaveTextContent('数据连接 → AI执行 → 动作 → 运行记录');
+    expect(within(dialog).getByLabelText('数据连接配置')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('AI执行配置')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('AI执行')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('AI 模型')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('AI角色')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Skills')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('知识引用')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText('结果写入执行')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('动作配置')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('结果动作')).toBeInTheDocument();
+    expect(within(dialog).getByText('可选择多个结果动作，按配置顺序执行写入或通知')).toBeInTheDocument();
+    expect(within(dialog).queryByText('数据扫描执行')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('结果写入执行')).not.toBeInTheDocument();
     expect(consoleError).not.toHaveBeenCalled();
   });
 
@@ -576,13 +611,13 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
 
     const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
-    await waitFor(() => expect(within(dialog).getByText('任务创建向导')).toBeInTheDocument());
-    expect(within(dialog).getByText('任务编排流程：数据连接 → AI 处理 → 知识引用 → 结果写入 → 运行记录')).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByText('执行链路')).toBeInTheDocument());
+    expect(within(dialog).getByText('执行链路：数据连接 → AI执行 → 动作 → 运行记录')).toBeInTheDocument();
 
     expect(within(dialog).getByLabelText('编排节点 数据连接')).toHaveTextContent('待配置');
-    expect(within(dialog).getByLabelText('编排节点 AI 处理')).toHaveTextContent('待配置');
+    expect(within(dialog).getByLabelText('编排节点 AI执行')).toHaveTextContent('待配置');
     expect(within(dialog).getByLabelText('编排节点 知识引用')).toHaveTextContent('可选');
-    expect(within(dialog).getByLabelText('编排节点 结果写入')).toHaveTextContent('待配置');
+    expect(within(dialog).getByLabelText('编排节点 动作')).toHaveTextContent('待配置');
 
     fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
     expect(await screen.findByText('邮件摘要收取')).toBeInTheDocument();
@@ -594,11 +629,11 @@ describe('ScheduledJobsPage', () => {
       expect(within(dialog).getByLabelText('编排节点 数据连接')).toHaveTextContent('已配置'),
     );
     expect(within(dialog).getByLabelText('编排节点 数据连接')).toHaveTextContent('生产 MaxCompute 项目');
-    expect(within(dialog).getByLabelText('编排节点 AI 处理')).toHaveTextContent('已配置');
-    expect(within(dialog).getByLabelText('编排节点 AI 处理')).toHaveTextContent('定时作业模型');
+    expect(within(dialog).getByLabelText('编排节点 AI执行')).toHaveTextContent('已配置');
+    expect(within(dialog).getByLabelText('编排节点 AI执行')).toHaveTextContent('定时作业模型');
     expect(within(dialog).getByLabelText('编排节点 知识引用')).toHaveTextContent('已选择');
-    expect(within(dialog).getByLabelText('编排节点 结果写入')).toHaveTextContent('已配置');
-    expect(within(dialog).getByLabelText('编排节点 结果写入')).toHaveTextContent('获取本周用户反馈数据');
+    expect(within(dialog).getByLabelText('编排节点 动作')).toHaveTextContent('已配置');
+    expect(within(dialog).getByLabelText('编排节点 动作')).toHaveTextContent('获取本周用户反馈数据');
 
     fireEvent.click(within(dialog).getByRole('button', { name: '测试数据连接' }));
 
@@ -660,6 +695,11 @@ describe('ScheduledJobsPage', () => {
     expect(within(feedbackDialog).getByDisplayValue('0 9 * * MON')).toBeInTheDocument();
     expect(within(feedbackDialog).getByDisplayValue('aliyun-maxcompute')).toBeInTheDocument();
 
+    fireEvent.mouseDown(within(feedbackDialog).getByLabelText('数据连接'));
+    fireEvent.click(await screen.findByText('备用 MaxCompute 项目 (prod)'));
+    fireEvent.mouseDown(within(feedbackDialog).getByLabelText('结果动作'));
+    fireEvent.click(await screen.findByText('写入用户洞察表 (write_weekly_user_feedback_insights)'));
+
     fireEvent.click(within(feedbackDialog).getByRole('button', { name: /OK|确\s*定/ }));
     await waitFor(() =>
       expect(jobCreateBodies[0]).toMatchObject({
@@ -673,7 +713,9 @@ describe('ScheduledJobsPage', () => {
         model_gateway_config_id: 'model_gateway_scheduled_job',
         name: '每周用户反馈洞察抽取',
         plugin_action_id: 'plugin_action_maxcompute',
+        plugin_action_ids: ['plugin_action_maxcompute', 'plugin_action_feedback_write'],
         plugin_connection_id: 'connection_maxcompute_prod',
+        plugin_connection_ids: ['connection_maxcompute_prod', 'connection_maxcompute_backup'],
         plugin_input_mapping: {
           week_end: '{{last_full_week.end}}',
           week_start: '{{last_full_week.start}}',
@@ -922,7 +964,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByText('代码仓库质量 / 安全 / 规范巡检'));
     expect(within(dialog).getByText('生产 GitHub 组织 (prod)')).toBeInTheDocument();
 
-    fireEvent.mouseDown(within(dialog).getByLabelText('执行模式'));
+    fireEvent.mouseDown(within(dialog).getByLabelText('AI执行'));
     fireEvent.click(await screen.findByTitle('AI 生成'));
 
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
@@ -966,9 +1008,8 @@ describe('ScheduledJobsPage', () => {
     expect(await screen.findByText('每周用户反馈洞察')).toBeInTheDocument();
     expect(screen.getByText('用户反馈洞察抽取（取数 + AI 分析 + 写入）')).toBeInTheDocument();
     expect(screen.getByText('生产 MaxCompute 项目 (prod)')).toBeInTheDocument();
-    expect(screen.getByText('定时作业模型 (scheduled-job-model)')).toBeInTheDocument();
+    expect(screen.getByText('AI 生成 · 定时作业模型 · 洞察 Agent · 1 Skill')).toBeInTheDocument();
     expect(screen.getByText('获取本周用户反馈数据')).toBeInTheDocument();
-    expect(screen.getByText('AI 生成')).toBeInTheDocument();
     expect(screen.getByText('Cron 定时')).toBeInTheDocument();
     expect(screen.getByText('启用')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '操作' })).toHaveAttribute('data-fixed', 'right');
@@ -1380,26 +1421,26 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
-    expect(within(dialog).getByText('三段式执行链路')).toBeInTheDocument();
+    expect(within(dialog).getByText('运行链路')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('succeeded');
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('prod');
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('GET');
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('200');
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('318');
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('maxcompute.example.com');
-    expect(within(dialog).getByLabelText('流程节点 经过 Skill 处理后的内容')).toHaveTextContent('已调用');
-    expect(within(dialog).getByLabelText('流程节点 经过 Skill 处理后的内容')).toHaveTextContent('1');
-    expect(within(dialog).getByLabelText('流程节点 结果写入反馈内容')).toHaveTextContent('user_feedback_insights');
-    expect(within(dialog).getByLabelText('流程节点 结果写入反馈内容')).toHaveTextContent('insight_001');
+    expect(within(dialog).getByLabelText('流程节点 AI执行处理内容')).toHaveTextContent('已调用');
+    expect(within(dialog).getByLabelText('流程节点 AI执行处理内容')).toHaveTextContent('1');
+    expect(within(dialog).getByLabelText('流程节点 动作反馈内容')).toHaveTextContent('user_feedback_insights');
+    expect(within(dialog).getByLabelText('流程节点 动作反馈内容')).toHaveTextContent('insight_001');
     expect(within(dialog).getAllByText('数据连接获取内容').length).toBeGreaterThan(0);
-    expect(within(dialog).getAllByText('经过 Skill 处理后的内容').length).toBeGreaterThan(0);
-    expect(within(dialog).getAllByText('结果写入反馈内容').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('AI执行处理内容').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('动作反馈内容').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('运行 Trace DAG')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Trace 节点 数据连接获取内容')).toHaveTextContent('318ms');
     expect(within(dialog).getByLabelText('Trace 节点 经过 Skill 处理后的内容')).toHaveTextContent('860ms');
     expect(within(dialog).getByText('data_connection → skill_processing')).toBeInTheDocument();
     expect(within(dialog).getByText('skill_processing → result_action')).toBeInTheDocument();
-    expect(within(dialog).getByText('结果写入状态')).toBeInTheDocument();
+    expect(within(dialog).getByText('动作执行状态')).toBeInTheDocument();
     expect(within(dialog).getByText('结果摘要')).toBeInTheDocument();
     expect(dialog).toHaveTextContent('用户反馈洞察抽取（取数 + AI 分析 + 写入）');
     expect(dialog).toHaveTextContent('AI 生成');
@@ -1453,7 +1494,7 @@ describe('ScheduledJobsPage', () => {
     await waitFor(() => expect(generatedTemplateRequests).toEqual(['scheduled_job_run_weekly_feedback']));
     const createDialog = await screen.findByRole('dialog', { name: '新增定时作业' });
     expect(within(createDialog).getByLabelText('名称')).toHaveValue('每周反馈运行模板');
-    expect(within(createDialog).getByText('任务创建向导')).toBeInTheDocument();
+    expect(within(createDialog).getByText('执行链路')).toBeInTheDocument();
     expect(within(createDialog).getByText('运行记录')).toBeInTheDocument();
 
     fireEvent.click(within(createDialog).getByRole('button', { name: /OK|确\s*定/ }));
@@ -1543,7 +1584,7 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('ai_executor_task_openclaw_scan');
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('/Users/zeek/source/e-ai-brain');
     expect(within(dialog).getByLabelText('流程节点 AI 执行器执行内容')).toHaveTextContent('1');
-    expect(within(dialog).getByLabelText('流程节点 结果写入反馈内容')).toHaveTextContent('scheduled_job_result');
+    expect(within(dialog).getByLabelText('流程节点 动作反馈内容')).toHaveTextContent('scheduled_job_result');
     expect(dialog).toHaveTextContent('发现 2 个中风险规范问题');
   });
 
@@ -1679,7 +1720,7 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_email_notification' }));
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
-    const resultActionNode = within(dialog).getByLabelText('流程节点 结果写入反馈内容');
+    const resultActionNode = within(dialog).getByLabelText('流程节点 动作反馈内容');
     expect(resultActionNode).toHaveTextContent('邮件通知记录');
     expect(resultActionNode).toHaveTextContent('mail_001');
     expect(resultActionNode).toHaveTextContent('queued');
@@ -1796,10 +1837,10 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_code_inspection_ai' }));
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
-    expect(within(dialog).getByText('三段式执行链路')).toBeInTheDocument();
+    expect(within(dialog).getByText('运行链路')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('succeeded');
-    expect(within(dialog).getByLabelText('流程节点 经过 Skill 处理后的内容')).toHaveTextContent('已调用');
-    expect(within(dialog).getByLabelText('流程节点 结果写入反馈内容')).toHaveTextContent('code_inspection_reports');
+    expect(within(dialog).getByLabelText('流程节点 AI执行处理内容')).toHaveTextContent('已调用');
+    expect(within(dialog).getByLabelText('流程节点 动作反馈内容')).toHaveTextContent('code_inspection_reports');
     expect(dialog).toHaveTextContent('代码仓库巡检');
     expect(dialog).toHaveTextContent('代码巡检报告写入结果');
     expect(dialog).toHaveTextContent('严重问题自动创建整改任务');
