@@ -120,10 +120,24 @@ export type PermissionRecord = {
 
 export type MenuResourceRecord = {
   code: string;
+  icon?: string;
+  is_system?: boolean;
   menu_type?: string;
   name: string;
   parent_code?: string | null;
   path?: string | null;
+  required_permissions?: string[];
+  sort_order?: number;
+  status?: string;
+};
+
+export type MenuResourceMutationPayload = {
+  code?: string;
+  icon?: string;
+  menu_type?: string;
+  name?: string;
+  parent_code?: string | null;
+  path?: string;
   required_permissions?: string[];
   sort_order?: number;
   status?: string;
@@ -3405,6 +3419,61 @@ export async function fetchSystemMenus(): Promise<MenuResourceRecord[]> {
   const token = requireAccessToken();
   const menus = await apiRequest<{ items: MenuResourceRecord[] }>('/api/system/menus', { token });
   return menus.items;
+}
+
+export async function createSystemMenu(
+  payload: MenuResourceMutationPayload & { code: string; name: string },
+): Promise<MenuResourceRecord> {
+  const token = requireAccessToken();
+  return apiRequest<MenuResourceRecord>('/api/system/menus', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateSystemMenu(
+  menuCode: string,
+  payload: MenuResourceMutationPayload,
+): Promise<MenuResourceRecord> {
+  const token = requireAccessToken();
+  return apiRequest<MenuResourceRecord>(`/api/system/menus/${menuCode}`, {
+    body: payload,
+    method: 'PATCH',
+    token,
+  });
+}
+
+export async function setSystemMenuStatus(
+  menuCode: string,
+  status: 'active' | 'inactive',
+): Promise<MenuResourceRecord> {
+  const token = requireAccessToken();
+  const action = status === 'active' ? 'enable' : 'disable';
+  return apiRequest<MenuResourceRecord>(`/api/system/menus/${menuCode}/${action}`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export async function deleteSystemMenu(menuCode: string): Promise<{ code: string; deleted: boolean }> {
+  const token = requireAccessToken();
+  return apiRequest<{ code: string; deleted: boolean }>(`/api/system/menus/${menuCode}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function reorderSystemMenus(
+  items: Array<{ code: string; sort_order: number }>,
+): Promise<MenuResourceRecord[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<{ items: MenuResourceRecord[] }>('/api/system/menus/reorder', {
+    body: { items },
+    method: 'PUT',
+    token,
+  });
+  return response.items;
 }
 
 export async function fetchSystemRoleList(

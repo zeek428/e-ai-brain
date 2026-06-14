@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import CurrentUser, api_error, require_permissions
+from app.api.deps import CurrentUser, api_error, require_any_permission, require_permissions
 from app.core.trace import envelope, get_trace_id
 
 router = APIRouter(tags=["system-rbac"])
@@ -40,6 +40,38 @@ class RolePermissionGrantRequest(BaseModel):
 
 class RoleMenuGrantRequest(BaseModel):
     menu_codes: list[str] = Field(default_factory=list)
+
+
+class MenuResourceRequest(BaseModel):
+    code: str
+    name: str
+    path: str = ""
+    parent_code: str | None = None
+    menu_type: str = "page"
+    icon: str = ""
+    sort_order: int = 0
+    required_permissions: list[str] = Field(default_factory=list)
+    status: str = "active"
+
+
+class MenuResourcePatchRequest(BaseModel):
+    name: str | None = None
+    path: str | None = None
+    parent_code: str | None = None
+    menu_type: str | None = None
+    icon: str | None = None
+    sort_order: int | None = None
+    required_permissions: list[str] | None = None
+    status: str | None = None
+
+
+class MenuReorderItem(BaseModel):
+    code: str
+    sort_order: int
+
+
+class MenuReorderRequest(BaseModel):
+    items: list[MenuReorderItem] = Field(default_factory=list)
 
 
 class ScopeGrant(BaseModel):
@@ -80,12 +112,47 @@ def _unique_codes(codes: list[str], field: str) -> list[str]:
     return normalized
 
 
+def _menu_payload(payload: MenuResourceRequest | MenuResourcePatchRequest) -> dict[str, Any]:
+    values = payload.model_dump(exclude_unset=True)
+    if "code" in values and values["code"] is not None:
+        values["code"] = _non_blank(values["code"], "code")
+    if "name" in values and values["name"] is not None:
+        values["name"] = _non_blank(values["name"], "name")
+    for field in ("icon", "menu_type", "parent_code", "path", "status"):
+        if field in values and values[field] is not None:
+            values[field] = values[field].strip()
+            if field == "parent_code" and not values[field]:
+                values[field] = None
+    if "required_permissions" in values and values["required_permissions"] is not None:
+        values["required_permissions"] = _unique_codes(
+            values["required_permissions"],
+            "required_permissions",
+        )
+    return values
+
+
 def _map_repository_error(exc: ValueError) -> None:
     code = str(exc)
-    status_code = 409 if code in {"ROLE_CODE_EXISTS", "SYSTEM_ROLE_PROTECTED"} else 400
+    status_code = (
+        409
+        if code in {
+            "MENU_CODE_EXISTS",
+            "MENU_HAS_CHILDREN",
+            "ROLE_CODE_EXISTS",
+            "SYSTEM_MENU_PROTECTED",
+            "SYSTEM_ROLE_PROTECTED",
+        }
+        else 400
+    )
     messages = {
+        "MENU_CODE_EXISTS": "Menu code already exists",
+        "MENU_HAS_CHILDREN": "Menu has child resources",
+        "MENU_PARENT_NOT_FOUND": "Parent menu not found",
         "ROLE_CODE_EXISTS": "Role code already exists",
+        "SYSTEM_MENU_PROTECTED": "System menu cannot be deleted",
         "SYSTEM_ROLE_PROTECTED": "System role cannot be disabled",
+        "UNSUPPORTED_MENU_STATUS": "Unsupported menu status",
+        "UNSUPPORTED_MENU_TYPE": "Unsupported menu type",
         "UNSUPPORTED_PERMISSION": "Unsupported permission code",
         "UNSUPPORTED_MENU": "Unsupported menu code",
         "INVALID_SCOPE": "Invalid scope grant",
@@ -111,11 +178,131 @@ def list_menus(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_permissions(user, {"system.roles.manage"})
+    require_any_permission(
+        user,
+        {"system.menus.read", "system.menus.manage", "system.roles.manage"},
+    )
     return envelope(
         {"items": _authorization_repository(request).menu_resources()},
         get_trace_id(request),
     )
+
+
+@router.post("/api/system/menus")
+def create_menu(
+    request: Request,
+    payload: MenuResourceRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.menus.manage"})
+    try:
+        menu = _authorization_repository(request).create_menu_resource(
+            _menu_payload(payload),
+            actor_id=str(user["id"]),
+            trace_id=get_trace_id(request),
+        )
+    except ValueError as exc:
+        _map_repository_error(exc)
+    return envelope(menu, get_trace_id(request))
+
+
+@router.put("/api/system/menus/reorder")
+def reorder_menus(
+    request: Request,
+    payload: MenuReorderRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.menus.manage"})
+    try:
+        items = _authorization_repository(request).reorder_menu_resources(
+            [item.model_dump() for item in payload.items],
+            actor_id=str(user["id"]),
+            trace_id=get_trace_id(request),
+        )
+    except ValueError as exc:
+        _map_repository_error(exc)
+    return envelope({"items": items, "total": len(items)}, get_trace_id(request))
+
+
+@router.patch("/api/system/menus/{menu_code}")
+def update_menu(
+    menu_code: str,
+    request: Request,
+    payload: MenuResourcePatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.menus.manage"})
+    try:
+        menu = _authorization_repository(request).update_menu_resource(
+            menu_code,
+            _menu_payload(payload),
+            actor_id=str(user["id"]),
+            trace_id=get_trace_id(request),
+        )
+    except ValueError as exc:
+        _map_repository_error(exc)
+    if menu is None:
+        raise api_error(404, "NOT_FOUND", "Menu not found")
+    return envelope(menu, get_trace_id(request))
+
+
+@router.delete("/api/system/menus/{menu_code}")
+def delete_menu(
+    menu_code: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.menus.manage"})
+    try:
+        deleted = _authorization_repository(request).delete_menu_resource(
+            menu_code,
+            actor_id=str(user["id"]),
+            trace_id=get_trace_id(request),
+        )
+    except ValueError as exc:
+        _map_repository_error(exc)
+    if deleted is None:
+        raise api_error(404, "NOT_FOUND", "Menu not found")
+    return envelope({"deleted": True, "code": menu_code}, get_trace_id(request))
+
+
+@router.post("/api/system/menus/{menu_code}/disable")
+def disable_menu(
+    menu_code: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return _set_menu_status(menu_code, request, user, "inactive")
+
+
+@router.post("/api/system/menus/{menu_code}/enable")
+def enable_menu(
+    menu_code: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return _set_menu_status(menu_code, request, user, "active")
+
+
+def _set_menu_status(
+    menu_code: str,
+    request: Request,
+    user: dict[str, Any],
+    status: str,
+) -> dict[str, Any]:
+    require_permissions(user, {"system.menus.manage"})
+    try:
+        menu = _authorization_repository(request).set_menu_status(
+            menu_code,
+            status,
+            actor_id=str(user["id"]),
+            trace_id=get_trace_id(request),
+        )
+    except ValueError as exc:
+        _map_repository_error(exc)
+    if menu is None:
+        raise api_error(404, "NOT_FOUND", "Menu not found")
+    return envelope(menu, get_trace_id(request))
 
 
 @router.get("/api/system/roles")

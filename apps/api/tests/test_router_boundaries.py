@@ -51,6 +51,12 @@ def test_system_rbac_endpoints_are_owned_by_system_rbac_router():
     for path, method in [
         ("/api/system/permissions", "GET"),
         ("/api/system/menus", "GET"),
+        ("/api/system/menus", "POST"),
+        ("/api/system/menus/reorder", "PUT"),
+        ("/api/system/menus/{menu_code}", "PATCH"),
+        ("/api/system/menus/{menu_code}", "DELETE"),
+        ("/api/system/menus/{menu_code}/disable", "POST"),
+        ("/api/system/menus/{menu_code}/enable", "POST"),
         ("/api/system/roles", "GET"),
         ("/api/system/roles", "POST"),
         ("/api/system/roles/{role_id}", "GET"),

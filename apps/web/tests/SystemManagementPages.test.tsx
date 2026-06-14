@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { message, Modal, notification } from 'antd';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import './proComponentsMock';
 
+import MenusPage from '../src/pages/Menus';
 import RolesPage from '../src/pages/Roles';
 import UsersPage from '../src/pages/Users';
 
@@ -213,5 +214,138 @@ describe('system management pages', () => {
     expect(screen.getByText('system.roles.manage')).toBeInTheDocument();
     expect(screen.getByText('system.users.manage')).toBeInTheDocument();
     expect(screen.getByText('governance.audit')).toBeInTheDocument();
+  });
+
+  it('manages menu resources from the system menu page', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/system/permissions' && method === 'GET') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  category: 'system',
+                  code: 'system.menus.manage',
+                  name: '管理菜单',
+                  status: 'active',
+                },
+              ],
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      if (path === '/api/system/menus' && method === 'GET') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  code: 'system',
+                  is_system: true,
+                  menu_type: 'group',
+                  name: '系统管理',
+                  path: '/system',
+                  required_permissions: [],
+                  sort_order: 60,
+                  status: 'active',
+                },
+                {
+                  code: 'system.menus',
+                  is_system: true,
+                  menu_type: 'page',
+                  name: '菜单管理',
+                  parent_code: 'system',
+                  path: '/system/menus',
+                  required_permissions: ['system.menus.manage'],
+                  sort_order: 64,
+                  status: 'active',
+                },
+              ],
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      if (path === '/api/system/menus' && method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              code: 'system.help',
+              icon: 'QuestionCircleOutlined',
+              is_system: false,
+              menu_type: 'page',
+              name: '系统帮助',
+              parent_code: 'system',
+              path: '/system/help',
+              required_permissions: ['system.menus.manage'],
+              sort_order: 65,
+              status: 'active',
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
+      return Promise.reject(new Error(`Unexpected fetch call: ${path}`));
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<MenusPage />);
+
+    expect(await screen.findByText('菜单资源')).toBeInTheDocument();
+    expect(screen.getAllByText('菜单管理').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: '新增菜单' }));
+    const menuDialog = within(await screen.findByRole('dialog', { name: '新增菜单' }));
+
+    fireEvent.change(menuDialog.getByLabelText('菜单编码'), {
+      target: { value: 'system.help' },
+    });
+    fireEvent.change(menuDialog.getByLabelText('菜单名称'), {
+      target: { value: '系统帮助' },
+    });
+    fireEvent.change(menuDialog.getByLabelText(/路由路径/), {
+      target: { value: '/system/help' },
+    });
+    fireEvent.change(menuDialog.getByLabelText('图标'), {
+      target: { value: 'QuestionCircleOutlined' },
+    });
+    fireEvent.change(menuDialog.getByLabelText('排序号'), {
+      target: { value: '65' },
+    });
+    fireEvent.click(menuDialog.getByLabelText(/管理菜单 \(system.menus.manage\)/));
+    fireEvent.click(menuDialog.getByRole('button', { name: /保\s*存/ }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+        '/api/system/menus',
+        'POST',
+      ]),
+    );
+    const createCall = fetchMock.mock.calls.find(
+      ([path, init]) => path === '/api/system/menus' && init?.method === 'POST',
+    );
+    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
+      code: 'system.help',
+      icon: 'QuestionCircleOutlined',
+      menu_type: 'page',
+      name: '系统帮助',
+      path: '/system/help',
+      required_permissions: ['system.menus.manage'],
+      sort_order: 65,
+      status: 'active',
+    });
   });
 });

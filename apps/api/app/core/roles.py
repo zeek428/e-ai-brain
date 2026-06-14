@@ -21,6 +21,8 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
         "permissions": [
             "system.roles.read",
             "system.roles.manage",
+            "system.menus.read",
+            "system.menus.manage",
             "system.users.manage",
             "system.model_gateway.manage",
             "system.ai_capabilities.manage",

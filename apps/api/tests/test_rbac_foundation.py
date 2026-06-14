@@ -205,7 +205,13 @@ def test_rbac_migration_updates_legacy_admin_role_definition_permissions():
     sql = MIGRATION.read_text(encoding="utf-8")
 
     assert "UPDATE role_definitions" in sql
-    assert '["system.roles.read", "system.roles.manage"]' in sql
+    for permission_code in [
+        "system.roles.read",
+        "system.roles.manage",
+        "system.menus.read",
+        "system.menus.manage",
+    ]:
+        assert permission_code in sql
     assert "WHERE code = 'admin'" in sql
 
 

@@ -116,6 +116,9 @@ def test_task_center_contains_ai_jobs_and_plugin_menus():
 
     assert response.status_code == 200
     menus = {item["code"]: item for item in response.json()["data"]["items"]}
+    assert menus["system.menus"]["parent_code"] == "system"
+    assert menus["system.menus"]["path"] == "/system/menus"
+    assert menus["system.menus"]["required_permissions"] == ["system.menus.manage"]
     assert menus["system.ai_capabilities"]["parent_code"] == "task"
     assert menus["system.ai_capabilities"]["path"] == "/tasks/ai-capabilities"
     assert menus["system.scheduled_jobs"]["parent_code"] == "task"
@@ -125,6 +128,70 @@ def test_task_center_contains_ai_jobs_and_plugin_menus():
     assert menus["system.users"]["parent_code"] == "system"
     assert menus["system.roles"]["parent_code"] == "system"
     assert menus["system.model_gateway"]["parent_code"] == "system"
+
+
+def test_admin_can_manage_menu_resources_and_reorder():
+    headers = auth_headers()
+
+    created = client.post(
+        "/api/system/menus",
+        headers=headers,
+        json={
+            "code": "system.demo_menu",
+            "icon": "AppstoreOutlined",
+            "menu_type": "page",
+            "name": "演示菜单",
+            "parent_code": "system",
+            "path": "/system/demo-menu",
+            "required_permissions": ["system.menus.manage"],
+            "sort_order": 69,
+        },
+    )
+    assert created.status_code == 200
+    menu = created.json()["data"]
+    assert menu["code"] == "system.demo_menu"
+    assert menu["is_system"] is False
+    assert menu["status"] == "active"
+
+    patched = client.patch(
+        "/api/system/menus/system.demo_menu",
+        headers=headers,
+        json={
+            "name": "演示菜单配置",
+            "required_permissions": ["system.menus.read"],
+            "sort_order": 70,
+        },
+    )
+    assert patched.status_code == 200
+    assert patched.json()["data"]["name"] == "演示菜单配置"
+    assert patched.json()["data"]["required_permissions"] == ["system.menus.read"]
+
+    disabled = client.post("/api/system/menus/system.demo_menu/disable", headers=headers)
+    assert disabled.status_code == 200
+    assert disabled.json()["data"]["status"] == "inactive"
+
+    enabled = client.post("/api/system/menus/system.demo_menu/enable", headers=headers)
+    assert enabled.status_code == 200
+    assert enabled.json()["data"]["status"] == "active"
+
+    reordered = client.put(
+        "/api/system/menus/reorder",
+        headers=headers,
+        json={"items": [{"code": "system.demo_menu", "sort_order": 68}]},
+    )
+    assert reordered.status_code == 200
+    assert reordered.json()["data"]["items"][0]["sort_order"] == 68
+
+    deleted = client.delete("/api/system/menus/system.demo_menu", headers=headers)
+    assert deleted.status_code == 200
+    assert deleted.json()["data"] == {"code": "system.demo_menu", "deleted": True}
+
+
+def test_system_menu_delete_is_protected():
+    response = client.delete("/api/system/menus/system.roles", headers=auth_headers())
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "SYSTEM_MENU_PROTECTED"
 
 
 def test_mutating_role_operation_writes_role_change_and_audit_events():

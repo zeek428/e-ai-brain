@@ -555,7 +555,7 @@ function JsonPreview({ title, value }: { title: string; value: unknown }) {
   );
 }
 
-function resultWriteRecordFieldText(value: unknown) {
+function resultWriteRecordFieldText(value: unknown): string {
   if (value === undefined || value === null || value === '') {
     return '-';
   }

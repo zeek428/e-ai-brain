@@ -258,6 +258,8 @@ INSERT INTO permissions (code, name, category, description, risk_level, is_syste
 VALUES
   ('system.roles.read', '查看角色', 'system', '查看角色、权限点和菜单授权配置。', 'normal', true, 'active'),
   ('system.roles.manage', '管理角色', 'system', '创建、编辑、停用角色并维护权限和菜单授权。', 'high', true, 'active'),
+  ('system.menus.read', '查看菜单', 'system', '查看系统菜单资源、路由入口和访问权限点配置。', 'normal', true, 'active'),
+  ('system.menus.manage', '管理菜单', 'system', '创建、编辑、停用和排序系统菜单资源。', 'high', true, 'active'),
   ('system.users.read', '查看用户', 'system', '查看系统用户和授权摘要。', 'normal', true, 'active'),
   ('system.users.manage', '管理用户', 'system', '创建用户、维护状态、部门和角色授权。', 'high', true, 'active'),
   ('system.model_gateway.manage', '管理模型网关', 'system', '维护 OpenAI-compatible 模型网关配置。', 'high', true, 'active'),
@@ -347,8 +349,9 @@ VALUES
   ('system', '系统管理', '/system', NULL, 'group', 'SettingOutlined', 60, '[]'::jsonb, true, 'active'),
   ('system.users', '用户管理', '/system/users', 'system', 'page', 'TeamOutlined', 61, '["system.users.manage"]'::jsonb, true, 'active'),
   ('system.roles', '角色管理', '/system/roles', 'system', 'page', 'SafetyCertificateOutlined', 62, '["system.roles.manage"]'::jsonb, true, 'active'),
-  ('system.model_gateway', '模型网关', '/system/model-gateway', 'system', 'page', 'ApiOutlined', 63, '["system.model_gateway.manage"]'::jsonb, true, 'active'),
-  ('org.departments', '部门管理', '/system/departments', 'system', 'hidden_page', 'ApartmentOutlined', 64, '["org.department.manage"]'::jsonb, true, 'active')
+  ('system.menus', '菜单管理', '/system/menus', 'system', 'page', 'MenuOutlined', 63, '["system.menus.manage"]'::jsonb, true, 'active'),
+  ('system.model_gateway', '模型网关', '/system/model-gateway', 'system', 'page', 'ApiOutlined', 64, '["system.model_gateway.manage"]'::jsonb, true, 'active'),
+  ('org.departments', '部门管理', '/system/departments', 'system', 'hidden_page', 'ApartmentOutlined', 66, '["org.department.manage"]'::jsonb, true, 'active')
 ON CONFLICT (code) DO UPDATE SET
   name = EXCLUDED.name,
   path = EXCLUDED.path,
@@ -391,6 +394,8 @@ WITH role_permission_seed(role_code, permission_code) AS (
   VALUES
     ('admin', 'system.roles.read'),
     ('admin', 'system.roles.manage'),
+    ('admin', 'system.menus.read'),
+    ('admin', 'system.menus.manage'),
     ('admin', 'system.users.read'),
     ('admin', 'system.users.manage'),
     ('admin', 'system.model_gateway.manage'),
@@ -541,6 +546,7 @@ WITH role_menu_seed(role_code, menu_code) AS (
     ('admin', 'system'),
     ('admin', 'system.users'),
     ('admin', 'system.roles'),
+    ('admin', 'system.menus'),
     ('admin', 'system.model_gateway'),
     ('admin', 'org.departments'),
     ('product_owner', 'workspace.dashboard'),
@@ -747,7 +753,7 @@ SET
       SELECT DISTINCT permission_code
       FROM jsonb_array_elements_text(
         role_definitions.permissions
-        || '["system.roles.read", "system.roles.manage"]'::jsonb
+        || '["system.roles.read", "system.roles.manage", "system.menus.read", "system.menus.manage"]'::jsonb
       ) AS permission_values(permission_code)
     ) AS merged_permissions
   ),

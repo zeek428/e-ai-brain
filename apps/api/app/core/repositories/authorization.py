@@ -236,12 +236,22 @@ COMPATIBILITY_MENU_RESOURCES: list[dict[str, Any]] = [
         "status": "active",
     },
     {
+        "code": "system.menus",
+        "name": "菜单管理",
+        "path": "/system/menus",
+        "parent_code": "system",
+        "menu_type": "page",
+        "sort_order": 63,
+        "required_permissions": ["system.menus.manage"],
+        "status": "active",
+    },
+    {
         "code": "system.model_gateway",
         "name": "模型网关",
         "path": "/system/model-gateway",
         "parent_code": "system",
         "menu_type": "page",
-        "sort_order": 63,
+        "sort_order": 64,
         "required_permissions": ["system.model_gateway.manage"],
         "status": "active",
     },
@@ -310,6 +320,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
         "system",
         "system.users",
         "system.roles",
+        "system.menus",
         "system.model_gateway",
         "system.ai_capabilities",
         "system.scheduled_jobs",
@@ -444,6 +455,10 @@ class CompatibilityAuthorizationRepository:
         self._role_scope_grants = deepcopy(COMPATIBILITY_ROLE_SCOPES)
         self._user_role_grants: dict[str, list[str]] = {}
         self._user_scope_grants: dict[str, list[dict[str, Any]]] = {}
+        self._menu_resources = [
+            {**deepcopy(resource), "is_system": resource.get("is_system", True)}
+            for resource in COMPATIBILITY_MENU_RESOURCES
+        ]
         self.role_change_events: list[dict[str, Any]] = []
         self.audit_events: list[dict[str, Any]] = []
         self._permissions = self._build_permission_catalog()
@@ -490,7 +505,7 @@ class CompatibilityAuthorizationRepository:
                 continue
             if role_code == "admin":
                 permissions.update(self._permissions)
-                granted_codes.update(resource["code"] for resource in COMPATIBILITY_MENU_RESOURCES)
+                granted_codes.update(resource["code"] for resource in self._menu_resources)
             else:
                 permissions.update(role.get("permissions") or [])
                 granted_codes.update(self._role_menu_grants.get(role_code, set()))
@@ -504,7 +519,7 @@ class CompatibilityAuthorizationRepository:
             scopes=scopes,
             menus=[
                 deepcopy(resource)
-                for resource in COMPATIBILITY_MENU_RESOURCES
+                for resource in self._menu_resources
                 if resource["code"] in granted_codes
             ],
         )
@@ -513,11 +528,150 @@ class CompatibilityAuthorizationRepository:
         return self.snapshot_for_user(user)
 
     def menu_resources(self) -> list[dict[str, Any]]:
-        return deepcopy(COMPATIBILITY_MENU_RESOURCES)
+        return deepcopy(
+            sorted(
+                self._menu_resources,
+                key=lambda item: (item.get("sort_order", 0), item["code"]),
+            )
+        )
+
+    def create_menu_resource(
+        self,
+        payload: dict[str, Any],
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        code = str(payload["code"])
+        if self._find_menu_resource(code) is not None:
+            raise ValueError("MENU_CODE_EXISTS")
+        menu = self._normalize_menu_payload(payload, is_system=False)
+        self._menu_resources.append(menu)
+        self._record_menu_mutation(
+            menu_code=code,
+            event_type="menu.created",
+            audit_event_type="system.menu.created",
+            before_payload={},
+            after_payload=menu,
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
+        return deepcopy(menu)
+
+    def update_menu_resource(
+        self,
+        menu_code: str,
+        updates: dict[str, Any],
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any] | None:
+        menu = self._find_menu_resource(menu_code)
+        if menu is None:
+            return None
+        before = deepcopy(menu)
+        for field in (
+            "icon",
+            "menu_type",
+            "name",
+            "parent_code",
+            "path",
+            "required_permissions",
+            "sort_order",
+            "status",
+        ):
+            if field in updates:
+                menu[field] = updates[field]
+        normalized = self._normalize_menu_payload(
+            menu,
+            is_system=bool(menu.get("is_system", False)),
+        )
+        menu.clear()
+        menu.update(normalized)
+        self._record_menu_mutation(
+            menu_code=menu_code,
+            event_type="menu.updated",
+            audit_event_type="system.menu.updated",
+            before_payload=before,
+            after_payload=menu,
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
+        return deepcopy(menu)
+
+    def set_menu_status(
+        self,
+        menu_code: str,
+        status: str,
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any] | None:
+        return self.update_menu_resource(
+            menu_code,
+            {"status": status},
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
+
+    def delete_menu_resource(
+        self,
+        menu_code: str,
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> bool | None:
+        menu = self._find_menu_resource(menu_code)
+        if menu is None:
+            return None
+        if menu.get("is_system"):
+            raise ValueError("SYSTEM_MENU_PROTECTED")
+        if any(item.get("parent_code") == menu_code for item in self._menu_resources):
+            raise ValueError("MENU_HAS_CHILDREN")
+        before = deepcopy(menu)
+        self._menu_resources = [item for item in self._menu_resources if item["code"] != menu_code]
+        for grants in self._role_menu_grants.values():
+            grants.discard(menu_code)
+        self._record_menu_mutation(
+            menu_code=menu_code,
+            event_type="menu.deleted",
+            audit_event_type="system.menu.deleted",
+            before_payload=before,
+            after_payload={},
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
+        return True
+
+    def reorder_menu_resources(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> list[dict[str, Any]]:
+        updated: list[dict[str, Any]] = []
+        for item in items:
+            menu = self._find_menu_resource(str(item["code"]))
+            if menu is None:
+                raise ValueError("UNSUPPORTED_MENU")
+            before = deepcopy(menu)
+            menu["sort_order"] = int(item["sort_order"])
+            self._record_menu_mutation(
+                menu_code=menu["code"],
+                event_type="menu.reordered",
+                audit_event_type="system.menu.reordered",
+                before_payload=before,
+                after_payload=menu,
+                actor_id=actor_id,
+                trace_id=trace_id,
+            )
+            updated.append(deepcopy(menu))
+        return updated
 
     def granted_menu_codes_for_roles(self, roles: list[str]) -> set[str]:
         if "admin" in roles:
-            return {resource["code"] for resource in COMPATIBILITY_MENU_RESOURCES}
+            return {resource["code"] for resource in self._menu_resources}
         granted_codes: set[str] = set()
         for role_code in roles:
             granted_codes.update(self._role_menu_grants.get(role_code, set()))
@@ -526,7 +680,7 @@ class CompatibilityAuthorizationRepository:
     def route_permissions(self) -> dict[str, list[str]]:
         return {
             resource["path"]: list(resource.get("required_permissions") or [])
-            for resource in COMPATIBILITY_MENU_RESOURCES
+            for resource in self._menu_resources
             if resource.get("menu_type") == "hidden_page" and resource.get("path")
         }
 
@@ -834,7 +988,7 @@ class CompatibilityAuthorizationRepository:
                 self._permissions if role["code"] == "admin" else role.get("permissions") or []
             ),
             "menu_codes": sorted(
-                {resource["code"] for resource in COMPATIBILITY_MENU_RESOURCES}
+                {resource["code"] for resource in self._menu_resources}
                 if role["code"] == "admin"
                 else self._role_menu_grants.get(role["code"], set())
             ),
@@ -858,10 +1012,59 @@ class CompatibilityAuthorizationRepository:
             raise ValueError("UNSUPPORTED_PERMISSION")
 
     def _ensure_menu_codes(self, menu_codes: list[str]) -> None:
-        valid_codes = {menu["code"] for menu in COMPATIBILITY_MENU_RESOURCES}
+        valid_codes = {menu["code"] for menu in self._menu_resources}
         unsupported = sorted(set(menu_codes) - valid_codes)
         if unsupported:
             raise ValueError("UNSUPPORTED_MENU")
+
+    def _find_menu_resource(self, menu_code: str) -> dict[str, Any] | None:
+        return next(
+            (menu for menu in self._menu_resources if menu["code"] == menu_code),
+            None,
+        )
+
+    def _normalize_menu_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        is_system: bool,
+    ) -> dict[str, Any]:
+        code = str(payload.get("code") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        path = str(payload.get("path") or "").strip()
+        menu_type = str(payload.get("menu_type") or "page").strip()
+        status = str(payload.get("status") or "active").strip()
+        parent_code = payload.get("parent_code")
+        parent_code = str(parent_code).strip() if parent_code is not None else None
+        if not code or not name:
+            raise ValueError("VALIDATION_ERROR")
+        if menu_type not in {"group", "hidden_page", "page"}:
+            raise ValueError("UNSUPPORTED_MENU_TYPE")
+        if status not in {"active", "inactive"}:
+            raise ValueError("UNSUPPORTED_MENU_STATUS")
+        if parent_code:
+            if parent_code == code or self._find_menu_resource(parent_code) is None:
+                raise ValueError("MENU_PARENT_NOT_FOUND")
+        required_permissions = [
+            str(permission_code).strip()
+            for permission_code in (payload.get("required_permissions") or [])
+            if str(permission_code).strip()
+        ]
+        if len(set(required_permissions)) != len(required_permissions):
+            raise ValueError("VALIDATION_ERROR")
+        self._ensure_permission_codes(required_permissions)
+        return {
+            "code": code,
+            "icon": str(payload.get("icon") or "").strip(),
+            "is_system": is_system,
+            "menu_type": menu_type,
+            "name": name,
+            "parent_code": parent_code,
+            "path": path,
+            "required_permissions": required_permissions,
+            "sort_order": int(payload.get("sort_order") or 0),
+            "status": status,
+        }
 
     def _normalize_scopes(self, scopes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
@@ -922,6 +1125,49 @@ class CompatibilityAuthorizationRepository:
                 "ai_task_id": None,
                 "subject_type": "role",
                 "subject_id": role_id,
+                "payload": {
+                    "before": deepcopy(before_payload),
+                    "after": deepcopy(after_payload),
+                },
+                "sequence": len(self.audit_events) + 1,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+
+    def _record_menu_mutation(
+        self,
+        *,
+        menu_code: str,
+        event_type: str,
+        audit_event_type: str,
+        before_payload: dict[str, Any],
+        after_payload: dict[str, Any],
+        actor_id: str,
+        trace_id: str,
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        self.role_change_events.append(
+            {
+                "id": f"role_change_{uuid4().hex}",
+                "role_id": None,
+                "event_type": event_type,
+                "before_payload": deepcopy(before_payload),
+                "after_payload": deepcopy(after_payload),
+                "actor_id": actor_id,
+                "trace_id": trace_id,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        self.audit_events.append(
+            {
+                "id": f"audit_event_{uuid4().hex}",
+                "event_type": audit_event_type,
+                "actor_id": actor_id,
+                "ai_task_id": None,
+                "subject_type": "menu_resource",
+                "subject_id": menu_code,
                 "payload": {
                     "before": deepcopy(before_payload),
                     "after": deepcopy(after_payload),
@@ -1076,35 +1322,214 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT code, name, path, parent_code, menu_type, sort_order,
-                           required_permissions, status
+                    SELECT code, name, path, parent_code, menu_type, icon, sort_order,
+                           required_permissions, is_system, status
                     FROM menu_resources
                     ORDER BY sort_order, code
                     """
                 )
                 rows = cursor.fetchall()
-        return [
-            {
-                "code": code,
-                "name": name,
-                "path": path,
-                "parent_code": parent_code,
-                "menu_type": menu_type,
-                "sort_order": sort_order,
-                "required_permissions": list(required_permissions or []),
-                "status": status,
-            }
-            for (
-                code,
-                name,
-                path,
-                parent_code,
-                menu_type,
-                sort_order,
-                required_permissions,
-                status,
-            ) in rows
-        ]
+        return [self._postgres_menu_resource_from_row(row) for row in rows]
+
+    def create_menu_resource(
+        self,
+        payload: dict[str, Any],
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    menu = self._postgres_normalize_menu_payload(cursor, payload, is_system=False)
+                    cursor.execute(
+                        """
+                        INSERT INTO menu_resources (
+                          code, name, path, parent_code, menu_type, icon, sort_order,
+                          required_permissions, is_system, status
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, false, %s)
+                        """,
+                        (
+                            menu["code"],
+                            menu["name"],
+                            menu["path"],
+                            menu["parent_code"],
+                            menu["menu_type"],
+                            menu["icon"],
+                            menu["sort_order"],
+                            json.dumps(menu["required_permissions"], ensure_ascii=False),
+                            menu["status"],
+                        ),
+                    )
+                    after = self._postgres_menu_resource_from_row(
+                        self._postgres_menu_resource_row(cursor, menu["code"])
+                    )
+                    self._insert_menu_mutation(
+                        cursor,
+                        menu_code=menu["code"],
+                        event_type="menu.created",
+                        audit_event_type="system.menu.created",
+                        before_payload={},
+                        after_payload=after,
+                        actor_id=actor_id,
+                        trace_id=trace_id,
+                    )
+                    return after
+        except Exception as exc:
+            if getattr(exc, "sqlstate", "") == "23505":
+                raise ValueError("MENU_CODE_EXISTS") from exc
+            raise
+
+    def update_menu_resource(
+        self,
+        menu_code: str,
+        updates: dict[str, Any],
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                row = self._postgres_menu_resource_row(cursor, menu_code)
+                if row is None:
+                    return None
+                before = self._postgres_menu_resource_from_row(row)
+                merged = {**before, **updates}
+                menu = self._postgres_normalize_menu_payload(
+                    cursor,
+                    merged,
+                    is_system=before["is_system"],
+                )
+                cursor.execute(
+                    """
+                    UPDATE menu_resources
+                    SET name = %s,
+                        path = %s,
+                        parent_code = %s,
+                        menu_type = %s,
+                        icon = %s,
+                        sort_order = %s,
+                        required_permissions = %s::jsonb,
+                        status = %s,
+                        updated_at = now()
+                    WHERE code = %s
+                    """,
+                    (
+                        menu["name"],
+                        menu["path"],
+                        menu["parent_code"],
+                        menu["menu_type"],
+                        menu["icon"],
+                        menu["sort_order"],
+                        json.dumps(menu["required_permissions"], ensure_ascii=False),
+                        menu["status"],
+                        menu_code,
+                    ),
+                )
+                after = self._postgres_menu_resource_from_row(
+                    self._postgres_menu_resource_row(cursor, menu_code)
+                )
+                self._insert_menu_mutation(
+                    cursor,
+                    menu_code=menu_code,
+                    event_type="menu.updated",
+                    audit_event_type="system.menu.updated",
+                    before_payload=before,
+                    after_payload=after,
+                    actor_id=actor_id,
+                    trace_id=trace_id,
+                )
+                return after
+
+    def set_menu_status(
+        self,
+        menu_code: str,
+        status: str,
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> dict[str, Any] | None:
+        return self.update_menu_resource(
+            menu_code,
+            {"status": status},
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
+
+    def delete_menu_resource(
+        self,
+        menu_code: str,
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> bool | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                row = self._postgres_menu_resource_row(cursor, menu_code)
+                if row is None:
+                    return None
+                before = self._postgres_menu_resource_from_row(row)
+                if before["is_system"]:
+                    raise ValueError("SYSTEM_MENU_PROTECTED")
+                cursor.execute(
+                    "SELECT 1 FROM menu_resources WHERE parent_code = %s LIMIT 1",
+                    (menu_code,),
+                )
+                if cursor.fetchone() is not None:
+                    raise ValueError("MENU_HAS_CHILDREN")
+                cursor.execute("DELETE FROM menu_resources WHERE code = %s", (menu_code,))
+                self._insert_menu_mutation(
+                    cursor,
+                    menu_code=menu_code,
+                    event_type="menu.deleted",
+                    audit_event_type="system.menu.deleted",
+                    before_payload=before,
+                    after_payload={},
+                    actor_id=actor_id,
+                    trace_id=trace_id,
+                )
+                return True
+
+    def reorder_menu_resources(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        actor_id: str,
+        trace_id: str,
+    ) -> list[dict[str, Any]]:
+        updated: list[dict[str, Any]] = []
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                for item in items:
+                    menu_code = str(item["code"])
+                    row = self._postgres_menu_resource_row(cursor, menu_code)
+                    if row is None:
+                        raise ValueError("UNSUPPORTED_MENU")
+                    before = self._postgres_menu_resource_from_row(row)
+                    cursor.execute(
+                        """
+                        UPDATE menu_resources
+                        SET sort_order = %s, updated_at = now()
+                        WHERE code = %s
+                        """,
+                        (int(item["sort_order"]), menu_code),
+                    )
+                    after = self._postgres_menu_resource_from_row(
+                        self._postgres_menu_resource_row(cursor, menu_code)
+                    )
+                    self._insert_menu_mutation(
+                        cursor,
+                        menu_code=menu_code,
+                        event_type="menu.reordered",
+                        audit_event_type="system.menu.reordered",
+                        before_payload=before,
+                        after_payload=after,
+                        actor_id=actor_id,
+                        trace_id=trace_id,
+                    )
+                    updated.append(after)
+        return updated
 
     def granted_menu_codes_for_roles(self, roles: list[str]) -> set[str]:
         if not roles:
@@ -1775,6 +2200,91 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
         if set(menu_codes) - existing:
             raise ValueError("UNSUPPORTED_MENU")
 
+    def _postgres_menu_resource_row(self, cursor, menu_code: str):
+        cursor.execute(
+            """
+            SELECT code, name, path, parent_code, menu_type, icon, sort_order,
+                   required_permissions, is_system, status
+            FROM menu_resources
+            WHERE code = %s
+            """,
+            (menu_code,),
+        )
+        return cursor.fetchone()
+
+    def _postgres_menu_resource_from_row(self, row) -> dict[str, Any]:
+        (
+            code,
+            name,
+            path,
+            parent_code,
+            menu_type,
+            icon,
+            sort_order,
+            required_permissions,
+            is_system,
+            status,
+        ) = row
+        return {
+            "code": code,
+            "icon": icon,
+            "is_system": bool(is_system),
+            "menu_type": menu_type,
+            "name": name,
+            "parent_code": parent_code,
+            "path": path,
+            "required_permissions": list(required_permissions or []),
+            "sort_order": int(sort_order or 0),
+            "status": status,
+        }
+
+    def _postgres_normalize_menu_payload(
+        self,
+        cursor,
+        payload: dict[str, Any],
+        *,
+        is_system: bool,
+    ) -> dict[str, Any]:
+        code = str(payload.get("code") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        path = str(payload.get("path") or "").strip()
+        menu_type = str(payload.get("menu_type") or "page").strip()
+        status = str(payload.get("status") or "active").strip()
+        parent_code = payload.get("parent_code")
+        parent_code = str(parent_code).strip() if parent_code is not None else None
+        if not code or not name:
+            raise ValueError("VALIDATION_ERROR")
+        if menu_type not in {"group", "hidden_page", "page"}:
+            raise ValueError("UNSUPPORTED_MENU_TYPE")
+        if status not in {"active", "inactive"}:
+            raise ValueError("UNSUPPORTED_MENU_STATUS")
+        if parent_code:
+            if parent_code == code:
+                raise ValueError("MENU_PARENT_NOT_FOUND")
+            cursor.execute("SELECT 1 FROM menu_resources WHERE code = %s", (parent_code,))
+            if cursor.fetchone() is None:
+                raise ValueError("MENU_PARENT_NOT_FOUND")
+        required_permissions = [
+            str(permission_code).strip()
+            for permission_code in (payload.get("required_permissions") or [])
+            if str(permission_code).strip()
+        ]
+        if len(set(required_permissions)) != len(required_permissions):
+            raise ValueError("VALIDATION_ERROR")
+        self._postgres_ensure_permission_codes(cursor, required_permissions)
+        return {
+            "code": code,
+            "icon": str(payload.get("icon") or "").strip(),
+            "is_system": is_system,
+            "menu_type": menu_type,
+            "name": name,
+            "parent_code": parent_code,
+            "path": path,
+            "required_permissions": required_permissions,
+            "sort_order": int(payload.get("sort_order") or 0),
+            "status": status,
+        }
+
     def _insert_role_mutation(
         self,
         cursor,
@@ -1804,18 +2314,47 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
                 trace_id,
             ),
         )
+
+    def _insert_menu_mutation(
+        self,
+        cursor,
+        *,
+        menu_code: str,
+        event_type: str,
+        audit_event_type: str,
+        before_payload: dict[str, Any],
+        after_payload: dict[str, Any],
+        actor_id: str,
+        trace_id: str,
+    ) -> None:
+        cursor.execute(
+            """
+            INSERT INTO role_change_events (
+              id, role_id, event_type, before_payload, after_payload, actor_id, trace_id
+            )
+            VALUES (%s, NULL, %s, %s::jsonb, %s::jsonb, %s, %s)
+            """,
+            (
+                f"role_change_{uuid4().hex}",
+                event_type,
+                json.dumps(before_payload, ensure_ascii=False),
+                json.dumps(after_payload, ensure_ascii=False),
+                actor_id,
+                trace_id,
+            ),
+        )
         cursor.execute(
             """
             INSERT INTO audit_events (
               id, event_type, actor_id, ai_task_id, subject_type, subject_id, payload, sequence
             )
-            VALUES (%s, %s, %s, NULL, 'role', %s, %s::jsonb, 0)
+            VALUES (%s, %s, %s, NULL, 'menu_resource', %s, %s::jsonb, 0)
             """,
             (
                 f"audit_event_{uuid4().hex}",
                 audit_event_type,
                 actor_id,
-                role_id,
+                menu_code,
                 json.dumps(
                     {"before": before_payload, "after": after_payload},
                     ensure_ascii=False,

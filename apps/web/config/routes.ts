@@ -170,6 +170,12 @@ const routes = [
         component: './Roles',
       },
       {
+        path: '/system/menus',
+        name: '菜单管理',
+        icon: 'MenuOutlined',
+        component: './Menus',
+      },
+      {
         path: '/system/model-gateway',
         name: '模型网关',
         icon: 'ApiOutlined',
