@@ -12,6 +12,7 @@ def assistant_tool_results(
     *,
     message: str,
     product_id: str | None,
+    references: list[dict[str, Any]] | None = None,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     """Deterministic read-model style tools used before asking the model."""
@@ -29,6 +30,14 @@ def assistant_tool_results(
             results.append(draft_builder.code_inspection_job_draft(message=message))
         elif intent == "scheduled_job_draft":
             results.append(draft_builder.scheduled_job_draft())
+        elif intent == "scheduled_job_diagnostic":
+            results.append(
+                _scheduled_job_diagnostic_tool(
+                    context,
+                    limit=limit,
+                    references=references or [],
+                )
+            )
         elif intent == "delivery_progress":
             results.append(_delivery_progress_tool(context, limit=limit))
         elif intent == "pending_reviews":
@@ -81,14 +90,30 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
         "integration_plugins": list(getattr(current_store, "integration_plugins", {}).values()),
         "knowledge_documents": list(getattr(current_store, "knowledge_documents", {}).values()),
         "model_gateway_configs": list(getattr(current_store, "model_gateway_configs", {}).values()),
+        "model_gateway_logs": list(getattr(current_store, "model_gateway_logs", [])),
         "plugin_actions": list(getattr(current_store, "plugin_actions", {}).values()),
         "plugin_connections": list(getattr(current_store, "plugin_connections", {}).values()),
+        "plugin_invocation_logs": list(
+            getattr(current_store, "plugin_invocation_logs", {}).values()
+        ),
         "products": products,
         "requirements": requirements,
         "scheduled_jobs": [
             job
             for job in getattr(current_store, "scheduled_jobs", {}).values()
             if not product_ids or job.get("product_id") in product_ids
+        ],
+        "scheduled_job_runs": [
+            run
+            for run in getattr(current_store, "scheduled_job_runs", {}).values()
+            if not product_ids
+            or str(run.get("scheduled_job_id"))
+            in {
+                str(job["id"])
+                for job in getattr(current_store, "scheduled_jobs", {}).values()
+                if job.get("id") is not None
+                and (not product_ids or job.get("product_id") in product_ids)
+            }
         ],
         "tasks": tasks,
         "task_by_id": {str(task["id"]): task for task in tasks if task.get("id") is not None},
@@ -113,6 +138,8 @@ def _assistant_tool_intents(message: str) -> list[str]:
             if _code_inspection_draft_requested(normalized)
             else "scheduled_job_draft",
         )
+    if _scheduled_job_diagnostic_requested(normalized):
+        intents.append("scheduled_job_diagnostic")
     keyword_map = [
         (("进展", "进度", "全链路", "项目", "开发情况", "progress"), "delivery_progress"),
         (("待确认", "review", "评审", "确认"), "pending_reviews"),
@@ -127,6 +154,18 @@ def _assistant_tool_intents(message: str) -> list[str]:
     if not intents:
         intents = ["delivery_progress", "pending_reviews", "bugs"]
     return _unique(intents)[:4]
+
+
+def _scheduled_job_diagnostic_requested(normalized_message: str) -> bool:
+    has_diagnostic_intent = any(
+        keyword in normalized_message
+        for keyword in ("为什么", "原因", "失败", "诊断", "排查", "failed", "failure", "diagnose")
+    )
+    has_scheduled_job_context = any(
+        keyword in normalized_message
+        for keyword in ("定时任务", "定时作业", "作业", "任务", "scheduled job", "run")
+    )
+    return has_diagnostic_intent and has_scheduled_job_context
 
 
 def _scheduled_job_draft_requested(normalized_message: str) -> bool:
@@ -369,6 +408,168 @@ def _bugs_tool(context: dict[str, Any], *, limit: int) -> dict[str, Any]:
         },
         "tool": "assistant.bugs",
     }
+
+
+def _scheduled_job_diagnostic_tool(
+    context: dict[str, Any],
+    *,
+    limit: int,
+    references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    referenced_run_ids = [
+        str(reference["id"])
+        for reference in references
+        if reference.get("type") == "scheduled_job_run" and reference.get("id")
+    ]
+    runs = context["scheduled_job_runs"]
+    if referenced_run_ids:
+        run_id_set = set(referenced_run_ids)
+        candidate_runs = [run for run in runs if str(run.get("id")) in run_id_set]
+    else:
+        candidate_runs = [run for run in runs if run.get("status") == "failed"]
+    jobs_by_id = {
+        str(job["id"]): job
+        for job in context["scheduled_jobs"]
+        if job.get("id") is not None
+    }
+    plugin_logs_by_run_id = {
+        str(log.get("scheduled_job_run_id")): log
+        for log in context["plugin_invocation_logs"]
+        if log.get("scheduled_job_run_id") is not None
+    }
+    model_logs_by_id = {
+        str(log.get("id")): log
+        for log in context["model_gateway_logs"]
+        if log.get("id") is not None
+    }
+    items: list[dict[str, Any]] = []
+    for run in _latest(candidate_runs)[:limit]:
+        run_id = str(run["id"])
+        job = jobs_by_id.get(str(run.get("scheduled_job_id"))) or {}
+        stages = _scheduled_job_diagnostic_stages(
+            run,
+            model_logs_by_id=model_logs_by_id,
+            plugin_log=plugin_logs_by_run_id.get(run_id),
+        )
+        title = (
+            f"{job.get('name') or run.get('scheduled_job_id') or run_id} / "
+            f"{run.get('status') or 'unknown'}"
+        )
+        items.append(
+            {
+                "completed_at": run.get("completed_at"),
+                "duration_ms": run.get("duration_ms"),
+                "error_message": run.get("error_message"),
+                "id": run_id,
+                "job_name": job.get("name"),
+                "scheduled_job_id": run.get("scheduled_job_id"),
+                "stages": stages,
+                "started_at": run.get("started_at"),
+                "status": run.get("status"),
+                "title": title,
+                "url": f"/tasks/scheduled-jobs?run_id={run_id}",
+            }
+        )
+    return {
+        "intent": "scheduled_job_diagnostic",
+        "items": items,
+        "references": _references("scheduled_job_run", items),
+        "summary": {
+            "failed_count": len([item for item in items if item.get("status") == "failed"]),
+            "run_count": len(items),
+        },
+        "tool": "assistant.scheduled_job_diagnostic",
+    }
+
+
+def _scheduled_job_diagnostic_stages(
+    run: dict[str, Any],
+    *,
+    model_logs_by_id: dict[str, dict[str, Any]],
+    plugin_log: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    result_summary = (
+        run.get("result_summary") if isinstance(run.get("result_summary"), dict) else {}
+    )
+    raw_nodes = (
+        result_summary.get("execution_nodes")
+        if isinstance(result_summary.get("execution_nodes"), dict)
+        else {}
+    )
+    stage_specs = [
+        ("data_connection", ("data_connection", "collector", "plugin_fetch")),
+        ("ai_processing", ("ai_processing", "skill_processing", "model_gateway")),
+        ("result_action", ("result_action", "writeback", "plugin_write")),
+    ]
+    stages: list[dict[str, Any]] = []
+    for stage_name, aliases in stage_specs:
+        node = next(
+            (
+                raw_nodes[alias]
+                for alias in aliases
+                if isinstance(raw_nodes.get(alias), dict)
+            ),
+            {},
+        )
+        log_id = _diagnostic_log_id(stage_name, node, plugin_log=plugin_log)
+        if stage_name == "ai_processing" and log_id in model_logs_by_id:
+            model_log = model_logs_by_id[log_id]
+            node = {
+                **node,
+                "status": node.get("status") or model_log.get("status"),
+                "summary": node.get("summary")
+                or (
+                    f"模型 {model_log.get('model') or 'unknown'} "
+                    f"调用{model_log.get('status') or 'unknown'}"
+                ),
+            }
+        stages.append(
+            {
+                "error_message": node.get("error_message"),
+                "log_id": log_id,
+                "stage": stage_name,
+                "status": node.get("status") or _infer_stage_status(stage_name, run, plugin_log),
+                "summary": node.get("summary") or _default_stage_summary(stage_name, run),
+            }
+        )
+    return stages
+
+
+def _diagnostic_log_id(
+    stage_name: str,
+    node: dict[str, Any],
+    *,
+    plugin_log: dict[str, Any] | None,
+) -> str | None:
+    if stage_name == "ai_processing":
+        return node.get("model_gateway_log_id") or node.get("log_id")
+    if stage_name == "result_action":
+        return (
+            node.get("plugin_invocation_log_id")
+            or node.get("log_id")
+            or (plugin_log or {}).get("id")
+        )
+    return node.get("log_id")
+
+
+def _infer_stage_status(
+    stage_name: str,
+    run: dict[str, Any],
+    plugin_log: dict[str, Any] | None,
+) -> str:
+    if stage_name == "result_action" and plugin_log:
+        return str(plugin_log.get("status") or run.get("status") or "unknown")
+    if stage_name == "result_action" and run.get("status") == "failed":
+        return "failed"
+    return "unknown"
+
+
+def _default_stage_summary(stage_name: str, run: dict[str, Any]) -> str:
+    if stage_name == "data_connection":
+        return "未记录数据连接节点摘要。"
+    if stage_name == "ai_processing":
+        return "未记录 AI 处理节点摘要。"
+    return str(run.get("error_message") or "未记录结果动作节点摘要。")
 
 
 def _model_gateway_tool(current_store: Any) -> dict[str, Any]:

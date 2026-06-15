@@ -1,10 +1,12 @@
 from io import BytesIO
 from zipfile import ZipFile
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.main import app
+from app.services.dynamic_parameters import dynamic_time_parameters
 from app.services.scheduled_job_execution_engine import ScheduledJobExecutionEngine
 
 client = TestClient(app)
@@ -229,7 +231,10 @@ def test_successful_scheduled_job_run_can_generate_template_and_trace_graph():
     ]
     by_node = {node["id"]: node for node in trace_graph["nodes"]}
     assert by_node["data_connection"]["duration_ms"] >= 0
-    assert by_node["data_connection"]["input"]["week_start"].startswith("2026-06-01T00:00:00")
+    expected_week_start = dynamic_time_parameters(timezone=ZoneInfo("Asia/Shanghai"))[
+        "last_full_week.start"
+    ]
+    assert by_node["data_connection"]["input"]["week_start"] == expected_week_start
     assert by_node["data_connection"]["output"]["records_imported"] == 2
     assert by_node["skill_processing"]["retry_count"] == 2
     assert by_node["result_action"]["error"] is None

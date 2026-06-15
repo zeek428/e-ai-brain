@@ -132,7 +132,7 @@ function activeMentionQuery(value: string) {
   if (tail.includes('\n')) {
     return undefined;
   }
-  const query = tail.trim();
+  const query = tail.trim().split(/\s+/)[0];
   return query.length ? query : undefined;
 }
 
@@ -147,6 +147,26 @@ function draftStatusLabel(status?: string) {
     return { color: 'red', text: '失败' };
   }
   return { color: 'blue', text: '待确认' };
+}
+
+function referenceTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    ai_agent: 'AI角色',
+    ai_skill: 'AI能力',
+    ai_task: '任务',
+    bug: '缺陷',
+    code_review_report: '代码评审',
+    human_review: '确认',
+    iteration_version: '迭代',
+    knowledge_deposit: '知识沉淀',
+    knowledge_document: '知识文档',
+    plugin_action: '插件动作',
+    product: '产品',
+    requirement: '需求',
+    scheduled_job: '定时作业',
+    scheduled_job_run: '运行记录',
+  };
+  return labels[type] ?? type;
 }
 
 function storeScheduledJobDraft(draft: AssistantToolResultItem) {
@@ -496,7 +516,6 @@ export default function AssistantPage() {
     fetchAssistantReferenceCandidates({
       limit: 6,
       query,
-      type: 'knowledge_document',
     })
       .then((items) => {
         if (!didCancel) {
@@ -859,6 +878,7 @@ export default function AssistantPage() {
                   onClose={() => removeSelectedReference(reference)}
                 >
                   {reference.title}
+                  <Text type="secondary"> {referenceTypeLabel(reference.type)}</Text>
                 </Tag>
               ))}
             </div>
@@ -873,7 +893,8 @@ export default function AssistantPage() {
                   size="small"
                   onClick={() => addSelectedReference(reference)}
                 >
-                  {reference.title}
+                  <span className="assistant-reference-candidate-title">{reference.title}</span>
+                  <Tag color="default">{referenceTypeLabel(reference.type)}</Tag>
                 </Button>
               ))}
             </div>

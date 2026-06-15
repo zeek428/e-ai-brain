@@ -703,7 +703,7 @@ body {
   max-width: 260px;
 }
 
-.assistant-reference-candidates .ant-btn > span:last-child {
+.assistant-reference-candidate-title {
   overflow: hidden;
   text-overflow: ellipsis;
 }

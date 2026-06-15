@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.305 |
+| 功能版本 | v1.1.306 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.306 | 2026-06-15 | AI 助手引用候选/解析扩展定时作业、运行记录、插件动作、AI角色和 Skill；聊天工具结果新增 `assistant.scheduled_job_diagnostic` 运行失败诊断 | Codex |
 | v1.1.305 | 2026-06-14 | AI 助手 API 落地显式知识引用和服务端动作草案：聊天请求支持 `references`，新增引用候选/解析接口和 `/api/assistant/action-drafts` 创建、查询、确认、取消接口 | Codex |
 | v1.1.304 | 2026-06-14 | MaxCompute 从官方标准插件与官方动作模板目录移除，历史官方 MaxCompute 插件自动降级为普通 HTTP 插件；连接编辑不再展示项目与表配置 schema | Codex |
 | v1.1.303 | 2026-06-14 | GitLab 官方连接表单改为单字段“GitLab 地址”，支持本地自建 GitLab 项目 URL，保存时自动同步 `endpoint_url` 并解析 `request_config.query.project_id/project_path/api_version`，用户不再手工填写 Project ID / Group ID / API 版本 | Codex |
@@ -542,7 +543,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题。 |
-| Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；首批落地 `knowledge_document`。 |
+| Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；覆盖业务对象、可读知识文档和管理员可见的定时作业/运行、插件动作、AI角色、Skill。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
 | Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持定时作业、插件连接和动作配置。 |
 | Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情。 |
@@ -1344,14 +1345,14 @@ POST /api/assistant/chat
 }
 ```
 
-助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway` 和 `assistant.action_draft`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit` 和已落地的 `knowledge_document`。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
+助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft` 和 `assistant.scheduled_job_diagnostic`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_document`，以及管理员可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
 
-显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。当前已落地 `knowledge_document` 引用：候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。未授权、不可读、不可检索或不存在的引用返回 `404 REFERENCE_NOT_FOUND`，不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
+显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。`knowledge_document` 候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。`scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent` 和 `ai_skill` 属于管理员运维配置引用，非管理员候选返回空集合，解析返回 `404 REFERENCE_NOT_FOUND`。未授权、不可读、不可检索或不存在的引用不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
 
 `@` 引用候选：
 
 ```http
-GET /api/assistant/reference-candidates?query=反馈&type=knowledge_document&product_id=product_001&limit=10
+GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limit=10
 ```
 
 响应：
@@ -1366,9 +1367,44 @@ GET /api/assistant/reference-candidates?query=反馈&type=knowledge_document&pro
       "url": "/knowledge/documents?document_id=knowledge_doc_001",
       "chunk_count": 12,
       "index_status": "vector_indexed"
+    },
+    {
+      "id": "scheduled_job_run_001",
+      "type": "scheduled_job_run",
+      "title": "每周反馈洞察定时作业 / failed",
+      "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_001"
     }
   ],
-  "total": 1
+  "total": 2
+}
+```
+
+`type` 仍可选传，用于限定候选类型；不传时按权限返回混合候选。管理员可得到配置/运行类候选，普通用户只能得到业务对象和可读知识文档。
+
+当聊天消息显式引用 `scheduled_job_run` 且问题包含失败、原因、诊断或排查意图时，响应中的 `message.tool_results[]` 会包含：
+
+```json
+{
+  "tool": "assistant.scheduled_job_diagnostic",
+  "intent": "scheduled_job_diagnostic",
+  "summary": {"run_count": 1, "failed_count": 1},
+  "items": [
+    {
+      "id": "scheduled_job_run_001",
+      "scheduled_job_id": "scheduled_job_001",
+      "status": "failed",
+      "title": "每周反馈洞察定时作业 / failed",
+      "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_001",
+      "stages": [
+        {"stage": "data_connection", "status": "succeeded", "summary": "读取 128 条反馈", "error_message": null, "log_id": null},
+        {"stage": "ai_processing", "status": "succeeded", "summary": "生成 6 条洞察", "error_message": null, "log_id": "model_gateway_log_001"},
+        {"stage": "result_action", "status": "failed", "summary": "写入反馈洞察表失败", "error_message": "HTTP 500", "log_id": "plugin_invocation_log_001"}
+      ]
+    }
+  ],
+  "references": [
+    {"type": "scheduled_job_run", "id": "scheduled_job_run_001", "title": "每周反馈洞察定时作业 / failed", "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_001"}
+  ]
 }
 ```
 

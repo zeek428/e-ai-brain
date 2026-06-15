@@ -74,6 +74,114 @@ def seed_assistant_knowledge_reference_documents() -> None:
     }
 
 
+def seed_assistant_operational_references() -> None:
+    now = "2026-06-14T09:30:00+00:00"
+    app.state.store.ai_agents["ai_agent_feedback_ops"] = {
+        "brain_app_id": "rd_brain",
+        "code": "feedback_ops",
+        "created_at": now,
+        "description": "负责用户反馈洞察和运行诊断。",
+        "id": "ai_agent_feedback_ops",
+        "name": "反馈洞察 AI 角色",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.ai_skills["ai_skill_feedback_summary"] = {
+        "brain_app_id": "rd_brain",
+        "code": "feedback_summary",
+        "created_at": now,
+        "description": "汇总反馈并生成洞察。",
+        "id": "ai_skill_feedback_summary",
+        "name": "反馈洞察 Skill",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.plugin_actions["plugin_action_feedback_write"] = {
+        "action_type": "http_request",
+        "code": "feedback_write",
+        "created_at": now,
+        "id": "plugin_action_feedback_write",
+        "name": "反馈洞察写入动作",
+        "plugin_id": "plugin_http",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.scheduled_jobs["scheduled_job_feedback_weekly"] = {
+        "agent_id": "ai_agent_feedback_ops",
+        "created_at": now,
+        "enabled": True,
+        "execution_mode": "ai_assisted",
+        "id": "scheduled_job_feedback_weekly",
+        "job_type": "user_feedback_insight",
+        "name": "每周反馈洞察定时作业",
+        "plugin_action_id": "plugin_action_feedback_write",
+        "product_id": None,
+        "schedule_type": "cron",
+        "skill_ids": ["ai_skill_feedback_summary"],
+        "source_system": "ai-assistant-test",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.scheduled_job_runs["scheduled_job_run_feedback_failed"] = {
+        "completed_at": "2026-06-14T09:35:00+00:00",
+        "duration_ms": 4200,
+        "error_message": "结果写入动作返回 500",
+        "id": "scheduled_job_run_feedback_failed",
+        "result_summary": {
+            "execution_nodes": {
+                "data_connection": {
+                    "status": "succeeded",
+                    "summary": "从 MaxCompute 读取 128 条反馈。",
+                },
+                "ai_processing": {
+                    "model_gateway_log_id": "model_gateway_log_feedback_failed",
+                    "status": "succeeded",
+                    "summary": "生成 6 条洞察。",
+                },
+                "result_action": {
+                    "error_message": "HTTP 500: downstream write failed",
+                    "plugin_invocation_log_id": "plugin_invocation_log_feedback_failed",
+                    "status": "failed",
+                    "summary": "写入反馈洞察表失败。",
+                },
+            },
+            "records_imported": 128,
+        },
+        "scheduled_job_id": "scheduled_job_feedback_weekly",
+        "started_at": "2026-06-14T09:31:00+00:00",
+        "status": "failed",
+        "trigger_type": "manual",
+        "updated_at": "2026-06-14T09:35:00+00:00",
+    }
+    app.state.store.plugin_invocation_logs["plugin_invocation_log_feedback_failed"] = {
+        "action_id": "plugin_action_feedback_write",
+        "connection_id": "plugin_connection_maxcompute",
+        "created_at": "2026-06-14T09:34:58+00:00",
+        "duration_ms": 1800,
+        "error_message": "HTTP 500: downstream write failed",
+        "id": "plugin_invocation_log_feedback_failed",
+        "plugin_id": "plugin_http",
+        "request_summary": {"method": "POST", "path": "/feedback/insights"},
+        "response_summary": {"status_code": 500},
+        "scheduled_job_id": "scheduled_job_feedback_weekly",
+        "scheduled_job_run_id": "scheduled_job_run_feedback_failed",
+        "status": "failed",
+        "trigger_type": "scheduled_job",
+    }
+    app.state.store.model_gateway_logs.append(
+        {
+            "created_at": "2026-06-14T09:33:00+00:00",
+            "id": "model_gateway_log_feedback_failed",
+            "latency_ms": 900,
+            "model": "test-chat-model",
+            "provider": "test",
+            "purpose": "scheduled_job.ai_processing",
+            "status": "succeeded",
+            "tokens": {"completion": 80, "prompt": 200, "total": 280},
+        }
+    )
+
+
 def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents():
     headers = auth_headers("reviewer@example.com", "reviewer123")
     app.state.store.reset()
@@ -98,6 +206,85 @@ def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents()
             "url": "/knowledge/documents?document_id=knowledge_payment_runbook",
         }
     ]
+
+
+def test_ai_assistant_reference_candidates_include_admin_operational_objects():
+    headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_operational_references()
+
+    response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "反馈", "limit": 20},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    reference_by_type = {item["type"]: item for item in items}
+    assert reference_by_type["scheduled_job"] == {
+        "id": "scheduled_job_feedback_weekly",
+        "title": "每周反馈洞察定时作业",
+        "type": "scheduled_job",
+        "url": "/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly",
+    }
+    assert reference_by_type["scheduled_job_run"] == {
+        "id": "scheduled_job_run_feedback_failed",
+        "title": "每周反馈洞察定时作业 / failed",
+        "type": "scheduled_job_run",
+        "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
+    }
+    assert reference_by_type["plugin_action"]["id"] == "plugin_action_feedback_write"
+    assert reference_by_type["ai_agent"]["id"] == "ai_agent_feedback_ops"
+    assert reference_by_type["ai_skill"]["id"] == "ai_skill_feedback_summary"
+
+    reviewer_response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "反馈", "type": "scheduled_job", "limit": 20},
+        headers=reviewer_headers,
+    )
+    assert reviewer_response.status_code == 200
+    assert reviewer_response.json()["data"] == {"items": [], "total": 0}
+
+
+def test_ai_assistant_resolve_operational_reference_requires_admin_role():
+    headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_operational_references()
+
+    response = client.post(
+        "/api/assistant/references/resolve",
+        json={
+            "references": [
+                {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
+            ]
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["items"] == [
+        {
+            "id": "scheduled_job_run_feedback_failed",
+            "title": "每周反馈洞察定时作业 / failed",
+            "type": "scheduled_job_run",
+            "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
+        }
+    ]
+
+    forbidden_response = client.post(
+        "/api/assistant/references/resolve",
+        json={
+            "references": [
+                {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
+            ]
+        },
+        headers=reviewer_headers,
+    )
+    assert forbidden_response.status_code == 404
+    assert forbidden_response.json()["detail"]["code"] == "REFERENCE_NOT_FOUND"
 
 
 def test_ai_assistant_resolve_rejects_unreadable_knowledge_reference():
@@ -214,6 +401,96 @@ def test_ai_assistant_chat_injects_selected_knowledge_chunks_without_logging_con
     ).json()["data"]["items"]
     assert logs[0]["purpose"] == "assistant_chat"
     assert "支付页提交无响应" not in str(logs[0])
+
+
+def test_ai_assistant_chat_returns_scheduled_job_run_diagnostic(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "这次失败发生在结果动作写入阶段。",
+                                        "suggestions": ["检查插件动作返回 500 的下游服务"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "为什么这次定时任务失败？",
+            "references": [
+                {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    diagnostic = next(
+        result
+        for result in message["tool_results"]
+        if result["tool"] == "assistant.scheduled_job_diagnostic"
+    )
+    assert diagnostic["summary"] == {"failed_count": 1, "run_count": 1}
+    assert diagnostic["references"] == [
+        {
+            "id": "scheduled_job_run_feedback_failed",
+            "title": "每周反馈洞察定时作业 / failed",
+            "type": "scheduled_job_run",
+            "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
+        }
+    ]
+    assert diagnostic["items"][0]["stages"] == [
+        {
+            "error_message": None,
+            "log_id": None,
+            "stage": "data_connection",
+            "status": "succeeded",
+            "summary": "从 MaxCompute 读取 128 条反馈。",
+        },
+        {
+            "error_message": None,
+            "log_id": "model_gateway_log_feedback_failed",
+            "stage": "ai_processing",
+            "status": "succeeded",
+            "summary": "生成 6 条洞察。",
+        },
+        {
+            "error_message": "HTTP 500: downstream write failed",
+            "log_id": "plugin_invocation_log_feedback_failed",
+            "stage": "result_action",
+            "status": "failed",
+            "summary": "写入反馈洞察表失败。",
+        },
+    ]
 
 
 def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():

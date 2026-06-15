@@ -291,6 +291,7 @@ def _assistant_chat_messages(
     payload: AssistantChatRequest,
     resolved_references: dict[str, Any],
     tool_results: list[dict[str, Any]],
+    user: dict[str, Any],
 ) -> list[dict[str, str]]:
     default_gateway = _default_model_gateway_config(current_store)
     system_context = build_assistant_system_context(
@@ -306,6 +307,7 @@ def _assistant_chat_messages(
         current_store,
         message=payload.message,
         product_id=payload.product_id,
+        user=user,
     )
     system_context["reference_candidates"] = _merge_assistant_references(
         resolved_references["items"],
@@ -345,11 +347,6 @@ def _call_model_gateway_for_assistant_chat(
     )
     provider = config["provider"]
     model = config["default_chat_model"]
-    tool_results = assistant_tool_results(
-        current_store,
-        message=payload.message,
-        product_id=payload.product_id,
-    )
     try:
         resolved_references = resolve_assistant_references(
             current_store,
@@ -358,12 +355,19 @@ def _call_model_gateway_for_assistant_chat(
         )
     except AssistantReferenceError as exc:
         raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
+    tool_results = assistant_tool_results(
+        current_store,
+        message=payload.message,
+        product_id=payload.product_id,
+        references=resolved_references["items"],
+    )
     messages = _assistant_chat_messages(
         current_store,
         model_gateway_status=model_gateway_status,
         payload=payload,
         resolved_references=resolved_references,
         tool_results=tool_results,
+        user=user,
     )
     body = {
         "messages": messages,
@@ -405,6 +409,7 @@ def _call_model_gateway_for_assistant_chat(
                 current_store,
                 message=payload.message,
                 product_id=payload.product_id,
+                user=user,
             ),
         )
         assistant_output["references"] = references

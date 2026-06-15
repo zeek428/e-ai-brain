@@ -10,6 +10,14 @@ from app.services.knowledge_documents import (
 )
 from app.services.knowledge_search import KNOWLEDGE_SEARCHABLE_STATUSES
 
+OPERATIONAL_REFERENCE_TYPES = {
+    "ai_agent",
+    "ai_skill",
+    "plugin_action",
+    "scheduled_job",
+    "scheduled_job_run",
+}
+
 
 class AssistantReferenceError(Exception):
     def __init__(self, status_code: int, code: str, message: str) -> None:
@@ -24,7 +32,9 @@ def assistant_reference_candidates(
     *,
     message: str,
     product_id: str | None,
+    filter_by_query: bool = False,
     limit: int = 6,
+    user: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     products = list(current_store.products.values())
     if product_id:
@@ -66,6 +76,17 @@ def assistant_reference_candidates(
         for deposit in current_store.knowledge_deposits.values()
         if str(deposit.get("ai_task_id")) in task_ids
     ]
+    scheduled_jobs = [
+        job
+        for job in getattr(current_store, "scheduled_jobs", {}).values()
+        if not product_ids or job.get("product_id") in product_ids
+    ]
+    scheduled_job_ids = {str(job["id"]) for job in scheduled_jobs if job.get("id") is not None}
+    scheduled_job_runs = [
+        run
+        for run in getattr(current_store, "scheduled_job_runs", {}).values()
+        if not scheduled_job_ids or str(run.get("scheduled_job_id")) in scheduled_job_ids
+    ]
     pools: list[tuple[str, list[dict[str, Any]]]] = [
         ("product", products),
         ("iteration_version", versions),
@@ -76,6 +97,16 @@ def assistant_reference_candidates(
         ("code_review_report", code_reviews),
         ("knowledge_deposit", deposits),
     ]
+    if _user_can_reference_operational(user):
+        pools.extend(
+            [
+                ("scheduled_job", scheduled_jobs),
+                ("scheduled_job_run", scheduled_job_runs),
+                ("plugin_action", list(getattr(current_store, "plugin_actions", {}).values())),
+                ("ai_agent", list(getattr(current_store, "ai_agents", {}).values())),
+                ("ai_skill", list(getattr(current_store, "ai_skills", {}).values())),
+            ]
+        )
     references: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     preferred_types = _assistant_reference_type_preferences(message)
@@ -84,8 +115,24 @@ def assistant_reference_candidates(
         key=lambda item: preferred_types.get(item[0], len(preferred_types) + 10),
     )
     for entity_type, items in ordered_pools:
-        for item in sorted(items, key=_assistant_reference_sort_key, reverse=True)[:3]:
-            reference = _assistant_reference_for_entity(entity_type, item)
+        pool_items = sorted(items, key=_assistant_reference_sort_key, reverse=True)
+        if filter_by_query:
+            pool_items = [
+                item
+                for item in pool_items
+                if _assistant_reference_matches_query(
+                    entity_type,
+                    item,
+                    message,
+                    current_store=current_store,
+                )
+            ]
+        for item in pool_items[:3]:
+            reference = _assistant_reference_for_entity(
+                entity_type,
+                item,
+                current_store=current_store,
+            )
             if reference is None:
                 continue
             key = (reference["type"], reference["id"])
@@ -109,6 +156,10 @@ def assistant_reference_candidates_response(
 ) -> dict[str, Any]:
     normalized_type = (reference_type or "").strip() or None
     normalized_limit = min(max(limit, 1), 20)
+    if normalized_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational(
+        user,
+    ):
+        return {"items": [], "total": 0}
     if normalized_type == "knowledge_document":
         items = _knowledge_document_reference_candidates(
             current_store,
@@ -122,9 +173,11 @@ def assistant_reference_candidates_response(
             reference
             for reference in assistant_reference_candidates(
                 current_store,
+                filter_by_query=True,
                 limit=normalized_limit,
                 message=message,
                 product_id=product_id,
+                user=user,
             )
             if reference["type"] == normalized_type
         ]
@@ -138,9 +191,11 @@ def assistant_reference_candidates_response(
         ),
         assistant_reference_candidates(
             current_store,
+            filter_by_query=True,
             limit=normalized_limit,
             message=message,
             product_id=product_id,
+            user=user,
         ),
         limit=normalized_limit,
     )
@@ -184,6 +239,10 @@ def resolve_assistant_references(
             )
             continue
         entity_reference = _entity_reference_for_id(current_store, reference_type, reference_id)
+        if reference_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational(
+            user,
+        ):
+            entity_reference = None
         if entity_reference is None:
             raise AssistantReferenceError(
                 404,
@@ -465,8 +524,13 @@ def _entity_reference_for_id(
         "human_review": "human_reviews",
         "iteration_version": "product_versions",
         "knowledge_deposit": "knowledge_deposits",
+        "plugin_action": "plugin_actions",
         "product": "products",
         "requirement": "requirements",
+        "scheduled_job": "scheduled_jobs",
+        "scheduled_job_run": "scheduled_job_runs",
+        "ai_agent": "ai_agents",
+        "ai_skill": "ai_skills",
     }
     collection_name = collection_map.get(entity_type)
     if collection_name is None:
@@ -474,7 +538,7 @@ def _entity_reference_for_id(
     item = getattr(current_store, collection_name, {}).get(item_id)
     if item is None:
         return None
-    return _assistant_reference_for_entity(entity_type, item)
+    return _assistant_reference_for_entity(entity_type, item, current_store=current_store)
 
 
 def _merge_reference_lists(
@@ -504,6 +568,13 @@ def _assistant_reference_type_preferences(message: str) -> dict[str, int]:
         (("需求", "requirement"), ["requirement"]),
         (("bug", "缺陷", "阻塞"), ["bug", "requirement"]),
         (("任务", "task"), ["ai_task", "human_review"]),
+        (
+            ("定时", "作业", "scheduled", "schedule"),
+            ["scheduled_job_run", "scheduled_job"],
+        ),
+        (("插件动作", "动作", "plugin action"), ["plugin_action"]),
+        (("ai角色", "agent", "角色"), ["ai_agent"]),
+        (("skill", "能力"), ["ai_skill"]),
         (("review", "确认", "评审"), ["human_review", "code_review_report", "ai_task"]),
         (("迭代", "版本", "version"), ["iteration_version", "requirement"]),
         (("产品", "product"), ["product"]),
@@ -523,6 +594,11 @@ def _assistant_reference_type_preferences(message: str) -> dict[str, int]:
             "code_review_report",
             "knowledge_deposit",
             "product",
+            "scheduled_job_run",
+            "scheduled_job",
+            "plugin_action",
+            "ai_agent",
+            "ai_skill",
         ]
     )
     preferences: dict[str, int] = {}
@@ -544,26 +620,27 @@ def _assistant_reference_sort_key(item: dict[str, Any]) -> str:
 def _assistant_reference_for_entity(
     entity_type: str,
     item: dict[str, Any],
+    *,
+    current_store: Any | None = None,
 ) -> dict[str, str] | None:
     item_id = item.get("id")
     if item_id is None:
         return None
-    title = (
-        item.get("title")
-        or item.get("name")
-        or item.get("summary")
-        or item.get("code")
-        or str(item_id)
-    )
+    title = _assistant_reference_title(entity_type, item, current_store=current_store)
     route_map = {
         "ai_task": f"/delivery/rd-tasks?task_id={item_id}",
+        "ai_agent": f"/tasks/ai-capabilities?agent_id={item_id}",
+        "ai_skill": f"/tasks/ai-capabilities?skill_id={item_id}",
         "bug": f"/delivery/bugs?bug_id={item_id}",
         "code_review_report": f"/delivery/rd-tasks?code_review_report_id={item_id}",
         "human_review": f"/delivery/rd-tasks?review_id={item_id}",
         "iteration_version": f"/delivery/versions?version_id={item_id}",
         "knowledge_deposit": f"/knowledge/documents?deposit_id={item_id}",
+        "plugin_action": f"/tasks/plugins?action_id={item_id}",
         "product": f"/assets/products?product_id={item_id}",
         "requirement": f"/delivery/requirements?requirement_id={item_id}",
+        "scheduled_job": f"/tasks/scheduled-jobs?job_id={item_id}",
+        "scheduled_job_run": f"/tasks/scheduled-jobs?run_id={item_id}",
     }
     return {
         "id": str(item_id),
@@ -571,3 +648,59 @@ def _assistant_reference_for_entity(
         "type": entity_type,
         "url": route_map[entity_type],
     }
+
+
+def _assistant_reference_title(
+    entity_type: str,
+    item: dict[str, Any],
+    *,
+    current_store: Any | None,
+) -> str:
+    if entity_type == "scheduled_job_run":
+        job_id = item.get("scheduled_job_id")
+        job = (
+            getattr(current_store, "scheduled_jobs", {}).get(str(job_id))
+            if current_store is not None and job_id is not None
+            else None
+        )
+        job_title = job.get("name") if isinstance(job, dict) else None
+        return f"{job_title or job_id or item.get('id')} / {item.get('status') or 'unknown'}"
+    return str(
+        item.get("title")
+        or item.get("name")
+        or item.get("summary")
+        or item.get("code")
+        or item.get("id")
+        or ""
+    )
+
+
+def _assistant_reference_matches_query(
+    entity_type: str,
+    item: dict[str, Any],
+    query: str,
+    *,
+    current_store: Any | None,
+) -> bool:
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return True
+    title = _assistant_reference_title(entity_type, item, current_store=current_store)
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            item.get("id"),
+            item.get("code"),
+            item.get("name"),
+            item.get("status"),
+            item.get("summary"),
+            item.get("title"),
+            title,
+        )
+    ).lower()
+    return normalized_query in haystack
+
+
+def _user_can_reference_operational(user: dict[str, Any] | None) -> bool:
+    roles = set(user.get("roles") or []) if isinstance(user, dict) else set()
+    return "admin" in roles

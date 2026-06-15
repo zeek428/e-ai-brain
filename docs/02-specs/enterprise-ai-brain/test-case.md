@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.470 |
+| 功能版本 | v1.1.471 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.471 | 2026-06-15 | 补充 AI 助手显式引用扩展和定时作业运行失败诊断验收：管理员可引用作业/运行/动作/AI角色/Skill，普通用户被权限过滤 | Codex |
 | v1.1.470 | 2026-06-14 | 补充 AI 助手 P0 落地验收：`@` 知识文档候选/解析、知识 chunk 注入不入日志、服务端动作草案确认/取消和前端草案卡片操作 | Codex |
 | v1.1.469 | 2026-06-14 | 调整 MaxCompute 插件验收：MaxCompute 不再属于官方标准插件和官方动作模板，历史官方插件降级为普通 HTTP 插件，连接编辑不展示项目与表配置 | Codex |
 | v1.1.468 | 2026-06-14 | 补充 GitLab 本地地址验收：新增/编辑 GitLab 连接只填写“GitLab 地址”，支持本地自建 GitLab 项目 URL，保存时自动同步 Endpoint 并解析 project_id/project_path，Project ID / Group ID / API 版本不再手工填写 | Codex |
@@ -569,7 +570,7 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 
 | 编号 | 阶段 | 优先级 | 用例 | 预期 |
 |------|------|--------|------|------|
-| TC-AIBRAIN-ASSISTANT-FUNC-010 | v1.1 | P0 | 在 AI 助手输入框通过 `@` 搜索知识文档、动作、AI角色/Skill 和定时作业 | 候选列表只展示当前用户有权读取或管理的对象，选择后显示引用 chip，并随聊天请求提交结构化 `references`。 |
+| TC-AIBRAIN-ASSISTANT-FUNC-010 | v1.1 | P0 | 在 AI 助手输入框通过 `@` 搜索知识文档、业务对象、动作、AI角色/Skill、定时作业和运行记录 | 候选列表只展示当前用户有权读取或管理的对象；普通用户可见业务对象和可读知识文档，管理员额外可见 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`；选择后显示带类型标签的引用 chip，并随聊天请求提交结构化 `references`。 |
 | TC-AIBRAIN-ASSISTANT-BOUND-011 | v1.1 | P0 | 用户提交无权、已删除或不可检索知识文档引用 | 后端拒绝该引用进入模型上下文，响应返回结构化错误；模型日志不出现该知识正文。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-012 | v1.1 | P0 | 通过 `@knowledge_document` 聊天问答 | 后端按权限读取可检索 chunk，限量注入模型请求；助手回复包含知识来源引用，历史消息可恢复引用 metadata。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-013 | v1.1 | P0 | 用户要求创建 AI 能力、插件连接、动作或定时作业 | 系统只生成 `assistant_action_draft` 草案和风险/差异摘要；首批周反馈洞察定时作业草案通过 `assistant.action_draft` tool result 返回 `create_scheduled_job` payload，自动引用可用产品、数据连接、AI 模型、AI角色、Skill、知识文档、Cron 和动态变量映射；代码巡检定时作业草案自动引用可用产品、GitHub/GitLab 代码巡检动作、同插件连接、Cron 和写报告/建 Bug/通知默认结果动作；当用户要求创建代码巡检定时作业但系统缺少可用 GitHub/GitLab 连接或动作时，`assistant.action_draft.items[]` 必须按连接、动作、作业顺序返回 `create_plugin_connection`、`create_plugin_action` 和 `create_scheduled_job` 草案，动作 payload 和作业 payload 必须包含 `assistant_prerequisite_draft_ids`，助手卡片展示“前置草案”，用户确认前不得写入任何配置；当用户明确要求 AI/大模型分析代码巡检结果时，草案必须设置 `execution_mode=ai_generated` 并带出可用 `model_gateway_config_id`、`agent_id` 和 `skill_ids`；GitHub/GitLab/邮箱连接草案必须通过 `assistant.action_draft` 返回 `create_plugin_connection` payload，自动带出官方插件、Endpoint、环境、认证方式、Params 和 Headers；GitHub/GitLab 代码巡检动作和邮箱通知动作草案必须通过 `assistant.action_draft` 返回 `create_plugin_action` payload，自动带出官方插件、可用连接、请求路径、Params/Headers 和结果映射，其中邮箱通知动作草案必须使用 `result_mapping.write_target=email_notifications` 并包含收件人、主题、投递状态和消息 ID 路径；助手页面必须把聊天响应和历史消息里的 `assistant.action_draft.items[]` 显示为待确认配置草案卡片，定时作业草案展示标题、风险、作业类型、调度、执行模式、AI 模型、AI角色、Skills、连接、结果动作和前置草案摘要，插件连接草案展示插件、Endpoint、环境、认证方式、Params 和 Headers，动作草案展示动作类型、编码、插件、连接、请求方法、请求路径和中文写入目标，中文写入目标必须从 `/api/system/result-write-targets` 返回的 `form_label/label` 渲染，不得依赖前端本地硬编码映射；点击应用草案后，任务中心 / 定时作业新增表单必须回填作业草案字段，任务中心 / 插件管理新增连接表单必须回填插件连接草案字段，任务中心 / 插件管理新增动作表单必须回填动作草案字段；先应用并保存连接草案后，依赖该草案的动作草案必须自动回填真实 `connection_id`，再应用并保存动作草案后，依赖前置草案的定时作业草案必须自动回填真实 `plugin_connection_id` 和 `plugin_action_id`；用户确认保存定时作业时保留 `{{last_full_week.start}}`、`{{last_full_week.end}}` 等动态变量映射，并在作业 `config_json.assistant_draft` 与 `scheduled_job.created/updated` 审计 payload 中保留草案 ID、来源和标题；未确认前不得写入 `ai_skills`、`ai_agents`、`plugin_connections`、`plugin_actions` 或 `scheduled_jobs`。 |
@@ -580,6 +581,7 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 | TC-AIBRAIN-ASSISTANT-BOUND-017 | v1.1 | P1 | 草案过期、引用失效或确认用户权限变化后再确认 | 确认失败并写入失败审计；不得使用草案生成时的旧权限绕过当前校验。 |
 | TC-AIBRAIN-ASSISTANT-ERR-018 | v1.1 | P1 | 插件连接含密钥、Header、Token 或 Basic 密码时被 `@` 引入聊天 | 传给模型的上下文只能包含脱敏能力摘要；不得包含密钥、完整外部响应或认证 Header 明文。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-019 | v1.1 | P1 | 用户取消助理动作草案 | `POST /api/assistant/action-drafts/{draft_id}/cancel` 将草案状态变为 `cancelled`，记录取消原因和审计，不调用领域 service，不产生业务写入；已取消草案再次确认返回冲突错误。 |
+| TC-AIBRAIN-ASSISTANT-FUNC-020 | v1.1 | P1 | 管理员围绕一次失败的 `@scheduled_job_run` 继续追问失败原因 | 聊天响应包含 `assistant.scheduled_job_diagnostic` 工具结果，按数据连接、AI 处理、结果动作三段返回状态、摘要、错误信息和关联日志 ID；助手回复和历史消息保留该工具结果；模型日志不保存完整插件请求/响应、Prompt、模型输出或密钥。 |
 
 ---
 

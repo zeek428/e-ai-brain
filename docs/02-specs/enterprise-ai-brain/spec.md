@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.363 |
+| 功能版本 | v1.1.364 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.364 | 2026-06-15 | AI 助手显式引用扩展到定时作业、运行记录、插件动作、AI角色和 Skill，并新增定时作业运行失败三段诊断工具结果 | Codex |
 | v1.1.363 | 2026-06-14 | AI 助手工作台 P0 能力落地：`@` 知识文档显式引用、引用候选/解析接口、知识 chunk 注入、服务端动作草案持久化和确认/取消闭环 | Codex |
 | v1.1.362 | 2026-06-14 | MaxCompute 不再作为官方标准插件和官方动作模板维护；历史官方 MaxCompute 自动降级为普通 HTTP 插件，连接编辑仅保留通用配置 | Codex |
 | v1.1.361 | 2026-06-14 | GitLab 官方连接支持本地项目地址单字段配置：页面填写 GitLab 地址，系统自动同步 endpoint 并解析 project_id/project_path，Project ID / Group ID / API 版本不再作为用户手填字段 | Codex |
@@ -399,6 +400,10 @@
 AI 助手正在从只读问答页升级为统一工作台。整体目标仍详见 [AI 助手工作台升级整体方案](assistant-workbench-upgrade-design.md)：用户可在输入框通过 `@` 显式引用产品、需求、AI 任务、Bug、知识空间/目录/文档/chunk、插件、动作、AI角色/Skill、模型网关配置、定时作业和运行实例；后端必须先解析引用、校验权限、构造脱敏上下文，再进入模型网关调用或动作草案生成。知识库引入遵守显式范围、权限过滤和限量注入，完整知识正文不得写入模型日志。
 
 当前 P0 已落地 `knowledge_document` 显式引用：前端在 AI 助手输入框输入 `@` 后调用 `/api/assistant/reference-candidates` 拉取当前用户可读且可检索的知识文档候选，选择后以引用 chip 展示并随 `/api/assistant/chat.references` 提交结构化 ID；后端通过 `/api/assistant/references/resolve` 和聊天前解析流程校验引用，未授权、不可读、不可检索或不存在的文档返回 `REFERENCE_NOT_FOUND`，不得进入模型上下文。聊天调用会把已解析引用写入 `system_context.selected_references`，并按权限读取有限数量的知识 chunk 写入 `system_context.knowledge_context`；助手消息只持久化引用元数据和工具结果，模型日志继续只记录 provider、model、purpose、tokens、latency、status 和 error 等脱敏元数据。
+
+显式引用候选已继续扩展到研发业务对象和管理员运维配置对象：所有助手用户可按产品上下文引用 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit` 和可读 `knowledge_document`；仅管理员可引用 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`。前端 `@` 查询不再固定为知识文档类型，会展示引用类型标签并提交 `{type,id}`；后端候选和解析都按当前用户角色过滤，非管理员提交配置/运行类引用时返回空候选或 `REFERENCE_NOT_FOUND`。
+
+当用户围绕一次 `scheduled_job_run` 追问“为什么失败/如何诊断”时，助手在模型调用前生成 `assistant.scheduled_job_diagnostic` 工具结果。诊断结果按 `data_connection`、`ai_processing`、`result_action` 三段输出状态、摘要、错误信息和关联日志 ID，来源可包括 `scheduled_job_runs.result_summary.execution_nodes`、`plugin_invocation_logs` 和 `model_gateway_logs`。该工具结果会随助手消息 metadata 持久化并进入模型上下文；完整插件请求/响应、Prompt、模型输出、密钥和外部系统 token 不进入模型日志。
 
 助理内的 AI 能力配置、插件管理配置和定时任务配置必须以“动作草案 -> 用户确认 -> 领域 service 执行”的方式实现。模型只能生成配置草案、差异摘要和建议，不能直接写 `ai_skills`、`ai_agents`、`integration_plugins`、`plugin_connections`、`plugin_actions`、`scheduled_jobs` 或触发外部调用。当前首批草案仍由聊天前的确定性工具结果生成 `assistant.action_draft`，包括 `create_scheduled_job`、`create_plugin_connection` 和 `create_plugin_action` 三类动作；服务端在聊天响应阶段把可支持的工具项持久化为 `assistant_action_drafts`，并在工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`，前端助手页据此展示“确认创建”和“取消”按钮。
 

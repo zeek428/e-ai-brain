@@ -18,6 +18,14 @@ class AssistantRepositoryRequestContext:
         self.related_systems: dict[str, dict[str, Any]] = {}
         self.model_gateway_configs: dict[str, dict[str, Any]] = {}
         self.model_gateway_logs: list[dict[str, Any]] = []
+        self.ai_skills: dict[str, dict[str, Any]] = {}
+        self.ai_agents: dict[str, dict[str, Any]] = {}
+        self.integration_plugins: dict[str, dict[str, Any]] = {}
+        self.plugin_connections: dict[str, dict[str, Any]] = {}
+        self.plugin_actions: dict[str, dict[str, Any]] = {}
+        self.plugin_invocation_logs: dict[str, dict[str, Any]] = {}
+        self.scheduled_jobs: dict[str, dict[str, Any]] = {}
+        self.scheduled_job_runs: dict[str, dict[str, Any]] = {}
         self.assistant_conversations: dict[str, dict[str, Any]] = {}
         self.assistant_messages: dict[str, dict[str, Any]] = {}
         self.assistant_action_drafts: dict[str, dict[str, Any]] = {}
@@ -86,6 +94,7 @@ def assistant_source_store(repository: Any, *, user_id: str) -> Any:
         if callable(load_task_rows)
         else AssistantRepositoryRequestContext(repository)
     )
+    _hydrate_assistant_operational_store(source_store, repository)
     conversations = repository.list_assistant_conversations(user_id=user_id)
     source_store.assistant_conversations = {
         str(conversation["id"]): dict(conversation)
@@ -106,6 +115,63 @@ def assistant_source_store(repository: Any, *, user_id: str) -> Any:
                 messages[str(message["id"])] = dict(message)
     source_store.assistant_messages = messages
     return source_store
+
+
+def _hydrate_assistant_operational_store(source_store: Any, repository: Any) -> None:
+    collection_loaders = {
+        "ai_agents": ("list_ai_agents", {"brain_app_id": None, "status": None}),
+        "ai_skills": ("list_ai_skills", {"code": None, "status": None}),
+        "integration_plugins": ("list_plugins", {"protocol": None, "status": None}),
+        "plugin_actions": ("list_plugin_actions", {"plugin_id": None, "status": None}),
+        "plugin_connections": (
+            "list_plugin_connections",
+            {"environment": None, "plugin_id": None, "status": None},
+        ),
+        "plugin_invocation_logs": (
+            "list_plugin_invocation_logs",
+            {
+                "action_id": None,
+                "scheduled_job_id": None,
+                "scheduled_job_run_id": None,
+                "status": None,
+            },
+        ),
+        "scheduled_jobs": (
+            "list_scheduled_jobs",
+            {"enabled": None, "job_type": None, "status": None},
+        ),
+        "scheduled_job_runs": (
+            "list_scheduled_job_runs",
+            {"scheduled_job_id": None, "status": None},
+        ),
+    }
+    for collection_name, (method_name, kwargs) in collection_loaders.items():
+        list_items = getattr(repository, method_name, None)
+        if not callable(list_items):
+            continue
+        try:
+            items = list_items(**kwargs)
+        except TypeError:
+            items = list_items()
+        setattr(
+            source_store,
+            collection_name,
+            {
+                str(item["id"]): dict(item)
+                for item in items
+                if isinstance(item, dict) and item.get("id") is not None
+            },
+        )
+    list_model_gateway_logs = getattr(repository, "list_model_gateway_logs", None)
+    if callable(list_model_gateway_logs):
+        try:
+            source_store.model_gateway_logs = list_model_gateway_logs(
+                ai_task_id=None,
+                purpose=None,
+                status=None,
+            )
+        except TypeError:
+            source_store.model_gateway_logs = list_model_gateway_logs()
 
 
 def assistant_task_source_store(rows: dict[str, Any], *, repository: Any) -> Any:
