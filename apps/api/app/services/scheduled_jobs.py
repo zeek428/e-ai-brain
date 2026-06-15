@@ -36,6 +36,11 @@ from app.services.model_gateway_logging import (
     openai_usage_tokens,
 )
 from app.services.model_gateway_runtime import model_gateway_chat_completions_url
+from app.services.native_code_scanner import (
+    NATIVE_CODE_SCAN_MODE,
+    code_inspection_uses_native_scan,
+    run_native_code_scan,
+)
 from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.plugins import (
     ensure_active_connection,
@@ -86,6 +91,12 @@ SCHEDULED_JOB_RUN_STATUSES = {"cancelled", "failed", "queued", "running", "skipp
 SCHEDULED_JOB_RUN_TERMINAL_STATUSES = {"cancelled", "failed", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TRIGGER_TYPES = {"manual", "manual_rerun", "scheduler"}
 USER_FEEDBACK_INSIGHT_WRITE_TARGETS = {"scheduled_job_result", "user_feedback_insights"}
+CODE_INSPECTION_SCAN_MODES = {
+    "native_full_scan",
+    "sync_existing_alerts",
+    "trigger_platform_scan",
+}
+DEFAULT_CODE_INSPECTION_SCAN_MODE = "sync_existing_alerts"
 DEFAULT_DATA_CONNECTION_POLICY = {
     "failure_policy": "fail_fast",
     "merge_strategy": "append_json_arrays",
@@ -733,6 +744,10 @@ def scheduled_job_config_with_code_inspection_defaults(
     if job_type != "code_repository_inspection":
         return config
 
+    scan_mode = optional_stripped(config.get("scan_mode")) or DEFAULT_CODE_INSPECTION_SCAN_MODE
+    ensure_enum(scan_mode, CODE_INSPECTION_SCAN_MODES, "config_json.scan_mode")
+    config["scan_mode"] = scan_mode
+
     repository_id = optional_stripped(config.get("repository_id"))
     if repository_id is None:
         branch = optional_stripped(config.get("branch"))
@@ -944,12 +959,18 @@ def validate_plugin_refs(
     current_store: Any,
     payload: Any,
 ) -> tuple[str | None, str | None, list[str], list[str]]:
+    native_code_inspection = (
+        effective_scheduled_job_type(payload) == "code_repository_inspection"
+        and code_inspection_uses_native_scan(payload)
+    )
     action_ids = scheduled_job_multi_ids(payload, "plugin_action_ids", "plugin_action_id")
     connection_ids = scheduled_job_multi_ids(
         payload,
         "plugin_connection_ids",
         "plugin_connection_id",
     )
+    if native_code_inspection:
+        return None, None, [], []
     action_id = action_ids[0] if action_ids else None
     connection_id = connection_ids[0] if connection_ids else None
     if action_id is None:
@@ -1386,20 +1407,38 @@ def dry_run_scheduled_job_response(
         payload.plugin_input_mapping or {},
         job,
     )
-    plugin_summary, _plugin_summaries = invoke_job_data_connections(
-        current_store,
-        job=job,
-        resolved_plugin_input_mapping=resolved_input_mapping,
-        run_id=job["id"],
-        trigger_type="manual",
-        user=user,
-    )
+    if code_inspection_uses_native_scan(job):
+        resolved_input_mapping = {
+            "branch": config_json.get("branch"),
+            "repository_id": config_json.get("repository_id"),
+            "scan_mode": NATIVE_CODE_SCAN_MODE,
+        }
+        plugin_summary = run_native_code_scan(
+            current_store,
+            job=job,
+            run_id=job["id"],
+            user=user,
+        )
+    else:
+        plugin_summary, _plugin_summaries = invoke_job_data_connections(
+            current_store,
+            job=job,
+            resolved_plugin_input_mapping=resolved_input_mapping,
+            run_id=job["id"],
+            trigger_type="manual",
+            user=user,
+        )
     output_mapping = resolve_job_plugin_output_mapping(current_store, job)
-    records_imported = (
-        JobExecutionEngine.plugin_records_imported_from_result(plugin_summary, output_mapping)
-        if plugin_summary is not None
-        else 0
-    )
+    if plugin_summary is not None and code_inspection_uses_native_scan(job):
+        native_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
+        native_findings = native_json.get("findings") if isinstance(native_json, dict) else []
+        records_imported = len(native_findings) if isinstance(native_findings, list) else 0
+    else:
+        records_imported = (
+            JobExecutionEngine.plugin_records_imported_from_result(plugin_summary, output_mapping)
+            if plugin_summary is not None
+            else 0
+        )
     will_call_model_gateway = JobExecutionEngine.uses_ai_processing(
         job,
         ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
@@ -2505,8 +2544,31 @@ def run_scheduled_job_response(
     plugin_output_mapping: dict[str, Any] = {}
     plugin_records_imported = 0
     resolved_plugin_input_mapping: dict[str, Any] = {}
+    native_code_inspection = (
+        job["job_type"] == "code_repository_inspection"
+        and code_inspection_uses_native_scan(job)
+    )
     try:
-        if job.get("plugin_action_id"):
+        if native_code_inspection:
+            job_config = job.get("config_json") or {}
+            resolved_plugin_input_mapping = {
+                "branch": job_config.get("branch"),
+                "repository_id": job_config.get("repository_id"),
+                "scan_mode": NATIVE_CODE_SCAN_MODE,
+            }
+            plugin_summary = run_native_code_scan(
+                current_store,
+                job=job,
+                run_id=run_id,
+                user=user,
+            )
+            plugin_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
+            native_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
+            native_findings = native_json.get("findings") if isinstance(native_json, dict) else []
+            plugin_records_imported = (
+                len(native_findings) if isinstance(native_findings, list) else 0
+            )
+        elif job.get("plugin_action_id"):
             resolved_plugin_input_mapping = resolve_plugin_input_mapping(
                 job.get("plugin_input_mapping") or {},
                 job,
@@ -2580,15 +2642,21 @@ def run_scheduled_job_response(
             if not isinstance(source_response_json, dict):
                 source_response_json = {}
             code_inspection_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
-            source_finding_count = records_imported_from_mapping(
-                plugin_summary.get("response_summary") or {},
-                {
-                    "records_imported_path": code_inspection_output_mapping.get(
-                        "findings_path",
-                    )
-                    or code_inspection_output_mapping.get("records_imported_path")
-                },
-            )
+            if native_code_inspection:
+                source_findings = source_response_json.get("findings")
+                source_finding_count = (
+                    len(source_findings) if isinstance(source_findings, list) else 0
+                )
+            else:
+                source_finding_count = records_imported_from_mapping(
+                    plugin_summary.get("response_summary") or {},
+                    {
+                        "records_imported_path": code_inspection_output_mapping.get(
+                            "findings_path",
+                        )
+                        or code_inspection_output_mapping.get("records_imported_path")
+                    },
+                )
             ai_processing = None
             effective_plugin_summary = plugin_summary
             if JobExecutionEngine.uses_ai_processing(
@@ -2633,6 +2701,11 @@ def run_scheduled_job_response(
                 inspection_result=inspection_result,
                 report=report,
             )
+            native_scan_summary = (
+                (plugin_summary.get("response_summary") or {}).get("native_scan")
+                if native_code_inspection
+                else None
+            )
             result_summary = {
                 "bug_ids": inspection_result["bug_ids"],
                 "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
@@ -2663,6 +2736,23 @@ def run_scheduled_job_response(
                         plugin_summary=plugin_summary,
                         records_imported=source_finding_count,
                         resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                    ),
+                    **(
+                        {
+                            "native_scan": {
+                                **(
+                                    native_scan_summary
+                                    if isinstance(native_scan_summary, dict)
+                                    else {}
+                                ),
+                                "label": "本地完整代码静态扫描",
+                                "records_imported": source_finding_count,
+                                "scan_mode": NATIVE_CODE_SCAN_MODE,
+                                "status": "succeeded",
+                            },
+                        }
+                        if native_code_inspection
+                        else {}
                     ),
                     "notifications": {
                         "created_notification_ids": inspection_result["notification_ids"],

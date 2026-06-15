@@ -1,9 +1,11 @@
 import json
+import subprocess
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 import app.services.scheduled_jobs as scheduled_jobs_service
+from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.main import app
 from app.services.code_inspections import existing_code_inspection_bug_id, finding_fingerprint
 
@@ -51,6 +53,100 @@ def create_repository(
         },
         headers=headers,
     ).json()["data"]
+
+
+def create_local_git_repository(path) -> str:
+    repo_path = path / "native-scan-repo"
+    repo_path.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.email", "seed@example.com"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Seed User"], cwd=repo_path, check=True)
+    (repo_path / "README.md").write_text("# Native scan fixture\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_path, check=True)
+    subprocess.run(["git", "checkout", "-b", "release/native-scan"], cwd=repo_path, check=True)
+    source_dir = repo_path / "src"
+    source_dir.mkdir()
+    (source_dir / "config.py").write_text(
+        'API_KEY = "sk-live-native-scan-secret"\n'
+        'INTERNAL_URL = "http://127.0.0.1:8080/admin"\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "src/config.py"], cwd=repo_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Add insecure config"],
+        cwd=repo_path,
+        env={
+            "GIT_AUTHOR_EMAIL": "alice@example.com",
+            "GIT_AUTHOR_NAME": "Alice Chen",
+            "GIT_COMMITTER_EMAIL": "alice@example.com",
+            "GIT_COMMITTER_NAME": "Alice Chen",
+        },
+        check=True,
+    )
+    return str(repo_path)
+
+
+def create_local_scan_repository(
+    headers: dict[str, str],
+    product_id: str,
+    *,
+    remote_url: str,
+) -> dict:
+    return client.post(
+        f"/api/products/{product_id}/git-repositories",
+        json={
+            "default_branch": "main",
+            "git_provider": "github",
+            "name": "Native Scan Repository",
+            "project_path": "local/native-scan",
+            "remote_url": remote_url,
+            "repo_type": "code",
+            "root_path": "/",
+            "status": "active",
+        },
+        headers=headers,
+    ).json()["data"]
+
+
+def test_code_inspection_report_upsert_accepts_native_scan_metadata():
+    class CountingCursor:
+        def execute(self, query: str, params: tuple | None = None) -> None:
+            if "INSERT INTO code_inspection_reports" not in query:
+                return
+            assert params is not None
+            assert query.count("%s") == len(params)
+
+    repository = CodeInspectionReadRepository(None)
+    repository.upsert_code_inspection_reports(
+        CountingCursor(),
+        {
+            "code_inspection_report_native": {
+                "branch": "release/native-scan",
+                "commit_sha": "abc123",
+                "coverage_warning": None,
+                "created_at": "2026-06-15T00:00:00+00:00",
+                "created_by": "user_admin",
+                "files_scanned": 12,
+                "finding_count": 2,
+                "id": "code_inspection_report_native",
+                "is_full_scan": True,
+                "lines_scanned": 345,
+                "repository": {"name": "Native Scan Repository"},
+                "repository_id": "repo_native",
+                "risk_level": "critical",
+                "rules_loaded": ["secrets", "internal_addresses"],
+                "scan_mode": "native_full_scan",
+                "scanner_name": "ai_brain_builtin_static",
+                "scheduled_job_id": "scheduled_job_native",
+                "scheduled_job_run_id": "scheduled_job_run_native",
+                "severe_finding_count": 1,
+                "source_system": "native-code-scanner",
+                "status": "completed",
+                "summary": "本地完整扫描完成。",
+            }
+        },
+    )
 
 
 def create_model_gateway(headers: dict[str, str]) -> dict:
@@ -439,6 +535,88 @@ def test_code_inspection_defaults_branch_from_repository_when_scanner_omits_bran
     ).json()["data"]
     assert detail["report"]["repository_id"] == repository["id"]
     assert detail["report"]["branch"] == "develop"
+
+
+def test_native_repository_inspection_clones_branch_scans_files_and_blames_committers(tmp_path):
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, code="native-scan-product", name="Native Scan Product")
+    local_repo_url = create_local_git_repository(tmp_path)
+    repository = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+
+    job_response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "branch": "release/native-scan",
+                "repository_id": repository["id"],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Native full repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    )
+
+    assert job_response.status_code == 200
+    job = job_response.json()["data"]
+    assert job["plugin_action_id"] is None
+    assert job["config_json"]["scan_mode"] == "native_full_scan"
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    assert run["plugin_invocation_log_id"] is None
+    assert run["records_imported"] == 2
+    execution_nodes = run["result_summary"]["execution_nodes"]
+    assert execution_nodes["native_scan"]["status"] == "succeeded"
+    assert execution_nodes["native_scan"]["scan_mode"] == "native_full_scan"
+    assert execution_nodes["native_scan"]["branch"] == "release/native-scan"
+    assert execution_nodes["native_scan"]["files_scanned"] >= 1
+    assert execution_nodes["native_scan"]["lines_scanned"] >= 2
+    assert execution_nodes["data_connection"]["processing_mode"] == "native_full_scan"
+
+    report_id = run["result_summary"]["report_id"]
+    detail = client.get(
+        f"/api/governance/code-inspections/{report_id}",
+        headers=headers,
+    ).json()["data"]
+    report = detail["report"]
+    assert report["repository_id"] == repository["id"]
+    assert report["branch"] == "release/native-scan"
+    assert report["scan_mode"] == "native_full_scan"
+    assert report["scanner_name"] == "ai_brain_builtin_static"
+    assert report["is_full_scan"] is True
+    assert report["files_scanned"] >= 1
+    assert report["lines_scanned"] >= 2
+    assert report["coverage_warning"] is None
+    assert report["commit_sha"]
+    assert report["finding_count"] == 2
+
+    findings_by_rule = {finding["rule_id"]: finding for finding in detail["findings"]}
+    assert "secrets.hardcoded_credential" in findings_by_rule
+    assert "metadata.internal_address_exposure" in findings_by_rule
+    secret_finding = findings_by_rule["secrets.hardcoded_credential"]
+    assert secret_finding["file_path"] == "src/config.py"
+    assert secret_finding["committer_email"] == "alice@example.com"
+    assert secret_finding["committer_name"] == "Alice Chen"
+    assert secret_finding["raw"]["scan_mode"] == "native_full_scan"
 
 
 def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():

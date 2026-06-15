@@ -78,9 +78,13 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
     {
         "category": "governance",
         "code": "code_repository_inspection",
-        "description": "定期扫描 GitHub/GitLab 仓库质量、安全和规范问题，写入代码巡检报告。",
+        "description": "定期 clone 产品 Git 仓库并扫描质量、安全和规范问题，写入代码巡检报告。",
         "name": "代码仓库质量 / 安全 / 规范巡检",
         "payload_defaults": {
+            "config_json": {
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
             "cron_expression": "0 2 * * MON",
             "enabled": True,
             "execution_mode": "deterministic",
@@ -93,13 +97,17 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
                     "severity_threshold": "critical",
                     "type": "create_bug_for_severe_findings",
                 },
+                {
+                    "severity_threshold": "high",
+                    "type": "create_task_for_severe_findings",
+                },
                 {"channels": ["email"], "recipients": [], "type": "send_notification"},
             ],
             "schedule_type": "cron",
             "skill_ids": [],
             "source_system": "code-inspection",
         },
-        "recommended_scenarios": ["代码质量巡检", "安全漏洞扫描", "研发规范治理"],
+        "recommended_scenarios": ["本地完整代码扫描", "安全漏洞扫描", "研发规范治理"],
         "resource_selectors": {
             "plugin_action": {
                 "code_candidates": [

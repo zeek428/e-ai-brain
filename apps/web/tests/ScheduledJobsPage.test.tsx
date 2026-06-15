@@ -9,7 +9,7 @@ import { ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY } from '../src/services/aiBra
 
 function installScheduledJobsFetchMock(
   options: {
-    jobs?: unknown[];
+    jobs?: Array<Record<string, unknown>>;
     observability?: unknown;
     resultWriteRecords?: unknown[];
     runResponse?: Promise<unknown>;
@@ -25,7 +25,7 @@ function installScheduledJobsFetchMock(
   const runJobBodies: unknown[] = [];
   const runJobIds: string[] = [];
   const resultWriteRecordCalls: string[] = [];
-  const jobs = options.jobs ?? [];
+  const jobs: Array<Record<string, unknown>> = options.jobs ?? [];
   const resultWriteRecords = options.resultWriteRecords ?? [];
   const runs = options.runs ?? [];
   const observability = options.observability ?? {
@@ -321,6 +321,17 @@ function installScheduledJobsFetchMock(
     }
     if (input === '/api/system/scheduled-job-runs/observability' && init?.method === 'GET') {
       return jsonResponse({ data: observability });
+    }
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/system/scheduled-jobs/')
+      && init?.method === 'PATCH'
+    ) {
+      const jobId = input.split('/').at(-1);
+      const body = JSON.parse(String(init.body ?? '{}'));
+      jobUpdateBodies.push(body);
+      const existingJob = jobs.find((item) => item.id === jobId) ?? { id: jobId };
+      return jsonResponse({ data: { ...existingJob, ...body, id: jobId } });
     }
     if (
       typeof input === 'string'
@@ -1290,6 +1301,58 @@ describe('ScheduledJobsPage', () => {
           branch: 'release/2026.06',
           repository_id: 'repo_zqf',
         },
+      }),
+    );
+  });
+
+  it('submits native full scan mode without requiring a plugin connection', async () => {
+    const { jobUpdateBodies } = installScheduledJobsFetchMock({
+      jobs: [
+        {
+          config_json: {
+            branch: 'release/native-scan',
+            repository_id: 'repo_zqf',
+            scan_mode: 'native_full_scan',
+          },
+          enabled: true,
+          execution_mode: 'deterministic',
+          id: 'scheduled_job_native_scan',
+          job_type: 'code_repository_inspection',
+          name: '醉清风APP本地完整代码扫描',
+          plugin_action_id: undefined,
+          plugin_connection_id: undefined,
+          product_id: 'product_ai_brain',
+          schedule_type: 'manual',
+          source_system: 'native-code-scanner',
+          status: 'active',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    expect(await screen.findByText('醉清风APP本地完整代码扫描')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '编辑作业 醉清风APP本地完整代码扫描' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '编辑定时作业' });
+    await waitFor(() => expect(within(dialog).getByLabelText('代码仓库')).toBeInTheDocument());
+    fireEvent.mouseDown(within(dialog).getByLabelText('扫描方式'));
+    fireEvent.click((await screen.findAllByText('本地完整扫描（clone 仓库）')).at(-1)!);
+    expect(within(dialog).getByLabelText('扫描分支')).toHaveValue('release/native-scan');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(jobUpdateBodies[0]).toMatchObject({
+        config_json: {
+          branch: 'release/native-scan',
+          repository_id: 'repo_zqf',
+          scan_mode: 'native_full_scan',
+        },
+        plugin_action_id: null,
+        plugin_action_ids: [],
+        plugin_connection_id: null,
+        plugin_connection_ids: [],
       }),
     );
   });

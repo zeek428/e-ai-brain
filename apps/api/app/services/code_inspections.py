@@ -513,12 +513,31 @@ def create_code_inspection_report_records(
             findings,
             severity_mapping=severity_mapping,
         ),
+        "coverage_warning": source_json.get("coverage_warning"),
+        "files_scanned": (
+            source_json.get("files_scanned")
+            if isinstance(source_json.get("files_scanned"), int)
+            else 0
+        ),
         "scheduled_job_id": job["id"],
         "scheduled_job_run_id": run_id,
+        "scan_mode": source_json.get("scan_mode"),
+        "scanner_name": source_json.get("scanner_name"),
         "severe_finding_count": sum(
             1
             for finding in findings
             if severity_rank(finding.get("severity")) >= severity_rank(SEVERE_FINDING_THRESHOLD)
+        ),
+        "is_full_scan": bool(source_json.get("is_full_scan")),
+        "lines_scanned": (
+            source_json.get("lines_scanned")
+            if isinstance(source_json.get("lines_scanned"), int)
+            else 0
+        ),
+        "rules_loaded": (
+            source_json.get("rules_loaded")
+            if isinstance(source_json.get("rules_loaded"), list)
+            else []
         ),
         "source_system": job.get("source_system"),
         "status": "completed",

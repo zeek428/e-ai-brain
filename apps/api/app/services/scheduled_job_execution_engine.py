@@ -67,6 +67,8 @@ class ScheduledJobExecutionEngine:
             "label": "数据连接获取内容",
             "latency_ms": plugin_summary.get("latency_ms"),
             "plugin_invocation_log_id": plugin_summary.get("invocation_log_id"),
+            "processing_mode": request_summary.get("processing_mode")
+            or response_summary.get("processing_mode"),
             "records_imported": records_imported,
             "request_method": request_summary.get("method")
             or request_preview.get("method"),
@@ -385,6 +387,7 @@ class ScheduledJobExecutionEngine:
         retry_count = int(config_snapshot.get("max_retry_count") or 0)
         ordered_node_ids = [
             "data_connection",
+            "native_scan",
             "runner_execution",
             "skill_processing",
             "result_action",

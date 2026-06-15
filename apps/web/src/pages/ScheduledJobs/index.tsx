@@ -177,6 +177,12 @@ const connectionEnvironmentOptions = [
 
 const productRequiredJobTypes = ['code_repository_inspection', 'user_feedback_insight_extract'];
 const pluginRequiredJobTypes = ['code_repository_inspection', 'plugin_action_invoke', 'user_feedback_insight_extract'];
+const nativeCodeInspectionScanMode = 'native_full_scan';
+const codeInspectionScanModeOptions = [
+  { label: '本地完整扫描（clone 仓库）', value: nativeCodeInspectionScanMode },
+  { label: '同步已有告警', value: 'sync_existing_alerts' },
+  { label: '触发平台扫描', value: 'trigger_platform_scan' },
+];
 const codeInspectionPluginActionCodes = new Set([
   'scan_github_code_inspection',
   'scan_gitlab_code_inspection',
@@ -406,6 +412,30 @@ function requiredForJobTypes(jobTypes: string[], message: string) {
   return ({ getFieldValue }: { getFieldValue: (field: string) => unknown }) => ({
     validator(_: unknown, value: unknown) {
       if (jobTypes.includes(String(getFieldValue('job_type') ?? '')) && !hasRequiredFormValue(value)) {
+        return Promise.reject(new Error(message));
+      }
+      return Promise.resolve();
+    },
+  });
+}
+
+function codeInspectionUsesNativeScan(jobType: unknown, configJson: unknown): boolean {
+  const config = recordValue(configJson) ?? {};
+  return (
+    String(jobType ?? '') === 'code_repository_inspection'
+    && recordStringValue(config, 'scan_mode') === nativeCodeInspectionScanMode
+  );
+}
+
+function requiredForPluginResource(message: string) {
+  return ({ getFieldValue }: { getFieldValue: (field: string) => unknown }) => ({
+    validator(_: unknown, value: unknown) {
+      const jobType = String(getFieldValue('job_type') ?? '');
+      if (
+        pluginRequiredJobTypes.includes(jobType)
+        && !codeInspectionUsesNativeScan(jobType, getFieldValue('config_json'))
+        && !hasRequiredFormValue(value)
+      ) {
         return Promise.reject(new Error(message));
       }
       return Promise.resolve();
@@ -1511,6 +1541,10 @@ export default function ScheduledJobsPage() {
     [selectedConfigJson],
   );
   const selectedRepositoryId = recordStringValue(selectedConfigJsonRecord, 'repository_id');
+  const selectedCodeInspectionUsesNativeScan = codeInspectionUsesNativeScan(
+    selectedJobType,
+    selectedConfigJsonRecord,
+  );
   const normalizedSelectedPluginConnectionIds = useMemo(
     () => stringArrayFromUnknown(selectedPluginConnectionIds),
     [selectedPluginConnectionIds],
@@ -1603,6 +1637,25 @@ export default function ScheduledJobsPage() {
       }),
     [connectionPluginFilterIds, pluginConnections, selectedConnectionEnvironment],
   );
+
+  useEffect(() => {
+    if (!selectedCodeInspectionUsesNativeScan) {
+      return;
+    }
+    if (normalizedSelectedPluginConnectionIds.length > 0) {
+      form.setFieldValue('plugin_connection_id', undefined);
+      form.setFieldValue('plugin_connection_ids', []);
+    }
+    if (normalizedSelectedPluginActionIds.length > 0) {
+      form.setFieldValue('plugin_action_id', undefined);
+      form.setFieldValue('plugin_action_ids', []);
+    }
+  }, [
+    form,
+    normalizedSelectedPluginActionIds.length,
+    normalizedSelectedPluginConnectionIds.length,
+    selectedCodeInspectionUsesNativeScan,
+  ]);
   const modelGatewayConfigById = useMemo(
     () => new Map(modelGatewayConfigs.map((config) => [config.id, config])),
     [modelGatewayConfigs],
@@ -1750,6 +1803,13 @@ export default function ScheduledJobsPage() {
 
   const handlePluginConnectionChange = useCallback(
     (value: unknown) => {
+      if (selectedCodeInspectionUsesNativeScan) {
+        form.setFieldValue('plugin_connection_id', undefined);
+        form.setFieldValue('plugin_connection_ids', []);
+        form.setFieldValue('plugin_action_id', undefined);
+        form.setFieldValue('plugin_action_ids', []);
+        return;
+      }
       let nextConnectionIds = uniqueStringList(stringArrayFromUnknown(value));
       if (selectedJobType === 'code_repository_inspection') {
         const addedConnectionId = nextConnectionIds.find(
@@ -1788,6 +1848,7 @@ export default function ScheduledJobsPage() {
       form,
       normalizedSelectedPluginConnectionIds,
       pluginConnectionById,
+      selectedCodeInspectionUsesNativeScan,
       selectedJobType,
     ],
   );
@@ -1817,10 +1878,17 @@ export default function ScheduledJobsPage() {
       .map((documentId) => knowledgeDocumentById.get(documentId)?.title ?? documentId)
       .filter(Boolean);
     const jobType = String(selectedJobType ?? '');
-    const connectionRequired = pluginRequiredJobTypes.includes(jobType);
-    const actionRequired = pluginRequiredJobTypes.includes(jobType);
+    const nativeCodeScan = codeInspectionUsesNativeScan(jobType, selectedConfigJsonRecord);
+    const connectionRequired = pluginRequiredJobTypes.includes(jobType) && !nativeCodeScan;
+    const actionRequired = pluginRequiredJobTypes.includes(jobType) && !nativeCodeScan;
     const aiRequired = requiresAiAssembly(selectedJobType, selectedExecutionMode);
-    const dataStatus = selectedConnections.length > 0 ? '已配置' : connectionRequired ? '待配置' : '可选';
+    const dataStatus = nativeCodeScan
+      ? '本地扫描'
+      : selectedConnections.length > 0
+        ? '已配置'
+        : connectionRequired
+          ? '待配置'
+          : '可选';
     const aiStatus =
       selectedModel && selectedAgent && skillLabels.length > 0
         ? '已配置'
@@ -1863,7 +1931,7 @@ export default function ScheduledJobsPage() {
         key: 'data_connection',
         required: connectionRequired,
         status: dataStatus,
-        statusColor: dataStatus === '已配置' ? 'green' : connectionRequired ? 'orange' : 'default',
+        statusColor: dataStatus === '已配置' || dataStatus === '本地扫描' ? 'green' : connectionRequired ? 'orange' : 'default',
         title: '数据连接',
       },
       {
@@ -1905,6 +1973,7 @@ export default function ScheduledJobsPage() {
     pluginActionById,
     pluginConnectionById,
     selectedAgentId,
+    selectedConfigJsonRecord,
     selectedExecutionMode,
     selectedJobType,
     selectedKnowledgeDocumentIds,
@@ -1987,12 +2056,14 @@ export default function ScheduledJobsPage() {
         ? pluginConnectionById.get(primaryConnectionId) ?? connection
         : connection;
       const jobType = templatePayloadString(template, 'job_type') ?? 'plugin_action_invoke';
+      const templateConfigJson = templatePayloadRecordValue(template, 'config_json') ?? {};
+      const nativeCodeScan = codeInspectionUsesNativeScan(jobType, templateConfigJson);
       const executionMode = templatePayloadString(template, 'execution_mode') ?? 'deterministic';
       const aiRequired = requiresAiAssembly(jobType, executionMode);
       form.setFieldsValue({
         agent_id: aiRequired ? agentId : undefined,
-        config_json: templatePayloadRecordValue(template, 'config_json') ?? {},
-        connection_environment: primaryConnection?.environment ?? undefined,
+        config_json: templateConfigJson,
+        connection_environment: nativeCodeScan ? undefined : primaryConnection?.environment ?? undefined,
         cron_expression: templatePayloadString(template, 'cron_expression'),
         enabled: templatePayloadBoolean(template, 'enabled', true),
         execution_mode: executionMode,
@@ -2003,10 +2074,10 @@ export default function ScheduledJobsPage() {
           ?? (aiRequired ? knowledgeDocumentIds : []),
         model_gateway_config_id: aiRequired ? modelGatewayConfigId : undefined,
         name: templatePayloadString(template, 'name') ?? template.name,
-        plugin_action_id: primaryId(pluginActionIds),
-        plugin_action_ids: pluginActionIds,
-        plugin_connection_id: primaryId(pluginConnectionIds),
-        plugin_connection_ids: pluginConnectionIds,
+        plugin_action_id: nativeCodeScan ? undefined : primaryId(pluginActionIds),
+        plugin_action_ids: nativeCodeScan ? [] : pluginActionIds,
+        plugin_connection_id: nativeCodeScan ? undefined : primaryId(pluginConnectionIds),
+        plugin_connection_ids: nativeCodeScan ? [] : pluginConnectionIds,
         plugin_input_mapping: templatePayloadRecordValue(template, 'plugin_input_mapping'),
         plugin_output_mapping: templatePayloadRecordValue(template, 'plugin_output_mapping'),
         product_id: productId,
@@ -2289,6 +2360,11 @@ export default function ScheduledJobsPage() {
     const pluginConnectionIds = multiIdsFromScheduledJob(job, 'plugin_connection_ids', 'plugin_connection_id');
     const pluginActionIds = multiIdsFromScheduledJob(job, 'plugin_action_ids', 'plugin_action_id');
     const primaryConnectionId = primaryId(pluginConnectionIds);
+    const editConfigJson = recordValue(job.config_json) ?? {};
+    if (job.job_type === 'code_repository_inspection' && !recordStringValue(editConfigJson, 'scan_mode')) {
+      editConfigJson.scan_mode = 'sync_existing_alerts';
+    }
+    const nativeCodeScan = codeInspectionUsesNativeScan(job.job_type, editConfigJson);
     setEditingJob(job);
     setAssistantDraftPayload(undefined);
     setAssistantDraftSource(undefined);
@@ -2299,10 +2375,10 @@ export default function ScheduledJobsPage() {
     form.resetFields();
     form.setFieldsValue({
       agent_id: job.agent_id ?? undefined,
-      connection_environment: primaryConnectionId
+      connection_environment: !nativeCodeScan && primaryConnectionId
         ? pluginConnectionById.get(primaryConnectionId)?.environment ?? 'default'
         : undefined,
-      config_json: job.config_json ?? {},
+      config_json: editConfigJson,
       cron_expression: job.cron_expression ?? undefined,
       enabled: job.enabled ?? true,
       execution_mode: job.execution_mode ?? 'deterministic',
@@ -2311,10 +2387,10 @@ export default function ScheduledJobsPage() {
       knowledge_document_ids: job.knowledge_document_ids ?? [],
       model_gateway_config_id: job.model_gateway_config_id ?? undefined,
       name: job.name,
-      plugin_action_id: primaryId(pluginActionIds),
-      plugin_action_ids: pluginActionIds,
-      plugin_connection_id: primaryConnectionId,
-      plugin_connection_ids: pluginConnectionIds,
+      plugin_action_id: nativeCodeScan ? undefined : primaryId(pluginActionIds),
+      plugin_action_ids: nativeCodeScan ? [] : pluginActionIds,
+      plugin_connection_id: nativeCodeScan ? undefined : primaryConnectionId,
+      plugin_connection_ids: nativeCodeScan ? [] : pluginConnectionIds,
       product_id: job.product_id ?? undefined,
       result_actions: job.result_actions?.length ? job.result_actions : defaultCodeInspectionResultActions,
       schedule_type: job.schedule_type ?? 'manual',
@@ -2415,6 +2491,17 @@ export default function ScheduledJobsPage() {
           : [],
       skill_ids: values.skill_ids ?? [],
     };
+    if (codeInspectionUsesNativeScan(requestPayload.job_type, requestPayload.config_json)) {
+      requestPayload.plugin_action_id = null;
+      requestPayload.plugin_action_ids = [];
+      requestPayload.plugin_connection_id = null;
+      requestPayload.plugin_connection_ids = [];
+      requestPayload.config_json = scheduledJobConfigWithOrchestration(
+        recordValue(requestPayload.config_json) ?? {},
+        [],
+        [],
+      );
+    }
     return requestPayload;
   };
 
@@ -2862,7 +2949,15 @@ export default function ScheduledJobsPage() {
                     onChange={(value) => {
                       if (value === 'code_repository_inspection') {
                         form.setFieldsValue({
+                          config_json: {
+                            ...(recordValue(form.getFieldValue('config_json')) ?? {}),
+                            scan_mode: nativeCodeInspectionScanMode,
+                          },
                           execution_mode: 'deterministic',
+                          plugin_action_id: undefined,
+                          plugin_action_ids: [],
+                          plugin_connection_id: undefined,
+                          plugin_connection_ids: [],
                           result_actions: form.getFieldValue('result_actions')?.length
                             ? form.getFieldValue('result_actions')
                             : cloneResultActions(defaultCodeInspectionResultActions),
@@ -2922,11 +3017,12 @@ export default function ScheduledJobsPage() {
                 <Form.Item
                   label="数据连接"
                   name="plugin_connection_ids"
-                  rules={[requiredForJobTypes(pluginRequiredJobTypes, '请选择数据连接')]}
-                  extra="可选择多个连接，运行时按配置顺序作为数据来源"
+                  rules={[requiredForPluginResource('请选择数据连接')]}
+                  extra={selectedCodeInspectionUsesNativeScan ? '本地完整扫描直接 clone 产品代码仓库，不需要外部数据连接' : '可选择多个连接，运行时按配置顺序作为数据来源'}
                 >
                   <Select
                     allowClear
+                    disabled={selectedCodeInspectionUsesNativeScan}
                     mode="multiple"
                     maxTagCount={2}
                     onChange={handlePluginConnectionChange}
@@ -2945,6 +3041,21 @@ export default function ScheduledJobsPage() {
           {selectedJobType === 'code_repository_inspection' ? (
             <FormSection label="代码仓库配置" marker="仓库">
               <Row gutter={12}>
+                <Col span={24}>
+                  <Form.Item label="扫描方式" name={['config_json', 'scan_mode']}>
+                    <Select
+                      options={codeInspectionScanModeOptions}
+                      onChange={(value) => {
+                        if (value === nativeCodeInspectionScanMode) {
+                          form.setFieldValue('plugin_connection_id', undefined);
+                          form.setFieldValue('plugin_connection_ids', []);
+                          form.setFieldValue('plugin_action_id', undefined);
+                          form.setFieldValue('plugin_action_ids', []);
+                        }
+                      }}
+                    />
+                  </Form.Item>
+                </Col>
                 <Col span={14}>
                   <Form.Item
                     label="代码仓库"
@@ -3063,11 +3174,12 @@ export default function ScheduledJobsPage() {
             <Form.Item
               label="写入策略"
               name="plugin_action_ids"
-              rules={[requiredForJobTypes(pluginRequiredJobTypes, '请选择写入策略')]}
-              extra="选择结果写到哪里或通知到哪里，后台按配置顺序执行对应动作"
+              rules={[requiredForPluginResource('请选择写入策略')]}
+              extra={selectedCodeInspectionUsesNativeScan ? '本地完整扫描使用下方结果动作写入代码巡检报告' : '选择结果写到哪里或通知到哪里，后台按配置顺序执行对应动作'}
             >
               <Select
                 allowClear
+                disabled={selectedCodeInspectionUsesNativeScan}
                 mode="multiple"
                 maxTagCount={2}
                 optionFilterProp="label"

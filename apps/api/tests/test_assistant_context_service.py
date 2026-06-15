@@ -404,6 +404,10 @@ def test_assistant_tool_results_can_generate_code_inspection_job_action_draft():
                     "severity_threshold": "critical",
                     "type": "create_bug_for_severe_findings",
                 },
+                {
+                    "severity_threshold": "high",
+                    "type": "create_task_for_severe_findings",
+                },
                 {"channels": ["email"], "recipients": [], "type": "send_notification"},
             ],
             "schedule_type": "cron",

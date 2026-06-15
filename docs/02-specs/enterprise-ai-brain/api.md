@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.307 |
+| 功能版本 | v1.1.308 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.308 | 2026-06-15 | 定时作业 API 补充代码巡检 `scan_mode`：`native_full_scan` 可不传插件动作/连接，运行摘要和报告返回本地扫描覆盖率元数据 | Codex |
 | v1.1.307 | 2026-06-15 | 定时作业 API 补充代码巡检仓库和扫描分支契约：`code_repository_inspection` 使用 `config_json.repository_id/branch`，分支缺失时服务端取仓库默认分支，运行插件输入和 AI 上下文携带分支 | Codex |
 | v1.1.306 | 2026-06-15 | AI 助手引用候选/解析扩展定时作业、运行记录、插件动作、AI角色和 Skill；聊天工具结果新增 `assistant.scheduled_job_diagnostic` 运行失败诊断 | Codex |
 | v1.1.305 | 2026-06-14 | AI 助手 API 落地显式知识引用和服务端动作草案：聊天请求支持 `references`，新增引用候选/解析接口和 `/api/assistant/action-drafts` 创建、查询、确认、取消接口 | Codex |
@@ -2988,7 +2989,9 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 
 MaxCompute 每周用户反馈场景使用 `job_type=user_feedback_insight_extract`，数据连接作为普通 HTTP 插件连接保存 endpoint、认证和公共 Params/Headers，结果写入动作通常为 `action_type=http_request` 的自定义 HTTP 动作；请求时间参数优先在连接/动作 Params 中配置，作业级 `plugin_input_mapping` 仅作为兼容和高级覆盖。作业必须选择 `model_gateway_config_id`、`agent_id` 和 `skill_ids`，页面展示为 AI 模型、AI角色和 Skills，可选选择知识引用文档。动作 `result_mapping` 默认包含 `write_target=user_feedback_insights`、`insights_path`、`records_imported_path` 和 `rows_path`，作业 `plugin_output_mapping` 仅用于覆盖。运行顺序为数据连接取数、读取知识引用、模型网关按 AI角色/Skill 处理为结构化 JSON、结果写入。运行成功后 `records_imported` 为实际新增洞察数，`result_summary.plugin.response_summary.json.row_count` 保留源表读取行数摘要；`result_summary.execution_nodes` 必须按 `data_connection`、`skill_processing`、`result_action` 三段保存数据连接获取内容、Skill 处理内容和结果写入反馈内容。`skill_processing.model_gateway_called=true`，并包含 `model_gateway_config_id`、`model_log_id`、`processing_mode=model_gateway_json_transform`、`input.knowledge_references` 和模型输出 JSON 摘要。
 
-代码仓库巡检场景使用 `job_type=code_repository_inspection`，通过 `config_json.repository_id` 绑定产品 Git 仓库，通过 `config_json.branch` 指定扫描分支，并通过 `plugin_connection_id` 和 `plugin_action_id` 调用仓库扫描器、SonarQube、SAST 或自建质量扫描服务。若请求未传 `config_json.branch`，服务端创建、更新和 dry-run 会按仓库 `default_branch` 补齐；运行时插件输入顶层携带 `repository_id/branch`，AI 处理上下文携带 `configured_repository_id/configured_branch`。插件响应推荐返回 `repository_id`、`branch`、`commit_sha`、`risk_level`、`summary` 和 `findings[]`；若响应未返回 `branch`，报告写入使用作业分支或仓库默认分支兜底。每个 finding 至少包含 `rule_id`、`category`、`severity`、`title`、`description`、`file_path`、`line_number` 和 `recommendation`，并推荐包含 `committer_name`、`committer_email`、`committer_username`。动作 `request_config.severity_mapping` 或作业 `config_json.severity_mapping` 可把外部扫描器等级映射为平台 `info/low/medium/high/critical`。示例 `result_actions`：
+代码仓库巡检场景使用 `job_type=code_repository_inspection`，通过 `config_json.repository_id` 绑定产品 Git 仓库，通过 `config_json.branch` 指定扫描分支；`native_full_scan` 使用平台内置本地扫描器，`sync_existing_alerts` 和 `trigger_platform_scan` 使用 `plugin_connection_id` / `plugin_action_id` 调用仓库扫描器、SonarQube、SAST 或自建质量扫描服务。若请求未传 `config_json.branch`，服务端创建、更新和 dry-run 会按仓库 `default_branch` 补齐；运行时插件输入顶层携带 `repository_id/branch`，AI 处理上下文携带 `configured_repository_id/configured_branch`。插件响应推荐返回 `repository_id`、`branch`、`commit_sha`、`risk_level`、`summary` 和 `findings[]`；若响应未返回 `branch`，报告写入使用作业分支或仓库默认分支兜底。每个 finding 至少包含 `rule_id`、`category`、`severity`、`title`、`description`、`file_path`、`line_number` 和 `recommendation`，并推荐包含 `committer_name`、`committer_email`、`committer_username`。动作 `request_config.severity_mapping` 或作业 `config_json.severity_mapping` 可把外部扫描器等级映射为平台 `info/low/medium/high/critical`。示例 `result_actions`：
+
+当 `config_json.scan_mode=native_full_scan` 时，服务端使用内置扫描器直接 clone `product_git_repositories.remote_url`，checkout `config_json.branch`，扫描 `config_json.scan_rules`，并通过 git blame 回填提交人；该模式不要求 `plugin_connection_id` / `plugin_action_id`，保存请求可传 `null` 或空数组清空插件字段。未传 `scan_mode` 时按 `sync_existing_alerts` 兼容旧插件模式。运行成功后 `plugin_invocation_log_id` 为空，`result_summary.execution_nodes.native_scan` 返回 `branch/commit_sha/files_scanned/lines_scanned/finding_count/scanner_name`，`execution_nodes.data_connection.processing_mode=native_full_scan`；报告额外返回 `scan_mode/scanner_name/is_full_scan/files_scanned/lines_scanned/rules_loaded/coverage_warning`。内置规则当前包括 `secrets.hardcoded_credential` 和 `metadata.internal_address_exposure`，finding 原始证据必须脱敏，不得保存明文密钥。
 
 ```json
 [

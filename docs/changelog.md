@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 代码巡检作业新增本地完整静态扫描：`config_json.scan_mode=native_full_scan` 时可直接 clone 产品 Git 仓库、checkout 指定分支、扫描内置规则并通过 git blame 回填提交人，不再强制配置插件连接；报告记录扫描模式、扫描器、文件数、行数、规则和覆盖率提示，运行详情新增 `native_scan` 节点。
 - 代码巡检作业新增显式扫描分支配置：新增/编辑表单按产品 Git 仓库展示“代码仓库”和“扫描分支”，默认使用仓库 `default_branch`，后端创建/更新/试运行兜底补齐分支，运行插件输入和 AI 上下文同步携带 `repository_id/branch`，报告写入时扫描器未返回分支也会落到明确分支。
 - AI 助手显式引用继续扩展：`@` 候选不再固定为知识文档，管理员可引用定时作业、运行记录、插件动作、AI角色和 Skill；失败运行追问会返回 `assistant.scheduled_job_diagnostic`，按数据连接、AI 处理、结果动作三段输出诊断依据。
 - AI 助手工作台 P0 升级：支持在输入框通过 `@` 选择知识文档并随聊天提交结构化 `references`，后端按权限解析并限量注入知识 chunk；新增 `/api/assistant/reference-candidates`、`/api/assistant/references/resolve` 和 `/api/assistant/action-drafts` 创建/查询/确认/取消接口，草案确认复用定时作业、插件连接和动作领域 service。
