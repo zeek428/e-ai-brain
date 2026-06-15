@@ -1024,6 +1024,41 @@ function numberValue(value: unknown, fallback: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function actionScenarioForExistingAction(
+  action: PluginActionRecord,
+  templates: PluginActionTemplateRecord[],
+  plugins: PluginRecord[],
+): string | undefined {
+  const actionRequestConfig = action.request_config ?? {};
+  const actionResultMapping = action.result_mapping ?? {};
+  const actionPlugin = plugins.find((plugin) => plugin.id === action.plugin_id);
+  for (const template of templates) {
+    const templatePluginMatches =
+      template.plugin_id === action.plugin_id || template.plugin_code === actionPlugin?.code;
+    if (!templatePluginMatches) {
+      continue;
+    }
+    const templateActionType = stringValue(template.action_type, 'http_request');
+    if (templateActionType !== action.action_type) {
+      continue;
+    }
+    const templateRequestConfig = isPlainRecord(template.request_config) ? template.request_config : {};
+    const templateResultMapping = isPlainRecord(template.result_mapping) ? template.result_mapping : {};
+    const templateDefaultCode = stringValue(template.default_code, template.code);
+    const codeMatches = [template.code, templateDefaultCode].filter(Boolean).includes(action.code);
+    const requestPathMatches =
+      Boolean(stringValue(templateRequestConfig.path))
+      && stringValue(templateRequestConfig.path) === stringValue(actionRequestConfig.path);
+    const writeTargetMatches =
+      Boolean(stringValue(templateResultMapping.write_target))
+      && stringValue(templateResultMapping.write_target) === stringValue(actionResultMapping.write_target);
+    if (codeMatches || (requestPathMatches && writeTargetMatches)) {
+      return template.code;
+    }
+  }
+  return undefined;
+}
+
 function pluginConnectionDraftFormValues(
   payload: Record<string, unknown>,
   schema?: PluginConnectionSchemaRecord,
@@ -2618,9 +2653,12 @@ export default function PluginsPage() {
     const requestConfig = action.request_config ?? {};
     const resultMapping = action.result_mapping ?? {};
     const isMaxComputeAction = requestConfig.tool_name === 'maxcompute.execute_sql';
+    const scenario = isMaxComputeAction
+      ? MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
+      : actionScenarioForExistingAction(action, actionTemplates, plugins);
     setEditingAction(action);
     setAssistantActionDraftSource(undefined);
-    setActionScenario(isMaxComputeAction ? MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO : undefined);
+    setActionScenario(scenario);
     setAdvancedActionJsonOpen(!isMaxComputeAction && action.action_type === 'mcp_tool');
     actionForm.resetFields();
     actionForm.setFieldsValue({
@@ -2641,7 +2679,7 @@ export default function PluginsPage() {
       returned_fields: Array.isArray(requestConfig.fields)
         ? requestConfig.fields.join(',')
         : undefined,
-      scenario: isMaxComputeAction ? MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO : undefined,
+      scenario,
       status: action.status,
       table_name: typeof requestConfig.table === 'string' ? requestConfig.table : undefined,
       time_field: typeof requestConfig.time_field === 'string' ? requestConfig.time_field : undefined,

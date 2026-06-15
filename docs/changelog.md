@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 代码巡检作业新增显式扫描分支配置：新增/编辑表单按产品 Git 仓库展示“代码仓库”和“扫描分支”，默认使用仓库 `default_branch`，后端创建/更新/试运行兜底补齐分支，运行插件输入和 AI 上下文同步携带 `repository_id/branch`，报告写入时扫描器未返回分支也会落到明确分支。
 - AI 助手显式引用继续扩展：`@` 候选不再固定为知识文档，管理员可引用定时作业、运行记录、插件动作、AI角色和 Skill；失败运行追问会返回 `assistant.scheduled_job_diagnostic`，按数据连接、AI 处理、结果动作三段输出诊断依据。
 - AI 助手工作台 P0 升级：支持在输入框通过 `@` 选择知识文档并随聊天提交结构化 `references`，后端按权限解析并限量注入知识 chunk；新增 `/api/assistant/reference-candidates`、`/api/assistant/references/resolve` 和 `/api/assistant/action-drafts` 创建/查询/确认/取消接口，草案确认复用定时作业、插件连接和动作领域 service。
 - 任务编排平台 5 项优化：定时作业运行层支持多数据连接顺序执行、失败策略和 JSON 数组合并；Skill 输入/输出 Schema 可配置并在运行前校验动作映射；新增作业全链路试运行预览数据连接、AI 契约和写入策略；定时作业配置页将结果动作选择升级为“写入策略”；官方插件市场和插件列表展示模板版本状态，并支持复制官方插件为可维护的自定义插件。
@@ -47,6 +48,8 @@
 - 插件连接最近测试摘要：连接测试后保存轻量 `last_test_summary`，连接列表展示最近测试状态、耗时和错误码，方便关闭调试弹窗后继续排障。
 
 ### Fixed
+- 代码巡检作业仓库归属修复：当 GitLab/GitHub 扫描器或 AI 归一化输出返回 project_path、remote_url 或 project_id 时，写报告会映射到同产品 `product_git_repositories.id`，并把作业 `config_json.repository_id` 注入模型上下文，避免报告写入阶段报 `Product Git repository not found`。
+- 插件调用日志脱敏修复：正式动作调用落库和列表返回都会把 Authorization、PRIVATE-TOKEN、Token、API Key、Cookie、Password、Secret 等敏感 Header 值替换为 `***`；历史运行摘要可通过数据修复清理，不再在定时作业排障链路暴露明文凭据。
 - 定时作业 AI Skills 必填校验收紧：AI 执行类新增/编辑作业必须在作业自身显式配置 `skill_ids`，后端不再用 AI角色 `default_skill_ids` 兜底通过空 Skills 请求，前端回归覆盖“模型和 AI角色已选但 Skills 为空不可提交”。
 - 任务中心菜单默认顺序调整为“定时作业 -> AI 能力配置 -> 插件管理”，并修正旧库兼容迁移避免系统管理员看到错序菜单。
 - MaxCompute 从官方标准插件和官方动作模板目录移除，历史官方 MaxCompute 插件自动降级为普通 HTTP 插件；编辑 MaxCompute 连接时不再出现“项目与表配置”，仅保留通用 Endpoint、认证、Params/Headers 和高级 JSON。

@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.api.deps import api_error, require_roles
 from app.services.code_inspections import (
     execute_code_inspection_result_actions,
+    sync_product_git_repository_store,
     validate_code_inspection_result_actions,
 )
 from app.services.dynamic_parameters import (
@@ -714,6 +715,46 @@ def scheduled_job_config_with_multi_refs(
     return config
 
 
+def optional_stripped(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def scheduled_job_config_with_code_inspection_defaults(
+    current_store: Any,
+    *,
+    config_json: Any,
+    job_type: str,
+    product_id: str | None,
+) -> dict[str, Any]:
+    config = dict(config_json) if isinstance(config_json, dict) else {}
+    if job_type != "code_repository_inspection":
+        return config
+
+    repository_id = optional_stripped(config.get("repository_id"))
+    if repository_id is None:
+        branch = optional_stripped(config.get("branch"))
+        if branch is not None:
+            config["branch"] = branch
+        return config
+
+    config["repository_id"] = repository_id
+    sync_product_git_repository_store(current_store, product_id)
+    repository = current_store.product_git_repositories.get(repository_id)
+    if repository is None:
+        return config
+    if product_id and repository.get("product_id") != product_id:
+        raise api_error(400, "VALIDATION_ERROR", "Repository does not belong to product")
+
+    branch = optional_stripped(config.get("branch"))
+    if branch is None:
+        branch = optional_stripped(repository.get("default_branch")) or "main"
+    config["branch"] = branch
+    return config
+
+
 def scheduled_job_data_connection_policy(job: dict[str, Any]) -> dict[str, str]:
     policy = scheduled_job_orchestration_config(job.get("config_json") or {}).get(
         "data_connections",
@@ -1220,12 +1261,18 @@ def create_scheduled_job_response(
         payload.knowledge_document_ids,
         user=user,
     )
+    config_json = scheduled_job_config_with_code_inspection_defaults(
+        current_store,
+        config_json=payload.config_json,
+        job_type=job_type,
+        product_id=payload.product_id,
+    )
     now = datetime.now(UTC).isoformat()
     job_id = current_store.new_id("scheduled_job")
     job = {
         "agent_id": agent_id,
         "config_json": scheduled_job_config_with_multi_refs(
-            payload.config_json,
+            config_json,
             plugin_action_ids=plugin_action_ids,
             plugin_connection_ids=plugin_connection_ids,
         ),
@@ -1301,10 +1348,16 @@ def dry_run_scheduled_job_response(
         plugin_action_ids,
         plugin_connection_ids,
     ) = validate_plugin_refs(current_store, payload)
+    config_json = scheduled_job_config_with_code_inspection_defaults(
+        current_store,
+        config_json=payload.config_json,
+        job_type=job_type,
+        product_id=payload.product_id,
+    )
     job = {
         "agent_id": agent_id,
         "config_json": scheduled_job_config_with_multi_refs(
-            payload.config_json,
+            config_json,
             plugin_action_ids=plugin_action_ids,
             plugin_connection_ids=plugin_connection_ids,
         ),
@@ -1464,8 +1517,14 @@ def patch_scheduled_job_response(
     updates["plugin_action_ids"] = plugin_action_ids
     updates["plugin_connection_id"] = plugin_connection_id
     updates["plugin_connection_ids"] = plugin_connection_ids
+    config_json = scheduled_job_config_with_code_inspection_defaults(
+        current_store,
+        config_json=payload_field(draft, "config_json", {}),
+        job_type=job_type,
+        product_id=payload_field(draft, "product_id"),
+    )
     updates["config_json"] = scheduled_job_config_with_multi_refs(
-        payload_field(draft, "config_json", {}),
+        config_json,
         plugin_action_ids=plugin_action_ids,
         plugin_connection_ids=plugin_connection_ids,
     )
@@ -1974,9 +2033,12 @@ def scheduled_job_ai_messages(
         (agent or {}).get("system_prompt")
         or "你是企业 AI 大脑的数据分析助手，负责把数据连接返回的原始数据整理为结果动作需要的 JSON。"
     )
+    job_config = job.get("config_json") or {}
     user_payload = {
         "instructions": instructions,
         "job": {
+            "configured_branch": job_config.get("branch"),
+            "configured_repository_id": job_config.get("repository_id"),
             "id": job.get("id"),
             "job_type": job.get("job_type"),
             "product_id": job.get("product_id"),
@@ -2319,15 +2381,21 @@ def invoke_job_data_connections(
     policy = scheduled_job_data_connection_policy(job)
     summaries: list[dict[str, Any]] = []
     for connection_id in connection_ids or [None]:
+        job_config = job.get("config_json") or {}
         plugin_log = invoke_plugin_action_response(
             action_id=job["plugin_action_id"],
             connection_id=connection_id,
             current_store=current_store,
             input_payload={
+                "branch": resolved_plugin_input_mapping.get("branch") or job_config.get("branch"),
                 "config": job.get("config_json") or {},
                 "input_mapping": resolved_plugin_input_mapping,
                 "job_id": job["id"],
                 "product_id": job.get("product_id"),
+                "repository_id": (
+                    resolved_plugin_input_mapping.get("repository_id")
+                    or job_config.get("repository_id")
+                ),
                 "timezone": job.get("timezone") or "UTC",
             },
             scheduled_job_id=job["id"],

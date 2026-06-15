@@ -359,6 +359,14 @@ function installScheduledJobsFetchMock(
               status: 'active',
             },
             {
+              action_type: 'http_request',
+              code: 'scan_gitlab_code_inspection',
+              id: 'plugin_action_gitlab_scan',
+              name: 'GitLab 代码巡检',
+              plugin_id: 'plugin_gitlab',
+              status: 'active',
+            },
+            {
               action_type: 'mcp_tool',
               code: 'run_ai_executor_instruction',
               id: 'plugin_action_ai_executor_command',
@@ -404,6 +412,13 @@ function installScheduledJobsFetchMock(
               status: 'active',
             },
             {
+              environment: 'prod',
+              id: 'connection_gitlab_prod',
+              name: '生产 GitLab 项目',
+              plugin_id: 'plugin_gitlab',
+              status: 'active',
+            },
+            {
               environment: 'default',
               id: 'connection_ai_executor_system',
               name: '系统默认 AI 执行器',
@@ -439,6 +454,23 @@ function installScheduledJobsFetchMock(
       return jsonResponse({
         data: {
           items: [{ code: 'ai-brain', id: 'product_ai_brain', name: 'AI Brain', status: 'active' }],
+          total: 1,
+        },
+      });
+    }
+    if (input === '/api/products/product_ai_brain/git-repositories?active_only=true' && init?.method === 'GET') {
+      return jsonResponse({
+        data: {
+          items: [
+            {
+              default_branch: 'main',
+              git_provider: 'gitlab',
+              id: 'repo_zqf',
+              name: '醉清风APP',
+              project_path: 'zqf-play-app/intofun',
+              status: 'active',
+            },
+          ],
           total: 1,
         },
       });
@@ -1134,6 +1166,132 @@ describe('ScheduledJobsPage', () => {
     await screen.findByText('确定删除「每周用户反馈洞察」吗？');
     fireEvent.click(screen.getAllByRole('button', { name: /删\s*除/ }).at(-1)!);
     await waitFor(() => expect(jobDeleteIds).toEqual(['scheduled_job_weekly_feedback']));
+  });
+
+  it('shows code inspection provider connections while hiding unrelated plugin connections', async () => {
+    installScheduledJobsFetchMock({
+      jobs: [
+        {
+          cron_expression: '0 2 * * MON',
+          enabled: true,
+          execution_mode: 'deterministic',
+          id: 'scheduled_job_weekly_feedback',
+          job_type: 'code_repository_inspection',
+          name: '醉清风APP代码仓库质量安全规范巡检',
+          plugin_action_id: 'plugin_action_github_scan',
+          plugin_connection_id: 'connection_github_prod',
+          product_id: 'product_ai_brain',
+          schedule_type: 'cron',
+          source_system: 'code-inspection',
+          status: 'active',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    expect(await screen.findByText('醉清风APP代码仓库质量安全规范巡检')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '编辑作业 醉清风APP代码仓库质量安全规范巡检' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '编辑定时作业' });
+    expect(within(dialog).getByText('GitHub 代码巡检 (scan_github_code_inspection)')).toBeInTheDocument();
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('数据连接'));
+
+    await waitFor(() => expect(screen.getAllByText('生产 GitHub 组织 (prod)').length).toBeGreaterThan(0));
+    expect(screen.queryAllByText('生产 GitLab 项目 (prod)').length).toBeGreaterThan(0);
+    expect(screen.queryAllByText('生产 MaxCompute 项目 (prod)')).toHaveLength(0);
+    expect(screen.queryAllByText('备用 MaxCompute 项目 (prod)')).toHaveLength(0);
+  });
+
+  it('switches code inspection action when selecting a GitLab data connection', async () => {
+    const { jobUpdateBodies } = installScheduledJobsFetchMock({
+      jobs: [
+        {
+          cron_expression: '0 2 * * MON',
+          enabled: true,
+          execution_mode: 'deterministic',
+          id: 'scheduled_job_weekly_feedback',
+          job_type: 'code_repository_inspection',
+          name: '醉清风APP代码仓库质量安全规范巡检',
+          plugin_action_id: 'plugin_action_github_scan',
+          plugin_connection_id: 'connection_github_prod',
+          product_id: 'product_ai_brain',
+          schedule_type: 'cron',
+          source_system: 'code-inspection',
+          status: 'active',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    expect(await screen.findByText('醉清风APP代码仓库质量安全规范巡检')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '编辑作业 醉清风APP代码仓库质量安全规范巡检' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '编辑定时作业' });
+    fireEvent.mouseDown(within(dialog).getByLabelText('数据连接'));
+    fireEvent.click(await screen.findByText('生产 GitLab 项目 (prod)'));
+
+    await waitFor(() =>
+      expect(within(dialog).getByText('GitLab 代码巡检 (scan_gitlab_code_inspection)')).toBeInTheDocument(),
+    );
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(jobUpdateBodies[0]).toMatchObject({
+        plugin_action_id: 'plugin_action_gitlab_scan',
+        plugin_action_ids: ['plugin_action_gitlab_scan'],
+        plugin_connection_id: 'connection_gitlab_prod',
+        plugin_connection_ids: ['connection_gitlab_prod'],
+      }),
+    );
+  });
+
+  it('submits an explicit scan branch for code inspection jobs', async () => {
+    const { jobUpdateBodies } = installScheduledJobsFetchMock({
+      jobs: [
+        {
+          config_json: { repository_id: 'repo_zqf' },
+          cron_expression: '0 2 * * MON',
+          enabled: true,
+          execution_mode: 'deterministic',
+          id: 'scheduled_job_weekly_feedback',
+          job_type: 'code_repository_inspection',
+          name: '醉清风APP代码仓库质量安全规范巡检',
+          plugin_action_id: 'plugin_action_gitlab_scan',
+          plugin_connection_id: 'connection_gitlab_prod',
+          product_id: 'product_ai_brain',
+          schedule_type: 'cron',
+          source_system: 'code-inspection',
+          status: 'active',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    expect(await screen.findByText('醉清风APP代码仓库质量安全规范巡检')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '编辑作业 醉清风APP代码仓库质量安全规范巡检' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '编辑定时作业' });
+    await waitFor(() => expect(within(dialog).getByLabelText('代码仓库')).toBeInTheDocument());
+    await waitFor(() => expect(within(dialog).getByLabelText('扫描分支')).toHaveValue('main'));
+
+    fireEvent.change(within(dialog).getByLabelText('扫描分支'), {
+      target: { value: 'release/2026.06' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+
+    await waitFor(() =>
+      expect(jobUpdateBodies[0]).toMatchObject({
+        config_json: {
+          branch: 'release/2026.06',
+          repository_id: 'repo_zqf',
+        },
+      }),
+    );
   });
 
   it('copies an existing scheduled job as a new template draft', async () => {
@@ -2095,5 +2253,49 @@ describe('ScheduledJobsPage', () => {
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
     expect(dialog).toHaveTextContent('model_log_110');
     await waitFor(() => expect(runButton).not.toBeDisabled());
+  });
+
+  it('shows a failure message when a scheduled job run returns failed', async () => {
+    const successSpy = vi.spyOn(message, 'success');
+    const errorSpy = vi.spyOn(message, 'error');
+    const runResponse = Promise.resolve({
+      error_code: 'HTTPError',
+      error_message: 'HTTP Error 403: Forbidden',
+      id: 'scheduled_job_run_code_inspection_failed',
+      records_imported: 0,
+      result_summary: {},
+      scheduled_job_id: 'scheduled_job_weekly_feedback',
+      status: 'failed',
+      trigger_type: 'manual',
+    });
+    installScheduledJobsFetchMock({
+      jobs: [
+        {
+          enabled: true,
+          execution_mode: 'ai_generated',
+          id: 'scheduled_job_weekly_feedback',
+          job_type: 'code_repository_inspection',
+          name: '代码仓库质量安全规范巡检',
+          plugin_action_id: 'plugin_action_github_scan',
+          plugin_connection_id: 'connection_github_prod',
+          schedule_type: 'manual',
+          skill_ids: ['skill_feedback'],
+          status: 'active',
+        },
+      ],
+      runResponse,
+    });
+
+    render(<ScheduledJobsPage />);
+
+    expect(await screen.findByText('代码仓库质量安全规范巡检')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: '运行作业 代码仓库质量安全规范巡检' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    expect(dialog).toHaveTextContent('failed');
+    await waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith('作业运行失败：HTTP Error 403: Forbidden'),
+    );
+    expect(successSpy).not.toHaveBeenCalledWith('作业运行完成');
   });
 });

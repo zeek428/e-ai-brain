@@ -33,13 +33,14 @@ def create_repository(
     headers: dict[str, str],
     product_id: str,
     *,
+    default_branch: str = "main",
     name: str = "service-api",
     project_path: str = "example/service-api",
 ) -> dict:
     return client.post(
         f"/api/products/{product_id}/git-repositories",
         json={
-            "default_branch": "main",
+            "default_branch": default_branch,
             "git_provider": "github",
             "name": name,
             "project_path": project_path,
@@ -336,6 +337,110 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     assert task_detail.json()["data"]["input"]["code_inspection_report_id"] == report_id
 
 
+def test_code_inspection_uses_configured_repository_when_scanner_returns_project_path():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, code="gitlab-path-product", name="GitLab Path Product")
+    repository = create_repository(
+        headers,
+        product["id"],
+        name="intofun",
+        project_path="zqf-play-app/intofun",
+    )
+    _, connection, action = create_scanner_plugin(
+        headers,
+        repository["id"],
+        response_json=scanner_response("zqf-play-app/intofun", severity="high"),
+    )
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {"repository_id": repository["id"]},
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "GitLab project path inspection",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "repo-quality-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    report_id = run["result_summary"]["execution_nodes"]["code_inspection_report"]["report_id"]
+    detail = client.get(
+        f"/api/governance/code-inspections/{report_id}",
+        headers=headers,
+    ).json()["data"]
+    assert detail["report"]["repository_id"] == repository["id"]
+    assert detail["report"]["repository"]["project_path"] == "zqf-play-app/intofun"
+
+
+def test_code_inspection_defaults_branch_from_repository_when_scanner_omits_branch():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, code="branch-default-product", name="Branch Default Product")
+    repository = create_repository(
+        headers,
+        product["id"],
+        default_branch="develop",
+    )
+    response_json = scanner_response(repository["id"], severity="high")
+    response_json.pop("branch")
+    _, connection, action = create_scanner_plugin(
+        headers,
+        repository["id"],
+        response_json=response_json,
+    )
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {"repository_id": repository["id"]},
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Default branch inspection",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "repo-quality-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    assert job["config_json"]["branch"] == "develop"
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    report_id = run["result_summary"]["execution_nodes"]["code_inspection_report"]["report_id"]
+    detail = client.get(
+        f"/api/governance/code-inspections/{report_id}",
+        headers=headers,
+    ).json()["data"]
+    assert detail["report"]["repository_id"] == repository["id"]
+    assert detail["report"]["branch"] == "develop"
+
+
 def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     app.state.store.reset()
     headers = auth_headers()
@@ -530,6 +635,8 @@ def test_ai_generated_repository_inspection_calls_model_before_writing_report(mo
     assert model_body["model"] == "code-inspection-model"
     user_payload = json.loads(model_body["messages"][1]["content"])
     assert user_payload["job"]["job_type"] == "code_repository_inspection"
+    assert user_payload["job"]["configured_branch"] == "main"
+    assert user_payload["job"]["configured_repository_id"] == repository["id"]
     assert user_payload["output_contract"]["write_target"] == "code_inspection_reports"
     assert user_payload["source_row_count"] == 2
 

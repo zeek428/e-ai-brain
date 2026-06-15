@@ -142,11 +142,11 @@ function installCodeInspectionsFetchMock() {
               file_path: 'src/config.py',
               id: 'code_inspection_finding_001',
               line_number: 12,
-              recommendation: '迁移到密钥管理。',
+              recommendation: '补充结构化仓库扫描数据，包括 repository_id、branch、commit_sha 和 findings，避免详情页因为长建议内容撑开表格布局。',
               report_id: report.id,
-              rule_id: 'SEC001',
+              rule_id: 'inspection.incomplete_source_data',
               severity: 'critical',
-              title: 'Hardcoded access key',
+              title: '扫描输入数据不完整，无法进行文件级代码审计',
             },
           ],
           notifications: [
@@ -216,5 +216,30 @@ describe('CodeInspectionsPage', () => {
     expect(within(dialog).getByText('plugin_action_github_scan')).toBeInTheDocument();
     expect(within(dialog).getByText('插件调用')).toBeInTheDocument();
     expect(within(dialog).getByText('plugin_invocation_log_001')).toBeInTheDocument();
+  });
+
+  it('keeps long finding text readable in the detail dialog', async () => {
+    installCodeInspectionsFetchMock();
+
+    render(<CodeInspectionsPage />);
+
+    await screen.findByText('code_inspection_report_001');
+    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
+    const findingTitle = await within(dialog).findByText('扫描输入数据不完整，无法进行文件级代码审计');
+    const findingsTable = findingTitle.closest('table');
+
+    expect(findingsTable).toHaveStyle({ tableLayout: 'fixed' });
+    expect(within(dialog).getAllByText('问题 / 建议').length).toBeGreaterThan(0);
+    expect(findingTitle).toHaveStyle({
+      wordBreak: 'break-word',
+      whiteSpace: 'normal',
+    });
+    expect(within(dialog).getByText('inspection.incomplete_source_data')).toHaveStyle({
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    });
   });
 });

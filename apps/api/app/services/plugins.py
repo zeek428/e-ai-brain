@@ -387,7 +387,40 @@ def public_action(action: dict[str, Any]) -> dict[str, Any]:
 
 
 def public_invocation_log(log: dict[str, Any]) -> dict[str, Any]:
-    return dict(log)
+    item = dict(log)
+    item["request_summary"] = redact_plugin_request_summary(item.get("request_summary"))
+    return item
+
+
+def is_sensitive_request_key(key: str) -> bool:
+    normalized = key.lower().replace("_", "-")
+    return any(
+        marker in normalized
+        for marker in (
+            "authorization",
+            "cookie",
+            "password",
+            "private-token",
+            "secret",
+            "token",
+            "x-api-key",
+        )
+    )
+
+
+def redact_plugin_request_summary(value: Any) -> Any:
+    if isinstance(value, list):
+        return [redact_plugin_request_summary(item) for item in value]
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if is_sensitive_request_key(key_text):
+                redacted[key_text] = "***"
+            else:
+                redacted[key_text] = redact_plugin_request_summary(item)
+        return redacted
+    return value
 
 
 def usage_names(items: list[dict[str, Any]], *, limit: int = 3) -> str:
@@ -2639,17 +2672,18 @@ def invoke_plugin_action_response(
     latency_ms = int((perf_counter() - start) * 1000)
     now = datetime.now(UTC).isoformat()
     log_id = current_store.new_id("plugin_invocation_log")
+    request_preview = plugin_action_request_preview(
+        plugin,
+        connection,
+        action,
+        input_payload or {},
+    )
     request_summary = {
         "action_code": action["code"],
         "input_keys": sorted((input_payload or {}).keys()),
         "plugin_code": plugin["code"],
         "protocol": plugin["protocol"],
-        "request_preview": plugin_action_request_preview(
-            plugin,
-            connection,
-            action,
-            input_payload or {},
-        ),
+        "request_preview": redact_plugin_request_summary(request_preview),
     }
     log = {
         "action_id": action["id"],

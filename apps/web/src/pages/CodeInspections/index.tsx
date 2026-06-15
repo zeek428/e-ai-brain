@@ -1,6 +1,6 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Card, Col, Descriptions, Modal, Row, Space, Statistic, Table, Tag, Typography, message } from 'antd';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import {
@@ -64,6 +64,49 @@ function compactText(value?: string | null) {
     <Typography.Text ellipsis={{ tooltip: text }} style={{ display: 'block', maxWidth: '100%' }}>
       {text}
     </Typography.Text>
+  );
+}
+
+const detailSingleLineTextStyle: CSSProperties = {
+  display: 'block',
+  maxWidth: '100%',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const detailMultiLineTextStyle: CSSProperties = {
+  display: 'block',
+  lineHeight: 1.5,
+  maxWidth: '100%',
+  whiteSpace: 'normal',
+  wordBreak: 'break-word',
+};
+
+function detailSingleLineText(value?: string | null) {
+  const text = value || '-';
+  return (
+    <Typography.Text style={detailSingleLineTextStyle} title={text}>
+      {text}
+    </Typography.Text>
+  );
+}
+
+function detailMultiLineText(value?: string | null) {
+  const text = value || '-';
+  return <Typography.Text style={detailMultiLineTextStyle}>{text}</Typography.Text>;
+}
+
+function findingProblemText(row: CodeInspectionFindingRecord) {
+  return (
+    <Space orientation="vertical" size={4} style={{ width: '100%' }}>
+      {detailMultiLineText(row.title)}
+      {row.recommendation ? (
+        <Typography.Text style={detailMultiLineTextStyle} type="secondary">
+          {row.recommendation}
+        </Typography.Text>
+      ) : null}
+    </Space>
   );
 }
 
@@ -557,7 +600,7 @@ export default function CodeInspectionsPage() {
         footer={<Button onClick={() => setDetailState(undefined)}>关闭</Button>}
         open={Boolean(detailState)}
         title="代码巡检详情"
-        width={1040}
+        width="min(1280px, calc(100vw - 48px))"
         onCancel={() => setDetailState(undefined)}
       >
         {detailState?.loading ? (
@@ -597,18 +640,33 @@ export default function CodeInspectionsPage() {
                 {
                   dataIndex: 'severity',
                   title: '级别',
-                  width: 100,
+                  width: 110,
                   render: (value) => <Tag color={severityColorByValue.get(String(value))}>{String(value)}</Tag>,
                 },
-                { dataIndex: 'category', title: '分类', width: 110 },
-                { dataIndex: 'rule_id', title: '规则', width: 120 },
-                { dataIndex: 'title', title: '问题', width: 220 },
+                {
+                  dataIndex: 'category',
+                  title: '分类',
+                  width: 130,
+                  render: (value) => detailSingleLineText(String(value ?? '')),
+                },
+                {
+                  dataIndex: 'rule_id',
+                  title: '规则',
+                  width: 260,
+                  render: (value) => detailSingleLineText(String(value ?? '')),
+                },
+                {
+                  dataIndex: 'title',
+                  title: '问题 / 建议',
+                  width: 520,
+                  render: (_, row) => findingProblemText(row),
+                },
                 {
                   dataIndex: 'committer_email',
                   title: '提交人',
-                  width: 260,
+                  width: 180,
                   render: (_, row) =>
-                    compactText(
+                    detailSingleLineText(
                       committerLabel({
                         email: row.committer_email,
                         name: row.committer_name,
@@ -620,16 +678,17 @@ export default function CodeInspectionsPage() {
                   dataIndex: 'file_path',
                   title: '位置',
                   width: 260,
-                  render: (_, row) => compactText(`${row.file_path || '-'}${row.line_number ? `:${row.line_number}` : ''}`),
+                  render: (_, row) =>
+                    detailSingleLineText(`${row.file_path || '-'}${row.line_number ? `:${row.line_number}` : ''}`),
                 },
-                { dataIndex: 'created_bug_id', title: 'Bug', width: 150, render: (value) => bugLink(String(value ?? '')) },
-                { dataIndex: 'recommendation', title: '建议', render: (value) => compactText(String(value ?? '')) },
+                { dataIndex: 'created_bug_id', title: 'Bug', width: 140, render: (value) => bugLink(String(value ?? '')) },
               ]}
               dataSource={detailState.detail.findings}
               pagination={false}
               rowKey="id"
-              scroll={{ x: 1460 }}
+              scroll={{ x: 1600 }}
               size="small"
+              tableLayout="fixed"
             />
             <Table<CodeInspectionNotificationRecord>
               columns={[

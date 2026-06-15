@@ -387,6 +387,49 @@ def repository_snapshot(current_store: Any, repository_id: str | None) -> dict[s
     return dict(repository) if repository is not None else {}
 
 
+def normalized_repository_identifier(value: Any) -> str:
+    return str(value or "").strip().removesuffix(".git").strip("/")
+
+
+def repository_matches_identifier(repository: dict[str, Any], identifier: str) -> bool:
+    if not identifier:
+        return False
+    candidates = {
+        normalized_repository_identifier(repository.get("id")),
+        normalized_repository_identifier(repository.get("project_id")),
+        normalized_repository_identifier(repository.get("project_path")),
+        normalized_repository_identifier(repository.get("remote_url")),
+    }
+    normalized = normalized_repository_identifier(identifier)
+    return normalized in {candidate for candidate in candidates if candidate}
+
+
+def configured_repository_id(job: dict[str, Any]) -> str | None:
+    repository_id = normalized_repository_identifier(
+        (job.get("config_json") or {}).get("repository_id"),
+    )
+    return repository_id or None
+
+
+def resolve_code_inspection_repository_id(
+    current_store: Any,
+    *,
+    job: dict[str, Any],
+    source_json: dict[str, Any],
+) -> str | None:
+    source_repository_id = normalized_repository_identifier(source_json.get("repository_id"))
+    configured_id = configured_repository_id(job)
+    if source_repository_id and source_repository_id in current_store.product_git_repositories:
+        return source_repository_id
+    if source_repository_id:
+        for repository in current_store.product_git_repositories.values():
+            if job.get("product_id") and repository.get("product_id") != job.get("product_id"):
+                continue
+            if repository_matches_identifier(repository, source_repository_id):
+                return str(repository["id"])
+    return configured_id or source_repository_id or None
+
+
 def sync_product_git_repository_store(current_store: Any, product_id: str | None) -> None:
     if not product_id:
         return
@@ -418,11 +461,14 @@ def create_code_inspection_report_records(
         plugin_summary=plugin_summary,
     )
     severity_mapping = action_severity_mapping(current_store, job)
-    repository_id = str(
-        source_json.get("repository_id")
-        or (job.get("config_json") or {}).get("repository_id")
-        or ""
-    ).strip() or None
+    repository_id = resolve_code_inspection_repository_id(
+        current_store,
+        job=job,
+        source_json=source_json,
+    )
+    repository = None
+    if repository_id is not None:
+        source_json["repository_id"] = repository_id
     if repository_id is not None:
         repository = current_store.product_git_repositories.get(repository_id)
         if repository is None:
@@ -437,8 +483,13 @@ def create_code_inspection_report_records(
         severity_mapping=severity_mapping,
     )
     now = datetime.now(UTC).isoformat()
+    repository_default_branch = repository.get("default_branch") if repository else None
     report = {
-        "branch": source_json.get("branch") or (job.get("config_json") or {}).get("branch"),
+        "branch": (
+            source_json.get("branch")
+            or (job.get("config_json") or {}).get("branch")
+            or repository_default_branch
+        ),
         "collector_run_id": collector_run_id,
         "commit_sha": source_json.get("commit_sha"),
         "created_at": now,

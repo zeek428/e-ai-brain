@@ -45,6 +45,7 @@ import {
   fetchPluginActions,
   fetchPluginConnections,
   fetchResultWriteRecords,
+  fetchProductGitRepositories,
   fetchScheduledJobTemplates,
   fetchScheduledJobRunObservability,
   fetchScheduledJobRuns,
@@ -61,6 +62,7 @@ import {
   type PluginConnectionTestResult,
   type PluginConnectionRecord,
   type ProductFilterOption,
+  type ProductGitRepositoryOption,
   type ResultWriteRecord,
   type ScheduledJobRecord,
   type ScheduledJobDryRunResult,
@@ -175,6 +177,10 @@ const connectionEnvironmentOptions = [
 
 const productRequiredJobTypes = ['code_repository_inspection', 'user_feedback_insight_extract'];
 const pluginRequiredJobTypes = ['code_repository_inspection', 'plugin_action_invoke', 'user_feedback_insight_extract'];
+const codeInspectionPluginActionCodes = new Set([
+  'scan_github_code_inspection',
+  'scan_gitlab_code_inspection',
+]);
 const aiProcessingRequiredJobTypes = [
   'iteration_plan_suggestion_generate',
   'online_log_ai_analysis',
@@ -315,6 +321,10 @@ function templateSelector(template: ScheduledJobTemplateRecord | undefined, key:
 
 function stringArrayFromUnknown(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function isCodeInspectionPluginAction(action: PluginActionRecord | undefined): action is PluginActionRecord {
+  return Boolean(action && codeInspectionPluginActionCodes.has(action.code));
 }
 
 function uniqueStringList(values: Array<string | null | undefined>): string[] {
@@ -1458,6 +1468,8 @@ export default function ScheduledJobsPage() {
   const [pluginActions, setPluginActions] = useState<PluginActionRecord[]>([]);
   const [pluginConnections, setPluginConnections] = useState<PluginConnectionRecord[]>([]);
   const [products, setProducts] = useState<ProductFilterOption[]>([]);
+  const [productRepositories, setProductRepositories] = useState<ProductGitRepositoryOption[]>([]);
+  const [productRepositoriesLoading, setProductRepositoriesLoading] = useState(false);
   const [agents, setAgents] = useState<AiAgentRecord[]>([]);
   const [skills, setSkills] = useState<AiSkillRecord[]>([]);
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeRecord[]>([]);
@@ -1491,7 +1503,14 @@ export default function ScheduledJobsPage() {
   const selectedKnowledgeDocumentIds = Form.useWatch('knowledge_document_ids', form);
   const selectedResultActions = Form.useWatch('result_actions', form);
   const selectedJobType = Form.useWatch('job_type', form);
+  const selectedProductId = Form.useWatch('product_id', form);
+  const selectedConfigJson = Form.useWatch('config_json', form);
   const selectedTemplateCode = Form.useWatch('template', form);
+  const selectedConfigJsonRecord = useMemo(
+    () => recordValue(selectedConfigJson) ?? {},
+    [selectedConfigJson],
+  );
+  const selectedRepositoryId = recordStringValue(selectedConfigJsonRecord, 'repository_id');
   const normalizedSelectedPluginConnectionIds = useMemo(
     () => stringArrayFromUnknown(selectedPluginConnectionIds),
     [selectedPluginConnectionIds],
@@ -1531,18 +1550,58 @@ export default function ScheduledJobsPage() {
     () => new Map(pluginConnections.map((connection) => [connection.id, connection])),
     [pluginConnections],
   );
+  const codeInspectionActionByPluginId = useMemo(() => {
+    const actionByPluginId = new Map<string, PluginActionRecord>();
+    for (const action of pluginActions) {
+      if (!isCodeInspectionPluginAction(action)) {
+        continue;
+      }
+      const existing = actionByPluginId.get(action.plugin_id);
+      if (!existing || (existing.status !== 'active' && action.status === 'active')) {
+        actionByPluginId.set(action.plugin_id, action);
+      }
+    }
+    return actionByPluginId;
+  }, [pluginActions]);
+  const productRepositoryById = useMemo(
+    () => new Map(productRepositories.map((repository) => [repository.id, repository])),
+    [productRepositories],
+  );
+  const selectedRepositoryDefaultBranch = selectedRepositoryId
+    ? productRepositoryById.get(selectedRepositoryId)?.defaultBranch
+    : undefined;
+  const selectedPluginActionPluginIds = useMemo(
+    () =>
+      new Set(
+        normalizedSelectedPluginActionIds
+          .map((actionId) => pluginActionById.get(actionId)?.plugin_id)
+          .filter((pluginId): pluginId is string => Boolean(pluginId)),
+      ),
+    [normalizedSelectedPluginActionIds, pluginActionById],
+  );
+  const connectionPluginFilterIds = useMemo(
+    () =>
+      selectedJobType === 'code_repository_inspection' && codeInspectionActionByPluginId.size > 0
+        ? new Set(codeInspectionActionByPluginId.keys())
+        : selectedPluginActionPluginIds,
+    [codeInspectionActionByPluginId, selectedJobType, selectedPluginActionPluginIds],
+  );
   const jobById = useMemo(
     () => new Map(jobs.map((job) => [job.id, job])),
     [jobs],
   );
   const filteredPluginConnections = useMemo(
     () =>
-      pluginConnections.filter(
-        (connection) =>
+      pluginConnections.filter((connection) => {
+        const matchesEnvironment =
           !selectedConnectionEnvironment
-          || (connection.environment ?? 'default') === selectedConnectionEnvironment,
-      ),
-    [pluginConnections, selectedConnectionEnvironment],
+          || (connection.environment ?? 'default') === selectedConnectionEnvironment;
+        const matchesSelectedActionPlugin =
+          connectionPluginFilterIds.size === 0
+          || connectionPluginFilterIds.has(String(connection.plugin_id));
+        return matchesEnvironment && matchesSelectedActionPlugin;
+      }),
+    [connectionPluginFilterIds, pluginConnections, selectedConnectionEnvironment],
   );
   const modelGatewayConfigById = useMemo(
     () => new Map(modelGatewayConfigs.map((config) => [config.id, config])),
@@ -1582,22 +1641,89 @@ export default function ScheduledJobsPage() {
     || '-';
 
   useEffect(() => {
-    if (!selectedConnectionEnvironment || normalizedSelectedPluginConnectionIds.length === 0) {
+    if (normalizedSelectedPluginConnectionIds.length === 0) {
       return;
     }
     const nextConnectionIds = normalizedSelectedPluginConnectionIds.filter((connectionId) => {
       const connection = pluginConnectionById.get(connectionId);
-      return connection && (connection.environment ?? 'default') === selectedConnectionEnvironment;
+      if (!connection) {
+        return false;
+      }
+      const matchesEnvironment =
+        !selectedConnectionEnvironment
+        || (connection.environment ?? 'default') === selectedConnectionEnvironment;
+      const matchesSelectedActionPlugin =
+        connectionPluginFilterIds.size === 0
+        || connectionPluginFilterIds.has(String(connection.plugin_id));
+      return matchesEnvironment && matchesSelectedActionPlugin;
     });
     if (nextConnectionIds.length !== normalizedSelectedPluginConnectionIds.length) {
       form.setFieldValue('plugin_connection_ids', nextConnectionIds);
       form.setFieldValue('plugin_connection_id', primaryId(nextConnectionIds));
     }
-  }, [form, normalizedSelectedPluginConnectionIds, pluginConnectionById, selectedConnectionEnvironment]);
+  }, [
+    form,
+    connectionPluginFilterIds,
+    normalizedSelectedPluginConnectionIds,
+    pluginConnectionById,
+    selectedConnectionEnvironment,
+  ]);
 
   useEffect(() => {
     setConnectionTestResult(undefined);
   }, [selectedPrimaryPluginConnectionId]);
+
+  useEffect(() => {
+    if (!modalOpen || selectedJobType !== 'code_repository_inspection' || !selectedProductId) {
+      setProductRepositories([]);
+      setProductRepositoriesLoading(false);
+      return;
+    }
+    let ignore = false;
+    setProductRepositoriesLoading(true);
+    fetchProductGitRepositories(selectedProductId)
+      .then((repositories) => {
+        if (ignore) {
+          return;
+        }
+        setProductRepositories(repositories);
+        const config = recordValue(form.getFieldValue('config_json')) ?? {};
+        const currentRepositoryId = recordStringValue(config, 'repository_id');
+        const currentBranch = recordStringValue(config, 'branch');
+        const selectedRepository =
+          repositories.find((repository) => repository.id === currentRepositoryId)
+          ?? (!currentRepositoryId ? repositories[0] : undefined);
+        if (!currentRepositoryId && selectedRepository) {
+          form.setFieldValue(['config_json', 'repository_id'], selectedRepository.id);
+        }
+        if (!currentBranch && selectedRepository?.defaultBranch) {
+          form.setFieldValue(['config_json', 'branch'], selectedRepository.defaultBranch);
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          message.error(error instanceof Error ? error.message : '代码仓库加载失败');
+          setProductRepositories([]);
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setProductRepositoriesLoading(false);
+        }
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [form, modalOpen, selectedJobType, selectedProductId]);
+
+  const handleCodeInspectionRepositoryChange = useCallback(
+    (repositoryId: string | undefined) => {
+      form.setFieldValue(['config_json', 'repository_id'], repositoryId);
+      const repository = repositoryId ? productRepositoryById.get(repositoryId) : undefined;
+      form.setFieldValue(['config_json', 'branch'], repository?.defaultBranch ?? undefined);
+    },
+    [form, productRepositoryById],
+  );
 
   const testSelectedConnection = useCallback(async () => {
     if (!selectedPrimaryPluginConnectionId) {
@@ -1621,6 +1747,50 @@ export default function ScheduledJobsPage() {
       setTestingConnectionId(undefined);
     }
   }, [selectedPrimaryPluginConnectionId]);
+
+  const handlePluginConnectionChange = useCallback(
+    (value: unknown) => {
+      let nextConnectionIds = uniqueStringList(stringArrayFromUnknown(value));
+      if (selectedJobType === 'code_repository_inspection') {
+        const addedConnectionId = nextConnectionIds.find(
+          (connectionId) => !normalizedSelectedPluginConnectionIds.includes(connectionId),
+        );
+        const addedConnection = addedConnectionId ? pluginConnectionById.get(addedConnectionId) : undefined;
+        if (
+          addedConnection
+          && codeInspectionActionByPluginId.has(String(addedConnection.plugin_id))
+        ) {
+          nextConnectionIds = uniqueStringList([
+            addedConnectionId,
+            ...nextConnectionIds.filter((connectionId) => {
+              if (connectionId === addedConnectionId) {
+                return false;
+              }
+              return pluginConnectionById.get(connectionId)?.plugin_id === addedConnection.plugin_id;
+            }),
+          ]);
+        }
+        const primaryConnectionId = primaryId(nextConnectionIds);
+        const primaryConnection = primaryConnectionId ? pluginConnectionById.get(primaryConnectionId) : undefined;
+        const codeInspectionAction = primaryConnection
+          ? codeInspectionActionByPluginId.get(String(primaryConnection.plugin_id))
+          : undefined;
+        if (codeInspectionAction) {
+          form.setFieldValue('plugin_action_id', codeInspectionAction.id);
+          form.setFieldValue('plugin_action_ids', [codeInspectionAction.id]);
+        }
+      }
+      form.setFieldValue('plugin_connection_id', primaryId(nextConnectionIds));
+      form.setFieldValue('plugin_connection_ids', nextConnectionIds);
+    },
+    [
+      codeInspectionActionByPluginId,
+      form,
+      normalizedSelectedPluginConnectionIds,
+      pluginConnectionById,
+      selectedJobType,
+    ],
+  );
 
   const orchestrationNodes = useMemo<ScheduledJobOrchestrationNode[]>(() => {
     const selectedConnections = normalizedSelectedPluginConnectionIds
@@ -2172,14 +2342,16 @@ export default function ScheduledJobsPage() {
     const { template, ...jobValues } = values;
     const selectedTemplate = availableJobTemplates.find((item) => item.code === template);
     delete jobValues.connection_environment;
-    const pluginConnectionIds = uniqueStringList([
-      ...(values.plugin_connection_ids ?? []),
-      values.plugin_connection_id,
-    ]);
-    const pluginActionIds = uniqueStringList([
-      ...(values.plugin_action_ids ?? []),
-      values.plugin_action_id,
-    ]);
+    const pluginConnectionIds = uniqueStringList(
+      Array.isArray(values.plugin_connection_ids)
+        ? values.plugin_connection_ids
+        : [values.plugin_connection_id],
+    );
+    const pluginActionIds = uniqueStringList(
+      Array.isArray(values.plugin_action_ids)
+        ? values.plugin_action_ids
+        : [values.plugin_action_id],
+    );
     jobValues.plugin_connection_id = primaryId(pluginConnectionIds) ?? null;
     jobValues.plugin_connection_ids = pluginConnectionIds;
     jobValues.plugin_action_id = primaryId(pluginActionIds) ?? null;
@@ -2304,7 +2476,13 @@ export default function ScheduledJobsPage() {
     try {
       const run = await runScheduledJob(jobId, triggerType, sourceRunId);
       setSelectedRun(run);
-      message.success('作业运行完成');
+      if (run.status === 'succeeded') {
+        message.success('作业运行完成');
+      } else if (run.status === 'running' || run.status === 'queued') {
+        message.info(`作业${run.status === 'queued' ? '已排队' : '运行中'}，请在运行记录查看进度`);
+      } else {
+        message.error(run.error_message ? `作业运行失败：${run.error_message}` : `作业运行 ${run.status}`);
+      }
       await reload();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '作业运行失败');
@@ -2705,6 +2883,12 @@ export default function ScheduledJobsPage() {
                     showSearch
                     optionFilterProp="label"
                     placeholder="请选择产品"
+                    onChange={() => {
+                      if (selectedJobType === 'code_repository_inspection') {
+                        form.setFieldValue(['config_json', 'repository_id'], undefined);
+                        form.setFieldValue(['config_json', 'branch'], undefined);
+                      }
+                    }}
                     options={products.map((product) => ({
                       label: `${product.name} (${product.code})`,
                       value: product.id,
@@ -2745,6 +2929,7 @@ export default function ScheduledJobsPage() {
                     allowClear
                     mode="multiple"
                     maxTagCount={2}
+                    onChange={handlePluginConnectionChange}
                     optionFilterProp="label"
                     placeholder="请选择取数连接"
                     showSearch
@@ -2757,6 +2942,41 @@ export default function ScheduledJobsPage() {
               </Col>
             </Row>
           </FormSection>
+          {selectedJobType === 'code_repository_inspection' ? (
+            <FormSection label="代码仓库配置" marker="仓库">
+              <Row gutter={12}>
+                <Col span={14}>
+                  <Form.Item
+                    label="代码仓库"
+                    name={['config_json', 'repository_id']}
+                    rules={[{ required: true, message: '请选择代码仓库' }]}
+                  >
+                    <Select
+                      allowClear
+                      loading={productRepositoriesLoading}
+                      onChange={handleCodeInspectionRepositoryChange}
+                      optionFilterProp="label"
+                      options={productRepositories.map((repository) => ({
+                        label: repository.label,
+                        value: repository.id,
+                      }))}
+                      placeholder="请选择代码仓库"
+                      showSearch
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={10}>
+                  <Form.Item
+                    label="扫描分支"
+                    name={['config_json', 'branch']}
+                    rules={[{ required: true, message: '请输入扫描分支' }]}
+                  >
+                    <Input placeholder={selectedRepositoryDefaultBranch ?? 'main'} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </FormSection>
+          ) : null}
           <FormSection label="AI执行配置" marker="处理">
             <Row gutter={12}>
               <Col span={8}>

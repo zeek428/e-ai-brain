@@ -136,7 +136,12 @@ function pluginConnectionTestBody() {
 }
 
 function installPluginsFetchMock(
-  options: { deferConnectionTest?: boolean; emptyActionTemplates?: boolean; includeOfficialPlugins?: boolean } = {},
+  options: {
+    deferConnectionTest?: boolean;
+    emptyActionTemplates?: boolean;
+    includeOfficialActions?: boolean;
+    includeOfficialPlugins?: boolean;
+  } = {},
 ) {
   const actionBodies: unknown[] = [];
   const actionDeleteIds: string[] = [];
@@ -841,6 +846,29 @@ function installPluginsFetchMock(
       return jsonResponse(pluginConnectionTestBody());
     }
     if (input === '/api/system/plugin-actions' && init?.method === 'GET') {
+      const officialActions = options.includeOfficialActions
+        ? [
+            {
+              action_type: 'http_request',
+              code: 'scan_github_code_inspection',
+              connection_id: null,
+              id: 'action_github_code_inspection',
+              name: 'GitHub 代码巡检',
+              plugin_id: 'plugin_standard_github',
+              request_config: {
+                method: 'GET',
+                path: '/repos/{{owner}}/{{repo}}/dependabot/alerts',
+                query: { state: 'fixed', per_page: 50 },
+              },
+              requires_human_review: false,
+              result_mapping: {
+                findings_path: '$.dependabot_alerts',
+                write_target: 'code_inspection_reports',
+              },
+              status: 'active',
+            },
+          ]
+        : [];
       return jsonResponse({
         data: {
           items: [
@@ -861,8 +889,9 @@ function installPluginsFetchMock(
               result_mapping: { write_target: 'scheduled_job_result' },
               status: 'active',
             },
+            ...officialActions,
           ],
-          total: 1,
+          total: 1 + officialActions.length,
         },
       });
     }
@@ -1830,6 +1859,23 @@ describe('PluginsPage', () => {
         }),
       ]),
     );
+  });
+
+  it('prefills the scene template when editing official plugin actions', async () => {
+    installPluginsFetchMock({ includeOfficialActions: true, includeOfficialPlugins: true });
+
+    render(<PluginsPage />);
+
+    const actionsTab = screen.getByRole('tab', { name: '动作' });
+    fireEvent.click(actionsTab);
+    await waitFor(() => expect(actionsTab).toHaveAttribute('aria-selected', 'true'));
+    fireEvent.click(await screen.findByRole('button', { name: '编辑动作 GitHub 代码巡检' }));
+
+    const dialog = await findDialogByTitle('编辑动作');
+
+    expect(within(dialog).getByText('GitHub 代码巡检')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('请求路径')).toHaveValue('/repos/{{owner}}/{{repo}}/dependabot/alerts');
+    expect(within(dialog).getByText('代码巡检报告')).toBeInTheDocument();
   });
 
   it('builds request config from visual params and headers by default', async () => {

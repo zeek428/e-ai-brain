@@ -2108,6 +2108,10 @@ def test_scheduled_job_can_invoke_configured_plugin_action_with_snapshots_and_lo
     assert run["resolved_plugin_snapshot"]["action"]["id"] == action["id"]
     assert run["result_summary"]["plugin"]["status"] == "succeeded"
     assert run["result_summary"]["plugin"]["response_summary"]["json"]["commits"] == 8
+    run_request_preview = run["result_summary"]["plugin"]["request_summary"]["request_preview"]
+    assert run_request_preview["headers"]["Authorization"] == "***"
+    assert run_request_preview["headers"]["PRIVATE-TOKEN"] == "***"
+    assert run_request_preview["headers"]["X-Action-Source"] == "action-default"
 
     logs = client.get(
         f"/api/system/plugin-invocation-logs?scheduled_job_id={job_data['id']}",
@@ -2116,6 +2120,10 @@ def test_scheduled_job_can_invoke_configured_plugin_action_with_snapshots_and_lo
     assert logs["total"] == 1
     assert logs["items"][0]["id"] == run["plugin_invocation_log_id"]
     assert logs["items"][0]["status"] == "succeeded"
+    log_request_preview = logs["items"][0]["request_summary"]["request_preview"]
+    assert log_request_preview["headers"]["Authorization"] == "***"
+    assert log_request_preview["headers"]["PRIVATE-TOKEN"] == "***"
+    assert log_request_preview["headers"]["X-Connection-Source"] == "connection-default"
 
 
 def test_scheduled_email_action_run_exposes_notification_write_preview():
