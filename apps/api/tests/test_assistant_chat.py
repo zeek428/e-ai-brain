@@ -595,6 +595,184 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     ]
 
 
+def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
+    headers = auth_headers()
+    app.state.store.reset()
+    now = "2026-06-16T10:00:00+00:00"
+
+    app.state.store.assistant_action_drafts = {
+        "assistant_action_draft_pending": {
+            "action": "create_scheduled_job",
+            "created_at": now,
+            "created_by": "user_admin",
+            "id": "assistant_action_draft_pending",
+            "metadata_json": {},
+            "payload": {"name": "待确认草案"},
+            "risk_level": "medium",
+            "status": "pending",
+            "title": "待确认草案",
+            "updated_at": now,
+        },
+        "assistant_action_draft_confirmed": {
+            "action": "create_scheduled_job",
+            "confirmed_at": now,
+            "confirmed_by": "user_admin",
+            "created_at": now,
+            "created_by": "user_admin",
+            "id": "assistant_action_draft_confirmed",
+            "metadata_json": {"modified_fields": ["cron_expression"]},
+            "payload": {"name": "已确认草案"},
+            "result_run_id": "assistant_action_run_succeeded",
+            "risk_level": "medium",
+            "status": "confirmed",
+            "title": "已确认草案",
+            "updated_at": now,
+        },
+        "assistant_action_draft_cancelled": {
+            "action": "create_plugin_action",
+            "cancelled_at": now,
+            "cancelled_by": "user_admin",
+            "created_at": now,
+            "created_by": "user_admin",
+            "id": "assistant_action_draft_cancelled",
+            "metadata_json": {"user_modified": False},
+            "payload": {"name": "已取消草案"},
+            "risk_level": "low",
+            "status": "cancelled",
+            "title": "已取消草案",
+            "updated_at": now,
+        },
+        "assistant_action_draft_other_user": {
+            "action": "create_scheduled_job",
+            "created_at": now,
+            "created_by": "user_reviewer",
+            "id": "assistant_action_draft_other_user",
+            "metadata_json": {},
+            "payload": {"name": "其他人的草案"},
+            "risk_level": "medium",
+            "status": "confirmed",
+            "title": "其他人的草案",
+            "updated_at": now,
+        },
+    }
+    app.state.store.assistant_action_runs = {
+        "assistant_action_run_succeeded": {
+            "action": "create_scheduled_job",
+            "created_at": now,
+            "draft_id": "assistant_action_draft_confirmed",
+            "executed_by": "user_admin",
+            "finished_at": now,
+            "id": "assistant_action_run_succeeded",
+            "result": {"id": "scheduled_job_metrics"},
+            "result_id": "scheduled_job_metrics",
+            "result_type": "scheduled_job",
+            "started_at": now,
+            "status": "succeeded",
+            "updated_at": now,
+        },
+        "assistant_action_run_other_user": {
+            "action": "create_scheduled_job",
+            "created_at": now,
+            "draft_id": "assistant_action_draft_other_user",
+            "executed_by": "user_reviewer",
+            "finished_at": now,
+            "id": "assistant_action_run_other_user",
+            "result": {},
+            "started_at": now,
+            "status": "failed",
+            "updated_at": now,
+        },
+    }
+    app.state.store.assistant_messages = {
+        "assistant_message_user_plain": {
+            "content": "当前进展如何？",
+            "conversation_id": "assistant_conversation_metrics",
+            "created_at": now,
+            "id": "assistant_message_user_plain",
+            "metadata_json": {"references": []},
+            "role": "user",
+            "suggestions": [],
+            "updated_at": now,
+            "user_id": "user_admin",
+        },
+        "assistant_message_user_refs": {
+            "content": "@支付页超时排障手册 总结一下",
+            "conversation_id": "assistant_conversation_metrics",
+            "created_at": now,
+            "id": "assistant_message_user_refs",
+            "metadata_json": {
+                "references": [
+                    {"id": "knowledge_payment_runbook", "type": "knowledge_document"},
+                    {"id": "scheduled_job_feedback_weekly", "type": "scheduled_job"},
+                ]
+            },
+            "role": "user",
+            "suggestions": [],
+            "updated_at": now,
+            "user_id": "user_admin",
+        },
+        "assistant_message_assistant_refs": {
+            "content": "已结合知识文档回答。",
+            "conversation_id": "assistant_conversation_metrics",
+            "created_at": now,
+            "id": "assistant_message_assistant_refs",
+            "metadata_json": {
+                "references": [
+                    {"id": "knowledge_payment_runbook", "type": "knowledge_document"}
+                ]
+            },
+            "role": "assistant",
+            "suggestions": [],
+            "updated_at": now,
+            "user_id": "user_admin",
+        },
+    }
+
+    response = client.get("/api/assistant/metrics", headers=headers)
+
+    assert response.status_code == 200
+    metrics = response.json()["data"]
+    assert metrics["summary"] == {
+        "action_run_failed_count": 0,
+        "action_run_succeeded_count": 1,
+        "action_run_success_rate": 1.0,
+        "action_run_total": 1,
+        "draft_adoption_rate": 0.333,
+        "draft_cancelled_count": 1,
+        "draft_confirmed_count": 1,
+        "draft_failed_count": 0,
+        "draft_pending_count": 1,
+        "draft_resolution_rate": 0.667,
+        "draft_total": 3,
+        "draft_user_modified_count": 1,
+        "draft_user_modified_rate": 0.333,
+        "knowledge_reference_count": 2,
+        "message_total": 3,
+        "reference_total": 3,
+        "reference_usage_rate": 0.5,
+        "referenced_user_message_count": 1,
+        "user_message_total": 2,
+    }
+    assert metrics["drafts_by_action"] == [
+        {
+            "action": "create_plugin_action",
+            "cancelled_count": 1,
+            "confirmed_count": 0,
+            "failed_count": 0,
+            "pending_count": 0,
+            "total": 1,
+        },
+        {
+            "action": "create_scheduled_job",
+            "cancelled_count": 0,
+            "confirmed_count": 1,
+            "failed_count": 0,
+            "pending_count": 1,
+            "total": 2,
+        },
+    ]
+
+
 def test_ai_assistant_action_draft_previews_diff_and_blocks_invalid_confirmation():
     headers = auth_headers()
     app.state.store.reset()

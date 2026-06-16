@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.317 |
+| 功能版本 | v1.1.318 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.318 | 2026-06-17 | AI 助手 API 新增 `/api/assistant/metrics` 当前用户效果指标，返回草案采纳率、用户修改率、动作运行成功率和显式引用使用率 | Codex |
 | v1.1.317 | 2026-06-16 | AI 执行器 API 新增管理员侧测试接口，返回系统默认执行器或本地 Runner 健康诊断 | Codex |
 | v1.1.316 | 2026-06-16 | 插件连接页面契约补充“保存并测试”：客户端保存连接后复用响应 ID 调用现有测试接口 | Codex |
 | v1.1.315 | 2026-06-16 | Runner 安装包公共文件新增 START_STOP.md，按目标系统说明启动、停止、状态、重启和禁用自启命令 | Codex |
@@ -560,6 +561,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/cancel` | 取消 pending 草案，不产生领域写入。 |
+| Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，包括草案采纳、运行成功、用户修改和显式引用使用情况。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |
@@ -1528,6 +1530,55 @@ POST /api/assistant/action-drafts/{draft_id}/cancel
 ```
 
 `confirm` 只接受仍处于 `pending` 的草案。确认时必须重新走对应领域 service：`create_scheduled_job` 调用 scheduled_jobs service 并把 `config_json.assistant_draft` 写入作业配置，`create_plugin_connection` 调用插件连接 service，`create_plugin_action` 调用动作 service。确认成功返回 `{"draft": ..., "run": ...}`，`run.result_type/result_id/result` 指向创建出的领域资源；确认失败不得绕过领域 service。取消接口只把草案置为 `cancelled` 并记录原因，不产生领域写入。草案创建、确认和取消分别写入 `assistant_action_draft.created`、`assistant_action_draft.confirmed` 和 `assistant_action_draft.cancelled` 审计事件。
+
+AI 助手效果指标：
+
+```http
+GET /api/assistant/metrics
+```
+
+响应：
+
+```json
+{
+  "data": {
+    "drafts_by_action": [
+      {
+        "action": "create_scheduled_job",
+        "cancelled_count": 0,
+        "confirmed_count": 3,
+        "failed_count": 0,
+        "pending_count": 1,
+        "total": 4
+      }
+    ],
+    "summary": {
+      "action_run_failed_count": 1,
+      "action_run_succeeded_count": 3,
+      "action_run_success_rate": 0.75,
+      "action_run_total": 4,
+      "draft_adoption_rate": 0.6,
+      "draft_cancelled_count": 1,
+      "draft_confirmed_count": 3,
+      "draft_failed_count": 0,
+      "draft_pending_count": 1,
+      "draft_resolution_rate": 0.8,
+      "draft_total": 5,
+      "draft_user_modified_count": 2,
+      "draft_user_modified_rate": 0.4,
+      "knowledge_reference_count": 6,
+      "message_total": 18,
+      "reference_total": 10,
+      "reference_usage_rate": 0.5,
+      "referenced_user_message_count": 4,
+      "user_message_total": 8
+    }
+  },
+  "trace_id": "trace_..."
+}
+```
+
+该接口只返回当前登录用户范围内的助手效果数据。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + failed) / draft_total`，运行成功率为 `succeeded / action_run_total`，显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，后续客户端确认草案字段编辑时应写入该元数据。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
 
 `conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
 

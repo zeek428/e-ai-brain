@@ -552,6 +552,121 @@ def test_assistant_history_uses_repository_when_runtime_store_is_stale():
         app.state.user_repository = original_users
 
 
+def test_assistant_metrics_use_repository_when_runtime_store_is_stale():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    now = "2026-06-16T10:00:00+00:00"
+    repository.assistant_chat_payload = {
+        "assistant_action_drafts": {
+            "assistant_action_draft_repo_admin": {
+                "action": "create_scheduled_job",
+                "created_at": now,
+                "created_by": "user_admin",
+                "id": "assistant_action_draft_repo_admin",
+                "metadata_json": {"user_modified": True},
+                "payload": {"name": "仓储草案"},
+                "result_run_id": "assistant_action_run_repo_admin",
+                "risk_level": "medium",
+                "status": "confirmed",
+                "title": "仓储草案",
+                "updated_at": now,
+            },
+            "assistant_action_draft_repo_reviewer": {
+                "action": "create_scheduled_job",
+                "created_at": now,
+                "created_by": "user_reviewer",
+                "id": "assistant_action_draft_repo_reviewer",
+                "metadata_json": {},
+                "payload": {"name": "其他用户草案"},
+                "risk_level": "medium",
+                "status": "cancelled",
+                "title": "其他用户草案",
+                "updated_at": now,
+            },
+        },
+        "assistant_action_runs": {
+            "assistant_action_run_repo_admin": {
+                "action": "create_scheduled_job",
+                "created_at": now,
+                "draft_id": "assistant_action_draft_repo_admin",
+                "executed_by": "user_admin",
+                "finished_at": now,
+                "id": "assistant_action_run_repo_admin",
+                "result": {"id": "scheduled_job_repo"},
+                "started_at": now,
+                "status": "succeeded",
+                "updated_at": now,
+            },
+            "assistant_action_run_repo_reviewer": {
+                "action": "create_scheduled_job",
+                "created_at": now,
+                "draft_id": "assistant_action_draft_repo_reviewer",
+                "executed_by": "user_reviewer",
+                "finished_at": now,
+                "id": "assistant_action_run_repo_reviewer",
+                "result": {},
+                "started_at": now,
+                "status": "failed",
+                "updated_at": now,
+            },
+        },
+        "assistant_conversations": {},
+        "assistant_messages": {
+            "assistant_message_repo_admin": {
+                "content": "@知识 总结一下",
+                "conversation_id": "conversation_repo_admin",
+                "created_at": now,
+                "id": "assistant_message_repo_admin",
+                "metadata_json": {
+                    "references": [
+                        {"id": "knowledge_repo_doc", "type": "knowledge_document"}
+                    ]
+                },
+                "role": "user",
+                "suggestions": [],
+                "user_id": "user_admin",
+            },
+            "assistant_message_repo_reviewer": {
+                "content": "@其他 总结一下",
+                "conversation_id": "conversation_repo_reviewer",
+                "created_at": now,
+                "id": "assistant_message_repo_reviewer",
+                "metadata_json": {
+                    "references": [
+                        {"id": "knowledge_other_doc", "type": "knowledge_document"}
+                    ]
+                },
+                "role": "user",
+                "suggestions": [],
+                "user_id": "user_reviewer",
+            },
+        },
+    }
+    stale_store = PostgresRuntimeStore(repository)
+    stale_store.assistant_action_drafts = {}
+    stale_store.assistant_action_runs = {}
+    stale_store.assistant_messages = {}
+    app.state.store = stale_store
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        response = client.get("/api/assistant/metrics", headers=auth_headers())
+
+        assert response.status_code == 200
+        summary = response.json()["data"]["summary"]
+        assert summary["draft_total"] == 1
+        assert summary["draft_confirmed_count"] == 1
+        assert summary["draft_user_modified_count"] == 1
+        assert summary["action_run_total"] == 1
+        assert summary["action_run_succeeded_count"] == 1
+        assert summary["knowledge_reference_count"] == 1
+        assert summary["reference_usage_rate"] == 1.0
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
 def test_assistant_action_draft_confirm_uses_runtime_store_under_postgres(monkeypatch):
     original_store = app.state.store
     original_users = app.state.user_repository

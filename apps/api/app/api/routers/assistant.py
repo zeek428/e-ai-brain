@@ -24,6 +24,7 @@ from app.services.assistant_chat import (
     assistant_conversations_response,
     assistant_request_store,
 )
+from app.services.assistant_metrics import assistant_metrics_response
 from app.services.assistant_references import (
     AssistantReferenceError,
     assistant_reference_candidates_response,
@@ -127,6 +128,19 @@ def cancel_assistant_action_draft(
         user=user,
     )
     return envelope(result, get_trace_id(request))
+
+
+@router.get("/metrics")
+def assistant_metrics(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    payload = assistant_metrics_response(
+        assistant_request_store(store(request), user_id=user["id"]),
+        user=user,
+    )
+    return envelope(payload, get_trace_id(request))
 
 
 @router.get("/reference-candidates")
