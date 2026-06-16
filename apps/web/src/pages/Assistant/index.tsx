@@ -235,6 +235,7 @@ function actionDraftItems(toolResults?: AssistantToolResult[]) {
           item.action === 'create_scheduled_job'
           || item.action === 'create_plugin_action'
           || item.action === 'create_plugin_connection'
+          || item.action === 'create_analysis_draft'
         )
         && item.draft_id,
     );
@@ -400,6 +401,12 @@ function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
     return {
       label: '打开插件动作',
       url: `/tasks/plugins?action_id=${resolution.resource_id}`,
+    };
+  }
+  if (resolution.resource_type === 'assistant_analysis') {
+    return {
+      label: '打开分析结果',
+      url: `/assistant?draft_id=${resolution.resource_id}`,
     };
   }
   return {
@@ -735,6 +742,7 @@ function AssistantActionDraftCards({
     <div className="assistant-action-draft-list">
       {drafts.map((draft) => {
         const payload = draft.payload;
+        const isAnalysisDraft = draft.action === 'create_analysis_draft';
         const isPluginActionDraft = draft.action === 'create_plugin_action';
         const isPluginConnectionDraft = draft.action === 'create_plugin_connection';
         const draftId = draft.draft_id;
@@ -761,7 +769,9 @@ function AssistantActionDraftCards({
                   ? '确认前不会写入插件连接'
                   : isPluginActionDraft
                     ? '确认前不会写入插件动作'
-                    : '确认前不会写入作业定义'}
+                    : isAnalysisDraft
+                      ? '确认前不会写入分析结果'
+                      : '确认前不会写入作业定义'}
               </Text>
             </div>
             <div className="assistant-action-draft-grid">
@@ -821,6 +831,25 @@ function AssistantActionDraftCards({
                   <span>
                     <Text type="secondary">写入目标</Text>
                     <Text>{draftPayloadLabel(payload, 'result_mapping.write_target', resultWriteTargetLabels)}</Text>
+                  </span>
+                </>
+              ) : isAnalysisDraft ? (
+                <>
+                  <span>
+                    <Text type="secondary">分析类型</Text>
+                    <Text>{draftPayloadText(payload, 'analysis_type')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">来源模块</Text>
+                    <Text>{draftPayloadText(payload, 'source_module')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">摘要指标</Text>
+                    <Text>{draftPayloadText(payload, 'summary')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">风险/治理项</Text>
+                    <Text>{draftPayloadText(payload, 'findings')}</Text>
                   </span>
                 </>
               ) : (
@@ -922,7 +951,7 @@ function AssistantActionDraftCards({
                   应用到插件动作表单
                 </Button>
               ) : null}
-              {!resourceLink && !isPluginConnectionDraft && !isPluginActionDraft ? (
+              {!resourceLink && !isPluginConnectionDraft && !isPluginActionDraft && !isAnalysisDraft ? (
                 <Button
                   href="/tasks/scheduled-jobs"
                   size="small"
@@ -1529,7 +1558,8 @@ export default function AssistantPage() {
       return;
     }
     if (
-      resourceType !== 'plugin_action'
+      resourceType !== 'assistant_analysis'
+      && resourceType !== 'plugin_action'
       && resourceType !== 'plugin_connection'
       && resourceType !== 'scheduled_job'
     ) {

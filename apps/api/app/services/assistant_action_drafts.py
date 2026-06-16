@@ -23,6 +23,7 @@ from app.services.scheduled_jobs import (
 ASSISTANT_ACTION_DRAFT_STATUSES = {"cancelled", "confirmed", "failed", "pending"}
 ASSISTANT_ACTION_RUN_STATUSES = {"failed", "succeeded"}
 ASSISTANT_DRAFT_ACTIONS = {
+    "create_analysis_draft",
     "create_plugin_action",
     "create_plugin_connection",
     "create_scheduled_job",
@@ -318,6 +319,14 @@ def execute_assistant_action_draft(
             user=user,
         )
         return "plugin_action", str(result["id"]), result
+    if action == "create_analysis_draft":
+        result = {
+            **payload,
+            "source_draft_id": draft["id"],
+            "status": "confirmed",
+            "title": draft["title"],
+        }
+        return "assistant_analysis", draft["id"], result
     raise api_error(400, "UNSUPPORTED_DRAFT_ACTION", "Unsupported assistant draft action")
 
 
@@ -427,6 +436,19 @@ def assistant_action_draft_preview(
         )
         _append_plugin_action_validation(current_store, draft, preview)
         return preview
+    if action == "create_analysis_draft":
+        return _generic_create_draft_preview(
+            draft,
+            diff_fields=[
+                ("title", "标题"),
+                ("analysis_type", "分析类型"),
+                ("source_module", "来源模块"),
+                ("summary", "摘要指标"),
+                ("findings", "风险/治理项"),
+            ],
+            required_fields=["title", "analysis_type"],
+            resource_type="assistant_analysis",
+        )
     return _generic_create_draft_preview(
         draft,
         diff_fields=[],

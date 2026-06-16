@@ -30,6 +30,10 @@ def assistant_tool_results(
             results.append(draft_builder.code_inspection_job_draft(message=message))
         elif intent == "email_digest_job_draft":
             results.append(draft_builder.email_digest_job_draft())
+        elif intent == "knowledge_base_inspection_draft":
+            results.append(draft_builder.knowledge_base_inspection_draft())
+        elif intent == "release_risk_analysis_draft":
+            results.append(draft_builder.release_risk_analysis_draft())
         elif intent == "scheduled_job_draft":
             results.append(draft_builder.scheduled_job_draft())
         elif intent == "scheduled_job_diagnostic":
@@ -90,6 +94,7 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
             if str(review.get("ai_task_id")) in task_ids
         ],
         "integration_plugins": list(getattr(current_store, "integration_plugins", {}).values()),
+        "knowledge_deposits": list(getattr(current_store, "knowledge_deposits", {}).values()),
         "knowledge_documents": list(getattr(current_store, "knowledge_documents", {}).values()),
         "model_gateway_configs": list(getattr(current_store, "model_gateway_configs", {}).values()),
         "model_gateway_logs": list(getattr(current_store, "model_gateway_logs", [])),
@@ -141,6 +146,10 @@ def _assistant_tool_intents(message: str) -> list[str]:
             intents.append("email_digest_job_draft")
         else:
             intents.append("scheduled_job_draft")
+    if _knowledge_base_inspection_draft_requested(normalized):
+        intents.append("knowledge_base_inspection_draft")
+    if _release_risk_analysis_draft_requested(normalized):
+        intents.append("release_risk_analysis_draft")
     if _scheduled_job_diagnostic_requested(normalized):
         intents.append("scheduled_job_diagnostic")
     keyword_map = [
@@ -224,6 +233,42 @@ def _code_inspection_draft_requested(normalized_message: str) -> bool:
             "扫描",
         )
     )
+
+
+def _knowledge_base_inspection_draft_requested(normalized_message: str) -> bool:
+    has_create_intent = any(
+        keyword in normalized_message
+        for keyword in ("创建", "新增", "配置", "生成", "新建", "create", "draft")
+    )
+    has_knowledge_inspection = any(
+        keyword in normalized_message
+        for keyword in (
+            "知识库巡检",
+            "知识巡检",
+            "知识库检查",
+            "知识治理",
+            "knowledge inspection",
+        )
+    )
+    return has_create_intent and has_knowledge_inspection
+
+
+def _release_risk_analysis_draft_requested(normalized_message: str) -> bool:
+    has_create_intent = any(
+        keyword in normalized_message
+        for keyword in ("创建", "新增", "配置", "生成", "新建", "create", "draft")
+    )
+    has_release_risk = any(
+        keyword in normalized_message
+        for keyword in (
+            "发布风险分析",
+            "发布风险",
+            "版本风险",
+            "release risk",
+            "release analysis",
+        )
+    )
+    return has_create_intent and has_release_risk
 
 
 def _plugin_action_draft_requested(normalized_message: str) -> bool:

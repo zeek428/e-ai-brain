@@ -191,6 +191,168 @@ class AssistantDraftBuilder:
             "tool": "assistant.action_draft",
         }
 
+    def knowledge_base_inspection_draft(self) -> dict[str, Any]:
+        documents = self.context["knowledge_documents"]
+        deposits = self.context["knowledge_deposits"]
+        indexed_documents = [
+            document
+            for document in documents
+            if document.get("index_status") in {"indexed", "vector_indexed"}
+        ]
+        failed_documents = [
+            document
+            for document in documents
+            if "failed" in str(document.get("index_status") or "").lower()
+        ]
+        pending_deposits = [
+            deposit for deposit in deposits if deposit.get("status") == "pending"
+        ]
+        findings = [
+            {
+                "document_id": document.get("id"),
+                "message": document.get("vector_index_error")
+                or "知识文档索引失败，需要重试或检查 Embedding 网关。",
+                "severity": "high",
+                "title": document.get("title"),
+                "type": "index_failed",
+            }
+            for document in failed_documents
+        ]
+        findings.extend(
+            {
+                "deposit_id": deposit.get("id"),
+                "message": "知识沉淀候选仍待处理，需要人工采纳或拒绝。",
+                "severity": "medium",
+                "title": deposit.get("title"),
+                "type": "pending_deposit",
+            }
+            for deposit in pending_deposits
+        )
+        payload = {
+            "analysis_type": "knowledge_base_inspection",
+            "findings": findings,
+            "source_module": "knowledge",
+            "summary": {
+                "indexed_document_count": len(indexed_documents),
+                "index_failed_document_count": len(failed_documents),
+                "knowledge_document_count": len(documents),
+                "pending_deposit_count": len(pending_deposits),
+            },
+            "title": "知识库巡检",
+        }
+        item = {
+            "action": "create_analysis_draft",
+            "draft_id": "assistant_draft_knowledge_base_inspection",
+            "payload": payload,
+            "requires_confirmation": True,
+            "risk_level": "medium",
+            "title": "知识库巡检",
+        }
+        return {
+            "intent": "knowledge_base_inspection_draft",
+            "items": [item],
+            "references": _references(
+                "assistant_action_draft",
+                [
+                    {
+                        "id": item["draft_id"],
+                        "title": item["title"],
+                        "url": f"/assistant?draft_id={item['draft_id']}",
+                    }
+                ],
+            ),
+            "summary": {
+                "draft_count": 1,
+                "requires_confirmation": True,
+                "target": "assistant_analysis",
+            },
+            "tool": "assistant.action_draft",
+        }
+
+    def release_risk_analysis_draft(self) -> dict[str, Any]:
+        versions = self.context["versions"]
+        requirements = self.context["requirements"]
+        bugs = self.context["bugs"]
+        active_release_versions = [
+            version
+            for version in versions
+            if version.get("status") in {"active", "testing", "ready_for_release"}
+        ]
+        unclosed_requirements = [
+            requirement
+            for requirement in requirements
+            if requirement.get("status")
+            not in {"accepted", "cancelled", "closed", "deferred", "rejected", "released"}
+        ]
+        open_bugs = [
+            bug
+            for bug in bugs
+            if bug.get("status") not in {"cancelled", "closed", "done", "resolved"}
+        ]
+        critical_open_bugs = [
+            bug for bug in open_bugs if bug.get("severity") == "critical"
+        ]
+        findings = [
+            {
+                "bug_id": bug.get("id"),
+                "message": "存在未关闭严重缺陷，发布前需要明确修复或风险接受结论。",
+                "severity": "critical",
+                "title": bug.get("title"),
+                "type": "critical_open_bug",
+            }
+            for bug in critical_open_bugs
+        ]
+        findings.extend(
+            {
+                "message": "存在未关闭交付需求，发布前需要确认是否阻塞。",
+                "requirement_id": requirement.get("id"),
+                "severity": "medium",
+                "title": requirement.get("title"),
+                "type": "unclosed_requirement",
+            }
+            for requirement in unclosed_requirements
+        )
+        payload = {
+            "analysis_type": "release_risk_analysis",
+            "findings": findings,
+            "source_module": "release_governance",
+            "summary": {
+                "active_release_version_count": len(active_release_versions),
+                "critical_open_bug_count": len(critical_open_bugs),
+                "open_bug_count": len(open_bugs),
+                "unclosed_requirement_count": len(unclosed_requirements),
+            },
+            "title": "发布风险分析",
+        }
+        item = {
+            "action": "create_analysis_draft",
+            "draft_id": "assistant_draft_release_risk_analysis",
+            "payload": payload,
+            "requires_confirmation": True,
+            "risk_level": "high" if critical_open_bugs else "medium",
+            "title": "发布风险分析",
+        }
+        return {
+            "intent": "release_risk_analysis_draft",
+            "items": [item],
+            "references": _references(
+                "assistant_action_draft",
+                [
+                    {
+                        "id": item["draft_id"],
+                        "title": item["title"],
+                        "url": f"/assistant?draft_id={item['draft_id']}",
+                    }
+                ],
+            ),
+            "summary": {
+                "draft_count": 1,
+                "requires_confirmation": True,
+                "target": "assistant_analysis",
+            },
+            "tool": "assistant.action_draft",
+        }
+
     def code_inspection_job_draft(self, *, message: str) -> dict[str, Any]:
         template = scheduled_job_template_by_code("code_repository_inspection") or {}
         defaults = _template_payload_defaults(template)

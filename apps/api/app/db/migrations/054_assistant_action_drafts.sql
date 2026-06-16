@@ -21,7 +21,12 @@ CREATE TABLE IF NOT EXISTS assistant_action_drafts (
     status IN ('pending', 'confirmed', 'cancelled', 'failed')
   ),
   CONSTRAINT ck_assistant_action_drafts_action CHECK (
-    action IN ('create_plugin_action', 'create_plugin_connection', 'create_scheduled_job')
+    action IN (
+      'create_analysis_draft',
+      'create_plugin_action',
+      'create_plugin_connection',
+      'create_scheduled_job'
+    )
   )
 );
 

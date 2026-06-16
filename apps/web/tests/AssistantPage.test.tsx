@@ -1234,6 +1234,113 @@ describe('AssistantPage', () => {
     ]);
   });
 
+  it('renders and confirms assistant analysis drafts from the draft card', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_analysis_draft',
+              latency_ms: 128,
+              message: {
+                content: '我已生成一个知识库巡检分析草案。',
+                id: 'assistant_message_analysis_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'knowledge_base_inspection_draft',
+                    items: [
+                      {
+                        action: 'create_analysis_draft',
+                        client_draft_id: 'assistant_draft_knowledge_base_inspection',
+                        draft_id: 'assistant_action_draft_analysis',
+                        payload: {
+                          analysis_type: 'knowledge_base_inspection',
+                          findings: [{ title: '旧版发布检查清单', type: 'index_failed' }],
+                          source_module: 'knowledge',
+                          summary: { index_failed_document_count: 1 },
+                          title: '知识库巡检',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        server_draft_id: 'assistant_action_draft_analysis',
+                        status: 'pending',
+                        title: '知识库巡检',
+                      },
+                    ],
+                    summary: { draft_count: 1, requires_confirmation: true },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_analysis/confirm') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              draft: {
+                action: 'create_analysis_draft',
+                id: 'assistant_action_draft_analysis',
+                payload: {},
+                status: 'confirmed',
+                title: '知识库巡检',
+              },
+              run: {
+                action: 'create_analysis_draft',
+                draft_id: 'assistant_action_draft_analysis',
+                id: 'assistant_action_run_analysis',
+                result_id: 'assistant_action_draft_analysis',
+                result_type: 'assistant_analysis',
+                status: 'succeeded',
+              },
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '请生成知识库巡检草案' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('我已生成一个知识库巡检分析草案。')).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入分析结果')).toBeInTheDocument();
+    expect(screen.getByText('分析类型')).toBeInTheDocument();
+    expect(screen.getByText('knowledge_base_inspection')).toBeInTheDocument();
+    expect(screen.getByText('摘要指标')).toBeInTheDocument();
+    expect(screen.getByText('{"index_failed_document_count":1}')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '应用到定时作业表单' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /确认创建/ }));
+
+    expect(await screen.findByText('已应用')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '打开分析结果' })).toHaveAttribute(
+      'href',
+      '/assistant?draft_id=assistant_action_draft_analysis',
+    );
+  });
+
   it('shows assistant action draft precheck issues before confirmation', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

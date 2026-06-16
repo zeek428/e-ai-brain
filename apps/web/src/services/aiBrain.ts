@@ -223,7 +223,11 @@ export const ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY =
 export const ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY =
   'ai_brain_assistant_draft_resolution';
 
-export type AssistantDraftResourceType = 'plugin_action' | 'plugin_connection' | 'scheduled_job';
+export type AssistantDraftResourceType =
+  | 'assistant_analysis'
+  | 'plugin_action'
+  | 'plugin_connection'
+  | 'scheduled_job';
 
 export type AssistantDraftResolutionRecord = {
   resource_id: string;

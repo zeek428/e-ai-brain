@@ -1126,6 +1126,216 @@ def test_ai_assistant_chat_generates_email_digest_job_draft(monkeypatch):
     assert draft_response.json()["data"]["client_draft_id"] == "assistant_draft_email_digest"
 
 
+def test_ai_assistant_chat_generates_knowledge_inspection_analysis_draft(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.knowledge_documents["knowledge_doc_ready"] = {
+        "content": "支付故障排查手册摘要",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "created_by": "knowledge_owner@example.com",
+        "doc_type": "manual",
+        "id": "knowledge_doc_ready",
+        "index_status": "indexed",
+        "permission_roles": ["admin"],
+        "source_type": "manual",
+        "tags": ["payment"],
+        "title": "支付排障手册",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.knowledge_documents["knowledge_doc_failed"] = {
+        "content": "旧版发布检查清单",
+        "created_at": "2026-06-01T08:00:00+00:00",
+        "created_by": "knowledge_owner@example.com",
+        "doc_type": "manual",
+        "id": "knowledge_doc_failed",
+        "index_status": "index_failed",
+        "permission_roles": ["admin"],
+        "source_type": "manual",
+        "tags": ["release"],
+        "title": "旧版发布检查清单",
+        "updated_at": "2026-06-01T08:00:00+00:00",
+        "vector_index_error": "embedding gateway unavailable",
+    }
+    app.state.store.knowledge_deposits["knowledge_deposit_pending"] = {
+        "content": "本周新增排障经验待沉淀",
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "id": "knowledge_deposit_pending",
+        "source_task_id": "ai_task_001",
+        "status": "pending",
+        "title": "支付排障经验",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "我已生成知识库巡检分析草案，确认后归档结果。",
+                                        "suggestions": ["查看草案"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setattr(assistant_router, "urlopen", lambda _request, timeout: FakeResponse())
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "请生成知识库巡检草案，检查索引失败、过期知识和待处理知识沉淀"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    tool_result = response.json()["data"]["message"]["tool_results"][0]
+    assert tool_result["tool"] == "assistant.action_draft"
+    assert tool_result["intent"] == "knowledge_base_inspection_draft"
+    draft_item = tool_result["items"][0]
+    assert draft_item["client_draft_id"] == "assistant_draft_knowledge_base_inspection"
+    assert draft_item["status"] == "pending"
+    assert draft_item["action"] == "create_analysis_draft"
+    assert draft_item["title"] == "知识库巡检"
+    assert draft_item["payload"]["analysis_type"] == "knowledge_base_inspection"
+    assert draft_item["payload"]["summary"] == {
+        "indexed_document_count": 1,
+        "index_failed_document_count": 1,
+        "knowledge_document_count": 2,
+        "pending_deposit_count": 1,
+    }
+    assert draft_item["payload"]["findings"][0]["type"] == "index_failed"
+    assert draft_item["payload"]["findings"][0]["document_id"] == "knowledge_doc_failed"
+
+    draft_response = client.get(
+        f"/api/assistant/action-drafts/{draft_item['draft_id']}",
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    assert draft_response.json()["data"]["preview"]["target"]["resource_type"] == (
+        "assistant_analysis"
+    )
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft_item['draft_id']}/confirm",
+        headers=headers,
+    )
+    assert confirm_response.status_code == 200
+    run = confirm_response.json()["data"]["run"]
+    assert run["action"] == "create_analysis_draft"
+    assert run["result_type"] == "assistant_analysis"
+    assert run["result"]["analysis_type"] == "knowledge_base_inspection"
+    assert run["result"]["source_draft_id"] == draft_item["draft_id"]
+
+
+def test_ai_assistant_chat_generates_release_risk_analysis_draft(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.products["product_release"] = {
+        "code": "release",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "id": "product_release",
+        "name": "发布系统",
+        "status": "active",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.product_versions["version_release"] = {
+        "code": "v1.2",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "id": "version_release",
+        "name": "v1.2 发布",
+        "product_id": "product_release",
+        "release_date": "2026-06-20",
+        "status": "testing",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.requirements["requirement_open"] = {
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "id": "requirement_open",
+        "product_id": "product_release",
+        "status": "testing",
+        "title": "支付回调验收",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+        "version_id": "version_release",
+    }
+    app.state.store.bugs["bug_open"] = {
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "id": "bug_open",
+        "product_id": "product_release",
+        "severity": "critical",
+        "status": "open",
+        "title": "支付回调偶发失败",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "我已生成发布风险分析草案，确认后可追踪。",
+                                        "suggestions": ["查看草案"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setattr(assistant_router, "urlopen", lambda _request, timeout: FakeResponse())
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "请基于当前发布记录、未关闭缺陷、测试结论和需求状态生成发布风险分析草案",
+            "product_id": "product_release",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    tool_result = response.json()["data"]["message"]["tool_results"][0]
+    assert tool_result["intent"] == "release_risk_analysis_draft"
+    draft_item = tool_result["items"][0]
+    assert draft_item["client_draft_id"] == "assistant_draft_release_risk_analysis"
+    assert draft_item["status"] == "pending"
+    assert draft_item["action"] == "create_analysis_draft"
+    assert draft_item["payload"]["analysis_type"] == "release_risk_analysis"
+    assert draft_item["payload"]["summary"] == {
+        "active_release_version_count": 1,
+        "critical_open_bug_count": 1,
+        "open_bug_count": 1,
+        "unclosed_requirement_count": 1,
+    }
+
+
 def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
