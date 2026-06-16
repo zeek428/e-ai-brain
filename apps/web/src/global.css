@@ -363,7 +363,9 @@ body {
 .assistant-workspace {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
-  min-height: calc(100vh - 84px);
+  height: calc(100dvh - 132px);
+  min-height: 0;
+  overflow: hidden;
   background: #f5f7fb;
 }
 
@@ -371,6 +373,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-height: 0;
+  overflow: hidden;
   padding: 22px;
   border-right: 1px solid #e6ebf2;
   background: #ffffff;
@@ -393,6 +397,7 @@ body {
 
 .assistant-history-panel {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
 }
@@ -407,6 +412,9 @@ body {
 .assistant-history-list {
   display: grid;
   gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .assistant-history-list .ant-btn {
@@ -544,7 +552,8 @@ body {
 .assistant-chat-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
-  min-height: calc(100vh - 84px);
+  min-height: 0;
+  overflow: hidden;
   padding: 22px;
 }
 
@@ -797,16 +806,23 @@ body {
 
   .assistant-workspace {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
   }
 
   .assistant-sidebar {
     border-right: 0;
     border-bottom: 1px solid #e6ebf2;
+    overflow: visible;
   }
 
   .assistant-chat-panel,
   .assistant-workspace {
     min-height: auto;
+  }
+
+  .assistant-history-list {
+    max-height: 320px;
   }
 
   .assistant-chat-header,
