@@ -149,6 +149,48 @@ STANDARD_SCHEDULED_JOB_TEMPLATES = [
         "wizard_steps": STANDARD_WIZARD_STEPS,
     },
     {
+        "category": "operations",
+        "code": "online_log_anomaly_analysis",
+        "description": "按时间窗口读取线上日志指标，经 AI/Skill 分析异常并生成处置建议或通知。",
+        "name": "线上日志异常分析",
+        "payload_defaults": {
+            "cron_expression": "*/30 * * * *",
+            "enabled": True,
+            "execution_mode": "ai_generated",
+            "job_type": "online_log_ai_analysis",
+            "knowledge_document_ids": [],
+            "name": "线上日志异常分析",
+            "plugin_input_mapping": {
+                "window_end": "{{now}}",
+                "window_start": "{{current_date}}",
+            },
+            "result_actions": [
+                {"channels": ["email"], "recipients": [], "type": "send_notification"},
+            ],
+            "schedule_type": "cron",
+            "source_system": "online-log",
+        },
+        "recommended_scenarios": ["线上日志异常发现", "错误率突增分析", "生产告警复盘"],
+        "resource_selectors": {
+            "agent": {"strategy": "first_active"},
+            "knowledge_document": {"strategy": "first_indexed_optional"},
+            "model_gateway_config": {"strategy": "default_or_first_active"},
+            "plugin_action": {
+                "code_candidates": [
+                    "query_online_log_metrics",
+                    "fetch_online_log_metrics",
+                    "collect_online_log_metrics",
+                ],
+                "text_candidates": ["online_log", "log_anomaly", "线上日志", "日志异常"],
+            },
+            "plugin_connection": {"strategy": "same_plugin_as_action"},
+            "product": {"strategy": "first_active"},
+            "skill": {"strategy": "first_active"},
+        },
+        "template_version": "v1",
+        "wizard_steps": STANDARD_WIZARD_STEPS,
+    },
+    {
         "category": "governance",
         "code": "gitlab_mr_review",
         "description": "读取 GitLab MR 或项目扫描数据，经 AI 复核后写入代码巡检报告。",

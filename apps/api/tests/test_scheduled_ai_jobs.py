@@ -92,7 +92,7 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     response = client.get("/api/system/scheduled-job-templates", headers=admin_headers)
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["total"] == 5
+    assert data["total"] == 6
     by_code = {item["code"]: item for item in data["items"]}
 
     weekly = by_code["weekly_feedback_insight"]
@@ -125,6 +125,19 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     assert email_digest["payload_defaults"]["source_system"] == "email"
     assert email_digest["resource_selectors"]["plugin_action"]["code_candidates"] == [
         "receive_email_messages",
+    ]
+
+    online_log = by_code["online_log_anomaly_analysis"]
+    assert online_log["payload_defaults"]["job_type"] == "online_log_ai_analysis"
+    assert online_log["payload_defaults"]["execution_mode"] == "ai_generated"
+    assert online_log["payload_defaults"]["plugin_input_mapping"] == {
+        "window_end": "{{now}}",
+        "window_start": "{{current_date}}",
+    }
+    assert online_log["resource_selectors"]["plugin_action"]["code_candidates"] == [
+        "query_online_log_metrics",
+        "fetch_online_log_metrics",
+        "collect_online_log_metrics",
     ]
 
     mr_review = by_code["gitlab_mr_review"]

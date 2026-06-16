@@ -516,6 +516,7 @@ def _append_scheduled_job_reference_validation(
     )
     if not plugin_action_ids and job_type in {
         "code_repository_inspection",
+        "online_log_ai_analysis",
         "user_feedback_insight_extract",
     }:
         _add_issue(

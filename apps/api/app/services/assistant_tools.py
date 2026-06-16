@@ -30,6 +30,8 @@ def assistant_tool_results(
             results.append(draft_builder.code_inspection_job_draft(message=message))
         elif intent == "email_digest_job_draft":
             results.append(draft_builder.email_digest_job_draft())
+        elif intent == "online_log_anomaly_job_draft":
+            results.append(draft_builder.online_log_anomaly_job_draft())
         elif intent == "knowledge_base_inspection_draft":
             results.append(draft_builder.knowledge_base_inspection_draft())
         elif intent == "release_risk_analysis_draft":
@@ -144,6 +146,8 @@ def _assistant_tool_intents(message: str) -> list[str]:
             intents.append("code_inspection_job_draft")
         elif _email_digest_draft_requested(normalized):
             intents.append("email_digest_job_draft")
+        elif _online_log_anomaly_draft_requested(normalized):
+            intents.append("online_log_anomaly_job_draft")
         else:
             intents.append("scheduled_job_draft")
     if _knowledge_base_inspection_draft_requested(normalized):
@@ -200,6 +204,7 @@ def _scheduled_job_draft_requested(normalized_message: str) -> bool:
             has_weekly_feedback
             or _code_inspection_draft_requested(normalized_message)
             or _email_digest_draft_requested(normalized_message)
+            or _online_log_anomaly_draft_requested(normalized_message)
         )
     )
 
@@ -231,6 +236,22 @@ def _code_inspection_draft_requested(normalized_message: str) -> bool:
             "github",
             "gitlab",
             "扫描",
+        )
+    )
+
+
+def _online_log_anomaly_draft_requested(normalized_message: str) -> bool:
+    return any(
+        keyword in normalized_message
+        for keyword in (
+            "线上日志异常",
+            "线上日志分析",
+            "日志异常",
+            "日志分析",
+            "online log anomaly",
+            "online_log_anomaly",
+            "online_log",
+            "log anomaly",
         )
     )
 

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.323 |
+| 功能版本 | v1.1.324 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.324 | 2026-06-17 | AI 助手聊天支持线上日志异常分析模板生成 `online_log_anomaly_job_draft`，返回可确认的 AI 定时作业服务端草案 | Codex |
 | v1.1.323 | 2026-06-17 | AI 助手 `@定时作业 执行一次` 对 AI 类长任务改为先返回运行中记录，后台继续完成用户反馈洞察等执行链路 | Codex |
 | v1.1.322 | 2026-06-17 | AI 助手动作草案支持 `create_analysis_draft`，发布风险分析和知识库巡检可确认生成 `assistant_analysis` 追踪结果 | Codex |
 | v1.1.321 | 2026-06-17 | AI 助手聊天支持邮件摘要模板生成 `email_digest_job_draft`，返回可确认的邮件收取定时作业服务端草案 | Codex |
@@ -1482,6 +1483,8 @@ POST /api/assistant/references/resolve
 
 当聊天消息包含“邮件摘要”“邮件收取”“邮箱摘要”“email digest”等意图，并明确要求生成定时作业草案时，`message.tool_results[]` 必须返回 `tool=assistant.action_draft`、`intent=email_digest_job_draft`。草案项 `client_draft_id=assistant_draft_email_digest`、`action=create_scheduled_job`、`title=邮件摘要收取`，payload 复用 `scheduled_job_templates.email_digest` 默认值，至少包含 `job_type=plugin_action_invoke`、`execution_mode=deterministic`、`schedule_type=cron`、`cron_expression=0 8 * * MON-FRI`、`source_system=email`、`plugin_input_mapping.poll_since={{current_date-1}}`，并在存在可用 `receive_email_messages` 动作和同插件邮箱连接时写入 `plugin_action_id` 与 `plugin_connection_id`。该草案同样会持久化为 `assistant_action_drafts`，确认前不创建真实定时作业。
 
+当聊天消息包含“线上日志异常”“日志异常”“online log anomaly”等意图，并明确要求生成定时作业草案时，`message.tool_results[]` 必须返回 `tool=assistant.action_draft`、`intent=online_log_anomaly_job_draft`。草案项 `client_draft_id=assistant_draft_online_log_anomaly_analysis`、`action=create_scheduled_job`、`title=线上日志异常分析`，payload 复用 `scheduled_job_templates.online_log_anomaly_analysis` 默认值，至少包含 `job_type=online_log_ai_analysis`、`execution_mode=ai_generated`、`schedule_type=cron`、`cron_expression=*/30 * * * *`、`source_system=online-log`、`plugin_input_mapping.window_start={{current_date}}`、`plugin_input_mapping.window_end={{now}}`、`result_actions[].type=send_notification`，并在存在可用线上日志动作、同插件连接、active AI角色、active Skill 和 active 模型网关时写入 `plugin_action_id`、`plugin_connection_id`、`agent_id`、`skill_ids` 与 `model_gateway_config_id`。该草案同样会持久化为 `assistant_action_drafts`，确认前不创建真实定时作业；草案预览必须提前校验 AI 装配和动作/连接引用。
+
 当聊天消息包含“发布风险分析/版本风险”或“知识库巡检/知识治理”等意图，并明确要求生成草案时，`message.tool_results[]` 必须返回 `tool=assistant.action_draft`，其中发布风险使用 `intent=release_risk_analysis_draft`、`client_draft_id=assistant_draft_release_risk_analysis`，知识库巡检使用 `intent=knowledge_base_inspection_draft`、`client_draft_id=assistant_draft_knowledge_base_inspection`。草案项 `action=create_analysis_draft`，payload 至少包含 `analysis_type`、`title`、`source_module`、`summary` 和 `findings[]`。确认该草案不会写入业务配置表，而是创建一条 `assistant_action_runs` 记录，`run.result_type=assistant_analysis`、`run.result_id=<draft_id>`，`run.result` 保存确认后的分析摘要、治理项和 `source_draft_id`，便于草案卡片展示“已应用”和后续追踪。
 
 助理动作草案接口：
@@ -1577,7 +1580,7 @@ GET /api/assistant/draft-templates
 }
 ```
 
-模板目录按当前用户角色过滤；管理员可见全部模板。`available=false` 表示模板已进入市场但尚未完整接入直接草案生成链路，前端必须展示状态并禁用直接使用或提示继续补齐依赖；`weekly_feedback_insight`、`code_inspection`、`email_digest`、`release_risk_analysis` 和 `knowledge_base_inspection` 属于已接入草案生成链路的可用模板。模板点击只回填聊天输入框，不直接确认草案、写配置或触发外部动作。
+模板目录按当前用户角色过滤；管理员可见全部模板。`available=false` 表示模板已进入市场但尚未完整接入直接草案生成链路，前端必须展示状态并禁用直接使用或提示继续补齐依赖；`weekly_feedback_insight`、`code_inspection`、`email_digest`、`online_log_anomaly_analysis`、`release_risk_analysis` 和 `knowledge_base_inspection` 属于已接入草案生成链路的可用模板。模板点击只回填聊天输入框，不直接确认草案、写配置或触发外部动作。
 
 AI 助手效果指标：
 

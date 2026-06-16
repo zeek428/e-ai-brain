@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.486 |
+| 功能版本 | v1.1.487 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.487 | 2026-06-17 | 补充 AI 助手线上日志异常分析草案验收：聊天生成 AI 定时作业服务端草案并绑定日志动作、连接和 AI 装配 | Codex |
 | v1.1.486 | 2026-06-17 | 补充 AI 助手执行一次长任务验收：AI 类定时作业应先返回运行中记录并后台完成 | Codex |
 | v1.1.485 | 2026-06-17 | 补充 AI 助手分析类草案验收：发布风险分析和知识库巡检可生成 `create_analysis_draft` 并确认追踪 | Codex |
 | v1.1.484 | 2026-06-17 | 补充 AI 助手邮件摘要模板草案验收：聊天生成邮件收取定时作业服务端草案并绑定可用邮箱动作和连接 | Codex |
@@ -601,6 +602,7 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 | TC-AIBRAIN-ASSISTANT-API-022 | v1.1 | P2 | 查询并使用 AI 助手草案模板市场 | `GET /api/assistant/draft-templates` 按当前用户角色返回官方草案模板目录，管理员可见周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析六类模板；模板字段包含 `code/name/category/description/prompt/roles/source_module/draft_action/target_resource/dependencies/wizard_steps/template_version/available`；前端助手侧栏点击“草案模板市场”后加载服务端目录，展示可生成/暂未完整接入状态、依赖和流程，点击可用模板只回填聊天输入框，不直接写配置、确认草案或触发外部动作。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-023 | v1.1 | P2 | 管理员要求 AI 助手生成邮件摘要收取定时作业草案 | 系统存在可用邮箱官方插件、邮箱连接和 `receive_email_messages` 动作；用户发送“生成邮件摘要收取定时作业草案”等提示后，`/api/assistant/chat` 返回 `assistant.action_draft` 工具结果，`intent=email_digest_job_draft`，服务端草案 `client_draft_id=assistant_draft_email_digest/status=pending/action=create_scheduled_job/title=邮件摘要收取`；payload 使用 `scheduled_job_templates.email_digest` 默认值，包含 `job_type=plugin_action_invoke`、`execution_mode=deterministic`、`cron_expression=0 8 * * MON-FRI`、`plugin_input_mapping.poll_since={{current_date-1}}`、`plugin_action_id` 和 `plugin_connection_id`；草案可通过 `/api/assistant/action-drafts/{draft_id}` 查询，确认前不得创建真实定时作业。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_generates_email_digest_job_draft`。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-024 | v1.1 | P2 | 管理员要求 AI 助手生成发布风险分析或知识库巡检草案 | 用户发送“生成发布风险分析草案”或“生成知识库巡检草案”后，`/api/assistant/chat` 返回 `assistant.action_draft` 工具结果；发布风险使用 `intent=release_risk_analysis_draft/client_draft_id=assistant_draft_release_risk_analysis`，知识库巡检使用 `intent=knowledge_base_inspection_draft/client_draft_id=assistant_draft_knowledge_base_inspection`；草案 `action=create_analysis_draft/status=pending`，payload 包含 `analysis_type/title/source_module/summary/findings[]`，前端以分析草案卡片展示分析类型、来源模块、摘要指标和风险/治理项，不提供“应用到定时作业表单”；确认草案后写入 `assistant_action_runs`，返回 `result_type=assistant_analysis/result_id=<draft_id>`，草案状态变为已应用并显示“打开分析结果”。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_generates_knowledge_inspection_analysis_draft`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_generates_release_risk_analysis_draft` 和 `apps/web/tests/AssistantPage.test.tsx::renders and confirms assistant analysis drafts from the draft card`。 |
+| TC-AIBRAIN-ASSISTANT-FUNC-025 | v1.1 | P2 | 管理员要求 AI 助手生成线上日志异常分析定时作业草案 | 系统存在可用线上日志插件动作、同插件连接、active AI角色、active Skill、active 模型网关和 active 产品；用户发送“生成线上日志异常分析定时作业草案”等提示后，`/api/assistant/chat` 返回 `assistant.action_draft` 工具结果，`intent=online_log_anomaly_job_draft`，服务端草案 `client_draft_id=assistant_draft_online_log_anomaly_analysis/status=pending/action=create_scheduled_job/title=线上日志异常分析`；payload 使用 `scheduled_job_templates.online_log_anomaly_analysis` 默认值，包含 `job_type=online_log_ai_analysis`、`execution_mode=ai_generated`、`cron_expression=*/30 * * * *`、`plugin_input_mapping.window_start={{current_date}}`、`plugin_input_mapping.window_end={{now}}`、`result_actions[].type=send_notification`、`plugin_action_id`、`plugin_connection_id`、`agent_id`、`skill_ids` 和 `model_gateway_config_id`；草案可通过 `/api/assistant/action-drafts/{draft_id}` 查询，预览提前校验动作/连接和 AI 装配，确认前不得创建真实定时作业。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_generates_online_log_anomaly_job_draft` 和 `apps/api/tests/test_scheduled_ai_jobs.py::test_scheduled_job_templates_are_admin_managed_and_versioned`。 |
 
 ---
 

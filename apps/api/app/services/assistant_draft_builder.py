@@ -191,6 +191,77 @@ class AssistantDraftBuilder:
             "tool": "assistant.action_draft",
         }
 
+    def online_log_anomaly_job_draft(self) -> dict[str, Any]:
+        template = scheduled_job_template_by_code("online_log_anomaly_analysis") or {}
+        defaults = _template_payload_defaults(template)
+        product = _first_active(self.context["products"])
+        action = _find_online_log_action(self.context["plugin_actions"])
+        connection = _connection_for_action(self.context["plugin_connections"], action)
+        model_gateway = _first_active(
+            self.context["model_gateway_configs"],
+            predicate=lambda item: item.get("is_default") is True,
+        ) or _first_active(self.context["model_gateway_configs"])
+        agent = _first_active(self.context["ai_agents"])
+        skill = _first_active(
+            self.context["ai_skills"],
+            predicate=_is_online_log_skill,
+        ) or _first_active(self.context["ai_skills"])
+        knowledge_document = _first_indexed_knowledge_document(
+            self.context["knowledge_documents"],
+        )
+
+        payload = {
+            "agent_id": agent.get("id") if agent else None,
+            "cron_expression": defaults.get("cron_expression") or "*/30 * * * *",
+            "enabled": defaults.get("enabled", True),
+            "execution_mode": defaults.get("execution_mode") or "ai_generated",
+            "job_type": defaults.get("job_type") or "online_log_ai_analysis",
+            "knowledge_document_ids": [knowledge_document["id"]] if knowledge_document else [],
+            "model_gateway_config_id": model_gateway.get("id") if model_gateway else None,
+            "name": defaults.get("name") or template.get("name") or "线上日志异常分析",
+            "plugin_action_id": action.get("id") if action else None,
+            "plugin_connection_id": connection.get("id") if connection else None,
+            "plugin_input_mapping": defaults.get("plugin_input_mapping")
+            or {
+                "window_end": "{{now}}",
+                "window_start": "{{current_date}}",
+            },
+            "product_id": product.get("id") if product else None,
+            "result_actions": defaults.get("result_actions")
+            or [{"channels": ["email"], "recipients": [], "type": "send_notification"}],
+            "schedule_type": defaults.get("schedule_type") or "cron",
+            "skill_ids": [skill["id"]] if skill else [],
+            "source_system": defaults.get("source_system") or "online-log",
+        }
+        item = {
+            "action": "create_scheduled_job",
+            "draft_id": "assistant_draft_online_log_anomaly_analysis",
+            "payload": payload,
+            "requires_confirmation": True,
+            "risk_level": "medium",
+            "title": template.get("name") or "线上日志异常分析",
+        }
+        return {
+            "intent": "online_log_anomaly_job_draft",
+            "items": [item],
+            "references": _references(
+                "assistant_action_draft",
+                [
+                    {
+                        "id": item["draft_id"],
+                        "title": item["title"],
+                        "url": f"/assistant?draft_id={item['draft_id']}",
+                    }
+                ],
+            ),
+            "summary": {
+                "draft_count": 1,
+                "requires_confirmation": True,
+                "target": "scheduled_jobs",
+            },
+            "tool": "assistant.action_draft",
+        }
+
     def knowledge_base_inspection_draft(self) -> dict[str, Any]:
         documents = self.context["knowledge_documents"]
         deposits = self.context["knowledge_deposits"]
@@ -649,6 +720,36 @@ def _find_code_inspection_action(items: list[dict[str, Any]]) -> dict[str, Any] 
 def _is_code_inspection_action(item: dict[str, Any]) -> bool:
     text = f"{item.get('code') or ''} {item.get('name') or ''}".lower()
     return "code_inspection" in text or "代码巡检" in text
+
+
+def _find_online_log_action(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for code in (
+        "query_online_log_metrics",
+        "fetch_online_log_metrics",
+        "collect_online_log_metrics",
+    ):
+        if action := _find_by_code(items, code):
+            return action
+    return _first_active(items, predicate=_is_online_log_action) or next(
+        (item for item in items if _is_online_log_action(item)),
+        None,
+    )
+
+
+def _is_online_log_action(item: dict[str, Any]) -> bool:
+    text = f"{item.get('code') or ''} {item.get('name') or ''}".lower()
+    return any(
+        keyword in text
+        for keyword in ("online_log", "log_anomaly", "logs", "线上日志", "日志异常")
+    )
+
+
+def _is_online_log_skill(item: dict[str, Any]) -> bool:
+    text = f"{item.get('code') or ''} {item.get('name') or ''}".lower()
+    return any(
+        keyword in text
+        for keyword in ("online_log", "log_anomaly", "anomaly", "线上日志", "日志异常", "异常")
+    )
 
 
 def _ai_processing_draft_requested(normalized_message: str) -> bool:

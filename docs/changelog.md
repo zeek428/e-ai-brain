@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手草案模板市场的“线上日志异常分析”模板接入真实草案生成链路：聊天请求“生成线上日志异常分析定时作业草案”会返回 `online_log_anomaly_job_draft`，持久化 `assistant_draft_online_log_anomaly_analysis` 服务端草案，并绑定线上日志动作、连接、AI角色、Skill 和模型网关。
 - AI 助手新增分析类服务端草案：发布风险分析和知识库巡检模板现在可通过聊天生成 `create_analysis_draft`，确认后写入 `assistant_action_runs` 并返回 `assistant_analysis` 追踪结果，前端草案卡片可展示和确认分析草案。
 - AI 助手草案模板市场的“邮件摘要”模板接入真实草案生成链路：聊天请求“生成邮件摘要收取定时作业草案”会返回 `email_digest_job_draft`，持久化 `assistant_draft_email_digest` 服务端草案，并绑定可用 `receive_email_messages` 动作和邮箱连接。
 - AI 助手新增草案模板市场：后端提供 `/api/assistant/draft-templates` 服务端目录，按角色返回周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析模板；前端侧栏可点击加载模板卡，展示依赖、流程和接入状态，并一键回填聊天输入框。

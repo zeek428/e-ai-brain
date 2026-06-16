@@ -42,7 +42,7 @@ def test_ai_assistant_draft_templates_list_official_market_entries():
     assert "执行一次" in templates_by_code["weekly_feedback_insight"]["prompt"]
     assert templates_by_code["release_risk_analysis"]["roles"] == ["product_owner", "reviewer"]
     assert templates_by_code["knowledge_base_inspection"]["source_module"] == "知识库"
-    assert templates_by_code["online_log_anomaly_analysis"]["available"] is False
+    assert templates_by_code["online_log_anomaly_analysis"]["available"] is True
 
 
 def seed_assistant_knowledge_reference_documents() -> None:
@@ -1124,6 +1124,186 @@ def test_ai_assistant_chat_generates_email_digest_job_draft(monkeypatch):
     )
     assert draft_response.status_code == 200
     assert draft_response.json()["data"]["client_draft_id"] == "assistant_draft_email_digest"
+
+
+def test_ai_assistant_chat_generates_online_log_anomaly_job_draft(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.products["product_online_ops"] = {
+        "code": "online_ops",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "id": "product_online_ops",
+        "name": "线上运营系统",
+        "status": "active",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.model_gateway_configs["model_gateway_online_log"] = {
+        "api_key": "sk-online-log-test",
+        "base_url": "https://models.example.com/v1",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "default_chat_model": "ops-chat",
+        "default_embedding_model": "ops-embedding",
+        "id": "model_gateway_online_log",
+        "is_default": True,
+        "model": "ops-chat",
+        "name": "运维模型",
+        "provider": "openai_compatible",
+        "status": "active",
+        "timeout_seconds": 60,
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.ai_agents["ai_agent_online_log_ops"] = {
+        "brain_app_id": "rd_brain",
+        "code": "online_log_ops",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "created_by": "user_admin",
+        "default_skill_ids": ["ai_skill_online_log_anomaly"],
+        "id": "ai_agent_online_log_ops",
+        "model_gateway_config_id": "model_gateway_online_log",
+        "name": "线上日志运维助手",
+        "status": "active",
+        "system_prompt": "分析线上日志异常并给出处置建议。",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.ai_skills["ai_skill_online_log_anomaly"] = {
+        "code": "online_log_anomaly",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "created_by": "user_admin",
+        "id": "ai_skill_online_log_anomaly",
+        "name": "线上日志异常检测",
+        "prompt_template": "识别错误率、延迟和异常模式，输出处置建议。",
+        "status": "active",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.integration_plugins["plugin_standard_observability"] = {
+        "category": "operations",
+        "code": "observability",
+        "id": "plugin_standard_observability",
+        "is_system": True,
+        "name": "可观测平台",
+        "protocol": "http",
+        "risk_level": "medium",
+        "status": "active",
+    }
+    app.state.store.plugin_connections["plugin_connection_online_log_prod"] = {
+        "auth_config": {"secret_ref": "vault/observability/api_key"},
+        "auth_type": "api_key_header",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "created_by": "user_admin",
+        "endpoint_url": "https://logs.example.com/api",
+        "environment": "prod",
+        "id": "plugin_connection_online_log_prod",
+        "name": "生产线上日志连接",
+        "plugin_id": "plugin_standard_observability",
+        "request_config": {"headers": {"X-App": "ai-brain"}},
+        "status": "active",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.plugin_actions["plugin_action_query_online_log_metrics"] = {
+        "action_type": "http_request",
+        "code": "query_online_log_metrics",
+        "connection_id": "plugin_connection_online_log_prod",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "created_by": "user_admin",
+        "id": "plugin_action_query_online_log_metrics",
+        "name": "查询线上日志指标",
+        "plugin_id": "plugin_standard_observability",
+        "request_config": {
+            "method": "GET",
+            "path": "/logs/anomaly-metrics",
+            "query": {
+                "window_end": "{{window_end}}",
+                "window_start": "{{window_start}}",
+            },
+        },
+        "result_mapping": {
+            "records_imported_path": "$.row_count",
+            "source_rows_path": "$.logs",
+        },
+        "status": "active",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            answer = "我已准备好线上日志异常分析定时作业草案，确认后再创建。"
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": answer,
+                                        "suggestions": ["查看草案"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setattr(assistant_router, "urlopen", lambda _request, timeout: FakeResponse())
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": (
+                "请生成线上日志异常分析定时作业草案，"
+                "说明需要的数据连接、AI处理、结果动作和调度策略"
+            )
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    tool_result = message["tool_results"][0]
+    assert tool_result["tool"] == "assistant.action_draft"
+    assert tool_result["intent"] == "online_log_anomaly_job_draft"
+    draft_item = tool_result["items"][0]
+    assert draft_item["client_draft_id"] == "assistant_draft_online_log_anomaly_analysis"
+    assert draft_item["status"] == "pending"
+    assert draft_item["action"] == "create_scheduled_job"
+    assert draft_item["title"] == "线上日志异常分析"
+    assert draft_item["payload"] == {
+        "agent_id": "ai_agent_online_log_ops",
+        "cron_expression": "*/30 * * * *",
+        "enabled": True,
+        "execution_mode": "ai_generated",
+        "job_type": "online_log_ai_analysis",
+        "knowledge_document_ids": [],
+        "model_gateway_config_id": "model_gateway_online_log",
+        "name": "线上日志异常分析",
+        "plugin_action_id": "plugin_action_query_online_log_metrics",
+        "plugin_connection_id": "plugin_connection_online_log_prod",
+        "plugin_input_mapping": {
+            "window_end": "{{now}}",
+            "window_start": "{{current_date}}",
+        },
+        "product_id": "product_online_ops",
+        "result_actions": [{"channels": ["email"], "recipients": [], "type": "send_notification"}],
+        "schedule_type": "cron",
+        "skill_ids": ["ai_skill_online_log_anomaly"],
+        "source_system": "online-log",
+    }
+    draft_response = client.get(
+        f"/api/assistant/action-drafts/{draft_item['draft_id']}",
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    assert draft["client_draft_id"] == "assistant_draft_online_log_anomaly_analysis"
+    assert draft["preview"]["target"]["resource_type"] == "scheduled_job"
 
 
 def test_ai_assistant_chat_generates_knowledge_inspection_analysis_draft(monkeypatch):

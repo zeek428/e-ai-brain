@@ -104,11 +104,11 @@ STANDARD_ASSISTANT_DRAFT_TEMPLATES = [
         "wizard_steps": ASSISTANT_DRAFT_WIZARD_STEPS,
     },
     {
-        "available": False,
+        "available": True,
         "category": "operations",
         "code": "online_log_anomaly_analysis",
         "dependencies": ["线上日志采集", "异常检测 Skill", "告警结果动作"],
-        "description": "面向线上日志异常发现和处置建议，等待日志异常草案生成器接入。",
+        "description": "面向线上日志异常发现和处置建议，生成可确认的定时作业草案。",
         "draft_action": "create_scheduled_job",
         "name": "线上日志异常分析",
         "prompt": (
