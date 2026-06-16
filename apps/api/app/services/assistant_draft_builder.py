@@ -144,6 +144,53 @@ class AssistantDraftBuilder:
             "tool": "assistant.action_draft",
         }
 
+    def email_digest_job_draft(self) -> dict[str, Any]:
+        template = scheduled_job_template_by_code("email_digest") or {}
+        defaults = _template_payload_defaults(template)
+        action = _find_by_code(self.context["plugin_actions"], "receive_email_messages")
+        connection = _connection_for_action(self.context["plugin_connections"], action)
+        payload = {
+            "cron_expression": defaults.get("cron_expression") or "0 8 * * MON-FRI",
+            "enabled": defaults.get("enabled", True),
+            "execution_mode": defaults.get("execution_mode") or "deterministic",
+            "job_type": defaults.get("job_type") or "plugin_action_invoke",
+            "name": defaults.get("name") or template.get("name") or "每日邮件摘要收取",
+            "plugin_action_id": action.get("id") if action else None,
+            "plugin_connection_id": connection.get("id") if connection else None,
+            "plugin_input_mapping": defaults.get("plugin_input_mapping")
+            or {"poll_since": "{{current_date-1}}"},
+            "schedule_type": defaults.get("schedule_type") or "cron",
+            "source_system": defaults.get("source_system") or "email",
+        }
+        item = {
+            "action": "create_scheduled_job",
+            "draft_id": "assistant_draft_email_digest",
+            "payload": payload,
+            "requires_confirmation": True,
+            "risk_level": "medium",
+            "title": template.get("name") or "邮件摘要收取",
+        }
+        return {
+            "intent": "email_digest_job_draft",
+            "items": [item],
+            "references": _references(
+                "assistant_action_draft",
+                [
+                    {
+                        "id": item["draft_id"],
+                        "title": item["title"],
+                        "url": f"/assistant?draft_id={item['draft_id']}",
+                    }
+                ],
+            ),
+            "summary": {
+                "draft_count": 1,
+                "requires_confirmation": True,
+                "target": "scheduled_jobs",
+            },
+            "tool": "assistant.action_draft",
+        }
+
     def code_inspection_job_draft(self, *, message: str) -> dict[str, Any]:
         template = scheduled_job_template_by_code("code_repository_inspection") or {}
         defaults = _template_payload_defaults(template)

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.320 |
+| 功能版本 | v1.1.321 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.321 | 2026-06-17 | AI 助手聊天支持邮件摘要模板生成 `email_digest_job_draft`，返回可确认的邮件收取定时作业服务端草案 | Codex |
 | v1.1.320 | 2026-06-17 | AI 助手 API 新增 `/api/assistant/draft-templates`，返回按角色过滤的官方草案模板市场目录 | Codex |
 | v1.1.319 | 2026-06-17 | AI 助手效果指标补齐 `scheduled_job_run_*`、`failed_run_*` 和 `knowledge_reference_hit_*` 字段 | Codex |
 | v1.1.318 | 2026-06-17 | AI 助手 API 新增 `/api/assistant/metrics` 当前用户效果指标，返回草案采纳率、用户修改率、动作运行成功率和显式引用使用率 | Codex |
@@ -1475,6 +1476,8 @@ POST /api/assistant/references/resolve
 
 助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_scheduled_job`、`create_plugin_connection` 和 `create_plugin_action`；状态为 `pending`、`confirmed`、`cancelled` 或 `failed`。确认前不得写入 `scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用。
 
+当聊天消息包含“邮件摘要”“邮件收取”“邮箱摘要”“email digest”等意图，并明确要求生成定时作业草案时，`message.tool_results[]` 必须返回 `tool=assistant.action_draft`、`intent=email_digest_job_draft`。草案项 `client_draft_id=assistant_draft_email_digest`、`action=create_scheduled_job`、`title=邮件摘要收取`，payload 复用 `scheduled_job_templates.email_digest` 默认值，至少包含 `job_type=plugin_action_invoke`、`execution_mode=deterministic`、`schedule_type=cron`、`cron_expression=0 8 * * MON-FRI`、`source_system=email`、`plugin_input_mapping.poll_since={{current_date-1}}`，并在存在可用 `receive_email_messages` 动作和同插件邮箱连接时写入 `plugin_action_id` 与 `plugin_connection_id`。该草案同样会持久化为 `assistant_action_drafts`，确认前不创建真实定时作业。
+
 助理动作草案接口：
 
 ```http
@@ -1568,7 +1571,7 @@ GET /api/assistant/draft-templates
 }
 ```
 
-模板目录按当前用户角色过滤；管理员可见全部模板。`available=false` 表示模板已进入市场但尚未完整接入直接草案生成链路，前端必须展示状态并禁用直接使用或提示继续补齐依赖。模板点击只回填聊天输入框，不直接确认草案、写配置或触发外部动作。
+模板目录按当前用户角色过滤；管理员可见全部模板。`available=false` 表示模板已进入市场但尚未完整接入直接草案生成链路，前端必须展示状态并禁用直接使用或提示继续补齐依赖；`weekly_feedback_insight`、`code_inspection` 和 `email_digest` 属于已接入草案生成链路的可用模板。模板点击只回填聊天输入框，不直接确认草案、写配置或触发外部动作。
 
 AI 助手效果指标：
 

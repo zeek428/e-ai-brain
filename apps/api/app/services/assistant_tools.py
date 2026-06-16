@@ -28,6 +28,8 @@ def assistant_tool_results(
             results.append(draft_builder.plugin_action_draft(message=message))
         elif intent == "code_inspection_job_draft":
             results.append(draft_builder.code_inspection_job_draft(message=message))
+        elif intent == "email_digest_job_draft":
+            results.append(draft_builder.email_digest_job_draft())
         elif intent == "scheduled_job_draft":
             results.append(draft_builder.scheduled_job_draft())
         elif intent == "scheduled_job_diagnostic":
@@ -133,11 +135,12 @@ def _assistant_tool_intents(message: str) -> list[str]:
     if _plugin_action_draft_requested(normalized):
         intents.append("plugin_action_draft")
     if _scheduled_job_draft_requested(normalized):
-        intents.append(
-            "code_inspection_job_draft"
-            if _code_inspection_draft_requested(normalized)
-            else "scheduled_job_draft",
-        )
+        if _code_inspection_draft_requested(normalized):
+            intents.append("code_inspection_job_draft")
+        elif _email_digest_draft_requested(normalized):
+            intents.append("email_digest_job_draft")
+        else:
+            intents.append("scheduled_job_draft")
     if _scheduled_job_diagnostic_requested(normalized):
         intents.append("scheduled_job_diagnostic")
     keyword_map = [
@@ -181,11 +184,30 @@ def _scheduled_job_draft_requested(normalized_message: str) -> bool:
         keyword in normalized_message
         for keyword in ("用户反馈", "周反馈", "每周", "feedback", "maxcompute")
     )
-    if has_create_intent and has_scheduled_job and _code_inspection_draft_requested(
-        normalized_message,
-    ):
-        return True
-    return has_create_intent and has_scheduled_job and has_weekly_feedback
+    return (
+        has_create_intent
+        and has_scheduled_job
+        and (
+            has_weekly_feedback
+            or _code_inspection_draft_requested(normalized_message)
+            or _email_digest_draft_requested(normalized_message)
+        )
+    )
+
+
+def _email_digest_draft_requested(normalized_message: str) -> bool:
+    return any(
+        keyword in normalized_message
+        for keyword in (
+            "邮件摘要",
+            "邮件收取",
+            "邮箱摘要",
+            "邮箱收取",
+            "email digest",
+            "email summary",
+            "mail digest",
+        )
+    )
 
 
 def _code_inspection_draft_requested(normalized_message: str) -> bool:

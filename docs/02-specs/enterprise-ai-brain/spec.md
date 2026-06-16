@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.379 |
+| 功能版本 | v1.1.380 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.380 | 2026-06-17 | AI 助手邮件摘要草案接入真实定时作业生成链路，聊天可生成绑定邮件收取动作和邮箱连接的服务端草案 | Codex |
 | v1.1.379 | 2026-06-17 | AI 助手新增服务端草案模板市场目录，前端侧栏可按模板回填草案提示并显示角色、依赖、流程和接入状态 | Codex |
 | v1.1.378 | 2026-06-17 | AI 助手效果指标补齐定时作业运行成功率、失败复跑修复率和知识引用命中率口径 | Codex |
 | v1.1.377 | 2026-06-17 | AI 助手新增效果指标接口，按当前用户统计草案采纳、用户修改、动作运行成功和显式引用使用情况 | Codex |
@@ -1262,12 +1263,12 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 | `ScheduledJobScheduler` | 计算 due jobs、抢占锁、创建运行实例、计算 `next_run_at`。 |
 | `ScheduledJobRunner` | 装配运行上下文、创建/更新 collector run、调用 handler、处理重试和超时。 |
 | `ScheduledJobHandler` | 每类 job 的业务执行器，复用现有 DevOps、用户洞察、迭代规划、看板和生命周期 service。 |
-| `ScheduledJobTemplateCatalog` | 提供官方定时作业模板目录，声明模板版本、默认 payload、推荐场景和资源选择规则；任务中心页面与 AI 助手草案共用该目录生成周反馈洞察和代码巡检作业配置。 |
+| `ScheduledJobTemplateCatalog` | 提供官方定时作业模板目录，声明模板版本、默认 payload、推荐场景和资源选择规则；任务中心页面与 AI 助手草案共用该目录生成周反馈洞察、代码巡检和邮件摘要作业配置。 |
 | `ScheduledJobExecutionEngine` | 构造执行期节点追踪和摘要，包括数据连接、Skill/AI 处理、结果动作、代码巡检报告写入、插件写入预览和是否需要 AI 处理判断；作业运行事务、审计和持久化仍由定时作业服务编排。 |
 | `AiExecutorRunnerService` | 管理系统默认执行器与隔离 Runner：系统默认执行器 `ai_executor_runner_system_default` 使用 `model_gateway` 执行类型，直接调用平台默认 AI 大模型并返回结构化执行结果，不参与 Runner Token、心跳或任务认领；本地 Runner 负责注册、心跳、Token 校验和轮换、任务队列、OpenClaw/Codex/Claude/Hermes 执行类型校验、任务认领、日志追加、管理员取消、超时熔断和完成回写；管理员侧测试接口只读取 Runner 配置与健康投影，返回诊断项并写轻量审计，不下发真实任务；完成回写不得执行外部命令，只更新任务状态、插件日志、定时作业运行、collector run 和作业最近运行字段。 |
 | `ScheduledJobObservabilityService` | 聚合运行健康概览、失败原因、慢运行和 AI/插件/动作写入指标；只读取运行实例、作业定义和模型日志元数据，不参与作业执行。 |
 | `ConnectionDiagnosticsService` | 构造插件连接测试诊断步骤、请求回放 cURL、动作模板草案、失败修复建议、最近测试历史和轻量测试摘要；真实网络请求、审计和连接记录持久化仍由插件服务编排。 |
-| `AssistantDraftBuilder` | 构造 AI 助手确认式配置草案，包括插件连接、动作、每周反馈洞察作业和代码巡检作业；复用插件连接默认模板、动作模板目录和定时作业模板目录，`assistant_tools` 保留意图识别、读模型工具和结果汇总；泛化“新增任务”由 AI 助手确定性返回任务类型向导，引导用户选择草案路径后再生成具体配置。 |
+| `AssistantDraftBuilder` | 构造 AI 助手确认式配置草案，包括插件连接、动作、每周反馈洞察作业、代码巡检作业和邮件摘要收取作业；复用插件连接默认模板、动作模板目录和定时作业模板目录，邮件摘要意图必须使用 `scheduled_job_templates.email_digest` 默认 payload，并绑定可用 `receive_email_messages` 动作和同插件邮箱连接生成 `create_scheduled_job` 草案；`assistant_tools` 保留意图识别、读模型工具和结果汇总；泛化“新增任务”由 AI 助手确定性返回任务类型向导，引导用户选择草案路径后再生成具体配置。 |
 | `AIExecutionConfigResolver` | 解析 AI角色（Agent）、Skill、模型网关和作业覆盖项，生成不可变运行快照。 |
 | `SkillOrchestrator` | 合并 agent system prompt、skill prompt、工具结果和 expected output schema，调用模型网关前做脱敏和限长，输出后做 schema 校验。 |
 

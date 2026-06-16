@@ -1010,6 +1010,122 @@ def test_ai_assistant_chat_persists_action_draft_tool_results(monkeypatch):
     assert draft["action"] == "create_scheduled_job"
 
 
+def test_ai_assistant_chat_generates_email_digest_job_draft(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.integration_plugins["plugin_standard_email"] = {
+        "category": "collaboration",
+        "code": "email",
+        "id": "plugin_standard_email",
+        "is_system": True,
+        "name": "邮箱",
+        "protocol": "http",
+        "risk_level": "medium",
+        "status": "active",
+    }
+    app.state.store.plugin_connections["plugin_connection_email_prod"] = {
+        "auth_config": {"secret_ref": "vault/email/api_key"},
+        "auth_type": "api_key_header",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "created_by": "user_admin",
+        "endpoint_url": "https://mail-gateway.example.com/api",
+        "environment": "prod",
+        "id": "plugin_connection_email_prod",
+        "name": "生产邮箱连接",
+        "plugin_id": "plugin_standard_email",
+        "request_config": {"query": {"mailbox_folder": "INBOX"}},
+        "status": "active",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.plugin_actions["plugin_action_receive_email_messages"] = {
+        "action_type": "http_request",
+        "code": "receive_email_messages",
+        "connection_id": "plugin_connection_email_prod",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "created_by": "user_admin",
+        "id": "plugin_action_receive_email_messages",
+        "name": "收取邮箱邮件",
+        "plugin_id": "plugin_standard_email",
+        "request_config": {
+            "method": "GET",
+            "path": "/messages/search",
+            "query": {"folder": "{{mailbox_folder}}", "since": "{{poll_since}}"},
+        },
+        "result_mapping": {"write_target": "scheduled_job_result"},
+        "status": "active",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            answer = "我已准备好邮件摘要收取定时作业草案，确认后再创建。"
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": answer,
+                                        "suggestions": ["查看草案"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "请帮我生成邮件摘要收取定时作业草案，先检查邮箱连接和邮件收取动作"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    tool_result = message["tool_results"][0]
+    assert tool_result["tool"] == "assistant.action_draft"
+    assert tool_result["intent"] == "email_digest_job_draft"
+    draft_item = tool_result["items"][0]
+    assert draft_item["client_draft_id"] == "assistant_draft_email_digest"
+    assert draft_item["status"] == "pending"
+    assert draft_item["action"] == "create_scheduled_job"
+    assert draft_item["title"] == "邮件摘要收取"
+    assert draft_item["payload"] == {
+        "cron_expression": "0 8 * * MON-FRI",
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "job_type": "plugin_action_invoke",
+        "name": "每日邮件摘要收取",
+        "plugin_action_id": "plugin_action_receive_email_messages",
+        "plugin_connection_id": "plugin_connection_email_prod",
+        "plugin_input_mapping": {"poll_since": "{{current_date-1}}"},
+        "schedule_type": "cron",
+        "source_system": "email",
+    }
+    draft_response = client.get(
+        f"/api/assistant/action-drafts/{draft_item['draft_id']}",
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    assert draft_response.json()["data"]["client_draft_id"] == "assistant_draft_email_digest"
+
+
 def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
