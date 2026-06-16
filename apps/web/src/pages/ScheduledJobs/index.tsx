@@ -6,6 +6,7 @@ import {
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import {
@@ -1500,6 +1501,18 @@ function scheduledJobRouteParams(): { runId?: string; tab?: ScheduledJobPageTab 
     runId: params.get('run_id') ?? undefined,
     tab,
   };
+}
+
+function assistantRunFollowupPrompt(run: ScheduledJobRunRecord) {
+  return run.status === 'failed' ? '为什么这次任务失败？' : '帮我分析这次运行结果';
+}
+
+function assistantRunFollowupUrl(run: ScheduledJobRunRecord) {
+  const params = new URLSearchParams();
+  params.set('reference_type', 'scheduled_job_run');
+  params.set('reference_id', run.id);
+  params.set('prompt', assistantRunFollowupPrompt(run));
+  return `/assistant?${params.toString()}`;
 }
 
 function initialScheduledJobPageTab(): ScheduledJobPageTab {
@@ -3442,6 +3455,15 @@ export default function ScheduledJobsPage() {
             {selectedRun?.status === 'succeeded' ? (
               <Button onClick={() => void generateTemplateFromRun(selectedRun)}>
                 生成模板
+              </Button>
+            ) : null}
+            {selectedRun ? (
+              <Button
+                aria-label="问 AI"
+                href={assistantRunFollowupUrl(selectedRun)}
+                icon={<RobotOutlined />}
+              >
+                问 AI
               </Button>
             ) : null}
             {selectedRun ? (

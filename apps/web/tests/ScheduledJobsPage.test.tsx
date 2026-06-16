@@ -1799,6 +1799,14 @@ describe('ScheduledJobsPage', () => {
     expect(dialog).toHaveTextContent('plugin_invocation_log_weekly_feedback');
     expect(dialog).toHaveTextContent('user_feedback_insights');
     expect(dialog).toHaveTextContent('write_result');
+    const askAiLink = within(dialog).getByRole('link', { name: '问 AI' });
+    expect(askAiLink).toHaveAttribute('href');
+    const href = askAiLink.getAttribute('href') ?? '';
+    expect(href.startsWith('/assistant?')).toBe(true);
+    const assistantParams = new URLSearchParams(href.split('?')[1]);
+    expect(assistantParams.get('reference_type')).toBe('scheduled_job_run');
+    expect(assistantParams.get('reference_id')).toBe('scheduled_job_run_weekly_feedback');
+    expect(assistantParams.get('prompt')).toBe('帮我分析这次运行结果');
   });
 
   it('generates a scheduled job template from a successful run', async () => {

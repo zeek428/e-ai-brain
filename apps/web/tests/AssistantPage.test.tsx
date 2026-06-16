@@ -18,6 +18,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  window.history.pushState({}, '', '/');
   window.localStorage.clear();
   window.sessionStorage.clear();
   void message.destroy();
@@ -609,6 +610,94 @@ describe('AssistantPage', () => {
     expect(await screen.findByText('这次失败发生在结果动作写入阶段。')).toBeInTheDocument();
     expect(chatRequestBody).toMatchObject({
       message: '为什么 @反馈 这次失败？',
+      references: [{ id: 'scheduled_job_run_feedback_failed', type: 'scheduled_job_run' }],
+    });
+  });
+
+  it('preselects scheduled job run references from route query parameters', async () => {
+    let chatRequestBody: Record<string, unknown> | undefined;
+    window.history.pushState(
+      {},
+      '',
+      '/assistant?reference_type=scheduled_job_run&reference_id=scheduled_job_run_feedback_failed&prompt=%E4%B8%BA%E4%BB%80%E4%B9%88%E8%BF%99%E6%AC%A1%E4%BB%BB%E5%8A%A1%E5%A4%B1%E8%B4%A5%EF%BC%9F',
+    );
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        expect(init?.method ?? 'GET').toBe('GET');
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('scheduled_job_run_feedback_failed');
+        expect(params.get('type')).toBe('scheduled_job_run');
+        expect(params.get('limit')).toBe('1');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'scheduled_job_run_feedback_failed',
+                  title: '每周反馈洞察定时作业 / failed',
+                  type: 'scheduled_job_run',
+                  url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        chatRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_run_route_reference',
+              latency_ms: 156,
+              message: {
+                content: '这次失败发生在结果动作写入阶段。',
+                id: 'assistant_message_run_route_reference',
+                references: [
+                  {
+                    id: 'scheduled_job_run_feedback_failed',
+                    title: '每周反馈洞察定时作业 / failed',
+                    type: 'scheduled_job_run',
+                    url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed',
+                  },
+                ],
+                role: 'assistant',
+                tool_results: [],
+              },
+              model: 'assistant-deterministic',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    expect(await screen.findByText('每周反馈洞察定时作业 / failed')).toBeInTheDocument();
+    expect(screen.getByText('本次上下文')).toBeInTheDocument();
+    expect(screen.getByText('运行记录')).toBeInTheDocument();
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('为什么这次任务失败？');
+
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('这次失败发生在结果动作写入阶段。')).toBeInTheDocument();
+    expect(chatRequestBody).toMatchObject({
+      message: '为什么这次任务失败？',
       references: [{ id: 'scheduled_job_run_feedback_failed', type: 'scheduled_job_run' }],
     });
   });

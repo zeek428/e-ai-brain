@@ -98,6 +98,16 @@ const scheduledJobRunOnceKeywords = [
   'run now',
   'execute once',
 ];
+const queryReferenceTypes = new Set([
+  'ai_agent',
+  'ai_skill',
+  'ai_task',
+  'knowledge_document',
+  'plugin_action',
+  'requirement',
+  'scheduled_job',
+  'scheduled_job_run',
+]);
 
 function actionDraftItems(toolResults?: AssistantToolResult[]) {
   return (toolResults ?? [])
@@ -191,6 +201,23 @@ function mergeReferences(...referenceLists: AssistantReference[][]) {
     });
   });
   return references;
+}
+
+function assistantQueryReferenceParams() {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const referenceType = params.get('reference_type')?.trim();
+  const referenceId = params.get('reference_id')?.trim();
+  if (!referenceType || !referenceId || !queryReferenceTypes.has(referenceType)) {
+    return undefined;
+  }
+  return {
+    prompt: params.get('prompt')?.trim() || undefined,
+    referenceId,
+    referenceType,
+  };
 }
 
 function draftStatusLabel(status?: string) {
@@ -731,6 +758,7 @@ export default function AssistantPage() {
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
+  const queryReferenceHydratedRef = useRef(false);
   const resultWriteTargetsLoadRequestedRef = useRef(false);
 
   const canSend = useMemo(() => inputValue.trim().length > 0 && !isSending, [inputValue, isSending]);
@@ -754,6 +782,57 @@ export default function AssistantPage() {
     () => selectedReferences.reduce((total, reference) => total + Number(reference.chunk_count ?? 0), 0),
     [selectedReferences],
   );
+
+  useEffect(() => {
+    if (queryReferenceHydratedRef.current) {
+      return undefined;
+    }
+    const queryReference = assistantQueryReferenceParams();
+    if (!queryReference) {
+      return undefined;
+    }
+    queryReferenceHydratedRef.current = true;
+    if (queryReference.prompt) {
+      setInputValue(queryReference.prompt);
+    }
+    let didCancel = false;
+    setIsLoadingReferences(true);
+    fetchAssistantReferenceCandidates({
+      limit: 1,
+      query: queryReference.referenceId,
+      type: queryReference.referenceType,
+    })
+      .then((items) => {
+        if (didCancel) {
+          return;
+        }
+        const reference = items.find(
+          (item) => item.id === queryReference.referenceId && item.type === queryReference.referenceType,
+        );
+        if (!reference) {
+          toast.warning('引用对象不存在或无权限');
+          return;
+        }
+        setSelectedReferences((currentItems) => (
+          currentItems.some((item) => item.id === reference.id && item.type === reference.type)
+            ? currentItems
+            : [...currentItems, reference]
+        ));
+      })
+      .catch((error) => {
+        if (!didCancel) {
+          toast.error(formatMutationError(error));
+        }
+      })
+      .finally(() => {
+        if (!didCancel) {
+          setIsLoadingReferences(false);
+        }
+      });
+    return () => {
+      didCancel = true;
+    };
+  }, []);
 
   useEffect(() => {
     const query = activeMentionQuery(inputValue);
