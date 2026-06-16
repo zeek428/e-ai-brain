@@ -201,8 +201,11 @@ def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents()
             "chunk_count": 1,
             "id": "knowledge_payment_runbook",
             "index_status": "indexed",
+            "permission_label": "可引用",
+            "source_module": "知识库",
             "title": "支付页超时排障手册",
             "type": "knowledge_document",
+            "updated_at": "2026-06-14T08:00:00+00:00",
             "url": "/knowledge/documents?document_id=knowledge_payment_runbook",
         }
     ]
@@ -225,14 +228,20 @@ def test_ai_assistant_reference_candidates_include_admin_operational_objects():
     reference_by_type = {item["type"]: item for item in items}
     assert reference_by_type["scheduled_job"] == {
         "id": "scheduled_job_feedback_weekly",
+        "permission_label": "管理员可引用",
+        "source_module": "任务中心",
         "title": "每周反馈洞察定时作业",
         "type": "scheduled_job",
+        "updated_at": "2026-06-14T09:30:00+00:00",
         "url": "/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly",
     }
     assert reference_by_type["scheduled_job_run"] == {
         "id": "scheduled_job_run_feedback_failed",
+        "permission_label": "管理员可引用",
+        "source_module": "任务中心",
         "title": "每周反馈洞察定时作业 / failed",
         "type": "scheduled_job_run",
+        "updated_at": "2026-06-14T09:35:00+00:00",
         "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
     }
     assert reference_by_type["plugin_action"]["id"] == "plugin_action_feedback_write"

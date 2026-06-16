@@ -164,10 +164,14 @@ export type AssistantChatResponse = {
 
 export type AssistantReference = {
   chunk_count?: number;
+  created_at?: string;
   id: string;
   index_status?: string;
+  permission_label?: string;
+  source_module?: string;
   title: string;
   type: string;
+  updated_at?: string;
   url: string;
 };
 

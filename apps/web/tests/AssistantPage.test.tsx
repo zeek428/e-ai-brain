@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { message, Modal, notification } from 'antd';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -266,7 +266,162 @@ describe('AssistantPage', () => {
     });
 
     expect(await screen.findByRole('button', { name: /AI 助手历史记录迭代/ })).toBeInTheDocument();
-    expect(screen.getByText('需求')).toBeInTheDocument();
+    expect(screen.getAllByText('需求').length).toBeGreaterThan(0);
+  });
+
+  it('groups @ reference candidates with metadata and supports keyboard selection', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'knowledge_weekly_feedback',
+                  permission_label: '可引用',
+                  source_module: '知识库',
+                  title: '每周反馈洞察手册',
+                  type: 'knowledge_document',
+                  updated_at: '2026-06-16T08:30:00+08:00',
+                  url: '/knowledge/documents?document_id=knowledge_weekly_feedback',
+                },
+                {
+                  id: 'scheduled_job_feedback_weekly',
+                  permission_label: '管理员可引用',
+                  source_module: '任务中心',
+                  title: '提取每周用户反馈有价值信息',
+                  type: 'scheduled_job',
+                  updated_at: '2026-06-15T18:00:00+08:00',
+                  url: '/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly',
+                },
+                {
+                  id: 'ai_skill_feedback_summary',
+                  permission_label: '管理员可引用',
+                  source_module: 'AI能力配置',
+                  title: '反馈洞察 Skill',
+                  type: 'ai_skill',
+                  updated_at: '2026-06-14T09:00:00+08:00',
+                  url: '/tasks/ai-capabilities?skill_id=ai_skill_feedback_summary',
+                },
+              ],
+              total: 3,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, {
+      target: { value: '@' },
+    });
+
+    expect((await screen.findAllByText('知识文档')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('定时作业').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('AI能力').length).toBeGreaterThan(0);
+    expect(screen.getByText('知识库 · 可引用 · 2026-06-16')).toBeInTheDocument();
+    expect(screen.getByText('任务中心 · 管理员可引用 · 2026-06-15')).toBeInTheDocument();
+
+    fireEvent.keyDown(assistantInput, { key: 'ArrowDown' });
+    fireEvent.keyDown(assistantInput, { key: 'Enter' });
+
+    expect(screen.getByText('提取每周用户反馈有价值信息')).toBeInTheDocument();
+    expect(screen.getAllByText('定时作业').length).toBeGreaterThan(0);
+  });
+
+  it('keeps grouped @ reference hover selection aligned with the original candidate', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'knowledge_weekly_feedback',
+                  permission_label: '可引用',
+                  source_module: '知识库',
+                  title: '每周反馈洞察手册',
+                  type: 'knowledge_document',
+                  updated_at: '2026-06-16T08:30:00+08:00',
+                  url: '/knowledge/documents?document_id=knowledge_weekly_feedback',
+                },
+                {
+                  id: 'scheduled_job_feedback_weekly',
+                  permission_label: '管理员可引用',
+                  source_module: '任务中心',
+                  title: '提取每周用户反馈有价值信息',
+                  type: 'scheduled_job',
+                  updated_at: '2026-06-15T18:00:00+08:00',
+                  url: '/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly',
+                },
+                {
+                  id: 'ai_skill_feedback_summary',
+                  permission_label: '管理员可引用',
+                  source_module: 'AI能力配置',
+                  title: '反馈洞察 Skill',
+                  type: 'ai_skill',
+                  updated_at: '2026-06-14T09:00:00+08:00',
+                  url: '/tasks/ai-capabilities?skill_id=ai_skill_feedback_summary',
+                },
+                {
+                  id: 'scheduled_job_feedback_review',
+                  permission_label: '管理员可引用',
+                  source_module: '任务中心',
+                  title: '每周反馈趋势复盘',
+                  type: 'scheduled_job',
+                  updated_at: '2026-06-13T18:00:00+08:00',
+                  url: '/tasks/scheduled-jobs?job_id=scheduled_job_feedback_review',
+                },
+              ],
+              total: 4,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, {
+      target: { value: '@' },
+    });
+
+    const secondScheduledJob = await screen.findByRole('button', { name: /每周反馈趋势复盘/ });
+    fireEvent.mouseEnter(secondScheduledJob);
+    fireEvent.keyDown(assistantInput, { key: 'Enter' });
+
+    const selectedReferenceList = (await screen.findByText('本次上下文'))
+      .closest('.assistant-selected-reference-list');
+    expect(selectedReferenceList).not.toBeNull();
+    const selectedReferenceTags = selectedReferenceList?.querySelector('.assistant-selected-reference-tags');
+    expect(selectedReferenceTags).not.toBeNull();
+    expect(within(selectedReferenceTags as HTMLElement).getByText('每周反馈趋势复盘')).toBeInTheDocument();
+    expect(within(selectedReferenceTags as HTMLElement).queryByText('反馈洞察 Skill')).not.toBeInTheDocument();
   });
 
   it('selects scheduled job run references with @ candidates and sends them to chat', async () => {

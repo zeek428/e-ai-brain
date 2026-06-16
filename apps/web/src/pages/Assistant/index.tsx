@@ -14,7 +14,7 @@ import {
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import { Button, Input, Space, Spin, Tag, Typography, message as toast } from 'antd';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
@@ -169,6 +169,69 @@ function referenceTypeLabel(type: string) {
     scheduled_job_run: '运行记录',
   };
   return labels[type] ?? type;
+}
+
+function referenceSourceModule(type: string) {
+  const modules: Record<string, string> = {
+    ai_agent: 'AI能力配置',
+    ai_skill: 'AI能力配置',
+    ai_task: '需求交付',
+    bug: '需求交付',
+    code_review_report: '需求交付',
+    human_review: '需求交付',
+    iteration_version: '需求交付',
+    knowledge_deposit: '知识库',
+    knowledge_document: '知识库',
+    plugin_action: '插件管理',
+    product: '产品资产',
+    requirement: '需求交付',
+    scheduled_job: '任务中心',
+    scheduled_job_run: '任务中心',
+  };
+  return modules[type] ?? 'AI Brain';
+}
+
+function referenceUpdatedDate(reference: AssistantReference) {
+  const value = reference.updated_at ?? reference.created_at;
+  if (!value) {
+    return undefined;
+  }
+  const normalized = String(value);
+  return /^\d{4}-\d{2}-\d{2}/.test(normalized) ? normalized.slice(0, 10) : normalized;
+}
+
+function referenceMetaText(reference: AssistantReference) {
+  return [
+    reference.source_module ?? referenceSourceModule(reference.type),
+    reference.permission_label ?? '可引用',
+    referenceUpdatedDate(reference),
+  ].filter(Boolean).join(' · ');
+}
+
+function groupedReferenceCandidates(references: AssistantReference[]) {
+  const groups: Array<{
+    items: Array<{
+      index: number;
+      reference: AssistantReference;
+    }>;
+    label: string;
+    type: string;
+  }> = [];
+  const groupByType = new Map<string, typeof groups[number]>();
+  references.forEach((reference, index) => {
+    let group = groupByType.get(reference.type);
+    if (!group) {
+      group = {
+        items: [],
+        label: referenceTypeLabel(reference.type),
+        type: reference.type,
+      };
+      groupByType.set(reference.type, group);
+      groups.push(group);
+    }
+    group.items.push({ index, reference });
+  });
+  return groups;
 }
 
 function storeScheduledJobDraft(draft: AssistantToolResultItem) {
@@ -487,6 +550,7 @@ export default function AssistantPage() {
   const [isSending, setIsSending] = useState(false);
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
+  const [activeReferenceIndex, setActiveReferenceIndex] = useState(-1);
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
@@ -503,6 +567,14 @@ export default function AssistantPage() {
   );
   const selectedReferenceKeys = useMemo(
     () => new Set(selectedReferences.map((reference) => `${reference.type}:${reference.id}`)),
+    [selectedReferences],
+  );
+  const referenceCandidateGroups = useMemo(
+    () => groupedReferenceCandidates(referenceCandidates),
+    [referenceCandidates],
+  );
+  const selectedKnowledgeChunkCount = useMemo(
+    () => selectedReferences.reduce((total, reference) => total + Number(reference.chunk_count ?? 0), 0),
     [selectedReferences],
   );
 
@@ -541,6 +613,15 @@ export default function AssistantPage() {
       didCancel = true;
     };
   }, [inputValue, selectedReferenceKeys]);
+
+  useEffect(() => {
+    setActiveReferenceIndex((index) => {
+      if (!referenceCandidates.length) {
+        return -1;
+      }
+      return Math.min(Math.max(index, 0), referenceCandidates.length - 1);
+    });
+  }, [referenceCandidates.length]);
 
   const loadConversations = useCallback(async () => {
     setIsLoadingConversations(true);
@@ -583,6 +664,7 @@ export default function AssistantPage() {
     setConversationId(undefined);
     setLastResponse(undefined);
     setMessages(welcomeMessages);
+    setActiveReferenceIndex(-1);
     setReferenceCandidates([]);
     setSelectedReferences([]);
   };
@@ -593,6 +675,7 @@ export default function AssistantPage() {
         ? items
         : [...items, reference]
     ));
+    setActiveReferenceIndex(-1);
     setReferenceCandidates([]);
   };
 
@@ -600,6 +683,37 @@ export default function AssistantPage() {
     setSelectedReferences((items) => (
       items.filter((item) => !(item.id === reference.id && item.type === reference.type))
     ));
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!referenceCandidates.length) {
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActiveReferenceIndex((index) => (index + 1) % referenceCandidates.length);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveReferenceIndex((index) => (
+        index <= 0 ? referenceCandidates.length - 1 : index - 1
+      ));
+      return;
+    }
+    if (event.key === 'Enter') {
+      const reference = referenceCandidates[Math.max(activeReferenceIndex, 0)];
+      if (reference) {
+        event.preventDefault();
+        addSelectedReference(reference);
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setActiveReferenceIndex(-1);
+      setReferenceCandidates([]);
+    }
   };
 
   const openConversation = async (targetConversationId: string) => {
@@ -664,6 +778,7 @@ export default function AssistantPage() {
       });
       setConversationId(response.conversationId);
       setLastResponse(response);
+      setActiveReferenceIndex(-1);
       setSelectedReferences([]);
       setReferenceCandidates([]);
       setMessages((items) => [
@@ -872,32 +987,68 @@ export default function AssistantPage() {
           ) : null}
           {selectedReferences.length ? (
             <div className="assistant-selected-reference-list">
-              {selectedReferences.map((reference) => (
-                <Tag
-                  closable
-                  color="blue"
-                  key={`${reference.type}:${reference.id}`}
-                  onClose={() => removeSelectedReference(reference)}
-                >
-                  {reference.title}
-                  <Text type="secondary"> {referenceTypeLabel(reference.type)}</Text>
-                </Tag>
-              ))}
+              <div className="assistant-selected-reference-header">
+                <Text strong>本次上下文</Text>
+                <Text type="secondary">
+                  {selectedReferences.length} 个引用
+                  {selectedKnowledgeChunkCount
+                    ? ` · ${selectedKnowledgeChunkCount} 个知识 chunk 将注入模型`
+                    : ' · 元数据将注入模型'}
+                </Text>
+              </div>
+              <div className="assistant-selected-reference-tags">
+                {selectedReferences.map((reference) => (
+                  <Tag
+                    closable
+                    color="blue"
+                    key={`${reference.type}:${reference.id}`}
+                    onClose={() => removeSelectedReference(reference)}
+                  >
+                    {reference.title}
+                    <Text type="secondary"> {referenceTypeLabel(reference.type)}</Text>
+                  </Tag>
+                ))}
+              </div>
             </div>
           ) : null}
           {referenceCandidates.length || isLoadingReferences ? (
-            <div className="assistant-reference-candidates">
+            <div
+              aria-label="引用候选"
+              className="assistant-reference-candidates"
+            >
+              <div className="assistant-reference-candidates-header">
+                <Text strong>引用候选</Text>
+                <Text type="secondary">↑↓ 选择，Enter 添加</Text>
+              </div>
               {isLoadingReferences ? <Spin size="small" /> : null}
-              {referenceCandidates.map((reference) => (
-                <Button
-                  icon={<LinkOutlined />}
-                  key={`${reference.type}:${reference.id}`}
-                  size="small"
-                  onClick={() => addSelectedReference(reference)}
-                >
-                  <span className="assistant-reference-candidate-title">{reference.title}</span>
-                  <Tag color="default">{referenceTypeLabel(reference.type)}</Tag>
-                </Button>
+              {referenceCandidateGroups.map((group) => (
+                <div className="assistant-reference-candidate-group" key={group.type}>
+                  <div className="assistant-reference-candidate-group-title">
+                    <Text strong>{group.label}</Text>
+                    <Tag color="default">{group.items.length}</Tag>
+                  </div>
+                  {group.items.map(({ index: referenceIndex, reference }) => {
+                    const isActive = referenceIndex === activeReferenceIndex;
+                    return (
+                      <Button
+                        className={isActive ? 'assistant-reference-candidate-active' : undefined}
+                        icon={<LinkOutlined />}
+                        key={`${reference.type}:${reference.id}`}
+                        size="small"
+                        onClick={() => addSelectedReference(reference)}
+                        onMouseEnter={() => setActiveReferenceIndex(referenceIndex)}
+                      >
+                        <span className="assistant-reference-candidate-main">
+                          <span className="assistant-reference-candidate-title">{reference.title}</span>
+                          <span className="assistant-reference-candidate-meta">
+                            {referenceMetaText(reference)}
+                          </span>
+                        </span>
+                        <Tag color="default">{referenceTypeLabel(reference.type)}</Tag>
+                      </Button>
+                    );
+                  })}
+                </div>
               ))}
             </div>
           ) : null}
@@ -905,7 +1056,12 @@ export default function AssistantPage() {
             <TextArea
               aria-label="发送给 AI 助手"
               onChange={(event) => setInputValue(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
               onPressEnter={(event) => {
+                if (referenceCandidates.length) {
+                  event.preventDefault();
+                  return;
+                }
                 if (!event.shiftKey) {
                   event.preventDefault();
                   void sendMessage();

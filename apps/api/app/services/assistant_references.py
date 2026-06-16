@@ -17,6 +17,22 @@ OPERATIONAL_REFERENCE_TYPES = {
     "scheduled_job",
     "scheduled_job_run",
 }
+REFERENCE_SOURCE_MODULES = {
+    "ai_agent": "AI能力配置",
+    "ai_skill": "AI能力配置",
+    "ai_task": "需求交付",
+    "bug": "需求交付",
+    "code_review_report": "需求交付",
+    "human_review": "需求交付",
+    "iteration_version": "需求交付",
+    "knowledge_deposit": "知识库",
+    "knowledge_document": "知识库",
+    "plugin_action": "插件管理",
+    "product": "产品资产",
+    "requirement": "需求交付",
+    "scheduled_job": "任务中心",
+    "scheduled_job_run": "任务中心",
+}
 
 
 class AssistantReferenceError(Exception):
@@ -167,7 +183,8 @@ def assistant_reference_candidates_response(
             query=message,
             user=user,
         )
-        return {"items": items, "total": len(items)}
+        enriched_items = _reference_candidates_with_metadata(current_store, items)
+        return {"items": enriched_items, "total": len(enriched_items)}
     if normalized_type:
         items = [
             reference
@@ -181,7 +198,11 @@ def assistant_reference_candidates_response(
             )
             if reference["type"] == normalized_type
         ]
-        return {"items": items[:normalized_limit], "total": len(items)}
+        enriched_items = _reference_candidates_with_metadata(
+            current_store,
+            items[:normalized_limit],
+        )
+        return {"items": enriched_items, "total": len(enriched_items)}
     items = _merge_reference_lists(
         _knowledge_document_reference_candidates(
             current_store,
@@ -199,7 +220,8 @@ def assistant_reference_candidates_response(
         ),
         limit=normalized_limit,
     )
-    return {"items": items, "total": len(items)}
+    enriched_items = _reference_candidates_with_metadata(current_store, items)
+    return {"items": enriched_items, "total": len(enriched_items)}
 
 
 def resolve_assistant_references(
@@ -308,6 +330,63 @@ def normalize_assistant_references(value: Any) -> list[dict[str, str]]:
         if len(references) >= 6:
             break
     return references
+
+
+def _reference_candidates_with_metadata(
+    current_store: Any,
+    references: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    for reference in references:
+        reference_type = str(reference.get("type") or "")
+        reference_id = str(reference.get("id") or "")
+        item = _entity_for_reference(current_store, reference_type, reference_id)
+        updated_at = (
+            item.get("updated_at")
+            or item.get("created_at")
+            or item.get("last_message_at")
+            if item
+            else None
+        )
+        enriched_item = {
+            **reference,
+            "permission_label": "管理员可引用"
+            if reference_type in OPERATIONAL_REFERENCE_TYPES
+            else "可引用",
+            "source_module": REFERENCE_SOURCE_MODULES.get(reference_type, "AI Brain"),
+        }
+        if updated_at:
+            enriched_item["updated_at"] = str(updated_at)
+        enriched.append(enriched_item)
+    return enriched
+
+
+def _entity_for_reference(
+    current_store: Any,
+    entity_type: str,
+    item_id: str,
+) -> dict[str, Any] | None:
+    collection_map = {
+        "ai_agent": "ai_agents",
+        "ai_skill": "ai_skills",
+        "ai_task": "ai_tasks",
+        "bug": "bugs",
+        "code_review_report": "code_review_reports",
+        "human_review": "human_reviews",
+        "iteration_version": "product_versions",
+        "knowledge_deposit": "knowledge_deposits",
+        "knowledge_document": "knowledge_documents",
+        "plugin_action": "plugin_actions",
+        "product": "products",
+        "requirement": "requirements",
+        "scheduled_job": "scheduled_jobs",
+        "scheduled_job_run": "scheduled_job_runs",
+    }
+    collection_name = collection_map.get(entity_type)
+    if collection_name is None:
+        return None
+    item = getattr(current_store, collection_name, {}).get(item_id)
+    return item if isinstance(item, dict) else None
 
 
 def _knowledge_document_reference_candidates(

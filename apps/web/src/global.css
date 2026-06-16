@@ -698,23 +698,69 @@ body {
 
 .assistant-selected-reference-list,
 .assistant-reference-candidates {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 8px;
   padding-bottom: 10px;
 }
 
-.assistant-reference-candidates {
+.assistant-selected-reference-header,
+.assistant-reference-candidates-header {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-selected-reference-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.assistant-reference-candidate-group {
+  display: grid;
+  gap: 6px;
+}
+
+.assistant-reference-candidate-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(15, 23, 42, 0.72);
+  font-size: 12px;
 }
 
 .assistant-reference-candidates .ant-btn {
-  max-width: 260px;
+  justify-content: flex-start;
+  width: 100%;
+  height: auto;
+  min-height: 42px;
+  padding: 7px 10px;
+  text-align: left;
 }
 
-.assistant-reference-candidate-title {
+.assistant-reference-candidate-active {
+  border-color: #2f6fed;
+  background: #eef4ff;
+}
+
+.assistant-reference-candidate-main {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+}
+
+.assistant-reference-candidate-title,
+.assistant-reference-candidate-meta {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.assistant-reference-candidate-meta {
+  color: rgba(15, 23, 42, 0.56);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .assistant-composer {
