@@ -22,7 +22,7 @@ async function findDialogByTitle(title: string) {
   let dialog: HTMLElement | undefined;
   await waitFor(() => {
     dialog = Array.from(document.body.querySelectorAll<HTMLElement>('[role="dialog"]')).find(
-      (item) => within(item).queryByText(title),
+      (item) => within(item).queryAllByText(title).length > 0,
     );
     expect(dialog).toBeTruthy();
   });
@@ -160,6 +160,7 @@ function installPluginsFetchMock(
   const runnerPackageCalls: string[] = [];
   const runnerRotateBodies: unknown[] = [];
   const runnerTaskCancelBodies: unknown[] = [];
+  const runnerTestCalls: string[] = [];
   const runnerUpdateBodies: unknown[] = [];
   const connectionTestDeferred = options.deferConnectionTest
     ? createDeferred<Response>()
@@ -689,6 +690,29 @@ function installPluginsFetchMock(
         status: 200,
       });
     }
+    if (input === '/api/system/ai-executor-runners/ai_executor_runner_001/test' && init?.method === 'POST') {
+      runnerTestCalls.push(String(input));
+      return jsonResponse({
+        data: {
+          checked_at: '2026-06-13T09:30:00Z',
+          diagnostics: [
+            { detail: 'Runner 注册状态 active', name: 'runner_registration', status: 'succeeded' },
+            { detail: 'Runner 心跳正常，12 秒前上报', name: 'runner_heartbeat', status: 'succeeded' },
+          ],
+          health_status: 'online',
+          heartbeat_age_seconds: 12,
+          latency_ms: 4,
+          runner: {
+            id: 'ai_executor_runner_001',
+            name: 'Zeek Mac 本地执行器',
+            protocol: 'runner_polling',
+            token_configured: true,
+          },
+          runner_id: 'ai_executor_runner_001',
+          status: 'succeeded',
+        },
+      });
+    }
     if (input === '/api/system/ai-executor-runners' && init?.method === 'POST') {
       runnerBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({
@@ -866,6 +890,15 @@ function installPluginsFetchMock(
       }
       return jsonResponse(pluginConnectionTestBody());
     }
+    if (input === '/api/system/plugin-connections/connection_created/test' && init?.method === 'POST') {
+      connectionTestCalls.push(String(input));
+      return jsonResponse({
+        data: {
+          ...pluginConnectionTestBody().data,
+          connection_id: 'connection_created',
+        },
+      });
+    }
     if (input === '/api/system/plugin-actions' && init?.method === 'GET') {
       const officialActions = options.includeOfficialActions
         ? [
@@ -1009,6 +1042,7 @@ function installPluginsFetchMock(
     runnerPackageCalls,
     runnerRotateBodies,
     runnerTaskCancelBodies,
+    runnerTestCalls,
     runnerUpdateBodies,
   };
 }
@@ -1172,10 +1206,29 @@ describe('PluginsPage', () => {
     expect(screen.getAllByText('model_gateway').length).toBeGreaterThan(0);
     expect(screen.getByText('managed')).toBeInTheDocument();
     expect(screen.getByText('使用系统默认 AI 大模型执行，无需启动本地 Runner')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '测试执行器 系统默认执行器' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '测试执行器 Zeek Mac 本地执行器' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '编辑执行器 系统默认执行器' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '删除执行器 系统默认执行器' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '轮换 Token 系统默认执行器' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看执行日志 系统默认执行器' })).not.toBeInTheDocument();
+  });
+
+  it('can test an AI executor runner from the runner list', async () => {
+    const { runnerTestCalls } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '执行器' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: '测试执行器 Zeek Mac 本地执行器' }));
+
+    await waitFor(() =>
+      expect(runnerTestCalls).toEqual(['/api/system/ai-executor-runners/ai_executor_runner_001/test']),
+    );
+    const dialog = await findDialogByTitle('执行器测试诊断');
+    expect(within(dialog).getByText('Zeek Mac 本地执行器')).toBeInTheDocument();
+    expect(within(dialog).getByText('Runner 心跳正常，12 秒前上报')).toBeInTheDocument();
   });
 
   it('rotates runner tokens and shows streaming task logs with cancellation', async () => {
@@ -1742,6 +1795,36 @@ describe('PluginsPage', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '测试连接 生产 MaxCompute 项目' })).toBeInTheDocument(),
     );
+  });
+
+  it('can save and immediately test a plugin connection from the connection modal', async () => {
+    const { connectionBodies, connectionTestCalls } = installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '连接' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新增连接' }));
+    const dialog = await findDialogByTitle('新增连接');
+
+    fireEvent.change(getDialogField<HTMLInputElement>(dialog, 'name'), { target: { value: '临时 GitHub 连接' } });
+    fireEvent.change(getDialogField<HTMLInputElement>(dialog, 'endpoint_url'), {
+      target: { value: 'https://api.github.com' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存并测试' }));
+
+    await waitFor(() =>
+      expect(connectionBodies).toEqual([
+        expect.objectContaining({
+          endpoint_url: 'https://api.github.com',
+          name: '临时 GitHub 连接',
+        }),
+      ]),
+    );
+    await waitFor(() =>
+      expect(connectionTestCalls).toContain('/api/system/plugin-connections/connection_created/test'),
+    );
+    expect((await screen.findAllByText('连接测试诊断')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('请求调试台')).toBeInTheDocument();
   });
 
   it('can edit existing plugins', async () => {

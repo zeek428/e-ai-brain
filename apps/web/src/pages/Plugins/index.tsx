@@ -43,6 +43,7 @@ import {
   rememberAssistantDraftResolution,
   resolveAssistantDraftResourceId,
   rotateAiExecutorRunnerToken,
+  testAiExecutorRunner,
   testPluginConnection,
   trialPluginAction,
   updateAiExecutorRunner,
@@ -54,6 +55,7 @@ import {
   type AiExecutorTaskLogRecord,
   type AiExecutorTaskRecord,
   type AiExecutorRunnerRecord,
+  type AiExecutorRunnerTestResult,
   type PluginActionTrialResult,
   type PluginActionRecord,
   type PluginActionTemplateRecord,
@@ -1915,6 +1917,7 @@ export default function PluginsPage() {
   const [connectionModalOpen, setConnectionModalOpen] = useState(false);
   const [actionModalOpen, setActionModalOpen] = useState(false);
   const [runnerModalOpen, setRunnerModalOpen] = useState(false);
+  const [connectionSubmitAction, setConnectionSubmitAction] = useState<'save' | 'save-test'>();
   const [editingPlugin, setEditingPlugin] = useState<PluginRecord | undefined>();
   const [editingConnection, setEditingConnection] = useState<PluginConnectionRecord | undefined>();
   const [editingAction, setEditingAction] = useState<PluginActionRecord | undefined>();
@@ -1944,6 +1947,7 @@ export default function PluginsPage() {
   const [advancedConnectionRequestJsonOpen, setAdvancedConnectionRequestJsonOpen] = useState(false);
   const [advancedActionJsonOpen, setAdvancedActionJsonOpen] = useState(false);
   const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
+  const [testingRunnerId, setTestingRunnerId] = useState<string | undefined>();
   const selectedConnectionAuthType = Form.useWatch('auth_type', connectionForm);
   const selectedConnectionPluginId = Form.useWatch('plugin_id', connectionForm);
   const actionFormValues = Form.useWatch([], actionForm) as ActionFormValues | undefined;
@@ -2635,8 +2639,9 @@ export default function PluginsPage() {
     connectionForm.setFieldsValue(nextValues);
   };
 
-  const submitConnection = async () => {
+  const submitConnection = async (options: { testAfterSave?: boolean } = {}) => {
     try {
+      setConnectionSubmitAction(options.testAfterSave ? 'save-test' : 'save');
       const values = await connectionForm.validateFields();
       const authConfig = advancedConnectionJsonOpen
         ? parseJsonObject(values.auth_config, '认证配置')
@@ -2651,11 +2656,31 @@ export default function PluginsPage() {
         ? parseJsonObject(values.request_config, '请求配置')
         : buildConnectionRequestConfig(values, selectedConnectionSchema);
       const payload = buildConnectionPayload(values, authConfig, requestConfig, selectedConnectionSchema);
+      let savedConnection: PluginConnectionRecord;
       if (editingConnection) {
-        await updatePluginConnection(editingConnection.id, payload);
+        const updatedConnection = await updatePluginConnection(editingConnection.id, payload);
+        savedConnection = {
+          ...editingConnection,
+          ...payload,
+          ...updatedConnection,
+          id: updatedConnection.id ?? editingConnection.id,
+          name: updatedConnection.name ?? payload.name ?? editingConnection.name,
+          plugin_id: updatedConnection.plugin_id ?? payload.plugin_id ?? editingConnection.plugin_id,
+          endpoint_url: updatedConnection.endpoint_url ?? payload.endpoint_url ?? editingConnection.endpoint_url,
+          status: updatedConnection.status ?? payload.status ?? editingConnection.status,
+        };
         message.success('连接已更新');
       } else {
         const createdConnection = await createPluginConnection(payload);
+        savedConnection = {
+          ...payload,
+          ...createdConnection,
+          id: createdConnection.id,
+          name: createdConnection.name ?? payload.name ?? values.name,
+          plugin_id: createdConnection.plugin_id ?? payload.plugin_id ?? values.plugin_id,
+          endpoint_url: createdConnection.endpoint_url ?? payload.endpoint_url ?? values.endpoint_url,
+          status: createdConnection.status ?? payload.status ?? values.status,
+        };
         rememberAssistantDraftResolution({
           draftId: assistantConnectionDraftSource?.draftId,
           resourceId: createdConnection.id,
@@ -2666,6 +2691,9 @@ export default function PluginsPage() {
       }
       closeConnectionModal();
       await reload();
+      if (options.testAfterSave) {
+        await runConnectionTest(savedConnection);
+      }
     } catch (error) {
       if (isFormValidationError(error)) {
         const firstField = error.errorFields[0]?.name;
@@ -2675,6 +2703,8 @@ export default function PluginsPage() {
         return;
       }
       message.error(error instanceof Error ? error.message : editingConnection ? '连接更新失败' : '连接创建失败');
+    } finally {
+      setConnectionSubmitAction(undefined);
     }
   };
 
@@ -3173,6 +3203,100 @@ export default function PluginsPage() {
       });
     } finally {
       setTestingConnectionId(undefined);
+    }
+  };
+
+  const openRunnerTestDiagnostics = (
+    runner: AiExecutorRunnerRecord,
+    result: AiExecutorRunnerTestResult,
+  ) => {
+    const resultRunner = result.runner ?? runner;
+    Modal.info({
+      content: (
+        <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+          <Space size={8} wrap>
+            <Typography.Text strong>{resultRunner.name ?? runner.name}</Typography.Text>
+            <Tag color={connectionTestStatusColor(result.status)}>{result.status}</Tag>
+            {result.health_status ? (
+              <Tag color={runnerHealthStatusColor(result.health_status)}>{result.health_status}</Tag>
+            ) : null}
+            <Typography.Text type="secondary">
+              耗时 {result.latency_ms ?? '-'}ms
+            </Typography.Text>
+            {result.checked_at ? (
+              <Typography.Text type="secondary">
+                检测时间 {result.checked_at}
+              </Typography.Text>
+            ) : null}
+          </Space>
+          <Table
+            columns={[
+              { dataIndex: 'name', title: '检查项', width: 190 },
+              {
+                dataIndex: 'status',
+                title: '状态',
+                width: 120,
+                render: (value: string) => <Tag color={connectionTestStatusColor(value)}>{value}</Tag>,
+              },
+              {
+                dataIndex: 'detail',
+                title: '说明',
+                render: (value?: string | null) => (
+                  <Typography.Text style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {value ?? '-'}
+                  </Typography.Text>
+                ),
+              },
+              { dataIndex: 'latency_ms', title: '耗时 ms', width: 100, render: (value?: number | null) => value ?? '-' },
+            ]}
+            dataSource={result.diagnostics ?? []}
+            pagination={false}
+            rowKey="name"
+            scroll={{ x: 760 }}
+            size="small"
+          />
+        </Space>
+      ),
+      title: '执行器测试诊断',
+      width: 820,
+    });
+  };
+
+  const runRunnerTest = async (runner: AiExecutorRunnerRecord) => {
+    if (testingRunnerId) {
+      return;
+    }
+    const messageKey = `ai-executor-runner-test-${runner.id}`;
+    setTestingRunnerId(runner.id);
+    message.loading({
+      content: `正在测试执行器「${runner.name}」，请稍候...`,
+      duration: 0,
+      key: messageKey,
+    });
+    try {
+      const result = await testAiExecutorRunner(runner.id);
+      openRunnerTestDiagnostics(runner, result);
+      if (result.status === 'succeeded') {
+        message.success({
+          content: `执行器测试通过，耗时 ${result.latency_ms ?? '-'}ms`,
+          duration: 3,
+          key: messageKey,
+        });
+      } else {
+        message.error({
+          content: '执行器测试未通过，请查看诊断详情',
+          duration: 5,
+          key: messageKey,
+        });
+      }
+    } catch (error) {
+      message.error({
+        content: error instanceof Error ? error.message : '执行器测试失败',
+        duration: 5,
+        key: messageKey,
+      });
+    } finally {
+      setTestingRunnerId(undefined);
     }
   };
 
@@ -3854,13 +3978,30 @@ export default function PluginsPage() {
                     key: 'actions',
                     title: '操作',
                     valueType: 'option',
-                    width: 300,
+                    width: 360,
                     render: (_, row) => {
+                      const testButton = (
+                        <Button
+                          aria-label={`测试执行器 ${row.name}`}
+                          icon={<PlayCircleOutlined />}
+                          loading={testingRunnerId === row.id}
+                          onClick={() => runRunnerTest(row)}
+                          type="link"
+                        >
+                          测试
+                        </Button>
+                      );
                       if (isSystemDefaultRunner(row)) {
-                        return <Tag color="blue">系统内置</Tag>;
+                        return (
+                          <Space className="management-row-actions" size={0}>
+                            {testButton}
+                            <Tag color="blue">系统内置</Tag>
+                          </Space>
+                        );
                       }
                       return (
                         <Space className="management-row-actions" size={0}>
+                          {testButton}
                           <Button
                             aria-label={`轮换 Token ${row.name}`}
                             icon={<KeyOutlined />}
@@ -4290,8 +4431,32 @@ export default function PluginsPage() {
         open={connectionModalOpen}
         title={editingConnection ? '编辑连接' : '新增连接'}
         width={860}
+        footer={[
+          <Button key="cancel" onClick={closeConnectionModal}>
+            取消
+          </Button>,
+          <Button
+            key="save"
+            disabled={Boolean(connectionSubmitAction)}
+            loading={connectionSubmitAction === 'save'}
+            onClick={() => void submitConnection()}
+          >
+            确定
+          </Button>,
+          <Button
+            key="save-test"
+            aria-label="保存并测试"
+            disabled={Boolean(connectionSubmitAction)}
+            icon={<PlayCircleOutlined />}
+            loading={connectionSubmitAction === 'save-test'}
+            onClick={() => void submitConnection({ testAfterSave: true })}
+            type="primary"
+          >
+            保存并测试
+          </Button>,
+        ]}
         onCancel={closeConnectionModal}
-        onOk={submitConnection}
+        onOk={() => void submitConnection()}
       >
         <Form
           form={connectionForm}

@@ -20,6 +20,7 @@ from app.services.ai_executor_runners import (
     patch_ai_executor_runner_response,
     rotate_ai_executor_runner_token_response,
     runner_heartbeat_response,
+    test_ai_executor_runner_response,
     timeout_ai_executor_tasks_response,
 )
 from app.services.plugins import (
@@ -294,6 +295,22 @@ def rotate_ai_executor_runner_token(
         rotate_ai_executor_runner_token_response(
             current_store=store(request),
             payload=payload,
+            runner_id=runner_id,
+            user=user,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-runners/{runner_id}/test")
+def test_ai_executor_runner(
+    request: Request,
+    runner_id: str,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        test_ai_executor_runner_response(
+            current_store=store(request),
             runner_id=runner_id,
             user=user,
         ),

@@ -4395,6 +4395,24 @@ export type AiExecutorRunnerInstallPackageOptions = {
   target_os?: string;
 };
 
+export type AiExecutorRunnerTestDiagnostic = {
+  detail?: string | null;
+  latency_ms?: number | null;
+  name: string;
+  status: string;
+};
+
+export type AiExecutorRunnerTestResult = {
+  checked_at?: string | null;
+  diagnostics?: AiExecutorRunnerTestDiagnostic[];
+  health_status?: string | null;
+  heartbeat_age_seconds?: number | null;
+  latency_ms?: number | null;
+  runner?: AiExecutorRunnerRecord;
+  runner_id: string;
+  status: string;
+};
+
 export type PluginSystemVariableRecord = {
   description?: string;
   expression: string;
@@ -4496,6 +4514,14 @@ export async function rotateAiExecutorRunnerToken(
       token,
     },
   );
+}
+
+export async function testAiExecutorRunner(runnerId: string): Promise<AiExecutorRunnerTestResult> {
+  const token = requireAccessToken();
+  return apiRequest<AiExecutorRunnerTestResult>(`/api/system/ai-executor-runners/${runnerId}/test`, {
+    method: 'POST',
+    token,
+  });
 }
 
 function filenameFromContentDisposition(value: string | null, fallback: string): string {

@@ -6,6 +6,7 @@ import secrets
 import zipfile
 from datetime import UTC, datetime
 from io import BytesIO
+from time import perf_counter
 from typing import Any
 
 from fastapi import Request
@@ -1385,6 +1386,154 @@ def list_ai_executor_runners_response(
         items.append(item)
     items.sort(key=lambda item: (item.get("updated_at") or "", item["id"]), reverse=True)
     return {"items": items, "total": len(items)}
+
+
+def _runner_test_diagnostic(
+    *,
+    detail: str,
+    name: str,
+    status: str,
+    latency_ms: int | None = None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "detail": detail,
+        "name": name,
+        "status": status,
+    }
+    if latency_ms is not None:
+        item["latency_ms"] = latency_ms
+    return item
+
+
+def test_ai_executor_runner_response(
+    *,
+    current_store: Any,
+    runner_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    _ensure_admin(user)
+    started_at = perf_counter()
+    sync_ai_executor_runner_store(current_store)
+    if _is_system_default_runner_id(runner_id):
+        runner = system_default_ai_executor_runner()
+    else:
+        runner = current_store.ai_executor_runners.get(runner_id)
+    if runner is None:
+        raise api_error(404, "NOT_FOUND", "AI executor runner not found")
+
+    public_runner = _runner_public(runner)
+    diagnostics: list[dict[str, Any]] = []
+    if _is_system_default_runner(runner):
+        diagnostics.extend(
+            [
+                _runner_test_diagnostic(
+                    detail="系统默认执行器由 AI Brain 模型网关托管，无需 Runner Token 或心跳。",
+                    name="system_managed",
+                    status="succeeded",
+                ),
+                _runner_test_diagnostic(
+                    detail="支持 model_gateway 执行器类型，可用于系统内置 AI 执行。",
+                    name="executor_types",
+                    status="succeeded",
+                ),
+            ],
+        )
+    else:
+        runner_status = str(runner.get("status") or "unknown")
+        diagnostics.append(
+            _runner_test_diagnostic(
+                detail=f"Runner 注册状态 {runner_status}。",
+                name="runner_registration",
+                status="succeeded" if runner_status == "active" else "failed",
+            ),
+        )
+        token_configured = bool(public_runner.get("token_configured"))
+        diagnostics.append(
+            _runner_test_diagnostic(
+                detail=(
+                    "Runner Token 已配置。"
+                    if token_configured
+                    else "Runner Token 未配置，无法安全领取任务。"
+                ),
+                name="runner_token",
+                status="succeeded" if token_configured else "failed",
+            ),
+        )
+        executor_types = [str(item) for item in runner.get("executor_types") or []]
+        diagnostics.append(
+            _runner_test_diagnostic(
+                detail=(
+                    "已配置执行器类型：" + "、".join(executor_types)
+                    if executor_types
+                    else "未配置执行器类型，无法匹配任务。"
+                ),
+                name="executor_types",
+                status="succeeded" if executor_types else "failed",
+            ),
+        )
+        endpoint_url = _runner_endpoint(runner)
+        diagnostics.append(
+            _runner_test_diagnostic(
+                detail=f"执行器端点 {endpoint_url}。",
+                name="runner_endpoint",
+                status="succeeded" if endpoint_url else "failed",
+            ),
+        )
+        health_status = str(public_runner.get("health_status") or "unknown")
+        heartbeat_age = public_runner.get("heartbeat_age_seconds")
+        heartbeat_timeout = int(runner.get("heartbeat_timeout_seconds") or 120)
+        if health_status == "online":
+            heartbeat_detail = f"Runner 心跳正常，{heartbeat_age} 秒前上报。"
+            heartbeat_status = "succeeded"
+        elif health_status == "never_connected":
+            heartbeat_detail = "Runner 尚未上报心跳，请启动本地 Runner 或检查安装包配置。"
+            heartbeat_status = "failed"
+        elif health_status == "offline":
+            heartbeat_detail = (
+                f"Runner 心跳超时，最近心跳 {heartbeat_age} 秒前，"
+                f"超时时间 {heartbeat_timeout} 秒。"
+            )
+            heartbeat_status = "failed"
+        else:
+            heartbeat_detail = f"Runner 当前健康状态为 {health_status}。"
+            heartbeat_status = "failed"
+        diagnostics.append(
+            _runner_test_diagnostic(
+                detail=heartbeat_detail,
+                name="runner_heartbeat",
+                status=heartbeat_status,
+            ),
+        )
+
+    overall_status = (
+        "failed"
+        if any(item["status"] == "failed" for item in diagnostics)
+        else "succeeded"
+    )
+    latency_ms = int((perf_counter() - started_at) * 1000)
+    result = {
+        "checked_at": datetime.now(UTC).isoformat(),
+        "diagnostics": diagnostics,
+        "health_status": public_runner.get("health_status"),
+        "heartbeat_age_seconds": public_runner.get("heartbeat_age_seconds"),
+        "latency_ms": latency_ms,
+        "runner": public_runner,
+        "runner_id": runner_id,
+        "status": overall_status,
+    }
+    record_audit_event(
+        current_store,
+        event_type="ai_executor_runner.tested",
+        actor_id=user["id"],
+        subject_type="ai_executor_runner",
+        subject_id=runner_id,
+        payload={
+            "health_status": result["health_status"],
+            "latency_ms": latency_ms,
+            "status": overall_status,
+        },
+    )
+    return result
 
 
 def patch_ai_executor_runner_response(

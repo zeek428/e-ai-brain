@@ -423,6 +423,75 @@ def test_ai_executor_runners_include_system_default_model_gateway_executor():
     assert delete_response.json()["detail"]["code"] == "AI_EXECUTOR_SYSTEM_RUNNER_LOCKED"
 
 
+def test_ai_executor_runner_test_endpoint_reports_managed_and_runner_health():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    system_response = client.post(
+        "/api/system/ai-executor-runners/ai_executor_runner_system_default/test",
+        headers=admin_headers,
+    )
+    assert system_response.status_code == 200
+    system_payload = system_response.json()["data"]
+    assert system_payload["runner_id"] == "ai_executor_runner_system_default"
+    assert system_payload["status"] == "succeeded"
+    assert system_payload["health_status"] == "managed"
+    assert system_payload["runner"]["token_configured"] is False
+    assert any(
+        item["name"] == "system_managed" and item["status"] == "succeeded"
+        for item in system_payload["diagnostics"]
+    )
+
+    created_runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["codex"],
+            "name": "Zeek Mac 本地执行器",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    )
+    assert created_runner.status_code == 200
+    runner = created_runner.json()["data"]
+
+    cold_response = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/test",
+        headers=admin_headers,
+    )
+    assert cold_response.status_code == 200
+    cold_payload = cold_response.json()["data"]
+    assert cold_payload["status"] == "failed"
+    assert cold_payload["health_status"] == "never_connected"
+    assert any(
+        item["name"] == "runner_heartbeat" and item["status"] == "failed"
+        for item in cold_payload["diagnostics"]
+    )
+    assert "runner_token" not in cold_payload["runner"]
+    assert "token_hash" not in cold_payload["runner"]
+
+    heartbeat = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/heartbeat",
+        json={"metadata": {"codex_path": "/usr/local/bin/codex"}},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+    assert heartbeat.status_code == 200
+
+    healthy_response = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/test",
+        headers=admin_headers,
+    )
+    assert healthy_response.status_code == 200
+    healthy_payload = healthy_response.json()["data"]
+    assert healthy_payload["status"] == "succeeded"
+    assert healthy_payload["health_status"] == "online"
+    assert any(
+        item["name"] == "runner_heartbeat" and item["status"] == "succeeded"
+        for item in healthy_payload["diagnostics"]
+    )
+
+
 def test_ai_executor_action_invokes_system_default_model_gateway_executor(monkeypatch):
     app.state.store.reset()
     admin_headers = auth_headers()

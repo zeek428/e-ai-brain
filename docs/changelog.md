@@ -8,6 +8,8 @@
 ## [Unreleased]
 
 ### Added
+- 插件管理 AI 执行器列表新增“测试”按钮：系统默认执行器可检测模型网关托管状态，本地/远程 Runner 可检测注册状态、Token、执行器类型、endpoint 和心跳健康，并展示诊断弹窗；后端新增 `/api/system/ai-executor-runners/{runner_id}/test` 管理员测试接口和轻量审计。
+- 插件管理连接弹窗新增“保存并测试”：新增或编辑连接时可保存后立即调用连接测试诊断，直接打开请求调试台，测试失败不回滚已保存连接配置。
 - AI 执行器远程 Runner 安装包：执行器配置页支持 Codex、Claude Code、Hermes、OpenClaw 命令参数、目标系统、CPU 架构和安装模式，新增按 Linux/macOS/Windows/Docker/通用手动安装生成 Runner ZIP；后端 `/api/system/ai-executor-runners/{runner_id}/install-package?target_os=&arch=&install_mode=` 生成包含 env、manifest、runner_config、START_STOP.md 启停说明、系统专属启动脚本/服务模板和 AI Brain Runner Skill 的安装包，Token 仍只在创建/轮换时一次性返回。
 - 代码巡检本地扫描真实联调增强：私有 HTTP(S) Git 仓库可复用产品 Git 仓库 `credential_ref` 通过临时 Git askpass 完成 clone/fetch，错误信息和报告继续脱敏；AI 归一化后保留 native 扫描快照元数据。本轮真实运行 `scheduled_job_run_031` 成功生成 `code_inspection_report_007`，扫描 `main` 分支 1,940 个文件 / 212,235 行，发现 13 个问题。
 - 代码巡检本地扫描增强：`CODE_SCAN_WORKDIR` 固定工作区、mirror 缓存、按 repository + branch + commit 的 checkout 快照、异步运行、取消保护、工作区清理策略、外部扫描引擎实际执行与状态记录、baseline/已接受风险/单条忽略 fingerprint、严重级别阈值、质量门禁、多仓库批量扫描、报告详情扫描摘要和与上次扫描对比。
