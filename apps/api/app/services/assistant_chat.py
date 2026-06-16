@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from time import perf_counter
@@ -9,6 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen as default_urlopen
 
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.store import MemoryStore
@@ -47,6 +49,7 @@ from app.services.model_gateway_logging import (
     model_gateway_log,
     openai_usage_tokens,
 )
+from app.services.scheduled_jobs import run_scheduled_job_response
 
 ASSISTANT_ACCESS_ROLES = {
     "admin",
@@ -55,6 +58,21 @@ ASSISTANT_ACCESS_ROLES = {
     "rd_owner",
     "reviewer",
 }
+SCHEDULED_JOB_RUN_ONCE_KEYWORDS = (
+    "执行一次",
+    "执行一下",
+    "运行一次",
+    "运行一下",
+    "跑一次",
+    "跑一下",
+    "立即执行",
+    "立即运行",
+    "手动执行",
+    "run once",
+    "run now",
+    "execute once",
+)
+SCHEDULED_JOB_RUN_NEGATION_KEYWORDS = ("不要执行", "别执行", "不执行", "不要运行", "别运行")
 
 __all__ = [
     "ASSISTANT_ACCESS_ROLES",
@@ -117,6 +135,21 @@ def assistant_chat_response(
             raise AssistantServiceError(404, "NOT_FOUND", "Assistant conversation not found")
 
     audit_start_index = len(current_store.audit_events)
+    deterministic_output = _deterministic_assistant_output(
+        current_store,
+        payload=normalized_payload,
+        user=user,
+    )
+    if deterministic_output is not None:
+        return _persist_assistant_chat_output(
+            current_store,
+            audit_start_index=len(current_store.audit_events),
+            message=message,
+            model_log=None,
+            normalized_payload=normalized_payload,
+            assistant_output=deterministic_output,
+            user=user,
+        )
     try:
         assistant_output, model_log = _call_model_gateway_for_assistant_chat(
             current_store,
@@ -170,6 +203,27 @@ def assistant_chat_response(
             "status": model_log["status"],
         },
     )
+    return _persist_assistant_chat_output(
+        current_store,
+        audit_start_index=audit_start_index,
+        message=message,
+        model_log=model_log,
+        normalized_payload=normalized_payload,
+        assistant_output=assistant_output,
+        user=user,
+    )
+
+
+def _persist_assistant_chat_output(
+    current_store: MemoryStore,
+    *,
+    assistant_output: dict[str, Any],
+    audit_start_index: int,
+    message: str,
+    model_log: dict[str, Any] | None,
+    normalized_payload: AssistantChatRequest,
+    user: dict[str, Any],
+) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     conversation = ensure_assistant_conversation(
         current_store,
@@ -200,27 +254,30 @@ def assistant_chat_response(
         tool_results=assistant_output["tool_results"],
         user_id=user["id"],
     )
-    assistant_output["tool_results"] = persist_assistant_action_drafts_from_tool_results(
-        current_store,
-        source_message_id=assistant_message["id"],
-        tool_results=assistant_output["tool_results"],
-        user=user,
-    )
-    assistant_message["metadata_json"]["tool_results"] = assistant_output["tool_results"]
+    if assistant_output.get("tool_results"):
+        assistant_output["tool_results"] = persist_assistant_action_drafts_from_tool_results(
+            current_store,
+            source_message_id=assistant_message["id"],
+            tool_results=assistant_output["tool_results"],
+            user=user,
+        )
+        assistant_message["metadata_json"]["tool_results"] = assistant_output["tool_results"]
+    audit_payload = {
+        "latency_ms": assistant_output["latency_ms"],
+        "model": assistant_output["model"],
+        "product_id": normalized_payload.product_id,
+        "reference_count": len(assistant_output["references"]),
+        "suggestion_count": len(assistant_output["suggestions"]),
+        "tool_count": len(assistant_output["tool_results"]),
+    }
+    if model_log is not None:
+        audit_payload["model_log_id"] = model_log["id"]
     current_store.audit(
         event_type="assistant.chat_completed",
         actor_id=user["id"],
         subject_type="assistant_conversation",
         subject_id=conversation["id"],
-        payload={
-            "latency_ms": assistant_output["latency_ms"],
-            "model": assistant_output["model"],
-            "model_log_id": model_log["id"],
-            "product_id": normalized_payload.product_id,
-            "reference_count": len(assistant_output["references"]),
-            "suggestion_count": len(assistant_output["suggestions"]),
-            "tool_count": len(assistant_output["tool_results"]),
-        },
+        payload=audit_payload,
     )
     save_assistant_chat_records(
         current_store,
@@ -235,6 +292,138 @@ def assistant_chat_response(
         "message": public_assistant_message(assistant_message),
         "model": assistant_output["model"],
         "suggestions": assistant_output["suggestions"],
+    }
+
+
+def _deterministic_assistant_output(
+    current_store: MemoryStore,
+    *,
+    payload: AssistantChatRequest,
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not _scheduled_job_run_once_requested(payload.message):
+        return None
+    try:
+        resolved_references = resolve_assistant_references(
+            current_store,
+            references=payload.references,
+            user=user,
+        )
+    except AssistantReferenceError as exc:
+        raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
+    selected_references = resolved_references["items"]
+    scheduled_job_references = [
+        reference for reference in selected_references if reference.get("type") == "scheduled_job"
+    ]
+    mention_resolution = _scheduled_job_references_from_explicit_mentions(
+        current_store,
+        message=payload.message,
+        product_id=payload.product_id,
+        user=user,
+    )
+    if not scheduled_job_references:
+        if mention_resolution["references"]:
+            selected_references = _merge_assistant_references(
+                selected_references,
+                mention_resolution["references"],
+            )
+            scheduled_job_references = mention_resolution["references"]
+        elif mention_resolution["attempted"]:
+            return _scheduled_job_reference_needed_output(
+                attempted_queries=mention_resolution["queries"],
+                selected_references=selected_references,
+            )
+        else:
+            return None
+    started = perf_counter()
+    if len(scheduled_job_references) > 1:
+        answer = "我检测到多个定时作业引用。请只保留一个定时作业后，再发送“执行一次”。"
+        return {
+            "answer": answer,
+            "latency_ms": int((perf_counter() - started) * 1000),
+            "model": "assistant-deterministic",
+            "references": selected_references,
+            "selected_references": selected_references,
+            "suggestions": ["只保留一个定时作业引用后执行一次"],
+            "tool_results": [
+                {
+                    "intent": "scheduled_job_run_once",
+                    "items": [],
+                    "summary": {
+                        "scheduled_job_ids": [
+                            str(reference["id"]) for reference in scheduled_job_references
+                        ],
+                        "status": "needs_single_reference",
+                    },
+                    "tool": "assistant.scheduled_job_run",
+                }
+            ],
+        }
+    scheduled_job_reference = scheduled_job_references[0]
+    job_id = str(scheduled_job_reference["id"])
+    job = getattr(current_store, "scheduled_jobs", {}).get(job_id) or {}
+    try:
+        run = run_scheduled_job_response(
+            current_store=current_store,
+            job_id=job_id,
+            source_run_id=None,
+            trigger_type="manual",
+            user=user,
+        )
+    except HTTPException as exc:
+        error_code, error_message = _http_exception_code_and_message(exc)
+        return {
+            "answer": f"没有执行成功：{error_message}",
+            "latency_ms": int((perf_counter() - started) * 1000),
+            "model": "assistant-deterministic",
+            "references": selected_references,
+            "selected_references": selected_references,
+            "suggestions": ["检查定时作业配置", "打开定时作业详情"],
+            "tool_results": [
+                _scheduled_job_run_tool_result(
+                    error_code=error_code,
+                    error_message=error_message,
+                    job=job,
+                    job_id=job_id,
+                    run=None,
+                )
+            ],
+        }
+    run_reference = _scheduled_job_run_reference(job=job, job_id=job_id, run=run)
+    run_status = str(run.get("status") or "unknown")
+    run_id = str(run.get("id") or "")
+    if run_status in {"queued", "running"}:
+        answer = (
+            f"已触发「{_scheduled_job_title(job, job_id)}」执行一次，"
+            f"运行记录 {run_id} 当前状态为 {run_status}。"
+        )
+    elif run_status == "succeeded":
+        answer = (
+            f"已执行「{_scheduled_job_title(job, job_id)}」一次，"
+            f"运行记录 {run_id} 已成功完成。"
+        )
+    else:
+        error_message = run.get("error_message") or "请查看运行记录详情。"
+        answer = (
+            f"已执行「{_scheduled_job_title(job, job_id)}」一次，"
+            f"运行记录 {run_id} 状态为 {run_status}：{error_message}"
+        )
+    return {
+        "answer": answer,
+        "latency_ms": int((perf_counter() - started) * 1000),
+        "model": "assistant-deterministic",
+        "references": _merge_assistant_references(selected_references, [run_reference]),
+        "selected_references": selected_references,
+        "suggestions": ["查看本次运行记录", "为什么这次任务失败？"],
+        "tool_results": [
+            _scheduled_job_run_tool_result(
+                error_code=None,
+                error_message=None,
+                job=job,
+                job_id=job_id,
+                run=run,
+            )
+        ],
     }
 
 
@@ -462,6 +651,203 @@ def _model_gateway_chat_completions_url(base_url: str) -> str:
     if normalized.endswith("/chat/completions"):
         return normalized
     return f"{normalized}/chat/completions"
+
+
+def _scheduled_job_run_once_requested(message: str) -> bool:
+    normalized = message.lower()
+    if any(keyword in normalized for keyword in SCHEDULED_JOB_RUN_NEGATION_KEYWORDS):
+        return False
+    return any(keyword in normalized for keyword in SCHEDULED_JOB_RUN_ONCE_KEYWORDS)
+
+
+def _scheduled_job_reference_needed_output(
+    *,
+    attempted_queries: list[str],
+    selected_references: list[dict[str, str]],
+) -> dict[str, Any]:
+    query_text = "、".join(attempted_queries) if attempted_queries else "这个 @ 引用"
+    return {
+        "answer": (
+            f"我没有找到唯一匹配的定时作业：{query_text}。"
+            "请从 @ 候选中点选一个定时作业后再执行一次。"
+        ),
+        "latency_ms": 0,
+        "model": "assistant-deterministic",
+        "references": selected_references,
+        "selected_references": selected_references,
+        "suggestions": ["输入 @ 后选择定时作业，再发送执行一次"],
+        "tool_results": [
+            {
+                "intent": "scheduled_job_run_once",
+                "items": [],
+                "summary": {
+                    "queries": attempted_queries,
+                    "status": "needs_scheduled_job_reference",
+                },
+                "tool": "assistant.scheduled_job_run",
+            }
+        ],
+    }
+
+
+def _scheduled_job_references_from_explicit_mentions(
+    current_store: MemoryStore,
+    *,
+    message: str,
+    product_id: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    queries = _explicit_mention_queries_for_run_once(message)
+    if not queries:
+        return {"attempted": False, "queries": [], "references": []}
+    if "admin" not in set(user.get("roles") or []):
+        return {"attempted": True, "queries": queries, "references": []}
+    jobs = list(getattr(current_store, "scheduled_jobs", {}).values())
+    if product_id:
+        jobs = [job for job in jobs if job.get("product_id") == product_id]
+    references: list[dict[str, str]] = []
+    for query in queries:
+        matches = [job for job in jobs if _scheduled_job_matches_mention(job, query)]
+        if len(matches) != 1:
+            return {"attempted": True, "queries": queries, "references": []}
+        job = matches[0]
+        job_id = str(job["id"])
+        references.append(
+            {
+                "id": job_id,
+                "title": _scheduled_job_title(job, job_id),
+                "type": "scheduled_job",
+                "url": f"/tasks/scheduled-jobs?job_id={job_id}",
+            }
+        )
+    return {
+        "attempted": True,
+        "queries": queries,
+        "references": _merge_assistant_references(references),
+    }
+
+
+def _explicit_mention_queries_for_run_once(message: str) -> list[str]:
+    queries: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"@([^@\n]+)", message):
+        raw_tail = match.group(1).strip()
+        if not raw_tail:
+            continue
+        end_index = len(raw_tail)
+        normalized_tail = raw_tail.lower()
+        for keyword in SCHEDULED_JOB_RUN_ONCE_KEYWORDS:
+            keyword_index = normalized_tail.find(keyword)
+            if keyword_index >= 0:
+                end_index = min(end_index, keyword_index)
+        query = raw_tail[:end_index].strip(" \t，,。；;：:")
+        query = re.sub(r"(请|麻烦|帮我|帮忙)$", "", query).strip()
+        if not query:
+            continue
+        normalized_query = query.lower()
+        if normalized_query in seen:
+            continue
+        seen.add(normalized_query)
+        queries.append(query)
+    return queries
+
+
+def _scheduled_job_matches_mention(job: dict[str, Any], query: str) -> bool:
+    normalized_query = query.lower().strip()
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            job.get("id"),
+            job.get("name"),
+            job.get("title"),
+            job.get("code"),
+            job.get("job_type"),
+        )
+    ).lower()
+    return normalized_query in haystack
+
+
+def _http_exception_code_and_message(exc: HTTPException) -> tuple[str, str]:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        return (
+            str(detail.get("code") or exc.status_code),
+            str(detail.get("message") or "Scheduled job run failed"),
+        )
+    return str(exc.status_code), str(detail or "Scheduled job run failed")
+
+
+def _scheduled_job_title(job: dict[str, Any], job_id: str) -> str:
+    return str(job.get("name") or job.get("title") or job.get("code") or job_id)
+
+
+def _scheduled_job_run_reference(
+    *,
+    job: dict[str, Any],
+    job_id: str,
+    run: dict[str, Any],
+) -> dict[str, str]:
+    run_id = str(run["id"])
+    return {
+        "id": run_id,
+        "title": f"{_scheduled_job_title(job, job_id)} / {run.get('status') or 'unknown'}",
+        "type": "scheduled_job_run",
+        "url": f"/tasks/scheduled-jobs?run_id={run_id}",
+    }
+
+
+def _scheduled_job_run_tool_result(
+    *,
+    error_code: str | None,
+    error_message: str | None,
+    job: dict[str, Any],
+    job_id: str,
+    run: dict[str, Any] | None,
+) -> dict[str, Any]:
+    job_name = _scheduled_job_title(job, job_id)
+    if run is None:
+        return {
+            "intent": "scheduled_job_run_once",
+            "items": [],
+            "references": [],
+            "summary": {
+                "error_code": error_code,
+                "error_message": error_message,
+                "scheduled_job_id": job_id,
+                "scheduled_job_name": job_name,
+                "status": "failed",
+                "trigger_type": "manual",
+            },
+            "tool": "assistant.scheduled_job_run",
+        }
+    run_reference = _scheduled_job_run_reference(job=job, job_id=job_id, run=run)
+    return {
+        "intent": "scheduled_job_run_once",
+        "items": [
+            {
+                "id": run_reference["id"],
+                "records_imported": int(run.get("records_imported") or 0),
+                "scheduled_job_id": job_id,
+                "status": str(run.get("status") or "unknown"),
+                "title": run_reference["title"],
+                "trigger_type": str(run.get("trigger_type") or "manual"),
+                "type": "scheduled_job_run",
+                "url": run_reference["url"],
+            }
+        ],
+        "references": [run_reference],
+        "summary": {
+            "error_code": error_code,
+            "error_message": error_message,
+            "records_imported": int(run.get("records_imported") or 0),
+            "run_id": run_reference["id"],
+            "scheduled_job_id": job_id,
+            "scheduled_job_name": job_name,
+            "status": str(run.get("status") or "unknown"),
+            "trigger_type": str(run.get("trigger_type") or "manual"),
+        },
+        "tool": "assistant.scheduled_job_run",
+    }
 
 
 def _merge_assistant_references(

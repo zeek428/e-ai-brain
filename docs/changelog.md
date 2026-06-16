@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手支持对已 `@` 引用的定时作业发送“执行一次 / 立即执行”等明确命令：后端复用定时作业手动运行链路创建运行记录，并在助手消息中返回运行记录引用和工具结果。
 - 插件管理 AI 执行器列表新增“测试”按钮：系统默认执行器可检测模型网关托管状态，本地/远程 Runner 可检测注册状态、Token、执行器类型、endpoint 和心跳健康，并展示诊断弹窗；后端新增 `/api/system/ai-executor-runners/{runner_id}/test` 管理员测试接口和轻量审计。
 - 插件管理连接弹窗新增“保存并测试”：新增或编辑连接时可保存后立即调用连接测试诊断，直接打开请求调试台，测试失败不回滚已保存连接配置。
 - AI 执行器远程 Runner 安装包：执行器配置页支持 Codex、Claude Code、Hermes、OpenClaw 命令参数、目标系统、CPU 架构和安装模式，新增按 Linux/macOS/Windows/Docker/通用手动安装生成 Runner ZIP；后端 `/api/system/ai-executor-runners/{runner_id}/install-package?target_os=&arch=&install_mode=` 生成包含 env、manifest、runner_config、START_STOP.md 启停说明、系统专属启动脚本/服务模板和 AI Brain Runner Skill 的安装包，Token 仍只在创建/轮换时一次性返回。
