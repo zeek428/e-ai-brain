@@ -593,7 +593,7 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 | TC-AIBRAIN-ASSISTANT-ERR-018 | v1.1 | P1 | 插件连接含密钥、Header、Token 或 Basic 密码时被 `@` 引入聊天 | 传给模型的上下文只能包含脱敏能力摘要；不得包含密钥、完整外部响应或认证 Header 明文。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-019 | v1.1 | P1 | 用户取消助理动作草案 | `POST /api/assistant/action-drafts/{draft_id}/cancel` 将草案状态变为 `cancelled`，记录取消原因和审计，不调用领域 service，不产生业务写入；已取消草案再次确认返回冲突错误。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-020 | v1.1 | P1 | 管理员围绕一次失败的 `@scheduled_job_run` 继续追问失败原因 | 聊天响应包含 `assistant.scheduled_job_diagnostic` 工具结果，按数据连接、AI 处理、结果动作三段返回状态、摘要、错误信息和关联日志 ID；助手回复和历史消息保留该工具结果；模型日志不保存完整插件请求/响应、Prompt、模型输出或密钥。 |
-| TC-AIBRAIN-ASSISTANT-API-021 | v1.1 | P2 | 查询当前用户 AI 助手效果指标 | `GET /api/assistant/metrics` 只统计当前登录用户的助手草案、动作运行和消息引用，返回草案总数、待确认/已确认/已取消/失败数、草案采纳率、草案处理率、用户修改率、动作运行成功率、用户消息显式引用使用率、引用总数、知识引用数和 `drafts_by_action`；其他用户草案和运行不计入；响应不得包含完整对话正文、知识正文、密钥、完整外部请求/响应或模型 Prompt。 |
+| TC-AIBRAIN-ASSISTANT-API-021 | v1.1 | P2 | 查询当前用户 AI 助手效果指标 | `GET /api/assistant/metrics` 只统计当前登录用户的助手草案、动作运行、定时作业运行和消息引用，返回草案总数、待确认/已确认/已取消/失败数、草案采纳率、草案处理率、用户修改率、动作运行成功率、定时作业运行成功率、失败复跑修复率、用户消息显式引用使用率、引用总数、知识引用数、知识引用命中率和 `drafts_by_action`；失败复跑修复率按失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用计算；知识引用命中率按同一会话用户显式引用知识对象后助手回复也引用该对象计算；其他用户草案和运行不计入；响应不得包含完整对话正文、知识正文、密钥、完整外部请求/响应或模型 Prompt。 |
 
 ---
 

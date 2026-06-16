@@ -4,20 +4,37 @@ from collections import defaultdict
 from typing import Any
 
 ASSISTANT_DRAFT_STATUSES = ("pending", "confirmed", "cancelled", "failed")
+KNOWLEDGE_REFERENCE_TYPES = {"knowledge_chunk", "knowledge_document", "knowledge_space"}
 
 
 def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> dict[str, Any]:
     user_id = str(user["id"])
-    drafts, runs, messages = _assistant_metric_rows(current_store, user_id=user_id)
+    drafts, runs, messages, scheduled_job_runs = _assistant_metric_rows(
+        current_store,
+        user_id=user_id,
+    )
     user_draft_ids = {str(draft["id"]) for draft in drafts if draft.get("id") is not None}
     runs = [run for run in runs if str(run.get("draft_id")) in user_draft_ids]
     messages = [message for message in messages if str(message.get("user_id")) == user_id]
+    scheduled_job_runs = _filter_scheduled_job_runs_for_assistant_scope(
+        scheduled_job_runs,
+        action_runs=runs,
+        messages=messages,
+    )
 
     draft_status_counts = _status_counts(drafts, ASSISTANT_DRAFT_STATUSES)
     run_succeeded_count = sum(1 for run in runs if run.get("status") == "succeeded")
     run_failed_count = sum(1 for run in runs if run.get("status") == "failed")
+    scheduled_job_run_succeeded_count = sum(
+        1 for run in scheduled_job_runs if run.get("status") == "succeeded"
+    )
+    scheduled_job_run_failed_count = sum(
+        1 for run in scheduled_job_runs if run.get("status") == "failed"
+    )
+    repaired_failed_run_count = _repaired_failed_run_count(scheduled_job_runs)
     draft_total = len(drafts)
     action_run_total = len(runs)
+    scheduled_job_run_total = len(scheduled_job_runs)
     user_messages = [message for message in messages if message.get("role") == "user"]
     referenced_user_message_count = sum(
         1 for message in user_messages if _message_references(message)
@@ -28,6 +45,7 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
         for reference in _message_references(message)
     ]
     draft_user_modified_count = sum(1 for draft in drafts if _draft_was_user_modified(draft))
+    knowledge_request_count, knowledge_hit_count = _knowledge_reference_hit_stats(messages)
 
     return {
         "drafts_by_action": _drafts_by_action(drafts),
@@ -50,16 +68,31 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
             "draft_total": draft_total,
             "draft_user_modified_count": draft_user_modified_count,
             "draft_user_modified_rate": _rate(draft_user_modified_count, draft_total),
+            "failed_run_repair_rate": _rate(
+                repaired_failed_run_count,
+                scheduled_job_run_failed_count,
+            ),
+            "failed_run_repaired_count": repaired_failed_run_count,
+            "failed_run_total": scheduled_job_run_failed_count,
             "knowledge_reference_count": sum(
                 1
                 for reference in references
-                if reference.get("type")
-                in {"knowledge_chunk", "knowledge_document", "knowledge_space"}
+                if reference.get("type") in KNOWLEDGE_REFERENCE_TYPES
             ),
+            "knowledge_reference_hit_count": knowledge_hit_count,
+            "knowledge_reference_hit_rate": _rate(knowledge_hit_count, knowledge_request_count),
+            "knowledge_reference_request_count": knowledge_request_count,
             "message_total": len(messages),
             "reference_total": len(references),
             "reference_usage_rate": _rate(referenced_user_message_count, len(user_messages)),
             "referenced_user_message_count": referenced_user_message_count,
+            "scheduled_job_run_failed_count": scheduled_job_run_failed_count,
+            "scheduled_job_run_succeeded_count": scheduled_job_run_succeeded_count,
+            "scheduled_job_run_success_rate": _rate(
+                scheduled_job_run_succeeded_count,
+                scheduled_job_run_total,
+            ),
+            "scheduled_job_run_total": scheduled_job_run_total,
             "user_message_total": len(user_messages),
         },
     }
@@ -69,7 +102,12 @@ def _assistant_metric_rows(
     current_store: Any,
     *,
     user_id: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
     repository = getattr(current_store, "repository", None)
     if repository is not None:
         drafts = _repository_user_drafts(repository, user_id=user_id)
@@ -78,7 +116,8 @@ def _assistant_metric_rows(
         messages = _dict_values(payload.get("assistant_messages", {}))
         if not messages:
             messages = _dict_values(getattr(current_store, "assistant_messages", {}))
-        return drafts, runs, messages
+        scheduled_job_runs = _dict_values(getattr(current_store, "scheduled_job_runs", {}))
+        return drafts, runs, messages, scheduled_job_runs
     drafts = [
         dict(draft)
         for draft in _dict_values(getattr(current_store, "assistant_action_drafts", {}))
@@ -86,7 +125,8 @@ def _assistant_metric_rows(
     ]
     runs = _dict_values(getattr(current_store, "assistant_action_runs", {}))
     messages = _dict_values(getattr(current_store, "assistant_messages", {}))
-    return drafts, runs, messages
+    scheduled_job_runs = _dict_values(getattr(current_store, "scheduled_job_runs", {}))
+    return drafts, runs, messages, scheduled_job_runs
 
 
 def _repository_user_drafts(repository: Any, *, user_id: str) -> list[dict[str, Any]]:
@@ -152,6 +192,90 @@ def _drafts_by_action(drafts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {"action": action, **dict(counts)}
         for action, counts in sorted(action_counts.items(), key=lambda item: item[0])
     ]
+
+
+def _filter_scheduled_job_runs_for_assistant_scope(
+    scheduled_job_runs: list[dict[str, Any]],
+    *,
+    action_runs: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    scheduled_job_ids = {
+        str(run.get("result_id") or (run.get("result") or {}).get("id"))
+        for run in action_runs
+        if run.get("result_type") == "scheduled_job"
+        and (run.get("result_id") or (run.get("result") or {}).get("id"))
+    }
+    referenced_run_ids: set[str] = set()
+    for message in messages:
+        for reference in _message_references(message):
+            reference_id = str(reference.get("id") or "").strip()
+            if not reference_id:
+                continue
+            if reference.get("type") == "scheduled_job":
+                scheduled_job_ids.add(reference_id)
+            elif reference.get("type") == "scheduled_job_run":
+                referenced_run_ids.add(reference_id)
+    if not scheduled_job_ids and not referenced_run_ids:
+        return []
+    scoped_runs = []
+    for run in scheduled_job_runs:
+        run_id = str(run.get("id") or "")
+        source_run_id = str(run.get("source_run_id") or "")
+        scheduled_job_id = str(run.get("scheduled_job_id") or "")
+        if (
+            scheduled_job_id in scheduled_job_ids
+            or run_id in referenced_run_ids
+            or source_run_id in referenced_run_ids
+        ):
+            scoped_runs.append(run)
+    return scoped_runs
+
+
+def _repaired_failed_run_count(scheduled_job_runs: list[dict[str, Any]]) -> int:
+    successful_rerun_source_ids = {
+        str(run.get("source_run_id"))
+        for run in scheduled_job_runs
+        if run.get("status") == "succeeded" and run.get("source_run_id")
+    }
+    return sum(
+        1
+        for run in scheduled_job_runs
+        if run.get("status") == "failed" and str(run.get("id")) in successful_rerun_source_ids
+    )
+
+
+def _knowledge_reference_hit_stats(messages: list[dict[str, Any]]) -> tuple[int, int]:
+    requested_by_conversation: dict[str, set[str]] = defaultdict(set)
+    answered_by_conversation: dict[str, set[str]] = defaultdict(set)
+    for message in messages:
+        conversation_id = str(message.get("conversation_id") or "")
+        knowledge_keys = {
+            _reference_key(reference)
+            for reference in _message_references(message)
+            if reference.get("type") in KNOWLEDGE_REFERENCE_TYPES
+        }
+        knowledge_keys.discard("")
+        if not knowledge_keys:
+            continue
+        if message.get("role") == "user":
+            requested_by_conversation[conversation_id].update(knowledge_keys)
+        elif message.get("role") == "assistant":
+            answered_by_conversation[conversation_id].update(knowledge_keys)
+    requested_count = sum(len(items) for items in requested_by_conversation.values())
+    hit_count = sum(
+        len(items & answered_by_conversation.get(conversation_id, set()))
+        for conversation_id, items in requested_by_conversation.items()
+    )
+    return requested_count, hit_count
+
+
+def _reference_key(reference: dict[str, Any]) -> str:
+    reference_type = str(reference.get("type") or "").strip()
+    reference_id = str(reference.get("id") or "").strip()
+    if not reference_type or not reference_id:
+        return ""
+    return f"{reference_type}:{reference_id}"
 
 
 def _message_references(message: dict[str, Any]) -> list[dict[str, Any]]:

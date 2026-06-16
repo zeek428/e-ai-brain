@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.318 |
+| 功能版本 | v1.1.319 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.319 | 2026-06-17 | AI 助手效果指标补齐 `scheduled_job_run_*`、`failed_run_*` 和 `knowledge_reference_hit_*` 字段 | Codex |
 | v1.1.318 | 2026-06-17 | AI 助手 API 新增 `/api/assistant/metrics` 当前用户效果指标，返回草案采纳率、用户修改率、动作运行成功率和显式引用使用率 | Codex |
 | v1.1.317 | 2026-06-16 | AI 执行器 API 新增管理员侧测试接口，返回系统默认执行器或本地 Runner 健康诊断 | Codex |
 | v1.1.316 | 2026-06-16 | 插件连接页面契约补充“保存并测试”：客户端保存连接后复用响应 ID 调用现有测试接口 | Codex |
@@ -1566,11 +1567,21 @@ GET /api/assistant/metrics
       "draft_total": 5,
       "draft_user_modified_count": 2,
       "draft_user_modified_rate": 0.4,
+      "failed_run_repair_rate": 0.5,
+      "failed_run_repaired_count": 1,
+      "failed_run_total": 2,
       "knowledge_reference_count": 6,
+      "knowledge_reference_hit_count": 3,
+      "knowledge_reference_hit_rate": 0.75,
+      "knowledge_reference_request_count": 4,
       "message_total": 18,
       "reference_total": 10,
       "reference_usage_rate": 0.5,
       "referenced_user_message_count": 4,
+      "scheduled_job_run_failed_count": 2,
+      "scheduled_job_run_succeeded_count": 6,
+      "scheduled_job_run_success_rate": 0.75,
+      "scheduled_job_run_total": 8,
       "user_message_total": 8
     }
   },
@@ -1578,7 +1589,7 @@ GET /api/assistant/metrics
 }
 ```
 
-该接口只返回当前登录用户范围内的助手效果数据。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + failed) / draft_total`，运行成功率为 `succeeded / action_run_total`，显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，后续客户端确认草案字段编辑时应写入该元数据。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
+该接口只返回当前登录用户范围内的助手效果数据。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + failed) / draft_total`，动作运行成功率为 `succeeded / action_run_total`，定时作业运行成功率为 `scheduled_job_run_succeeded_count / scheduled_job_run_total`，失败修复率为“失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用”的比例，显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。知识引用命中率为“用户在同一会话显式引用的知识对象，后续助手回复也引用该知识对象”的比例；用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，后续客户端确认草案字段编辑时应写入该元数据。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
 
 `conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
 
