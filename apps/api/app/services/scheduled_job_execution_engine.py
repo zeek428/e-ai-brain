@@ -7,6 +7,36 @@ from app.services.plugins import (
     result_write_preview,
 )
 
+CODE_INSPECTION_SOURCE_METADATA_FIELDS = (
+    "artifact_ref",
+    "branch",
+    "checkout_path",
+    "checkout_path_retained",
+    "commit_sha",
+    "coverage_warning",
+    "external_scanner_status",
+    "files_scanned",
+    "incremental_file_count",
+    "incremental_from_commit",
+    "is_full_scan",
+    "lines_scanned",
+    "quality_gate",
+    "remote_url_hash",
+    "remote_url_summary",
+    "repository_id",
+    "rules_loaded",
+    "rules_version",
+    "scan_finished_at",
+    "scan_mode",
+    "scan_profile",
+    "scan_started_at",
+    "scanner_name",
+    "scanner_version",
+    "suppressed_finding_count",
+    "suppression_summary",
+)
+CODE_INSPECTION_NATIVE_SCAN_MODE = "native_full_scan"
+
 
 class ScheduledJobExecutionEngine:
     """Build scheduled job execution traces and execution-time helper summaries."""
@@ -298,8 +328,20 @@ class ScheduledJobExecutionEngine:
         ai_processing: dict[str, Any],
     ) -> dict[str, Any]:
         response_summary = dict(plugin_summary.get("response_summary") or {})
+        source_json = response_summary.get("json")
+        output_json = ai_processing["output_json"]
+        if (
+            isinstance(source_json, dict)
+            and isinstance(output_json, dict)
+            and source_json.get("scan_mode") == CODE_INSPECTION_NATIVE_SCAN_MODE
+        ):
+            merged_json = {**source_json, **output_json}
+            for field in CODE_INSPECTION_SOURCE_METADATA_FIELDS:
+                if field in source_json:
+                    merged_json[field] = source_json[field]
+            output_json = merged_json
         response_summary["ai_processed"] = True
-        response_summary["json"] = ai_processing["output_json"]
+        response_summary["json"] = output_json
         return {**plugin_summary, "response_summary": response_summary}
 
     @staticmethod

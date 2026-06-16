@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+import app.services.native_code_scanner as native_code_scanner
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.main import app
@@ -646,6 +647,121 @@ def test_native_repository_inspection_clones_branch_scans_files_and_blames_commi
     assert secret_finding["committer_email"] == "alice@example.com"
     assert secret_finding["committer_name"] == "Alice Chen"
     assert secret_finding["raw"]["scan_mode"] == "native_full_scan"
+
+
+def test_native_repository_inspection_uses_repository_credential_ref_for_git_clone(
+    monkeypatch,
+    tmp_path,
+):
+    scan_workdir = tmp_path / "code-scan-workdir"
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(scan_workdir))
+    monkeypatch.setenv("GITLAB_READONLY_TOKEN", "gitlab-private-token")
+    captured_auth_context = {}
+
+    def fake_ensure_mirror(*, mirror_path, remote_url, auth_context):
+        captured_auth_context.update(auth_context or {})
+        mirror_path.mkdir(parents=True)
+        assert remote_url == "http://gitlab.example/group/repo.git"
+        return False
+
+    def fake_checkout_commit(*, checkout_path, commit_sha, mirror_path):
+        checkout_path.mkdir(parents=True)
+        (checkout_path / "README.md").write_text("# Fixture\n", encoding="utf-8")
+
+    monkeypatch.setattr(native_code_scanner, "_ensure_mirror", fake_ensure_mirror)
+    monkeypatch.setattr(
+        native_code_scanner,
+        "_resolve_mirror_branch_commit",
+        lambda mirror_path, branch: "a" * 40,
+    )
+    monkeypatch.setattr(native_code_scanner, "_checkout_commit", fake_checkout_commit)
+
+    result = native_code_scanner.run_native_code_scan(
+        SimpleNamespace(
+            product_git_repositories={
+                "repo_private": {
+                    "credential_ref": "env:GITLAB_READONLY_TOKEN",
+                    "default_branch": "main",
+                    "git_provider": "gitlab",
+                    "id": "repo_private",
+                    "product_id": "product_private",
+                    "remote_url": "http://gitlab.example/group/repo.git",
+                    "root_path": "/",
+                }
+            }
+        ),
+        job={
+            "config_json": {
+                "async_execution": False,
+                "repository_id": "repo_private",
+                "scan_mode": "native_full_scan",
+            },
+            "id": "scheduled_job_private",
+            "product_id": "product_private",
+        },
+        run_id="scheduled_job_run_private",
+        user={"id": "user_admin"},
+    )
+
+    assert result["status"] == "succeeded"
+    assert captured_auth_context["password"] == "gitlab-private-token"
+    assert captured_auth_context["username"] == "oauth2"
+    assert "GITLAB_READONLY_TOKEN" not in captured_auth_context
+
+
+def test_ai_processed_code_inspection_preserves_native_scan_metadata():
+    source_summary = {
+        "response_summary": {
+            "json": {
+                "artifact_ref": "workdir://checkouts/run__repo__main__abc123",
+                "branch": "main",
+                "checkout_path_retained": False,
+                "commit_sha": "abc123",
+                "files_scanned": 12,
+                "findings": [{"rule_id": "source.rule"}],
+                "is_full_scan": True,
+                "lines_scanned": 345,
+                "quality_gate": {"enabled": False, "status": "skipped"},
+                "remote_url_hash": "hash123",
+                "remote_url_summary": "https://git.example/repo.git#hash123",
+                "repository_id": "repo_001",
+                "rules_loaded": ["secrets"],
+                "rules_version": "builtin-test",
+                "scan_finished_at": "2026-06-16T01:00:02+00:00",
+                "scan_mode": "native_full_scan",
+                "scan_profile": {"scanner_engines": ["builtin"]},
+                "scan_started_at": "2026-06-16T01:00:00+00:00",
+                "scanner_name": "ai_brain_builtin_static",
+                "scanner_version": "test-version",
+            }
+        },
+        "status": "succeeded",
+    }
+    process_for_ai = (
+        scheduled_jobs_service.JobExecutionEngine.code_inspection_plugin_summary_for_ai_output
+    )
+    processed = process_for_ai(
+        source_summary,
+        ai_processing={
+            "output_json": {
+                "findings": [{"rule_id": "ai.rule"}],
+                "risk_level": "critical",
+                "summary": "AI processed summary",
+            }
+        },
+    )
+
+    output_json = processed["response_summary"]["json"]
+    assert output_json["findings"] == [{"rule_id": "ai.rule"}]
+    assert output_json["summary"] == "AI processed summary"
+    assert output_json["scan_mode"] == "native_full_scan"
+    assert output_json["scanner_name"] == "ai_brain_builtin_static"
+    assert output_json["scanner_version"] == "test-version"
+    assert output_json["files_scanned"] == 12
+    assert output_json["lines_scanned"] == 345
+    assert output_json["artifact_ref"].startswith("workdir://checkouts/")
+    assert output_json["remote_url_summary"] == "https://git.example/repo.git#hash123"
+    assert output_json["quality_gate"] == {"enabled": False, "status": "skipped"}
 
 
 def test_native_repository_inspection_queues_run_and_worker_completes_scan(

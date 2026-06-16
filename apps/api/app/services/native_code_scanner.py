@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from app.api.deps import api_error
 from app.services.code_inspections import sync_product_git_repository_store
+from app.services.git_review import credential_ref_token
 
 NATIVE_CODE_SCAN_MODE = "native_full_scan"
 NATIVE_CODE_SCANNER_NAME = "ai_brain_builtin_static"
@@ -69,8 +70,21 @@ def code_inspection_uses_native_scan(job_or_payload: Any) -> bool:
     return str(config.get("scan_mode") or "").strip() == NATIVE_CODE_SCAN_MODE
 
 
-def _git(args: list[str], *, cwd: Path | None = None, timeout: int = 60) -> str:
+def _git(
+    args: list[str],
+    *,
+    auth_context: dict[str, str] | None = None,
+    cwd: Path | None = None,
+    timeout: int = 60,
+) -> str:
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    if auth_context:
+        env = {
+            **env,
+            "AI_BRAIN_GIT_PASSWORD": auth_context["password"],
+            "AI_BRAIN_GIT_USERNAME": auth_context["username"],
+            "GIT_ASKPASS": auth_context["askpass_path"],
+        }
     completed = subprocess.run(
         ["git", *args],
         cwd=str(cwd) if cwd else None,
@@ -94,6 +108,66 @@ def _scan_workdir() -> Path:
     (path / "mirrors").mkdir(parents=True, exist_ok=True)
     (path / "checkouts").mkdir(parents=True, exist_ok=True)
     return path.resolve()
+
+
+def _ensure_git_askpass_script(workdir: Path) -> Path:
+    script_path = workdir / ".git-askpass.sh"
+    script = """#!/bin/sh
+case "$1" in
+  *Username*|*username*) printf '%s' "$AI_BRAIN_GIT_USERNAME" ;;
+  *) printf '%s' "$AI_BRAIN_GIT_PASSWORD" ;;
+esac
+"""
+    if not script_path.exists() or script_path.read_text(encoding="utf-8") != script:
+        script_path.write_text(script, encoding="utf-8")
+        script_path.chmod(0o700)
+    return script_path
+
+
+def _git_credential_fallback_env_names(provider: str) -> list[str]:
+    normalized = provider.strip().lower()
+    if normalized == "gitlab":
+        return ["GITLAB_READONLY_TOKEN", "GITLAB_TOKEN"]
+    if normalized == "github":
+        return ["GITHUB_READONLY_TOKEN", "GITHUB_TOKEN"]
+    return ["GIT_READONLY_TOKEN", "GIT_TOKEN"]
+
+
+def _git_auth_username(provider: str) -> str:
+    normalized = provider.strip().lower()
+    if normalized == "github":
+        return "x-access-token"
+    return "oauth2"
+
+
+def _git_auth_context(repository: dict[str, Any], *, workdir: Path) -> dict[str, str] | None:
+    remote_url = str(repository.get("remote_url") or "").strip()
+    parsed = urlparse(remote_url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    provider = str(repository.get("git_provider") or "").strip().lower()
+    credential_ref = str(repository.get("credential_ref") or "").strip()
+    token = credential_ref_token(
+        credential_ref,
+        fallback_env_names=_git_credential_fallback_env_names(provider),
+    )
+    if not token:
+        return None
+    return {
+        "askpass_path": str(_ensure_git_askpass_script(workdir)),
+        "password": token,
+        "username": _git_auth_username(provider),
+    }
+
+
+def _redact_auth_context(value: str, auth_context: dict[str, str] | None) -> str:
+    if not auth_context:
+        return value
+    redacted = value
+    for secret_value in (auth_context.get("password"),):
+        if secret_value:
+            redacted = redacted.replace(secret_value, "***")
+    return redacted
 
 
 def _safe_slug(value: str, *, fallback: str) -> str:
@@ -199,14 +273,24 @@ def _cleanup_scan_workdir(workdir: Path) -> None:
 
 def _ensure_mirror(
     *,
+    auth_context: dict[str, str] | None = None,
     mirror_path: Path,
     remote_url: str,
 ) -> bool:
     if mirror_path.exists():
-        _git(["fetch", "--prune", "--tags"], cwd=mirror_path, timeout=180)
+        _git(
+            ["fetch", "--prune", "--tags"],
+            auth_context=auth_context,
+            cwd=mirror_path,
+            timeout=180,
+        )
         return True
     mirror_path.parent.mkdir(parents=True, exist_ok=True)
-    _git(["clone", "--mirror", remote_url, str(mirror_path)], timeout=300)
+    _git(
+        ["clone", "--mirror", remote_url, str(mirror_path)],
+        auth_context=auth_context,
+        timeout=300,
+    )
     return False
 
 
@@ -1142,8 +1226,13 @@ def run_native_code_scan(
     artifact_ref: str | None = None
     checkout_path_retained = False
     mirror_cache_hit = False
+    auth_context = _git_auth_context(repository, workdir=workdir)
     try:
-        mirror_cache_hit = _ensure_mirror(mirror_path=mirror_path, remote_url=remote_url)
+        mirror_cache_hit = _ensure_mirror(
+            auth_context=auth_context,
+            mirror_path=mirror_path,
+            remote_url=remote_url,
+        )
         commit_sha = _resolve_mirror_branch_commit(mirror_path, branch)
         checkout_name = "__".join(
             [
@@ -1212,7 +1301,7 @@ def run_native_code_scan(
         raise api_error(504, "CODE_SCAN_TIMEOUT", "Native code scan timed out") from None
     except subprocess.CalledProcessError as exc:
         checkout_path_retained = bool(checkout_path and checkout_path.exists())
-        message = (exc.stderr or exc.stdout or str(exc)).strip()
+        message = _redact_auth_context((exc.stderr or exc.stdout or str(exc)).strip(), auth_context)
         raise api_error(502, "CODE_SCAN_GIT_FAILED", message or "Git command failed") from None
     finally:
         scan_finished_at = datetime.now(UTC).isoformat()
