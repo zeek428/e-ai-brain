@@ -55,6 +55,129 @@ class AssistantChatRepositoryStub:
         return max_value
 
 
+class ScheduledJobAssistantRepository(FakeSnapshotRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.scheduled_jobs_payload = {
+            "scheduled_job_runs": {},
+            "scheduled_jobs": {
+                "scheduled_job_feedback_insight": {
+                    "agent_id": None,
+                    "config_json": {},
+                    "created_at": "2026-06-16T08:00:00+00:00",
+                    "created_by": "user_admin",
+                    "cron_expression": None,
+                    "enabled": True,
+                    "execution_mode": "deterministic",
+                    "id": "scheduled_job_feedback_insight",
+                    "interval_seconds": None,
+                    "job_type": "dashboard_snapshot_refresh",
+                    "knowledge_document_ids": [],
+                    "last_failure_at": None,
+                    "last_run_at": None,
+                    "last_success_at": None,
+                    "lock_ttl_seconds": 900,
+                    "max_retry_count": 0,
+                    "model_gateway_config_id": None,
+                    "name": "提取每周用户反馈有价值信息",
+                    "next_run_at": None,
+                    "plugin_action_id": None,
+                    "plugin_action_ids": [],
+                    "plugin_connection_id": None,
+                    "plugin_connection_ids": [],
+                    "plugin_input_mapping": {},
+                    "plugin_output_mapping": {},
+                    "product_id": None,
+                    "result_actions": [],
+                    "schedule_type": "manual",
+                    "skill_ids": [],
+                    "source_system": "ai-brain",
+                    "status": "active",
+                    "timeout_seconds": 600,
+                    "timezone": "Asia/Shanghai",
+                    "updated_at": "2026-06-16T08:00:00+00:00",
+                },
+            },
+        }
+
+    def list_ai_agents(
+        self,
+        *,
+        brain_app_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        return []
+
+    def list_ai_skills(
+        self,
+        *,
+        code: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        return []
+
+    def list_scheduled_jobs(
+        self,
+        *,
+        enabled: bool | None = None,
+        job_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        items = [
+            dict(job)
+            for job in self.scheduled_jobs_payload.get("scheduled_jobs", {}).values()
+        ]
+        if enabled is not None:
+            items = [job for job in items if job.get("enabled") is enabled]
+        if job_type is not None:
+            items = [job for job in items if job.get("job_type") == job_type]
+        if status is not None:
+            items = [job for job in items if job.get("status") == status]
+        return items
+
+    def list_scheduled_job_runs(
+        self,
+        *,
+        scheduled_job_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        items = [
+            dict(run)
+            for run in self.scheduled_jobs_payload.get("scheduled_job_runs", {}).values()
+        ]
+        if scheduled_job_id is not None:
+            items = [
+                run for run in items if run.get("scheduled_job_id") == scheduled_job_id
+            ]
+        if status is not None:
+            items = [run for run in items if run.get("status") == status]
+        return items
+
+    def save_scheduled_job_record(
+        self,
+        record: dict,
+        *,
+        audit_event: dict | None = None,
+    ) -> None:
+        self.scheduled_jobs_payload.setdefault("scheduled_jobs", {})[record["id"]] = dict(
+            record
+        )
+        if audit_event is not None:
+            self._append_direct_audit_event(audit_event)
+
+    def save_scheduled_job_run_record(
+        self,
+        record: dict,
+        *,
+        audit_event: dict | None = None,
+    ) -> None:
+        self.scheduled_jobs_payload.setdefault("scheduled_job_runs", {})[
+            record["id"]
+        ] = dict(record)
+        if audit_event is not None:
+            self._append_direct_audit_event(audit_event)
+
+
 def test_assistant_chat_history_is_persisted_through_fine_grained_repository_payload():
     repository = AssistantChatRepositoryStub()
     current_store = PersistentMemoryStore.from_repository(repository)
@@ -293,6 +416,37 @@ def test_assistant_chat_writes_repository_without_request_persist(monkeypatch):
             and event["payload"]["status"] == "failed"
             for event in repository.audit_events_payload["audit_events"]
         )
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_assistant_chat_runs_scheduled_job_from_repository_context():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = ScheduledJobAssistantRepository()
+
+    app.state.store = PostgresRuntimeStore(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        response = client.post(
+            "/api/assistant/chat",
+            json={"message": "@提取每周用户反馈有价值信息 执行一次"},
+            headers=auth_headers(),
+        )
+
+        assert response.status_code == 200
+        payload = response.json()["data"]
+        assert payload["model"] == "assistant-deterministic"
+        assert "已执行" in payload["message"]["content"]
+        runs = repository.scheduled_jobs_payload["scheduled_job_runs"]
+        assert len(runs) == 1
+        run = next(iter(runs.values()))
+        assert run["scheduled_job_id"] == "scheduled_job_feedback_insight"
+        assert run["trigger_type"] == "manual"
+        assert repository.collector_runs_payload is not None
+        assert len(repository.collector_runs_payload["collector_runs"]) == 1
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users

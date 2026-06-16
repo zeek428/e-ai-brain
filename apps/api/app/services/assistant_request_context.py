@@ -24,6 +24,7 @@ class AssistantRepositoryRequestContext:
         self.plugin_connections: dict[str, dict[str, Any]] = {}
         self.plugin_actions: dict[str, dict[str, Any]] = {}
         self.plugin_invocation_logs: dict[str, dict[str, Any]] = {}
+        self.collector_runs: dict[str, dict[str, Any]] = {}
         self.scheduled_jobs: dict[str, dict[str, Any]] = {}
         self.scheduled_job_runs: dict[str, dict[str, Any]] = {}
         self.assistant_conversations: dict[str, dict[str, Any]] = {}
@@ -133,6 +134,15 @@ def _hydrate_assistant_operational_store(source_store: Any, repository: Any) -> 
                 "action_id": None,
                 "scheduled_job_id": None,
                 "scheduled_job_run_id": None,
+                "status": None,
+            },
+        ),
+        "collector_runs": (
+            "list_collector_runs",
+            {
+                "collector_type": None,
+                "product_id": None,
+                "source_system": None,
                 "status": None,
             },
         ),
