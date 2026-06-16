@@ -220,3 +220,66 @@ def test_assistant_chat_runs_explicitly_mentioned_scheduled_job_once_without_mod
             "tool": "assistant.scheduled_job_run",
         }
     ]
+
+
+def test_assistant_chat_runs_weekly_feedback_alias_job_once_without_model_gateway():
+    store = MemoryStore()
+    store.scheduled_jobs["scheduled_job_feedback_insight"] = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": "scheduled_job_feedback_insight",
+        "interval_seconds": None,
+        "job_type": "dashboard_snapshot_refresh",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "name": "每周用户反馈洞察抽取",
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+
+    response = assistant_chat_response(
+        store,
+        model_gateway_api_key="",
+        model_gateway_base_url="",
+        model_gateway_default_chat_model="",
+        model_gateway_status="not_configured",
+        payload=AssistantChatRequest(
+            message="@提取每周用户反馈有价值信息 执行一次",
+        ),
+        user={"id": "user_admin", "roles": ["admin"]},
+    )
+
+    assert response["model"] == "assistant-deterministic"
+    assert "已执行" in response["message"]["content"]
+    run = next(iter(store.scheduled_job_runs.values()))
+    assert run["scheduled_job_id"] == "scheduled_job_feedback_insight"
+    assert response["message"]["references"][0] == {
+        "id": "scheduled_job_feedback_insight",
+        "title": "每周用户反馈洞察抽取",
+        "type": "scheduled_job",
+        "url": "/tasks/scheduled-jobs?job_id=scheduled_job_feedback_insight",
+    }

@@ -33,6 +33,18 @@ REFERENCE_SOURCE_MODULES = {
     "scheduled_job": "任务中心",
     "scheduled_job_run": "任务中心",
 }
+SCHEDULED_JOB_QUERY_KEYWORD_GROUPS = (
+    ("用户反馈", "反馈", "feedback", "user feedback"),
+    ("洞察", "insight", "insights"),
+    ("每周", "周", "weekly"),
+    ("提取", "抽取", "extract"),
+    ("有价值", "价值", "信息", "summary", "summarize"),
+    ("代码", "仓库", "code", "repository"),
+    ("巡检", "质量", "安全", "规范", "inspection", "review"),
+    ("邮件", "邮箱", "通知", "email", "mail", "notification"),
+    ("日志", "分析", "log", "analysis"),
+)
+SCHEDULED_JOB_DOMAIN_GROUP_INDEXES = {0, 5, 7, 8}
 
 
 class AssistantReferenceError(Exception):
@@ -777,7 +789,53 @@ def _assistant_reference_matches_query(
             title,
         )
     ).lower()
-    return normalized_query in haystack
+    if normalized_query in haystack:
+        return True
+    return _scheduled_job_reference_matches_semantic_query(
+        entity_type,
+        normalized_query,
+        haystack,
+    )
+
+
+def assistant_reference_matches_query(
+    entity_type: str,
+    item: dict[str, Any],
+    query: str,
+    *,
+    current_store: Any | None = None,
+) -> bool:
+    return _assistant_reference_matches_query(
+        entity_type,
+        item,
+        query,
+        current_store=current_store,
+    )
+
+
+def _scheduled_job_reference_matches_semantic_query(
+    entity_type: str,
+    normalized_query: str,
+    haystack: str,
+) -> bool:
+    if entity_type not in {"scheduled_job", "scheduled_job_run"}:
+        return False
+    query_groups = _scheduled_job_keyword_group_indexes(normalized_query)
+    if len(query_groups) < 2:
+        return False
+    haystack_groups = _scheduled_job_keyword_group_indexes(haystack)
+    overlap = query_groups & haystack_groups
+    if len(overlap) < 2:
+        return False
+    return bool(overlap & SCHEDULED_JOB_DOMAIN_GROUP_INDEXES)
+
+
+def _scheduled_job_keyword_group_indexes(value: str) -> set[int]:
+    return {
+        index
+        for index, keywords in enumerate(SCHEDULED_JOB_QUERY_KEYWORD_GROUPS)
+        if any(keyword in value for keyword in keywords)
+    }
 
 
 def _user_can_reference_operational(user: dict[str, Any] | None) -> bool:

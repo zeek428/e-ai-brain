@@ -257,6 +257,34 @@ def test_ai_assistant_reference_candidates_include_admin_operational_objects():
     assert reviewer_response.json()["data"] == {"items": [], "total": 0}
 
 
+def test_ai_assistant_reference_candidates_match_weekly_feedback_alias():
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    app.state.store.scheduled_jobs["scheduled_job_feedback_weekly"]["name"] = (
+        "每周用户反馈洞察抽取"
+    )
+
+    response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "提取每周用户反馈有价值信息", "type": "scheduled_job", "limit": 5},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["items"] == [
+        {
+            "id": "scheduled_job_feedback_weekly",
+            "permission_label": "管理员可引用",
+            "source_module": "任务中心",
+            "title": "每周用户反馈洞察抽取",
+            "type": "scheduled_job",
+            "updated_at": "2026-06-14T09:30:00+00:00",
+            "url": "/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly",
+        }
+    ]
+
+
 def test_ai_assistant_resolve_operational_reference_requires_admin_role():
     headers = auth_headers()
     reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")

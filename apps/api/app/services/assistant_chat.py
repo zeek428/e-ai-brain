@@ -35,6 +35,7 @@ from app.services.assistant_history import (
 )
 from app.services.assistant_references import (
     AssistantReferenceError,
+    assistant_reference_matches_query,
     resolve_assistant_references,
 )
 from app.services.assistant_request_context import (
@@ -882,7 +883,14 @@ def _scheduled_job_matches_mention(job: dict[str, Any], query: str) -> bool:
             job.get("job_type"),
         )
     ).lower()
-    return normalized_query in haystack
+    if normalized_query in haystack:
+        return True
+    return assistant_reference_matches_query(
+        "scheduled_job",
+        job,
+        query,
+        current_store=None,
+    )
 
 
 def _http_exception_code_and_message(exc: HTTPException) -> tuple[str, str]:
