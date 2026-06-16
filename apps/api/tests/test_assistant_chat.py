@@ -594,6 +594,53 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     ]
 
 
+def test_ai_assistant_action_draft_previews_diff_and_blocks_invalid_confirmation():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "execution_mode": "deterministic",
+                "job_type": "user_feedback_insight_extract",
+                "name": "缺少配置的反馈洞察作业",
+                "schedule_type": "cron",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": "创建反馈洞察定时任务",
+        },
+        headers=headers,
+    )
+
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    preview = draft["preview"]
+    assert preview["target"] == {
+        "operation": "create",
+        "resource_id": None,
+        "resource_type": "scheduled_job",
+    }
+    diff_by_field = {item["field"]: item for item in preview["diffs"]}
+    assert diff_by_field["name"]["proposed"] == "缺少配置的反馈洞察作业"
+    assert diff_by_field["schedule_type"]["proposed"] == "cron"
+    validation = preview["validation"]
+    assert validation["status"] == "blocked"
+    issues_by_field = {item["field"]: item for item in validation["issues"]}
+    assert issues_by_field["cron_expression"]["severity"] == "error"
+    assert issues_by_field["plugin_action_id"]["severity"] == "error"
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 409
+    assert confirm_response.json()["detail"]["code"] == "DRAFT_PRECHECK_FAILED"
+
+
 def test_ai_assistant_action_draft_cancel_prevents_confirmation():
     headers = auth_headers()
     app.state.store.reset()

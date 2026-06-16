@@ -30,6 +30,7 @@ import {
   fetchResultWriteTargets,
   readAssistantDraftResolutions,
   rememberAssistantDraftResolution,
+  type AssistantActionDraftPreview,
   type AssistantChatResponse,
   type AssistantConversationMessage,
   type AssistantReference,
@@ -236,6 +237,29 @@ function draftStatusLabel(status?: string) {
   return { color: 'blue', text: '待确认' };
 }
 
+function draftPreviewStatusLabel(status?: string) {
+  if (status === 'blocked') {
+    return { color: 'red', text: '阻塞' };
+  }
+  if (status === 'warning') {
+    return { color: 'orange', text: '需确认' };
+  }
+  return { color: 'green', text: '通过' };
+}
+
+function draftPreviewValueText(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  if (Array.isArray(value)) {
+    return value.length ? value.map(String).join('、') : '-';
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
 function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
   if (!resolution) {
     return undefined;
@@ -387,6 +411,44 @@ function storePluginConnectionDraft(draft: AssistantToolResultItem) {
   );
 }
 
+function AssistantDraftPreviewBlock({ preview }: { preview?: AssistantActionDraftPreview }) {
+  if (!preview) {
+    return null;
+  }
+  const diffs = (preview.diffs ?? []).slice(0, 4);
+  const issues = preview.validation?.issues ?? [];
+  const statusLabel = draftPreviewStatusLabel(preview.validation?.status);
+  return (
+    <div className="assistant-action-draft-precheck">
+      <Space size={8} wrap>
+        <Text strong>应用前预检</Text>
+        <Tag color={statusLabel.color}>{statusLabel.text}</Tag>
+      </Space>
+      {diffs.length ? (
+        <div className="assistant-action-draft-precheck-diffs">
+          {diffs.map((diff) => (
+            <span key={diff.field}>
+              <Text type="secondary">{diff.label ?? diff.field}</Text>
+              <Text>
+                {draftPreviewValueText(diff.current)} -&gt; {draftPreviewValueText(diff.proposed)}
+              </Text>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {issues.length ? (
+        <div className="assistant-action-draft-precheck-issues">
+          {issues.map((issue) => (
+            <Text key={`${issue.field}:${issue.message}`} type={issue.severity === 'error' ? 'danger' : 'warning'}>
+              {issue.message}
+            </Text>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AssistantActionDraftCards({
   drafts,
   draftMutationId,
@@ -423,6 +485,8 @@ function AssistantActionDraftCards({
           : (draftId ? draftStatusById[draftId] : undefined) ?? draft.status ?? 'pending';
         const statusLabel = draftStatusLabel(currentStatus);
         const isPending = currentStatus === 'pending';
+        const previewStatus = draft.preview?.validation?.status;
+        const isPreviewBlocked = previewStatus === 'blocked';
         return (
           <div className="assistant-action-draft-card" key={draftId}>
             <div className="assistant-action-draft-header">
@@ -542,10 +606,12 @@ function AssistantActionDraftCards({
                 </>
               )}
             </div>
+            <AssistantDraftPreviewBlock preview={draft.preview} />
             <Space size={8} wrap>
               {draftId && isPending ? (
                 <>
                   <Button
+                    disabled={isPreviewBlocked}
                     icon={<CheckCircleOutlined />}
                     loading={draftMutationId === draftId}
                     size="small"

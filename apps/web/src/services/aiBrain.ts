@@ -180,6 +180,7 @@ export type AssistantToolResultItem = {
   client_draft_id?: string;
   draft_id?: string;
   payload?: Record<string, unknown>;
+  preview?: AssistantActionDraftPreview;
   requires_confirmation?: boolean;
   risk_level?: string;
   server_draft_id?: string;
@@ -355,12 +356,40 @@ export type AssistantActionDraftRecord = {
   created_by?: string;
   id: string;
   payload: Record<string, unknown>;
+  preview?: AssistantActionDraftPreview;
   result_run_id?: string;
   risk_level?: string;
   source_message_id?: string;
   status: string;
   title: string;
   updated_at?: string;
+};
+
+export type AssistantActionDraftPreviewDiff = {
+  change_type: string;
+  current?: unknown;
+  field: string;
+  label?: string;
+  proposed?: unknown;
+};
+
+export type AssistantActionDraftPreviewIssue = {
+  field: string;
+  message: string;
+  severity: 'error' | 'warning' | string;
+};
+
+export type AssistantActionDraftPreview = {
+  diffs?: AssistantActionDraftPreviewDiff[];
+  target?: {
+    operation?: string;
+    resource_id?: string | null;
+    resource_type?: string;
+  };
+  validation?: {
+    issues?: AssistantActionDraftPreviewIssue[];
+    status?: 'blocked' | 'passed' | 'warning' | string;
+  };
 };
 
 export type AssistantActionRunRecord = {

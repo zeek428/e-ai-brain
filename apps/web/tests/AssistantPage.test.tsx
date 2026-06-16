@@ -998,6 +998,118 @@ describe('AssistantPage', () => {
     ]);
   });
 
+  it('shows assistant action draft precheck issues before confirmation', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_draft_precheck',
+              latency_ms: 128,
+              message: {
+                content: '我已生成一个需要补齐字段的服务端草案。',
+                id: 'assistant_message_draft_precheck',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        draft_id: 'assistant_action_draft_precheck',
+                        payload: {
+                          execution_mode: 'deterministic',
+                          job_type: 'user_feedback_insight_extract',
+                          name: '缺少配置的反馈洞察作业',
+                          schedule_type: 'cron',
+                        },
+                        preview: {
+                          diffs: [
+                            {
+                              change_type: 'create',
+                              current: null,
+                              field: 'name',
+                              label: '名称',
+                              proposed: '缺少配置的反馈洞察作业',
+                            },
+                            {
+                              change_type: 'create',
+                              current: null,
+                              field: 'schedule_type',
+                              label: '调度类型',
+                              proposed: 'cron',
+                            },
+                          ],
+                          target: {
+                            operation: 'create',
+                            resource_id: null,
+                            resource_type: 'scheduled_job',
+                          },
+                          validation: {
+                            issues: [
+                              {
+                                field: 'cron_expression',
+                                message: 'cron_expression is required',
+                                severity: 'error',
+                              },
+                              {
+                                field: 'plugin_action_id',
+                                message: 'user_feedback_insight_extract requires plugin_action_id',
+                                severity: 'error',
+                              },
+                            ],
+                            status: 'blocked',
+                          },
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        status: 'pending',
+                        title: '创建反馈洞察定时任务',
+                      },
+                    ],
+                    summary: { draft_count: 1, requires_confirmation: true },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_precheck/confirm') {
+        throw new Error('Blocked drafts should not be confirmed from the card');
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我创建缺字段的反馈洞察草案' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('应用前预检')).toBeInTheDocument();
+    expect(screen.getByText('阻塞')).toBeInTheDocument();
+    expect(screen.getByText('名称')).toBeInTheDocument();
+    expect(screen.getByText('- -> 缺少配置的反馈洞察作业')).toBeInTheDocument();
+    expect(screen.getByText('cron_expression is required')).toBeInTheDocument();
+    expect(screen.getByText('user_feedback_insight_extract requires plugin_action_id')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /确认创建/ })).toBeDisabled();
+  });
+
   it('renders assistant plugin action drafts as configuration cards', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
