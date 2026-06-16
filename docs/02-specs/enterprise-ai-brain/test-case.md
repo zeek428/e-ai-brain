@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.485 |
+| 功能版本 | v1.1.486 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.486 | 2026-06-17 | 补充 AI 助手执行一次长任务验收：AI 类定时作业应先返回运行中记录并后台完成 | Codex |
 | v1.1.485 | 2026-06-17 | 补充 AI 助手分析类草案验收：发布风险分析和知识库巡检可生成 `create_analysis_draft` 并确认追踪 | Codex |
 | v1.1.484 | 2026-06-17 | 补充 AI 助手邮件摘要模板草案验收：聊天生成邮件收取定时作业服务端草案并绑定可用邮箱动作和连接 | Codex |
 | v1.1.483 | 2026-06-17 | 补充 AI 助手草案模板市场验收：服务端目录返回六类模板，前端侧栏可加载并回填提示 | Codex |
@@ -590,7 +591,7 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 | TC-AIBRAIN-ASSISTANT-FUNC-013 | v1.1 | P0 | 用户要求创建 AI 能力、插件连接、动作或定时作业 | 系统只生成 `assistant_action_draft` 草案和风险/差异摘要；首批周反馈洞察定时作业草案通过 `assistant.action_draft` tool result 返回 `create_scheduled_job` payload，自动引用可用产品、数据连接、AI 模型、AI角色、Skill、知识文档、Cron 和动态变量映射；代码巡检定时作业草案自动引用可用产品、GitHub/GitLab 代码巡检动作、同插件连接、Cron 和写报告/建 Bug/通知默认结果动作；当用户要求创建代码巡检定时作业但系统缺少可用 GitHub/GitLab 连接或动作时，`assistant.action_draft.items[]` 必须按连接、动作、作业顺序返回 `create_plugin_connection`、`create_plugin_action` 和 `create_scheduled_job` 草案，动作 payload 和作业 payload 必须包含 `assistant_prerequisite_draft_ids`，助手卡片展示“前置草案”，用户确认前不得写入任何配置；当用户明确要求 AI/大模型分析代码巡检结果时，草案必须设置 `execution_mode=ai_generated` 并带出可用 `model_gateway_config_id`、`agent_id` 和 `skill_ids`；GitHub/GitLab/邮箱连接草案必须通过 `assistant.action_draft` 返回 `create_plugin_connection` payload，自动带出官方插件、Endpoint、环境、认证方式、Params 和 Headers；GitHub/GitLab 代码巡检动作和邮箱通知动作草案必须通过 `assistant.action_draft` 返回 `create_plugin_action` payload，自动带出官方插件、可用连接、请求路径、Params/Headers 和结果映射，其中邮箱通知动作草案必须使用 `result_mapping.write_target=email_notifications` 并包含收件人、主题、投递状态和消息 ID 路径；助手页面必须把聊天响应和历史消息里的 `assistant.action_draft.items[]` 显示为待确认配置草案卡片，定时作业草案展示标题、风险、作业类型、调度、执行模式、AI 模型、AI角色、Skills、连接、结果动作和前置草案摘要，插件连接草案展示插件、Endpoint、环境、认证方式、Params 和 Headers，动作草案展示动作类型、编码、插件、连接、请求方法、请求路径和中文写入目标，中文写入目标必须从 `/api/system/result-write-targets` 返回的 `form_label/label` 渲染，不得依赖前端本地硬编码映射；点击应用草案后，任务中心 / 定时作业新增表单必须回填作业草案字段，任务中心 / 插件管理新增连接表单必须回填插件连接草案字段，任务中心 / 插件管理新增动作表单必须回填动作草案字段；先应用并保存连接草案后，依赖该草案的动作草案必须自动回填真实 `connection_id`，再应用并保存动作草案后，依赖前置草案的定时作业草案必须自动回填真实 `plugin_connection_id` 和 `plugin_action_id`；用户确认保存定时作业时保留 `{{last_full_week.start}}`、`{{last_full_week.end}}` 等动态变量映射，并在作业 `config_json.assistant_draft` 与 `scheduled_job.created/updated` 审计 payload 中保留草案 ID、来源和标题；未确认前不得写入 `ai_skills`、`ai_agents`、`plugin_connections`、`plugin_actions` 或 `scheduled_jobs`。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-014 | v1.1 | P0 | 管理员确认定时作业创建草案 | 草案已持久化到 `assistant_action_drafts` 且状态为 `pending`；`POST /api/assistant/action-drafts/{draft_id}/confirm` 重新校验引用和权限，复用 scheduled_jobs service 写入作业、审计和配置快照，响应返回 `{draft, run}`、作业 ID 与管理页链接，草案状态变为 `confirmed`。 |
 | TC-AIBRAIN-ASSISTANT-API-014B | v1.1 | P0 | 聊天返回的 `assistant.action_draft` 工具项自动转为服务端草案 | `/api/assistant/chat` 响应中的可支持草案项包含 `server_draft_id`、`client_draft_id` 和 `status=pending`；刷新历史消息后仍能看到草案卡片，确认/取消操作使用服务端草案 ID。 |
-| TC-AIBRAIN-ASSISTANT-FUNC-015 | v1.1 | P0 | 管理员通过助理手动运行 `@scheduled_job` | 确认后复用现有 run service 创建运行实例；对话返回 run ID、状态、结果详情链接和三段执行节点摘要。 |
+| TC-AIBRAIN-ASSISTANT-FUNC-015 | v1.1 | P0 | 管理员通过助理手动运行 `@scheduled_job` | 确认后复用现有 run service 创建运行实例；对话返回 run ID、状态、结果详情链接和三段执行节点摘要。对于 `user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate` 等 AI 类长链路作业，助手不等待完整执行结束，运行记录进入 `running/queued` 后即返回“已触发”和 `assistant.scheduled_job_run` 工具结果，后台继续完成，后续可通过运行详情或继续追问查看最终成功/失败原因。回归见 `apps/api/tests/test_assistant_chat_service.py::test_assistant_chat_returns_running_record_for_long_ai_job_once_without_waiting`。 |
 | TC-AIBRAIN-ASSISTANT-ERR-016 | v1.1 | P0 | 非管理员尝试通过自然语言创建插件、修改模型配置或运行定时作业 | 接口返回权限错误，不生成可确认写入草案，不产生领域写入审计。 |
 | TC-AIBRAIN-ASSISTANT-BOUND-017 | v1.1 | P1 | 草案过期、引用失效或确认用户权限变化后再确认 | 确认失败并写入失败审计；不得使用草案生成时的旧权限绕过当前校验。 |
 | TC-AIBRAIN-ASSISTANT-ERR-018 | v1.1 | P1 | 插件连接含密钥、Header、Token 或 Basic 密码时被 `@` 引入聊天 | 传给模型的上下文只能包含脱敏能力摘要；不得包含密钥、完整外部响应或认证 Header 明文。 |

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from app.core.store import MemoryStore
+from app.services import assistant_chat as assistant_chat_service
 from app.services.assistant_chat import (
     AssistantChatRequest,
     AssistantServiceError,
@@ -283,3 +286,117 @@ def test_assistant_chat_runs_weekly_feedback_alias_job_once_without_model_gatewa
         "type": "scheduled_job",
         "url": "/tasks/scheduled-jobs?job_id=scheduled_job_feedback_insight",
     }
+
+
+def test_assistant_chat_returns_running_record_for_long_ai_job_once_without_waiting(
+    monkeypatch,
+):
+    store = MemoryStore()
+    store.scheduled_jobs["scheduled_job_feedback_insight"] = {
+        "agent_id": "agent_feedback",
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "ai_generated",
+        "id": "scheduled_job_feedback_insight",
+        "interval_seconds": None,
+        "job_type": "user_feedback_insight_extract",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": "model_gateway_feedback",
+        "name": "提取每周用户反馈有价值信息",
+        "next_run_at": None,
+        "plugin_action_id": "plugin_action_feedback",
+        "plugin_action_ids": [],
+        "plugin_connection_id": "plugin_connection_feedback",
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": ["skill_feedback"],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+    started = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+
+    def fake_run_scheduled_job_response(
+        *,
+        current_store,
+        job_id,
+        source_run_id,
+        trigger_type,
+        user,
+    ):
+        del source_run_id, user
+        started.set()
+        run_id = current_store.new_id("scheduled_job_run")
+        run = {
+            "collector_run_id": None,
+            "config_snapshot": {},
+            "created_at": "2026-06-16T08:01:00+00:00",
+            "error_code": None,
+            "error_message": None,
+            "finished_at": None,
+            "id": run_id,
+            "plugin_invocation_log_id": None,
+            "records_imported": 0,
+            "result_summary": {},
+            "scheduled_for": "2026-06-16T08:01:00+00:00",
+            "scheduled_job_id": job_id,
+            "source_run_id": None,
+            "started_at": "2026-06-16T08:01:00+00:00",
+            "status": "running",
+            "trigger_type": trigger_type,
+            "updated_at": "2026-06-16T08:01:00+00:00",
+        }
+        current_store.scheduled_job_runs[run_id] = run
+        release.wait(timeout=0.5)
+        completed.set()
+        run = {
+            **run,
+            "finished_at": "2026-06-16T08:02:00+00:00",
+            "records_imported": 19,
+            "status": "succeeded",
+            "updated_at": "2026-06-16T08:02:00+00:00",
+        }
+        current_store.scheduled_job_runs[run_id] = run
+        return run
+
+    monkeypatch.setattr(
+        assistant_chat_service,
+        "run_scheduled_job_response",
+        fake_run_scheduled_job_response,
+    )
+
+    response = assistant_chat_service.assistant_chat_response(
+        store,
+        model_gateway_api_key="",
+        model_gateway_base_url="",
+        model_gateway_default_chat_model="",
+        model_gateway_status="not_configured",
+        payload=AssistantChatRequest(
+            message="@提取每周用户反馈有价值信息 执行一次",
+        ),
+        user={"id": "user_admin", "roles": ["admin"]},
+    )
+
+    assert started.is_set()
+    assert not completed.is_set()
+    assert response["model"] == "assistant-deterministic"
+    assert "已触发" in response["message"]["content"]
+    assert response["message"]["tool_results"][0]["summary"]["status"] == "running"
+    release.set()
+    assert completed.wait(timeout=1)

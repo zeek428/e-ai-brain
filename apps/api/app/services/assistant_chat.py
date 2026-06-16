@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest
@@ -74,6 +75,13 @@ SCHEDULED_JOB_RUN_ONCE_KEYWORDS = (
     "execute once",
 )
 SCHEDULED_JOB_RUN_NEGATION_KEYWORDS = ("不要执行", "别执行", "不执行", "不要运行", "别运行")
+ASSISTANT_ASYNC_SCHEDULED_JOB_TYPES = {
+    "iteration_plan_suggestion_generate",
+    "online_log_ai_analysis",
+    "user_feedback_insight_extract",
+}
+ASSISTANT_ASYNC_RUN_START_TIMEOUT_SECONDS = 2.0
+ASSISTANT_ASYNC_RUN_POLL_SECONDS = 0.05
 TASK_CREATION_WIZARD_STEPS = ["数据来源", "AI处理", "结果动作", "调度策略", "确认执行"]
 TASK_CREATION_GUIDE_ITEMS = [
     {
@@ -422,13 +430,20 @@ def _deterministic_assistant_output(
     job_id = str(scheduled_job_reference["id"])
     job = getattr(current_store, "scheduled_jobs", {}).get(job_id) or {}
     try:
-        run = run_scheduled_job_response(
-            current_store=current_store,
-            job_id=job_id,
-            source_run_id=None,
-            trigger_type="manual",
-            user=user,
-        )
+        if _scheduled_job_run_should_return_immediately(job):
+            run = _start_scheduled_job_run_once_in_background(
+                current_store=current_store,
+                job_id=job_id,
+                user=user,
+            )
+        else:
+            run = run_scheduled_job_response(
+                current_store=current_store,
+                job_id=job_id,
+                source_run_id=None,
+                trigger_type="manual",
+                user=user,
+            )
     except HTTPException as exc:
         error_code, error_message = _http_exception_code_and_message(exc)
         return {
@@ -891,6 +906,97 @@ def _scheduled_job_matches_mention(job: dict[str, Any], query: str) -> bool:
         query,
         current_store=None,
     )
+
+
+def _scheduled_job_run_should_return_immediately(job: dict[str, Any]) -> bool:
+    if not job.get("enabled"):
+        return False
+    return str(job.get("job_type") or "") in ASSISTANT_ASYNC_SCHEDULED_JOB_TYPES
+
+
+def _start_scheduled_job_run_once_in_background(
+    *,
+    current_store: MemoryStore,
+    job_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    existing_run_ids = {
+        str(run.get("id"))
+        for run in getattr(current_store, "scheduled_job_runs", {}).values()
+        if run.get("id") is not None
+    }
+    result: dict[str, dict[str, Any]] = {}
+    error: dict[str, HTTPException] = {}
+    done = threading.Event()
+
+    def worker() -> None:
+        try:
+            result["run"] = run_scheduled_job_response(
+                current_store=current_store,
+                job_id=job_id,
+                source_run_id=None,
+                trigger_type="manual",
+                user=user,
+            )
+        except HTTPException as exc:
+            error["exception"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(
+        target=worker,
+        name=f"assistant-scheduled-job-run-{job_id}",
+        daemon=True,
+    )
+    thread.start()
+    deadline = perf_counter() + ASSISTANT_ASYNC_RUN_START_TIMEOUT_SECONDS
+    while perf_counter() < deadline:
+        run = _new_scheduled_job_run(
+            current_store,
+            existing_run_ids=existing_run_ids,
+            job_id=job_id,
+        )
+        if run is not None:
+            return run
+        if done.is_set():
+            if error.get("exception") is not None:
+                raise error["exception"]
+            if result.get("run") is not None:
+                return result["run"]
+            break
+        sleep(ASSISTANT_ASYNC_RUN_POLL_SECONDS)
+    if error.get("exception") is not None:
+        raise error["exception"]
+    if result.get("run") is not None:
+        return result["run"]
+    raise HTTPException(
+        status_code=504,
+        detail={
+            "code": "SCHEDULED_JOB_RUN_START_TIMEOUT",
+            "message": "Scheduled job run did not start in time",
+        },
+    )
+
+
+def _new_scheduled_job_run(
+    current_store: MemoryStore,
+    *,
+    existing_run_ids: set[str],
+    job_id: str,
+) -> dict[str, Any] | None:
+    candidates = [
+        run
+        for run in getattr(current_store, "scheduled_job_runs", {}).values()
+        if run.get("id") is not None
+        and str(run.get("id")) not in existing_run_ids
+        and str(run.get("scheduled_job_id")) == job_id
+    ]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda run: str(run.get("created_at") or run.get("started_at") or ""),
+    )[-1]
 
 
 def _http_exception_code_and_message(exc: HTTPException) -> tuple[str, str]:
