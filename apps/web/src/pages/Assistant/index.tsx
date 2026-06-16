@@ -80,6 +80,21 @@ const starterPrompts = [
   },
 ];
 
+const scheduledJobRunOnceKeywords = [
+  '执行一次',
+  '执行一下',
+  '运行一次',
+  '运行一下',
+  '跑一次',
+  '跑一下',
+  '立即执行',
+  '立即运行',
+  '手动执行',
+  'run once',
+  'run now',
+  'execute once',
+];
+
 function actionDraftItems(toolResults?: AssistantToolResult[]) {
   return (toolResults ?? [])
     .filter((toolResult) => toolResult.tool === 'assistant.action_draft')
@@ -151,6 +166,27 @@ function activeMentionQuery(value: string) {
     return undefined;
   }
   return tail.split(/\s+/)[0] ?? '';
+}
+
+function scheduledJobRunOnceRequested(value: string) {
+  const normalized = value.toLowerCase();
+  return scheduledJobRunOnceKeywords.some((keyword) => normalized.includes(keyword));
+}
+
+function mergeReferences(...referenceLists: AssistantReference[][]) {
+  const references: AssistantReference[] = [];
+  const seen = new Set<string>();
+  referenceLists.forEach((referenceList) => {
+    referenceList.forEach((reference) => {
+      const key = `${reference.type}:${reference.id}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      references.push(reference);
+    });
+  });
+  return references;
 }
 
 function draftStatusLabel(status?: string) {
@@ -756,6 +792,17 @@ export default function AssistantPage() {
     ));
   };
 
+  const commandReferenceCandidates = (messageText: string) => {
+    if (!scheduledJobRunOnceRequested(messageText)) {
+      return [];
+    }
+    const activeReference = referenceCandidates[Math.max(activeReferenceIndex, 0)];
+    const scheduledJobReference = activeReference?.type === 'scheduled_job'
+      ? activeReference
+      : referenceCandidates.find((reference) => reference.type === 'scheduled_job');
+    return scheduledJobReference ? [scheduledJobReference] : [];
+  };
+
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!referenceCandidates.length) {
       return;
@@ -773,6 +820,12 @@ export default function AssistantPage() {
       return;
     }
     if (event.key === 'Enter') {
+      const commandReferences = commandReferenceCandidates(inputValue);
+      if (commandReferences.length) {
+        event.preventDefault();
+        void sendMessage(inputValue, commandReferences);
+        return;
+      }
       const reference = referenceCandidates[Math.max(activeReferenceIndex, 0)];
       if (reference) {
         event.preventDefault();
@@ -825,12 +878,18 @@ export default function AssistantPage() {
     }
   };
 
-  const sendMessage = async (messageText = inputValue) => {
+  const sendMessage = async (
+    messageText = inputValue,
+    referenceOverrides?: AssistantReference[],
+  ) => {
     const content = messageText.trim();
     if (!content || isSending) {
       return;
     }
-    const referencesForRequest = selectedReferences;
+    const referencesForRequest = mergeReferences(
+      selectedReferences,
+      referenceOverrides ?? commandReferenceCandidates(content),
+    );
     const userMessage: ChatMessage = {
       content,
       id: `user-${Date.now()}`,

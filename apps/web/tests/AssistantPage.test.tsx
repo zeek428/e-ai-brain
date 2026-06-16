@@ -342,6 +342,106 @@ describe('AssistantPage', () => {
     expect(screen.getAllByText('定时作业').length).toBeGreaterThan(0);
   });
 
+  it('sends @ scheduled job run-once commands with the active candidate reference', async () => {
+    let chatRequestBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'scheduled_job_feedback_weekly',
+                  permission_label: '管理员可引用',
+                  source_module: '任务中心',
+                  title: '提取每周用户反馈有价值信息',
+                  type: 'scheduled_job',
+                  updated_at: '2026-06-15T18:00:00+08:00',
+                  url: '/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        chatRequestBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_run_once',
+              latency_ms: 12,
+              message: {
+                content: '已执行「提取每周用户反馈有价值信息」一次，运行记录 scheduled_job_run_001 已成功完成。',
+                id: 'assistant_message_run_once',
+                references: [
+                  {
+                    id: 'scheduled_job_feedback_weekly',
+                    title: '提取每周用户反馈有价值信息',
+                    type: 'scheduled_job',
+                    url: '/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly',
+                  },
+                  {
+                    id: 'scheduled_job_run_001',
+                    title: '提取每周用户反馈有价值信息 / succeeded',
+                    type: 'scheduled_job_run',
+                    url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_001',
+                  },
+                ],
+                role: 'assistant',
+                suggestions: [],
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_run_once',
+                    items: [],
+                    summary: { run_id: 'scheduled_job_run_001', status: 'succeeded' },
+                    tool: 'assistant.scheduled_job_run',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, {
+      target: { value: '@提取每周用户反馈有价值信息 执行一次' },
+    });
+
+    await screen.findByRole('button', { name: /提取每周用户反馈有价值信息/ });
+    fireEvent.keyDown(assistantInput, { key: 'Enter' });
+
+    expect(await screen.findByText(/已执行「提取每周用户反馈有价值信息」一次/)).toBeInTheDocument();
+    expect(chatRequestBody).toMatchObject({
+      message: '@提取每周用户反馈有价值信息 执行一次',
+      references: [
+        {
+          id: 'scheduled_job_feedback_weekly',
+          type: 'scheduled_job',
+        },
+      ],
+    });
+  });
+
   it('keeps grouped @ reference hover selection aligned with the original candidate', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
