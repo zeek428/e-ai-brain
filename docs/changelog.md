@@ -54,6 +54,7 @@
 - 插件连接最近测试摘要：连接测试后保存轻量 `last_test_summary`，连接列表展示最近测试状态、耗时和错误码，方便关闭调试弹窗后继续排障。
 
 ### Fixed
+- AI 助手 @ 引用候选触发修复：输入框只输入 @ 时也会拉取默认引用候选，不再要求先输入搜索词。
 - AI 助手页聊天输入框首屏可见性：限制工作台高度在当前视口内，并让消息列表和历史列表内部滚动，避免需要下拉页面才能看到输入框。
 - 用户反馈转需求持久化修复：DB-first 运行时补齐用户反馈转换事务的仓库委托，确保转换响应、用户反馈列表状态、关联需求 ID 和审计记录一致，避免页面仍显示 `open` 并可重复转需求。
 - 代码巡检作业仓库归属修复：当 GitLab/GitHub 扫描器或 AI 归一化输出返回 project_path、remote_url 或 project_id 时，写报告会映射到同产品 `product_git_repositories.id`，并把作业 `config_json.repository_id` 注入模型上下文，避免报告写入阶段报 `Product Git repository not found`。

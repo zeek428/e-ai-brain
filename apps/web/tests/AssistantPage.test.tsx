@@ -223,6 +223,52 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('opens default reference candidates when the user types a bare @', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        expect(init?.method ?? 'GET').toBe('GET');
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('');
+        expect(params.get('type')).toBeNull();
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'requirement_assistant_iteration',
+                  title: 'AI 助手历史记录迭代',
+                  type: 'requirement',
+                  url: '/delivery/requirements?requirement_id=requirement_assistant_iteration',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@' },
+    });
+
+    expect(await screen.findByRole('button', { name: /AI 助手历史记录迭代/ })).toBeInTheDocument();
+    expect(screen.getByText('需求')).toBeInTheDocument();
+  });
+
   it('selects scheduled job run references with @ candidates and sends them to chat', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {

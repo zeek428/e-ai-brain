@@ -132,8 +132,10 @@ function activeMentionQuery(value: string) {
   if (tail.includes('\n')) {
     return undefined;
   }
-  const query = tail.trim().split(/\s+/)[0];
-  return query.length ? query : undefined;
+  if (tail.length > 0 && /^\s/.test(tail)) {
+    return undefined;
+  }
+  return tail.split(/\s+/)[0] ?? '';
 }
 
 function draftStatusLabel(status?: string) {
@@ -506,7 +508,7 @@ export default function AssistantPage() {
 
   useEffect(() => {
     const query = activeMentionQuery(inputValue);
-    if (!query) {
+    if (query === undefined) {
       setReferenceCandidates([]);
       setIsLoadingReferences(false);
       return;
