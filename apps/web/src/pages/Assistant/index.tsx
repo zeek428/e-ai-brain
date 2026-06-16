@@ -9,6 +9,7 @@ import {
   MessageOutlined,
   PlusOutlined,
   ProjectOutlined,
+  ReloadOutlined,
   RobotOutlined,
   SendOutlined,
 } from '@ant-design/icons';
@@ -27,11 +28,14 @@ import {
   fetchAssistantConversations,
   fetchAssistantReferenceCandidates,
   fetchResultWriteTargets,
+  readAssistantDraftResolutions,
   rememberAssistantDraftResolution,
   type AssistantChatResponse,
   type AssistantConversationMessage,
   type AssistantReference,
   type AssistantConversationSummary,
+  type AssistantDraftResolutionMap,
+  type AssistantDraftResolutionRecord,
   type AssistantToolResult,
   type AssistantToolResultItem,
   type ResultWriteTargetRecord,
@@ -190,16 +194,45 @@ function mergeReferences(...referenceLists: AssistantReference[][]) {
 }
 
 function draftStatusLabel(status?: string) {
-  if (status === 'confirmed') {
-    return { color: 'green', text: '已确认' };
+  if (status === 'confirmed' || status === 'applied') {
+    return { color: 'green', text: '已应用' };
   }
   if (status === 'cancelled') {
     return { color: 'default', text: '已取消' };
+  }
+  if (status === 'expired') {
+    return { color: 'orange', text: '已过期' };
   }
   if (status === 'failed') {
     return { color: 'red', text: '失败' };
   }
   return { color: 'blue', text: '待确认' };
+}
+
+function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
+  if (!resolution) {
+    return undefined;
+  }
+  if (resolution.resource_type === 'scheduled_job') {
+    return {
+      label: '打开定时作业',
+      url: `/tasks/scheduled-jobs?job_id=${resolution.resource_id}`,
+    };
+  }
+  if (resolution.resource_type === 'plugin_action') {
+    return {
+      label: '打开插件动作',
+      url: `/tasks/plugins?action_id=${resolution.resource_id}`,
+    };
+  }
+  return {
+    label: '打开插件连接',
+    url: `/tasks/plugins?connection_id=${resolution.resource_id}`,
+  };
+}
+
+function draftRegeneratePrompt(draft: AssistantToolResultItem) {
+  return `重新生成「${draft.title ?? '配置草案'}」草案`;
 }
 
 function referenceTypeLabel(type: string) {
@@ -330,16 +363,20 @@ function storePluginConnectionDraft(draft: AssistantToolResultItem) {
 function AssistantActionDraftCards({
   drafts,
   draftMutationId,
+  draftResolutionById,
   draftStatusById,
   onCancelDraft,
   onConfirmDraft,
+  onRegenerateDraft,
   resultWriteTargetLabels,
 }: {
   draftMutationId?: string;
+  draftResolutionById: AssistantDraftResolutionMap;
   drafts: AssistantToolResultItem[];
   draftStatusById: Record<string, string>;
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
+  onRegenerateDraft: (draft: AssistantToolResultItem) => void;
   resultWriteTargetLabels: Map<string, string>;
 }) {
   if (!drafts.length) {
@@ -352,7 +389,11 @@ function AssistantActionDraftCards({
         const isPluginActionDraft = draft.action === 'create_plugin_action';
         const isPluginConnectionDraft = draft.action === 'create_plugin_connection';
         const draftId = draft.draft_id;
-        const currentStatus = (draftId ? draftStatusById[draftId] : undefined) ?? draft.status ?? 'pending';
+        const resolution = draftId ? draftResolutionById[draftId] : undefined;
+        const resourceLink = draftResourceLink(resolution);
+        const currentStatus = resolution
+          ? 'applied'
+          : (draftId ? draftStatusById[draftId] : undefined) ?? draft.status ?? 'pending';
         const statusLabel = draftStatusLabel(currentStatus);
         const isPending = currentStatus === 'pending';
         return (
@@ -496,7 +537,17 @@ function AssistantActionDraftCards({
                   </Button>
                 </>
               ) : null}
-              {isPluginConnectionDraft ? (
+              {resourceLink ? (
+                <Button
+                  aria-label={resourceLink.label}
+                  href={resourceLink.url}
+                  icon={<LinkOutlined />}
+                  size="small"
+                >
+                  {resourceLink.label}
+                </Button>
+              ) : null}
+              {!resourceLink && isPluginConnectionDraft ? (
                 <Button
                   href="/tasks/plugins"
                   size="small"
@@ -506,7 +557,8 @@ function AssistantActionDraftCards({
                 >
                   应用到插件连接表单
                 </Button>
-              ) : isPluginActionDraft ? (
+              ) : null}
+              {!resourceLink && isPluginActionDraft ? (
                 <Button
                   href="/tasks/plugins"
                   size="small"
@@ -516,7 +568,8 @@ function AssistantActionDraftCards({
                 >
                   应用到插件动作表单
                 </Button>
-              ) : (
+              ) : null}
+              {!resourceLink && !isPluginConnectionDraft && !isPluginActionDraft ? (
                 <Button
                   href="/tasks/scheduled-jobs"
                   size="small"
@@ -526,9 +579,17 @@ function AssistantActionDraftCards({
                 >
                   应用到定时作业表单
                 </Button>
-              )}
+              ) : null}
               <Button href={`/assistant?draft_id=${draft.draft_id}`} size="small">
                 查看草案
+              </Button>
+              <Button
+                aria-label="重新生成"
+                icon={<ReloadOutlined />}
+                size="small"
+                onClick={() => onRegenerateDraft(draft)}
+              >
+                重新生成
               </Button>
             </Space>
           </div>
@@ -589,18 +650,22 @@ function AssistantTaskCreationGuideCards({
 
 function AssistantBubble({
   draftMutationId,
+  draftResolutionById,
   draftStatusById,
   message,
   onCancelDraft,
   onConfirmDraft,
+  onRegenerateDraft,
   onUseTaskGuidePrompt,
   resultWriteTargetLabels,
 }: {
   draftMutationId?: string;
+  draftResolutionById: AssistantDraftResolutionMap;
   draftStatusById: Record<string, string>;
   message: ChatMessage;
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
+  onRegenerateDraft: (draft: AssistantToolResultItem) => void;
   onUseTaskGuidePrompt: (prompt: string) => void;
   resultWriteTargetLabels: Map<string, string>;
 }) {
@@ -630,10 +695,12 @@ function AssistantBubble({
         ) : null}
         <AssistantActionDraftCards
           draftMutationId={draftMutationId}
+          draftResolutionById={draftResolutionById}
           drafts={drafts}
           draftStatusById={draftStatusById}
           onCancelDraft={onCancelDraft}
           onConfirmDraft={onConfirmDraft}
+          onRegenerateDraft={onRegenerateDraft}
           resultWriteTargetLabels={resultWriteTargetLabels}
         />
         <AssistantTaskCreationGuideCards
@@ -650,6 +717,9 @@ export default function AssistantPage() {
   const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [draftMutationId, setDraftMutationId] = useState<string>();
+  const [draftResolutionById, setDraftResolutionById] = useState<AssistantDraftResolutionMap>(
+    () => readAssistantDraftResolutions(),
+  );
   const [draftStatusById, setDraftStatusById] = useState<Record<string, string>>({});
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
@@ -966,6 +1036,24 @@ export default function AssistantPage() {
         title,
       });
     });
+    setDraftResolutionById((items) => {
+      const resolution: AssistantDraftResolutionRecord = {
+        resource_id: resourceId,
+        resource_type: resourceType,
+      };
+      if (title) {
+        resolution.title = title;
+      }
+      const next = { ...items };
+      draftIds.forEach((draftId) => {
+        next[draftId] = resolution;
+      });
+      return next;
+    });
+  };
+
+  const regenerateDraft = (draft: AssistantToolResultItem) => {
+    setInputValue(draftRegeneratePrompt(draft));
   };
 
   const confirmDraft = async (draft: AssistantToolResultItem) => {
@@ -983,7 +1071,7 @@ export default function AssistantPage() {
         result.run.result_type,
         result.draft.title,
       );
-      toast.success('草案已确认');
+      toast.success('草案已应用');
     } catch (error) {
       toast.error(formatMutationError(error));
     } finally {
@@ -1085,11 +1173,13 @@ export default function AssistantPage() {
             {messages.map((item) => (
               <AssistantBubble
                 draftMutationId={draftMutationId}
+                draftResolutionById={draftResolutionById}
                 draftStatusById={draftStatusById}
                 key={item.id}
                 message={item}
                 onCancelDraft={cancelDraft}
                 onConfirmDraft={confirmDraft}
+                onRegenerateDraft={regenerateDraft}
                 onUseTaskGuidePrompt={setInputValue}
                 resultWriteTargetLabels={resultWriteTargetLabels}
               />

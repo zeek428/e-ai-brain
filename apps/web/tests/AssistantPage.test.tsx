@@ -896,7 +896,13 @@ describe('AssistantPage', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /确认创建/ }));
 
-    expect(await screen.findByText('已确认')).toBeInTheDocument();
+    expect(await screen.findByText('已应用')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '打开定时作业' })).toHaveAttribute(
+      'href',
+      '/tasks/scheduled-jobs?job_id=scheduled_job_001',
+    );
+    fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('重新生成「创建仪表盘刷新定时任务」草案');
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
       '/api/assistant/action-drafts/assistant_action_draft_001/confirm',
       'POST',
