@@ -395,6 +395,22 @@ body {
   height: 40px;
 }
 
+.assistant-role-task-panel,
+.assistant-role-task-group,
+.assistant-role-task-list {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-role-task-panel {
+  padding-top: 4px;
+}
+
+.assistant-role-task-list .ant-btn {
+  justify-content: flex-start;
+  height: 32px;
+}
+
 .assistant-history-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);

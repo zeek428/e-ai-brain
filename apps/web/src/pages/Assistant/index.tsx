@@ -28,6 +28,7 @@ import {
   fetchAssistantConversations,
   fetchAssistantReferenceCandidates,
   fetchResultWriteTargets,
+  getStoredCurrentUser,
   readAssistantDraftResolutions,
   rememberAssistantDraftResolution,
   type AssistantActionDraftPreview,
@@ -82,6 +83,115 @@ const starterPrompts = [
     icon: <ClockCircleOutlined />,
     label: '模型网关',
     prompt: '模型网关和 GitHub PR Review 链路现在是否可用？',
+  },
+];
+
+type AssistantRoleQuickTask = {
+  key: string;
+  label: string;
+  prompt: string;
+};
+
+type AssistantRoleQuickTaskGroup = {
+  key: string;
+  label: string;
+  roles: string[];
+  tasks: AssistantRoleQuickTask[];
+};
+
+const assistantRoleQuickTaskGroups: AssistantRoleQuickTaskGroup[] = [
+  {
+    key: 'product',
+    label: '产品快捷任务',
+    roles: ['product_owner'],
+    tasks: [
+      {
+        key: 'requirement_progress',
+        label: '需求进展',
+        prompt: '请按产品视角总结当前需求进展、阻塞和下一步推进建议。',
+      },
+      {
+        key: 'feedback_insights',
+        label: '反馈洞察',
+        prompt: '请汇总最近用户反馈洞察，指出高频问题、影响范围和建议转需求项。',
+      },
+      {
+        key: 'version_risk',
+        label: '版本风险',
+        prompt: '请从需求、缺陷、发布和用户反馈角度评估当前版本风险。',
+      },
+    ],
+  },
+  {
+    key: 'engineering',
+    label: '研发快捷任务',
+    roles: ['rd_owner'],
+    tasks: [
+      {
+        key: 'task_blockers',
+        label: '任务阻塞',
+        prompt: '请列出当前研发任务阻塞、待确认项和建议处理顺序。',
+      },
+      {
+        key: 'code_inspection',
+        label: '代码巡检',
+        prompt: '请帮我生成或检查代码巡检任务草案，并说明数据连接、AI处理和结果动作依赖。',
+      },
+      {
+        key: 'defect_fix',
+        label: '缺陷修复',
+        prompt: '请按严重度梳理待修复缺陷，给出修复优先级和关联需求/任务。',
+      },
+    ],
+  },
+  {
+    key: 'testing',
+    label: '测试快捷任务',
+    roles: ['reviewer'],
+    tasks: [
+      {
+        key: 'test_defects',
+        label: '测试缺陷',
+        prompt: '请汇总当前测试缺陷、复现状态、阻塞发布的问题和建议责任归属。',
+      },
+      {
+        key: 'automated_tests',
+        label: '自动化测试',
+        prompt: '请检查自动化测试相关任务、失败原因和可生成的测试草案。',
+      },
+      {
+        key: 'release_risk',
+        label: '发布风险',
+        prompt: '请从测试结果、未关闭缺陷和发布记录评估当前发布风险。',
+      },
+    ],
+  },
+  {
+    key: 'admin',
+    label: '管理员快捷任务',
+    roles: ['admin'],
+    tasks: [
+      {
+        key: 'plugin_connections',
+        label: '插件连接',
+        prompt: '请检查插件连接配置状态，指出失败连接和可生成的连接草案。',
+      },
+      {
+        key: 'ai_capabilities',
+        label: 'AI能力',
+        prompt: '请检查 AI 模型、AI角色和 Skill 配置是否完整，并指出缺口。',
+      },
+      {
+        key: 'scheduled_jobs',
+        label: '定时作业',
+        prompt: '请汇总定时作业配置、运行健康和需要补齐的依赖。',
+      },
+      {
+        key: 'run_failures',
+        label: '运行失败',
+        prompt: '请诊断最近失败的定时作业运行，按数据连接、AI处理、结果动作给出原因和修复建议。',
+      },
+    ],
   },
 ];
 
@@ -202,6 +312,13 @@ function mergeReferences(...referenceLists: AssistantReference[][]) {
     });
   });
   return references;
+}
+
+function selectedAssistantRoleQuickTaskGroups() {
+  const roleSet = new Set(getStoredCurrentUser()?.roles ?? []);
+  return assistantRoleQuickTaskGroups.filter((group) => (
+    group.roles.some((role) => roleSet.has(role))
+  ));
 }
 
 function assistantQueryReferenceParams() {
@@ -844,6 +961,7 @@ export default function AssistantPage() {
     () => groupedReferenceCandidates(referenceCandidates),
     [referenceCandidates],
   );
+  const roleQuickTaskGroups = useMemo(() => selectedAssistantRoleQuickTaskGroups(), []);
   const selectedKnowledgeChunkCount = useMemo(
     () => selectedReferences.reduce((total, reference) => total + Number(reference.chunk_count ?? 0), 0),
     [selectedReferences],
@@ -1264,6 +1382,28 @@ export default function AssistantPage() {
               </Button>
             ))}
           </div>
+          {roleQuickTaskGroups.length ? (
+            <div className="assistant-role-task-panel">
+              <Text strong>角色快捷任务</Text>
+              {roleQuickTaskGroups.map((group) => (
+                <div className="assistant-role-task-group" key={group.key}>
+                  <Text type="secondary">{group.label}</Text>
+                  <div className="assistant-role-task-list">
+                    {group.tasks.map((task) => (
+                      <Button
+                        block
+                        key={task.key}
+                        size="small"
+                        onClick={() => setInputValue(task.prompt)}
+                      >
+                        {task.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className="assistant-history-panel">
             <div className="assistant-history-title">
               <Text strong>最近对话</Text>
