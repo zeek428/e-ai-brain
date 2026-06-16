@@ -673,6 +673,19 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "title": "已取消草案",
             "updated_at": now,
         },
+        "assistant_action_draft_expired": {
+            "action": "create_scheduled_job",
+            "created_at": now,
+            "created_by": "user_admin",
+            "expires_at": "2026-06-15T10:00:00+00:00",
+            "id": "assistant_action_draft_expired",
+            "metadata_json": {},
+            "payload": {"name": "已过期草案"},
+            "risk_level": "medium",
+            "status": "pending",
+            "title": "已过期草案",
+            "updated_at": now,
+        },
         "assistant_action_draft_other_user": {
             "action": "create_scheduled_job",
             "created_at": now,
@@ -816,15 +829,16 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
         "action_run_succeeded_count": 1,
         "action_run_success_rate": 1.0,
         "action_run_total": 1,
-        "draft_adoption_rate": 0.333,
+        "draft_adoption_rate": 0.25,
         "draft_cancelled_count": 1,
         "draft_confirmed_count": 1,
+        "draft_expired_count": 1,
         "draft_failed_count": 0,
         "draft_pending_count": 1,
-        "draft_resolution_rate": 0.667,
-        "draft_total": 3,
+        "draft_resolution_rate": 0.75,
+        "draft_total": 4,
         "draft_user_modified_count": 1,
-        "draft_user_modified_rate": 0.333,
+        "draft_user_modified_rate": 0.25,
         "failed_run_repair_rate": 1.0,
         "failed_run_repaired_count": 1,
         "failed_run_total": 1,
@@ -847,6 +861,7 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "action": "create_plugin_action",
             "cancelled_count": 1,
             "confirmed_count": 0,
+            "expired_count": 0,
             "failed_count": 0,
             "pending_count": 0,
             "total": 1,
@@ -855,9 +870,10 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "action": "create_scheduled_job",
             "cancelled_count": 0,
             "confirmed_count": 1,
+            "expired_count": 1,
             "failed_count": 0,
             "pending_count": 1,
-            "total": 2,
+            "total": 3,
         },
     ]
 
@@ -946,6 +962,46 @@ def test_ai_assistant_action_draft_cancel_prevents_confirmation():
     )
     assert confirm_response.status_code == 409
     assert confirm_response.json()["detail"]["code"] == "DRAFT_NOT_PENDING"
+
+
+def test_ai_assistant_action_draft_expires_before_confirmation():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "metadata_json": {"expires_at": "2020-01-01T00:00:00+00:00"},
+            "payload": {
+                "enabled": False,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "已过期定时任务草案",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "title": "已过期草案",
+        },
+        headers=headers,
+    )
+
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    assert draft["status"] == "expired"
+    assert draft["expires_at"] == "2020-01-01T00:00:00+00:00"
+
+    get_response = client.get(f"/api/assistant/action-drafts/{draft['id']}", headers=headers)
+    assert get_response.status_code == 200
+    assert get_response.json()["data"]["status"] == "expired"
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/confirm",
+        headers=headers,
+    )
+    assert confirm_response.status_code == 409
+    assert confirm_response.json()["detail"]["code"] == "DRAFT_EXPIRED"
+    assert app.state.store.scheduled_jobs == {}
 
 
 def test_ai_assistant_chat_persists_action_draft_tool_results(monkeypatch):

@@ -48,6 +48,7 @@ class AssistantReferenceResolveRequest(BaseModel):
 class AssistantActionDraftRequest(BaseModel):
     action: str
     client_draft_id: str | None = None
+    expires_at: str | None = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
     payload: dict[str, Any] = Field(default_factory=dict)
     risk_level: str = "medium"

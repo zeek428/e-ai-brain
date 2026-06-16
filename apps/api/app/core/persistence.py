@@ -177,6 +177,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "057_assistant_analysis_drafts.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "058_assistant_action_draft_expiry.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

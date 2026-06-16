@@ -20,7 +20,13 @@ from app.services.scheduled_jobs import (
     effective_scheduled_job_type,
 )
 
-ASSISTANT_ACTION_DRAFT_STATUSES = {"cancelled", "confirmed", "failed", "pending"}
+ASSISTANT_ACTION_DRAFT_STATUSES = {
+    "cancelled",
+    "confirmed",
+    "expired",
+    "failed",
+    "pending",
+}
 ASSISTANT_ACTION_RUN_STATUSES = {"failed", "succeeded"}
 ASSISTANT_DRAFT_ACTIONS = {
     "create_analysis_draft",
@@ -84,6 +90,8 @@ def create_assistant_action_draft_response(
     ensure_action_collections(current_store)
     action = ensure_draft_action(payload.action)
     now = now_iso()
+    metadata_json = deepcopy(getattr(payload, "metadata_json", {}) or {})
+    expires_at = _draft_expires_at(payload, metadata_json=metadata_json)
     draft = {
         "action": action,
         "cancel_reason": None,
@@ -94,8 +102,9 @@ def create_assistant_action_draft_response(
         "confirmed_by": None,
         "created_at": now,
         "created_by": user["id"],
+        "expires_at": expires_at,
         "id": current_store.new_id("assistant_action_draft"),
-        "metadata_json": deepcopy(getattr(payload, "metadata_json", {}) or {}),
+        "metadata_json": metadata_json,
         "payload": deepcopy(payload.payload),
         "result_run_id": None,
         "risk_level": getattr(payload, "risk_level", None) or "medium",
@@ -117,6 +126,7 @@ def create_assistant_action_draft_response(
         },
     )
     save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
+    draft = refresh_assistant_action_draft_expiry(current_store, draft)
     return public_assistant_action_draft(draft, current_store=current_store)
 
 
@@ -128,6 +138,7 @@ def get_assistant_action_draft_response(
 ) -> dict[str, Any]:
     draft = get_assistant_action_draft(current_store, draft_id=draft_id)
     ensure_draft_access(draft, user=user)
+    draft = refresh_assistant_action_draft_expiry(current_store, draft)
     return public_assistant_action_draft(draft, current_store=current_store)
 
 
@@ -140,6 +151,9 @@ def confirm_assistant_action_draft_response(
     ensure_action_collections(current_store)
     draft = get_assistant_action_draft(current_store, draft_id=draft_id)
     ensure_draft_access(draft, user=user)
+    draft = refresh_assistant_action_draft_expiry(current_store, draft)
+    if draft.get("status") == "expired":
+        raise api_error(409, "DRAFT_EXPIRED", "Assistant action draft has expired")
     if draft.get("status") != "pending":
         raise api_error(409, "DRAFT_NOT_PENDING", "Assistant action draft is not pending")
     preview = assistant_action_draft_preview(current_store, draft)
@@ -213,6 +227,9 @@ def cancel_assistant_action_draft_response(
     ensure_action_collections(current_store)
     draft = get_assistant_action_draft(current_store, draft_id=draft_id)
     ensure_draft_access(draft, user=user)
+    draft = refresh_assistant_action_draft_expiry(current_store, draft)
+    if draft.get("status") == "expired":
+        raise api_error(409, "DRAFT_EXPIRED", "Assistant action draft has expired")
     if draft.get("status") != "pending":
         raise api_error(409, "DRAFT_NOT_PENDING", "Assistant action draft is not pending")
     now = now_iso()
@@ -346,6 +363,35 @@ def get_assistant_action_draft(
     return dict(draft)
 
 
+def refresh_assistant_action_draft_expiry(
+    current_store: Any,
+    draft: dict[str, Any],
+) -> dict[str, Any]:
+    if draft.get("status") != "pending" or not _draft_is_expired(draft):
+        return draft
+    ensure_action_collections(current_store)
+    now = now_iso()
+    draft = {
+        **draft,
+        "status": "expired",
+        "updated_at": now,
+    }
+    current_store.assistant_action_drafts[draft["id"]] = draft
+    audit_event = current_store.audit(
+        event_type="assistant_action_draft.expired",
+        actor_id="system",
+        subject_type="assistant_action_draft",
+        subject_id=draft["id"],
+        payload={
+            "action": draft.get("action"),
+            "expires_at": _draft_expires_at_value(draft),
+            "title": draft.get("title"),
+        },
+    )
+    save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
+    return draft
+
+
 def save_assistant_action_records(
     current_store: Any,
     *,
@@ -395,6 +441,44 @@ def with_defaults(defaults: dict[str, Any], payload: dict[str, Any]) -> dict[str
     merged = deepcopy(defaults)
     merged.update(deepcopy(payload))
     return merged
+
+
+def _draft_expires_at(payload: Any, *, metadata_json: dict[str, Any]) -> str | None:
+    value = getattr(payload, "expires_at", None) or metadata_json.get("expires_at")
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _draft_expires_at_value(draft: dict[str, Any]) -> str | None:
+    metadata_json = (
+        draft.get("metadata_json") if isinstance(draft.get("metadata_json"), dict) else {}
+    )
+    value = draft.get("expires_at") or metadata_json.get("expires_at")
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _draft_is_expired(draft: dict[str, Any]) -> bool:
+    expires_at = _parse_draft_datetime(_draft_expires_at_value(draft))
+    if expires_at is None:
+        return False
+    return expires_at <= datetime.now(UTC)
+
+
+def _parse_draft_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def assistant_action_draft_preview(
@@ -721,6 +805,7 @@ def public_assistant_action_draft(
     *,
     current_store: Any,
 ) -> dict[str, Any]:
+    draft = refresh_assistant_action_draft_expiry(current_store, draft)
     public = {
         "action": draft["action"],
         "cancel_reason": draft.get("cancel_reason"),
@@ -731,6 +816,7 @@ def public_assistant_action_draft(
         "confirmed_by": draft.get("confirmed_by"),
         "created_at": draft["created_at"],
         "created_by": draft["created_by"],
+        "expires_at": _draft_expires_at_value(draft),
         "id": draft["id"],
         "metadata_json": deepcopy(draft.get("metadata_json") or {}),
         "payload": deepcopy(draft.get("payload") or {}),

@@ -141,6 +141,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "050_code_inspection_remediation_tasks.sql" in applied_migrations
     assert "053_menu_management.sql" in applied_migrations
     assert "054_assistant_action_drafts.sql" in applied_migrations
+    assert "058_assistant_action_draft_expiry.sql" in applied_migrations
 
 
 def test_postgres_brain_app_read_models_delegate_to_domain_repository(monkeypatch):

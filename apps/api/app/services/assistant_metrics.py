@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Any
 
-ASSISTANT_DRAFT_STATUSES = ("pending", "confirmed", "cancelled", "failed")
+ASSISTANT_DRAFT_STATUSES = ("pending", "confirmed", "cancelled", "expired", "failed")
 KNOWLEDGE_REFERENCE_TYPES = {"knowledge_chunk", "knowledge_document", "knowledge_space"}
 
 
@@ -57,11 +58,13 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
             "draft_adoption_rate": _rate(draft_status_counts["confirmed"], draft_total),
             "draft_cancelled_count": draft_status_counts["cancelled"],
             "draft_confirmed_count": draft_status_counts["confirmed"],
+            "draft_expired_count": draft_status_counts["expired"],
             "draft_failed_count": draft_status_counts["failed"],
             "draft_pending_count": draft_status_counts["pending"],
             "draft_resolution_rate": _rate(
                 draft_status_counts["confirmed"]
                 + draft_status_counts["cancelled"]
+                + draft_status_counts["expired"]
                 + draft_status_counts["failed"],
                 draft_total,
             ),
@@ -164,7 +167,7 @@ def _record_user_id(record: dict[str, Any]) -> str | None:
 def _status_counts(records: list[dict[str, Any]], statuses: tuple[str, ...]) -> dict[str, int]:
     counts = {status: 0 for status in statuses}
     for record in records:
-        status = str(record.get("status") or "").strip()
+        status = _effective_draft_status(record)
         if status in counts:
             counts[status] += 1
     return counts
@@ -175,6 +178,7 @@ def _drafts_by_action(drafts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         lambda: {
             "cancelled_count": 0,
             "confirmed_count": 0,
+            "expired_count": 0,
             "failed_count": 0,
             "pending_count": 0,
             "total": 0,
@@ -184,7 +188,7 @@ def _drafts_by_action(drafts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         action = str(draft.get("action") or "unknown")
         row = action_counts[action]
         row["total"] = int(row["total"]) + 1
-        status = str(draft.get("status") or "").strip()
+        status = _effective_draft_status(draft)
         status_key = f"{status}_count"
         if status_key in row:
             row[status_key] = int(row[status_key]) + 1
@@ -289,6 +293,27 @@ def _message_references(message: dict[str, Any]) -> list[dict[str, Any]]:
 def _draft_was_user_modified(draft: dict[str, Any]) -> bool:
     metadata = draft.get("metadata_json") or {}
     return metadata.get("user_modified") is True or bool(metadata.get("modified_fields"))
+
+
+def _effective_draft_status(draft: dict[str, Any]) -> str:
+    status = str(draft.get("status") or "").strip()
+    if status == "pending" and _draft_expires_at(draft) <= datetime.now(UTC):
+        return "expired"
+    return status
+
+
+def _draft_expires_at(draft: dict[str, Any]) -> datetime:
+    metadata = draft.get("metadata_json") if isinstance(draft.get("metadata_json"), dict) else {}
+    value = draft.get("expires_at") or metadata.get("expires_at")
+    if not value:
+        return datetime.max.replace(tzinfo=UTC)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.max.replace(tzinfo=UTC)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _rate(numerator: int, denominator: int) -> float:

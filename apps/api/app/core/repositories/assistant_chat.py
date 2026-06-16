@@ -93,7 +93,7 @@ class AssistantChatReadRepository:
                     SELECT id, user_id, source_message_id, client_draft_id, title, action,
                            risk_level, status, payload, metadata_json, result_run_id,
                            cancel_reason, cancelled_by, cancelled_at, confirmed_by,
-                           confirmed_at, created_at, updated_at
+                           confirmed_at, created_at, updated_at, expires_at
                     FROM assistant_action_drafts
                     WHERE user_id = %s
                     ORDER BY updated_at DESC, id
@@ -110,7 +110,7 @@ class AssistantChatReadRepository:
                     SELECT id, user_id, source_message_id, client_draft_id, title, action,
                            risk_level, status, payload, metadata_json, result_run_id,
                            cancel_reason, cancelled_by, cancelled_at, confirmed_by,
-                           confirmed_at, created_at, updated_at
+                           confirmed_at, created_at, updated_at, expires_at
                     FROM assistant_action_drafts
                     WHERE id = %s
                     """,
@@ -190,7 +190,7 @@ class AssistantChatReadRepository:
             SELECT id, user_id, source_message_id, client_draft_id, title, action,
                    risk_level, status, payload, metadata_json, result_run_id,
                    cancel_reason, cancelled_by, cancelled_at, confirmed_by,
-                   confirmed_at, created_at, updated_at
+                   confirmed_at, created_at, updated_at, expires_at
             FROM assistant_action_drafts
             ORDER BY updated_at, id
             """
@@ -351,13 +351,13 @@ class AssistantChatReadRepository:
                   id, user_id, source_message_id, client_draft_id, title, action,
                   risk_level, status, payload, metadata_json, result_run_id,
                   cancel_reason, cancelled_by, cancelled_at, confirmed_by,
-                  confirmed_at, created_at, updated_at
+                  confirmed_at, expires_at, created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
                   %s, %s, %s::jsonb, %s::jsonb, %s,
                   %s, %s, %s::timestamptz, %s,
-                  %s::timestamptz, COALESCE(%s::timestamptz, now()),
+                  %s::timestamptz, %s::timestamptz, COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -376,6 +376,7 @@ class AssistantChatReadRepository:
                   cancelled_at = EXCLUDED.cancelled_at,
                   confirmed_by = EXCLUDED.confirmed_by,
                   confirmed_at = EXCLUDED.confirmed_at,
+                  expires_at = EXCLUDED.expires_at,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -395,6 +396,7 @@ class AssistantChatReadRepository:
                     draft.get("cancelled_at"),
                     draft.get("confirmed_by"),
                     draft.get("confirmed_at"),
+                    draft.get("expires_at"),
                     created_at,
                     updated_at,
                 ),
@@ -463,6 +465,7 @@ class AssistantChatReadRepository:
             "confirmed_by": row[14],
             "created_at": row[16].isoformat() if row[16] else None,
             "created_by": row[1],
+            "expires_at": row[18].isoformat() if len(row) > 18 and row[18] else None,
             "id": row[0],
             "metadata_json": dict(row[9] or {}),
             "payload": dict(row[8] or {}),
@@ -482,6 +485,7 @@ class AssistantChatReadRepository:
             "confirmed_at",
             "confirmed_by",
             "created_at",
+            "expires_at",
             "result_run_id",
             "source_message_id",
             "updated_at",

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.324 |
+| 功能版本 | v1.1.325 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.325 | 2026-06-17 | AI 助手动作草案支持 `expires_at` 与 `expired` 状态，确认过期草案返回 `DRAFT_EXPIRED`，指标返回过期草案数量 | Codex |
 | v1.1.324 | 2026-06-17 | AI 助手聊天支持线上日志异常分析模板生成 `online_log_anomaly_job_draft`，返回可确认的 AI 定时作业服务端草案 | Codex |
 | v1.1.323 | 2026-06-17 | AI 助手 `@定时作业 执行一次` 对 AI 类长任务改为先返回运行中记录，后台继续完成用户反馈洞察等执行链路 | Codex |
 | v1.1.322 | 2026-06-17 | AI 助手动作草案支持 `create_analysis_draft`，发布风险分析和知识库巡检可确认生成 `assistant_analysis` 追踪结果 | Codex |
@@ -1477,7 +1478,7 @@ POST /api/assistant/references/resolve
 }
 ```
 
-助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；状态为 `pending`、`confirmed`、`cancelled` 或 `failed`。确认前不得写入 `scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。
+助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认或取消前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。
 
 当聊天消息通过结构化 `scheduled_job` 引用或显式 `@定时作业名称` 并包含“执行一次/立即执行/run once”等意图时，助手确定性调用定时作业手动运行链路并返回 `tool=assistant.scheduled_job_run`。对于 `user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate` 这类 AI 处理链路较长的作业，聊天接口不得等待完整外部取数、模型处理和结果写入结束；后端在运行记录进入 `running` 或 `queued` 后立即返回运行 ID、状态、详情链接和引用，后台继续完成作业，用户可围绕该 `scheduled_job_run` 继续追问或在任务中心查看最终结果。
 
@@ -1517,7 +1518,8 @@ POST /api/assistant/action-drafts/{draft_id}/cancel
   },
   "metadata_json": {
     "references": [{"type": "knowledge_document", "id": "knowledge_doc_001"}]
-  }
+  },
+  "expires_at": "2026-06-15T18:00:00+08:00"
 }
 ```
 
@@ -1531,6 +1533,7 @@ POST /api/assistant/action-drafts/{draft_id}/cancel
   "title": "每周用户反馈洞察",
   "risk_level": "high",
   "status": "pending",
+  "expires_at": "2026-06-15T18:00:00+08:00",
   "payload": {
     "name": "每周用户反馈洞察",
     "job_type": "user_feedback_insight_extract"
@@ -1544,7 +1547,7 @@ POST /api/assistant/action-drafts/{draft_id}/cancel
 }
 ```
 
-`confirm` 只接受仍处于 `pending` 的草案。确认时必须重新走对应领域 service 或助手运行记录执行器：`create_scheduled_job` 调用 scheduled_jobs service 并把 `config_json.assistant_draft` 写入作业配置，`create_plugin_connection` 调用插件连接 service，`create_plugin_action` 调用动作 service，`create_analysis_draft` 不写业务配置表，只生成 `assistant_action_runs.result_type=assistant_analysis` 的可追踪结果。确认成功返回 `{"draft": ..., "run": ...}`，`run.result_type/result_id/result` 指向创建出的领域资源或助手分析结果；确认失败不得绕过对应 service/执行器。取消接口只把草案置为 `cancelled` 并记录原因，不产生领域写入。草案创建、确认和取消分别写入 `assistant_action_draft.created`、`assistant_action_draft.confirmed` 和 `assistant_action_draft.cancelled` 审计事件。
+`confirm` 只接受仍处于 `pending` 的草案。若草案 `expires_at <= now()`，服务端先将其置为 `expired` 并返回 `409 DRAFT_EXPIRED`，不得调用领域 service、不得创建 `assistant_action_runs` 或业务资源。确认时必须重新走对应领域 service 或助手运行记录执行器：`create_scheduled_job` 调用 scheduled_jobs service 并把 `config_json.assistant_draft` 写入作业配置，`create_plugin_connection` 调用插件连接 service，`create_plugin_action` 调用动作 service，`create_analysis_draft` 不写业务配置表，只生成 `assistant_action_runs.result_type=assistant_analysis` 的可追踪结果。确认成功返回 `{"draft": ..., "run": ...}`，`run.result_type/result_id/result` 指向创建出的领域资源或助手分析结果；确认失败不得绕过对应 service/执行器。取消接口只把 `pending` 草案置为 `cancelled` 并记录原因，不产生领域写入；取消过期草案同样返回 `DRAFT_EXPIRED`。草案创建、确认、取消和过期分别写入 `assistant_action_draft.created`、`assistant_action_draft.confirmed`、`assistant_action_draft.cancelled` 和 `assistant_action_draft.expired` 审计事件。
 
 AI 助手草案模板市场：
 
@@ -1598,6 +1601,7 @@ GET /api/assistant/metrics
         "action": "create_scheduled_job",
         "cancelled_count": 0,
         "confirmed_count": 3,
+        "expired_count": 0,
         "failed_count": 0,
         "pending_count": 1,
         "total": 4
@@ -1611,6 +1615,7 @@ GET /api/assistant/metrics
       "draft_adoption_rate": 0.6,
       "draft_cancelled_count": 1,
       "draft_confirmed_count": 3,
+      "draft_expired_count": 0,
       "draft_failed_count": 0,
       "draft_pending_count": 1,
       "draft_resolution_rate": 0.8,
