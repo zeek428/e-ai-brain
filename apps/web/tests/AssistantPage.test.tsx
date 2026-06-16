@@ -1266,6 +1266,84 @@ describe('AssistantPage', () => {
     expect(screen.getByText('assistant_draft_github_plugin_connection、assistant_draft_github_plugin_action')).toBeInTheDocument();
   });
 
+  it('renders a task creation guide and lets users choose a draft-first path', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_task_guide',
+              latency_ms: 8,
+              message: {
+                content: '你想新增哪类任务？我会先生成可确认的向导草案。',
+                id: 'assistant_message_task_guide',
+                references: [],
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'task_creation_guide',
+                    items: [
+                      {
+                        dependencies: ['GitHub/GitLab 连接', '代码巡检动作'],
+                        description: '按仓库、分支、AI处理和结果动作生成定时作业草案。',
+                        draft_action: 'create_scheduled_job',
+                        prompt: '帮我配置代码巡检定时作业草案',
+                        title: '代码巡检',
+                        type: 'code_inspection',
+                        wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
+                      },
+                      {
+                        dependencies: ['用户反馈数据连接', '反馈洞察动作'],
+                        description: '抽取每周用户反馈并写入洞察结果。',
+                        draft_action: 'create_scheduled_job',
+                        prompt: '帮我配置每周用户反馈洞察定时作业草案',
+                        title: '反馈洞察',
+                        type: 'feedback_insight',
+                        wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
+                      },
+                    ],
+                    summary: {
+                      draft_first: true,
+                      option_count: 2,
+                      wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
+                    },
+                    tool: 'assistant.task_creation_guide',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: ['新增研发任务', '配置代码巡检定时作业'],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, { target: { value: '我要新增任务' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('任务类型向导')).toBeInTheDocument();
+    expect(screen.getByText('数据来源 -> AI处理 -> 结果动作 -> 调度策略 -> 确认执行')).toBeInTheDocument();
+    expect(screen.getByText('代码巡检')).toBeInTheDocument();
+    expect(screen.getByText('依赖：GitHub/GitLab 连接、代码巡检动作')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '选择代码巡检' }));
+    expect(assistantInput).toHaveValue('帮我配置代码巡检定时作业草案');
+  });
+
   it('posts AI assistant chat messages to the assistant API', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(input).toBe('/api/assistant/chat');

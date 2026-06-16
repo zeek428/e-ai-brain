@@ -678,6 +678,46 @@ body {
   text-overflow: ellipsis;
 }
 
+.assistant-task-guide {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  white-space: normal;
+}
+
+.assistant-task-guide-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-task-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.assistant-task-guide-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #dbe7ff;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.assistant-task-guide-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.assistant-task-guide-card .ant-btn {
+  justify-self: start;
+}
+
 .assistant-bubble-user .assistant-bubble-content .ant-typography {
   color: #ffffff;
 }
@@ -878,6 +918,14 @@ body {
 
   .assistant-chat-header {
     flex-direction: column;
+  }
+
+  .assistant-task-guide-header {
+    flex-direction: column;
+  }
+
+  .assistant-task-guide-grid {
+    grid-template-columns: 1fr;
   }
 
   .assistant-bubble {

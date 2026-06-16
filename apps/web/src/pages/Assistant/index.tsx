@@ -95,6 +95,21 @@ function actionDraftItems(toolResults?: AssistantToolResult[]) {
     );
 }
 
+function taskCreationGuideItems(toolResults?: AssistantToolResult[]) {
+  return (toolResults ?? [])
+    .filter((toolResult) => toolResult.tool === 'assistant.task_creation_guide')
+    .flatMap((toolResult) => toolResult.items ?? [])
+    .filter((item) => item.title && item.prompt);
+}
+
+function itemText(item: AssistantToolResultItem, field: string) {
+  const value = item[field];
+  if (Array.isArray(value)) {
+    return value.length ? value.map((entry) => String(entry)).join('、') : '-';
+  }
+  return value === undefined || value === null || value === '' ? '-' : String(value);
+}
+
 function draftPayloadText(payload: Record<string, unknown> | undefined, field: string) {
   const value = field.split('.').reduce<unknown>((current, key) => {
     if (!current || typeof current !== 'object' || Array.isArray(current)) {
@@ -487,12 +502,62 @@ function AssistantActionDraftCards({
   );
 }
 
+function AssistantTaskCreationGuideCards({
+  items,
+  onUsePrompt,
+}: {
+  items: AssistantToolResultItem[];
+  onUsePrompt: (prompt: string) => void;
+}) {
+  if (!items.length) {
+    return null;
+  }
+  const defaultSteps = ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'];
+  return (
+    <div className="assistant-task-guide">
+      <div className="assistant-task-guide-header">
+        <Space size={8} wrap>
+          <ProjectOutlined />
+          <Text strong>任务类型向导</Text>
+          <Tag color="blue">草案优先</Tag>
+        </Space>
+        <Text type="secondary">{defaultSteps.join(' -> ')}</Text>
+      </div>
+      <div className="assistant-task-guide-grid">
+        {items.map((item) => {
+          const title = itemText(item, 'title');
+          const prompt = itemText(item, 'prompt');
+          const dependencies = itemText(item, 'dependencies');
+          const wizardSteps = itemText(item, 'wizard_steps');
+          return (
+            <div className="assistant-task-guide-card" key={itemText(item, 'type')}>
+              <div className="assistant-task-guide-card-title">
+                <Text strong>{title}</Text>
+                <Tag color={item.draft_action === 'create_scheduled_job' ? 'green' : 'default'}>
+                  {itemText(item, 'draft_action')}
+                </Tag>
+              </div>
+              <Text type="secondary">{itemText(item, 'description')}</Text>
+              {dependencies !== '-' ? <Text>依赖：{dependencies}</Text> : null}
+              <Text type="secondary">流程：{wizardSteps}</Text>
+              <Button size="small" onClick={() => onUsePrompt(prompt)}>
+                选择{title}
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AssistantBubble({
   draftMutationId,
   draftStatusById,
   message,
   onCancelDraft,
   onConfirmDraft,
+  onUseTaskGuidePrompt,
   resultWriteTargetLabels,
 }: {
   draftMutationId?: string;
@@ -500,9 +565,11 @@ function AssistantBubble({
   message: ChatMessage;
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
+  onUseTaskGuidePrompt: (prompt: string) => void;
   resultWriteTargetLabels: Map<string, string>;
 }) {
   const drafts = actionDraftItems(message.toolResults);
+  const taskGuideItems = taskCreationGuideItems(message.toolResults);
   return (
     <div className={`assistant-bubble assistant-bubble-${message.role}`}>
       <div className="assistant-bubble-avatar">
@@ -532,6 +599,10 @@ function AssistantBubble({
           onCancelDraft={onCancelDraft}
           onConfirmDraft={onConfirmDraft}
           resultWriteTargetLabels={resultWriteTargetLabels}
+        />
+        <AssistantTaskCreationGuideCards
+          items={taskGuideItems}
+          onUsePrompt={onUseTaskGuidePrompt}
         />
       </div>
     </div>
@@ -960,6 +1031,7 @@ export default function AssistantPage() {
                 message={item}
                 onCancelDraft={cancelDraft}
                 onConfirmDraft={confirmDraft}
+                onUseTaskGuidePrompt={setInputValue}
                 resultWriteTargetLabels={resultWriteTargetLabels}
               />
             ))}

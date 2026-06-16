@@ -667,6 +667,47 @@ def test_ai_assistant_chat_persists_action_draft_tool_results(monkeypatch):
     assert draft["action"] == "create_scheduled_job"
 
 
+def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("generic task creation guide should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "我要新增任务"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    message = payload["message"]
+    assert payload["model"] == "assistant-deterministic"
+    assert "你想新增哪类任务" in message["content"]
+    guide = message["tool_results"][0]
+    assert guide["tool"] == "assistant.task_creation_guide"
+    assert guide["intent"] == "task_creation_guide"
+    assert guide["summary"] == {
+        "draft_first": True,
+        "option_count": 5,
+        "wizard_steps": ["数据来源", "AI处理", "结果动作", "调度策略", "确认执行"],
+    }
+    assert [item["type"] for item in guide["items"]] == [
+        "rd_task",
+        "scheduled_job",
+        "plugin_action",
+        "code_inspection",
+        "feedback_insight",
+    ]
+    assert guide["items"][3]["draft_action"] == "create_scheduled_job"
+    assert guide["items"][3]["dependencies"] == ["GitHub/GitLab 连接", "代码巡检动作"]
+    assert "新增研发任务" in payload["suggestions"]
+
+
 def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(
     monkeypatch,
 ):

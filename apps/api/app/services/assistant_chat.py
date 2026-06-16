@@ -73,6 +73,54 @@ SCHEDULED_JOB_RUN_ONCE_KEYWORDS = (
     "execute once",
 )
 SCHEDULED_JOB_RUN_NEGATION_KEYWORDS = ("不要执行", "别执行", "不执行", "不要运行", "别运行")
+TASK_CREATION_WIZARD_STEPS = ["数据来源", "AI处理", "结果动作", "调度策略", "确认执行"]
+TASK_CREATION_GUIDE_ITEMS = [
+    {
+        "dependencies": [],
+        "description": "创建普通研发任务前，先补齐产品、需求、版本、负责人和验收标准。",
+        "draft_action": "clarify_rd_task",
+        "prompt": "我要新增研发任务，请按产品、需求、版本、负责人和验收标准引导我补齐信息",
+        "title": "研发任务",
+        "type": "rd_task",
+        "wizard_steps": ["任务目标", "产品/版本", "负责人", "验收标准", "确认创建"],
+    },
+    {
+        "dependencies": ["数据连接", "AI能力", "结果动作"],
+        "description": "按数据来源、AI处理、结果动作和调度策略生成可确认的定时作业草案。",
+        "draft_action": "create_scheduled_job",
+        "prompt": "帮我新增定时作业，先按数据来源、AI处理、结果动作和调度策略生成草案",
+        "title": "定时作业",
+        "type": "scheduled_job",
+        "wizard_steps": TASK_CREATION_WIZARD_STEPS,
+    },
+    {
+        "dependencies": ["插件连接"],
+        "description": "为 GitHub、GitLab、邮箱等插件生成结果动作草案，确认前不写入真实动作。",
+        "draft_action": "create_plugin_action",
+        "prompt": "帮我新增插件动作，先生成可确认的动作草案",
+        "title": "插件动作",
+        "type": "plugin_action",
+        "wizard_steps": ["插件", "连接", "请求配置", "结果映射", "确认创建"],
+    },
+    {
+        "dependencies": ["GitHub/GitLab 连接", "代码巡检动作"],
+        "description": "按仓库、分支、AI处理和结果动作生成代码巡检定时作业草案。",
+        "draft_action": "create_scheduled_job",
+        "prompt": "帮我配置代码巡检定时作业草案",
+        "title": "代码巡检",
+        "type": "code_inspection",
+        "wizard_steps": TASK_CREATION_WIZARD_STEPS,
+    },
+    {
+        "dependencies": ["用户反馈数据连接", "反馈洞察动作"],
+        "description": "抽取每周用户反馈、经过 AI 处理后写入反馈洞察结果。",
+        "draft_action": "create_scheduled_job",
+        "prompt": "帮我配置每周用户反馈洞察定时作业草案",
+        "title": "反馈洞察",
+        "type": "feedback_insight",
+        "wizard_steps": TASK_CREATION_WIZARD_STEPS,
+    },
+]
 
 __all__ = [
     "ASSISTANT_ACCESS_ROLES",
@@ -301,6 +349,16 @@ def _deterministic_assistant_output(
     payload: AssistantChatRequest,
     user: dict[str, Any],
 ) -> dict[str, Any] | None:
+    if _task_creation_guide_requested(payload.message):
+        try:
+            resolved_references = resolve_assistant_references(
+                current_store,
+                references=payload.references,
+                user=user,
+            )
+        except AssistantReferenceError as exc:
+            raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
+        return _task_creation_guide_output(selected_references=resolved_references["items"])
     if not _scheduled_job_run_once_requested(payload.message):
         return None
     try:
@@ -658,6 +716,66 @@ def _scheduled_job_run_once_requested(message: str) -> bool:
     if any(keyword in normalized for keyword in SCHEDULED_JOB_RUN_NEGATION_KEYWORDS):
         return False
     return any(keyword in normalized for keyword in SCHEDULED_JOB_RUN_ONCE_KEYWORDS)
+
+
+def _task_creation_guide_requested(message: str) -> bool:
+    normalized = message.lower()
+    has_create_intent = any(
+        keyword in normalized
+        for keyword in ("新增", "新建", "创建", "增加", "create", "add")
+    )
+    has_task_context = any(keyword in normalized for keyword in ("任务", "作业", "task"))
+    has_specific_task_type = any(
+        keyword in normalized
+        for keyword in (
+            "定时作业",
+            "定时任务",
+            "插件动作",
+            "插件连接",
+            "代码巡检",
+            "反馈洞察",
+            "用户反馈",
+            "scheduled job",
+            "plugin action",
+            "code inspection",
+            "feedback",
+        )
+    )
+    return has_create_intent and has_task_context and not has_specific_task_type
+
+
+def _task_creation_guide_output(
+    *,
+    selected_references: list[dict[str, str]],
+) -> dict[str, Any]:
+    started = perf_counter()
+    return {
+        "answer": (
+            "你想新增哪类任务？我会先按向导生成可确认的草案，确认前不会写入真实配置。"
+        ),
+        "latency_ms": int((perf_counter() - started) * 1000),
+        "model": "assistant-deterministic",
+        "references": selected_references,
+        "selected_references": selected_references,
+        "suggestions": [
+            "新增研发任务",
+            "配置代码巡检定时作业",
+            "配置每周用户反馈洞察定时作业",
+            "新增插件动作",
+        ],
+        "tool_results": [
+            {
+                "intent": "task_creation_guide",
+                "items": TASK_CREATION_GUIDE_ITEMS,
+                "summary": {
+                    "draft_first": True,
+                    "option_count": len(TASK_CREATION_GUIDE_ITEMS),
+                    "wizard_steps": TASK_CREATION_WIZARD_STEPS,
+                },
+                "tool": "assistant.task_creation_guide",
+            }
+        ],
+    }
 
 
 def _scheduled_job_reference_needed_output(
