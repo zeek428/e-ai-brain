@@ -1,5 +1,7 @@
 import json
+import zipfile
 from datetime import UTC, datetime
+from io import BytesIO
 
 from fastapi.testclient import TestClient
 
@@ -642,6 +644,196 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
     assert listed_runner["health_status"] == "online"
     assert isinstance(listed_runner["heartbeat_age_seconds"], int)
     assert "ai-brain-runner" in listed_runner["setup_command"]
+
+
+def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_assets():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+
+    created_runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "endpoint_url": "https://aibrain.example.com/api/system/ai-executor-runners",
+            "executor_types": ["codex", "claude", "hermes", "openclaw"],
+            "heartbeat_timeout_seconds": 180,
+            "max_concurrent_tasks": 2,
+            "metadata": {
+                "executor_commands": {
+                    "claude": "claude",
+                    "codex": "codex",
+                    "hermes": "hermes",
+                    "openclaw": "openclaw",
+                },
+                "install_mode": "systemd",
+                "package_arch": "arm64",
+                "target_os": "macos",
+            },
+            "name": "远程研发执行器",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": ["/data/repos/e-ai-brain", "/data/repos/service-a"],
+        },
+        headers=admin_headers,
+    )
+    assert created_runner.status_code == 200
+    runner_id = created_runner.json()["data"]["id"]
+
+    linux_response = client.get(
+        f"/api/system/ai-executor-runners/{runner_id}/install-package"
+        "?target_os=linux&arch=amd64&install_mode=systemd",
+        headers=admin_headers,
+    )
+
+    assert linux_response.status_code == 200
+    assert linux_response.headers["content-type"] == "application/zip"
+    assert (
+        f"ai-brain-runner-{runner_id}-linux-amd64-systemd.zip"
+        in linux_response.headers["content-disposition"]
+    )
+
+    with zipfile.ZipFile(BytesIO(linux_response.content)) as archive:
+        names = set(archive.namelist())
+        assert {
+            "README.md",
+            "START_STOP.md",
+            "ai-brain-runner.env",
+            "install.sh",
+            "manifest.json",
+            "runner_config.json",
+            "skills/ai-brain-runner/SKILL.md",
+            "systemd/ai-brain-runner.service",
+        }.issubset(names)
+        env_text = archive.read("ai-brain-runner.env").decode("utf-8")
+        config = json.loads(archive.read("runner_config.json").decode("utf-8"))
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        readme_text = archive.read("README.md").decode("utf-8")
+        start_stop_text = archive.read("START_STOP.md").decode("utf-8")
+        skill_text = archive.read("skills/ai-brain-runner/SKILL.md").decode("utf-8")
+
+    assert "START_STOP.md" in readme_text
+    assert "启动 Runner" in start_stop_text
+    assert "停止 Runner" in start_stop_text
+    assert "sudo systemctl start ai-brain-runner" in start_stop_text
+    assert "sudo systemctl stop ai-brain-runner" in start_stop_text
+    assert "sudo systemctl status ai-brain-runner" in start_stop_text
+    assert f"AI_BRAIN_RUNNER_ID={runner_id}" in env_text
+    assert (
+        "AI_BRAIN_ENDPOINT=https://aibrain.example.com/api/system/ai-executor-runners"
+        in env_text
+    )
+    assert "AI_BRAIN_RUNNER_TOKEN=<runner_token>" in env_text
+    assert "AI_BRAIN_EXECUTORS=codex,claude,hermes,openclaw" in env_text
+    assert "AI_BRAIN_WORKSPACE_ROOTS=/data/repos/e-ai-brain,/data/repos/service-a" in env_text
+    assert config["executor_commands"]["codex"] == "codex"
+    assert config["package"] == {
+        "arch": "amd64",
+        "install_mode": "systemd",
+        "target_os": "linux",
+    }
+    assert config["runner"]["heartbeat_timeout_seconds"] == 180
+    assert config["runner"]["max_concurrent_tasks"] == 2
+    assert manifest["package"]["target_os"] == "linux"
+    assert manifest["package"]["arch"] == "amd64"
+    assert manifest["package"]["install_mode"] == "systemd"
+    assert "Claude Code" in skill_text
+    assert "AI Brain" in skill_text
+
+    macos_response = client.get(
+        f"/api/system/ai-executor-runners/{runner_id}/install-package"
+        "?target_os=macos&arch=arm64&install_mode=launchd",
+        headers=admin_headers,
+    )
+    assert macos_response.status_code == 200
+    assert (
+        f"ai-brain-runner-{runner_id}-macos-arm64-launchd.zip"
+        in macos_response.headers["content-disposition"]
+    )
+    with zipfile.ZipFile(BytesIO(macos_response.content)) as archive:
+        names = set(archive.namelist())
+        assert "install.sh" in names
+        assert "START_STOP.md" in names
+        assert "launchd/com.ai-brain.runner.plist" in names
+        assert "systemd/ai-brain-runner.service" not in names
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        start_stop_text = archive.read("START_STOP.md").decode("utf-8")
+    assert manifest["package"]["target_os"] == "macos"
+    assert manifest["package"]["arch"] == "arm64"
+    assert manifest["package"]["install_mode"] == "launchd"
+    assert "launchctl load" in start_stop_text
+    assert "launchctl unload" in start_stop_text
+    assert "launchctl list | grep ai-brain" in start_stop_text
+
+    windows_response = client.get(
+        f"/api/system/ai-executor-runners/{runner_id}/install-package"
+        "?target_os=windows&arch=amd64&install_mode=service",
+        headers=admin_headers,
+    )
+    assert windows_response.status_code == 200
+    assert (
+        f"ai-brain-runner-{runner_id}-windows-amd64-service.zip"
+        in windows_response.headers["content-disposition"]
+    )
+    with zipfile.ZipFile(BytesIO(windows_response.content)) as archive:
+        names = set(archive.namelist())
+        assert "START_STOP.md" in names
+        assert "install.ps1" in names
+        assert "windows/ai-brain-runner-service.xml" in names
+        assert "systemd/ai-brain-runner.service" not in names
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        start_stop_text = archive.read("START_STOP.md").decode("utf-8")
+    assert manifest["package"]["target_os"] == "windows"
+    assert manifest["package"]["arch"] == "amd64"
+    assert manifest["package"]["install_mode"] == "service"
+    assert "Start-Service ai-brain-runner" in start_stop_text
+    assert "Stop-Service ai-brain-runner" in start_stop_text
+    assert "Get-Service ai-brain-runner" in start_stop_text
+
+    docker_response = client.get(
+        f"/api/system/ai-executor-runners/{runner_id}/install-package"
+        "?target_os=docker&arch=amd64&install_mode=docker",
+        headers=admin_headers,
+    )
+    assert docker_response.status_code == 200
+    with zipfile.ZipFile(BytesIO(docker_response.content)) as archive:
+        names = set(archive.namelist())
+        assert "START_STOP.md" in names
+        assert "Dockerfile" in names
+        assert "docker-compose.runner.yml" in names
+        assert "systemd/ai-brain-runner.service" not in names
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        start_stop_text = archive.read("START_STOP.md").decode("utf-8")
+    assert manifest["package"]["target_os"] == "docker"
+    assert manifest["package"]["install_mode"] == "docker"
+    assert "docker compose -f docker-compose.runner.yml up -d --build" in start_stop_text
+    assert "docker compose -f docker-compose.runner.yml down" in start_stop_text
+    assert "docker compose -f docker-compose.runner.yml logs -f" in start_stop_text
+
+    manual_response = client.get(
+        f"/api/system/ai-executor-runners/{runner_id}/install-package"
+        "?target_os=manual&arch=universal&install_mode=manual",
+        headers=admin_headers,
+    )
+    assert manual_response.status_code == 200
+    with zipfile.ZipFile(BytesIO(manual_response.content)) as archive:
+        names = set(archive.namelist())
+        assert "START_STOP.md" in names
+        assert "scripts/start-runner.sh" in names
+        assert "scripts/start-runner.ps1" in names
+        assert "systemd/ai-brain-runner.service" not in names
+        assert "launchd/com.ai-brain.runner.plist" not in names
+        assert "windows/ai-brain-runner-service.xml" not in names
+        start_stop_text = archive.read("START_STOP.md").decode("utf-8")
+    assert "./scripts/start-runner.sh" in start_stop_text
+    assert "Ctrl + C" in start_stop_text
+    assert "./scripts/start-runner.ps1" in start_stop_text
+
+    invalid_response = client.get(
+        f"/api/system/ai-executor-runners/{runner_id}/install-package"
+        "?target_os=solaris",
+        headers=admin_headers,
+    )
+    assert invalid_response.status_code == 400
+    assert invalid_response.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
 def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():

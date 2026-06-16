@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 执行器远程 Runner 安装包：执行器配置页支持 Codex、Claude Code、Hermes、OpenClaw 命令参数、目标系统、CPU 架构和安装模式，新增按 Linux/macOS/Windows/Docker/通用手动安装生成 Runner ZIP；后端 `/api/system/ai-executor-runners/{runner_id}/install-package?target_os=&arch=&install_mode=` 生成包含 env、manifest、runner_config、START_STOP.md 启停说明、系统专属启动脚本/服务模板和 AI Brain Runner Skill 的安装包，Token 仍只在创建/轮换时一次性返回。
 - 代码巡检本地扫描真实联调增强：私有 HTTP(S) Git 仓库可复用产品 Git 仓库 `credential_ref` 通过临时 Git askpass 完成 clone/fetch，错误信息和报告继续脱敏；AI 归一化后保留 native 扫描快照元数据。本轮真实运行 `scheduled_job_run_031` 成功生成 `code_inspection_report_007`，扫描 `main` 分支 1,940 个文件 / 212,235 行，发现 13 个问题。
 - 代码巡检本地扫描增强：`CODE_SCAN_WORKDIR` 固定工作区、mirror 缓存、按 repository + branch + commit 的 checkout 快照、异步运行、取消保护、工作区清理策略、外部扫描引擎实际执行与状态记录、baseline/已接受风险/单条忽略 fingerprint、严重级别阈值、质量门禁、多仓库批量扫描、报告详情扫描摘要和与上次扫描对比。
 - 代码巡检作业新增本地完整静态扫描：`config_json.scan_mode=native_full_scan` 时可直接 clone 产品 Git 仓库、checkout 指定分支、扫描内置规则并通过 git blame 回填提交人，不再强制配置插件连接；报告记录扫描模式、扫描器、文件数、行数、规则和覆盖率提示，运行详情新增 `native_scan` 节点。

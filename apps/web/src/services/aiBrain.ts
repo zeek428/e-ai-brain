@@ -4389,6 +4389,12 @@ export type AiExecutorTaskLogsResponse = {
   task: AiExecutorTaskRecord;
 };
 
+export type AiExecutorRunnerInstallPackageOptions = {
+  arch?: string;
+  install_mode?: string;
+  target_os?: string;
+};
+
 export type PluginSystemVariableRecord = {
   description?: string;
   expression: string;
@@ -4490,6 +4496,65 @@ export async function rotateAiExecutorRunnerToken(
       token,
     },
   );
+}
+
+function filenameFromContentDisposition(value: string | null, fallback: string): string {
+  if (!value) {
+    return fallback;
+  }
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+  const quotedMatch = value.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+  const plainMatch = value.match(/filename=([^;]+)/i);
+  return plainMatch?.[1]?.trim() || fallback;
+}
+
+export async function downloadAiExecutorRunnerInstallPackage(
+  runnerId: string,
+  options: AiExecutorRunnerInstallPackageOptions = {},
+) {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'target_os', options.target_os);
+  appendQueryParam(params, 'arch', options.arch);
+  appendQueryParam(params, 'install_mode', options.install_mode);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await fetch(`${API_BASE_URL}/api/system/ai-executor-runners/${runnerId}/install-package${suffix}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    method: 'GET',
+  });
+  if (!response.ok) {
+    let payload: ApiErrorPayload | undefined;
+    try {
+      payload = (await response.json()) as ApiErrorPayload;
+    } catch {
+      payload = undefined;
+    }
+    throw new ApiRequestError({
+      code: payload?.detail?.code,
+      message: payload?.detail?.message ?? `API request failed: ${response.status}`,
+      status: response.status,
+      traceId: payload?.detail?.trace_id,
+    });
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(
+      response.headers.get('Content-Disposition'),
+      `ai-brain-runner-${runnerId}.zip`,
+    ),
+  };
 }
 
 export async function fetchAiExecutorTaskLogs(taskId: string): Promise<AiExecutorTaskLogsResponse> {

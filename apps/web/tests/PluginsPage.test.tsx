@@ -157,6 +157,7 @@ function installPluginsFetchMock(
   const pluginUpdateBodies: unknown[] = [];
   const runnerBodies: unknown[] = [];
   const runnerDeleteIds: string[] = [];
+  const runnerPackageCalls: string[] = [];
   const runnerRotateBodies: unknown[] = [];
   const runnerTaskCancelBodies: unknown[] = [];
   const runnerUpdateBodies: unknown[] = [];
@@ -644,7 +645,7 @@ function installPluginsFetchMock(
             },
             {
               endpoint_url: 'runner://local',
-              executor_types: ['codex', 'openclaw'],
+              executor_types: ['codex', 'claude', 'hermes', 'openclaw'],
               heartbeat_timeout_seconds: 120,
               heartbeat_age_seconds: 12,
               health_status: 'online',
@@ -653,7 +654,17 @@ function installPluginsFetchMock(
               latest_task_id: 'ai_executor_task_001',
               latest_task_status: 'running',
               max_concurrent_tasks: 1,
-              metadata: { codex_path: '/Applications/Codex.app/Contents/Resources/codex' },
+              metadata: {
+                executor_commands: {
+                  claude: 'claude',
+                  codex: 'codex',
+                  hermes: 'hermes',
+                  openclaw: 'openclaw',
+                },
+                install_mode: 'launchd',
+                package_arch: 'arm64',
+                target_os: 'macos',
+              },
               name: 'Zeek Mac 本地执行器',
               protocol: 'runner_polling',
               setup_command: 'ai-brain-runner start --runner-id ai_executor_runner_001 --token <runner_token> --server http://127.0.0.1:8000',
@@ -666,6 +677,16 @@ function installPluginsFetchMock(
           ],
           total: 2,
         },
+      });
+    }
+    if (String(input).startsWith('/api/system/ai-executor-runners/ai_executor_runner_001/install-package') && init?.method === 'GET') {
+      runnerPackageCalls.push(String(input));
+      return new Response(new Blob(['runner-package']), {
+        headers: {
+          'Content-Disposition': 'attachment; filename="ai-brain-runner-ai_executor_runner_001-macos-arm64-launchd.zip"',
+          'Content-Type': 'application/zip',
+        },
+        status: 200,
       });
     }
     if (input === '/api/system/ai-executor-runners' && init?.method === 'POST') {
@@ -985,6 +1006,7 @@ function installPluginsFetchMock(
     },
     runnerBodies,
     runnerDeleteIds,
+    runnerPackageCalls,
     runnerRotateBodies,
     runnerTaskCancelBodies,
     runnerUpdateBodies,
@@ -1063,8 +1085,13 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByText('20260603')).toBeInTheDocument();
   });
 
-  it('manages AI executor runners with OpenClaw support', async () => {
-    const { runnerBodies } = installPluginsFetchMock();
+  it('manages AI executor runners with remote executor options and install packages', async () => {
+    const { runnerBodies, runnerPackageCalls } = installPluginsFetchMock();
+    const createObjectURL = vi.fn(() => 'blob:ai-brain-runner');
+    const revokeObjectURL = vi.fn();
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
 
     render(<PluginsPage />);
 
@@ -1074,8 +1101,19 @@ describe('PluginsPage', () => {
     expect(screen.getByText('Zeek Mac 本地执行器')).toBeInTheDocument();
     expect(screen.getByText('online')).toBeInTheDocument();
     expect(screen.getByText('ai-brain-runner start --runner-id ai_executor_runner_001 --token <runner_token> --server http://127.0.0.1:8000')).toBeInTheDocument();
-    expect(screen.getByText('openclaw')).toBeInTheDocument();
+    expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(screen.getByText('Claude Code')).toBeInTheDocument();
+    expect(screen.getByText('Hermes')).toBeInTheDocument();
+    expect(screen.getByText('OpenClaw')).toBeInTheDocument();
     expect(screen.getByText('/Users/zeek/source/e-ai-brain')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '下载安装包 Zeek Mac 本地执行器' }));
+    await waitFor(() =>
+      expect(runnerPackageCalls).toEqual([
+        '/api/system/ai-executor-runners/ai_executor_runner_001/install-package?target_os=macos&arch=arm64&install_mode=launchd',
+      ]),
+    );
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: '新增执行器' }));
 
@@ -1083,12 +1121,37 @@ describe('PluginsPage', () => {
     fireEvent.change(within(dialog).getByLabelText('名称'), {
       target: { value: '本地 OpenClaw 执行器' },
     });
+    fireEvent.change(within(dialog).getByLabelText('Codex 命令'), {
+      target: { value: 'codex --profile ai-brain' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Claude Code 命令'), {
+      target: { value: 'claude' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Hermes 命令'), {
+      target: { value: 'hermes' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('OpenClaw 命令'), {
+      target: { value: 'openclaw' },
+    });
+    expect(within(dialog).getByLabelText('目标系统')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('CPU 架构')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
 
     await waitFor(() =>
       expect(runnerBodies).toEqual([
         expect.objectContaining({
           executor_types: ['codex', 'openclaw'],
+          metadata: expect.objectContaining({
+            executor_commands: {
+              claude: 'claude',
+              codex: 'codex --profile ai-brain',
+              hermes: 'hermes',
+              openclaw: 'openclaw',
+            },
+            install_mode: 'systemd',
+            package_arch: 'amd64',
+            target_os: 'linux',
+          }),
           name: '本地 OpenClaw 执行器',
           protocol: 'runner_polling',
           workspace_roots: ['/Users/zeek/source/e-ai-brain'],

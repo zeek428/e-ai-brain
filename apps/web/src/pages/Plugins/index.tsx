@@ -1,6 +1,8 @@
 import {
   ApiOutlined,
+  CopyOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   FileTextOutlined,
   KeyOutlined,
@@ -26,6 +28,7 @@ import {
   deletePluginAction,
   deletePluginConnection,
   deleteAiExecutorRunner,
+  downloadAiExecutorRunnerInstallPackage,
   fetchAiExecutorTaskLogs,
   fetchAiExecutorRunners,
   fetchPluginActions,
@@ -135,15 +138,22 @@ type ActionFormValues = {
 };
 
 type AiExecutorRunnerFormValues = {
+  claude_command?: string;
+  codex_command?: string;
   endpoint_url: string;
   executor_types: string[];
+  hermes_command?: string;
   heartbeat_timeout_seconds: number;
+  install_mode?: string;
   max_concurrent_tasks: number;
   metadata?: string;
   name: string;
+  openclaw_command?: string;
+  package_arch?: string;
   protocol: string;
   runner_token?: string;
   status: string;
+  target_os?: string;
   workspace_roots?: string;
 };
 
@@ -180,10 +190,61 @@ const requestParameterTypeOptions = [
 
 const aiExecutorTypeOptions = [
   { label: 'Codex', value: 'codex' },
-  { label: 'Claude', value: 'claude' },
+  { label: 'Claude Code', value: 'claude' },
   { label: 'Hermes', value: 'hermes' },
   { label: 'OpenClaw', value: 'openclaw' },
 ];
+
+const aiExecutorTypeLabelByValue = new Map([
+  [SYSTEM_DEFAULT_AI_EXECUTOR_TYPE, '系统默认模型'],
+  ...aiExecutorTypeOptions.map((option) => [option.value, option.label] as const),
+]);
+
+const aiExecutorCommandFieldByType = new Map([
+  ['codex', 'codex_command'],
+  ['claude', 'claude_command'],
+  ['hermes', 'hermes_command'],
+  ['openclaw', 'openclaw_command'],
+] as const);
+
+const aiExecutorRunnerTargetOsOptions = [
+  { label: 'Linux', value: 'linux' },
+  { label: 'macOS', value: 'macos' },
+  { label: 'Windows', value: 'windows' },
+  { label: 'Docker', value: 'docker' },
+  { label: '通用手动安装', value: 'manual' },
+];
+
+const aiExecutorRunnerArchOptions = [
+  { label: 'amd64', value: 'amd64' },
+  { label: 'arm64', value: 'arm64' },
+  { label: 'universal', value: 'universal' },
+];
+
+const defaultInstallModeByTargetOs = new Map([
+  ['docker', 'docker'],
+  ['linux', 'systemd'],
+  ['macos', 'launchd'],
+  ['manual', 'manual'],
+  ['windows', 'service'],
+]);
+
+const installModeOptionsByTargetOs = new Map([
+  ['docker', [{ label: 'Docker Compose', value: 'docker' }]],
+  ['linux', [
+    { label: 'systemd 服务', value: 'systemd' },
+    { label: 'Shell 脚本', value: 'shell' },
+  ]],
+  ['macos', [
+    { label: 'launchd 服务', value: 'launchd' },
+    { label: 'Shell 脚本', value: 'shell' },
+  ]],
+  ['manual', [{ label: '手动启动脚本', value: 'manual' }]],
+  ['windows', [
+    { label: 'Windows Service', value: 'service' },
+    { label: 'PowerShell 脚本', value: 'powershell' },
+  ]],
+]);
 
 const aiExecutorRunnerProtocolOptions = [
   { label: 'Runner Polling', value: 'runner_polling' },
@@ -278,13 +339,72 @@ function arrayToLines(value?: string[]): string {
   return (value ?? []).join('\n');
 }
 
+function aiExecutorTypeLabel(value: unknown): string {
+  const key = String(value ?? '');
+  return aiExecutorTypeLabelByValue.get(key) ?? key;
+}
+
+function runnerExecutorCommandsFromValues(values: AiExecutorRunnerFormValues): Record<string, string> {
+  return Object.fromEntries(
+    Array.from(aiExecutorCommandFieldByType.entries())
+      .map(([executorType, field]) => [executorType, stringValue(values[field]).trim()] as const)
+      .filter(([, command]) => Boolean(command)),
+  );
+}
+
+function runnerExecutorCommandsFromMetadata(metadata: Record<string, unknown> | undefined): Record<string, string> {
+  const commands = isPlainRecord(metadata?.executor_commands) ? metadata.executor_commands : {};
+  return Object.fromEntries(
+    Array.from(aiExecutorCommandFieldByType.keys())
+      .map((executorType) => [executorType, stringValue(commands[executorType])] as const)
+      .filter(([, command]) => Boolean(command)),
+  );
+}
+
+function runnerInstallModeOptions(targetOs: unknown) {
+  const key = stringValue(targetOs, 'linux');
+  return installModeOptionsByTargetOs.get(key) ?? installModeOptionsByTargetOs.get('linux') ?? [];
+}
+
+function runnerDefaultInstallMode(targetOs: unknown) {
+  const key = stringValue(targetOs, 'linux');
+  return defaultInstallModeByTargetOs.get(key) ?? 'systemd';
+}
+
+function runnerPackageOptionsFromMetadata(metadata: Record<string, unknown> | undefined) {
+  const targetOs = stringValue(metadata?.target_os, 'linux');
+  return {
+    arch: stringValue(metadata?.package_arch, targetOs === 'manual' ? 'universal' : 'amd64'),
+    install_mode: stringValue(metadata?.install_mode, runnerDefaultInstallMode(targetOs)),
+    target_os: targetOs,
+  };
+}
+
 function runnerPayload(values: AiExecutorRunnerFormValues): Partial<AiExecutorRunnerRecord> {
+  const metadata = values.metadata ? parseJsonObject(values.metadata, 'Runner Metadata') : {};
+  const executorCommands = runnerExecutorCommandsFromValues(values);
+  delete metadata.executor_commands;
+  if (Object.keys(executorCommands).length > 0) {
+    metadata.executor_commands = executorCommands;
+  }
+  delete metadata.install_mode;
+  if (values.install_mode) {
+    metadata.install_mode = values.install_mode;
+  }
+  delete metadata.package_arch;
+  if (values.package_arch) {
+    metadata.package_arch = values.package_arch;
+  }
+  delete metadata.target_os;
+  if (values.target_os) {
+    metadata.target_os = values.target_os;
+  }
   return {
     endpoint_url: values.endpoint_url,
     executor_types: values.executor_types,
     heartbeat_timeout_seconds: values.heartbeat_timeout_seconds,
     max_concurrent_tasks: values.max_concurrent_tasks,
-    metadata: values.metadata ? parseJsonObject(values.metadata, 'Runner Metadata') : {},
+    metadata,
     name: values.name,
     protocol: values.protocol,
     ...(values.runner_token ? { runner_token: values.runner_token } : {}),
@@ -2069,13 +2189,20 @@ export default function PluginsPage() {
     setEditingRunner(undefined);
     runnerForm.resetFields();
     runnerForm.setFieldsValue({
-      endpoint_url: 'runner://local',
+      claude_command: 'claude',
+      codex_command: 'codex',
+      endpoint_url: `${window.location.origin.replace(/:\d+$/, ':8000')}/api/system/ai-executor-runners`,
       executor_types: ['codex', 'openclaw'],
+      hermes_command: 'hermes',
       heartbeat_timeout_seconds: 120,
+      install_mode: 'systemd',
       max_concurrent_tasks: 1,
       metadata: '{}',
+      openclaw_command: 'openclaw',
+      package_arch: 'amd64',
       protocol: 'runner_polling',
       status: 'active',
+      target_os: 'linux',
       workspace_roots: '/Users/zeek/source/e-ai-brain',
     });
     setRunnerModalOpen(true);
@@ -2084,15 +2211,24 @@ export default function PluginsPage() {
   const openEditRunnerModal = (runner: AiExecutorRunnerRecord) => {
     setEditingRunner(runner);
     runnerForm.resetFields();
+    const executorCommands = runnerExecutorCommandsFromMetadata(runner.metadata);
+    const packageOptions = runnerPackageOptionsFromMetadata(runner.metadata);
     runnerForm.setFieldsValue({
+      claude_command: executorCommands.claude || 'claude',
+      codex_command: executorCommands.codex || 'codex',
       endpoint_url: runner.endpoint_url ?? 'runner://local',
       executor_types: runner.executor_types ?? ['codex'],
+      hermes_command: executorCommands.hermes || 'hermes',
       heartbeat_timeout_seconds: runner.heartbeat_timeout_seconds ?? 120,
+      install_mode: packageOptions.install_mode,
       max_concurrent_tasks: runner.max_concurrent_tasks ?? 1,
       metadata: stableJson(runner.metadata ?? {}),
       name: runner.name,
+      openclaw_command: executorCommands.openclaw || 'openclaw',
+      package_arch: packageOptions.arch,
       protocol: runner.protocol ?? 'runner_polling',
       status: runner.status,
+      target_os: packageOptions.target_os,
       workspace_roots: arrayToLines(runner.workspace_roots),
     });
     setRunnerModalOpen(true);
@@ -2155,6 +2291,35 @@ export default function PluginsPage() {
 
   const rotateRunnerToken = (runner: AiExecutorRunnerRecord) => {
     setRotatingRunner(runner);
+  };
+
+  const downloadRunnerInstallPackage = async (runner: AiExecutorRunnerRecord) => {
+    try {
+      const { blob, filename } = await downloadAiExecutorRunnerInstallPackage(
+        runner.id,
+        runnerPackageOptionsFromMetadata(runner.metadata),
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      message.success('Runner 安装包已生成');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Runner 安装包下载失败');
+    }
+  };
+
+  const copyRunnerSetupCommand = async (command: string) => {
+    try {
+      await navigator.clipboard.writeText(command);
+      message.success('启动命令已复制');
+    } catch {
+      message.error('启动命令复制失败');
+    }
   };
 
   const submitRotateRunnerToken = async () => {
@@ -3559,9 +3724,19 @@ export default function PluginsPage() {
                         {isSystemDefaultRunner(record) ? '系统默认执行器说明' : '本地 Runner 启动命令'}
                       </Typography.Text>
                       {record.setup_command ? (
-                        <Typography.Text code copyable={{ text: record.setup_command }}>
-                          {record.setup_command}
-                        </Typography.Text>
+                        <Space size={8} wrap>
+                          <code style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                            {String(record.setup_command)}
+                          </code>
+                          <Button
+                            aria-label={`复制启动命令 ${record.name}`}
+                            icon={<CopyOutlined />}
+                            onClick={() => copyRunnerSetupCommand(String(record.setup_command))}
+                            size="small"
+                          >
+                            复制
+                          </Button>
+                        </Space>
                       ) : (
                         <Typography.Text type="secondary">创建或刷新 Runner 后由后端生成启动命令。</Typography.Text>
                       )}
@@ -3599,7 +3774,7 @@ export default function PluginsPage() {
                     render: (value) => Array.isArray(value)
                       ? (
                         <Space wrap size={4}>
-                          {value.map((item) => <Tag key={String(item)}>{String(item)}</Tag>)}
+                          {value.map((item) => <Tag key={String(item)}>{aiExecutorTypeLabel(item)}</Tag>)}
                         </Space>
                       )
                       : '-',
@@ -3655,11 +3830,24 @@ export default function PluginsPage() {
                     title: '启动命令',
                     ellipsis: true,
                     width: 320,
-                    render: (value) => value ? (
-                      <Typography.Text code copyable={{ text: String(value) }} ellipsis={{ tooltip: String(value) }}>
-                        {String(value)}
-                      </Typography.Text>
-                    ) : '-',
+                    render: (_, row) => {
+                      const command = stringValue(row.setup_command);
+                      if (!command) {
+                        return '-';
+                      }
+                      return (
+                        <Space size={6} wrap={false}>
+                          <code style={{ wordBreak: 'break-all' }}>{command}</code>
+                          <Button
+                            aria-label={`复制启动命令 ${row.name}`}
+                            icon={<CopyOutlined />}
+                            onClick={() => copyRunnerSetupCommand(command)}
+                            size="small"
+                            type="text"
+                          />
+                        </Space>
+                      );
+                    },
                   },
                   {
                     fixed: 'right',
@@ -3689,6 +3877,14 @@ export default function PluginsPage() {
                             type="link"
                           >
                             日志
+                          </Button>
+                          <Button
+                            aria-label={`下载安装包 ${row.name}`}
+                            icon={<DownloadOutlined />}
+                            onClick={() => downloadRunnerInstallPackage(row)}
+                            type="link"
+                          >
+                            安装包
                           </Button>
                           <Button
                             aria-label={`编辑执行器 ${row.name}`}
@@ -3991,10 +4187,24 @@ export default function PluginsPage() {
             endpoint_url: 'runner://local',
             executor_types: ['codex', 'openclaw'],
             heartbeat_timeout_seconds: 120,
+            install_mode: 'systemd',
             max_concurrent_tasks: 1,
             metadata: '{}',
+            package_arch: 'amd64',
             protocol: 'runner_polling',
             status: 'active',
+            target_os: 'linux',
+          }}
+          onValuesChange={(changedValues) => {
+            if (Object.prototype.hasOwnProperty.call(changedValues, 'target_os')) {
+              const targetOs = stringValue(changedValues.target_os, 'linux');
+              runnerForm.setFieldValue('install_mode', runnerDefaultInstallMode(targetOs));
+              if (targetOs === 'manual') {
+                runnerForm.setFieldValue('package_arch', 'universal');
+              } else if (!runnerForm.getFieldValue('package_arch')) {
+                runnerForm.setFieldValue('package_arch', 'amd64');
+              }
+            }
           }}
         >
           <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入执行器名称' }]}>
@@ -4027,6 +4237,40 @@ export default function PluginsPage() {
           <Form.Item label="执行器类型" name="executor_types" rules={[{ required: true, message: '请选择至少一个执行器类型' }]}>
             <Select mode="multiple" options={aiExecutorTypeOptions} />
           </Form.Item>
+          <Typography.Text strong>执行器命令配置</Typography.Text>
+          <Space wrap>
+            <Form.Item label="Codex 命令" name="codex_command">
+              <Input placeholder="codex" style={{ width: 220 }} />
+            </Form.Item>
+            <Form.Item label="Claude Code 命令" name="claude_command">
+              <Input placeholder="claude" style={{ width: 220 }} />
+            </Form.Item>
+            <Form.Item label="Hermes 命令" name="hermes_command">
+              <Input placeholder="hermes" style={{ width: 220 }} />
+            </Form.Item>
+            <Form.Item label="OpenClaw 命令" name="openclaw_command">
+              <Input placeholder="openclaw" style={{ width: 220 }} />
+            </Form.Item>
+          </Space>
+          <Typography.Text strong>Runner 安装包配置</Typography.Text>
+          <Space wrap>
+            <Form.Item label="目标系统" name="target_os" rules={[{ required: true, message: '请选择目标系统' }]}>
+              <Select options={aiExecutorRunnerTargetOsOptions} style={{ width: 180 }} />
+            </Form.Item>
+            <Form.Item label="CPU 架构" name="package_arch" rules={[{ required: true, message: '请选择 CPU 架构' }]}>
+              <Select options={aiExecutorRunnerArchOptions} style={{ width: 160 }} />
+            </Form.Item>
+            <Form.Item noStyle shouldUpdate={(prev, current) => prev.target_os !== current.target_os}>
+              {({ getFieldValue }) => (
+                <Form.Item label="安装模式" name="install_mode" rules={[{ required: true, message: '请选择安装模式' }]}>
+                  <Select
+                    options={runnerInstallModeOptions(getFieldValue('target_os'))}
+                    style={{ width: 190 }}
+                  />
+                </Form.Item>
+              )}
+            </Form.Item>
+          </Space>
           <Form.Item label="工作区白名单" name="workspace_roots">
             <Input.TextArea
               placeholder="/Users/zeek/source/e-ai-brain"

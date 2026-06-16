@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, store
@@ -12,6 +12,7 @@ from app.services.ai_executor_runners import (
     cancel_ai_executor_task_response,
     claim_ai_executor_task_response,
     complete_ai_executor_task_response,
+    create_ai_executor_runner_install_package_response,
     create_ai_executor_runner_response,
     delete_ai_executor_runner_response,
     list_ai_executor_runners_response,
@@ -237,6 +238,30 @@ def create_ai_executor_runner(
             user=user,
         ),
         get_trace_id(request),
+    )
+
+
+@router.get("/api/system/ai-executor-runners/{runner_id}/install-package")
+def download_ai_executor_runner_install_package(
+    request: Request,
+    runner_id: str,
+    target_os: str | None = Query(default=None),
+    arch: str | None = Query(default=None),
+    install_mode: str | None = Query(default=None),
+    user: dict[str, Any] = CurrentUser,
+) -> Response:
+    content, filename = create_ai_executor_runner_install_package_response(
+        arch=arch,
+        current_store=store(request),
+        install_mode=install_mode,
+        runner_id=runner_id,
+        target_os=target_os,
+        user=user,
+    )
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
