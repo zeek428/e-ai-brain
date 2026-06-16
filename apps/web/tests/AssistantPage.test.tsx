@@ -55,6 +55,79 @@ function resultWriteTargetsResponse() {
 }
 
 describe('AssistantPage', () => {
+  it('loads assistant draft template market and applies a template prompt', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/draft-templates') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  available: true,
+                  category: 'insights',
+                  code: 'weekly_feedback_insight',
+                  description: '每周从用户反馈中提取高价值洞察。',
+                  draft_action: 'create_scheduled_job',
+                  name: '周反馈洞察',
+                  prompt: '请帮我生成每周用户反馈洞察定时作业草案，并在确认后执行一次。',
+                  roles: ['product_owner'],
+                  source_module: '用户洞察',
+                  target_resource: 'scheduled_job',
+                  template_version: 'v1',
+                  wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
+                },
+                {
+                  available: false,
+                  category: 'operations',
+                  code: 'online_log_anomaly_analysis',
+                  description: '分析线上日志异常并生成处理草案。',
+                  draft_action: 'create_scheduled_job',
+                  name: '线上日志异常分析',
+                  prompt: '请生成线上日志异常分析定时作业草案。',
+                  roles: ['admin'],
+                  source_module: '运行数据',
+                  target_resource: 'scheduled_job',
+                  template_version: 'v1',
+                  wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
+                },
+              ],
+              total: 2,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: '草案模板市场' }));
+
+    expect(await screen.findByText('周反馈洞察')).toBeInTheDocument();
+    expect(screen.getByText('每周从用户反馈中提取高价值洞察。')).toBeInTheDocument();
+    expect(screen.getByText('暂未完整接入')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '使用模板 周反馈洞察' }));
+
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '请帮我生成每周用户反馈洞察定时作业草案，并在确认后执行一次。',
+    );
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+      ['/api/assistant/conversations', 'GET'],
+      ['/api/assistant/draft-templates', 'GET'],
+    ]);
+  });
+
   it('renders an AI assistant chat surface that can answer AI Brain progress questions', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

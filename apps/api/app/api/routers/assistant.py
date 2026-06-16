@@ -24,6 +24,7 @@ from app.services.assistant_chat import (
     assistant_conversations_response,
     assistant_request_store,
 )
+from app.services.assistant_draft_templates import list_assistant_draft_templates_response
 from app.services.assistant_metrics import assistant_metrics_response
 from app.services.assistant_references import (
     AssistantReferenceError,
@@ -140,6 +141,16 @@ def assistant_metrics(
         assistant_request_store(store(request), user_id=user["id"]),
         user=user,
     )
+    return envelope(payload, get_trace_id(request))
+
+
+@router.get("/draft-templates")
+def list_assistant_draft_templates(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    payload = list_assistant_draft_templates_response(user=user)
     return envelope(payload, get_trace_id(request))
 
 

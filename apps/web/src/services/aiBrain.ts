@@ -176,6 +176,22 @@ export type AssistantReference = {
   url: string;
 };
 
+export type AssistantDraftTemplate = {
+  available?: boolean;
+  category?: string;
+  code: string;
+  dependencies?: string[];
+  description?: string;
+  draft_action?: string;
+  name: string;
+  prompt: string;
+  roles?: string[];
+  source_module?: string;
+  target_resource?: string;
+  template_version?: string;
+  wizard_steps?: string[];
+};
+
 export type AssistantToolResultItem = {
   action?: string;
   client_draft_id?: string;
@@ -2309,6 +2325,18 @@ export async function fetchAssistantReferenceCandidates(params: {
   }
   const response = await apiRequest<ListResponse<AssistantReference>>(
     `/api/assistant/reference-candidates?${searchParams.toString()}`,
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return response.items;
+}
+
+export async function fetchAssistantDraftTemplates(): Promise<AssistantDraftTemplate[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<AssistantDraftTemplate>>(
+    '/api/assistant/draft-templates',
     {
       method: 'GET',
       token,

@@ -14,6 +14,37 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_ai_assistant_draft_templates_list_official_market_entries():
+    response = client.get("/api/assistant/draft-templates", headers=auth_headers())
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["total"] == 6
+    templates_by_code = {item["code"]: item for item in payload["items"]}
+    assert set(templates_by_code) == {
+        "code_inspection",
+        "email_digest",
+        "knowledge_base_inspection",
+        "online_log_anomaly_analysis",
+        "release_risk_analysis",
+        "weekly_feedback_insight",
+    }
+    assert templates_by_code["weekly_feedback_insight"]["draft_action"] == "create_scheduled_job"
+    assert templates_by_code["weekly_feedback_insight"]["target_resource"] == "scheduled_job"
+    assert templates_by_code["weekly_feedback_insight"]["wizard_steps"] == [
+        "数据来源",
+        "AI处理",
+        "知识引用",
+        "结果动作",
+        "调度策略",
+        "确认执行",
+    ]
+    assert "执行一次" in templates_by_code["weekly_feedback_insight"]["prompt"]
+    assert templates_by_code["release_risk_analysis"]["roles"] == ["product_owner", "reviewer"]
+    assert templates_by_code["knowledge_base_inspection"]["source_module"] == "知识库"
+    assert templates_by_code["online_log_anomaly_analysis"]["available"] is False
+
+
 def seed_assistant_knowledge_reference_documents() -> None:
     now = "2026-06-14T08:00:00+00:00"
     app.state.store.knowledge_documents["knowledge_payment_runbook"] = {

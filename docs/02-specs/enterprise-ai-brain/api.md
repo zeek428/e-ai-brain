@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.319 |
+| 功能版本 | v1.1.320 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.320 | 2026-06-17 | AI 助手 API 新增 `/api/assistant/draft-templates`，返回按角色过滤的官方草案模板市场目录 | Codex |
 | v1.1.319 | 2026-06-17 | AI 助手效果指标补齐 `scheduled_job_run_*`、`failed_run_*` 和 `knowledge_reference_hit_*` 字段 | Codex |
 | v1.1.318 | 2026-06-17 | AI 助手 API 新增 `/api/assistant/metrics` 当前用户效果指标，返回草案采纳率、用户修改率、动作运行成功率和显式引用使用率 | Codex |
 | v1.1.317 | 2026-06-16 | AI 执行器 API 新增管理员侧测试接口，返回系统默认执行器或本地 Runner 健康诊断 | Codex |
@@ -556,6 +557,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题。 |
+| Assistant | GET | `/api/assistant/draft-templates` | 查询当前用户可见的 AI 助手草案模板市场目录；返回周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析模板的提示、角色、依赖、流程和接入状态。 |
 | Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；覆盖业务对象、可读知识文档和管理员可见的定时作业/运行、插件动作、AI角色、Skill。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
 | Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持定时作业、插件连接和动作配置。 |
@@ -1531,6 +1533,42 @@ POST /api/assistant/action-drafts/{draft_id}/cancel
 ```
 
 `confirm` 只接受仍处于 `pending` 的草案。确认时必须重新走对应领域 service：`create_scheduled_job` 调用 scheduled_jobs service 并把 `config_json.assistant_draft` 写入作业配置，`create_plugin_connection` 调用插件连接 service，`create_plugin_action` 调用动作 service。确认成功返回 `{"draft": ..., "run": ...}`，`run.result_type/result_id/result` 指向创建出的领域资源；确认失败不得绕过领域 service。取消接口只把草案置为 `cancelled` 并记录原因，不产生领域写入。草案创建、确认和取消分别写入 `assistant_action_draft.created`、`assistant_action_draft.confirmed` 和 `assistant_action_draft.cancelled` 审计事件。
+
+AI 助手草案模板市场：
+
+```http
+GET /api/assistant/draft-templates
+```
+
+响应：
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "available": true,
+        "category": "insights",
+        "code": "weekly_feedback_insight",
+        "dependencies": ["用户反馈数据连接", "反馈洞察 Skill", "用户洞察写入动作"],
+        "description": "按周提取用户反馈高价值信息，生成可确认的定时作业草案。",
+        "draft_action": "create_scheduled_job",
+        "name": "周反馈洞察",
+        "prompt": "请帮我生成每周用户反馈洞察定时作业草案，配置数据来源、AI处理、结果动作和调度策略，并在确认后执行一次。",
+        "roles": ["product_owner", "admin"],
+        "source_module": "用户洞察",
+        "target_resource": "scheduled_job",
+        "template_version": "v1",
+        "wizard_steps": ["数据来源", "AI处理", "知识引用", "结果动作", "调度策略", "确认执行"]
+      }
+    ],
+    "total": 6
+  },
+  "trace_id": "trace_..."
+}
+```
+
+模板目录按当前用户角色过滤；管理员可见全部模板。`available=false` 表示模板已进入市场但尚未完整接入直接草案生成链路，前端必须展示状态并禁用直接使用或提示继续补齐依赖。模板点击只回填聊天输入框，不直接确认草案、写配置或触发外部动作。
 
 AI 助手效果指标：
 

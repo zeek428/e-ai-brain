@@ -1,4 +1,5 @@
 import {
+  AppstoreOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
@@ -26,6 +27,7 @@ import {
   confirmAssistantActionDraft,
   fetchAssistantConversationMessages,
   fetchAssistantConversations,
+  fetchAssistantDraftTemplates,
   fetchAssistantReferenceCandidates,
   fetchResultWriteTargets,
   getStoredCurrentUser,
@@ -34,6 +36,7 @@ import {
   type AssistantActionDraftPreview,
   type AssistantChatResponse,
   type AssistantConversationMessage,
+  type AssistantDraftTemplate,
   type AssistantReference,
   type AssistantConversationSummary,
   type AssistantDraftResolutionMap,
@@ -998,6 +1001,66 @@ function AssistantTaskCreationGuideCards({
   );
 }
 
+function AssistantDraftTemplateMarket({
+  isLoading,
+  onUseTemplate,
+  templates,
+}: {
+  isLoading: boolean;
+  onUseTemplate: (template: AssistantDraftTemplate) => void;
+  templates: AssistantDraftTemplate[];
+}) {
+  return (
+    <div className="assistant-template-market-panel">
+      <div className="assistant-template-market-header">
+        <Text strong>模板市场</Text>
+        {isLoading ? <Spin size="small" /> : <Tag color="blue">{templates.length}</Tag>}
+      </div>
+      <div className="assistant-template-market-list">
+        {templates.map((template) => (
+          <div className="assistant-template-card" key={template.code}>
+            <div className="assistant-template-card-title">
+              <Text strong>{template.name}</Text>
+              <Tag color={template.available === false ? 'default' : 'green'}>
+                {template.available === false ? '暂未完整接入' : '可生成草案'}
+              </Tag>
+            </div>
+            <Text className="assistant-template-description" type="secondary">
+              {template.description}
+            </Text>
+            <Space size={[4, 4]} wrap>
+              {template.source_module ? <Tag color="blue">{template.source_module}</Tag> : null}
+              {template.draft_action ? <Tag color="default">{template.draft_action}</Tag> : null}
+              {template.template_version ? <Tag color="default">{template.template_version}</Tag> : null}
+            </Space>
+            {template.dependencies?.length ? (
+              <Text className="assistant-template-meta" type="secondary">
+                依赖：{template.dependencies.join('、')}
+              </Text>
+            ) : null}
+            {template.wizard_steps?.length ? (
+              <Text className="assistant-template-meta" type="secondary">
+                流程：{template.wizard_steps.join(' -> ')}
+              </Text>
+            ) : null}
+            <Button
+              aria-label={`使用模板 ${template.name}`}
+              disabled={template.available === false}
+              size="small"
+              onClick={() => onUseTemplate(template)}
+            >
+              使用模板
+            </Button>
+          </div>
+        ))}
+        {!isLoading && !templates.length ? (
+          <Text type="secondary">暂无可用模板</Text>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function AssistantBubble({
   draftMutationId,
   draftResolutionById,
@@ -1071,7 +1134,10 @@ export default function AssistantPage() {
     () => readAssistantDraftResolutions(),
   );
   const [draftStatusById, setDraftStatusById] = useState<Record<string, string>>({});
+  const [draftTemplateMarketOpened, setDraftTemplateMarketOpened] = useState(false);
+  const [draftTemplates, setDraftTemplates] = useState<AssistantDraftTemplate[]>([]);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const [isLoadingDraftTemplates, setIsLoadingDraftTemplates] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isLoadingReferences, setIsLoadingReferences] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -1083,6 +1149,7 @@ export default function AssistantPage() {
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
   const queryReferenceHydratedRef = useRef(false);
+  const draftTemplatesLoadRequestedRef = useRef(false);
   const resultWriteTargetsLoadRequestedRef = useRef(false);
 
   const canSend = useMemo(() => inputValue.trim().length > 0 && !isSending, [inputValue, isSending]);
@@ -1223,6 +1290,22 @@ export default function AssistantPage() {
     void loadConversations();
   }, [loadConversations]);
 
+  const loadDraftTemplates = useCallback(async () => {
+    if (draftTemplatesLoadRequestedRef.current) {
+      return;
+    }
+    draftTemplatesLoadRequestedRef.current = true;
+    setIsLoadingDraftTemplates(true);
+    try {
+      setDraftTemplates(await fetchAssistantDraftTemplates());
+    } catch (error) {
+      draftTemplatesLoadRequestedRef.current = false;
+      toast.error(formatMutationError(error));
+    } finally {
+      setIsLoadingDraftTemplates(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!hasPluginActionDraft || resultWriteTargetsLoadRequestedRef.current) {
       return;
@@ -1252,6 +1335,15 @@ export default function AssistantPage() {
     setActiveReferenceIndex(-1);
     setReferenceCandidates([]);
     setSelectedReferences([]);
+  };
+
+  const openDraftTemplateMarket = () => {
+    setDraftTemplateMarketOpened((opened) => !opened);
+    void loadDraftTemplates();
+  };
+
+  const useDraftTemplate = (template: AssistantDraftTemplate) => {
+    setInputValue(template.prompt);
   };
 
   const addSelectedReference = (reference: AssistantReference) => {
@@ -1539,6 +1631,21 @@ export default function AssistantPage() {
               </Button>
             ))}
           </div>
+          <Button
+            aria-label="草案模板市场"
+            block
+            icon={<AppstoreOutlined />}
+            onClick={openDraftTemplateMarket}
+          >
+            草案模板市场
+          </Button>
+          {draftTemplateMarketOpened ? (
+            <AssistantDraftTemplateMarket
+              isLoading={isLoadingDraftTemplates}
+              templates={draftTemplates}
+              onUseTemplate={useDraftTemplate}
+            />
+          ) : null}
           {roleQuickTaskGroups.length ? (
             <div className="assistant-role-task-panel">
               <Text strong>角色快捷任务</Text>

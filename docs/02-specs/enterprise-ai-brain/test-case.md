@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.482 |
+| 功能版本 | v1.1.483 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.483 | 2026-06-17 | 补充 AI 助手草案模板市场验收：服务端目录返回六类模板，前端侧栏可加载并回填提示 | Codex |
 | v1.1.482 | 2026-06-16 | 补充 AI 执行器列表测试验收：系统默认执行器和本地 Runner 均可从列表发起健康诊断 | Codex |
 | v1.1.481 | 2026-06-16 | 补充插件连接“保存并测试”验收：新增/编辑连接保存成功后立即执行连接测试并展示诊断 | Codex |
 | v1.1.480 | 2026-06-16 | 补充 Runner 安装包 START_STOP.md 验收，要求覆盖各系统启动、停止、状态查看、重启和页面停用边界 | Codex |
@@ -594,6 +595,7 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 | TC-AIBRAIN-ASSISTANT-FUNC-019 | v1.1 | P1 | 用户取消助理动作草案 | `POST /api/assistant/action-drafts/{draft_id}/cancel` 将草案状态变为 `cancelled`，记录取消原因和审计，不调用领域 service，不产生业务写入；已取消草案再次确认返回冲突错误。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-020 | v1.1 | P1 | 管理员围绕一次失败的 `@scheduled_job_run` 继续追问失败原因 | 聊天响应包含 `assistant.scheduled_job_diagnostic` 工具结果，按数据连接、AI 处理、结果动作三段返回状态、摘要、错误信息和关联日志 ID；助手回复和历史消息保留该工具结果；模型日志不保存完整插件请求/响应、Prompt、模型输出或密钥。 |
 | TC-AIBRAIN-ASSISTANT-API-021 | v1.1 | P2 | 查询当前用户 AI 助手效果指标 | `GET /api/assistant/metrics` 只统计当前登录用户的助手草案、动作运行、定时作业运行和消息引用，返回草案总数、待确认/已确认/已取消/失败数、草案采纳率、草案处理率、用户修改率、动作运行成功率、定时作业运行成功率、失败复跑修复率、用户消息显式引用使用率、引用总数、知识引用数、知识引用命中率和 `drafts_by_action`；失败复跑修复率按失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用计算；知识引用命中率按同一会话用户显式引用知识对象后助手回复也引用该对象计算；其他用户草案和运行不计入；响应不得包含完整对话正文、知识正文、密钥、完整外部请求/响应或模型 Prompt。 |
+| TC-AIBRAIN-ASSISTANT-API-022 | v1.1 | P2 | 查询并使用 AI 助手草案模板市场 | `GET /api/assistant/draft-templates` 按当前用户角色返回官方草案模板目录，管理员可见周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析六类模板；模板字段包含 `code/name/category/description/prompt/roles/source_module/draft_action/target_resource/dependencies/wizard_steps/template_version/available`；前端助手侧栏点击“草案模板市场”后加载服务端目录，展示可生成/暂未完整接入状态、依赖和流程，点击可用模板只回填聊天输入框，不直接写配置、确认草案或触发外部动作。 |
 
 ---
 
