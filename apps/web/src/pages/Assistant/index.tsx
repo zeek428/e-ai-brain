@@ -219,6 +219,8 @@ const queryReferenceTypes = new Set([
   'scheduled_job',
   'scheduled_job_run',
 ]);
+const ASSISTANT_RECENT_REFERENCES_STORAGE_KEY = 'ai_brain_assistant_recent_references';
+const MAX_RECENT_REFERENCES = 8;
 
 function actionDraftItems(toolResults?: AssistantToolResult[]) {
   return (toolResults ?? [])
@@ -303,7 +305,7 @@ function mergeReferences(...referenceLists: AssistantReference[][]) {
   const seen = new Set<string>();
   referenceLists.forEach((referenceList) => {
     referenceList.forEach((reference) => {
-      const key = `${reference.type}:${reference.id}`;
+      const key = referenceKey(reference);
       if (seen.has(key)) {
         return;
       }
@@ -312,6 +314,10 @@ function mergeReferences(...referenceLists: AssistantReference[][]) {
     });
   });
   return references;
+}
+
+function referenceKey(reference: Pick<AssistantReference, 'id' | 'type'>) {
+  return `${reference.type}:${reference.id}`;
 }
 
 function selectedAssistantRoleQuickTaskGroups() {
@@ -475,7 +481,112 @@ function referenceSummaryText(reference: AssistantReference) {
   return summary || '暂无摘要，仅注入引用元数据。';
 }
 
-function groupedReferenceCandidates(references: AssistantReference[]) {
+function normalizeRecentReferences(value: unknown): AssistantReference[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const references: AssistantReference[] = [];
+  const seen = new Set<string>();
+  value.forEach((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return;
+    }
+    const record = item as Partial<AssistantReference>;
+    const id = String(record.id ?? '').trim();
+    const title = String(record.title ?? '').trim();
+    const type = String(record.type ?? '').trim();
+    const url = String(record.url ?? '').trim();
+    if (!id || !title || !type || !url) {
+      return;
+    }
+    const reference: AssistantReference = {
+      ...record,
+      id,
+      title,
+      type,
+      url,
+    };
+    const key = referenceKey(reference);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    references.push(reference);
+  });
+  return references.slice(0, MAX_RECENT_REFERENCES);
+}
+
+function readRecentReferences() {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+  try {
+    return normalizeRecentReferences(
+      JSON.parse(window.localStorage.getItem(ASSISTANT_RECENT_REFERENCES_STORAGE_KEY) ?? '[]'),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeRecentReferences(references: AssistantReference[]) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      ASSISTANT_RECENT_REFERENCES_STORAGE_KEY,
+      JSON.stringify(references.slice(0, MAX_RECENT_REFERENCES)),
+    );
+  } catch {
+    // Recent references are an input convenience; failing to persist them should not block chat.
+  }
+}
+
+function nextRecentReferences(
+  currentReferences: AssistantReference[],
+  referencesToRemember: AssistantReference[],
+) {
+  const nextReferences = [...currentReferences];
+  referencesToRemember.forEach((reference) => {
+    const key = referenceKey(reference);
+    const existingIndex = nextReferences.findIndex((item) => referenceKey(item) === key);
+    if (existingIndex >= 0) {
+      nextReferences.splice(existingIndex, 1);
+    }
+    nextReferences.unshift(reference);
+  });
+  return normalizeRecentReferences(nextReferences);
+}
+
+function orderReferenceCandidatesByRecent(
+  references: AssistantReference[],
+  recentReferences: AssistantReference[],
+) {
+  const recentOrderByKey = new Map(
+    recentReferences.map((reference, index) => [referenceKey(reference), index]),
+  );
+  return references
+    .map((reference, index) => ({
+      index,
+      recentIndex: recentOrderByKey.get(referenceKey(reference)),
+      reference,
+    }))
+    .sort((left, right) => {
+      const leftRecent = left.recentIndex ?? Number.MAX_SAFE_INTEGER;
+      const rightRecent = right.recentIndex ?? Number.MAX_SAFE_INTEGER;
+      if (leftRecent !== rightRecent) {
+        return leftRecent - rightRecent;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.reference);
+}
+
+function groupedReferenceCandidates(
+  references: AssistantReference[],
+  recentReferences: AssistantReference[],
+) {
   const groups: Array<{
     items: Array<{
       index: number;
@@ -484,8 +595,22 @@ function groupedReferenceCandidates(references: AssistantReference[]) {
     label: string;
     type: string;
   }> = [];
+  const recentReferenceKeys = new Set(recentReferences.map(referenceKey));
+  const recentItems = references
+    .map((reference, index) => ({ index, reference }))
+    .filter(({ reference }) => recentReferenceKeys.has(referenceKey(reference)));
+  if (recentItems.length) {
+    groups.push({
+      items: recentItems,
+      label: '最近使用',
+      type: '__recent__',
+    });
+  }
   const groupByType = new Map<string, typeof groups[number]>();
   references.forEach((reference, index) => {
+    if (recentReferenceKeys.has(referenceKey(reference))) {
+      return;
+    }
     let group = groupByType.get(reference.type);
     if (!group) {
       group = {
@@ -954,6 +1079,7 @@ export default function AssistantPage() {
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
   const [activeReferenceIndex, setActiveReferenceIndex] = useState(-1);
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
+  const [recentReferences, setRecentReferences] = useState<AssistantReference[]>(() => readRecentReferences());
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
   const queryReferenceHydratedRef = useRef(false);
@@ -969,12 +1095,16 @@ export default function AssistantPage() {
     [resultWriteTargets],
   );
   const selectedReferenceKeys = useMemo(
-    () => new Set(selectedReferences.map((reference) => `${reference.type}:${reference.id}`)),
+    () => new Set(selectedReferences.map(referenceKey)),
     [selectedReferences],
   );
+  const orderedReferenceCandidates = useMemo(
+    () => orderReferenceCandidatesByRecent(referenceCandidates, recentReferences),
+    [recentReferences, referenceCandidates],
+  );
   const referenceCandidateGroups = useMemo(
-    () => groupedReferenceCandidates(referenceCandidates),
-    [referenceCandidates],
+    () => groupedReferenceCandidates(orderedReferenceCandidates, recentReferences),
+    [orderedReferenceCandidates, recentReferences],
   );
   const roleQuickTaskGroups = useMemo(() => selectedAssistantRoleQuickTaskGroups(), []);
   const selectedKnowledgeChunkCount = useMemo(
@@ -1049,7 +1179,7 @@ export default function AssistantPage() {
       .then((items) => {
         if (!didCancel) {
           setReferenceCandidates(
-            items.filter((reference) => !selectedReferenceKeys.has(`${reference.type}:${reference.id}`)),
+            items.filter((reference) => !selectedReferenceKeys.has(referenceKey(reference))),
           );
         }
       })
@@ -1071,12 +1201,12 @@ export default function AssistantPage() {
 
   useEffect(() => {
     setActiveReferenceIndex((index) => {
-      if (!referenceCandidates.length) {
+      if (!orderedReferenceCandidates.length) {
         return -1;
       }
-      return Math.min(Math.max(index, 0), referenceCandidates.length - 1);
+      return Math.min(Math.max(index, 0), orderedReferenceCandidates.length - 1);
     });
-  }, [referenceCandidates.length]);
+  }, [orderedReferenceCandidates.length]);
 
   const loadConversations = useCallback(async () => {
     setIsLoadingConversations(true);
@@ -1130,6 +1260,11 @@ export default function AssistantPage() {
         ? items
         : [...items, reference]
     ));
+    setRecentReferences((items) => {
+      const nextItems = nextRecentReferences(items, [reference]);
+      writeRecentReferences(nextItems);
+      return nextItems;
+    });
     setActiveReferenceIndex(-1);
     setReferenceCandidates([]);
   };
@@ -1144,26 +1279,26 @@ export default function AssistantPage() {
     if (!scheduledJobRunOnceRequested(messageText)) {
       return [];
     }
-    const activeReference = referenceCandidates[Math.max(activeReferenceIndex, 0)];
+    const activeReference = orderedReferenceCandidates[Math.max(activeReferenceIndex, 0)];
     const scheduledJobReference = activeReference?.type === 'scheduled_job'
       ? activeReference
-      : referenceCandidates.find((reference) => reference.type === 'scheduled_job');
+      : orderedReferenceCandidates.find((reference) => reference.type === 'scheduled_job');
     return scheduledJobReference ? [scheduledJobReference] : [];
   };
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!referenceCandidates.length) {
+    if (!orderedReferenceCandidates.length) {
       return;
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setActiveReferenceIndex((index) => (index + 1) % referenceCandidates.length);
+      setActiveReferenceIndex((index) => (index + 1) % orderedReferenceCandidates.length);
       return;
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault();
       setActiveReferenceIndex((index) => (
-        index <= 0 ? referenceCandidates.length - 1 : index - 1
+        index <= 0 ? orderedReferenceCandidates.length - 1 : index - 1
       ));
       return;
     }
@@ -1174,7 +1309,7 @@ export default function AssistantPage() {
         void sendMessage(inputValue, commandReferences);
         return;
       }
-      const reference = referenceCandidates[Math.max(activeReferenceIndex, 0)];
+      const reference = orderedReferenceCandidates[Math.max(activeReferenceIndex, 0)];
       if (reference) {
         event.preventDefault();
         addSelectedReference(reference);
@@ -1238,6 +1373,13 @@ export default function AssistantPage() {
       selectedReferences,
       referenceOverrides ?? commandReferenceCandidates(content),
     );
+    if (referencesForRequest.length) {
+      setRecentReferences((items) => {
+        const nextItems = nextRecentReferences(items, referencesForRequest);
+        writeRecentReferences(nextItems);
+        return nextItems;
+      });
+    }
     const userMessage: ChatMessage = {
       content,
       id: `user-${Date.now()}`,

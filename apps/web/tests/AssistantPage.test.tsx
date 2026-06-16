@@ -245,6 +245,76 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('promotes previously selected @ references into a recent group', async () => {
+    const referenceItems = [
+      {
+        chunk_count: 2,
+        id: 'knowledge_payment_runbook',
+        index_status: 'indexed',
+        permission_label: '可引用',
+        source_module: '知识库',
+        summary: '支付页提交无响应时，先检查网关超时、回调状态和前端埋点。',
+        title: '支付页超时排障手册',
+        type: 'knowledge_document',
+        updated_at: '2026-06-14T08:00:00+00:00',
+        url: '/knowledge/documents?document_id=knowledge_payment_runbook',
+      },
+      {
+        chunk_count: 1,
+        id: 'knowledge_checkout_runbook',
+        index_status: 'indexed',
+        permission_label: '可引用',
+        source_module: '知识库',
+        summary: '收银台提交失败时检查表单状态和支付回调。',
+        title: '收银台提交排障手册',
+        type: 'knowledge_document',
+        updated_at: '2026-06-13T08:00:00+00:00',
+        url: '/knowledge/documents?document_id=knowledge_checkout_runbook',
+      },
+    ];
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: referenceItems,
+              total: referenceItems.length,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, {
+      target: { value: '@支付' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /支付页超时排障手册/ }));
+    fireEvent.click(screen.getByRole('button', { name: '移除 支付页超时排障手册' }));
+    fireEvent.change(assistantInput, {
+      target: { value: '@' },
+    });
+
+    const referenceCandidatePanel = await screen.findByLabelText('引用候选');
+    expect(within(referenceCandidatePanel).getByText('最近使用')).toBeInTheDocument();
+    expect(within(referenceCandidatePanel).getAllByRole('button', { name: /支付页超时排障手册/ })).toHaveLength(1);
+    expect(within(referenceCandidatePanel).getAllByText('知识文档').length).toBeGreaterThan(0);
+    expect(within(referenceCandidatePanel).getByRole('button', { name: /收银台提交排障手册/ })).toBeInTheDocument();
+  });
+
   it('shows admin role quick tasks and fills the run-failure prompt', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
