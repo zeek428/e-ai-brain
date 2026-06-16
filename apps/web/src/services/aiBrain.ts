@@ -169,6 +169,7 @@ export type AssistantReference = {
   index_status?: string;
   permission_label?: string;
   source_module?: string;
+  summary?: string;
   title: string;
   type: string;
   updated_at?: string;

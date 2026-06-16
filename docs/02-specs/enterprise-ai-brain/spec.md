@@ -411,7 +411,7 @@
 
 AI 助手正在从只读问答页升级为统一工作台。整体目标仍详见 [AI 助手工作台升级整体方案](assistant-workbench-upgrade-design.md)：用户可在输入框通过 `@` 显式引用产品、需求、AI 任务、Bug、知识空间/目录/文档/chunk、插件、动作、AI角色/Skill、模型网关配置、定时作业和运行实例；后端必须先解析引用、校验权限、构造脱敏上下文，再进入模型网关调用或动作草案生成。知识库引入遵守显式范围、权限过滤和限量注入，完整知识正文不得写入模型日志。
 
-当前 P0 已落地 `knowledge_document` 显式引用：前端在 AI 助手输入框输入 `@` 后调用 `/api/assistant/reference-candidates` 拉取当前用户可读且可检索的知识文档候选，选择后以引用 chip 展示并随 `/api/assistant/chat.references` 提交结构化 ID；后端通过 `/api/assistant/references/resolve` 和聊天前解析流程校验引用，未授权、不可读、不可检索或不存在的文档返回 `REFERENCE_NOT_FOUND`，不得进入模型上下文。聊天调用会把已解析引用写入 `system_context.selected_references`，并按权限读取有限数量的知识 chunk 写入 `system_context.knowledge_context`；助手消息只持久化引用元数据和工具结果，模型日志继续只记录 provider、model、purpose、tokens、latency、status 和 error 等脱敏元数据。
+当前 P0 已落地 `knowledge_document` 显式引用：前端在 AI 助手输入框输入 `@` 后调用 `/api/assistant/reference-candidates` 拉取当前用户可读且可检索的知识文档候选，选择后在聊天框上方“本次上下文”区域展示引用类型、来源模块、权限状态、更新时间、知识 chunk 注入状态和轻量摘要，并随 `/api/assistant/chat.references` 提交结构化 ID；后端通过 `/api/assistant/references/resolve` 和聊天前解析流程校验引用，未授权、不可读、不可检索或不存在的文档返回 `REFERENCE_NOT_FOUND`，不得进入模型上下文。聊天调用会把已解析引用写入 `system_context.selected_references`，并按权限读取有限数量的知识 chunk 写入 `system_context.knowledge_context`；助手消息只持久化引用元数据和工具结果，模型日志继续只记录 provider、model、purpose、tokens、latency、status 和 error 等脱敏元数据，不保存完整知识正文。
 
 显式引用候选已继续扩展到研发业务对象和管理员运维配置对象：所有助手用户可按产品上下文引用 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit` 和可读 `knowledge_document`；仅管理员可引用 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`。前端 `@` 查询不再固定为知识文档类型，会展示引用类型标签并提交 `{type,id}`；后端候选和解析都按当前用户角色过滤，非管理员提交配置/运行类引用时返回空候选或 `REFERENCE_NOT_FOUND`。
 

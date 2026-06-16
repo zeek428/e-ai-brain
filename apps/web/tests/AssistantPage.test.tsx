@@ -163,11 +163,15 @@ describe('AssistantPage', () => {
             data: {
               items: [
                 {
-                  chunk_count: 1,
+                  chunk_count: 2,
                   id: 'knowledge_payment_runbook',
                   index_status: 'indexed',
+                  permission_label: '可引用',
+                  source_module: '知识库',
+                  summary: '支付页提交无响应时，先检查网关超时、回调状态和前端埋点。',
                   title: '支付页超时排障手册',
                   type: 'knowledge_document',
+                  updated_at: '2026-06-14T08:00:00+00:00',
                   url: '/knowledge/documents?document_id=knowledge_payment_runbook',
                 },
               ],
@@ -216,6 +220,22 @@ describe('AssistantPage', () => {
       target: { value: '基于 @支付 分析提交无响应' },
     });
     fireEvent.click(await screen.findByRole('button', { name: /支付页超时排障手册/ }));
+
+    const selectedReferenceList = screen.getByText('本次上下文')
+      .closest('.assistant-selected-reference-list');
+    expect(selectedReferenceList).not.toBeNull();
+    expect(within(selectedReferenceList as HTMLElement).getAllByText(/2 个知识 chunk 将注入模型/).length)
+      .toBeGreaterThan(0);
+    expect(within(selectedReferenceList as HTMLElement).getByText('知识库 · 可引用 · 2026-06-14')).toBeInTheDocument();
+    expect(
+      within(selectedReferenceList as HTMLElement).getByText(
+        '支付页提交无响应时，先检查网关超时、回调状态和前端埋点。',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(selectedReferenceList as HTMLElement).getByRole('button', { name: '移除 支付页超时排障手册' }),
+    ).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('支付页应先检查网关超时和回调幂等键。')).toBeInTheDocument();

@@ -460,6 +460,21 @@ function referenceMetaText(reference: AssistantReference) {
   ].filter(Boolean).join(' · ');
 }
 
+function referenceInjectionText(reference: AssistantReference) {
+  if (reference.type === 'knowledge_document') {
+    const chunkCount = Number(reference.chunk_count ?? 0);
+    return chunkCount > 0
+      ? `${chunkCount} 个知识 chunk 将注入模型`
+      : '知识文档元数据将注入模型';
+  }
+  return '引用元数据将注入模型';
+}
+
+function referenceSummaryText(reference: AssistantReference) {
+  const summary = String(reference.summary ?? '').trim();
+  return summary || '暂无摘要，仅注入引用元数据。';
+}
+
 function groupedReferenceCandidates(references: AssistantReference[]) {
   const groups: Array<{
     items: Array<{
@@ -1504,15 +1519,39 @@ export default function AssistantPage() {
               </div>
               <div className="assistant-selected-reference-tags">
                 {selectedReferences.map((reference) => (
-                  <Tag
-                    closable
-                    color="blue"
+                  <div
+                    className="assistant-selected-reference-card"
                     key={`${reference.type}:${reference.id}`}
-                    onClose={() => removeSelectedReference(reference)}
                   >
-                    {reference.title}
-                    <Text type="secondary"> {referenceTypeLabel(reference.type)}</Text>
-                  </Tag>
+                    <div className="assistant-selected-reference-card-header">
+                      <Space size={6} wrap>
+                        <Tag color="blue">{referenceTypeLabel(reference.type)}</Tag>
+                        <Text strong>{reference.title}</Text>
+                      </Space>
+                      <Button
+                        aria-label={`移除 ${reference.title}`}
+                        size="small"
+                        type="text"
+                        onClick={() => removeSelectedReference(reference)}
+                      >
+                        移除
+                      </Button>
+                    </div>
+                    <Text className="assistant-selected-reference-meta" type="secondary">
+                      {referenceMetaText(reference)}
+                    </Text>
+                    <Text className="assistant-selected-reference-summary">
+                      {referenceSummaryText(reference)}
+                    </Text>
+                    <Space size={6} wrap>
+                      <Tag color={reference.type === 'knowledge_document' ? 'green' : 'default'}>
+                        {referenceInjectionText(reference)}
+                      </Tag>
+                      <Button href={reference.url} size="small" type="link">
+                        查看来源
+                      </Button>
+                    </Space>
+                  </div>
                 ))}
               </div>
             </div>

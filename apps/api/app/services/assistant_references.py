@@ -422,6 +422,7 @@ def _knowledge_document_reference_candidates(
                 or _knowledge_chunk_count(current_store, document)
             ),
             "index_status": str(document.get("index_status") or ""),
+            **_knowledge_document_reference_summary(document),
         }
         for document in documents
         if document.get("index_status") in KNOWLEDGE_SEARCHABLE_STATUSES
@@ -591,6 +592,22 @@ def _knowledge_chunk_count(current_store: Any, document: dict[str, Any]) -> int:
             if chunk.get("document_id") == document.get("id")
         ]
     )
+
+
+def _knowledge_document_reference_summary(document: dict[str, Any]) -> dict[str, str]:
+    summary = str(
+        document.get("summary")
+        or document.get("abstract")
+        or document.get("description")
+        or document.get("content")
+        or ""
+    ).strip()
+    if not summary:
+        return {}
+    normalized = " ".join(summary.split())
+    if len(normalized) > 120:
+        normalized = f"{normalized[:117]}..."
+    return {"summary": normalized}
 
 
 def _knowledge_document_reference(document: dict[str, Any]) -> dict[str, str]:

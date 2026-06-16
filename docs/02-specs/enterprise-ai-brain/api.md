@@ -1380,7 +1380,11 @@ GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limi
       "title": "反馈分类标准",
       "url": "/knowledge/documents?document_id=knowledge_doc_001",
       "chunk_count": 12,
-      "index_status": "vector_indexed"
+      "index_status": "vector_indexed",
+      "source_module": "知识库",
+      "permission_label": "可引用",
+      "updated_at": "2026-06-14T08:00:00+00:00",
+      "summary": "用于判断反馈类别、严重度和后续转需求规则。"
     },
     {
       "id": "scheduled_job_run_001",
@@ -1393,7 +1397,7 @@ GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limi
 }
 ```
 
-`type` 仍可选传，用于限定候选类型；不传时按权限返回混合候选。管理员可得到配置/运行类候选，普通用户只能得到业务对象和可读知识文档。
+`type` 仍可选传，用于限定候选类型；不传时按权限返回混合候选。管理员可得到配置/运行类候选，普通用户只能得到业务对象和可读知识文档。候选可携带 `source_module`、`permission_label`、`updated_at` 和轻量 `summary`，供前端“本次上下文”展示来源、权限、更新时间、知识 chunk 注入状态和引用摘要；模型日志不得保存完整知识正文。
 
 当聊天消息显式引用 `scheduled_job_run` 且问题包含失败、原因、诊断或排查意图时，响应中的 `message.tool_results[]` 会包含：
 

@@ -768,9 +768,41 @@ body {
 }
 
 .assistant-selected-reference-tags {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 8px;
+}
+
+.assistant-selected-reference-card {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid #dfe6f1;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.assistant-selected-reference-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.assistant-selected-reference-card-header .ant-space {
+  min-width: 0;
+}
+
+.assistant-selected-reference-card-header .ant-typography,
+.assistant-selected-reference-summary,
+.assistant-selected-reference-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assistant-selected-reference-summary,
+.assistant-selected-reference-meta {
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .assistant-reference-candidate-group {

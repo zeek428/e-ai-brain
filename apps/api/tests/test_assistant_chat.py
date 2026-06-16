@@ -203,6 +203,7 @@ def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents()
             "index_status": "indexed",
             "permission_label": "可引用",
             "source_module": "知识库",
+            "summary": "支付页提交无响应时，先检查网关超时、回调状态和前端埋点。",
             "title": "支付页超时排障手册",
             "type": "knowledge_document",
             "updated_at": "2026-06-14T08:00:00+00:00",
