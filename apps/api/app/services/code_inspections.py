@@ -444,6 +444,31 @@ def sync_product_git_repository_store(current_store: Any, product_id: str | None
             )
 
 
+def previous_code_inspection_report(
+    current_store: Any,
+    *,
+    branch: str | None,
+    product_id: str | None,
+    repository_id: str | None,
+) -> dict[str, Any] | None:
+    if not repository_id:
+        return None
+    candidates = [
+        report
+        for report in current_store.code_inspection_reports.values()
+        if report.get("repository_id") == repository_id
+        and report.get("branch") == branch
+        and report.get("product_id") == product_id
+    ]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda item: (str(item.get("created_at") or ""), str(item.get("id") or "")),
+        reverse=True,
+    )[0]
+
+
 def create_code_inspection_report_records(
     current_store: Any,
     *,
@@ -484,12 +509,39 @@ def create_code_inspection_report_records(
     )
     now = datetime.now(UTC).isoformat()
     repository_default_branch = repository.get("default_branch") if repository else None
+    branch = (
+        source_json.get("branch")
+        or (job.get("config_json") or {}).get("branch")
+        or repository_default_branch
+    )
+    severe_finding_count = sum(
+        1
+        for finding in findings
+        if severity_rank(finding.get("severity")) >= severity_rank(SEVERE_FINDING_THRESHOLD)
+    )
+    previous_report = previous_code_inspection_report(
+        current_store,
+        branch=branch,
+        product_id=job.get("product_id"),
+        repository_id=repository_id,
+    )
+    previous_report_id = previous_report.get("id") if previous_report else None
+    previous_comparison = (
+        {
+            "finding_delta": len(findings) - int(previous_report.get("finding_count") or 0),
+            "previous_finding_count": int(previous_report.get("finding_count") or 0),
+            "previous_report_id": previous_report_id,
+            "previous_severe_finding_count": int(
+                previous_report.get("severe_finding_count") or 0
+            ),
+            "severe_finding_delta": severe_finding_count
+            - int(previous_report.get("severe_finding_count") or 0),
+        }
+        if previous_report
+        else {}
+    )
     report = {
-        "branch": (
-            source_json.get("branch")
-            or (job.get("config_json") or {}).get("branch")
-            or repository_default_branch
-        ),
+        "branch": branch,
         "collector_run_id": collector_run_id,
         "commit_sha": source_json.get("commit_sha"),
         "created_at": now,
@@ -514,6 +566,27 @@ def create_code_inspection_report_records(
             severity_mapping=severity_mapping,
         ),
         "coverage_warning": source_json.get("coverage_warning"),
+        "artifact_ref": source_json.get("artifact_ref"),
+        "checkout_path": source_json.get("checkout_path"),
+        "checkout_path_retained": bool(source_json.get("checkout_path_retained")),
+        "remote_url_hash": source_json.get("remote_url_hash"),
+        "remote_url_summary": source_json.get("remote_url_summary"),
+        "rules_version": source_json.get("rules_version"),
+        "previous_comparison": previous_comparison,
+        "previous_report_id": previous_report_id,
+        "quality_gate": (
+            source_json.get("quality_gate")
+            if isinstance(source_json.get("quality_gate"), dict)
+            else {}
+        ),
+        "scan_profile": (
+            source_json.get("scan_profile")
+            if isinstance(source_json.get("scan_profile"), dict)
+            else {}
+        ),
+        "scan_finished_at": source_json.get("scan_finished_at"),
+        "scan_started_at": source_json.get("scan_started_at"),
+        "scanner_version": source_json.get("scanner_version"),
         "files_scanned": (
             source_json.get("files_scanned")
             if isinstance(source_json.get("files_scanned"), int)
@@ -523,11 +596,7 @@ def create_code_inspection_report_records(
         "scheduled_job_run_id": run_id,
         "scan_mode": source_json.get("scan_mode"),
         "scanner_name": source_json.get("scanner_name"),
-        "severe_finding_count": sum(
-            1
-            for finding in findings
-            if severity_rank(finding.get("severity")) >= severity_rank(SEVERE_FINDING_THRESHOLD)
-        ),
+        "severe_finding_count": severe_finding_count,
         "is_full_scan": bool(source_json.get("is_full_scan")),
         "lines_scanned": (
             source_json.get("lines_scanned")
@@ -542,6 +611,16 @@ def create_code_inspection_report_records(
         "source_system": job.get("source_system"),
         "status": "completed",
         "summary": str(source_json.get("summary") or ""),
+        "suppressed_finding_count": (
+            source_json.get("suppressed_finding_count")
+            if isinstance(source_json.get("suppressed_finding_count"), int)
+            else 0
+        ),
+        "suppression_summary": (
+            source_json.get("suppression_summary")
+            if isinstance(source_json.get("suppression_summary"), dict)
+            else {}
+        ),
         "updated_at": now,
     }
     current_store.code_inspection_reports[report_id] = report
@@ -1519,6 +1598,105 @@ def list_code_inspection_reports_response(
     )
 
 
+def _distribution_rows(
+    items: dict[str, dict[str, Any]],
+    *,
+    key_fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    return sorted(
+        items.values(),
+        key=lambda item: (
+            -int(item.get("severe_finding_count") or 0),
+            -int(item.get("finding_count") or 0),
+            *(str(item.get(field) or "") for field in key_fields),
+        ),
+    )
+
+
+def code_inspection_scan_summary(
+    report: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    rule_distribution: dict[str, dict[str, Any]] = {}
+    file_distribution: dict[str, dict[str, Any]] = {}
+    committer_distribution: dict[str, dict[str, Any]] = {}
+    for finding in findings:
+        severity = normalize_severity(finding.get("severity"), fallback="info")
+        is_severe = severity_rank(severity) >= severity_rank(SEVERE_FINDING_THRESHOLD)
+        rule_id = str(finding.get("rule_id") or "unknown")
+        rule_entry = rule_distribution.setdefault(
+            rule_id,
+            {
+                "category": finding.get("category") or "uncategorized",
+                "finding_count": 0,
+                "rule_id": rule_id,
+                "severity": severity,
+                "severe_finding_count": 0,
+            },
+        )
+        rule_entry["finding_count"] += 1
+        if severity_rank(severity) > severity_rank(rule_entry.get("severity")):
+            rule_entry["severity"] = severity
+        if is_severe:
+            rule_entry["severe_finding_count"] += 1
+
+        file_path = str(finding.get("file_path") or "-")
+        file_entry = file_distribution.setdefault(
+            file_path,
+            {
+                "file_path": file_path,
+                "finding_count": 0,
+                "severe_finding_count": 0,
+            },
+        )
+        file_entry["finding_count"] += 1
+        if is_severe:
+            file_entry["severe_finding_count"] += 1
+
+        identity = (
+            finding.get("committer_email")
+            or finding.get("committer_username")
+            or finding.get("committer_name")
+            or "unknown"
+        )
+        committer_entry = committer_distribution.setdefault(
+            str(identity),
+            {
+                "email": finding.get("committer_email"),
+                "finding_count": 0,
+                "name": finding.get("committer_name"),
+                "severe_finding_count": 0,
+                "username": finding.get("committer_username"),
+            },
+        )
+        committer_entry["finding_count"] += 1
+        if is_severe:
+            committer_entry["severe_finding_count"] += 1
+    return {
+        "coverage": {
+            "files_scanned": report.get("files_scanned") or 0,
+            "lines_scanned": report.get("lines_scanned") or 0,
+            "suppressed_finding_count": report.get("suppressed_finding_count") or 0,
+        },
+        "file_distribution": _distribution_rows(
+            file_distribution,
+            key_fields=("file_path",),
+        ),
+        "quality_gate": report.get("quality_gate") or {},
+        "rule_distribution": _distribution_rows(
+            rule_distribution,
+            key_fields=("rule_id",),
+        ),
+        "committer_distribution": _distribution_rows(
+            committer_distribution,
+            key_fields=("email", "username", "name"),
+        ),
+        "previous_comparison": report.get("previous_comparison") or {},
+        "scan_profile": report.get("scan_profile") or {},
+        "suppression_summary": report.get("suppression_summary") or {},
+    }
+
+
 def code_inspection_detail_response(
     *,
     current_store: Any,
@@ -1534,6 +1712,10 @@ def code_inspection_detail_response(
         if not user_can_read_product(user, detail["report"].get("product_id")):
             raise api_error(404, "NOT_FOUND", "Code inspection report not found")
         detail["report"] = public_code_inspection_report(detail["report"], current_store)
+        detail["scan_summary"] = code_inspection_scan_summary(
+            detail["report"],
+            detail.get("findings") or [],
+        )
         return detail
     report = current_store.code_inspection_reports.get(report_id)
     if report is None:
@@ -1563,6 +1745,7 @@ def code_inspection_detail_response(
         "findings": findings,
         "notifications": notifications,
         "report": public_code_inspection_report(report, current_store),
+        "scan_summary": code_inspection_scan_summary(report, findings),
     }
 
 

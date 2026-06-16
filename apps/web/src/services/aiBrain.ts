@@ -4905,7 +4905,10 @@ export async function fetchScheduledJobRunObservability(): Promise<ScheduledJobR
 }
 
 export type CodeInspectionReportRecord = {
+  artifact_ref?: string | null;
   branch?: string | null;
+  checkout_path?: string | null;
+  checkout_path_retained?: boolean;
   commit_sha?: string | null;
   committer_count?: number;
   committer_summary?: Array<{
@@ -4924,17 +4927,32 @@ export type CodeInspectionReportRecord = {
   plugin_action_id?: string | null;
   plugin_connection_id?: string | null;
   plugin_invocation_log_id?: string | null;
+  previous_comparison?: Record<string, unknown>;
+  previous_report_id?: string | null;
   product_id?: string | null;
+  quality_gate?: Record<string, unknown>;
   repository_id?: string | null;
   repository_name?: string | null;
   repository_path?: string | null;
+  remote_url_hash?: string | null;
+  remote_url_summary?: string | null;
   risk_level: string;
+  rules_loaded?: string[];
+  rules_version?: string | null;
+  scan_finished_at?: string | null;
+  scan_mode?: string | null;
+  scan_started_at?: string | null;
+  scanner_name?: string | null;
+  scanner_version?: string | null;
+  scan_profile?: Record<string, unknown>;
   scheduled_job_id?: string | null;
   scheduled_job_run_id?: string | null;
   severe_finding_count: number;
   source_system?: string | null;
   status: string;
   summary?: string;
+  suppressed_finding_count?: number;
+  suppression_summary?: Record<string, unknown>;
 };
 
 export type CodeInspectionFindingRecord = {
@@ -4968,6 +4986,16 @@ export type CodeInspectionDetailRecord = {
   findings: CodeInspectionFindingRecord[];
   notifications: CodeInspectionNotificationRecord[];
   report: CodeInspectionReportRecord & Record<string, unknown>;
+  scan_summary?: {
+    committer_distribution?: Array<Record<string, unknown>>;
+    coverage?: Record<string, unknown>;
+    file_distribution?: Array<Record<string, unknown>>;
+    previous_comparison?: Record<string, unknown>;
+    quality_gate?: Record<string, unknown>;
+    rule_distribution?: Array<Record<string, unknown>>;
+    scan_profile?: Record<string, unknown>;
+    suppression_summary?: Record<string, unknown>;
+  };
 };
 
 export type CodeInspectionDashboardRecord = {

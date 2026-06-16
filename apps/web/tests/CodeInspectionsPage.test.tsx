@@ -8,7 +8,9 @@ import CodeInspectionsPage from '../src/pages/CodeInspections';
 
 function installCodeInspectionsFetchMock() {
   const report = {
+    artifact_ref: 'workdir://checkouts/scheduled_job_run_001__repo_ai_brain__main__abc1234',
     branch: 'main',
+    checkout_path_retained: false,
     commit_sha: 'abc1234',
     committer_count: 1,
     committer_summary: [
@@ -33,13 +35,53 @@ function installCodeInspectionsFetchMock() {
     repository_id: 'repo_ai_brain',
     repository_name: 'AI Brain',
     repository_path: 'example/ai-brain',
+    remote_url_hash: 'f00dbeef1234',
+    remote_url_summary: 'https://github.com/example/ai-brain.git#f00dbeef1234',
+    previous_comparison: {
+      finding_delta: -1,
+      previous_finding_count: 2,
+      previous_report_id: 'code_inspection_report_previous',
+      previous_severe_finding_count: 2,
+      severe_finding_delta: -1,
+    },
+    previous_report_id: 'code_inspection_report_previous',
+    quality_gate: {
+      counts: { critical: 1, high: 0, medium: 0, total: 1 },
+      enabled: true,
+      status: 'failed',
+      violations: [{ limit: 0, severity: 'critical', value: 1 }],
+    },
     risk_level: 'critical',
+    rules_loaded: ['secrets', 'internal_addresses'],
+    rules_version: 'builtin-2026.06.16',
+    scan_profile: {
+      external_scanner_status: {
+        configured: ['gitleaks'],
+        executed: ['gitleaks'],
+        failed: [],
+        skipped: [],
+      },
+      scanner_engines: ['builtin', 'gitleaks'],
+      severity_threshold: 'medium',
+    },
+    scan_finished_at: '2026-06-12T09:01:00Z',
+    scan_mode: 'native_full_scan',
+    scan_started_at: '2026-06-12T09:00:00Z',
+    scanner_name: 'ai_brain_builtin_static',
+    scanner_version: '2026.06.16',
     scheduled_job_id: 'scheduled_job_code_inspection_weekly',
     scheduled_job_run_id: 'scheduled_job_run_001',
     severe_finding_count: 1,
     source_system: 'github-code-scanner',
     status: 'completed',
     summary: '发现 1 个 critical 安全问题。',
+    suppressed_finding_count: 2,
+    suppression_summary: {
+      accepted_risk: 1,
+      baseline: 1,
+      ignored: 0,
+      severity_threshold: 0,
+    },
   };
   const jsonResponse = (body: unknown) =>
     new Response(JSON.stringify(body), {
@@ -160,6 +202,42 @@ function installCodeInspectionsFetchMock() {
             },
           ],
           report,
+          scan_summary: {
+            committer_distribution: [
+              {
+                email: 'alice@example.com',
+                finding_count: 1,
+                name: 'Alice Chen',
+                severe_finding_count: 1,
+                username: 'alice',
+              },
+            ],
+            coverage: {
+              files_scanned: 12,
+              lines_scanned: 300,
+              suppressed_finding_count: 2,
+            },
+            file_distribution: [
+              {
+                file_path: 'src/config.py',
+                finding_count: 1,
+                severe_finding_count: 1,
+              },
+            ],
+            previous_comparison: report.previous_comparison,
+            quality_gate: report.quality_gate,
+            rule_distribution: [
+              {
+                category: 'security',
+                finding_count: 1,
+                rule_id: 'inspection.incomplete_source_data',
+                severity: 'critical',
+                severe_finding_count: 1,
+              },
+            ],
+            scan_profile: report.scan_profile,
+            suppression_summary: report.suppression_summary,
+          },
         },
       });
     }
@@ -216,6 +294,23 @@ describe('CodeInspectionsPage', () => {
     expect(within(dialog).getByText('plugin_action_github_scan')).toBeInTheDocument();
     expect(within(dialog).getByText('插件调用')).toBeInTheDocument();
     expect(within(dialog).getByText('plugin_invocation_log_001')).toBeInTheDocument();
+    expect(within(dialog).getByText('扫描快照')).toBeInTheDocument();
+    expect(within(dialog).getByText('native_full_scan')).toBeInTheDocument();
+    expect(within(dialog).getByText('workdir://checkouts/scheduled_job_run_001__repo_ai_brain__main__abc1234')).toBeInTheDocument();
+    expect(within(dialog).getByText('builtin-2026.06.16')).toBeInTheDocument();
+    expect(within(dialog).getByText('未保留')).toBeInTheDocument();
+    expect(within(dialog).getByText('扫描摘要')).toBeInTheDocument();
+    expect(within(dialog).getByText('质量门禁')).toBeInTheDocument();
+    expect(within(dialog).getByText('failed')).toBeInTheDocument();
+    expect(within(dialog).getByText('过滤问题数')).toBeInTheDocument();
+    expect(within(dialog).getByText('2')).toBeInTheDocument();
+    expect(within(dialog).getByText('扫描引擎')).toBeInTheDocument();
+    expect(within(dialog).getByText('builtin、gitleaks')).toBeInTheDocument();
+    expect(within(dialog).getByText('外部引擎状态')).toBeInTheDocument();
+    expect(within(dialog).getByText('已执行 gitleaks')).toBeInTheDocument();
+    expect(within(dialog).getByText('与上次对比')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('inspection.incomplete_source_data').length).toBeGreaterThan(1);
+    expect(within(dialog).getByText('src/config.py')).toBeInTheDocument();
   });
 
   it('keeps long finding text readable in the detail dialog', async () => {
@@ -236,7 +331,7 @@ describe('CodeInspectionsPage', () => {
       wordBreak: 'break-word',
       whiteSpace: 'normal',
     });
-    expect(within(dialog).getByText('inspection.incomplete_source_data')).toHaveStyle({
+    expect(within(dialog).getAllByText('inspection.incomplete_source_data')[0]).toHaveStyle({
       overflow: 'hidden',
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap',

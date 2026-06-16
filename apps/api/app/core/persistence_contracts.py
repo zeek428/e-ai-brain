@@ -579,6 +579,14 @@ class UserFeedbackRepository(Protocol):
         audit_event: dict[str, Any] | None = None,
     ) -> None: ...
 
+    def save_user_feedback_requirement_conversion(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        feedback: dict[str, Any],
+        requirement: dict[str, Any],
+    ) -> None: ...
+
 
 class IterationPlanningRepository(Protocol):
     def load_iteration_planning(self) -> dict[str, Any] | None: ...

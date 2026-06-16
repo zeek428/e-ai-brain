@@ -183,6 +183,23 @@ const codeInspectionScanModeOptions = [
   { label: '同步已有告警', value: 'sync_existing_alerts' },
   { label: '触发平台扫描', value: 'trigger_platform_scan' },
 ];
+const codeInspectionScannerEngineOptions = [
+  { label: '内置规则', value: 'builtin' },
+  { label: 'gitleaks 密钥扫描', value: 'gitleaks' },
+  { label: 'semgrep 代码安全/规范', value: 'semgrep' },
+  { label: 'trivy 依赖/镜像风险', value: 'trivy' },
+  { label: 'npm audit', value: 'npm' },
+  { label: 'pip-audit', value: 'pip-audit' },
+  { label: 'mvn dependency-check', value: 'dependency-check' },
+];
+const codeInspectionBuiltinRuleOptions = [
+  { label: '硬编码凭据', value: 'secrets' },
+  { label: '内部地址暴露', value: 'internal_addresses' },
+];
+const codeInspectionIgnoreRuleOptions = [
+  { label: 'secrets.hardcoded_credential', value: 'secrets.hardcoded_credential' },
+  { label: 'metadata.internal_address_exposure', value: 'metadata.internal_address_exposure' },
+];
 const codeInspectionPluginActionCodes = new Set([
   'scan_github_code_inspection',
   'scan_gitlab_code_inspection',
@@ -3051,6 +3068,9 @@ export default function ScheduledJobsPage() {
                           form.setFieldValue('plugin_connection_ids', []);
                           form.setFieldValue('plugin_action_id', undefined);
                           form.setFieldValue('plugin_action_ids', []);
+                          form.setFieldValue(['config_json', 'async_execution'], true);
+                          form.setFieldValue(['config_json', 'scanner_engines'], ['builtin']);
+                          form.setFieldValue(['config_json', 'scan_rules'], ['secrets', 'internal_addresses']);
                         }
                       }}
                     />
@@ -3060,7 +3080,6 @@ export default function ScheduledJobsPage() {
                   <Form.Item
                     label="代码仓库"
                     name={['config_json', 'repository_id']}
-                    rules={[{ required: true, message: '请选择代码仓库' }]}
                   >
                     <Select
                       allowClear
@@ -3083,6 +3102,127 @@ export default function ScheduledJobsPage() {
                     rules={[{ required: true, message: '请输入扫描分支' }]}
                   >
                     <Input placeholder={selectedRepositoryDefaultBranch ?? 'main'} />
+                  </Form.Item>
+                </Col>
+                <Col span={24}>
+                  <Form.Item
+                    extra="用于一个产品同时扫描前端、后端、移动端等多个仓库；留空时使用上方单仓库"
+                    label="批量代码仓库"
+                    name={['config_json', 'repository_ids']}
+                  >
+                    <Select
+                      allowClear
+                      loading={productRepositoriesLoading}
+                      mode="multiple"
+                      optionFilterProp="label"
+                      options={productRepositories.map((repository) => ({
+                        label: repository.label,
+                        value: repository.id,
+                      }))}
+                      placeholder="请选择多个代码仓库"
+                      showSearch
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    initialValue={['builtin']}
+                    label="扫描引擎"
+                    name={['config_json', 'scanner_engines']}
+                  >
+                    <Select
+                      mode="multiple"
+                      optionFilterProp="label"
+                      options={codeInspectionScannerEngineOptions}
+                      placeholder="请选择扫描引擎"
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    initialValue={['secrets', 'internal_addresses']}
+                    label="内置规则"
+                    name={['config_json', 'scan_rules']}
+                  >
+                    <Select
+                      mode="multiple"
+                      optionFilterProp="label"
+                      options={codeInspectionBuiltinRuleOptions}
+                      placeholder="请选择内置规则"
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="严重级别阈值" name={['config_json', 'severity_threshold']}>
+                    <Select
+                      allowClear
+                      options={severityThresholdOptions}
+                      placeholder="默认 high"
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item
+                    initialValue={true}
+                    label="异步执行"
+                    name={['config_json', 'async_execution']}
+                    valuePropName="checked"
+                  >
+                    <Switch />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="忽略目录" name={['config_json', 'ignore_dirs']}>
+                    <Select mode="tags" placeholder="如 node_modules、dist、coverage" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="忽略规则" name={['config_json', 'ignore_rules']}>
+                    <Select
+                      mode="multiple"
+                      optionFilterProp="label"
+                      options={codeInspectionIgnoreRuleOptions}
+                      placeholder="请选择要忽略的规则"
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="Baseline Fingerprints" name={['config_json', 'baseline_fingerprints']}>
+                    <Select mode="tags" placeholder="粘贴历史问题 fingerprint，回车分隔" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="已接受风险 Fingerprints" name={['config_json', 'accepted_risk_fingerprints']}>
+                    <Select mode="tags" placeholder="粘贴已接受风险 fingerprint，回车分隔" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item
+                    label="启用质量门禁"
+                    name={['config_json', 'quality_gate', 'enabled']}
+                    valuePropName="checked"
+                  >
+                    <Switch />
+                  </Form.Item>
+                </Col>
+                <Col span={5}>
+                  <Form.Item label="Critical 上限" name={['config_json', 'quality_gate', 'critical_max']}>
+                    <InputNumber min={0} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={5}>
+                  <Form.Item label="High 上限" name={['config_json', 'quality_gate', 'high_max']}>
+                    <InputNumber min={0} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item label="Medium 上限" name={['config_json', 'quality_gate', 'medium_max']}>
+                    <InputNumber min={0} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="增量基线 Commit" name={['config_json', 'incremental_from_commit']}>
+                    <Input placeholder="留空表示全量扫描" />
                   </Form.Item>
                 </Col>
               </Row>

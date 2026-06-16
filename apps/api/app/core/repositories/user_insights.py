@@ -37,6 +37,19 @@ class UserInsightReadRepository:
     ) -> None:
         self._write_repository.save_user_feedback_record(record, audit_event=audit_event)
 
+    def save_user_feedback_requirement_conversion(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        feedback: dict[str, Any],
+        requirement: dict[str, Any],
+    ) -> None:
+        self._write_repository.save_user_feedback_requirement_conversion(
+            audit_events=audit_events,
+            feedback=feedback,
+            requirement=requirement,
+        )
+
     def save_user_usage_metrics(self, payload: dict[str, Any]) -> None:
         self._write_repository.save_user_usage_metrics(payload)
 

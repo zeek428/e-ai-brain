@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from types import SimpleNamespace
 
@@ -537,8 +538,13 @@ def test_code_inspection_defaults_branch_from_repository_when_scanner_omits_bran
     assert detail["report"]["branch"] == "develop"
 
 
-def test_native_repository_inspection_clones_branch_scans_files_and_blames_committers(tmp_path):
+def test_native_repository_inspection_clones_branch_scans_files_and_blames_committers(
+    monkeypatch,
+    tmp_path,
+):
     app.state.store.reset()
+    scan_workdir = tmp_path / "code-scan-workdir"
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(scan_workdir))
     headers = auth_headers()
     product = create_product(headers, code="native-scan-product", name="Native Scan Product")
     local_repo_url = create_local_git_repository(tmp_path)
@@ -552,6 +558,7 @@ def test_native_repository_inspection_clones_branch_scans_files_and_blames_commi
         "/api/system/scheduled-jobs",
         json={
             "config_json": {
+                "async_execution": False,
                 "branch": "release/native-scan",
                 "repository_id": repository["id"],
                 "scan_mode": "native_full_scan",
@@ -590,6 +597,20 @@ def test_native_repository_inspection_clones_branch_scans_files_and_blames_commi
     assert execution_nodes["native_scan"]["branch"] == "release/native-scan"
     assert execution_nodes["native_scan"]["files_scanned"] >= 1
     assert execution_nodes["native_scan"]["lines_scanned"] >= 2
+    assert execution_nodes["native_scan"]["repository_id"] == repository["id"]
+    assert execution_nodes["native_scan"]["remote_url_hash"]
+    assert execution_nodes["native_scan"]["remote_url_summary"].startswith("file://")
+    assert execution_nodes["native_scan"]["artifact_ref"].startswith("workdir://checkouts/")
+    assert execution_nodes["native_scan"]["checkout_path_retained"] is False
+    assert execution_nodes["native_scan"]["scan_started_at"]
+    assert execution_nodes["native_scan"]["scan_finished_at"]
+    assert execution_nodes["native_scan"]["scanner_version"]
+    assert execution_nodes["native_scan"]["rules_version"]
+    assert (scan_workdir / "mirrors").is_dir()
+    assert any((scan_workdir / "mirrors").iterdir())
+    checkout_path = execution_nodes["native_scan"].get("checkout_path")
+    if checkout_path:
+        assert not (tmp_path / checkout_path).exists()
     assert execution_nodes["data_connection"]["processing_mode"] == "native_full_scan"
 
     report_id = run["result_summary"]["report_id"]
@@ -608,6 +629,14 @@ def test_native_repository_inspection_clones_branch_scans_files_and_blames_commi
     assert report["coverage_warning"] is None
     assert report["commit_sha"]
     assert report["finding_count"] == 2
+    assert report["remote_url_hash"] == execution_nodes["native_scan"]["remote_url_hash"]
+    assert report["remote_url_summary"] == execution_nodes["native_scan"]["remote_url_summary"]
+    assert report["artifact_ref"] == execution_nodes["native_scan"]["artifact_ref"]
+    assert report["checkout_path_retained"] is False
+    assert report["scan_started_at"]
+    assert report["scan_finished_at"]
+    assert report["scanner_version"] == execution_nodes["native_scan"]["scanner_version"]
+    assert report["rules_version"] == execution_nodes["native_scan"]["rules_version"]
 
     findings_by_rule = {finding["rule_id"]: finding for finding in detail["findings"]}
     assert "secrets.hardcoded_credential" in findings_by_rule
@@ -617,6 +646,583 @@ def test_native_repository_inspection_clones_branch_scans_files_and_blames_commi
     assert secret_finding["committer_email"] == "alice@example.com"
     assert secret_finding["committer_name"] == "Alice Chen"
     assert secret_finding["raw"]["scan_mode"] == "native_full_scan"
+
+
+def test_native_repository_inspection_queues_run_and_worker_completes_scan(
+    monkeypatch,
+    tmp_path,
+):
+    app.state.store.reset()
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(tmp_path / "code-scan-workdir"))
+    monkeypatch.setenv("SCHEDULED_JOB_ASYNC_WORKER_DISABLED", "1")
+    headers = auth_headers()
+    product = create_product(headers, code="native-scan-async-product", name="Native Scan Async")
+    local_repo_url = create_local_git_repository(tmp_path)
+    repository = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+
+    job_response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "branch": "release/native-scan",
+                "repository_id": repository["id"],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Async native full repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    )
+    assert job_response.status_code == 200
+    job = job_response.json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    )
+
+    assert run_response.status_code == 200
+    queued_run = run_response.json()["data"]
+    assert queued_run["status"] == "queued"
+    assert queued_run["started_at"] is None
+    assert queued_run["finished_at"] is None
+    assert queued_run["result_summary"]["execution_nodes"]["native_scan"]["status"] == "queued"
+    assert (
+        queued_run["result_summary"]["execution_nodes"]["native_scan"]["repository_id"]
+        == repository["id"]
+    )
+
+    worker_run = scheduled_jobs_service.execute_queued_scheduled_job_run_response(
+        current_store=app.state.store,
+        run_id=queued_run["id"],
+        user={"id": "system_scheduled_job_worker", "roles": ["admin"]},
+    )
+
+    assert worker_run["id"] == queued_run["id"]
+    assert worker_run["status"] == "succeeded"
+    assert worker_run["records_imported"] == 2
+    assert worker_run["result_summary"]["report_id"]
+    assert worker_run["result_summary"]["execution_nodes"]["native_scan"]["scan_finished_at"]
+
+
+def test_native_repository_inspection_worker_does_not_overwrite_cancelled_run(
+    monkeypatch,
+    tmp_path,
+):
+    app.state.store.reset()
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(tmp_path / "code-scan-workdir"))
+    monkeypatch.setenv("SCHEDULED_JOB_ASYNC_WORKER_DISABLED", "1")
+    headers = auth_headers()
+    product = create_product(headers, code="native-scan-cancel-product", name="Native Scan Cancel")
+    local_repo_url = create_local_git_repository(tmp_path)
+    repository = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "branch": "release/native-scan",
+                "repository_id": repository["id"],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Async cancellable native repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+    queued_run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers).json()[
+        "data"
+    ]
+
+    def fake_native_scan(current_store, *, job, run_id, user):
+        scheduled_jobs_service.cancel_scheduled_job_run_response(
+            current_store=current_store,
+            run_id=run_id,
+            user={"id": "user_admin", "roles": ["admin"]},
+        )
+        return {
+            "action_id": None,
+            "connection_id": None,
+            "invocation_log_id": None,
+            "latency_ms": 1,
+            "request_summary": {},
+            "response_summary": {
+                "json": {
+                    "branch": "release/native-scan",
+                    "commit_sha": "abc123",
+                    "findings": [],
+                    "repository_id": repository["id"],
+                    "risk_level": "low",
+                    "summary": "cancelled worker fixture",
+                },
+                "native_scan": {
+                    "branch": "release/native-scan",
+                    "commit_sha": "abc123",
+                    "repository_id": repository["id"],
+                    "scan_mode": "native_full_scan",
+                },
+                "status_code": None,
+            },
+            "status": "succeeded",
+        }
+
+    monkeypatch.setattr(scheduled_jobs_service, "run_native_code_scan", fake_native_scan)
+
+    worker_run = scheduled_jobs_service.execute_queued_scheduled_job_run_response(
+        current_store=app.state.store,
+        run_id=queued_run["id"],
+        user={"id": "system_scheduled_job_worker", "roles": ["admin"]},
+    )
+
+    assert worker_run["status"] == "cancelled"
+    assert worker_run["records_imported"] == 0
+    reports = client.get(
+        f"/api/governance/code-inspections?product_id={product['id']}",
+        headers=headers,
+    ).json()["data"]
+    assert reports["total"] == 0
+
+
+def test_native_repository_inspection_applies_ignore_rules(monkeypatch, tmp_path):
+    app.state.store.reset()
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(tmp_path / "code-scan-workdir"))
+    headers = auth_headers()
+    product = create_product(headers, code="native-scan-ignore-product", name="Native Scan Ignore")
+    local_repo_url = create_local_git_repository(tmp_path)
+    repository = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+
+    job_response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "async_execution": False,
+                "branch": "release/native-scan",
+                "ignore_rules": ["metadata.internal_address_exposure"],
+                "repository_id": repository["id"],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Native ignored rule repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    )
+    assert job_response.status_code == 200
+    job = job_response.json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    assert run["records_imported"] == 1
+    report_id = run["result_summary"]["report_id"]
+    detail = client.get(
+        f"/api/governance/code-inspections/{report_id}",
+        headers=headers,
+    ).json()["data"]
+    assert {finding["rule_id"] for finding in detail["findings"]} == {
+        "secrets.hardcoded_credential"
+    }
+
+
+def test_native_repository_inspection_runs_external_semgrep_engine(monkeypatch, tmp_path):
+    app.state.store.reset()
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(tmp_path / "code-scan-workdir"))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    marker_path = tmp_path / "semgrep-called"
+    semgrep = fake_bin / "semgrep"
+    semgrep.write_text(
+        "#!/bin/sh\n"
+        f"touch {marker_path}\n"
+        "cat <<'JSON'\n"
+        "{\n"
+        '  "results": [\n'
+        "    {\n"
+        '      "check_id": "python.lang.security.audit.dangerous-subprocess",\n'
+        '      "path": "src/config.py",\n'
+        '      "start": {"line": 2},\n'
+        '      "extra": {\n'
+        '        "message": "Subprocess shell execution should be reviewed",\n'
+        '        "severity": "WARNING",\n'
+        '        "metadata": {"category": "security"}\n'
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "JSON\n",
+        encoding="utf-8",
+    )
+    semgrep.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ.get('PATH', '')}")
+    headers = auth_headers()
+    product = create_product(
+        headers,
+        code="native-scan-semgrep-product",
+        name="Native Scan Semgrep",
+    )
+    local_repo_url = create_local_git_repository(tmp_path)
+    repository = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+
+    job_response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "async_execution": False,
+                "branch": "release/native-scan",
+                "repository_id": repository["id"],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+                "scanner_engines": ["builtin", "semgrep"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Native semgrep repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    )
+    assert job_response.status_code == 200
+    job = job_response.json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    assert marker_path.exists()
+    assert run["records_imported"] == 3
+    native_scan = run["result_summary"]["execution_nodes"]["native_scan"]
+    assert native_scan["scan_profile"]["external_scanner_status"] == {
+        "configured": ["semgrep"],
+        "executed": ["semgrep"],
+        "failed": [],
+        "skipped": [],
+    }
+    detail = client.get(
+        f"/api/governance/code-inspections/{run['result_summary']['report_id']}",
+        headers=headers,
+    ).json()["data"]
+    findings_by_rule = {finding["rule_id"]: finding for finding in detail["findings"]}
+    assert "semgrep.python.lang.security.audit.dangerous-subprocess" in findings_by_rule
+    semgrep_finding = findings_by_rule["semgrep.python.lang.security.audit.dangerous-subprocess"]
+    assert semgrep_finding["severity"] == "medium"
+    assert semgrep_finding["committer_email"] == "alice@example.com"
+    assert semgrep_finding["raw"]["scanner_name"] == "semgrep"
+
+
+def test_native_repository_inspection_supports_incremental_commit_range(monkeypatch, tmp_path):
+    app.state.store.reset()
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(tmp_path / "code-scan-workdir"))
+    headers = auth_headers()
+    product = create_product(
+        headers,
+        code="native-scan-incremental-product",
+        name="Native Scan Incremental",
+    )
+    local_repo_url = create_local_git_repository(tmp_path)
+    current_commit = subprocess.run(
+        ["git", "rev-parse", "release/native-scan"],
+        capture_output=True,
+        check=True,
+        cwd=local_repo_url,
+        text=True,
+    ).stdout.strip()
+    repository = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+
+    job_response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "async_execution": False,
+                "branch": "release/native-scan",
+                "incremental_from_commit": current_commit,
+                "repository_id": repository["id"],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Native incremental repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    )
+    assert job_response.status_code == 200
+    job = job_response.json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    assert run["records_imported"] == 0
+    native_scan = run["result_summary"]["execution_nodes"]["native_scan"]
+    assert native_scan["incremental_from_commit"] == current_commit
+    assert native_scan["incremental_file_count"] == 0
+
+
+def test_native_repository_inspection_applies_baseline_quality_gate_and_detail_summary(
+    monkeypatch,
+    tmp_path,
+):
+    app.state.store.reset()
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(tmp_path / "code-scan-workdir"))
+    headers = auth_headers()
+    product = create_product(
+        headers,
+        code="native-scan-baseline-product",
+        name="Native Scan Baseline",
+    )
+    local_repo_url = create_local_git_repository(tmp_path)
+    repository = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+
+    first_job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "async_execution": False,
+                "branch": "release/native-scan",
+                "repository_id": repository["id"],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Native baseline seed repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+    first_run = client.post(f"/api/system/scheduled-jobs/{first_job['id']}/run", headers=headers)
+    assert first_run.status_code == 200
+    first_report_id = first_run.json()["data"]["result_summary"]["report_id"]
+
+    secret_fingerprint = finding_fingerprint(
+        {
+            "committer_email": "alice@example.com",
+            "file_path": "src/config.py",
+            "line_number": 1,
+            "rule_id": "secrets.hardcoded_credential",
+        },
+        {"branch": "release/native-scan", "repository_id": repository["id"]},
+    )
+    second_job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "async_execution": False,
+                "baseline_fingerprints": [secret_fingerprint],
+                "branch": "release/native-scan",
+                "quality_gate": {
+                    "enabled": True,
+                    "critical_max": 0,
+                    "high_max": 0,
+                    "medium_max": 0,
+                },
+                "repository_id": repository["id"],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Native baseline repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+
+    second_run = client.post(
+        f"/api/system/scheduled-jobs/{second_job['id']}/run",
+        headers=headers,
+    )
+
+    assert second_run.status_code == 200
+    run_payload = second_run.json()["data"]
+    assert run_payload["status"] == "succeeded"
+    assert run_payload["records_imported"] == 1
+    native_scan = run_payload["result_summary"]["execution_nodes"]["native_scan"]
+    assert native_scan["suppressed_finding_count"] == 1
+    assert native_scan["suppression_summary"]["baseline"] == 1
+    assert native_scan["quality_gate"]["status"] == "failed"
+    assert native_scan["quality_gate"]["violations"] == [
+        {"limit": 0, "severity": "medium", "value": 1}
+    ]
+
+    second_report_id = run_payload["result_summary"]["report_id"]
+    detail = client.get(
+        f"/api/governance/code-inspections/{second_report_id}",
+        headers=headers,
+    )
+    assert detail.status_code == 200
+    detail_payload = detail.json()["data"]
+    report = detail_payload["report"]
+    assert report["finding_count"] == 1
+    assert report["suppressed_finding_count"] == 1
+    assert report["quality_gate"]["status"] == "failed"
+    assert report["previous_report_id"] == first_report_id
+    assert report["previous_comparison"] == {
+        "finding_delta": -1,
+        "previous_finding_count": 2,
+        "previous_report_id": first_report_id,
+        "previous_severe_finding_count": 1,
+        "severe_finding_delta": -1,
+    }
+    assert detail_payload["scan_summary"]["coverage"]["files_scanned"] >= 1
+    assert detail_payload["scan_summary"]["rule_distribution"] == [
+        {
+            "category": "security",
+            "finding_count": 1,
+            "rule_id": "metadata.internal_address_exposure",
+            "severity": "medium",
+            "severe_finding_count": 0,
+        }
+    ]
+    assert detail_payload["scan_summary"]["file_distribution"] == [
+        {
+            "file_path": "src/config.py",
+            "finding_count": 1,
+            "severe_finding_count": 0,
+        }
+    ]
+
+
+def test_native_repository_inspection_runs_multiple_repositories_from_one_job(
+    monkeypatch,
+    tmp_path,
+):
+    app.state.store.reset()
+    monkeypatch.setenv("CODE_SCAN_WORKDIR", str(tmp_path / "code-scan-workdir"))
+    headers = auth_headers()
+    product = create_product(
+        headers,
+        code="native-scan-multi-product",
+        name="Native Scan Multi Repo",
+    )
+    local_repo_url = create_local_git_repository(tmp_path)
+    repository_a = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+    repository_b = create_local_scan_repository(
+        headers,
+        product["id"],
+        remote_url=local_repo_url,
+    )
+
+    job_response = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "async_execution": False,
+                "branch": "release/native-scan",
+                "repository_ids": [repository_a["id"], repository_b["id"]],
+                "scan_mode": "native_full_scan",
+                "scan_rules": ["secrets", "internal_addresses"],
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Native multi repository inspection",
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "native-code-scanner",
+        },
+        headers=headers,
+    )
+    assert job_response.status_code == 200
+    job = job_response.json()["data"]
+
+    run_response = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    )
+
+    assert run_response.status_code == 200
+    run = run_response.json()["data"]
+    assert run["status"] == "succeeded"
+    assert run["records_imported"] == 4
+    assert run["result_summary"]["report_count"] == 2
+    assert set(run["result_summary"]["report_ids"]) == {
+        run["result_summary"]["reports_by_repository"][repository_a["id"]]["report_id"],
+        run["result_summary"]["reports_by_repository"][repository_b["id"]]["report_id"],
+    }
+    assert set(run["result_summary"]["reports_by_repository"]) == {
+        repository_a["id"],
+        repository_b["id"],
+    }
 
 
 def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():

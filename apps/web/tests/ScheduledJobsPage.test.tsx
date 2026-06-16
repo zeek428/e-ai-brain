@@ -615,6 +615,35 @@ describe('ScheduledJobsPage', () => {
     expect(consoleError).not.toHaveBeenCalled();
   });
 
+  it('exposes native code inspection rule configuration in the create dialog', async () => {
+    installScheduledJobsFetchMock();
+
+    render(<ScheduledJobsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '新增作业' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '新增定时作业' });
+    await waitFor(() => expect(within(dialog).getByLabelText('作业模板')).toBeInTheDocument());
+    fireEvent.mouseDown(within(dialog).getByLabelText('作业模板'));
+    fireEvent.click(await screen.findByText('代码仓库质量 / 安全 / 规范巡检'));
+
+    await waitFor(() => expect(within(dialog).getByLabelText('代码仓库')).toBeInTheDocument());
+    expect(within(dialog).getByLabelText('批量代码仓库')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('扫描引擎')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('内置规则')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('严重级别阈值')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('忽略目录')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('忽略规则')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Baseline Fingerprints')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('已接受风险 Fingerprints')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('启用质量门禁')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Critical 上限')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('High 上限')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Medium 上限')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('增量基线 Commit')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('异步执行')).toBeInTheDocument();
+  });
+
   it('shows scheduled job run observability before the run list', async () => {
     installScheduledJobsFetchMock({
       observability: {

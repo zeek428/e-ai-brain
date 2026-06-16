@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from types import SimpleNamespace
@@ -1710,7 +1712,13 @@ def complete_collector_run(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
-    collector_status = "succeeded" if status == "succeeded" else "failed"
+    collector_status = (
+        "succeeded"
+        if status == "succeeded"
+        else "cancelled"
+        if status == "cancelled"
+        else "failed"
+    )
     updated = {
         **collector_run,
         "error_message": error_message,
@@ -1735,6 +1743,27 @@ def complete_collector_run(
         audit_event=audit_event,
     )
     return updated
+
+
+def cancelled_scheduled_job_run_if_requested(
+    current_store: Any,
+    *,
+    collector_run: dict[str, Any],
+    run_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    latest_run = current_store.scheduled_job_runs.get(run_id)
+    if latest_run is None or latest_run.get("status") != "cancelled":
+        return None
+    complete_collector_run(
+        current_store,
+        collector_run=collector_run,
+        error_message="Scheduled job run was cancelled",
+        records_imported=0,
+        status="cancelled",
+        user=user,
+    )
+    return public_scheduled_job_run(latest_run, current_store=current_store)
 
 
 def run_iteration_plan_job(
@@ -2455,6 +2484,574 @@ def invoke_job_data_connections(
     return merged, summaries
 
 
+def scheduled_job_uses_async_worker(job: dict[str, Any]) -> bool:
+    if job.get("job_type") != "code_repository_inspection":
+        return False
+    if not code_inspection_uses_native_scan(job):
+        return False
+    config = job.get("config_json") or {}
+    return config.get("async_execution") is not False
+
+
+def native_code_scan_repository_ids(job: dict[str, Any]) -> list[str]:
+    config = job.get("config_json") or {}
+    configured_ids = config.get("repository_ids")
+    repository_ids: list[str] = []
+    if isinstance(configured_ids, list):
+        repository_ids.extend(
+            str(repository_id).strip()
+            for repository_id in configured_ids
+            if str(repository_id or "").strip()
+        )
+    single_repository_id = str(config.get("repository_id") or "").strip()
+    if single_repository_id:
+        repository_ids.append(single_repository_id)
+    seen: set[str] = set()
+    unique_ids: list[str] = []
+    for repository_id in repository_ids:
+        if repository_id in seen:
+            continue
+        seen.add(repository_id)
+        unique_ids.append(repository_id)
+    return unique_ids
+
+
+def native_code_scan_job_for_repository(
+    job: dict[str, Any],
+    *,
+    repository_id: str,
+) -> dict[str, Any]:
+    config = dict(job.get("config_json") or {})
+    config["repository_id"] = repository_id
+    return {**job, "config_json": config}
+
+
+def _highest_code_inspection_risk(current: str | None, candidate: str | None) -> str:
+    ranks = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+    current_value = str(current or "low")
+    candidate_value = str(candidate or "low")
+    return (
+        candidate_value
+        if ranks.get(candidate_value, 1) > ranks.get(current_value, 1)
+        else current_value
+    )
+
+
+def execute_native_multi_code_inspection_summary(
+    current_store: Any,
+    *,
+    collector_run_id: str | None,
+    job: dict[str, Any],
+    repository_ids: list[str],
+    run_id: str,
+    user: dict[str, Any],
+) -> tuple[dict[str, Any], int]:
+    report_ids: list[str] = []
+    reports_by_repository: dict[str, dict[str, Any]] = {}
+    action_results: list[dict[str, Any]] = []
+    bug_ids: list[str] = []
+    deduplicated_bug_ids: list[str] = []
+    notification_ids: list[str] = []
+    task_ids: list[str] = []
+    severe_finding_count = 0
+    total_findings = 0
+    total_source_findings = 0
+    risk_level = "low"
+    native_scans: list[dict[str, Any]] = []
+    for repository_id in repository_ids:
+        scanned_job = native_code_scan_job_for_repository(job, repository_id=repository_id)
+        plugin_summary = run_native_code_scan(
+            current_store,
+            job=scanned_job,
+            run_id=run_id,
+            user=user,
+        )
+        source_response_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
+        if not isinstance(source_response_json, dict):
+            source_response_json = {}
+        source_findings = source_response_json.get("findings")
+        source_finding_count = len(source_findings) if isinstance(source_findings, list) else 0
+        total_source_findings += source_finding_count
+        inspection_result = execute_code_inspection_result_actions(
+            current_store,
+            collector_run_id=collector_run_id,
+            job=scanned_job,
+            plugin_summary=plugin_summary,
+            result_actions=job.get("result_actions") or [],
+            run_id=run_id,
+            user=user,
+        )
+        report = inspection_result["report"]
+        report_ids.append(report["id"])
+        total_findings += int(inspection_result["finding_count"])
+        severe_finding_count += int(report.get("severe_finding_count") or 0)
+        risk_level = _highest_code_inspection_risk(risk_level, report.get("risk_level"))
+        action_results.extend(inspection_result["action_results"])
+        bug_ids.extend(inspection_result["bug_ids"])
+        deduplicated_bug_ids.extend(inspection_result["deduplicated_bug_ids"])
+        notification_ids.extend(inspection_result["notification_ids"])
+        task_ids.extend(inspection_result.get("task_ids") or [])
+        native_scan = (plugin_summary.get("response_summary") or {}).get("native_scan")
+        if isinstance(native_scan, dict):
+            native_scans.append(native_scan)
+        reports_by_repository[repository_id] = {
+            "branch": report.get("branch"),
+            "finding_count": report.get("finding_count"),
+            "report_id": report["id"],
+            "risk_level": report.get("risk_level"),
+            "severe_finding_count": report.get("severe_finding_count"),
+        }
+    return (
+        {
+            "bug_ids": bug_ids,
+            "deduplicated_bug_ids": deduplicated_bug_ids,
+            "execution_nodes": {
+                "bug_creation": {
+                    "created_bug_ids": bug_ids,
+                    "deduplicated_bug_ids": deduplicated_bug_ids,
+                    "label": "严重问题自动创建 Bug",
+                    "records_imported": len(bug_ids),
+                    "status": "succeeded",
+                },
+                "code_inspection_report": {
+                    "label": "代码巡检报告写入结果",
+                    "records_imported": len(report_ids),
+                    "report_ids": report_ids,
+                    "risk_level": risk_level,
+                    "severe_finding_count": severe_finding_count,
+                    "status": "succeeded",
+                },
+                "native_scan": {
+                    "label": "本地完整代码静态扫描",
+                    "native_scans": native_scans,
+                    "records_imported": total_source_findings,
+                    "repository_count": len(repository_ids),
+                    "reports_by_repository": reports_by_repository,
+                    "scan_mode": NATIVE_CODE_SCAN_MODE,
+                    "status": "succeeded",
+                },
+                "notifications": {
+                    "created_notification_ids": notification_ids,
+                    "label": "问题消息通知",
+                    "records_imported": len(notification_ids),
+                    "status": "succeeded",
+                },
+                "result_action": {
+                    "feedback": {
+                        "report_count": len(report_ids),
+                        "report_ids": report_ids,
+                        "reports_by_repository": reports_by_repository,
+                        "write_target": "code_inspection_reports",
+                    },
+                    "label": "结果动作反馈内容",
+                    "records_imported": total_findings,
+                    "status": "succeeded",
+                    "write_target": "code_inspection_reports",
+                },
+                "result_actions": action_results,
+                "task_creation": {
+                    "created_task_ids": task_ids,
+                    "label": "严重问题自动创建整改任务",
+                    "records_imported": len(task_ids),
+                    "status": "succeeded",
+                },
+            },
+            "finding_count": total_findings,
+            "notification_ids": notification_ids,
+            "processing": {
+                "model_gateway_called": False,
+                "multi_repository": True,
+                "repository_count": len(repository_ids),
+                "skill_codes": skill_codes_for_job(current_store, job),
+                "skill_ids": list(job.get("skill_ids", [])),
+            },
+            "report_count": len(report_ids),
+            "report_ids": report_ids,
+            "reports_by_repository": reports_by_repository,
+            "result_actions": job.get("result_actions") or [],
+            "risk_level": risk_level,
+            "severe_finding_count": severe_finding_count,
+            "task_ids": task_ids,
+        },
+        total_findings,
+    )
+
+
+def queued_native_scan_result_summary(
+    current_store: Any,
+    *,
+    job: dict[str, Any],
+) -> dict[str, Any]:
+    job_config = job.get("config_json") or {}
+    repository_id = job_config.get("repository_id")
+    sync_product_git_repository_store(current_store, job.get("product_id"))
+    repository = current_store.product_git_repositories.get(str(repository_id)) or {}
+    branch = job_config.get("branch") or repository.get("default_branch")
+    return {
+        "execution_nodes": {
+            "code_inspection_report": {
+                "label": "代码巡检报告写入结果",
+                "records_imported": 0,
+                "status": "queued",
+            },
+            "native_scan": {
+                "branch": branch,
+                "label": "本地完整代码静态扫描",
+                "records_imported": 0,
+                "repository_id": repository_id,
+                "scan_mode": NATIVE_CODE_SCAN_MODE,
+                "status": "queued",
+            },
+            "result_action": {
+                "label": "结果动作反馈内容",
+                "records_imported": 0,
+                "status": "queued",
+                "write_target": "code_inspection_reports",
+            },
+        },
+        "processing": {
+            "async_worker": True,
+            "model_gateway_called": False,
+            "skill_codes": skill_codes_for_job(current_store, job),
+            "skill_ids": list(job.get("skill_ids", [])),
+        },
+    }
+
+
+def scheduled_job_async_worker_disabled() -> bool:
+    return str(os.getenv("SCHEDULED_JOB_ASYNC_WORKER_DISABLED") or "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _scheduled_job_worker_user(user: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **user,
+        "id": user.get("id") or "system_scheduled_job_worker",
+        "roles": list(set(user.get("roles") or []) | {"admin"}),
+    }
+
+
+def enqueue_scheduled_job_run_worker(
+    current_store: Any,
+    *,
+    run_id: str,
+    user: dict[str, Any],
+) -> None:
+    if scheduled_job_async_worker_disabled():
+        return
+    worker_user = _scheduled_job_worker_user(user)
+    thread = threading.Thread(
+        target=execute_queued_scheduled_job_run_response,
+        kwargs={"current_store": current_store, "run_id": run_id, "user": worker_user},
+        name=f"scheduled-job-worker-{run_id}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def execute_queued_scheduled_job_run_response(
+    *,
+    current_store: Any,
+    run_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_admin(user)
+    sync_scheduled_job_store(current_store)
+    sync_ai_agent_store(current_store)
+    sync_ai_skill_store(current_store)
+    sync_reference_store(current_store)
+    sync_scheduled_job_run_store(current_store)
+    run = current_store.scheduled_job_runs.get(run_id)
+    if run is None:
+        raise api_error(404, "NOT_FOUND", "Scheduled job run not found")
+    if run.get("status") in SCHEDULED_JOB_RUN_TERMINAL_STATUSES:
+        raise api_error(409, "SCHEDULED_JOB_RUN_STATE_INVALID", "Terminal run cannot be executed")
+    if run.get("status") != "queued":
+        raise api_error(409, "SCHEDULED_JOB_RUN_STATE_INVALID", "Only queued runs can be executed")
+    job = current_store.scheduled_jobs.get(run.get("scheduled_job_id"))
+    if job is None:
+        raise api_error(404, "NOT_FOUND", "Scheduled job not found")
+    if not scheduled_job_uses_async_worker(job):
+        raise api_error(400, "VALIDATION_ERROR", "Scheduled job run is not async native code scan")
+    if not job.get("enabled"):
+        raise api_error(409, "SCHEDULED_JOB_DISABLED", "Scheduled job is disabled")
+
+    now = datetime.now(UTC).isoformat()
+    collector_run = current_store.collector_runs.get(run.get("collector_run_id"))
+    if collector_run is None:
+        collector_run = create_collector_run_for_job(
+            current_store,
+            job=job,
+            run_id=run_id,
+            status="running",
+            user=user,
+        )
+        run["collector_run_id"] = collector_run["id"]
+    run = {
+        **run,
+        "result_summary": queued_native_scan_result_summary(current_store, job=job),
+        "started_at": now,
+        "status": "running",
+        "updated_at": now,
+    }
+    current_store.scheduled_job_runs[run_id] = run
+    persist_record(current_store, "save_scheduled_job_run_record", run)
+
+    plugin_summary = None
+    plugin_output_mapping: dict[str, Any] = {}
+    records_imported = 0
+    resolved_plugin_input_mapping: dict[str, Any] = {}
+    try:
+        native_repository_ids = native_code_scan_repository_ids(job)
+        if len(native_repository_ids) > 1:
+            result_summary, records_imported = execute_native_multi_code_inspection_summary(
+                current_store,
+                collector_run_id=collector_run["id"],
+                job=job,
+                repository_ids=native_repository_ids,
+                run_id=run_id,
+                user=user,
+            )
+            cancelled_run = cancelled_scheduled_job_run_if_requested(
+                current_store,
+                collector_run=collector_run,
+                run_id=run_id,
+                user=user,
+            )
+            if cancelled_run is not None:
+                return cancelled_run
+            status = "succeeded"
+            error_code = None
+            error_message = None
+            raise StopIteration
+        job_config = job.get("config_json") or {}
+        resolved_plugin_input_mapping = {
+            "branch": job_config.get("branch"),
+            "repository_id": job_config.get("repository_id"),
+            "scan_mode": NATIVE_CODE_SCAN_MODE,
+        }
+        plugin_summary = run_native_code_scan(
+            current_store,
+            job=job,
+            run_id=run_id,
+            user=user,
+        )
+        cancelled_run = cancelled_scheduled_job_run_if_requested(
+            current_store,
+            collector_run=collector_run,
+            run_id=run_id,
+            user=user,
+        )
+        if cancelled_run is not None:
+            return cancelled_run
+        if plugin_summary.get("status") != "succeeded":
+            raise api_error(
+                502,
+                "PLUGIN_ACTION_FAILED",
+                "Code repository inspection plugin action failed",
+            )
+        plugin_output_mapping = resolve_job_plugin_output_mapping(current_store, job)
+        source_response_json = (plugin_summary.get("response_summary") or {}).get("json") or {}
+        if not isinstance(source_response_json, dict):
+            source_response_json = {}
+        source_findings = source_response_json.get("findings")
+        source_finding_count = len(source_findings) if isinstance(source_findings, list) else 0
+        ai_processing = None
+        effective_plugin_summary = plugin_summary
+        if JobExecutionEngine.uses_ai_processing(
+            job,
+            ai_required_job_types=AI_REQUIRED_SCHEDULED_JOB_TYPES,
+        ):
+            ai_processing = run_scheduled_job_ai_processing(
+                current_store,
+                job=job,
+                output_mapping=plugin_output_mapping,
+                source_response_json=source_response_json,
+                source_row_count=source_finding_count,
+                user=user,
+            )
+            effective_plugin_summary = (
+                JobExecutionEngine.code_inspection_plugin_summary_for_ai_output(
+                    plugin_summary,
+                    ai_processing=ai_processing,
+                )
+            )
+        inspection_result = execute_code_inspection_result_actions(
+            current_store,
+            collector_run_id=collector_run["id"],
+            job=job,
+            plugin_summary=effective_plugin_summary,
+            result_actions=job.get("result_actions") or [],
+            run_id=run_id,
+            user=user,
+        )
+        report = inspection_result["report"]
+        records_imported = int(inspection_result["finding_count"])
+        skill_processing_node = JobExecutionEngine.code_inspection_skill_processing_node(
+            ai_processing=ai_processing,
+            job=job,
+            output_mapping=plugin_output_mapping,
+            skill_codes=skill_codes_for_job(current_store, job),
+            source_finding_count=source_finding_count,
+        )
+        result_action_node = JobExecutionEngine.code_inspection_result_action_node(
+            inspection_result=inspection_result,
+            report=report,
+        )
+        native_scan_summary = (plugin_summary.get("response_summary") or {}).get("native_scan")
+        result_summary = {
+            "bug_ids": inspection_result["bug_ids"],
+            "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
+            "execution_nodes": {
+                "bug_creation": {
+                    "created_bug_ids": inspection_result["bug_ids"],
+                    "deduplicated_bug_ids": inspection_result["deduplicated_bug_ids"],
+                    "label": "严重问题自动创建 Bug",
+                    "records_imported": len(inspection_result["bug_ids"]),
+                    "status": "succeeded",
+                },
+                "task_creation": {
+                    "created_task_ids": inspection_result.get("task_ids") or [],
+                    "label": "严重问题自动创建整改任务",
+                    "records_imported": len(inspection_result.get("task_ids") or []),
+                    "status": "succeeded",
+                },
+                "code_inspection_report": {
+                    "finding_count": report["finding_count"],
+                    "label": "代码巡检报告写入结果",
+                    "report_id": report["id"],
+                    "risk_level": report["risk_level"],
+                    "severe_finding_count": report["severe_finding_count"],
+                    "status": "succeeded",
+                },
+                "data_connection": JobExecutionEngine.data_connection_execution_node(
+                    job=job,
+                    plugin_summary=plugin_summary,
+                    records_imported=source_finding_count,
+                    resolved_plugin_input_mapping=resolved_plugin_input_mapping,
+                ),
+                "native_scan": {
+                    **(native_scan_summary if isinstance(native_scan_summary, dict) else {}),
+                    "label": "本地完整代码静态扫描",
+                    "records_imported": source_finding_count,
+                    "scan_mode": NATIVE_CODE_SCAN_MODE,
+                    "status": "succeeded",
+                },
+                "notifications": {
+                    "created_notification_ids": inspection_result["notification_ids"],
+                    "label": "问题消息通知",
+                    "records_imported": len(inspection_result["notification_ids"]),
+                    "status": "succeeded",
+                },
+                "result_action": result_action_node,
+                "result_actions": inspection_result["action_results"],
+                "skill_processing": skill_processing_node,
+            },
+            "finding_count": report["finding_count"],
+            "notification_ids": inspection_result["notification_ids"],
+            "plugin": effective_plugin_summary,
+            "processing": {
+                "async_worker": True,
+                "model_gateway_called": ai_processing is not None,
+                "skill_codes": skill_codes_for_job(current_store, job),
+                "skill_ids": list(job.get("skill_ids", [])),
+            },
+            "report_id": report["id"],
+            "result_actions": inspection_result["result_actions"],
+            "risk_level": report["risk_level"],
+            "severe_finding_count": report["severe_finding_count"],
+            "task_ids": inspection_result.get("task_ids") or [],
+        }
+        status = "succeeded"
+        error_code = None
+        error_message = None
+    except StopIteration:
+        pass
+    except Exception as exc:
+        status = "failed"
+        error_code, error_message = exception_error_code_and_message(exc)
+        result_summary = {
+            "execution_nodes": {
+                "native_scan": {
+                    "error_code": error_code,
+                    "error_message": error_message,
+                    "label": "本地完整代码静态扫描",
+                    "records_imported": 0,
+                    "scan_mode": NATIVE_CODE_SCAN_MODE,
+                    "status": "failed",
+                },
+                "result_action": {
+                    "label": "结果动作反馈内容",
+                    "records_imported": 0,
+                    "status": "not_run",
+                    "write_target": "code_inspection_reports",
+                },
+            },
+            "plugin": plugin_summary,
+            "processing": {
+                "async_worker": True,
+                "error_code": error_code,
+                "error_message": error_message,
+                "model_gateway_called": False,
+                "skill_codes": skill_codes_for_job(current_store, job),
+                "skill_ids": list(job.get("skill_ids", [])),
+            },
+            "write_target": "code_inspection_reports",
+        }
+        records_imported = 0
+
+    finished_at = datetime.now(UTC).isoformat()
+    updated_at = datetime.now(UTC).isoformat()
+    run = {
+        **run,
+        "error_code": error_code,
+        "error_message": error_message,
+        "finished_at": finished_at,
+        "records_imported": records_imported,
+        "result_summary": result_summary,
+        "status": status,
+        "updated_at": updated_at,
+    }
+    current_store.scheduled_job_runs[run_id] = run
+    complete_collector_run(
+        current_store,
+        collector_run=collector_run,
+        error_message=error_message,
+        records_imported=records_imported,
+        status=status,
+        user=user,
+    )
+    job_update = {
+        **job,
+        "last_error_message": error_message,
+        "last_failure_at": finished_at if status == "failed" else job.get("last_failure_at"),
+        "last_run_at": finished_at,
+        "last_success_at": finished_at if status == "succeeded" else job.get("last_success_at"),
+        "updated_at": updated_at,
+    }
+    current_store.scheduled_jobs[job["id"]] = job_update
+    persist_record(current_store, "save_scheduled_job_record", job_update)
+    persist_record(current_store, "save_scheduled_job_run_record", run)
+    audit_event = record_audit_event(
+        current_store,
+        event_type=f"scheduled_job_run.{status}",
+        actor_id=user["id"],
+        subject_type="scheduled_job_run",
+        subject_id=run_id,
+        payload=scheduled_job_run_audit_payload(job=job, run=run),
+    )
+    persist_record(
+        current_store,
+        "save_scheduled_job_run_record",
+        run,
+        audit_event=audit_event,
+    )
+    return public_scheduled_job_run(run, current_store=current_store)
+
+
 def run_scheduled_job_response(
     *,
     current_store: Any,
@@ -2503,6 +3100,15 @@ def run_scheduled_job_response(
             "execution_mode": effective_execution_mode,
             "job_type": effective_job_type,
         }
+    native_code_inspection = (
+        job["job_type"] == "code_repository_inspection"
+        and code_inspection_uses_native_scan(job)
+    )
+    native_repository_ids = (
+        native_code_scan_repository_ids(job) if native_code_inspection else []
+    )
+    native_multi_inspection = native_code_inspection and len(native_repository_ids) > 1
+    use_async_worker = scheduled_job_uses_async_worker(job)
     run_id = current_store.new_id("scheduled_job_run")
     now = datetime.now(UTC).isoformat()
     snapshots = resolve_job_snapshots(current_store, job)
@@ -2517,12 +3123,14 @@ def run_scheduled_job_response(
         "id": run_id,
         "plugin_invocation_log_id": None,
         "records_imported": 0,
-        "result_summary": {},
+        "result_summary": (
+            queued_native_scan_result_summary(current_store, job=job) if use_async_worker else {}
+        ),
         "scheduled_for": now,
         "scheduled_job_id": job_id,
         "source_run_id": source_run.get("id") if source_run else None,
-        "started_at": now,
-        "status": "running",
+        "started_at": None if use_async_worker else now,
+        "status": "queued" if use_async_worker else "running",
         "trigger_type": trigger_type,
         "updated_at": now,
     }
@@ -2531,7 +3139,7 @@ def run_scheduled_job_response(
         current_store,
         job=job,
         run_id=run_id,
-        status="running",
+        status=run["status"],
         user=user,
     )
     run["collector_run_id"] = collector_run["id"]
@@ -2540,16 +3148,40 @@ def run_scheduled_job_response(
         "save_scheduled_job_run_record",
         run,
     )
+    if use_async_worker:
+        audit_event = record_audit_event(
+            current_store,
+            event_type="scheduled_job_run.queued",
+            actor_id=user["id"],
+            subject_type="scheduled_job_run",
+            subject_id=run_id,
+            payload=scheduled_job_run_audit_payload(job=job, run=run),
+        )
+        persist_record(
+            current_store,
+            "save_scheduled_job_run_record",
+            run,
+            audit_event=audit_event,
+        )
+        enqueue_scheduled_job_run_worker(current_store, run_id=run_id, user=user)
+        return public_scheduled_job_run(run, current_store=current_store)
     plugin_summary = None
     plugin_output_mapping: dict[str, Any] = {}
     plugin_records_imported = 0
     resolved_plugin_input_mapping: dict[str, Any] = {}
-    native_code_inspection = (
-        job["job_type"] == "code_repository_inspection"
-        and code_inspection_uses_native_scan(job)
-    )
     try:
-        if native_code_inspection:
+        handled_job = False
+        if native_multi_inspection:
+            result_summary, records_imported = execute_native_multi_code_inspection_summary(
+                current_store,
+                collector_run_id=collector_run["id"],
+                job=job,
+                repository_ids=native_repository_ids,
+                run_id=run_id,
+                user=user,
+            )
+            handled_job = True
+        elif native_code_inspection:
             job_config = job.get("config_json") or {}
             resolved_plugin_input_mapping = {
                 "branch": job_config.get("branch"),
@@ -2590,7 +3222,9 @@ def run_scheduled_job_response(
                     )
                 )
                 run["plugin_invocation_log_id"] = plugin_summary.get("invocation_log_id")
-        if job["job_type"] == "iteration_plan_suggestion_generate":
+        if handled_job:
+            pass
+        elif job["job_type"] == "iteration_plan_suggestion_generate":
             result_summary, records_imported = run_iteration_plan_job(
                 current_store,
                 job=job,
@@ -3004,6 +3638,21 @@ def cancel_scheduled_job_run_response(
     now = datetime.now(UTC).isoformat()
     run = {**run, "finished_at": now, "status": "cancelled", "updated_at": now}
     current_store.scheduled_job_runs[run_id] = run
+    collector_run_id = run.get("collector_run_id")
+    collector_run = current_store.collector_runs.get(collector_run_id) if collector_run_id else None
+    if collector_run is not None and collector_run.get("status") not in {
+        "cancelled",
+        "failed",
+        "succeeded",
+    }:
+        complete_collector_run(
+            current_store,
+            collector_run=collector_run,
+            error_message="Scheduled job run was cancelled",
+            records_imported=0,
+            status="cancelled",
+            user=user,
+        )
     audit_event = record_audit_event(
         current_store,
         event_type="scheduled_job_run.cancelled",

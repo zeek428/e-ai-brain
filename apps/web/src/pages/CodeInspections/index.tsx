@@ -378,6 +378,117 @@ function sourceTraceItems(report: CodeInspectionReportRecord) {
   ];
 }
 
+function scanSnapshotItems(report: CodeInspectionReportRecord) {
+  return [
+    { key: 'scan_mode', label: '扫描模式', children: compactText(report.scan_mode) },
+    { key: 'scanner_name', label: '扫描器', children: compactText(report.scanner_name) },
+    { key: 'scanner_version', label: '扫描器版本', children: compactText(report.scanner_version) },
+    { key: 'rules_version', label: '规则版本', children: compactText(report.rules_version) },
+    { key: 'rules_loaded', label: '加载规则', children: compactText(report.rules_loaded?.join('、')) },
+    { key: 'commit_sha', label: 'Commit', children: compactText(report.commit_sha) },
+    { key: 'remote_url_summary', label: '远端摘要', children: compactText(report.remote_url_summary) },
+    { key: 'remote_url_hash', label: '远端 Hash', children: compactText(report.remote_url_hash) },
+    { key: 'artifact_ref', label: '代码快照', children: compactText(report.artifact_ref) },
+    {
+      key: 'checkout_path_retained',
+      label: 'Checkout 保留',
+      children: report.checkout_path_retained ? '已保留' : '未保留',
+    },
+    { key: 'scan_started_at', label: '开始时间', children: compactText(report.scan_started_at) },
+    { key: 'scan_finished_at', label: '结束时间', children: compactText(report.scan_finished_at) },
+  ];
+}
+
+function recordValue(record: Record<string, unknown> | undefined, key: string, fallback = '-') {
+  const value = record?.[key];
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+  return String(value);
+}
+
+function arrayValue(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+}
+
+function scannerStatusText(scanProfile?: Record<string, unknown>) {
+  const status = scanProfile?.external_scanner_status as Record<string, unknown> | undefined;
+  if (!status) {
+    return '-';
+  }
+  const executed = arrayValue(status.executed);
+  const skipped = arrayValue(status.skipped);
+  const failed = arrayValue(status.failed);
+  const parts = [
+    executed.length ? `已执行 ${executed.join('、')}` : undefined,
+    skipped.length ? `已跳过 ${skipped.join('、')}` : undefined,
+    failed.length ? `失败 ${failed.join('、')}` : undefined,
+  ].filter(Boolean);
+  return parts.join('；') || '-';
+}
+
+function scanSummaryItems(detail: CodeInspectionDetailRecord) {
+  const summary = detail.scan_summary;
+  const coverage = summary?.coverage;
+  const suppression = summary?.suppression_summary;
+  const qualityGate = summary?.quality_gate ?? detail.report.quality_gate;
+  const comparison = summary?.previous_comparison ?? detail.report.previous_comparison;
+  const scanProfile = (summary?.scan_profile ?? detail.report.scan_profile) as
+    | Record<string, unknown>
+    | undefined;
+  const scannerEngines = arrayValue(scanProfile?.scanner_engines);
+  return [
+    {
+      key: 'quality_gate',
+      label: '质量门禁',
+      children: recordValue(qualityGate, 'status'),
+    },
+    {
+      key: 'suppressed_finding_count',
+      label: '过滤问题数',
+      children: recordValue(coverage, 'suppressed_finding_count', String(detail.report.suppressed_finding_count ?? 0)),
+    },
+    {
+      key: 'baseline',
+      label: 'Baseline 过滤',
+      children: recordValue(suppression, 'baseline', '0'),
+    },
+    {
+      key: 'accepted_risk',
+      label: '已接受风险',
+      children: recordValue(suppression, 'accepted_risk', '0'),
+    },
+    {
+      key: 'coverage',
+      label: '扫描覆盖',
+      children: `${recordValue(coverage, 'files_scanned', String(detail.report.files_scanned ?? 0))} 文件 / ${recordValue(
+        coverage,
+        'lines_scanned',
+        String(detail.report.lines_scanned ?? 0),
+      )} 行`,
+    },
+    {
+      key: 'scanner_engines',
+      label: '扫描引擎',
+      children: scannerEngines.length ? scannerEngines.join('、') : '-',
+    },
+    {
+      key: 'external_scanner_status',
+      label: '外部引擎状态',
+      children: scannerStatusText(scanProfile),
+    },
+    {
+      key: 'previous_comparison',
+      label: '与上次对比',
+      children: comparison
+        ? `问题 ${recordValue(comparison, 'finding_delta', '0')}，严重 ${recordValue(comparison, 'severe_finding_delta', '0')}`
+        : '-',
+    },
+  ];
+}
+
 export default function CodeInspectionsPage() {
   const [detailState, setDetailState] = useState<{
     detail?: CodeInspectionDetailRecord;
@@ -634,6 +745,60 @@ export default function CodeInspectionsPage() {
               items={sourceTraceItems(detailState.detail.report)}
               size="small"
               title="来源链路"
+            />
+            <Descriptions
+              bordered
+              column={2}
+              items={scanSnapshotItems(detailState.detail.report)}
+              size="small"
+              title="扫描快照"
+            />
+            <Descriptions
+              bordered
+              column={2}
+              items={scanSummaryItems(detailState.detail)}
+              size="small"
+              title="扫描摘要"
+            />
+            <Table<Record<string, unknown>>
+              columns={[
+                {
+                  dataIndex: 'rule_id',
+                  title: '规则',
+                  width: 260,
+                  render: (value) => detailSingleLineText(String(value ?? '')),
+                },
+                { dataIndex: 'category', title: '分类', width: 140 },
+                { dataIndex: 'severity', title: '最高级别', width: 120 },
+                { dataIndex: 'finding_count', title: '问题数', width: 100 },
+                { dataIndex: 'severe_finding_count', title: '严重问题', width: 100 },
+              ]}
+              dataSource={detailState.detail.scan_summary?.rule_distribution ?? []}
+              pagination={false}
+              rowKey={(row) => String(row.rule_id ?? JSON.stringify(row))}
+              scroll={{ x: 720 }}
+              size="small"
+              tableLayout="fixed"
+              title={() => '规则命中分布'}
+            />
+            <Table<Record<string, unknown>>
+              columns={[
+                {
+                  dataIndex: 'file_path',
+                  title: '文件',
+                  width: 420,
+                  render: (value) => detailSingleLineText(String(value ?? '')),
+                },
+                { dataIndex: 'finding_count', title: '问题数', width: 100 },
+                { dataIndex: 'severe_finding_count', title: '严重问题', width: 100 },
+              ]}
+              dataSource={detailState.detail.scan_summary?.file_distribution ?? []}
+              pagination={false}
+              rowKey={(row) => String(row.file_path ?? JSON.stringify(row))}
+              scroll={{ x: 640 }}
+              size="small"
+              tableLayout="fixed"
+              title={() => '文件维度问题'}
             />
             <Table<CodeInspectionFindingRecord>
               columns={[

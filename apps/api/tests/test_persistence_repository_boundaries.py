@@ -889,6 +889,12 @@ def test_postgres_user_insight_writes_delegate_to_domain_repository(monkeypatch)
     )
     monkeypatch.setattr(
         UserInsightReadRepository,
+        "save_user_feedback_requirement_conversion",
+        record_save("save_user_feedback_requirement_conversion"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        UserInsightReadRepository,
         "save_user_usage_metrics",
         record_save("save_user_usage_metrics"),
     )
@@ -950,6 +956,11 @@ def test_postgres_user_insight_writes_delegate_to_domain_repository(monkeypatch)
 
     repository.save_user_feedback(feedback_payload)
     repository.save_user_feedback_record(feedback, audit_event=audit_event)
+    repository.save_user_feedback_requirement_conversion(
+        audit_events=audit_events,
+        feedback=feedback,
+        requirement=requirement,
+    )
     repository.save_user_usage_metrics(usage_payload)
     repository.save_user_usage_metric_record(usage, audit_event=audit_event)
     repository.save_iteration_planning(planning_payload)
@@ -976,6 +987,17 @@ def test_postgres_user_insight_writes_delegate_to_domain_repository(monkeypatch)
         (
             "save_user_feedback_record",
             {"args": (feedback,), "kwargs": {"audit_event": audit_event}},
+        ),
+        (
+            "save_user_feedback_requirement_conversion",
+            {
+                "args": (),
+                "kwargs": {
+                    "audit_events": audit_events,
+                    "feedback": feedback,
+                    "requirement": requirement,
+                },
+            },
         ),
         ("save_user_usage_metrics", {"args": (usage_payload,), "kwargs": {}}),
         (

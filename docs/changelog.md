@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 代码巡检本地扫描增强：`CODE_SCAN_WORKDIR` 固定工作区、mirror 缓存、按 repository + branch + commit 的 checkout 快照、异步运行、取消保护、工作区清理策略、外部扫描引擎实际执行与状态记录、baseline/已接受风险/单条忽略 fingerprint、严重级别阈值、质量门禁、多仓库批量扫描、报告详情扫描摘要和与上次扫描对比。
 - 代码巡检作业新增本地完整静态扫描：`config_json.scan_mode=native_full_scan` 时可直接 clone 产品 Git 仓库、checkout 指定分支、扫描内置规则并通过 git blame 回填提交人，不再强制配置插件连接；报告记录扫描模式、扫描器、文件数、行数、规则和覆盖率提示，运行详情新增 `native_scan` 节点。
 - 代码巡检作业新增显式扫描分支配置：新增/编辑表单按产品 Git 仓库展示“代码仓库”和“扫描分支”，默认使用仓库 `default_branch`，后端创建/更新/试运行兜底补齐分支，运行插件输入和 AI 上下文同步携带 `repository_id/branch`，报告写入时扫描器未返回分支也会落到明确分支。
 - AI 助手显式引用继续扩展：`@` 候选不再固定为知识文档，管理员可引用定时作业、运行记录、插件动作、AI角色和 Skill；失败运行追问会返回 `assistant.scheduled_job_diagnostic`，按数据连接、AI 处理、结果动作三段输出诊断依据。
@@ -49,6 +50,7 @@
 - 插件连接最近测试摘要：连接测试后保存轻量 `last_test_summary`，连接列表展示最近测试状态、耗时和错误码，方便关闭调试弹窗后继续排障。
 
 ### Fixed
+- 用户反馈转需求持久化修复：DB-first 运行时补齐用户反馈转换事务的仓库委托，确保转换响应、用户反馈列表状态、关联需求 ID 和审计记录一致，避免页面仍显示 `open` 并可重复转需求。
 - 代码巡检作业仓库归属修复：当 GitLab/GitHub 扫描器或 AI 归一化输出返回 project_path、remote_url 或 project_id 时，写报告会映射到同产品 `product_git_repositories.id`，并把作业 `config_json.repository_id` 注入模型上下文，避免报告写入阶段报 `Product Git repository not found`。
 - 插件调用日志脱敏修复：正式动作调用落库和列表返回都会把 Authorization、PRIVATE-TOKEN、Token、API Key、Cookie、Password、Secret 等敏感 Header 值替换为 `***`；历史运行摘要可通过数据修复清理，不再在定时作业排障链路暴露明文凭据。
 - 定时作业 AI Skills 必填校验收紧：AI 执行类新增/编辑作业必须在作业自身显式配置 `skill_ids`，后端不再用 AI角色 `default_skill_ids` 兜底通过空 Skills 请求，前端回归覆盖“模型和 AI角色已选但 Skills 为空不可提交”。

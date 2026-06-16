@@ -169,6 +169,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "055_code_inspection_native_scan.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "056_code_inspection_scan_snapshot.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1487,6 +1491,19 @@ class PostgresSnapshotRepository:
         self._user_insight_read_repository.save_user_feedback_record(
             record,
             audit_event=audit_event,
+        )
+
+    def save_user_feedback_requirement_conversion(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        feedback: dict[str, Any],
+        requirement: dict[str, Any],
+    ) -> None:
+        self._user_insight_read_repository.save_user_feedback_requirement_conversion(
+            audit_events=audit_events,
+            feedback=feedback,
+            requirement=requirement,
         )
 
     def save_user_usage_metrics(self, payload: dict[str, Any]) -> None:
