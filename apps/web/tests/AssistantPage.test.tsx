@@ -1434,6 +1434,14 @@ describe('AssistantPage', () => {
                 action: 'create_scheduled_job',
                 draft_id: 'assistant_action_draft_001',
                 id: 'assistant_action_run_001',
+                result: {
+                  scheduled_job_run: {
+                    id: 'scheduled_job_run_001',
+                    scheduled_job_id: 'scheduled_job_001',
+                    status: 'succeeded',
+                    trigger_type: 'manual',
+                  },
+                },
                 result_id: 'scheduled_job_001',
                 result_type: 'scheduled_job',
                 status: 'succeeded',
@@ -1461,6 +1469,10 @@ describe('AssistantPage', () => {
     expect(screen.getByRole('link', { name: '打开定时作业' })).toHaveAttribute(
       'href',
       '/tasks/scheduled-jobs?job_id=scheduled_job_001',
+    );
+    expect(screen.getByRole('link', { name: '打开本次运行' })).toHaveAttribute(
+      'href',
+      '/tasks/scheduled-jobs?job_id=scheduled_job_001&run_id=scheduled_job_run_001',
     );
     fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('重新生成「创建仪表盘刷新定时任务」草案');

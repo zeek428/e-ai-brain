@@ -280,6 +280,7 @@ export type AssistantDraftResourceType =
 export type AssistantDraftResolutionRecord = {
   resource_id: string;
   resource_type: AssistantDraftResourceType;
+  scheduled_job_run_id?: string;
   title?: string;
 };
 
@@ -313,6 +314,7 @@ export function rememberAssistantDraftResolution(params: {
   draftId?: string;
   resourceId?: string;
   resourceType: AssistantDraftResourceType;
+  scheduledJobRunId?: string;
   title?: string;
 }) {
   if (typeof window === 'undefined' || !params.draftId || !params.resourceId) {
@@ -325,6 +327,9 @@ export function rememberAssistantDraftResolution(params: {
   };
   if (params.title) {
     nextRecord.title = params.title;
+  }
+  if (params.scheduledJobRunId) {
+    nextRecord.scheduled_job_run_id = params.scheduledJobRunId;
   }
   window.sessionStorage.setItem(
     ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,

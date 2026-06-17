@@ -492,6 +492,29 @@ function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
   };
 }
 
+function draftRunResourceLink(resolution?: AssistantDraftResolutionRecord) {
+  if (
+    !resolution
+    || resolution.resource_type !== 'scheduled_job'
+    || !resolution.scheduled_job_run_id
+  ) {
+    return undefined;
+  }
+  return {
+    label: '打开本次运行',
+    url: `/tasks/scheduled-jobs?job_id=${resolution.resource_id}&run_id=${resolution.scheduled_job_run_id}`,
+  };
+}
+
+function scheduledJobRunIdFromActionResult(result?: Record<string, unknown>) {
+  const scheduledJobRun = result?.scheduled_job_run;
+  if (!scheduledJobRun || typeof scheduledJobRun !== 'object' || Array.isArray(scheduledJobRun)) {
+    return undefined;
+  }
+  const runId = String((scheduledJobRun as Record<string, unknown>).id ?? '').trim();
+  return runId || undefined;
+}
+
 function draftRegeneratePrompt(draft: AssistantToolResultItem) {
   return `重新生成「${draft.title ?? '配置草案'}」草案`;
 }
@@ -825,6 +848,7 @@ function AssistantActionDraftCards({
         const draftId = draft.draft_id;
         const resolution = draftId ? draftResolutionById[draftId] : undefined;
         const resourceLink = draftResourceLink(resolution);
+        const runResourceLink = draftRunResourceLink(resolution);
         const currentStatus = resolution
           ? 'applied'
           : (draftId ? draftStatusById[draftId] : undefined) ?? draft.status ?? 'pending';
@@ -1004,6 +1028,16 @@ function AssistantActionDraftCards({
                   size="small"
                 >
                   {resourceLink.label}
+                </Button>
+              ) : null}
+              {runResourceLink ? (
+                <Button
+                  aria-label={runResourceLink.label}
+                  href={runResourceLink.url}
+                  icon={<LinkOutlined />}
+                  size="small"
+                >
+                  {runResourceLink.label}
                 </Button>
               ) : null}
               {!resourceLink && isPluginConnectionDraft ? (
@@ -1864,6 +1898,7 @@ export default function AssistantPage() {
     resourceId?: string,
     resourceType?: string,
     title?: string,
+    scheduledJobRunId?: string,
   ) => {
     if (!resourceId) {
       return;
@@ -1886,6 +1921,7 @@ export default function AssistantPage() {
         draftId,
         resourceId,
         resourceType,
+        scheduledJobRunId,
         title,
       });
     });
@@ -1896,6 +1932,9 @@ export default function AssistantPage() {
       };
       if (title) {
         resolution.title = title;
+      }
+      if (scheduledJobRunId) {
+        resolution.scheduled_job_run_id = scheduledJobRunId;
       }
       const next = { ...items };
       draftIds.forEach((draftId) => {
@@ -1923,6 +1962,7 @@ export default function AssistantPage() {
         result.run.result_id,
         result.run.result_type,
         result.draft.title,
+        scheduledJobRunIdFromActionResult(result.run.result),
       );
       toast.success('草案已应用');
     } catch (error) {
