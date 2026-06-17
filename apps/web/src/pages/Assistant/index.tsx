@@ -605,6 +605,17 @@ function draftWizardStatusLabel(status?: string) {
   return { color: 'default', text: status || '未设置' };
 }
 
+function draftWizardPrerequisitePrompt(draftTitle: string | undefined, step: AssistantDraftWizardStep) {
+  const stepTitle = step.title || step.key || '当前步骤';
+  const dependencies = step.depends_on ?? [];
+  const dependencyText = dependencies.length ? `。依赖：${dependencies.join('、')}` : '';
+  return `为「${draftTitle || '配置草案'}」补齐「${stepTitle}」前置配置草案${dependencyText}`;
+}
+
+function canGenerateWizardPrerequisite(step: AssistantDraftWizardStep) {
+  return step.status === 'needs_prerequisite' || step.status === 'blocked';
+}
+
 function activeMentionQuery(value: string) {
   const markerIndex = value.lastIndexOf('@');
   if (markerIndex < 0) {
@@ -1113,7 +1124,15 @@ function AssistantDraftPreviewBlock({ preview }: { preview?: AssistantActionDraf
   );
 }
 
-function AssistantDraftWizardBlock({ steps }: { steps: AssistantDraftWizardStep[] }) {
+function AssistantDraftWizardBlock({
+  draftTitle,
+  onUsePrerequisitePrompt,
+  steps,
+}: {
+  draftTitle?: string;
+  onUsePrerequisitePrompt?: (prompt: string) => void;
+  steps: AssistantDraftWizardStep[];
+}) {
   if (!steps.length) {
     return null;
   }
@@ -1130,6 +1149,8 @@ function AssistantDraftWizardBlock({ steps }: { steps: AssistantDraftWizardStep[
           const label = draftWizardStatusLabel(step.status);
           const title = step.title || step.key || `步骤 ${index + 1}`;
           const dependsOn = step.depends_on ?? [];
+          const canGeneratePrerequisite = Boolean(onUsePrerequisitePrompt)
+            && canGenerateWizardPrerequisite(step);
           return (
             <div className="assistant-draft-wizard-step" key={step.key || title}>
               <Space size={6} wrap>
@@ -1139,6 +1160,16 @@ function AssistantDraftWizardBlock({ steps }: { steps: AssistantDraftWizardStep[
               {step.summary ? <Text type="secondary">{step.summary}</Text> : null}
               {dependsOn.length ? (
                 <Text type="secondary">依赖：{dependsOn.join('、')}</Text>
+              ) : null}
+              {canGeneratePrerequisite ? (
+                <Button
+                  size="small"
+                  onClick={() => onUsePrerequisitePrompt?.(
+                    draftWizardPrerequisitePrompt(draftTitle, step),
+                  )}
+                >
+                  生成{title}前置草案
+                </Button>
               ) : null}
             </div>
           );
@@ -1224,6 +1255,7 @@ function AssistantActionDraftCards({
   onCancelDraft,
   onConfirmDraft,
   onRegenerateDraft,
+  onUseDraftWizardStepPrompt,
   resultWriteTargetLabels,
 }: {
   draftMutationId?: string;
@@ -1233,6 +1265,7 @@ function AssistantActionDraftCards({
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
   onRegenerateDraft: (draft: AssistantToolResultItem) => void;
+  onUseDraftWizardStepPrompt: (prompt: string) => void;
   resultWriteTargetLabels: Map<string, string>;
 }) {
   const [detailDraft, setDetailDraft] = useState<AssistantToolResultItem>();
@@ -1469,7 +1502,11 @@ function AssistantActionDraftCards({
                 </>
               )}
             </div>
-            <AssistantDraftWizardBlock steps={wizardSteps} />
+            <AssistantDraftWizardBlock
+              draftTitle={draft.title}
+              steps={wizardSteps}
+              onUsePrerequisitePrompt={onUseDraftWizardStepPrompt}
+            />
             <AssistantDraftPreviewBlock preview={draft.preview} />
             <Space size={8} wrap>
               {draftId && isPending ? (
@@ -2172,6 +2209,7 @@ function AssistantBubble({
           onCancelDraft={onCancelDraft}
           onConfirmDraft={onConfirmDraft}
           onRegenerateDraft={onRegenerateDraft}
+          onUseDraftWizardStepPrompt={onUseTaskGuidePrompt}
           resultWriteTargetLabels={resultWriteTargetLabels}
         />
         <AssistantTaskCreationGuideCards

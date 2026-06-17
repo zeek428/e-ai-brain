@@ -1774,6 +1774,98 @@ describe('AssistantPage', () => {
     );
   });
 
+  it('offers prerequisite draft prompts from blocked wizard steps', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_wizard_prerequisite',
+              latency_ms: 166,
+              message: {
+                content: '我先生成一个待补齐依赖的代码巡检定时作业草案。',
+                id: 'assistant_message_wizard_prerequisite',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        draft_id: 'assistant_draft_code_repository_inspection_missing_dependencies',
+                        payload: {
+                          cron_expression: '0 2 * * MON',
+                          execution_mode: 'ai_generated',
+                          job_type: 'code_repository_inspection',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: '代码仓库质量安全规范巡检',
+                        wizard_steps: [
+                          {
+                            depends_on: ['GitHub 连接', '代码巡检动作'],
+                            key: 'data_source',
+                            status: 'needs_prerequisite',
+                            summary: '需要先配置 GitHub 连接和代码巡检动作',
+                            title: '数据来源',
+                          },
+                          {
+                            depends_on: ['代码巡检 Skill', 'AI角色'],
+                            key: 'ai_processing',
+                            status: 'blocked',
+                            summary: '需要先配置代码巡检 Skill 和 AI角色',
+                            title: 'AI处理',
+                          },
+                        ],
+                      },
+                    ],
+                    summary: {
+                      draft_count: 1,
+                      requires_confirmation: true,
+                      target: 'scheduled_jobs',
+                    },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我创建代码巡检定时作业' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('数据来源：需先确认前置草案')).toBeInTheDocument();
+    expect(screen.getByText('AI处理：已阻塞')).toBeInTheDocument();
+    expect(screen.getByText('依赖：GitHub 连接、代码巡检动作')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '生成数据来源前置草案' }));
+
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '为「代码仓库质量安全规范巡检」补齐「数据来源」前置配置草案。依赖：GitHub 连接、代码巡检动作',
+    );
+  });
+
   it('renders assistant draft cards when only server_draft_id is present', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
