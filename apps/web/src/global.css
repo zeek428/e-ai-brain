@@ -822,6 +822,55 @@ body {
   justify-self: start;
 }
 
+.assistant-run-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  white-space: normal;
+}
+
+.assistant-run-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d7e6d7;
+  border-radius: 8px;
+  background: #f7fcf7;
+}
+
+.assistant-run-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.assistant-run-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assistant-run-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.assistant-run-metrics span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid #dcecdc;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.assistant-run-metrics .ant-typography {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .assistant-diagnostic-list {
   display: grid;
   gap: 10px;
@@ -1175,6 +1224,14 @@ body {
   }
 
   .assistant-task-guide-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-run-header {
+    flex-direction: column;
+  }
+
+  .assistant-run-metrics {
     grid-template-columns: 1fr;
   }
 

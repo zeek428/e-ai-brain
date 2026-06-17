@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.335 |
+| 功能版本 | v1.1.336 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.336 | 2026-06-17 | AI 助手动作草案前端契约补充当前页详情查看，run-once 工具结果补充前端轮询运行状态追踪 | Codex |
 | v1.1.335 | 2026-06-17 | AI 助手 `assistant.task_creation_guide` 的 `suggestions` 与五类任务向导项保持一致 | Codex |
 | v1.1.334 | 2026-06-17 | AI 助手 run-once 草案确认响应中的 `scheduled_job_run` 被前端用于展示本次运行追踪入口 | Codex |
 | v1.1.333 | 2026-06-17 | AI 助手带 run-once 标记的定时作业草案确认后返回创建作业和本次手动运行记录 | Codex |
@@ -1520,9 +1521,9 @@ POST /api/assistant/references/resolve
 }
 ```
 
-助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认或取消前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。
+助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认或取消前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。前端“查看详情”不新增 API，直接复用 `assistant.action_draft.items[].payload` 与 `preview={diffs,validation,target}`，在当前对话页展示草案状态、动作、风险等级、payload JSON、字段差异和校验问题。
 
-当聊天消息通过结构化 `scheduled_job` 引用或显式 `@定时作业名称` 并包含“执行一次/立即执行/run once”等意图时，助手确定性调用定时作业手动运行链路并返回 `tool=assistant.scheduled_job_run`。显式 @ 名称解析成功时优先级高于请求中由前端自动候选带入的 `scheduled_job` 引用；服务端必须先用完整 @ 文本按作业名称、标题、编码或 ID 做精确命中，语义匹配出现多个相近作业但存在唯一精确命中时仍执行该精确作业。若显式 @ 已尝试解析但没有唯一可执行作业，且文本命中“提取每周用户反馈有价值信息/周反馈洞察”等场景，聊天响应必须返回 `tool=assistant.action_draft`、`intent=scheduled_job_draft`，草案项 `client_draft_id=assistant_draft_weekly_feedback_insight/action=create_scheduled_job`，并在草案 payload 的 `config_json.assistant_run_once_request` 写入 `{"requested": true, "source_message": "<原始消息>"}`；服务端会持久化该草案并返回 `server_draft_id/status/preview`，但确认前不得创建真实作业或触发外部调用。用户确认带该 run-once 标记的草案后，`POST /api/assistant/action-drafts/{draft_id}/confirm` 的 `run.result_type` 仍为 `scheduled_job`，`run.result` 返回创建出的定时作业，并额外包含 `scheduled_job_run` 公开运行记录；`assistant_action_draft.confirmed` 审计 payload 同步包含 `scheduled_job_run_id`。客户端必须消费 `run.result.scheduled_job_run.id`，在草案卡确认成功状态中展示本次运行深链，例如 `/tasks/scheduled-jobs?job_id=<job_id>&run_id=<run_id>`。对于 `user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate` 这类 AI 处理链路较长的作业，聊天接口不得等待完整外部取数、模型处理和结果写入结束；后端在运行记录进入 `running` 或 `queued` 后立即返回运行 ID、状态、详情链接和引用，后台继续完成作业，用户可围绕该 `scheduled_job_run` 继续追问或在任务中心查看最终结果。
+当聊天消息通过结构化 `scheduled_job` 引用或显式 `@定时作业名称` 并包含“执行一次/立即执行/run once”等意图时，助手确定性调用定时作业手动运行链路并返回 `tool=assistant.scheduled_job_run`。显式 @ 名称解析成功时优先级高于请求中由前端自动候选带入的 `scheduled_job` 引用；服务端必须先用完整 @ 文本按作业名称、标题、编码或 ID 做精确命中，语义匹配出现多个相近作业但存在唯一精确命中时仍执行该精确作业。若显式 @ 已尝试解析但没有唯一可执行作业，且文本命中“提取每周用户反馈有价值信息/周反馈洞察”等场景，聊天响应必须返回 `tool=assistant.action_draft`、`intent=scheduled_job_draft`，草案项 `client_draft_id=assistant_draft_weekly_feedback_insight/action=create_scheduled_job`，并在草案 payload 的 `config_json.assistant_run_once_request` 写入 `{"requested": true, "source_message": "<原始消息>"}`；服务端会持久化该草案并返回 `server_draft_id/status/preview`，但确认前不得创建真实作业或触发外部调用。用户确认带该 run-once 标记的草案后，`POST /api/assistant/action-drafts/{draft_id}/confirm` 的 `run.result_type` 仍为 `scheduled_job`，`run.result` 返回创建出的定时作业，并额外包含 `scheduled_job_run` 公开运行记录；`assistant_action_draft.confirmed` 审计 payload 同步包含 `scheduled_job_run_id`。客户端必须消费 `run.result.scheduled_job_run.id`，在草案卡确认成功状态中展示本次运行深链，例如 `/tasks/scheduled-jobs?job_id=<job_id>&run_id=<run_id>`。对于 `user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate` 这类 AI 处理链路较长的作业，聊天接口不得等待完整外部取数、模型处理和结果写入结束；后端在运行记录进入 `running` 或 `queued` 后立即返回运行 ID、状态、详情链接和引用，后台继续完成作业，用户可围绕该 `scheduled_job_run` 继续追问或在任务中心查看最终结果。前端收到 `assistant.scheduled_job_run.items[]/summary` 后必须展示运行记录卡；当状态为 `running/queued` 时，客户端复用 `GET /api/system/scheduled-job-runs?scheduled_job_id=<scheduled_job_id>` 查询同一运行 ID 并刷新状态、导入记录和错误信息，终态后停止轮询；该追踪不需要新增助手 API。
 
 当聊天消息包含“邮件摘要”“邮件收取”“邮箱摘要”“email digest”等意图，并明确要求生成定时作业草案时，`message.tool_results[]` 必须返回 `tool=assistant.action_draft`、`intent=email_digest_job_draft`。草案项 `client_draft_id=assistant_draft_email_digest`、`action=create_scheduled_job`、`title=邮件摘要收取`，payload 复用 `scheduled_job_templates.email_digest` 默认值，至少包含 `job_type=plugin_action_invoke`、`execution_mode=deterministic`、`schedule_type=cron`、`cron_expression=0 8 * * MON-FRI`、`source_system=email`、`plugin_input_mapping.poll_since={{current_date-1}}`，并在存在可用 `receive_email_messages` 动作和同插件邮箱连接时写入 `plugin_action_id` 与 `plugin_connection_id`。该草案同样会持久化为 `assistant_action_drafts`，确认前不创建真实定时作业。
 

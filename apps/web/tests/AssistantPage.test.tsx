@@ -679,7 +679,7 @@ describe('AssistantPage', () => {
               conversation_id: 'conversation_run_once',
               latency_ms: 12,
               message: {
-                content: '已执行「提取每周用户反馈有价值信息」一次，运行记录 scheduled_job_run_001 已成功完成。',
+                content: '已触发「提取每周用户反馈有价值信息」执行一次，运行记录 scheduled_job_run_001 当前状态为 running。',
                 id: 'assistant_message_run_once',
                 references: [
                   {
@@ -690,7 +690,7 @@ describe('AssistantPage', () => {
                   },
                   {
                     id: 'scheduled_job_run_001',
-                    title: '提取每周用户反馈有价值信息 / succeeded',
+                    title: '提取每周用户反馈有价值信息 / running',
                     type: 'scheduled_job_run',
                     url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_001',
                   },
@@ -700,14 +700,52 @@ describe('AssistantPage', () => {
                 tool_results: [
                   {
                     intent: 'scheduled_job_run_once',
-                    items: [],
-                    summary: { run_id: 'scheduled_job_run_001', status: 'succeeded' },
+                    items: [
+                      {
+                        id: 'scheduled_job_run_001',
+                        records_imported: 0,
+                        scheduled_job_id: 'scheduled_job_feedback_weekly',
+                        status: 'running',
+                        title: '提取每周用户反馈有价值信息 / running',
+                        trigger_type: 'manual',
+                        type: 'scheduled_job_run',
+                        url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_001',
+                      },
+                    ],
+                    summary: {
+                      run_id: 'scheduled_job_run_001',
+                      scheduled_job_id: 'scheduled_job_feedback_weekly',
+                      status: 'running',
+                    },
                     tool: 'assistant.scheduled_job_run',
                   },
                 ],
               },
               model: 'assistant-deterministic',
               suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_feedback_weekly') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  error_code: null,
+                  error_message: null,
+                  finished_at: '2026-06-17T02:53:50.260971+00:00',
+                  id: 'scheduled_job_run_001',
+                  records_imported: 19,
+                  scheduled_job_id: 'scheduled_job_feedback_weekly',
+                  started_at: '2026-06-17T02:53:15.835137+00:00',
+                  status: 'succeeded',
+                  trigger_type: 'manual',
+                },
+              ],
+              total: 1,
             },
           }),
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
@@ -728,7 +766,9 @@ describe('AssistantPage', () => {
     await screen.findByRole('button', { name: /提取每周用户反馈有价值信息/ });
     fireEvent.keyDown(assistantInput, { key: 'Enter' });
 
-    expect(await screen.findByText(/已执行「提取每周用户反馈有价值信息」一次/)).toBeInTheDocument();
+    expect(await screen.findByText(/已触发「提取每周用户反馈有价值信息」执行一次/)).toBeInTheDocument();
+    expect(await screen.findByText('运行状态：成功')).toBeInTheDocument();
+    expect(screen.getByText('导入记录：19')).toBeInTheDocument();
     expect(chatRequestBody).toMatchObject({
       message: '@提取每周用户反馈有价值信息 执行一次',
       references: [
@@ -1699,6 +1739,19 @@ describe('AssistantPage', () => {
     expect(screen.getByText('cron_expression is required')).toBeInTheDocument();
     expect(screen.getByText('user_feedback_insight_extract requires plugin_action_id')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /确认创建/ })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: '查看详情' }));
+
+    const detailDialog = await screen.findByRole('dialog', { name: /草案详情/ });
+    expect(within(detailDialog).getByText('草案状态')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('待确认')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('Payload')).toBeInTheDocument();
+    expect(detailDialog).toHaveTextContent('"job_type": "user_feedback_insight_extract"');
+    expect(within(detailDialog).getByText('字段差异')).toBeInTheDocument();
+    expect(detailDialog).toHaveTextContent('名称');
+    expect(detailDialog).toHaveTextContent('- -> 缺少配置的反馈洞察作业');
+    expect(within(detailDialog).getByText('校验问题')).toBeInTheDocument();
+    expect(detailDialog).toHaveTextContent('cron_expression is required');
   });
 
   it('renders assistant plugin action drafts as configuration cards', async () => {

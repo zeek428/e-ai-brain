@@ -16,7 +16,7 @@ import {
   SendOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Input, Space, Spin, Tag, Typography, message as toast } from 'antd';
+import { Button, Input, Modal, Space, Spin, Tag, Typography, message as toast } from 'antd';
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -31,6 +31,7 @@ import {
   fetchAssistantDraftTemplates,
   fetchAssistantMetrics,
   fetchAssistantReferenceCandidates,
+  fetchScheduledJobRuns,
   fetchResultWriteTargets,
   getStoredCurrentUser,
   readAssistantDraftResolutions,
@@ -47,6 +48,7 @@ import {
   type AssistantToolResult,
   type AssistantToolResultItem,
   type ResultWriteTargetRecord,
+  type ScheduledJobRunRecord,
 } from '../../services/aiBrain';
 import { formatMutationError } from '../../utils/managementCrud';
 
@@ -227,6 +229,18 @@ const queryReferenceTypes = new Set([
 ]);
 const ASSISTANT_RECENT_REFERENCES_STORAGE_KEY = 'ai_brain_assistant_recent_references';
 const MAX_RECENT_REFERENCES = 8;
+const SCHEDULED_JOB_RUN_POLL_INTERVAL_MS = 5000;
+
+type AssistantScheduledJobRunItem = {
+  errorMessage?: string | null;
+  id: string;
+  recordsImported?: number;
+  scheduledJobId?: string;
+  status: string;
+  title: string;
+  triggerType?: string;
+  url?: string;
+};
 
 function actionDraftItems(toolResults?: AssistantToolResult[]) {
   return (toolResults ?? [])
@@ -263,6 +277,18 @@ function scheduledJobComparisonItems(toolResults?: AssistantToolResult[]) {
     .filter((toolResult) => toolResult.tool === 'assistant.scheduled_job_run_comparison')
     .flatMap((toolResult) => toolResult.items ?? [])
     .filter((item) => item.id || item.title);
+}
+
+function optionalText(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  return String(value);
+}
+
+function optionalNumber(value: unknown) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : undefined;
 }
 
 function itemText(item: AssistantToolResultItem, field: string) {
@@ -322,6 +348,110 @@ function diagnosticStatusColor(status: string) {
     return 'blue';
   }
   return 'default';
+}
+
+function scheduledJobRunStatusLabel(status?: string) {
+  const labels: Record<string, string> = {
+    cancelled: '已取消',
+    failed: '失败',
+    queued: '排队中',
+    running: '运行中',
+    succeeded: '成功',
+  };
+  return labels[status ?? ''] ?? (status || '未知');
+}
+
+function scheduledJobRunIsActive(status?: string) {
+  return status === 'queued' || status === 'running';
+}
+
+function scheduledJobRunRecordChanged(
+  current: ScheduledJobRunRecord | undefined,
+  next: ScheduledJobRunRecord,
+) {
+  return (
+    !current
+    || current.error_code !== next.error_code
+    || current.error_message !== next.error_message
+    || current.finished_at !== next.finished_at
+    || current.records_imported !== next.records_imported
+    || current.status !== next.status
+  );
+}
+
+function scheduledJobRunBaseItems(toolResults?: AssistantToolResult[]) {
+  const byRunId = new Map<string, AssistantScheduledJobRunItem>();
+  (toolResults ?? [])
+    .filter((toolResult) => toolResult.tool === 'assistant.scheduled_job_run')
+    .forEach((toolResult) => {
+      const summary = toolResult.summary ?? {};
+      const sourceItems = toolResult.items?.length
+        ? toolResult.items
+        : (summary.run_id ? [{ ...summary, id: summary.run_id }] : []);
+      sourceItems.forEach((item) => {
+        const id = optionalText(item.id ?? item.run_id);
+        if (!id || byRunId.has(id)) {
+          return;
+        }
+        const status = optionalText(item.status ?? summary.status) ?? 'unknown';
+        byRunId.set(id, {
+          errorMessage: optionalText(item.error_message ?? summary.error_message),
+          id,
+          recordsImported: optionalNumber(item.records_imported ?? summary.records_imported),
+          scheduledJobId: optionalText(item.scheduled_job_id ?? summary.scheduled_job_id),
+          status,
+          title: optionalText(item.title ?? summary.scheduled_job_name) ?? `运行记录 ${id}`,
+          triggerType: optionalText(item.trigger_type ?? summary.trigger_type),
+          url: optionalText(item.url) ?? `/tasks/scheduled-jobs?run_id=${id}`,
+        });
+      });
+    });
+  return [...byRunId.values()];
+}
+
+function scheduledJobRunItems(
+  toolResults: AssistantToolResult[] | undefined,
+  runById: Record<string, ScheduledJobRunRecord>,
+) {
+  return scheduledJobRunBaseItems(toolResults).map((item) => {
+    const latestRun = runById[item.id];
+    if (!latestRun) {
+      return item;
+    }
+    const latestStatus = latestRun.status || item.status;
+    return {
+      ...item,
+      errorMessage: latestRun.error_message ?? item.errorMessage,
+      recordsImported: latestRun.records_imported ?? item.recordsImported,
+      scheduledJobId: latestRun.scheduled_job_id ?? item.scheduledJobId,
+      status: latestStatus,
+      title: item.title.includes('/')
+        ? item.title.replace(/\/\s*[^/]+$/, `/ ${latestStatus}`)
+        : item.title,
+      triggerType: latestRun.trigger_type ?? item.triggerType,
+    };
+  });
+}
+
+function scheduledJobRunPollTargets(
+  messages: ChatMessage[],
+  runById: Record<string, ScheduledJobRunRecord>,
+) {
+  const byRunId = new Map<string, AssistantScheduledJobRunItem>();
+  messages.forEach((message) => {
+    scheduledJobRunBaseItems(message.toolResults).forEach((item) => {
+      const latestStatus = runById[item.id]?.status ?? item.status;
+      if (!scheduledJobRunIsActive(latestStatus)) {
+        return;
+      }
+      byRunId.set(item.id, {
+        ...item,
+        scheduledJobId: runById[item.id]?.scheduled_job_id ?? item.scheduledJobId,
+        status: latestStatus,
+      });
+    });
+  });
+  return [...byRunId.values()];
 }
 
 function comparisonDifferenceItems(item: AssistantToolResultItem) {
@@ -816,6 +946,74 @@ function AssistantDraftPreviewBlock({ preview }: { preview?: AssistantActionDraf
   );
 }
 
+function AssistantDraftDetailModal({
+  draft,
+  onClose,
+  status,
+}: {
+  draft?: AssistantToolResultItem;
+  onClose: () => void;
+  status?: string;
+}) {
+  const statusLabel = draftStatusLabel(status ?? draft?.status);
+  const diffs = draft?.preview?.diffs ?? [];
+  const issues = draft?.preview?.validation?.issues ?? [];
+  return (
+    <Modal
+      footer={null}
+      open={Boolean(draft)}
+      title={`草案详情 - ${draft?.title ?? '配置草案'}`}
+      width={760}
+      onCancel={onClose}
+    >
+      {draft ? (
+        <div className="assistant-draft-detail">
+          <Space size={8} wrap>
+            <Text strong>草案状态</Text>
+            <Tag color={statusLabel.color}>{statusLabel.text}</Tag>
+            <Tag color="default">{draft.action ?? 'unknown_action'}</Tag>
+            {draft.risk_level ? <Tag color="orange">风险：{draft.risk_level}</Tag> : null}
+          </Space>
+          <div className="assistant-draft-detail-section">
+            <Text strong>Payload</Text>
+            <pre>{JSON.stringify(draft.payload ?? {}, null, 2)}</pre>
+          </div>
+          {diffs.length ? (
+            <div className="assistant-draft-detail-section">
+              <Text strong>字段差异</Text>
+              <div className="assistant-action-draft-precheck-diffs">
+                {diffs.map((diff) => (
+                  <span key={diff.field}>
+                    <Text type="secondary">{diff.label ?? diff.field}</Text>
+                    <Text>
+                      {draftPreviewValueText(diff.current)} -&gt; {draftPreviewValueText(diff.proposed)}
+                    </Text>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {issues.length ? (
+            <div className="assistant-draft-detail-section">
+              <Text strong>校验问题</Text>
+              <div className="assistant-action-draft-precheck-issues">
+                {issues.map((issue) => (
+                  <Text
+                    key={`${issue.field}:${issue.message}`}
+                    type={issue.severity === 'error' ? 'danger' : 'warning'}
+                  >
+                    {issue.message}
+                  </Text>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
 function AssistantActionDraftCards({
   drafts,
   draftMutationId,
@@ -835,6 +1033,14 @@ function AssistantActionDraftCards({
   onRegenerateDraft: (draft: AssistantToolResultItem) => void;
   resultWriteTargetLabels: Map<string, string>;
 }) {
+  const [detailDraft, setDetailDraft] = useState<AssistantToolResultItem>();
+  const currentDraftStatus = (draft: AssistantToolResultItem) => {
+    const draftId = draft.draft_id;
+    const resolution = draftId ? draftResolutionById[draftId] : undefined;
+    return resolution
+      ? 'applied'
+      : (draftId ? draftStatusById[draftId] : undefined) ?? draft.status ?? 'pending';
+  };
   if (!drafts.length) {
     return null;
   }
@@ -849,9 +1055,7 @@ function AssistantActionDraftCards({
         const resolution = draftId ? draftResolutionById[draftId] : undefined;
         const resourceLink = draftResourceLink(resolution);
         const runResourceLink = draftRunResourceLink(resolution);
-        const currentStatus = resolution
-          ? 'applied'
-          : (draftId ? draftStatusById[draftId] : undefined) ?? draft.status ?? 'pending';
+        const currentStatus = currentDraftStatus(draft);
         const statusLabel = draftStatusLabel(currentStatus);
         const isPending = currentStatus === 'pending';
         const previewStatus = draft.preview?.validation?.status;
@@ -1073,6 +1277,9 @@ function AssistantActionDraftCards({
                   应用到定时作业表单
                 </Button>
               ) : null}
+              <Button size="small" onClick={() => setDetailDraft(draft)}>
+                查看详情
+              </Button>
               <Button href={`/assistant?draft_id=${draft.draft_id}`} size="small">
                 查看草案
               </Button>
@@ -1088,6 +1295,11 @@ function AssistantActionDraftCards({
           </div>
         );
       })}
+      <AssistantDraftDetailModal
+        draft={detailDraft}
+        status={detailDraft ? currentDraftStatus(detailDraft) : undefined}
+        onClose={() => setDetailDraft(undefined)}
+      />
     </div>
   );
 }
@@ -1137,6 +1349,62 @@ function AssistantTaskCreationGuideCards({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function AssistantScheduledJobRunCards({
+  items,
+}: {
+  items: AssistantScheduledJobRunItem[];
+}) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className="assistant-run-list">
+      {items.map((item) => {
+        const isActive = scheduledJobRunIsActive(item.status);
+        return (
+          <div className="assistant-run-card" key={item.id}>
+            <div className="assistant-run-header">
+              <Space size={8} wrap>
+                <ClockCircleOutlined />
+                <Text strong>运行记录</Text>
+                <Tag color={diagnosticStatusColor(item.status)}>
+                  {scheduledJobRunStatusLabel(item.status)}
+                </Tag>
+              </Space>
+              <Button href={item.url} icon={<LinkOutlined />} size="small" type="link">
+                查看运行记录
+              </Button>
+            </div>
+            <Text className="assistant-run-title" strong>
+              {item.title}
+            </Text>
+            <div className="assistant-run-metrics">
+              <span>
+                <Text type="secondary">运行状态</Text>
+                <Text>运行状态：{scheduledJobRunStatusLabel(item.status)}</Text>
+              </span>
+              <span>
+                <Text type="secondary">导入记录</Text>
+                <Text>导入记录：{item.recordsImported ?? 0}</Text>
+              </span>
+              <span>
+                <Text type="secondary">触发方式</Text>
+                <Text>{item.triggerType ?? 'manual'}</Text>
+              </span>
+            </div>
+            {isActive ? (
+              <Text type="secondary">正在执行，完成后会自动刷新状态。</Text>
+            ) : null}
+            {item.errorMessage ? (
+              <Text type="danger">错误：{item.errorMessage}</Text>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1428,6 +1696,7 @@ function AssistantBubble({
   onRegenerateDraft,
   onUseTaskGuidePrompt,
   resultWriteTargetLabels,
+  scheduledJobRunById,
 }: {
   draftMutationId?: string;
   draftResolutionById: AssistantDraftResolutionMap;
@@ -1438,9 +1707,11 @@ function AssistantBubble({
   onRegenerateDraft: (draft: AssistantToolResultItem) => void;
   onUseTaskGuidePrompt: (prompt: string) => void;
   resultWriteTargetLabels: Map<string, string>;
+  scheduledJobRunById: Record<string, ScheduledJobRunRecord>;
 }) {
   const drafts = actionDraftItems(message.toolResults);
   const taskGuideItems = taskCreationGuideItems(message.toolResults);
+  const runItems = scheduledJobRunItems(message.toolResults, scheduledJobRunById);
   const diagnosticItems = scheduledJobDiagnosticItems(message.toolResults);
   const comparisonItems = scheduledJobComparisonItems(message.toolResults);
   return (
@@ -1479,6 +1750,7 @@ function AssistantBubble({
           items={taskGuideItems}
           onUsePrompt={onUseTaskGuidePrompt}
         />
+        <AssistantScheduledJobRunCards items={runItems} />
         <AssistantScheduledJobDiagnosticCards items={diagnosticItems} />
         <AssistantScheduledJobComparisonCards items={comparisonItems} />
       </div>
@@ -1510,6 +1782,7 @@ export default function AssistantPage() {
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
   const [recentReferences, setRecentReferences] = useState<AssistantReference[]>(() => readRecentReferences());
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
+  const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
   const queryReferenceHydratedRef = useRef(false);
   const draftTemplatesLoadRequestedRef = useRef(false);
@@ -1541,6 +1814,69 @@ export default function AssistantPage() {
     () => selectedReferences.reduce((total, reference) => total + Number(reference.chunk_count ?? 0), 0),
     [selectedReferences],
   );
+  const activeRunPollTargets = useMemo(
+    () => scheduledJobRunPollTargets(messages, scheduledJobRunById),
+    [messages, scheduledJobRunById],
+  );
+
+  useEffect(() => {
+    if (!activeRunPollTargets.length) {
+      return undefined;
+    }
+    let didCancel = false;
+    let didShowError = false;
+
+    const pollRuns = async () => {
+      const targetsByJobId = new Map<string, AssistantScheduledJobRunItem[]>();
+      activeRunPollTargets.forEach((target) => {
+        const jobKey = target.scheduledJobId ?? '';
+        targetsByJobId.set(jobKey, [...(targetsByJobId.get(jobKey) ?? []), target]);
+      });
+      try {
+        await Promise.all(
+          [...targetsByJobId.entries()].map(async ([scheduledJobId, targets]) => {
+            const runIds = new Set(targets.map((target) => target.id));
+            const runs = await fetchScheduledJobRuns(
+              scheduledJobId ? { scheduledJobId } : {},
+            );
+            if (didCancel) {
+              return;
+            }
+            const relevantRuns = runs.filter((run) => runIds.has(run.id));
+            if (!relevantRuns.length) {
+              return;
+            }
+            setScheduledJobRunById((currentItems) => {
+              let changed = false;
+              const nextItems = { ...currentItems };
+              relevantRuns.forEach((run) => {
+                if (!scheduledJobRunRecordChanged(currentItems[run.id], run)) {
+                  return;
+                }
+                nextItems[run.id] = run;
+                changed = true;
+              });
+              return changed ? nextItems : currentItems;
+            });
+          }),
+        );
+      } catch (error) {
+        if (!didCancel && !didShowError) {
+          didShowError = true;
+          toast.error(formatMutationError(error));
+        }
+      }
+    };
+
+    void pollRuns();
+    const pollTimer = window.setInterval(() => {
+      void pollRuns();
+    }, SCHEDULED_JOB_RUN_POLL_INTERVAL_MS);
+    return () => {
+      didCancel = true;
+      window.clearInterval(pollTimer);
+    };
+  }, [activeRunPollTargets]);
 
   useEffect(() => {
     if (queryReferenceHydratedRef.current) {
@@ -2117,6 +2453,7 @@ export default function AssistantPage() {
                 onRegenerateDraft={regenerateDraft}
                 onUseTaskGuidePrompt={setInputValue}
                 resultWriteTargetLabels={resultWriteTargetLabels}
+                scheduledJobRunById={scheduledJobRunById}
               />
             ))}
             {isLoadingMessages ? (
