@@ -255,12 +255,26 @@ function scheduledJobDiagnosticItems(toolResults?: AssistantToolResult[]) {
     .filter((item) => item.id || item.title);
 }
 
+function scheduledJobComparisonItems(toolResults?: AssistantToolResult[]) {
+  return (toolResults ?? [])
+    .filter((toolResult) => toolResult.tool === 'assistant.scheduled_job_run_comparison')
+    .flatMap((toolResult) => toolResult.items ?? [])
+    .filter((item) => item.id || item.title);
+}
+
 function itemText(item: AssistantToolResultItem, field: string) {
   const value = item[field];
   if (Array.isArray(value)) {
     return value.length ? value.map((entry) => String(entry)).join('、') : '-';
   }
   return value === undefined || value === null || value === '' ? '-' : String(value);
+}
+
+function itemRecord(item: AssistantToolResultItem, field: string) {
+  const value = item[field];
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as AssistantToolResultItem)
+    : {};
 }
 
 function diagnosticStageItems(item: AssistantToolResultItem) {
@@ -292,6 +306,15 @@ function diagnosticStatusColor(status: string) {
     return 'blue';
   }
   return 'default';
+}
+
+function comparisonDifferenceItems(item: AssistantToolResultItem) {
+  return Array.isArray(item.differences)
+    ? item.differences.filter(
+      (difference): difference is AssistantToolResultItem =>
+        Boolean(difference) && typeof difference === 'object' && !Array.isArray(difference),
+    )
+    : [];
 }
 
 function draftPayloadText(payload: Record<string, unknown> | undefined, field: string) {
@@ -1137,6 +1160,103 @@ function AssistantScheduledJobDiagnosticCards({
   );
 }
 
+function AssistantScheduledJobComparisonCards({
+  items,
+}: {
+  items: AssistantToolResultItem[];
+}) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className="assistant-comparison-list">
+      {items.map((item) => {
+        const currentRun = itemRecord(item, 'current_run');
+        const baselineRun = itemRecord(item, 'baseline_run');
+        const differences = comparisonDifferenceItems(item);
+        return (
+          <div className="assistant-comparison-card" key={itemText(item, 'id')}>
+            <div className="assistant-comparison-header">
+              <Space size={8} wrap>
+                <ProjectOutlined />
+                <Text strong>运行对比</Text>
+                <Tag color={diagnosticStatusColor(itemText(currentRun, 'status'))}>
+                  当前：{itemText(currentRun, 'status')}
+                </Tag>
+                <Tag color={diagnosticStatusColor(itemText(baselineRun, 'status'))}>
+                  上次成功：{itemText(baselineRun, 'status')}
+                </Tag>
+              </Space>
+              {item.url ? (
+                <Button href={itemText(item, 'url')} icon={<LinkOutlined />} size="small" type="link">
+                  当前运行
+                </Button>
+              ) : null}
+            </div>
+            <Text className="assistant-comparison-title" strong>
+              {itemText(item, 'title')}
+            </Text>
+            <div className="assistant-comparison-metrics">
+              <span>
+                <Text type="secondary">当前导入</Text>
+                <Text>{itemText(currentRun, 'records_imported')}</Text>
+              </span>
+              <span>
+                <Text type="secondary">上次导入</Text>
+                <Text>{itemText(baselineRun, 'records_imported')}</Text>
+              </span>
+              <span>
+                <Text type="secondary">当前耗时</Text>
+                <Text>{itemText(currentRun, 'duration_ms')} ms</Text>
+              </span>
+              <span>
+                <Text type="secondary">上次耗时</Text>
+                <Text>{itemText(baselineRun, 'duration_ms')} ms</Text>
+              </span>
+            </div>
+            <div className="assistant-comparison-differences">
+              {differences.map((difference, index) => {
+                const stage = itemText(difference, 'stage');
+                const currentSummary = itemText(difference, 'current_summary');
+                const baselineSummary = itemText(difference, 'baseline_summary');
+                return (
+                  <div
+                    className="assistant-comparison-difference"
+                    key={`${itemText(difference, 'field')}:${index}`}
+                  >
+                    <Space size={6} wrap>
+                      <Tag color={stage !== '-' ? 'blue' : 'default'}>
+                        {stage !== '-' ? diagnosticStageLabel(stage) : itemText(difference, 'field')}
+                      </Tag>
+                      {itemText(difference, 'current_status') !== '-' ? (
+                        <Tag color={diagnosticStatusColor(itemText(difference, 'current_status'))}>
+                          当前 {itemText(difference, 'current_status')}
+                        </Tag>
+                      ) : null}
+                      {itemText(difference, 'baseline_status') !== '-' ? (
+                        <Tag color={diagnosticStatusColor(itemText(difference, 'baseline_status'))}>
+                          上次 {itemText(difference, 'baseline_status')}
+                        </Tag>
+                      ) : null}
+                    </Space>
+                    {currentSummary !== '-' ? <Text>当前：{currentSummary}</Text> : null}
+                    {baselineSummary !== '-' ? <Text>上次：{baselineSummary}</Text> : null}
+                    {itemText(difference, 'current') !== '-' || itemText(difference, 'baseline') !== '-' ? (
+                      <Text type="secondary">
+                        {itemText(difference, 'baseline')} {'->'} {itemText(difference, 'current')}
+                      </Text>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AssistantDraftTemplateMarket({
   isLoading,
   onUseTemplate,
@@ -1221,6 +1341,7 @@ function AssistantBubble({
   const drafts = actionDraftItems(message.toolResults);
   const taskGuideItems = taskCreationGuideItems(message.toolResults);
   const diagnosticItems = scheduledJobDiagnosticItems(message.toolResults);
+  const comparisonItems = scheduledJobComparisonItems(message.toolResults);
   return (
     <div className={`assistant-bubble assistant-bubble-${message.role}`}>
       <div className="assistant-bubble-avatar">
@@ -1258,6 +1379,7 @@ function AssistantBubble({
           onUsePrompt={onUseTaskGuidePrompt}
         />
         <AssistantScheduledJobDiagnosticCards items={diagnosticItems} />
+        <AssistantScheduledJobComparisonCards items={comparisonItems} />
       </div>
     </div>
   );

@@ -834,6 +834,71 @@ body {
   overflow-wrap: anywhere;
 }
 
+.assistant-comparison-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  white-space: normal;
+}
+
+.assistant-comparison-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d7e6d7;
+  border-radius: 8px;
+  background: #f7fcf7;
+}
+
+.assistant-comparison-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.assistant-comparison-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assistant-comparison-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.assistant-comparison-metrics span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid #dcecdc;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.assistant-comparison-differences {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-comparison-difference {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #dcecdc;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.assistant-comparison-difference .ant-typography,
+.assistant-comparison-metrics .ant-typography {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .assistant-bubble-user .assistant-bubble-content .ant-typography {
   color: #ffffff;
 }
@@ -1082,6 +1147,14 @@ body {
 
   .assistant-diagnostic-stage-grid {
     grid-template-columns: 1fr;
+  }
+
+  .assistant-comparison-header {
+    flex-direction: column;
+  }
+
+  .assistant-comparison-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .assistant-bubble {

@@ -216,6 +216,69 @@ def seed_assistant_operational_references() -> None:
     )
 
 
+def seed_previous_successful_feedback_run() -> None:
+    app.state.store.scheduled_job_runs["scheduled_job_run_feedback_success"] = {
+        "completed_at": "2026-06-07T09:28:00+00:00",
+        "duration_ms": 3600,
+        "error_message": None,
+        "id": "scheduled_job_run_feedback_success",
+        "records_imported": 120,
+        "result_summary": {
+            "execution_nodes": {
+                "data_connection": {
+                    "status": "succeeded",
+                    "summary": "从 MaxCompute 读取 120 条反馈。",
+                },
+                "ai_processing": {
+                    "model_gateway_log_id": "model_gateway_log_feedback_success",
+                    "status": "succeeded",
+                    "summary": "生成 5 条洞察。",
+                },
+                "result_action": {
+                    "plugin_invocation_log_id": "plugin_invocation_log_feedback_success",
+                    "status": "succeeded",
+                    "summary": "写入反馈洞察表成功。",
+                    "write_target": "user_feedback_insights",
+                    "write_target_label": "用户洞察表",
+                },
+            },
+            "records_imported": 120,
+        },
+        "scheduled_job_id": "scheduled_job_feedback_weekly",
+        "started_at": "2026-06-07T09:25:00+00:00",
+        "status": "succeeded",
+        "trigger_type": "scheduler",
+        "updated_at": "2026-06-07T09:28:00+00:00",
+    }
+    app.state.store.plugin_invocation_logs["plugin_invocation_log_feedback_success"] = {
+        "action_id": "plugin_action_feedback_write",
+        "connection_id": "plugin_connection_maxcompute",
+        "created_at": "2026-06-07T09:27:50+00:00",
+        "duration_ms": 900,
+        "error_message": None,
+        "id": "plugin_invocation_log_feedback_success",
+        "plugin_id": "plugin_http",
+        "request_summary": {"method": "POST", "path": "/feedback/insights"},
+        "response_summary": {"status_code": 200},
+        "scheduled_job_id": "scheduled_job_feedback_weekly",
+        "scheduled_job_run_id": "scheduled_job_run_feedback_success",
+        "status": "succeeded",
+        "trigger_type": "scheduled_job",
+    }
+    app.state.store.model_gateway_logs.append(
+        {
+            "created_at": "2026-06-07T09:26:30+00:00",
+            "id": "model_gateway_log_feedback_success",
+            "latency_ms": 700,
+            "model": "test-chat-model",
+            "provider": "test",
+            "purpose": "scheduled_job.ai_processing",
+            "status": "succeeded",
+            "tokens": {"completion": 70, "prompt": 180, "total": 250},
+        }
+    )
+
+
 def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents():
     headers = auth_headers("reviewer@example.com", "reviewer123")
     app.state.store.reset()
@@ -566,6 +629,108 @@ def test_ai_assistant_chat_returns_scheduled_job_run_diagnostic(monkeypatch):
             "stage": "result_action",
             "status": "failed",
             "summary": "写入反馈洞察表失败。",
+        },
+    ]
+
+
+def test_ai_assistant_chat_compares_run_with_previous_success(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    seed_previous_successful_feedback_run()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": (
+                                            "这次和上次成功相比，"
+                                            "差异集中在结果动作写入阶段。"
+                                        ),
+                                        "suggestions": ["检查用户洞察表写入接口"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "这次任务和上次成功有什么不同？",
+            "references": [
+                {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    comparison = next(
+        result
+        for result in message["tool_results"]
+        if result["tool"] == "assistant.scheduled_job_run_comparison"
+    )
+    assert comparison["summary"] == {"baseline_found_count": 1, "comparison_count": 1}
+    item = comparison["items"][0]
+    assert item["current_run"]["id"] == "scheduled_job_run_feedback_failed"
+    assert item["baseline_run"]["id"] == "scheduled_job_run_feedback_success"
+    assert item["differences"][0] == {
+        "baseline": "succeeded",
+        "current": "failed",
+        "field": "status",
+    }
+    result_action_difference = next(
+        difference
+        for difference in item["differences"]
+        if difference.get("stage") == "result_action"
+    )
+    assert result_action_difference == {
+        "baseline_result_write_status": "succeeded",
+        "baseline_result_write_target": "user_feedback_insights",
+        "baseline_status": "succeeded",
+        "baseline_summary": "写入反馈洞察表成功。",
+        "current_result_write_status": "failed",
+        "current_result_write_target": "user_feedback_insights",
+        "current_status": "failed",
+        "current_summary": "写入反馈洞察表失败。",
+        "field": "stage.result_action",
+        "stage": "result_action",
+    }
+    assert comparison["references"] == [
+        {
+            "id": "scheduled_job_run_feedback_failed",
+            "title": "每周反馈洞察定时作业 / failed",
+            "type": "scheduled_job_run",
+            "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
+        },
+        {
+            "id": "scheduled_job_run_feedback_success",
+            "title": "每周反馈洞察定时作业 / succeeded",
+            "type": "scheduled_job_run",
+            "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_success",
         },
     ]
 

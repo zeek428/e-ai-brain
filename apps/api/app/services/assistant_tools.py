@@ -47,6 +47,14 @@ def assistant_tool_results(
                     references=references or [],
                 )
             )
+        elif intent == "scheduled_job_run_comparison":
+            results.append(
+                _scheduled_job_run_comparison_tool(
+                    context,
+                    limit=limit,
+                    references=references or [],
+                )
+            )
         elif intent == "delivery_progress":
             results.append(_delivery_progress_tool(context, limit=limit))
         elif intent == "pending_reviews":
@@ -159,6 +167,8 @@ def _assistant_tool_intents(message: str) -> list[str]:
         intents.append("knowledge_base_inspection_draft")
     if _release_risk_analysis_draft_requested(normalized):
         intents.append("release_risk_analysis_draft")
+    if _scheduled_job_run_comparison_requested(normalized):
+        intents.append("scheduled_job_run_comparison")
     if _scheduled_job_diagnostic_requested(normalized):
         intents.append("scheduled_job_diagnostic")
     keyword_map = [
@@ -187,6 +197,28 @@ def _scheduled_job_diagnostic_requested(normalized_message: str) -> bool:
         for keyword in ("定时任务", "定时作业", "作业", "任务", "scheduled job", "run")
     )
     return has_diagnostic_intent and has_scheduled_job_context
+
+
+def _scheduled_job_run_comparison_requested(normalized_message: str) -> bool:
+    has_compare_intent = any(
+        keyword in normalized_message
+        for keyword in (
+            "上次成功",
+            "上一次成功",
+            "有什么不同",
+            "差异",
+            "对比",
+            "不同",
+            "compare",
+            "difference",
+            "last success",
+        )
+    )
+    has_run_context = any(
+        keyword in normalized_message
+        for keyword in ("这次", "本次", "任务", "作业", "运行", "scheduled job", "run")
+    )
+    return has_compare_intent and has_run_context
 
 
 def _scheduled_job_draft_requested(normalized_message: str) -> bool:
@@ -581,6 +613,223 @@ def _scheduled_job_diagnostic_tool(
     }
 
 
+def _scheduled_job_run_comparison_tool(
+    context: dict[str, Any],
+    *,
+    limit: int,
+    references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    referenced_run_ids = [
+        str(reference["id"])
+        for reference in references
+        if reference.get("type") == "scheduled_job_run" and reference.get("id")
+    ]
+    if not referenced_run_ids:
+        return {
+            "intent": "scheduled_job_run_comparison",
+            "items": [],
+            "references": [],
+            "summary": {"baseline_found_count": 0, "comparison_count": 0},
+            "tool": "assistant.scheduled_job_run_comparison",
+        }
+    runs = context["scheduled_job_runs"]
+    run_by_id = {str(run["id"]): run for run in runs if run.get("id") is not None}
+    jobs_by_id = {
+        str(job["id"]): job
+        for job in context["scheduled_jobs"]
+        if job.get("id") is not None
+    }
+    plugin_logs_by_run_id = {
+        str(log.get("scheduled_job_run_id")): log
+        for log in context["plugin_invocation_logs"]
+        if log.get("scheduled_job_run_id") is not None
+    }
+    model_logs_by_id = {
+        str(log.get("id")): log
+        for log in context["model_gateway_logs"]
+        if log.get("id") is not None
+    }
+    result_write_records_by_run_id = {
+        str(record.get("scheduled_job_run_id")): record
+        for record in context["result_write_records"]
+        if record.get("scheduled_job_run_id") is not None
+    }
+    items: list[dict[str, Any]] = []
+    references_out: list[dict[str, Any]] = []
+    for run_id in referenced_run_ids[:limit]:
+        current_run = run_by_id.get(run_id)
+        if current_run is None:
+            continue
+        baseline_run = _previous_successful_scheduled_job_run(runs, current_run)
+        job = jobs_by_id.get(str(current_run.get("scheduled_job_id"))) or {}
+        current_stages = _scheduled_job_diagnostic_stages(
+            current_run,
+            model_logs_by_id=model_logs_by_id,
+            plugin_log=plugin_logs_by_run_id.get(run_id),
+            result_write_record=result_write_records_by_run_id.get(run_id),
+        )
+        baseline_stages = (
+            _scheduled_job_diagnostic_stages(
+                baseline_run,
+                model_logs_by_id=model_logs_by_id,
+                plugin_log=plugin_logs_by_run_id.get(str(baseline_run.get("id"))),
+                result_write_record=result_write_records_by_run_id.get(
+                    str(baseline_run.get("id"))
+                ),
+            )
+            if baseline_run is not None
+            else []
+        )
+        current_summary = _scheduled_job_run_comparison_summary(current_run)
+        baseline_summary = (
+            _scheduled_job_run_comparison_summary(baseline_run)
+            if baseline_run is not None
+            else None
+        )
+        differences = _scheduled_job_run_differences(
+            current_summary=current_summary,
+            current_stages=current_stages,
+            baseline_summary=baseline_summary,
+            baseline_stages=baseline_stages,
+        )
+        item = {
+            "baseline_run": baseline_summary,
+            "current_run": current_summary,
+            "differences": differences,
+            "id": run_id,
+            "scheduled_job_id": current_run.get("scheduled_job_id"),
+            "title": _scheduled_job_run_title(job, current_run),
+            "url": f"/tasks/scheduled-jobs?run_id={run_id}",
+        }
+        items.append(item)
+        references_out.append(
+            _scheduled_job_run_tool_reference(job=job, run=current_run)
+        )
+        if baseline_run is not None:
+            baseline_job = jobs_by_id.get(str(baseline_run.get("scheduled_job_id"))) or job
+            references_out.append(
+                _scheduled_job_run_tool_reference(job=baseline_job, run=baseline_run)
+            )
+    return {
+        "intent": "scheduled_job_run_comparison",
+        "items": items,
+        "references": normalize_assistant_references(references_out),
+        "summary": {
+            "baseline_found_count": len(
+                [item for item in items if item.get("baseline_run") is not None]
+            ),
+            "comparison_count": len(items),
+        },
+        "tool": "assistant.scheduled_job_run_comparison",
+    }
+
+
+def _previous_successful_scheduled_job_run(
+    runs: list[dict[str, Any]],
+    current_run: dict[str, Any],
+) -> dict[str, Any] | None:
+    scheduled_job_id = str(current_run.get("scheduled_job_id") or "")
+    current_id = str(current_run.get("id") or "")
+    current_time = _run_time(current_run)
+    candidates = [
+        run
+        for run in runs
+        if str(run.get("scheduled_job_id") or "") == scheduled_job_id
+        and str(run.get("id") or "") != current_id
+        and run.get("status") == "succeeded"
+    ]
+    before_current = [
+        run for run in candidates if not current_time or _run_time(run) <= current_time
+    ]
+    ordered = sorted(
+        before_current or candidates,
+        key=_run_time,
+        reverse=True,
+    )
+    return ordered[0] if ordered else None
+
+
+def _scheduled_job_run_comparison_summary(run: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "completed_at": run.get("completed_at") or run.get("finished_at"),
+        "duration_ms": run.get("duration_ms"),
+        "error_message": run.get("error_message"),
+        "id": run.get("id"),
+        "records_imported": _run_records_imported(run),
+        "started_at": run.get("started_at"),
+        "status": run.get("status"),
+        "trigger_type": run.get("trigger_type"),
+    }
+
+
+def _scheduled_job_run_differences(
+    *,
+    current_summary: dict[str, Any],
+    current_stages: list[dict[str, Any]],
+    baseline_summary: dict[str, Any] | None,
+    baseline_stages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if baseline_summary is None:
+        return [{"field": "baseline_run", "current": current_summary.get("id"), "baseline": None}]
+    differences: list[dict[str, Any]] = []
+    for field in ("status", "records_imported", "duration_ms", "error_message"):
+        current_value = current_summary.get(field)
+        baseline_value = baseline_summary.get(field)
+        if current_value != baseline_value:
+            differences.append(
+                {"baseline": baseline_value, "current": current_value, "field": field}
+            )
+    baseline_stage_by_name = {
+        str(stage.get("stage")): stage for stage in baseline_stages if stage.get("stage")
+    }
+    for current_stage in current_stages:
+        stage_name = str(current_stage.get("stage") or "")
+        baseline_stage = baseline_stage_by_name.get(stage_name, {})
+        if not baseline_stage:
+            differences.append(
+                {
+                    "baseline_status": None,
+                    "current_status": current_stage.get("status"),
+                    "field": f"stage.{stage_name}",
+                    "stage": stage_name,
+                }
+            )
+            continue
+        stage_changed = any(
+            current_stage.get(field) != baseline_stage.get(field)
+            for field in (
+                "status",
+                "summary",
+                "result_write_status",
+                "result_write_target",
+            )
+        )
+        if stage_changed:
+            differences.append(
+                {
+                    "baseline_result_write_status": baseline_stage.get(
+                        "result_write_status"
+                    ),
+                    "baseline_result_write_target": baseline_stage.get(
+                        "result_write_target"
+                    ),
+                    "baseline_status": baseline_stage.get("status"),
+                    "baseline_summary": baseline_stage.get("summary"),
+                    "current_result_write_status": current_stage.get(
+                        "result_write_status"
+                    ),
+                    "current_result_write_target": current_stage.get(
+                        "result_write_target"
+                    ),
+                    "current_status": current_stage.get("status"),
+                    "current_summary": current_stage.get("summary"),
+                    "field": f"stage.{stage_name}",
+                    "stage": stage_name,
+                }
+            )
+    return differences
+
+
 def _scheduled_job_diagnostic_stages(
     run: dict[str, Any],
     *,
@@ -692,6 +941,47 @@ def _default_stage_summary(stage_name: str, run: dict[str, Any]) -> str:
     if stage_name == "ai_processing":
         return "未记录 AI 处理节点摘要。"
     return str(run.get("error_message") or "未记录结果动作节点摘要。")
+
+
+def _scheduled_job_run_title(job: dict[str, Any], run: dict[str, Any]) -> str:
+    job_title = job.get("name") or run.get("scheduled_job_id") or run.get("id")
+    return f"{job_title} / {run.get('status') or 'unknown'}"
+
+
+def _scheduled_job_run_tool_reference(
+    *,
+    job: dict[str, Any],
+    run: dict[str, Any],
+) -> dict[str, str | None]:
+    run_id = str(run.get("id") or "")
+    return {
+        "id": run_id,
+        "title": _scheduled_job_run_title(job, run),
+        "type": "scheduled_job_run",
+        "url": f"/tasks/scheduled-jobs?run_id={run_id}",
+    }
+
+
+def _run_records_imported(run: dict[str, Any]) -> int:
+    result_summary = (
+        run.get("result_summary") if isinstance(run.get("result_summary"), dict) else {}
+    )
+    value = run.get("records_imported", result_summary.get("records_imported", 0))
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _run_time(run: dict[str, Any]) -> str:
+    return str(
+        run.get("completed_at")
+        or run.get("finished_at")
+        or run.get("updated_at")
+        or run.get("started_at")
+        or run.get("created_at")
+        or ""
+    )
 
 
 def _model_gateway_tool(current_store: Any) -> dict[str, Any]:

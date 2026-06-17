@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手支持围绕某次定时作业运行继续追问“和上次成功有什么不同”：后端新增 `assistant.scheduled_job_run_comparison` 工具结果，对比同作业最近一次成功运行，前端聊天气泡展示“运行对比”卡片。
 - AI 助手运行失败诊断接入结果写入记录：`assistant.scheduled_job_diagnostic` 的结果动作段现在返回 `result_write_record_id`、写入状态、写入目标和目标标签，便于追踪“执行了但最终写入失败”的问题。
 - AI 助手服务端草案补齐过期生命周期：动作草案支持 `expires_at` 和 `expired` 状态，读取/确认/取消前会自动过期 pending 草案，确认过期草案返回 `DRAFT_EXPIRED` 且不会写业务资源，效果指标新增 `draft_expired_count`。
 - AI 助手草案模板市场的“线上日志异常分析”模板接入真实草案生成链路：聊天请求“生成线上日志异常分析定时作业草案”会返回 `online_log_anomaly_job_draft`，持久化 `assistant_draft_online_log_anomaly_analysis` 服务端草案，并绑定线上日志动作、连接、AI角色、Skill 和模型网关。

@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.489 |
+| 功能版本 | v1.1.490 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.490 | 2026-06-17 | 补充 AI 助手运行追问对比验收：引用一次运行后可询问“和上次成功有什么不同”并展示运行对比卡片 | Codex |
 | v1.1.489 | 2026-06-17 | 补充 AI 助手运行失败诊断验收：结果动作段必须返回结果写入记录 ID、写入目标和写入状态 | Codex |
 | v1.1.488 | 2026-06-17 | 补充 AI 助手过期草案验收：`expires_at` 到期后草案自动进入 `expired`，确认返回 `DRAFT_EXPIRED` 且不写业务资源 | Codex |
 | v1.1.487 | 2026-06-17 | 补充 AI 助手线上日志异常分析草案验收：聊天生成 AI 定时作业服务端草案并绑定日志动作、连接和 AI 装配 | Codex |
@@ -601,6 +602,7 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 | TC-AIBRAIN-ASSISTANT-ERR-018 | v1.1 | P1 | 插件连接含密钥、Header、Token 或 Basic 密码时被 `@` 引入聊天 | 传给模型的上下文只能包含脱敏能力摘要；不得包含密钥、完整外部响应或认证 Header 明文。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-019 | v1.1 | P1 | 用户取消助理动作草案 | `POST /api/assistant/action-drafts/{draft_id}/cancel` 将草案状态变为 `cancelled`，记录取消原因和审计，不调用领域 service，不产生业务写入；已取消草案再次确认返回冲突错误。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-020 | v1.1 | P1 | 管理员围绕一次失败的 `@scheduled_job_run` 继续追问失败原因 | 聊天响应包含 `assistant.scheduled_job_diagnostic` 工具结果，按数据连接、AI 处理、结果动作三段返回状态、摘要、错误信息和关联日志 ID；结果动作段必须从结果写入记录读模型补充 `result_write_record_id/result_write_status/result_write_target/result_write_target_label`，用于判断最终写入目标是否成功；助手回复和历史消息保留该工具结果；模型日志不保存完整插件请求/响应、Prompt、模型输出或密钥。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_returns_scheduled_job_run_diagnostic`。 |
+| TC-AIBRAIN-ASSISTANT-FUNC-020B | v1.1 | P1 | 管理员围绕一次失败的 `@scheduled_job_run` 继续追问“和上次成功有什么不同” | 聊天响应包含 `assistant.scheduled_job_run_comparison` 工具结果，服务端按同一 `scheduled_job_id` 找到当前运行之前最近一次 `succeeded` 运行作为 baseline，返回当前运行、baseline 运行、状态/导入数/耗时/错误信息和三段执行节点差异；结果动作差异必须包含写入状态和写入目标，不保存完整插件请求/响应、Prompt、模型输出或密钥；前端助手气泡展示“运行对比”卡片，列出当前状态、上次成功状态、关键指标和差异项。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_compares_run_with_previous_success` 和 `apps/web/tests/AssistantPage.test.tsx::renders scheduled job run comparison tool results`。 |
 | TC-AIBRAIN-ASSISTANT-API-021 | v1.1 | P2 | 查询当前用户 AI 助手效果指标 | `GET /api/assistant/metrics` 只统计当前登录用户的助手草案、动作运行、定时作业运行和消息引用，返回草案总数、待确认/已确认/已取消/已过期/失败数、草案采纳率、草案处理率、用户修改率、动作运行成功率、定时作业运行成功率、失败复跑修复率、用户消息显式引用使用率、引用总数、知识引用数、知识引用命中率和 `drafts_by_action`；失败复跑修复率按失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用计算；知识引用命中率按同一会话用户显式引用知识对象后助手回复也引用该对象计算；其他用户草案和运行不计入；响应不得包含完整对话正文、知识正文、密钥、完整外部请求/响应或模型 Prompt。 |
 | TC-AIBRAIN-ASSISTANT-API-022 | v1.1 | P2 | 查询并使用 AI 助手草案模板市场 | `GET /api/assistant/draft-templates` 按当前用户角色返回官方草案模板目录，管理员可见周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析六类模板；模板字段包含 `code/name/category/description/prompt/roles/source_module/draft_action/target_resource/dependencies/wizard_steps/template_version/available`；前端助手侧栏点击“草案模板市场”后加载服务端目录，展示可生成/暂未完整接入状态、依赖和流程，点击可用模板只回填聊天输入框，不直接写配置、确认草案或触发外部动作。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-023 | v1.1 | P2 | 管理员要求 AI 助手生成邮件摘要收取定时作业草案 | 系统存在可用邮箱官方插件、邮箱连接和 `receive_email_messages` 动作；用户发送“生成邮件摘要收取定时作业草案”等提示后，`/api/assistant/chat` 返回 `assistant.action_draft` 工具结果，`intent=email_digest_job_draft`，服务端草案 `client_draft_id=assistant_draft_email_digest/status=pending/action=create_scheduled_job/title=邮件摘要收取`；payload 使用 `scheduled_job_templates.email_digest` 默认值，包含 `job_type=plugin_action_invoke`、`execution_mode=deterministic`、`cron_expression=0 8 * * MON-FRI`、`plugin_input_mapping.poll_since={{current_date-1}}`、`plugin_action_id` 和 `plugin_connection_id`；草案可通过 `/api/assistant/action-drafts/{draft_id}` 查询，确认前不得创建真实定时作业。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_generates_email_digest_job_draft`。 |

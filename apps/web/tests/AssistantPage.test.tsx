@@ -893,6 +893,138 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('renders scheduled job run comparison tool results', async () => {
+    let chatRequestBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'scheduled_job_run_feedback_failed',
+                  title: '每周反馈洞察定时作业 / failed',
+                  type: 'scheduled_job_run',
+                  url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        chatRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_run_comparison',
+              latency_ms: 190,
+              message: {
+                content: '这次和上次成功相比，差异集中在结果动作写入阶段。',
+                id: 'assistant_message_run_comparison',
+                references: [
+                  {
+                    id: 'scheduled_job_run_feedback_failed',
+                    title: '每周反馈洞察定时作业 / failed',
+                    type: 'scheduled_job_run',
+                    url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed',
+                  },
+                ],
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_run_comparison',
+                    items: [
+                      {
+                        baseline_run: {
+                          duration_ms: 3600,
+                          id: 'scheduled_job_run_feedback_success',
+                          records_imported: 120,
+                          status: 'succeeded',
+                        },
+                        current_run: {
+                          duration_ms: 4200,
+                          error_message: '结果写入动作返回 500',
+                          id: 'scheduled_job_run_feedback_failed',
+                          records_imported: 128,
+                          status: 'failed',
+                        },
+                        differences: [
+                          {
+                            baseline: 'succeeded',
+                            current: 'failed',
+                            field: 'status',
+                          },
+                          {
+                            baseline_result_write_status: 'succeeded',
+                            baseline_status: 'succeeded',
+                            baseline_summary: '写入反馈洞察表成功。',
+                            current_result_write_status: 'failed',
+                            current_status: 'failed',
+                            current_summary: '写入反馈洞察表失败。',
+                            field: 'stage.result_action',
+                            stage: 'result_action',
+                          },
+                        ],
+                        id: 'scheduled_job_run_feedback_failed',
+                        scheduled_job_id: 'scheduled_job_feedback_weekly',
+                        title: '每周反馈洞察定时作业 / failed',
+                        url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed',
+                      },
+                    ],
+                    references: [
+                      {
+                        id: 'scheduled_job_run_feedback_success',
+                        title: '每周反馈洞察定时作业 / succeeded',
+                        type: 'scheduled_job_run',
+                        url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_success',
+                      },
+                    ],
+                    summary: { baseline_found_count: 1, comparison_count: 1 },
+                    tool: 'assistant.scheduled_job_run_comparison',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '这次 @反馈 和上次成功有什么不同？' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /每周反馈洞察定时作业/ }));
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('运行对比')).toBeInTheDocument();
+    expect(screen.getByText('当前：failed')).toBeInTheDocument();
+    expect(screen.getByText('上次成功：succeeded')).toBeInTheDocument();
+    expect(screen.getByText('结果动作')).toBeInTheDocument();
+    expect(screen.getByText('当前：写入反馈洞察表失败。')).toBeInTheDocument();
+    expect(screen.getByText('上次：写入反馈洞察表成功。')).toBeInTheDocument();
+    expect(chatRequestBody).toMatchObject({
+      references: [{ id: 'scheduled_job_run_feedback_failed', type: 'scheduled_job_run' }],
+    });
+  });
+
   it('preselects scheduled job run references from route query parameters', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     window.history.pushState(

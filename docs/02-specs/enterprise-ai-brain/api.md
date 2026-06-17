@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.326 |
+| 功能版本 | v1.1.327 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.327 | 2026-06-17 | AI 助手聊天新增 `assistant.scheduled_job_run_comparison` 工具结果，对比当前运行和同作业上次成功运行差异 | Codex |
 | v1.1.326 | 2026-06-17 | AI 助手 `assistant.scheduled_job_diagnostic` 结果动作段补充结果写入记录 ID、写入目标和写入状态 | Codex |
 | v1.1.325 | 2026-06-17 | AI 助手动作草案支持 `expires_at` 与 `expired` 状态，确认过期草案返回 `DRAFT_EXPIRED`，指标返回过期草案数量 | Codex |
 | v1.1.324 | 2026-06-17 | AI 助手聊天支持线上日志异常分析模板生成 `online_log_anomaly_job_draft`，返回可确认的 AI 定时作业服务端草案 | Codex |
@@ -1438,6 +1439,32 @@ GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limi
 ```
 
 `result_action` 段的结果写入字段来自与 `/api/system/result-write-records?scheduled_job_run_id=<run_id>` 同源的派生读模型，只返回记录 ID、状态、写入目标和标签等排障元数据，不返回完整插件请求/响应、模型 Prompt、模型输出或密钥。
+
+当聊天消息显式引用 `scheduled_job_run` 且问题包含“和上次成功有什么不同/对比/差异”意图时，响应中的 `message.tool_results[]` 会包含：
+
+```json
+{
+  "tool": "assistant.scheduled_job_run_comparison",
+  "intent": "scheduled_job_run_comparison",
+  "summary": {"comparison_count": 1, "baseline_found_count": 1},
+  "items": [
+    {
+      "id": "scheduled_job_run_002",
+      "scheduled_job_id": "scheduled_job_001",
+      "title": "每周反馈洞察定时作业 / failed",
+      "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_002",
+      "current_run": {"id": "scheduled_job_run_002", "status": "failed", "records_imported": 128, "duration_ms": 4200, "error_message": "结果写入动作返回 500"},
+      "baseline_run": {"id": "scheduled_job_run_001", "status": "succeeded", "records_imported": 120, "duration_ms": 3600, "error_message": null},
+      "differences": [
+        {"field": "status", "baseline": "succeeded", "current": "failed"},
+        {"field": "stage.result_action", "stage": "result_action", "baseline_status": "succeeded", "current_status": "failed", "baseline_summary": "写入反馈洞察表成功。", "current_summary": "写入反馈洞察表失败。", "baseline_result_write_status": "succeeded", "current_result_write_status": "failed"}
+      ]
+    }
+  ]
+}
+```
+
+该工具只对比同一 `scheduled_job_id` 下当前运行之前最近一次 `succeeded` 运行；无 baseline 时 `baseline_run=null` 且 differences 标记 `baseline_run` 缺失。响应不得包含完整插件请求/响应、模型 Prompt、模型输出或密钥。
 
 引用解析：
 
