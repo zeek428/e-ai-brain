@@ -816,7 +816,43 @@ describe('AssistantPage', () => {
                 tool_results: [
                   {
                     intent: 'scheduled_job_diagnostic',
-                    items: [],
+                    items: [
+                      {
+                        id: 'scheduled_job_run_feedback_failed',
+                        scheduled_job_id: 'scheduled_job_feedback_weekly',
+                        stages: [
+                          {
+                            error_message: null,
+                            log_id: null,
+                            stage: 'data_connection',
+                            status: 'succeeded',
+                            summary: '从 MaxCompute 读取 128 条反馈。',
+                          },
+                          {
+                            error_message: null,
+                            log_id: 'model_gateway_log_feedback_failed',
+                            stage: 'ai_processing',
+                            status: 'succeeded',
+                            summary: '生成 6 条洞察。',
+                          },
+                          {
+                            error_code: 'RESULT_WRITE_FAILED',
+                            error_message: 'HTTP 500: downstream write failed',
+                            log_id: 'plugin_invocation_log_feedback_failed',
+                            result_write_record_id: 'result_write_record_scheduled_job_run_feedback_failed',
+                            result_write_status: 'failed',
+                            result_write_target: 'user_feedback_insights',
+                            result_write_target_label: '用户洞察表',
+                            stage: 'result_action',
+                            status: 'failed',
+                            summary: '写入反馈洞察表失败。',
+                          },
+                        ],
+                        status: 'failed',
+                        title: '每周反馈洞察定时作业 / failed',
+                        url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed',
+                      },
+                    ],
                     summary: { failed_count: 1, run_count: 1 },
                     tool: 'assistant.scheduled_job_diagnostic',
                   },
@@ -844,6 +880,13 @@ describe('AssistantPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('这次失败发生在结果动作写入阶段。')).toBeInTheDocument();
+    expect(screen.getByText('运行诊断')).toBeInTheDocument();
+    expect(screen.getByText('数据连接')).toBeInTheDocument();
+    expect(screen.getByText('AI处理')).toBeInTheDocument();
+    expect(screen.getByText('结果动作')).toBeInTheDocument();
+    expect(screen.getByText('写入反馈洞察表失败。')).toBeInTheDocument();
+    expect(screen.getByText('写入目标：用户洞察表')).toBeInTheDocument();
+    expect(screen.getByText('错误：HTTP 500: downstream write failed')).toBeInTheDocument();
     expect(chatRequestBody).toMatchObject({
       message: '为什么 @反馈 这次失败？',
       references: [{ id: 'scheduled_job_run_feedback_failed', type: 'scheduled_job_run' }],

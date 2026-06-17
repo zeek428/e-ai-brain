@@ -4,6 +4,7 @@ from typing import Any
 
 from app.services.assistant_draft_builder import AssistantDraftBuilder
 from app.services.assistant_references import normalize_assistant_references
+from app.services.plugins import result_write_record_from_scheduled_run
 
 __all__ = ["assistant_tool_results"]
 
@@ -77,6 +78,24 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
         if not product_ids or task.get("product_id") in product_ids
     ]
     task_ids = {str(task["id"]) for task in tasks if task.get("id") is not None}
+    scheduled_jobs = [
+        job
+        for job in getattr(current_store, "scheduled_jobs", {}).values()
+        if not product_ids or job.get("product_id") in product_ids
+    ]
+    scheduled_job_ids = {
+        str(job["id"]) for job in scheduled_jobs if job.get("id") is not None
+    }
+    scheduled_job_runs = [
+        run
+        for run in getattr(current_store, "scheduled_job_runs", {}).values()
+        if not product_ids or str(run.get("scheduled_job_id")) in scheduled_job_ids
+    ]
+    result_write_records = []
+    for run in scheduled_job_runs:
+        record = result_write_record_from_scheduled_run(current_store, run)
+        if record is not None:
+            result_write_records.append(record)
     return {
         "ai_agents": list(getattr(current_store, "ai_agents", {}).values()),
         "ai_skills": list(getattr(current_store, "ai_skills", {}).values()),
@@ -107,23 +126,9 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
         ),
         "products": products,
         "requirements": requirements,
-        "scheduled_jobs": [
-            job
-            for job in getattr(current_store, "scheduled_jobs", {}).values()
-            if not product_ids or job.get("product_id") in product_ids
-        ],
-        "scheduled_job_runs": [
-            run
-            for run in getattr(current_store, "scheduled_job_runs", {}).values()
-            if not product_ids
-            or str(run.get("scheduled_job_id"))
-            in {
-                str(job["id"])
-                for job in getattr(current_store, "scheduled_jobs", {}).values()
-                if job.get("id") is not None
-                and (not product_ids or job.get("product_id") in product_ids)
-            }
-        ],
+        "result_write_records": result_write_records,
+        "scheduled_jobs": scheduled_jobs,
+        "scheduled_job_runs": scheduled_job_runs,
         "tasks": tasks,
         "task_by_id": {str(task["id"]): task for task in tasks if task.get("id") is not None},
         "versions": [
@@ -530,6 +535,11 @@ def _scheduled_job_diagnostic_tool(
         for log in context["model_gateway_logs"]
         if log.get("id") is not None
     }
+    result_write_records_by_run_id = {
+        str(record.get("scheduled_job_run_id")): record
+        for record in context["result_write_records"]
+        if record.get("scheduled_job_run_id") is not None
+    }
     items: list[dict[str, Any]] = []
     for run in _latest(candidate_runs)[:limit]:
         run_id = str(run["id"])
@@ -538,6 +548,7 @@ def _scheduled_job_diagnostic_tool(
             run,
             model_logs_by_id=model_logs_by_id,
             plugin_log=plugin_logs_by_run_id.get(run_id),
+            result_write_record=result_write_records_by_run_id.get(run_id),
         )
         title = (
             f"{job.get('name') or run.get('scheduled_job_id') or run_id} / "
@@ -575,6 +586,7 @@ def _scheduled_job_diagnostic_stages(
     *,
     model_logs_by_id: dict[str, dict[str, Any]],
     plugin_log: dict[str, Any] | None,
+    result_write_record: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     result_summary = (
         run.get("result_summary") if isinstance(run.get("result_summary"), dict) else {}
@@ -611,16 +623,38 @@ def _scheduled_job_diagnostic_stages(
                     f"调用{model_log.get('status') or 'unknown'}"
                 ),
             }
-        stages.append(
-            {
-                "error_message": node.get("error_message"),
-                "log_id": log_id,
-                "stage": stage_name,
-                "status": node.get("status") or _infer_stage_status(stage_name, run, plugin_log),
-                "summary": node.get("summary") or _default_stage_summary(stage_name, run),
-            }
-        )
+        stage = {
+            "error_message": node.get("error_message"),
+            "log_id": log_id,
+            "stage": stage_name,
+            "status": node.get("status") or _infer_stage_status(stage_name, run, plugin_log),
+            "summary": node.get("summary") or _default_stage_summary(stage_name, run),
+        }
+        if node.get("error_code"):
+            stage["error_code"] = node.get("error_code")
+        if stage_name == "result_action":
+            stage.update(_result_write_diagnostic_fields(node, result_write_record))
+        stages.append(stage)
     return stages
+
+
+def _result_write_diagnostic_fields(
+    node: dict[str, Any],
+    result_write_record: dict[str, Any] | None,
+) -> dict[str, Any]:
+    record = result_write_record if isinstance(result_write_record, dict) else {}
+    fields: dict[str, Any] = {}
+    if record.get("id"):
+        fields["result_write_record_id"] = record["id"]
+    if record.get("status"):
+        fields["result_write_status"] = record["status"]
+    write_target = record.get("write_target") or node.get("write_target")
+    if write_target:
+        fields["result_write_target"] = write_target
+    write_target_label = record.get("write_target_label") or node.get("write_target_label")
+    if write_target_label:
+        fields["result_write_target_label"] = write_target_label
+    return fields
 
 
 def _diagnostic_log_id(

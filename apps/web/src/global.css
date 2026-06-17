@@ -785,6 +785,55 @@ body {
   justify-self: start;
 }
 
+.assistant-diagnostic-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  white-space: normal;
+}
+
+.assistant-diagnostic-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #f0d8ae;
+  border-radius: 8px;
+  background: #fffaf0;
+}
+
+.assistant-diagnostic-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.assistant-diagnostic-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assistant-diagnostic-stage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.assistant-diagnostic-stage {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #f1dfbd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.assistant-diagnostic-stage .ant-typography {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .assistant-bubble-user .assistant-bubble-content .ant-typography {
   color: #ffffff;
 }
@@ -1024,6 +1073,14 @@ body {
   }
 
   .assistant-task-guide-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-diagnostic-header {
+    flex-direction: column;
+  }
+
+  .assistant-diagnostic-stage-grid {
     grid-template-columns: 1fr;
   }
 

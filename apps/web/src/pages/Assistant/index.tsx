@@ -248,12 +248,50 @@ function taskCreationGuideItems(toolResults?: AssistantToolResult[]) {
     .filter((item) => item.title && item.prompt);
 }
 
+function scheduledJobDiagnosticItems(toolResults?: AssistantToolResult[]) {
+  return (toolResults ?? [])
+    .filter((toolResult) => toolResult.tool === 'assistant.scheduled_job_diagnostic')
+    .flatMap((toolResult) => toolResult.items ?? [])
+    .filter((item) => item.id || item.title);
+}
+
 function itemText(item: AssistantToolResultItem, field: string) {
   const value = item[field];
   if (Array.isArray(value)) {
     return value.length ? value.map((entry) => String(entry)).join('、') : '-';
   }
   return value === undefined || value === null || value === '' ? '-' : String(value);
+}
+
+function diagnosticStageItems(item: AssistantToolResultItem) {
+  return Array.isArray(item.stages)
+    ? item.stages.filter(
+      (stage): stage is AssistantToolResultItem =>
+        Boolean(stage) && typeof stage === 'object' && !Array.isArray(stage),
+    )
+    : [];
+}
+
+function diagnosticStageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    ai_processing: 'AI处理',
+    data_connection: '数据连接',
+    result_action: '结果动作',
+  };
+  return labels[stage] ?? stage;
+}
+
+function diagnosticStatusColor(status: string) {
+  if (status === 'succeeded') {
+    return 'green';
+  }
+  if (status === 'failed') {
+    return 'red';
+  }
+  if (status === 'running' || status === 'queued') {
+    return 'blue';
+  }
+  return 'default';
 }
 
 function draftPayloadText(payload: Record<string, unknown> | undefined, field: string) {
@@ -1030,6 +1068,75 @@ function AssistantTaskCreationGuideCards({
   );
 }
 
+function AssistantScheduledJobDiagnosticCards({
+  items,
+}: {
+  items: AssistantToolResultItem[];
+}) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className="assistant-diagnostic-list">
+      {items.map((item) => {
+        const stages = diagnosticStageItems(item);
+        return (
+          <div className="assistant-diagnostic-card" key={itemText(item, 'id')}>
+            <div className="assistant-diagnostic-header">
+              <Space size={8} wrap>
+                <ExclamationCircleOutlined />
+                <Text strong>运行诊断</Text>
+                <Tag color={diagnosticStatusColor(itemText(item, 'status'))}>
+                  {itemText(item, 'status')}
+                </Tag>
+              </Space>
+              {item.url ? (
+                <Button href={itemText(item, 'url')} icon={<LinkOutlined />} size="small" type="link">
+                  运行记录
+                </Button>
+              ) : null}
+            </div>
+            <Text className="assistant-diagnostic-title" strong>
+              {itemText(item, 'title')}
+            </Text>
+            <div className="assistant-diagnostic-stage-grid">
+              {stages.map((stage) => {
+                const writeTargetLabel = itemText(stage, 'result_write_target_label');
+                const writeTarget = itemText(stage, 'result_write_target');
+                const errorMessage = itemText(stage, 'error_message');
+                return (
+                  <div className="assistant-diagnostic-stage" key={itemText(stage, 'stage')}>
+                    <Space size={6} wrap>
+                      <Tag color="blue">{diagnosticStageLabel(itemText(stage, 'stage'))}</Tag>
+                      <Tag color={diagnosticStatusColor(itemText(stage, 'status'))}>
+                        {itemText(stage, 'status')}
+                      </Tag>
+                    </Space>
+                    <Text>{itemText(stage, 'summary')}</Text>
+                    {writeTargetLabel !== '-' || writeTarget !== '-' ? (
+                      <Text type="secondary">
+                        写入目标：{writeTargetLabel !== '-' ? writeTargetLabel : writeTarget}
+                      </Text>
+                    ) : null}
+                    {itemText(stage, 'result_write_record_id') !== '-' ? (
+                      <Text type="secondary">
+                        写入记录：{itemText(stage, 'result_write_record_id')}
+                      </Text>
+                    ) : null}
+                    {errorMessage !== '-' ? (
+                      <Text type="danger">错误：{errorMessage}</Text>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AssistantDraftTemplateMarket({
   isLoading,
   onUseTemplate,
@@ -1113,6 +1220,7 @@ function AssistantBubble({
 }) {
   const drafts = actionDraftItems(message.toolResults);
   const taskGuideItems = taskCreationGuideItems(message.toolResults);
+  const diagnosticItems = scheduledJobDiagnosticItems(message.toolResults);
   return (
     <div className={`assistant-bubble assistant-bubble-${message.role}`}>
       <div className="assistant-bubble-avatar">
@@ -1149,6 +1257,7 @@ function AssistantBubble({
           items={taskGuideItems}
           onUsePrompt={onUseTaskGuidePrompt}
         />
+        <AssistantScheduledJobDiagnosticCards items={diagnosticItems} />
       </div>
     </div>
   );
