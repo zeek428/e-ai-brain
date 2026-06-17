@@ -1631,6 +1631,7 @@ describe('AssistantPage', () => {
 
     expect(await screen.findByText('每周反馈洞察定时作业 / failed')).toBeInTheDocument();
     expect(screen.getByText('本次上下文')).toBeInTheDocument();
+    expect(screen.getByText('已从链接带入运行记录：每周反馈洞察定时作业 / failed')).toBeInTheDocument();
     expect(screen.getByText('运行记录')).toBeInTheDocument();
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('为什么这次任务失败？');
 
@@ -1641,6 +1642,56 @@ describe('AssistantPage', () => {
       message: '为什么这次任务失败？',
       references: [{ id: 'scheduled_job_run_feedback_failed', type: 'scheduled_job_run' }],
     });
+  });
+
+  it('keeps route reference resolution status visible when the linked context is missing', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/assistant?reference_type=scheduled_job_run&reference_id=scheduled_job_run_missing&prompt=%E4%B8%BA%E4%BB%80%E4%B9%88%E8%BF%99%E6%AC%A1%E4%BB%BB%E5%8A%A1%E5%A4%B1%E8%B4%A5%EF%BC%9F',
+    );
+    let resolveReferenceCandidates: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('scheduled_job_run_missing');
+        expect(params.get('type')).toBe('scheduled_job_run');
+        return new Promise<Response>((resolve) => {
+          resolveReferenceCandidates = resolve;
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const currentContext = await screen.findByLabelText('本次上下文');
+    expect(within(currentContext).getByText('正在解析运行记录引用：scheduled_job_run_missing')).toBeInTheDocument();
+    resolveReferenceCandidates?.(
+      new Response(
+        JSON.stringify({
+          data: {
+            items: [],
+            total: 0,
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' }, status: 200 },
+      ),
+    );
+    expect(
+      await within(currentContext).findByText('引用解析失败：运行记录 scheduled_job_run_missing 不存在或无权限'),
+    ).toBeInTheDocument();
+    expect(within(currentContext).getByText('0 个显式引用')).toBeInTheDocument();
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('为什么这次任务失败？');
   });
 
   it('loads current-user AI assistant conversations and opens historical messages', async () => {

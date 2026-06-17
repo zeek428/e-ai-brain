@@ -73,6 +73,14 @@ type ChatMessage = {
   toolResults?: AssistantToolResult[];
 };
 
+type QueryReferenceResolution = {
+  message?: string;
+  referenceId: string;
+  referenceType: string;
+  status: 'failed' | 'loading' | 'resolved';
+  title?: string;
+};
+
 const welcomeMessages: ChatMessage[] = [
   {
     content: '我在，直接问我当前进展。',
@@ -737,6 +745,27 @@ function assistantQueryReferenceParams() {
     referenceId,
     referenceType,
   };
+}
+
+function queryReferenceResolutionLabel(status: QueryReferenceResolution['status']) {
+  if (status === 'loading') {
+    return { color: 'processing', text: '解析中' };
+  }
+  if (status === 'resolved') {
+    return { color: 'green', text: '已带入' };
+  }
+  return { color: 'red', text: '未带入' };
+}
+
+function queryReferenceResolutionText(resolution: QueryReferenceResolution) {
+  const label = referenceTypeLabel(resolution.referenceType);
+  if (resolution.status === 'loading') {
+    return `正在解析${label}引用：${resolution.referenceId}`;
+  }
+  if (resolution.status === 'resolved') {
+    return `已从链接带入${label}：${resolution.title || resolution.referenceId}`;
+  }
+  return `引用解析失败：${label} ${resolution.referenceId} ${resolution.message || '不存在或无权限'}`;
 }
 
 function draftStatusLabel(status?: string) {
@@ -2418,6 +2447,7 @@ export default function AssistantPage() {
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
   const [recentReferences, setRecentReferences] = useState<AssistantReference[]>(() => readRecentReferences());
   const [referenceDetail, setReferenceDetail] = useState<AssistantReference>();
+  const [queryReferenceResolution, setQueryReferenceResolution] = useState<QueryReferenceResolution>();
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
@@ -2536,7 +2566,11 @@ export default function AssistantPage() {
       setInputValue(queryReference.prompt);
     }
     let didCancel = false;
-    setIsLoadingReferences(true);
+    setQueryReferenceResolution({
+      referenceId: queryReference.referenceId,
+      referenceType: queryReference.referenceType,
+      status: 'loading',
+    });
     fetchAssistantReferenceCandidates({
       limit: 1,
       query: queryReference.referenceId,
@@ -2551,8 +2585,20 @@ export default function AssistantPage() {
         );
         if (!reference) {
           toast.warning('引用对象不存在或无权限');
+          setQueryReferenceResolution({
+            message: '不存在或无权限',
+            referenceId: queryReference.referenceId,
+            referenceType: queryReference.referenceType,
+            status: 'failed',
+          });
           return;
         }
+        setQueryReferenceResolution({
+          referenceId: queryReference.referenceId,
+          referenceType: queryReference.referenceType,
+          status: 'resolved',
+          title: reference.title,
+        });
         setSelectedReferences((currentItems) => (
           currentItems.some((item) => item.id === reference.id && item.type === reference.type)
             ? currentItems
@@ -2561,12 +2607,14 @@ export default function AssistantPage() {
       })
       .catch((error) => {
         if (!didCancel) {
-          toast.error(formatMutationError(error));
-        }
-      })
-      .finally(() => {
-        if (!didCancel) {
-          setIsLoadingReferences(false);
+          const messageText = formatMutationError(error);
+          toast.error(messageText);
+          setQueryReferenceResolution({
+            message: messageText,
+            referenceId: queryReference.referenceId,
+            referenceType: queryReference.referenceType,
+            status: 'failed',
+          });
         }
       });
     return () => {
@@ -2690,6 +2738,7 @@ export default function AssistantPage() {
     setActiveReferenceIndex(-1);
     setReferenceCandidates([]);
     setReferenceDetail(undefined);
+    setQueryReferenceResolution(undefined);
     setSelectedReferences([]);
   };
 
@@ -2723,6 +2772,12 @@ export default function AssistantPage() {
         ? undefined
         : currentReference
     ));
+    if (
+      queryReferenceResolution?.referenceId === reference.id
+      && queryReferenceResolution.referenceType === reference.type
+    ) {
+      setQueryReferenceResolution(undefined);
+    }
     setSelectedReferences((items) => (
       items.filter((item) => !(item.id === reference.id && item.type === reference.type))
     ));
@@ -3186,6 +3241,21 @@ export default function AssistantPage() {
                   : '0 个显式引用 · 0 个知识 chunk 注入模型'}
               </Text>
             </div>
+            {queryReferenceResolution ? (
+              <div
+                aria-label="链接引用状态"
+                className={`assistant-query-reference-status assistant-query-reference-status-${queryReferenceResolution.status}`}
+              >
+                <Space size={6} wrap>
+                  <Tag color={queryReferenceResolutionLabel(queryReferenceResolution.status).color}>
+                    {queryReferenceResolutionLabel(queryReferenceResolution.status).text}
+                  </Tag>
+                  <Text type={queryReferenceResolution.status === 'failed' ? 'danger' : 'secondary'}>
+                    {queryReferenceResolutionText(queryReferenceResolution)}
+                  </Text>
+                </Space>
+              </div>
+            ) : null}
             {selectedReferences.length ? (
               <div className="assistant-selected-reference-tags">
                 {selectedReferences.map((reference) => (

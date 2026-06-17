@@ -1098,6 +1098,33 @@ body {
   background: #fbfdff;
 }
 
+.assistant-query-reference-status {
+  padding: 7px 10px;
+  border: 1px solid #dfe6f1;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.assistant-query-reference-status-loading {
+  background: #f8fbff;
+}
+
+.assistant-query-reference-status-resolved {
+  border-color: #c7e7d4;
+  background: #f6fffa;
+}
+
+.assistant-query-reference-status-failed {
+  border-color: #f2c6c6;
+  background: #fff8f8;
+}
+
+.assistant-query-reference-status .ant-space,
+.assistant-query-reference-status .ant-typography {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .assistant-selected-reference-card-header {
   display: flex;
   align-items: center;
