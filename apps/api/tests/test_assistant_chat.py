@@ -470,6 +470,15 @@ def test_ai_assistant_reference_candidates_include_admin_operational_objects():
         "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
     }
     assert reference_by_type["plugin_action"]["id"] == "plugin_action_feedback_write"
+    assert reference_by_type["plugin_connection"] == {
+        "id": "plugin_connection_maxcompute",
+        "permission_label": "管理员可引用",
+        "source_module": "插件管理",
+        "title": "MaxCompute 用户反馈连接",
+        "type": "plugin_connection",
+        "updated_at": "2026-06-14T09:30:00+00:00",
+        "url": "/tasks/plugins?connection_id=plugin_connection_maxcompute",
+    }
     assert reference_by_type["ai_agent"]["id"] == "ai_agent_feedback_ops"
     assert reference_by_type["ai_skill"]["id"] == "ai_skill_feedback_summary"
 
@@ -536,13 +545,14 @@ def test_ai_assistant_default_reference_candidates_are_balanced_across_types():
 
     assert response.status_code == 200
     items = response.json()["data"]["items"]
-    assert [item["type"] for item in items[:8]] == [
+    assert [item["type"] for item in items[:9]] == [
         "knowledge_document",
         "requirement",
         "ai_task",
         "scheduled_job",
         "scheduled_job_run",
         "plugin_action",
+        "plugin_connection",
         "ai_agent",
         "ai_skill",
     ]

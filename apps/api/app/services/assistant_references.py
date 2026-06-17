@@ -44,6 +44,7 @@ DEFAULT_REFERENCE_TYPE_ORDER = (
     "scheduled_job",
     "scheduled_job_run",
     "plugin_action",
+    "plugin_connection",
     "ai_agent",
     "ai_skill",
     "human_review",

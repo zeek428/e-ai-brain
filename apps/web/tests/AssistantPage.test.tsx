@@ -880,6 +880,15 @@ describe('AssistantPage', () => {
                   url: '/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly',
                 },
                 {
+                  id: 'plugin_connection_feedback',
+                  permission_label: '管理员可引用',
+                  source_module: '插件管理',
+                  title: '用户反馈数据连接',
+                  type: 'plugin_connection',
+                  updated_at: '2026-06-15T16:00:00+08:00',
+                  url: '/tasks/plugins?connection_id=plugin_connection_feedback',
+                },
+                {
                   id: 'ai_skill_feedback_summary',
                   permission_label: '管理员可引用',
                   source_module: 'AI能力配置',
@@ -909,9 +918,11 @@ describe('AssistantPage', () => {
 
     expect((await screen.findAllByText('知识文档')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('定时作业').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('插件连接').length).toBeGreaterThan(0);
     expect(screen.getAllByText('AI能力').length).toBeGreaterThan(0);
     expect(screen.getByText('知识库 · 可引用 · 2026-06-16')).toBeInTheDocument();
     expect(screen.getByText('任务中心 · 管理员可引用 · 2026-06-15')).toBeInTheDocument();
+    expect(screen.getByText('插件管理 · 管理员可引用 · 2026-06-15')).toBeInTheDocument();
 
     fireEvent.keyDown(assistantInput, { key: 'ArrowDown' });
     fireEvent.keyDown(assistantInput, { key: 'Enter' });
