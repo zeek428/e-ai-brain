@@ -55,6 +55,67 @@ function resultWriteTargetsResponse() {
 }
 
 describe('AssistantPage', () => {
+  it('loads assistant effectiveness metrics from the workbench sidebar', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/metrics') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              drafts_by_action: [
+                {
+                  action: 'create_scheduled_job',
+                  cancelled_count: 1,
+                  confirmed_count: 2,
+                  expired_count: 0,
+                  failed_count: 0,
+                  pending_count: 1,
+                  total: 4,
+                },
+              ],
+              summary: {
+                draft_adoption_rate: 0.5,
+                draft_total: 4,
+                draft_user_modified_rate: 0.25,
+                failed_run_repair_rate: 1,
+                knowledge_reference_hit_rate: 0.6,
+                reference_usage_rate: 0.75,
+                scheduled_job_run_success_rate: 0.8,
+              },
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: '查看指标' }));
+
+    expect(screen.getByText('助手效果指标')).toBeInTheDocument();
+    expect(await screen.findByLabelText('指标 草案生成数')).toHaveTextContent('4');
+    expect(screen.getByLabelText('指标 草案确认率')).toHaveTextContent('50%');
+    expect(screen.getByLabelText('指标 用户修改率')).toHaveTextContent('25%');
+    expect(screen.getByLabelText('指标 @ 引用使用率')).toHaveTextContent('75%');
+    expect(screen.getByLabelText('指标 作业运行成功率')).toHaveTextContent('80%');
+    expect(screen.getByLabelText('指标 失败修复率')).toHaveTextContent('100%');
+    expect(screen.getByLabelText('指标 知识命中率')).toHaveTextContent('60%');
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+      ['/api/assistant/conversations', 'GET'],
+      ['/api/assistant/metrics', 'GET'],
+    ]);
+  });
+
   it('loads assistant draft template market and applies a template prompt', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

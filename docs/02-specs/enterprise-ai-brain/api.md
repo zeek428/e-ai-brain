@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.329 |
+| 功能版本 | v1.1.330 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.330 | 2026-06-17 | AI 助手工作台侧栏按需消费 `/api/assistant/metrics`，展示当前用户草案闭环、引用和运行效果指标 | Codex |
 | v1.1.329 | 2026-06-17 | AI 助手聊天新增 `scheduled_job_run_repair_draft`，可从失败运行生成可确认的结果动作修复草案 | Codex |
 | v1.1.328 | 2026-06-17 | AI 助手 `@定时作业 执行一次` API 契约补充完整 @ 名称精确匹配优先，并覆盖错误自动候选引用 | Codex |
 | v1.1.327 | 2026-06-17 | AI 助手聊天新增 `assistant.scheduled_job_run_comparison` 工具结果，对比当前运行和同作业上次成功运行差异 | Codex |
@@ -1678,7 +1679,7 @@ GET /api/assistant/metrics
 }
 ```
 
-该接口只返回当前登录用户范围内的助手效果数据。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + failed) / draft_total`，动作运行成功率为 `succeeded / action_run_total`，定时作业运行成功率为 `scheduled_job_run_succeeded_count / scheduled_job_run_total`，失败修复率为“失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用”的比例，显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。知识引用命中率为“用户在同一会话显式引用的知识对象，后续助手回复也引用该知识对象”的比例；用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，后续客户端确认草案字段编辑时应写入该元数据。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
+该接口只返回当前登录用户范围内的助手效果数据。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + failed) / draft_total`，动作运行成功率为 `succeeded / action_run_total`，定时作业运行成功率为 `scheduled_job_run_succeeded_count / scheduled_job_run_total`，失败修复率为“失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用”的比例，显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。知识引用命中率为“用户在同一会话显式引用的知识对象，后续助手回复也引用该知识对象”的比例；用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，后续客户端确认草案字段编辑时应写入该元数据。AI 助手工作台侧栏可按需调用该接口展示草案生成数、草案确认率、用户修改率、`@` 引用使用率、作业运行成功率、失败修复率和知识命中率。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
 
 `conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
 

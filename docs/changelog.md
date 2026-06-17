@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手工作台侧栏新增“助手效果指标”入口：按需调用 `/api/assistant/metrics` 展示草案生成数、草案确认率、用户修改率、`@` 引用使用率、作业运行成功率、失败修复率和知识命中率，让草案闭环和上下文使用效果可见。
 - AI 助手支持围绕失败定时作业运行生成结果动作修复草案：用户引用 `scheduled_job_run` 后询问“这次失败怎么修，帮我生成修复草案”，后端返回 `assistant.action_draft intent=scheduled_job_run_repair_draft`，并持久化为可确认的 `create_plugin_action` 服务端草案。
 - AI 助手支持围绕某次定时作业运行继续追问“和上次成功有什么不同”：后端新增 `assistant.scheduled_job_run_comparison` 工具结果，对比同作业最近一次成功运行，前端聊天气泡展示“运行对比”卡片。
 - AI 助手运行失败诊断接入结果写入记录：`assistant.scheduled_job_diagnostic` 的结果动作段现在返回 `result_write_record_id`、写入状态、写入目标和目标标签，便于追踪“执行了但最终写入失败”的问题。

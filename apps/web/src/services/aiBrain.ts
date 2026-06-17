@@ -192,6 +192,54 @@ export type AssistantDraftTemplate = {
   wizard_steps?: string[];
 };
 
+export type AssistantMetricsSummary = {
+  action_run_failed_count?: number;
+  action_run_succeeded_count?: number;
+  action_run_success_rate?: number;
+  action_run_total?: number;
+  draft_adoption_rate?: number;
+  draft_cancelled_count?: number;
+  draft_confirmed_count?: number;
+  draft_expired_count?: number;
+  draft_failed_count?: number;
+  draft_pending_count?: number;
+  draft_resolution_rate?: number;
+  draft_total?: number;
+  draft_user_modified_count?: number;
+  draft_user_modified_rate?: number;
+  failed_run_repair_rate?: number;
+  failed_run_repaired_count?: number;
+  failed_run_total?: number;
+  knowledge_reference_count?: number;
+  knowledge_reference_hit_count?: number;
+  knowledge_reference_hit_rate?: number;
+  knowledge_reference_request_count?: number;
+  message_total?: number;
+  reference_total?: number;
+  reference_usage_rate?: number;
+  referenced_user_message_count?: number;
+  scheduled_job_run_failed_count?: number;
+  scheduled_job_run_succeeded_count?: number;
+  scheduled_job_run_success_rate?: number;
+  scheduled_job_run_total?: number;
+  user_message_total?: number;
+};
+
+export type AssistantDraftActionMetric = {
+  action: string;
+  cancelled_count?: number;
+  confirmed_count?: number;
+  expired_count?: number;
+  failed_count?: number;
+  pending_count?: number;
+  total?: number;
+};
+
+export type AssistantMetrics = {
+  drafts_by_action: AssistantDraftActionMetric[];
+  summary: AssistantMetricsSummary;
+};
+
 export type AssistantToolResultItem = {
   action?: string;
   client_draft_id?: string;
@@ -2347,6 +2395,14 @@ export async function fetchAssistantDraftTemplates(): Promise<AssistantDraftTemp
     },
   );
   return response.items;
+}
+
+export async function fetchAssistantMetrics(): Promise<AssistantMetrics> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantMetrics>('/api/assistant/metrics', {
+    method: 'GET',
+    token,
+  });
 }
 
 export async function getAssistantActionDraft(

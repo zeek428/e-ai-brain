@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  BarChartOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
@@ -28,6 +29,7 @@ import {
   fetchAssistantConversationMessages,
   fetchAssistantConversations,
   fetchAssistantDraftTemplates,
+  fetchAssistantMetrics,
   fetchAssistantReferenceCandidates,
   fetchResultWriteTargets,
   getStoredCurrentUser,
@@ -37,6 +39,7 @@ import {
   type AssistantChatResponse,
   type AssistantConversationMessage,
   type AssistantDraftTemplate,
+  type AssistantMetrics,
   type AssistantReference,
   type AssistantConversationSummary,
   type AssistantDraftResolutionMap,
@@ -268,6 +271,19 @@ function itemText(item: AssistantToolResultItem, field: string) {
     return value.length ? value.map((entry) => String(entry)).join('、') : '-';
   }
   return value === undefined || value === null || value === '' ? '-' : String(value);
+}
+
+function metricCount(value?: number) {
+  return Number.isFinite(value) ? new Intl.NumberFormat('zh-CN').format(Number(value)) : '-';
+}
+
+function metricPercent(value?: number) {
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+  const percentage = Number(value) * 100;
+  const rounded = Math.round(percentage * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
 }
 
 function itemRecord(item: AssistantToolResultItem, field: string) {
@@ -1317,6 +1333,57 @@ function AssistantDraftTemplateMarket({
   );
 }
 
+function AssistantMetricsPanel({
+  isLoading,
+  metrics,
+  onRefresh,
+}: {
+  isLoading: boolean;
+  metrics?: AssistantMetrics;
+  onRefresh: () => void;
+}) {
+  const summary = metrics?.summary ?? {};
+  const metricItems = [
+    { label: '草案生成数', value: metricCount(summary.draft_total) },
+    { label: '草案确认率', value: metricPercent(summary.draft_adoption_rate) },
+    { label: '用户修改率', value: metricPercent(summary.draft_user_modified_rate) },
+    { label: '@ 引用使用率', value: metricPercent(summary.reference_usage_rate) },
+    { label: '作业运行成功率', value: metricPercent(summary.scheduled_job_run_success_rate) },
+    { label: '失败修复率', value: metricPercent(summary.failed_run_repair_rate) },
+    { label: '知识命中率', value: metricPercent(summary.knowledge_reference_hit_rate) },
+  ];
+
+  return (
+    <div className="assistant-metrics-panel">
+      <div className="assistant-metrics-header">
+        <Space size={6}>
+          <BarChartOutlined />
+          <Text strong>助手效果指标</Text>
+        </Space>
+        <Button loading={isLoading} size="small" onClick={onRefresh}>
+          {metrics ? '刷新指标' : '查看指标'}
+        </Button>
+      </div>
+      {metrics ? (
+        <div className="assistant-metrics-grid">
+          {metricItems.map((item) => (
+            <div
+              aria-label={`指标 ${item.label}`}
+              className="assistant-metric-item"
+              key={item.label}
+            >
+              <Text type="secondary">{item.label}</Text>
+              <Text strong>{item.value}</Text>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Text type="secondary">跟踪草案、引用、运行和失败修复效果。</Text>
+      )}
+    </div>
+  );
+}
+
 function AssistantBubble({
   draftMutationId,
   draftResolutionById,
@@ -1394,10 +1461,12 @@ export default function AssistantPage() {
     () => readAssistantDraftResolutions(),
   );
   const [draftStatusById, setDraftStatusById] = useState<Record<string, string>>({});
+  const [assistantMetrics, setAssistantMetrics] = useState<AssistantMetrics>();
   const [draftTemplateMarketOpened, setDraftTemplateMarketOpened] = useState(false);
   const [draftTemplates, setDraftTemplates] = useState<AssistantDraftTemplate[]>([]);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingDraftTemplates, setIsLoadingDraftTemplates] = useState(false);
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isLoadingReferences, setIsLoadingReferences] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -1587,6 +1656,17 @@ export default function AssistantPage() {
       didCancel = true;
     };
   }, [hasPluginActionDraft]);
+
+  const loadAssistantMetrics = useCallback(async () => {
+    setIsLoadingMetrics(true);
+    try {
+      setAssistantMetrics(await fetchAssistantMetrics());
+    } catch (error) {
+      toast.error(formatMutationError(error));
+    } finally {
+      setIsLoadingMetrics(false);
+    }
+  }, []);
 
   const startNewConversation = () => {
     setConversationId(undefined);
@@ -1907,6 +1987,11 @@ export default function AssistantPage() {
               onUseTemplate={useDraftTemplate}
             />
           ) : null}
+          <AssistantMetricsPanel
+            isLoading={isLoadingMetrics}
+            metrics={assistantMetrics}
+            onRefresh={() => void loadAssistantMetrics()}
+          />
           {roleQuickTaskGroups.length ? (
             <div className="assistant-role-task-panel">
               <Text strong>角色快捷任务</Text>
