@@ -56,6 +56,14 @@ const { Text, Title } = Typography;
 const { TextArea } = Input;
 const ASSISTANT_REFERENCE_CANDIDATE_LIMIT = 12;
 const ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT = 8;
+const assistantDraftActionLabels: Record<string, string> = {
+  create_ai_agent: '创建AI角色',
+  create_ai_skill: '创建AI Skill',
+  create_analysis_draft: '创建分析草案',
+  create_plugin_action: '创建插件动作',
+  create_plugin_connection: '创建插件连接',
+  create_scheduled_job: '创建定时作业',
+};
 
 type ChatMessage = {
   content: string;
@@ -276,6 +284,13 @@ function actionDraftItems(toolResults?: AssistantToolResult[]) {
         )
         && assistantDraftId(item),
     );
+}
+
+function assistantDraftActionLabel(action?: string) {
+  if (!action) {
+    return '未知草案';
+  }
+  return assistantDraftActionLabels[action] ?? action;
 }
 
 function taskCreationGuideItems(toolResults?: AssistantToolResult[]) {
@@ -1970,6 +1985,14 @@ function AssistantMetricsPanel({
     { label: '失败修复率', value: metricPercent(summary.failed_run_repair_rate) },
     { label: '知识命中率', value: metricPercent(summary.knowledge_reference_hit_rate) },
   ];
+  const draftStatusItems = [
+    { label: '待确认', value: metricCount(summary.draft_pending_count) },
+    { label: '已应用', value: metricCount(summary.draft_confirmed_count) },
+    { label: '已取消', value: metricCount(summary.draft_cancelled_count) },
+    { label: '已过期', value: metricCount(summary.draft_expired_count) },
+    { label: '失败', value: metricCount(summary.draft_failed_count) },
+  ];
+  const draftActionItems = metrics?.drafts_by_action ?? [];
 
   return (
     <div className="assistant-metrics-panel">
@@ -1983,18 +2006,49 @@ function AssistantMetricsPanel({
         </Button>
       </div>
       {metrics ? (
-        <div className="assistant-metrics-grid">
-          {metricItems.map((item) => (
-            <div
-              aria-label={`指标 ${item.label}`}
-              className="assistant-metric-item"
-              key={item.label}
-            >
-              <Text type="secondary">{item.label}</Text>
-              <Text strong>{item.value}</Text>
+        <>
+          <div className="assistant-metrics-grid">
+            {metricItems.map((item) => (
+              <div
+                aria-label={`指标 ${item.label}`}
+                className="assistant-metric-item"
+                key={item.label}
+              >
+                <Text type="secondary">{item.label}</Text>
+                <Text strong>{item.value}</Text>
+              </div>
+            ))}
+          </div>
+          <div className="assistant-metrics-breakdown">
+            <Text strong>草案状态</Text>
+            <Space size={[4, 4]} wrap>
+              {draftStatusItems.map((item) => (
+                <Tag aria-label={`草案状态 ${item.label}`} key={item.label}>
+                  {item.label} {item.value}
+                </Tag>
+              ))}
+            </Space>
+          </div>
+          {draftActionItems.length ? (
+            <div className="assistant-metrics-breakdown">
+              <Text strong>草案类型</Text>
+              <div className="assistant-metrics-action-list">
+                {draftActionItems.map((item) => (
+                  <Text
+                    aria-label={`草案类型 ${item.action}`}
+                    key={item.action}
+                    type="secondary"
+                  >
+                    {assistantDraftActionLabel(item.action)}：总数 {metricCount(item.total)}
+                    {' · '}待确认 {metricCount(item.pending_count)}
+                    {' · '}已应用 {metricCount(item.confirmed_count)}
+                    {' · '}已取消 {metricCount(item.cancelled_count)}
+                  </Text>
+                ))}
+              </div>
             </div>
-          ))}
-        </div>
+          ) : null}
+        </>
       ) : (
         <Text type="secondary">跟踪草案、引用、运行和失败修复效果。</Text>
       )}

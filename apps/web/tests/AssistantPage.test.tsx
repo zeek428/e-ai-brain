@@ -81,6 +81,11 @@ describe('AssistantPage', () => {
               ],
               summary: {
                 draft_adoption_rate: 0.5,
+                draft_cancelled_count: 1,
+                draft_confirmed_count: 2,
+                draft_expired_count: 0,
+                draft_failed_count: 0,
+                draft_pending_count: 1,
                 draft_total: 4,
                 draft_user_modified_rate: 0.25,
                 failed_run_repair_rate: 1,
@@ -110,6 +115,17 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('指标 作业运行成功率')).toHaveTextContent('80%');
     expect(screen.getByLabelText('指标 失败修复率')).toHaveTextContent('100%');
     expect(screen.getByLabelText('指标 知识命中率')).toHaveTextContent('60%');
+    expect(screen.getByText('草案状态')).toBeInTheDocument();
+    expect(screen.getByLabelText('草案状态 待确认')).toHaveTextContent('1');
+    expect(screen.getByLabelText('草案状态 已应用')).toHaveTextContent('2');
+    expect(screen.getByLabelText('草案状态 已取消')).toHaveTextContent('1');
+    expect(screen.getByText('草案类型')).toBeInTheDocument();
+    expect(screen.getByLabelText('草案类型 create_scheduled_job')).toHaveTextContent(
+      '创建定时作业',
+    );
+    expect(screen.getByLabelText('草案类型 create_scheduled_job')).toHaveTextContent(
+      '总数 4 · 待确认 1 · 已应用 2 · 已取消 1',
+    );
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/assistant/conversations', 'GET'],
       ['/api/assistant/metrics', 'GET'],

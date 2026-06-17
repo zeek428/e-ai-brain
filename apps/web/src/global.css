@@ -499,6 +499,23 @@ body {
   overflow-wrap: anywhere;
 }
 
+.assistant-metrics-breakdown {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.assistant-metrics-action-list {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.assistant-metrics-action-list .ant-typography {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .assistant-history-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
