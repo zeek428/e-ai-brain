@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.353 |
+| 功能版本 | v1.1.354 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.354 | 2026-06-17 | AI 助手动作草案详情响应补充 `wizard_steps[]`，用于深链和历史草案卡片恢复配置向导 | Codex |
 | v1.1.353 | 2026-06-17 | AI 助手 run-once 前端契约补充：运行状态未变化但 `execution_nodes` 更新时也必须刷新进度卡片 | Codex |
 | v1.1.352 | 2026-06-17 | AI 助手引用候选和解析契约补充 `knowledge_space` / `knowledge_folder`，按权限注入范围内有限 chunk | Codex |
 | v1.1.351 | 2026-06-17 | AI 助手引用候选搜索契约补充：定时作业类型词不再优先匹配运行记录，运行/失败词才优先匹配 `scheduled_job_run` | Codex |
@@ -1557,7 +1558,7 @@ POST /api/assistant/references/resolve
 }
 ```
 
-助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_rd_task`、`create_ai_skill`、`create_ai_agent`、`create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；可由 `assistant_tools` 构造的草案必须在模型调用前确定性返回，模型网关未配置时也不应阻塞草案生成。状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认或取消前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `ai_tasks`、`ai_skills`、`ai_agents`、`scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。前端“查看详情”不新增 API，直接复用 `assistant.action_draft.items[].payload` 与 `preview={diffs,validation,target}`，在当前对话页展示草案状态、动作、风险等级、payload JSON、字段差异和校验问题。
+助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。工具项携带的 `wizard_steps[]` 必须写入草案元数据，并由 `GET /api/assistant/action-drafts/{draft_id}` 原样返回，供 `/assistant?draft_id=...` 深链和历史草案卡片恢复配置向导、步骤状态、摘要和依赖关系。支持的动作包括 `create_rd_task`、`create_ai_skill`、`create_ai_agent`、`create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；可由 `assistant_tools` 构造的草案必须在模型调用前确定性返回，模型网关未配置时也不应阻塞草案生成。状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认或取消前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `ai_tasks`、`ai_skills`、`ai_agents`、`scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。前端“查看详情”不新增 API，直接复用 `assistant.action_draft.items[].payload` 与 `preview={diffs,validation,target}`，在当前对话页展示草案状态、动作、风险等级、payload JSON、字段差异和校验问题。
 
 当聊天消息要求配置代码巡检定时作业且明确要求 AI/大模型分析扫描结果时，服务端必须生成 `intent=code_inspection_setup_draft` 的 `assistant.action_draft`。若系统缺少可用代码巡检 Skill 或 AI角色，`items[]` 应按 `create_ai_skill`、`create_ai_agent`、`create_scheduled_job` 顺序返回前置草案和最终作业草案；AI角色草案通过 `payload.assistant_prerequisite_draft_ids` 依赖 Skill 草案，定时作业草案通过同字段依赖 Skill/AI角色草案。最终 `create_scheduled_job` 草案项必须包含 `wizard_steps[]`，每项包含 `key/title/status/summary/depends_on`，用于显式展示数据来源、AI处理、结果动作、调度策略、确认执行的就绪状态和前置依赖；前端必须对 `status=needs_prerequisite/blocked` 的步骤展示“生成<步骤>前置草案”入口，点击后将草案标题、步骤名称和 `depends_on` 回填为新的助手输入，继续生成连接、动作、AI Skill 或 AI角色等前置草案。`create_ai_skill` payload 至少包含 `name/code/prompt_template/required_context/risk_level/status`；`create_ai_agent` payload 至少包含 `name/code/brain_app_id/model_gateway_config_id/default_skill_ids/system_prompt/status`。前端必须把这两类草案展示为 AI 能力配置草案，确认前不提供“应用到定时作业表单”，确认后返回 `ai_skill` 或 `ai_agent` 资源入口。
 
@@ -1622,6 +1623,29 @@ POST /api/assistant/action-drafts/{draft_id}/cancel
   "metadata_json": {
     "references": [{"type": "knowledge_document", "id": "knowledge_doc_001"}]
   },
+  "wizard_steps": [
+    {
+      "depends_on": [],
+      "key": "data_source",
+      "status": "ready",
+      "summary": "已选择用户反馈数据来源",
+      "title": "数据来源"
+    },
+    {
+      "depends_on": ["data_source"],
+      "key": "ai_processing",
+      "status": "needs_prerequisite",
+      "summary": "需要选择 AI角色、Skill 和模型网关",
+      "title": "AI处理"
+    },
+    {
+      "depends_on": ["data_source", "ai_processing"],
+      "key": "confirm",
+      "status": "pending",
+      "summary": "确认后创建定时作业",
+      "title": "确认执行"
+    }
+  ],
   "created_by": "user_admin",
   "created_at": "2026-06-14T09:00:00+08:00",
   "updated_at": "2026-06-14T09:00:00+08:00"

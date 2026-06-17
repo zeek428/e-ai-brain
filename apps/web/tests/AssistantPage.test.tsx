@@ -2597,6 +2597,29 @@ describe('AssistantPage', () => {
               status: 'pending',
               title: '每周用户反馈洞察定时作业草案',
               updated_at: '2026-06-17T08:00:00+00:00',
+              wizard_steps: [
+                {
+                  depends_on: [],
+                  key: 'data_source',
+                  status: 'ready',
+                  summary: '已选择用户反馈数据来源',
+                  title: '数据来源',
+                },
+                {
+                  depends_on: ['data_source'],
+                  key: 'ai_processing',
+                  status: 'needs_prerequisite',
+                  summary: '需要选择 AI角色、Skill 和模型网关',
+                  title: 'AI处理',
+                },
+                {
+                  depends_on: ['data_source', 'ai_processing'],
+                  key: 'confirm',
+                  status: 'pending',
+                  summary: '确认后创建定时作业',
+                  title: '确认执行',
+                },
+              ],
             },
           }),
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
@@ -2616,7 +2639,12 @@ describe('AssistantPage', () => {
       within(draftLinkStatus).getByText('已从链接打开草案：每周用户反馈洞察定时作业草案'),
     ).toBeInTheDocument();
     expect(within(draftLinkStatus).getByText('每周用户反馈洞察定时作业草案')).toBeInTheDocument();
-    expect(within(draftLinkStatus).getByText('待确认')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getAllByText('待确认').length).toBeGreaterThanOrEqual(1);
+    expect(within(draftLinkStatus).getByText('配置向导')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByText('数据来源：已就绪')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByText('已选择用户反馈数据来源')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByText('AI处理：需先确认前置草案')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByText('依赖：data_source')).toBeInTheDocument();
     expect(within(draftLinkStatus).getByText('应用前预检')).toBeInTheDocument();
     expect(within(draftLinkStatus).getByText('作业名称')).toBeInTheDocument();
     expect(within(draftLinkStatus).getByRole('button', { name: /确认创建/ })).toBeInTheDocument();

@@ -445,6 +445,7 @@ export type AssistantActionDraftRecord = {
   status: string;
   title: string;
   updated_at?: string;
+  wizard_steps?: unknown[];
 };
 
 export type AssistantActionDraftPreviewDiff = {

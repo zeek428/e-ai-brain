@@ -2215,7 +2215,9 @@ def test_ai_assistant_chat_generates_email_digest_job_draft(monkeypatch):
         headers=headers,
     )
     assert draft_response.status_code == 200
-    assert draft_response.json()["data"]["client_draft_id"] == "assistant_draft_email_digest"
+    draft = draft_response.json()["data"]
+    assert draft["client_draft_id"] == "assistant_draft_email_digest"
+    assert draft["wizard_steps"] == draft_item["wizard_steps"]
 
 
 def test_ai_assistant_chat_generates_online_log_anomaly_job_draft(monkeypatch):

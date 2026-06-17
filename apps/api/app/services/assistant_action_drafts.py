@@ -309,16 +309,19 @@ def persist_assistant_action_drafts_from_tool_results(
             if item.get("action") not in ASSISTANT_DRAFT_ACTIONS:
                 continue
             client_draft_id = str(item.get("draft_id") or "").strip() or None
+            metadata_json = {
+                "intent": tool_result.get("intent"),
+                "source": "assistant_tool_result",
+                "tool": tool_result.get("tool"),
+            }
+            if isinstance(item.get("wizard_steps"), list):
+                metadata_json["wizard_steps"] = deepcopy(item["wizard_steps"])
             draft = create_assistant_action_draft_response(
                 current_store=current_store,
                 payload=SimpleNamespace(
                     action=item["action"],
                     client_draft_id=client_draft_id,
-                    metadata_json={
-                        "intent": tool_result.get("intent"),
-                        "source": "assistant_tool_result",
-                        "tool": tool_result.get("tool"),
-                    },
+                    metadata_json=metadata_json,
                     payload=deepcopy(item.get("payload") or {}),
                     risk_level=item.get("risk_level") or "medium",
                     source_message_id=source_message_id,
@@ -1218,6 +1221,9 @@ def public_assistant_action_draft(
         "title": draft["title"],
         "updated_at": draft["updated_at"],
     }
+    wizard_steps = public["metadata_json"].get("wizard_steps")
+    if isinstance(wizard_steps, list):
+        public["wizard_steps"] = deepcopy(wizard_steps)
     preview_draft = _draft_with_resolved_prerequisites(current_store, draft)
     public["preview"] = assistant_action_draft_preview(current_store, preview_draft)
     return {key: value for key, value in public.items() if value is not None}

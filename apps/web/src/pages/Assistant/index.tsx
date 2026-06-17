@@ -913,6 +913,7 @@ function assistantActionDraftRecordToToolItem(
     server_draft_id: draft.id,
     status: draft.status,
     title: draft.title,
+    wizard_steps: draft.wizard_steps,
   };
 }
 

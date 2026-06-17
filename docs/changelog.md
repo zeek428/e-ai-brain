@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手服务端草案详情保留配置向导：聊天草案项的 `wizard_steps` 会随服务端草案持久化并在 `/assistant?draft_id=...` 深链卡片中恢复展示，避免依赖关系只存在于原始对话里。
 - AI 助手草案深链追踪：打开 `/assistant?draft_id=...` 会拉取服务端草案并复用草案卡片展示状态、预检、确认/取消、查看详情和后续资源入口。
 - AI 助手 `@` 候选面板显性化：候选项拆分展示引用类型、权限状态、来源模块、更新时间和摘要；无匹配候选时面板继续提示换词或检查权限，避免输入 `@` 后像是没有响应。
 - AI 助手 `@定时作业 执行一次` 权限结果可追踪：无定时作业执行权限时返回 `assistant.scheduled_job_run summary.status=permission_denied` 并说明需要 `system.scheduled_jobs.manage`，具备该权限的非管理员可通过显式 @ 命令触发定时作业。
