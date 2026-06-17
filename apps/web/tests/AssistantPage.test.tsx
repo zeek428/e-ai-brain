@@ -1960,6 +1960,14 @@ describe('AssistantPage', () => {
     expect(await screen.findByText('数据来源：需先确认前置草案')).toBeInTheDocument();
     expect(screen.getByText('AI处理：已阻塞')).toBeInTheDocument();
     expect(screen.getByText('依赖：GitHub 连接、代码巡检动作')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '手动调整数据来源' })).toHaveAttribute(
+      'href',
+      '/tasks/plugins',
+    );
+    expect(screen.getByRole('link', { name: '手动调整AI处理' })).toHaveAttribute(
+      'href',
+      '/settings/ai-capabilities',
+    );
 
     fireEvent.click(screen.getByRole('button', { name: '生成数据来源前置草案' }));
 

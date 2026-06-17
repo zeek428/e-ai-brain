@@ -648,6 +648,33 @@ function canGenerateWizardPrerequisite(step: AssistantDraftWizardStep) {
   return step.status === 'needs_prerequisite' || step.status === 'blocked';
 }
 
+function draftWizardManualAdjustUrl(step: AssistantDraftWizardStep) {
+  const key = String(step.key ?? '').toLowerCase();
+  const title = String(step.title ?? '').toLowerCase();
+  if (
+    key.includes('data')
+    || key.includes('source')
+    || key.includes('connection')
+    || key.includes('result')
+    || key.includes('action')
+    || title.includes('数据来源')
+    || title.includes('结果动作')
+  ) {
+    return '/tasks/plugins';
+  }
+  if (
+    key.includes('ai')
+    || key.includes('agent')
+    || key.includes('skill')
+    || title.includes('ai')
+    || title.includes('角色')
+    || title.includes('skill')
+  ) {
+    return '/settings/ai-capabilities';
+  }
+  return '/tasks/scheduled-jobs';
+}
+
 function activeMentionQuery(value: string) {
   const markerIndex = value.lastIndexOf('@');
   if (markerIndex < 0) {
@@ -1235,6 +1262,7 @@ function AssistantDraftWizardBlock({
           const dependsOn = step.depends_on ?? [];
           const canGeneratePrerequisite = Boolean(onUsePrerequisitePrompt)
             && canGenerateWizardPrerequisite(step);
+          const manualAdjustUrl = draftWizardManualAdjustUrl(step);
           return (
             <div className="assistant-draft-wizard-step" key={step.key || title}>
               <Space size={6} wrap>
@@ -1245,15 +1273,22 @@ function AssistantDraftWizardBlock({
               {dependsOn.length ? (
                 <Text type="secondary">依赖：{dependsOn.join('、')}</Text>
               ) : null}
-              {canGeneratePrerequisite ? (
-                <Button
-                  size="small"
-                  onClick={() => onUsePrerequisitePrompt?.(
-                    draftWizardPrerequisitePrompt(draftTitle, step),
-                  )}
-                >
-                  生成{title}前置草案
-                </Button>
+              {canGeneratePrerequisite || manualAdjustUrl ? (
+                <Space size={6} wrap>
+                  {canGeneratePrerequisite ? (
+                    <Button
+                      size="small"
+                      onClick={() => onUsePrerequisitePrompt?.(
+                        draftWizardPrerequisitePrompt(draftTitle, step),
+                      )}
+                    >
+                      生成{title}前置草案
+                    </Button>
+                  ) : null}
+                  <Button href={manualAdjustUrl} size="small">
+                    手动调整{title}
+                  </Button>
+                </Space>
               ) : null}
             </div>
           );
