@@ -2475,6 +2475,26 @@ describe('ScheduledJobsPage', () => {
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
     expect(dialog).toHaveTextContent('failed');
+    const askAiLink = within(dialog).getByRole('link', { name: '问 AI' });
+    const askAiHref = askAiLink.getAttribute('href') ?? '';
+    const askAiParams = new URLSearchParams(askAiHref.split('?')[1]);
+    expect(askAiParams.get('reference_type')).toBe('scheduled_job_run');
+    expect(askAiParams.get('reference_id')).toBe('scheduled_job_run_code_inspection_failed');
+    expect(askAiParams.get('prompt')).toBe('为什么这次任务失败？');
+
+    const repairDraftLink = within(dialog).getByRole('link', { name: '生成修复草案' });
+    const repairDraftHref = repairDraftLink.getAttribute('href') ?? '';
+    const repairDraftParams = new URLSearchParams(repairDraftHref.split('?')[1]);
+    expect(repairDraftParams.get('reference_type')).toBe('scheduled_job_run');
+    expect(repairDraftParams.get('reference_id')).toBe('scheduled_job_run_code_inspection_failed');
+    expect(repairDraftParams.get('prompt')).toBe('这次失败怎么修？帮我生成修复草案');
+
+    const compareLink = within(dialog).getByRole('link', { name: '对比上次成功' });
+    const compareHref = compareLink.getAttribute('href') ?? '';
+    const compareParams = new URLSearchParams(compareHref.split('?')[1]);
+    expect(compareParams.get('reference_type')).toBe('scheduled_job_run');
+    expect(compareParams.get('reference_id')).toBe('scheduled_job_run_code_inspection_failed');
+    expect(compareParams.get('prompt')).toBe('和上次成功有什么不同？');
     await waitFor(() =>
       expect(errorSpy).toHaveBeenCalledWith('作业运行失败：HTTP Error 403: Forbidden'),
     );

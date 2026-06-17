@@ -344,7 +344,7 @@ def test_assistant_chat_returns_running_record_for_long_ai_job_once_without_wait
         started.set()
         run_id = current_store.new_id("scheduled_job_run")
         run = {
-            "collector_run_id": None,
+            "collector_run_id": "collector_run_feedback_insight",
             "config_snapshot": {},
             "created_at": "2026-06-16T08:01:00+00:00",
             "error_code": None,

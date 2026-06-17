@@ -4,7 +4,7 @@ import json
 import re
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import perf_counter, sleep
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -82,6 +82,7 @@ ASSISTANT_ASYNC_SCHEDULED_JOB_TYPES = {
 }
 ASSISTANT_ASYNC_RUN_START_TIMEOUT_SECONDS = 2.0
 ASSISTANT_ASYNC_RUN_POLL_SECONDS = 0.05
+ASSISTANT_TRACKED_RUN_STATUSES = {"queued", "running"}
 TASK_CREATION_WIZARD_STEPS = ["数据来源", "AI处理", "结果动作", "调度策略", "确认执行"]
 TASK_CREATION_GUIDE_ITEMS = [
     {
@@ -450,6 +451,37 @@ def _deterministic_assistant_output(
     scheduled_job_reference = scheduled_job_references[0]
     job_id = str(scheduled_job_reference["id"])
     job = getattr(current_store, "scheduled_jobs", {}).get(job_id) or {}
+    active_run = _active_scheduled_job_run_for_job(
+        current_store,
+        job=job,
+        job_id=job_id,
+    )
+    if active_run is not None:
+        run_id = str(active_run.get("id") or "")
+        run_status = str(active_run.get("status") or "unknown")
+        return {
+            "answer": (
+                f"「{_scheduled_job_title(job, job_id)}」已有一次执行正在进行中，"
+                f"运行记录 {run_id} 当前状态为 {run_status}。"
+            ),
+            "latency_ms": int((perf_counter() - started) * 1000),
+            "model": "assistant-deterministic",
+            "references": _merge_assistant_references(
+                selected_references,
+                [_scheduled_job_run_reference(job=job, job_id=job_id, run=active_run)],
+            ),
+            "selected_references": selected_references,
+            "suggestions": ["查看本次运行记录", "为什么这次任务失败？"],
+            "tool_results": [
+                _scheduled_job_run_tool_result(
+                    error_code=None,
+                    error_message=None,
+                    job=job,
+                    job_id=job_id,
+                    run=active_run,
+                )
+            ],
+        }
     try:
         if _scheduled_job_run_should_return_immediately(job):
             run = _start_scheduled_job_run_once_in_background(
@@ -1105,6 +1137,58 @@ def _scheduled_job_run_should_return_immediately(job: dict[str, Any]) -> bool:
     return str(job.get("job_type") or "") in ASSISTANT_ASYNC_SCHEDULED_JOB_TYPES
 
 
+def _active_scheduled_job_run_for_job(
+    current_store: MemoryStore,
+    *,
+    job: dict[str, Any],
+    job_id: str,
+) -> dict[str, Any] | None:
+    candidates = [
+        run
+        for run in getattr(current_store, "scheduled_job_runs", {}).values()
+        if str(run.get("scheduled_job_id") or "") == job_id
+        and str(run.get("status") or "") in ASSISTANT_TRACKED_RUN_STATUSES
+        and not _scheduled_job_run_is_stale(run, job)
+    ]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda run: str(
+            run.get("updated_at")
+            or run.get("created_at")
+            or run.get("started_at")
+            or run.get("scheduled_for")
+            or "",
+        ),
+    )[-1]
+
+
+def _scheduled_job_run_is_stale(run: dict[str, Any], job: dict[str, Any]) -> bool:
+    ttl_seconds = int(job.get("lock_ttl_seconds") or job.get("timeout_seconds") or 0)
+    if ttl_seconds <= 0:
+        return False
+    timestamp = _scheduled_job_run_timestamp(run)
+    if timestamp is None:
+        return False
+    return datetime.now(UTC) - timestamp > timedelta(seconds=ttl_seconds)
+
+
+def _scheduled_job_run_timestamp(run: dict[str, Any]) -> datetime | None:
+    for field in ("updated_at", "started_at", "created_at", "scheduled_for"):
+        raw_value = run.get(field)
+        if not raw_value:
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    return None
+
+
 def _start_scheduled_job_run_once_in_background(
     *,
     current_store: MemoryStore,
@@ -1184,10 +1268,40 @@ def _new_scheduled_job_run(
     ]
     if not candidates:
         return None
-    return sorted(
-        candidates,
-        key=lambda run: str(run.get("created_at") or run.get("started_at") or ""),
-    )[-1]
+    for run in reversed(
+        sorted(
+            candidates,
+            key=lambda item: str(item.get("created_at") or item.get("started_at") or ""),
+        )
+    ):
+        traceable_run = _traceable_scheduled_job_run(current_store, run)
+        if traceable_run is not None:
+            return traceable_run
+    return None
+
+
+def _traceable_scheduled_job_run(
+    current_store: MemoryStore,
+    run: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not run.get("collector_run_id"):
+        return None
+    repository = getattr(current_store, "repository", None)
+    list_scheduled_job_runs = getattr(repository, "list_scheduled_job_runs", None)
+    if not callable(list_scheduled_job_runs):
+        return run
+    persisted_runs = list_scheduled_job_runs(
+        scheduled_job_id=str(run.get("scheduled_job_id") or ""),
+        status=str(run.get("status") or ""),
+    )
+    return next(
+        (
+            persisted_run
+            for persisted_run in persisted_runs
+            if str(persisted_run.get("id") or "") == str(run.get("id") or "")
+        ),
+        None,
+    )
 
 
 def _http_exception_code_and_message(exc: HTTPException) -> tuple[str, str]:

@@ -1535,11 +1535,19 @@ function assistantRunFollowupPrompt(run: ScheduledJobRunRecord) {
   return run.status === 'failed' ? '为什么这次任务失败？' : '帮我分析这次运行结果';
 }
 
-function assistantRunFollowupUrl(run: ScheduledJobRunRecord) {
+function assistantRunRepairDraftPrompt() {
+  return '这次失败怎么修？帮我生成修复草案';
+}
+
+function assistantRunComparisonPrompt() {
+  return '和上次成功有什么不同？';
+}
+
+function assistantRunFollowupUrl(run: ScheduledJobRunRecord, prompt = assistantRunFollowupPrompt(run)) {
   const params = new URLSearchParams();
   params.set('reference_type', 'scheduled_job_run');
   params.set('reference_id', run.id);
-  params.set('prompt', assistantRunFollowupPrompt(run));
+  params.set('prompt', prompt);
   return `/assistant?${params.toString()}`;
 }
 
@@ -3511,6 +3519,24 @@ export default function ScheduledJobsPage() {
               >
                 问 AI
               </Button>
+            ) : null}
+            {selectedRun?.status === 'failed' ? (
+              <>
+                <Button
+                  aria-label="生成修复草案"
+                  href={assistantRunFollowupUrl(selectedRun, assistantRunRepairDraftPrompt())}
+                  icon={<EditOutlined />}
+                >
+                  生成修复草案
+                </Button>
+                <Button
+                  aria-label="对比上次成功"
+                  href={assistantRunFollowupUrl(selectedRun, assistantRunComparisonPrompt())}
+                  icon={<ReloadOutlined />}
+                >
+                  对比上次成功
+                </Button>
+              </>
             ) : null}
             {selectedRun ? (
               <Button icon={<CopyOutlined />} type="primary" onClick={() => openCopyRunModal(selectedRun)}>

@@ -1,8 +1,10 @@
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 import app.api.routers.assistant as assistant_router
+import app.services.assistant_chat as assistant_chat_service
 from app.main import app
 
 client = TestClient(app)
@@ -2574,7 +2576,7 @@ def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(
         "last_failure_at": None,
         "last_run_at": None,
         "last_success_at": None,
-        "lock_ttl_seconds": 900,
+        "lock_ttl_seconds": 999999999,
         "max_retry_count": 0,
         "model_gateway_config_id": None,
         "name": "提取每周用户反馈有价值信息",
@@ -2626,6 +2628,185 @@ def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(
     }
     assert message["tool_results"][0]["tool"] == "assistant.scheduled_job_run"
     assert message["tool_results"][0]["summary"]["run_id"] == run["id"]
+
+
+def test_ai_assistant_chat_reuses_active_run_once_execution(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.scheduled_jobs["scheduled_job_feedback_insight"] = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "ai_generated",
+        "id": "scheduled_job_feedback_insight",
+        "interval_seconds": None,
+        "job_type": "user_feedback_insight_extract",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": "2026-06-17T06:10:00+00:00",
+        "last_success_at": None,
+        "lock_ttl_seconds": 999999999,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "name": "提取每周用户反馈有价值信息",
+        "next_run_at": None,
+        "plugin_action_id": "plugin_action_feedback",
+        "plugin_action_ids": [],
+        "plugin_connection_id": "plugin_connection_feedback",
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-17T06:10:00+00:00",
+    }
+    app.state.store.scheduled_job_runs["scheduled_job_run_feedback_running"] = {
+        "collector_run_id": "collector_run_feedback_running",
+        "config_snapshot": {},
+        "created_at": "2026-06-17T06:10:00+00:00",
+        "error_code": None,
+        "error_message": None,
+        "finished_at": None,
+        "id": "scheduled_job_run_feedback_running",
+        "records_imported": 0,
+        "result_summary": {},
+        "scheduled_for": "2026-06-17T06:10:00+00:00",
+        "scheduled_job_id": "scheduled_job_feedback_insight",
+        "source_run_id": None,
+        "started_at": "2026-06-17T06:10:00+00:00",
+        "status": "running",
+        "trigger_type": "manual",
+        "updated_at": "2026-06-17T06:10:00+00:00",
+    }
+
+    def fail_if_run_started(**_kwargs):
+        raise AssertionError("existing active run-once execution should be reused")
+
+    monkeypatch.setattr(assistant_chat_service, "run_scheduled_job_response", fail_if_run_started)
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "@提取每周用户反馈有价值信息 执行一次",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    message = payload["message"]
+    assert payload["model"] == "assistant-deterministic"
+    assert "已有一次执行正在进行中" in message["content"]
+    assert len(app.state.store.scheduled_job_runs) == 1
+    assert message["references"][-1] == {
+        "id": "scheduled_job_run_feedback_running",
+        "title": "提取每周用户反馈有价值信息 / running",
+        "type": "scheduled_job_run",
+        "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_running",
+    }
+    assert message["tool_results"][0]["summary"] == {
+        "error_code": None,
+        "error_message": None,
+        "records_imported": 0,
+        "run_id": "scheduled_job_run_feedback_running",
+        "scheduled_job_id": "scheduled_job_feedback_insight",
+        "scheduled_job_name": "提取每周用户反馈有价值信息",
+        "status": "running",
+        "trigger_type": "manual",
+    }
+
+
+def test_ai_assistant_run_once_waits_until_new_run_is_traceable():
+    run = {
+        "collector_run_id": None,
+        "created_at": "2026-06-17T06:20:00+00:00",
+        "id": "scheduled_job_run_feedback_new",
+        "scheduled_job_id": "scheduled_job_feedback_insight",
+        "status": "running",
+        "updated_at": "2026-06-17T06:20:00+00:00",
+    }
+    store = SimpleNamespace(
+        scheduled_job_runs={"scheduled_job_run_feedback_new": run},
+    )
+
+    assert (
+        assistant_chat_service._new_scheduled_job_run(
+            store,
+            existing_run_ids=set(),
+            job_id="scheduled_job_feedback_insight",
+        )
+        is None
+    )
+
+    run["collector_run_id"] = "collector_run_feedback_new"
+    assert (
+        assistant_chat_service._new_scheduled_job_run(
+            store,
+            existing_run_ids=set(),
+            job_id="scheduled_job_feedback_insight",
+        )
+        == run
+    )
+
+
+def test_ai_assistant_run_once_waits_until_repository_can_read_new_run():
+    class RepositoryStub:
+        def __init__(self) -> None:
+            self.persisted_runs: dict[str, dict] = {}
+
+        def list_scheduled_job_runs(
+            self,
+            *,
+            scheduled_job_id: str | None = None,
+            status: str | None = None,
+        ) -> list[dict]:
+            return [
+                dict(run)
+                for run in self.persisted_runs.values()
+                if (
+                    (scheduled_job_id is None or run["scheduled_job_id"] == scheduled_job_id)
+                    and (status is None or run["status"] == status)
+                )
+            ]
+
+    run = {
+        "collector_run_id": "collector_run_feedback_new",
+        "created_at": "2026-06-17T06:20:00+00:00",
+        "id": "scheduled_job_run_feedback_new",
+        "scheduled_job_id": "scheduled_job_feedback_insight",
+        "status": "running",
+        "updated_at": "2026-06-17T06:20:00+00:00",
+    }
+    repository = RepositoryStub()
+    store = SimpleNamespace(
+        repository=repository,
+        scheduled_job_runs={"scheduled_job_run_feedback_new": run},
+    )
+
+    assert (
+        assistant_chat_service._new_scheduled_job_run(
+            store,
+            existing_run_ids=set(),
+            job_id="scheduled_job_feedback_insight",
+        )
+        is None
+    )
+
+    persisted_run = {**run, "result_summary": {"persisted": True}}
+    repository.persisted_runs["scheduled_job_run_feedback_new"] = persisted_run
+    assert assistant_chat_service._new_scheduled_job_run(
+        store,
+        existing_run_ids=set(),
+        job_id="scheduled_job_feedback_insight",
+    ) == persisted_run
 
 
 def test_ai_assistant_chat_generates_feedback_draft_when_run_once_job_missing(
