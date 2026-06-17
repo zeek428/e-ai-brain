@@ -1993,6 +1993,34 @@ function AssistantMetricsPanel({
     { label: '失败', value: metricCount(summary.draft_failed_count) },
   ];
   const draftActionItems = metrics?.drafts_by_action ?? [];
+  const runTrackingItems = [
+    {
+      label: '作业运行',
+      value: `成功 ${metricCount(summary.scheduled_job_run_succeeded_count)} · 失败 ${metricCount(
+        summary.scheduled_job_run_failed_count,
+      )} · 总数 ${metricCount(summary.scheduled_job_run_total)}`,
+    },
+    {
+      label: '失败修复',
+      value: `已修复 ${metricCount(summary.failed_run_repaired_count)} · 失败运行 ${metricCount(
+        summary.failed_run_total,
+      )}`,
+    },
+  ];
+  const referenceTrackingItems = [
+    {
+      label: '用户消息',
+      value: `已引用 ${metricCount(summary.referenced_user_message_count)} · 用户消息 ${metricCount(
+        summary.user_message_total,
+      )}`,
+    },
+    {
+      label: '知识命中',
+      value: `命中 ${metricCount(summary.knowledge_reference_hit_count)} · 请求 ${metricCount(
+        summary.knowledge_reference_request_count,
+      )} · 知识引用 ${metricCount(summary.knowledge_reference_count)}`,
+    },
+  ];
 
   return (
     <div className="assistant-metrics-panel">
@@ -2048,6 +2076,34 @@ function AssistantMetricsPanel({
               </div>
             </div>
           ) : null}
+          <div className="assistant-metrics-breakdown">
+            <Text strong>运行追踪</Text>
+            <div className="assistant-metrics-action-list">
+              {runTrackingItems.map((item) => (
+                <Text
+                  aria-label={`运行追踪 ${item.label}`}
+                  key={item.label}
+                  type="secondary"
+                >
+                  {item.label}：{item.value}
+                </Text>
+              ))}
+            </div>
+          </div>
+          <div className="assistant-metrics-breakdown">
+            <Text strong>引用追踪</Text>
+            <div className="assistant-metrics-action-list">
+              {referenceTrackingItems.map((item) => (
+                <Text
+                  aria-label={`引用追踪 ${item.label}`}
+                  key={item.label}
+                  type="secondary"
+                >
+                  {item.label}：{item.value}
+                </Text>
+              ))}
+            </div>
+          </div>
         </>
       ) : (
         <Text type="secondary">跟踪草案、引用、运行和失败修复效果。</Text>

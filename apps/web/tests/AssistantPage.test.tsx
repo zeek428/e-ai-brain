@@ -87,11 +87,22 @@ describe('AssistantPage', () => {
                 draft_failed_count: 0,
                 draft_pending_count: 1,
                 draft_total: 4,
+                draft_user_modified_count: 1,
                 draft_user_modified_rate: 0.25,
+                failed_run_repaired_count: 2,
                 failed_run_repair_rate: 1,
+                failed_run_total: 2,
+                knowledge_reference_count: 6,
+                knowledge_reference_hit_count: 3,
                 knowledge_reference_hit_rate: 0.6,
+                knowledge_reference_request_count: 5,
                 reference_usage_rate: 0.75,
+                referenced_user_message_count: 3,
+                scheduled_job_run_failed_count: 1,
+                scheduled_job_run_succeeded_count: 4,
                 scheduled_job_run_success_rate: 0.8,
+                scheduled_job_run_total: 5,
+                user_message_total: 4,
               },
             },
           }),
@@ -125,6 +136,20 @@ describe('AssistantPage', () => {
     );
     expect(screen.getByLabelText('草案类型 create_scheduled_job')).toHaveTextContent(
       '总数 4 · 待确认 1 · 已应用 2 · 已取消 1',
+    );
+    expect(screen.getByText('运行追踪')).toBeInTheDocument();
+    expect(screen.getByLabelText('运行追踪 作业运行')).toHaveTextContent(
+      '成功 4 · 失败 1 · 总数 5',
+    );
+    expect(screen.getByLabelText('运行追踪 失败修复')).toHaveTextContent(
+      '已修复 2 · 失败运行 2',
+    );
+    expect(screen.getByText('引用追踪')).toBeInTheDocument();
+    expect(screen.getByLabelText('引用追踪 用户消息')).toHaveTextContent(
+      '已引用 3 · 用户消息 4',
+    );
+    expect(screen.getByLabelText('引用追踪 知识命中')).toHaveTextContent(
+      '命中 3 · 请求 5 · 知识引用 6',
     );
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/assistant/conversations', 'GET'],
