@@ -162,6 +162,9 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('草案类型 create_scheduled_job')).toHaveTextContent(
       '总数 4 · 待确认 1 · 已应用 2 · 已取消 1',
     );
+    expect(screen.getByLabelText('草案类型 create_scheduled_job')).toHaveTextContent(
+      '处理率 75%',
+    );
     expect(screen.getByText('运行追踪')).toBeInTheDocument();
     expect(screen.getByLabelText('运行追踪 作业运行')).toHaveTextContent(
       '成功 4 · 失败 1 · 总数 5',
@@ -1190,6 +1193,136 @@ describe('AssistantPage', () => {
         },
       ],
     });
+  });
+
+  it('shows active run progress for @ scheduled job run-once commands', async () => {
+    const scheduledJobReference = {
+      id: 'scheduled_job_feedback_weekly',
+      permission_label: '管理员可引用',
+      source_module: '任务中心',
+      title: '提取每周用户反馈有价值信息',
+      type: 'scheduled_job',
+      updated_at: '2026-06-15T18:00:00+08:00',
+      url: '/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly',
+    };
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(
+          JSON.stringify({ data: { items: [scheduledJobReference], total: 1 } }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_run_once',
+              latency_ms: 12,
+              message: {
+                content: '已触发「提取每周用户反馈有价值信息」执行一次，运行记录 scheduled_job_run_001 当前状态为 running。',
+                id: 'assistant_message_run_once',
+                references: [
+                  scheduledJobReference,
+                  {
+                    id: 'scheduled_job_run_001',
+                    title: '提取每周用户反馈有价值信息 / running',
+                    type: 'scheduled_job_run',
+                    url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_001',
+                  },
+                ],
+                role: 'assistant',
+                suggestions: [],
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_run_once',
+                    items: [
+                      {
+                        id: 'scheduled_job_run_001',
+                        records_imported: 0,
+                        scheduled_job_id: 'scheduled_job_feedback_weekly',
+                        status: 'running',
+                        title: '提取每周用户反馈有价值信息 / running',
+                        trigger_type: 'manual',
+                        type: 'scheduled_job_run',
+                        url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_001',
+                      },
+                    ],
+                    summary: {
+                      run_id: 'scheduled_job_run_001',
+                      scheduled_job_id: 'scheduled_job_feedback_weekly',
+                      status: 'running',
+                    },
+                    tool: 'assistant.scheduled_job_run',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_feedback_weekly') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  error_code: null,
+                  error_message: null,
+                  finished_at: null,
+                  id: 'scheduled_job_run_001',
+                  records_imported: 0,
+                  result_summary: {
+                    execution_nodes: {
+                      data_connection: {
+                        label: '数据连接获取内容',
+                        status: 'succeeded',
+                      },
+                      result_action: {
+                        label: '动作反馈内容',
+                        status: 'waiting_runner',
+                      },
+                      runner_execution: {
+                        label: 'AI 执行器执行内容',
+                        status: 'queued',
+                      },
+                    },
+                  },
+                  scheduled_job_id: 'scheduled_job_feedback_weekly',
+                  started_at: '2026-06-17T02:53:15.835137+00:00',
+                  status: 'running',
+                  trigger_type: 'manual',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@提取每周用户反馈有价值信息 执行一次' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText(/已触发「提取每周用户反馈有价值信息」执行一次/)).toBeInTheDocument();
+    expect(await screen.findByText('执行进度：AI 执行器执行内容（排队中）')).toBeInTheDocument();
   });
 
   it('keeps grouped @ reference hover selection aligned with the original candidate', async () => {

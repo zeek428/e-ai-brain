@@ -254,6 +254,7 @@ type AssistantScheduledJobRunItem = {
   errorMessage?: string | null;
   id: string;
   latestStatusRefreshed?: boolean;
+  progressText?: string;
   recordsImported?: number;
   scheduledJobId?: string;
   status: string;
@@ -356,11 +357,24 @@ function metricPercent(value?: number) {
   return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
 }
 
+function metricRatio(numerator?: number, denominator?: number) {
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || Number(denominator) <= 0) {
+    return '-';
+  }
+  return metricPercent(Number(numerator) / Number(denominator));
+}
+
 function itemRecord(item: AssistantToolResultItem, field: string) {
   const value = item[field];
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as AssistantToolResultItem)
     : {};
+}
+
+function unknownRecord(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function assistantDraftRunOnceRequested(draft: AssistantToolResultItem) {
@@ -469,11 +483,42 @@ function scheduledJobRunStatusLabel(status?: string) {
   const labels: Record<string, string> = {
     cancelled: '已取消',
     failed: '失败',
+    not_run: '未运行',
     queued: '排队中',
     running: '运行中',
     succeeded: '成功',
+    waiting_runner: '等待执行器回写',
   };
   return labels[status ?? ''] ?? (status || '未知');
+}
+
+function scheduledJobRunExecutionProgressText(run?: ScheduledJobRunRecord) {
+  const summary = unknownRecord(run?.result_summary);
+  const nodes = unknownRecord(summary?.execution_nodes);
+  if (!nodes) {
+    return undefined;
+  }
+  const nodeOrder = ['data_connection', 'runner_execution', 'skill_processing', 'result_action'];
+  const nodeLabelFallbacks: Record<string, string> = {
+    data_connection: '数据连接获取内容',
+    result_action: '动作反馈内容',
+    runner_execution: 'AI 执行器执行内容',
+    skill_processing: 'AI执行处理内容',
+  };
+  const activeStatuses = new Set(['claimed', 'pending', 'queued', 'running', 'waiting_runner']);
+  for (const nodeKey of nodeOrder) {
+    const node = unknownRecord(nodes[nodeKey]);
+    if (!node) {
+      continue;
+    }
+    const status = optionalText(node.status);
+    if (!status || !activeStatuses.has(status)) {
+      continue;
+    }
+    const label = optionalText(node.label) ?? nodeLabelFallbacks[nodeKey] ?? nodeKey;
+    return `执行进度：${label}（${scheduledJobRunStatusLabel(status)}）`;
+  }
+  return undefined;
 }
 
 function scheduledJobRunIsActive(status?: string) {
@@ -539,6 +584,7 @@ function scheduledJobRunItems(
       ...item,
       errorMessage: latestRun.error_message ?? item.errorMessage,
       latestStatusRefreshed,
+      progressText: scheduledJobRunExecutionProgressText(latestRun),
       recordsImported: latestRun.records_imported ?? item.recordsImported,
       scheduledJobId: latestRun.scheduled_job_id ?? item.scheduledJobId,
       status: latestStatus,
@@ -1883,7 +1929,12 @@ function AssistantScheduledJobRunCards({
               </span>
             </div>
             {isActive ? (
-              <Text type="secondary">正在执行，完成后会自动刷新状态。</Text>
+              <div className="assistant-run-progress">
+                <Text type="secondary">正在执行，完成后会自动刷新状态。</Text>
+                {item.progressText ? (
+                  <Text type="secondary">{item.progressText}</Text>
+                ) : null}
+              </div>
             ) : null}
             {item.latestStatusRefreshed ? (
               <Text type="secondary">
@@ -2315,6 +2366,10 @@ function AssistantMetricsPanel({
                     {' · '}待确认 {metricCount(item.pending_count)}
                     {' · '}已应用 {metricCount(item.confirmed_count)}
                     {' · '}已取消 {metricCount(item.cancelled_count)}
+                    {' · '}处理率 {metricRatio(
+                      Number(item.total ?? 0) - Number(item.pending_count ?? 0),
+                      Number(item.total ?? 0),
+                    )}
                   </Text>
                 ))}
               </div>

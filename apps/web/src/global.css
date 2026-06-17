@@ -926,6 +926,11 @@ body {
   overflow-wrap: anywhere;
 }
 
+.assistant-run-progress {
+  display: grid;
+  gap: 2px;
+}
+
 .assistant-diagnostic-list {
   display: grid;
   gap: 10px;
