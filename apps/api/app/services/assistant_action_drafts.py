@@ -15,6 +15,8 @@ from app.services.scheduled_jobs import (
     SCHEDULED_JOB_EXECUTION_MODES,
     SCHEDULED_JOB_SCHEDULE_TYPES,
     SCHEDULED_JOB_TYPES,
+    create_ai_agent_response,
+    create_ai_skill_response,
     create_scheduled_job_response,
     effective_scheduled_job_execution_mode,
     effective_scheduled_job_type,
@@ -30,10 +32,32 @@ ASSISTANT_ACTION_DRAFT_STATUSES = {
 }
 ASSISTANT_ACTION_RUN_STATUSES = {"failed", "succeeded"}
 ASSISTANT_DRAFT_ACTIONS = {
+    "create_ai_agent",
+    "create_ai_skill",
     "create_analysis_draft",
     "create_plugin_action",
     "create_plugin_connection",
     "create_scheduled_job",
+}
+AI_AGENT_DEFAULTS = {
+    "brain_app_id": "rd_brain",
+    "default_skill_ids": [],
+    "description": None,
+    "execution_policy": {},
+    "model_gateway_config_id": None,
+    "status": "active",
+    "tool_policy": {},
+}
+AI_SKILL_DEFAULTS = {
+    "allowed_tools": [],
+    "description": None,
+    "input_schema": {},
+    "output_schema": {},
+    "required_context": [],
+    "requires_human_review": False,
+    "risk_level": "medium",
+    "status": "active",
+    "version": "1.0.0",
 }
 SCHEDULED_JOB_DEFAULTS = {
     "agent_id": None,
@@ -157,13 +181,14 @@ def confirm_assistant_action_draft_response(
         raise api_error(409, "DRAFT_EXPIRED", "Assistant action draft has expired")
     if draft.get("status") != "pending":
         raise api_error(409, "DRAFT_NOT_PENDING", "Assistant action draft is not pending")
-    preview = assistant_action_draft_preview(current_store, draft)
+    effective_draft = _draft_with_resolved_prerequisites(current_store, draft)
+    preview = assistant_action_draft_preview(current_store, effective_draft)
     if preview["validation"]["status"] == "blocked":
         raise api_error(409, "DRAFT_PRECHECK_FAILED", "Assistant action draft precheck failed")
 
     result_type, result_id, result = execute_assistant_action_draft(
         current_store,
-        draft=draft,
+        draft=effective_draft,
         user=user,
     )
     now = now_iso()
@@ -350,6 +375,22 @@ def execute_assistant_action_draft(
             user=user,
         )
         return "plugin_action", str(result["id"]), result
+    if action == "create_ai_skill":
+        payload = with_defaults(AI_SKILL_DEFAULTS, payload)
+        result = create_ai_skill_response(
+            current_store=current_store,
+            payload=SimpleNamespace(**payload),
+            user=user,
+        )
+        return "ai_skill", str(result["id"]), result
+    if action == "create_ai_agent":
+        payload = with_defaults(AI_AGENT_DEFAULTS, payload)
+        result = create_ai_agent_response(
+            current_store=current_store,
+            payload=SimpleNamespace(**payload),
+            user=user,
+        )
+        return "ai_agent", str(result["id"]), result
     if action == "create_analysis_draft":
         result = {
             **payload,
@@ -359,6 +400,148 @@ def execute_assistant_action_draft(
         }
         return "assistant_analysis", draft["id"], result
     raise api_error(400, "UNSUPPORTED_DRAFT_ACTION", "Unsupported assistant draft action")
+
+
+def _draft_with_resolved_prerequisites(
+    current_store: Any,
+    draft: dict[str, Any],
+) -> dict[str, Any]:
+    payload = deepcopy(draft.get("payload") or {})
+    prerequisite_ids = _string_ids(payload.get("assistant_prerequisite_draft_ids"))
+    if not prerequisite_ids:
+        return draft
+    resolutions = _assistant_prerequisite_resolutions(
+        current_store,
+        draft=draft,
+        prerequisite_ids=prerequisite_ids,
+    )
+    if not resolutions:
+        return draft
+
+    action = draft["action"]
+    for resolution in resolutions:
+        result_type = resolution["result_type"]
+        result_id = resolution["result_id"]
+        if action == "create_ai_agent" and result_type == "ai_skill":
+            _append_payload_list_id(
+                payload,
+                "default_skill_ids",
+                result_id,
+                prerequisite_ids=prerequisite_ids,
+            )
+        elif action == "create_plugin_action" and result_type == "plugin_connection":
+            _set_payload_scalar_id(
+                payload,
+                "connection_id",
+                result_id,
+                prerequisite_ids=prerequisite_ids,
+            )
+        elif action == "create_scheduled_job":
+            if result_type == "plugin_connection":
+                _set_payload_scalar_id(
+                    payload,
+                    "plugin_connection_id",
+                    result_id,
+                    prerequisite_ids=prerequisite_ids,
+                )
+                _append_payload_list_id(
+                    payload,
+                    "plugin_connection_ids",
+                    result_id,
+                    prerequisite_ids=prerequisite_ids,
+                )
+            elif result_type == "plugin_action":
+                _set_payload_scalar_id(
+                    payload,
+                    "plugin_action_id",
+                    result_id,
+                    prerequisite_ids=prerequisite_ids,
+                )
+                _append_payload_list_id(
+                    payload,
+                    "plugin_action_ids",
+                    result_id,
+                    prerequisite_ids=prerequisite_ids,
+                )
+            elif result_type == "ai_agent":
+                _set_payload_scalar_id(
+                    payload,
+                    "agent_id",
+                    result_id,
+                    prerequisite_ids=prerequisite_ids,
+                )
+            elif result_type == "ai_skill":
+                _append_payload_list_id(
+                    payload,
+                    "skill_ids",
+                    result_id,
+                    prerequisite_ids=prerequisite_ids,
+                )
+
+    if payload == (draft.get("payload") or {}):
+        return draft
+    effective_draft = deepcopy(draft)
+    effective_draft["payload"] = payload
+    return effective_draft
+
+
+def _assistant_prerequisite_resolutions(
+    current_store: Any,
+    *,
+    draft: dict[str, Any],
+    prerequisite_ids: list[str],
+) -> list[dict[str, str]]:
+    drafts_by_client_id = {
+        str(item.get("client_draft_id")): item
+        for item in current_store.assistant_action_drafts.values()
+        if item.get("client_draft_id")
+    }
+    resolutions: list[dict[str, str]] = []
+    for prerequisite_id in prerequisite_ids:
+        prerequisite = current_store.assistant_action_drafts.get(
+            prerequisite_id
+        ) or drafts_by_client_id.get(prerequisite_id)
+        if not prerequisite or prerequisite.get("status") != "confirmed":
+            continue
+        if prerequisite.get("created_by") != draft.get("created_by"):
+            continue
+        run = current_store.assistant_action_runs.get(
+            str(prerequisite.get("result_run_id") or "")
+        )
+        if not run or run.get("status") != "succeeded":
+            continue
+        result_type = str(run.get("result_type") or "").strip()
+        result_id = str(run.get("result_id") or "").strip()
+        if result_type and result_id:
+            resolutions.append({"result_id": result_id, "result_type": result_type})
+    return resolutions
+
+
+def _set_payload_scalar_id(
+    payload: dict[str, Any],
+    field: str,
+    result_id: str,
+    *,
+    prerequisite_ids: list[str],
+) -> None:
+    current_value = str(payload.get(field) or "").strip()
+    if not current_value or current_value in prerequisite_ids:
+        payload[field] = result_id
+
+
+def _append_payload_list_id(
+    payload: dict[str, Any],
+    field: str,
+    result_id: str,
+    *,
+    prerequisite_ids: list[str],
+) -> None:
+    existing = [
+        item_id for item_id in _string_ids(payload.get(field)) if item_id not in prerequisite_ids
+    ]
+    if result_id not in existing:
+        existing.append(result_id)
+    payload[field] = existing
 
 
 def _assistant_run_once_after_confirm_requested(payload: dict[str, Any]) -> bool:
@@ -552,6 +735,37 @@ def assistant_action_draft_preview(
         )
         _append_plugin_action_validation(current_store, draft, preview)
         return preview
+    if action == "create_ai_skill":
+        return _generic_create_draft_preview(
+            draft,
+            diff_fields=[
+                ("name", "名称"),
+                ("code", "编码"),
+                ("prompt_template", "Prompt 模板"),
+                ("required_context", "上下文"),
+                ("risk_level", "风险等级"),
+                ("status", "状态"),
+            ],
+            required_fields=["name", "code", "prompt_template"],
+            resource_type="ai_skill",
+        )
+    if action == "create_ai_agent":
+        preview = _generic_create_draft_preview(
+            draft,
+            diff_fields=[
+                ("name", "名称"),
+                ("code", "编码"),
+                ("brain_app_id", "业务大脑"),
+                ("model_gateway_config_id", "AI 模型"),
+                ("default_skill_ids", "默认 Skills"),
+                ("system_prompt", "系统 Prompt"),
+                ("status", "状态"),
+            ],
+            required_fields=["name", "code", "brain_app_id", "system_prompt"],
+            resource_type="ai_agent",
+        )
+        _append_ai_agent_validation(current_store, draft, preview)
+        return preview
     if action == "create_analysis_draft":
         return _generic_create_draft_preview(
             draft,
@@ -721,6 +935,32 @@ def _append_plugin_action_validation(
     _finalize_validation(preview["validation"])
 
 
+def _append_ai_agent_validation(
+    current_store: Any,
+    draft: dict[str, Any],
+    preview: dict[str, Any],
+) -> None:
+    payload = draft.get("payload") or {}
+    model_gateway_config_id = payload.get("model_gateway_config_id")
+    if model_gateway_config_id:
+        _validate_collection_ref(
+            current_store.model_gateway_configs,
+            str(model_gateway_config_id),
+            field="model_gateway_config_id",
+            label="Model gateway config",
+            validation=preview["validation"],
+        )
+    for skill_id in _string_ids(payload.get("default_skill_ids")):
+        _validate_collection_ref(
+            current_store.ai_skills,
+            skill_id,
+            field="default_skill_ids",
+            label="AI skill",
+            validation=preview["validation"],
+        )
+    _finalize_validation(preview["validation"])
+
+
 def _generic_create_draft_preview(
     draft: dict[str, Any],
     *,
@@ -859,7 +1099,8 @@ def public_assistant_action_draft(
         "title": draft["title"],
         "updated_at": draft["updated_at"],
     }
-    public["preview"] = assistant_action_draft_preview(current_store, draft)
+    preview_draft = _draft_with_resolved_prerequisites(current_store, draft)
+    public["preview"] = assistant_action_draft_preview(current_store, preview_draft)
     return {key: value for key, value in public.items() if value is not None}
 
 

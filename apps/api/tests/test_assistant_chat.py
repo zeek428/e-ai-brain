@@ -17,7 +17,7 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
 def test_ai_assistant_draft_templates_list_official_market_entries():
     response = client.get("/api/assistant/draft-templates", headers=auth_headers())
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     payload = response.json()["data"]
     assert payload["total"] == 6
     templates_by_code = {item["code"]: item for item in payload["items"]}
@@ -320,7 +320,7 @@ def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents()
         headers=headers,
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     payload = response.json()["data"]
     assert payload["total"] == 1
     assert payload["items"] == [
@@ -2082,6 +2082,245 @@ def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeyp
         "配置代码巡检定时作业",
         "配置每周用户反馈洞察定时作业",
     ]
+
+
+def _seed_ai_code_inspection_draft_context() -> None:
+    now = "2026-06-17T09:00:00+00:00"
+    app.state.store.products["product_rd"] = {
+        "code": "rd",
+        "created_at": now,
+        "id": "product_rd",
+        "name": "研发平台",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.integration_plugins["plugin_github"] = {
+        "code": "github",
+        "created_at": now,
+        "id": "plugin_github",
+        "name": "GitHub",
+        "plugin_type": "http",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.plugin_connections["plugin_connection_github"] = {
+        "auth_config": {},
+        "auth_type": "bearer",
+        "created_at": now,
+        "created_by": "user_admin",
+        "endpoint_url": "https://api.github.com",
+        "environment": "prod",
+        "id": "plugin_connection_github",
+        "max_retries": 0,
+        "name": "GitHub 生产连接",
+        "plugin_id": "plugin_github",
+        "request_config": {},
+        "status": "active",
+        "timeout_seconds": 30,
+        "updated_at": now,
+    }
+    app.state.store.plugin_actions["plugin_action_github_code_inspection"] = {
+        "action_type": "http_request",
+        "code": "scan_github_code_inspection",
+        "connection_id": "plugin_connection_github",
+        "created_at": now,
+        "created_by": "user_admin",
+        "id": "plugin_action_github_code_inspection",
+        "name": "GitHub 代码巡检动作",
+        "plugin_id": "plugin_github",
+        "request_config": {"method": "GET", "path": "/repos/{{owner}}/{{repo}}/pulls"},
+        "result_mapping": {"write_target": "code_inspection_reports"},
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.model_gateway_configs["model_gateway_default"] = {
+        "api_key": "sk-test",
+        "base_url": "https://models.example.com/v1",
+        "chat_model": "gpt-test",
+        "created_at": now,
+        "default_chat_model": "gpt-test",
+        "embedding_model": "text-embedding-test",
+        "id": "model_gateway_default",
+        "is_default": True,
+        "name": "默认模型",
+        "provider": "openai_compatible",
+        "status": "active",
+        "updated_at": now,
+    }
+
+
+def test_ai_assistant_chat_generates_ai_capability_prerequisites_for_ai_code_inspection(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    _seed_ai_code_inspection_draft_context()
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("assistant draft generation should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "帮我配置 AI 代码巡检定时作业草案，用大模型分析扫描结果"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["model"] == "assistant-deterministic"
+    draft_result = payload["message"]["tool_results"][0]
+    assert draft_result["tool"] == "assistant.action_draft"
+    assert draft_result["intent"] == "code_inspection_setup_draft"
+    assert [item["action"] for item in draft_result["items"]] == [
+        "create_ai_skill",
+        "create_ai_agent",
+        "create_scheduled_job",
+    ]
+    skill_item, agent_item, job_item = draft_result["items"]
+    assert skill_item["server_draft_id"] in app.state.store.assistant_action_drafts
+    assert agent_item["server_draft_id"] in app.state.store.assistant_action_drafts
+    assert skill_item["payload"]["code"] == "code_inspection_analysis"
+    assert agent_item["payload"]["code"] == "code_inspection_agent"
+    assert agent_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        skill_item["client_draft_id"]
+    ]
+    assert job_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        skill_item["client_draft_id"],
+        agent_item["client_draft_id"],
+    ]
+    assert job_item["payload"]["execution_mode"] == "ai_generated"
+    assert job_item["payload"]["plugin_action_id"] == "plugin_action_github_code_inspection"
+    assert job_item["payload"]["model_gateway_config_id"] == "model_gateway_default"
+
+
+def test_ai_assistant_generated_ai_code_inspection_drafts_confirm_in_order(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    _seed_ai_code_inspection_draft_context()
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("assistant draft generation should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "帮我配置 AI 代码巡检定时作业草案，用大模型分析扫描结果"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    items = response.json()["data"]["message"]["tool_results"][0]["items"]
+    skill_item, agent_item, job_item = items
+
+    skill_confirm_response = client.post(
+        f"/api/assistant/action-drafts/{skill_item['server_draft_id']}/confirm",
+        headers=headers,
+    )
+    assert skill_confirm_response.status_code == 200
+    skill_id = skill_confirm_response.json()["data"]["run"]["result_id"]
+
+    agent_confirm_response = client.post(
+        f"/api/assistant/action-drafts/{agent_item['server_draft_id']}/confirm",
+        headers=headers,
+    )
+    assert agent_confirm_response.status_code == 200, agent_confirm_response.text
+    agent_run = agent_confirm_response.json()["data"]["run"]
+    agent_id = agent_run["result_id"]
+    assert agent_run["result"]["default_skill_ids"] == [skill_id]
+
+    job_get_response = client.get(
+        f"/api/assistant/action-drafts/{job_item['server_draft_id']}",
+        headers=headers,
+    )
+    assert job_get_response.status_code == 200
+    assert job_get_response.json()["data"]["preview"]["validation"]["status"] == "passed"
+
+    job_confirm_response = client.post(
+        f"/api/assistant/action-drafts/{job_item['server_draft_id']}/confirm",
+        headers=headers,
+    )
+    assert job_confirm_response.status_code == 200, job_confirm_response.text
+    job_run = job_confirm_response.json()["data"]["run"]
+    assert job_run["result_type"] == "scheduled_job"
+    assert job_run["result"]["agent_id"] == agent_id
+    assert job_run["result"]["skill_ids"] == [skill_id]
+    assert job_run["result"]["model_gateway_config_id"] == "model_gateway_default"
+
+
+def test_ai_assistant_ai_capability_drafts_can_be_confirmed():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    skill_draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_ai_skill",
+            "payload": {
+                "code": "code_inspection_analysis",
+                "name": "代码巡检分析 Skill",
+                "prompt_template": "请归一化代码扫描结果并输出风险摘要。",
+                "required_context": ["code_repository_inspection"],
+                "status": "active",
+            },
+            "risk_level": "medium",
+            "title": "创建代码巡检分析 Skill",
+        },
+        headers=headers,
+    )
+
+    assert skill_draft_response.status_code == 200
+    skill_draft = skill_draft_response.json()["data"]
+    assert skill_draft["preview"]["validation"]["status"] == "passed"
+
+    skill_confirm_response = client.post(
+        f"/api/assistant/action-drafts/{skill_draft['id']}/confirm",
+        headers=headers,
+    )
+
+    assert skill_confirm_response.status_code == 200
+    skill_result = skill_confirm_response.json()["data"]["run"]
+    assert skill_result["result_type"] == "ai_skill"
+    skill_id = skill_result["result_id"]
+    assert app.state.store.ai_skills[skill_id]["code"] == "code_inspection_analysis"
+
+    agent_draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_ai_agent",
+            "payload": {
+                "brain_app_id": "rd_brain",
+                "code": "code_inspection_agent",
+                "default_skill_ids": [skill_id],
+                "name": "代码巡检 AI角色",
+                "status": "active",
+                "system_prompt": "你负责代码仓库质量、安全和规范巡检。",
+            },
+            "risk_level": "medium",
+            "title": "创建代码巡检 AI角色",
+        },
+        headers=headers,
+    )
+
+    assert agent_draft_response.status_code == 200
+    agent_draft = agent_draft_response.json()["data"]
+    assert agent_draft["preview"]["validation"]["status"] == "passed"
+
+    agent_confirm_response = client.post(
+        f"/api/assistant/action-drafts/{agent_draft['id']}/confirm",
+        headers=headers,
+    )
+
+    assert agent_confirm_response.status_code == 200
+    agent_result = agent_confirm_response.json()["data"]["run"]
+    assert agent_result["result_type"] == "ai_agent"
+    agent_id = agent_result["result_id"]
+    assert app.state.store.ai_agents[agent_id]["code"] == "code_inspection_agent"
+    assert app.state.store.ai_agents[agent_id]["default_skill_ids"] == [skill_id]
 
 
 def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(

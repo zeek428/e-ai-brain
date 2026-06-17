@@ -251,6 +251,8 @@ function actionDraftItems(toolResults?: AssistantToolResult[]) {
       (item) =>
         (
           item.action === 'create_scheduled_job'
+          || item.action === 'create_ai_agent'
+          || item.action === 'create_ai_skill'
           || item.action === 'create_plugin_action'
           || item.action === 'create_plugin_connection'
           || item.action === 'create_analysis_draft'
@@ -603,6 +605,18 @@ function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
     return {
       label: '打开定时作业',
       url: `/tasks/scheduled-jobs?job_id=${resolution.resource_id}`,
+    };
+  }
+  if (resolution.resource_type === 'ai_skill') {
+    return {
+      label: '打开 Skill',
+      url: `/tasks/ai-capabilities?skill_id=${resolution.resource_id}`,
+    };
+  }
+  if (resolution.resource_type === 'ai_agent') {
+    return {
+      label: '打开 AI角色',
+      url: `/tasks/ai-capabilities?agent_id=${resolution.resource_id}`,
     };
   }
   if (resolution.resource_type === 'plugin_action') {
@@ -1054,6 +1068,9 @@ function AssistantActionDraftCards({
     <div className="assistant-action-draft-list">
       {drafts.map((draft) => {
         const payload = draft.payload;
+        const isAiAgentDraft = draft.action === 'create_ai_agent';
+        const isAiSkillDraft = draft.action === 'create_ai_skill';
+        const isAiCapabilityDraft = isAiAgentDraft || isAiSkillDraft;
         const isAnalysisDraft = draft.action === 'create_analysis_draft';
         const isPluginActionDraft = draft.action === 'create_plugin_action';
         const isPluginConnectionDraft = draft.action === 'create_plugin_connection';
@@ -1080,9 +1097,11 @@ function AssistantActionDraftCards({
                   ? '确认前不会写入插件连接'
                   : isPluginActionDraft
                     ? '确认前不会写入插件动作'
-                    : isAnalysisDraft
-                      ? '确认前不会写入分析结果'
-                      : '确认前不会写入作业定义'}
+                    : isAiCapabilityDraft
+                      ? '确认前不会写入 AI 能力配置'
+                      : isAnalysisDraft
+                        ? '确认前不会写入分析结果'
+                        : '确认前不会写入作业定义'}
               </Text>
             </div>
             <div className="assistant-action-draft-grid">
@@ -1143,6 +1162,66 @@ function AssistantActionDraftCards({
                     <Text type="secondary">写入目标</Text>
                     <Text>{draftPayloadLabel(payload, 'result_mapping.write_target', resultWriteTargetLabels)}</Text>
                   </span>
+                </>
+              ) : isAiSkillDraft ? (
+                <>
+                  <span>
+                    <Text type="secondary">名称</Text>
+                    <Text>{draftPayloadText(payload, 'name')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">编码</Text>
+                    <Text>{draftPayloadText(payload, 'code')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">Prompt 模板</Text>
+                    <Text>{draftPayloadText(payload, 'prompt_template')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">上下文</Text>
+                    <Text>{draftPayloadText(payload, 'required_context')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">风险等级</Text>
+                    <Text>{draftPayloadText(payload, 'risk_level')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">状态</Text>
+                    <Text>{draftPayloadText(payload, 'status')}</Text>
+                  </span>
+                </>
+              ) : isAiAgentDraft ? (
+                <>
+                  <span>
+                    <Text type="secondary">名称</Text>
+                    <Text>{draftPayloadText(payload, 'name')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">编码</Text>
+                    <Text>{draftPayloadText(payload, 'code')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">业务大脑</Text>
+                    <Text>{draftPayloadText(payload, 'brain_app_id')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">AI 模型</Text>
+                    <Text>{draftPayloadText(payload, 'model_gateway_config_id')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">默认 Skills</Text>
+                    <Text>{draftPayloadText(payload, 'default_skill_ids')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">系统 Prompt</Text>
+                    <Text>{draftPayloadText(payload, 'system_prompt')}</Text>
+                  </span>
+                  {draftPayloadText(payload, 'assistant_prerequisite_draft_ids') !== '-' ? (
+                    <span>
+                      <Text type="secondary">前置草案</Text>
+                      <Text>{draftPayloadText(payload, 'assistant_prerequisite_draft_ids')}</Text>
+                    </span>
+                  ) : null}
                 </>
               ) : isAnalysisDraft ? (
                 <>
@@ -1272,7 +1351,11 @@ function AssistantActionDraftCards({
                   应用到插件动作表单
                 </Button>
               ) : null}
-              {!resourceLink && !isPluginConnectionDraft && !isPluginActionDraft && !isAnalysisDraft ? (
+              {!resourceLink
+              && !isAiCapabilityDraft
+              && !isPluginConnectionDraft
+              && !isPluginActionDraft
+              && !isAnalysisDraft ? (
                 <Button
                   href="/tasks/scheduled-jobs"
                   size="small"
@@ -2247,6 +2330,8 @@ export default function AssistantPage() {
     }
     if (
       resourceType !== 'assistant_analysis'
+      && resourceType !== 'ai_agent'
+      && resourceType !== 'ai_skill'
       && resourceType !== 'plugin_action'
       && resourceType !== 'plugin_connection'
       && resourceType !== 'scheduled_job'

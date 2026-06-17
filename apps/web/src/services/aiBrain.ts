@@ -274,6 +274,8 @@ export const ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY =
   'ai_brain_assistant_draft_resolution';
 
 export type AssistantDraftResourceType =
+  | 'ai_agent'
+  | 'ai_skill'
   | 'assistant_analysis'
   | 'plugin_action'
   | 'plugin_connection'

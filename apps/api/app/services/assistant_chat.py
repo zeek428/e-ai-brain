@@ -369,7 +369,11 @@ def _deterministic_assistant_output(
             raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
         return _task_creation_guide_output(selected_references=resolved_references["items"])
     if not _scheduled_job_run_once_requested(payload.message):
-        return None
+        return _deterministic_action_draft_output(
+            current_store,
+            payload=payload,
+            user=user,
+        )
     try:
         resolved_references = resolve_assistant_references(
             current_store,
@@ -414,7 +418,11 @@ def _deterministic_assistant_output(
                 attempted_queries=mention_resolution["queries"],
                 selected_references=selected_references,
             )
-        return None
+        return _deterministic_action_draft_output(
+            current_store,
+            payload=payload,
+            user=user,
+        )
     started = perf_counter()
     if len(scheduled_job_references) > 1:
         answer = "我检测到多个定时作业引用。请只保留一个定时作业后，再发送“执行一次”。"
@@ -512,6 +520,61 @@ def _deterministic_assistant_output(
             )
         ],
     }
+
+
+def _deterministic_action_draft_output(
+    current_store: MemoryStore,
+    *,
+    payload: AssistantChatRequest,
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    started = perf_counter()
+    try:
+        resolved_references = resolve_assistant_references(
+            current_store,
+            references=payload.references,
+            user=user,
+        )
+    except AssistantReferenceError as exc:
+        raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
+    tool_results = assistant_tool_results(
+        current_store,
+        message=payload.message,
+        product_id=payload.product_id,
+        references=resolved_references["items"],
+    )
+    draft_results = [
+        result
+        for result in tool_results
+        if result.get("tool") == "assistant.action_draft"
+    ]
+    if not draft_results:
+        return None
+    draft_references = [
+        reference
+        for result in draft_results
+        for reference in result.get("references", [])
+        if isinstance(reference, dict)
+    ]
+    return {
+        "answer": _action_draft_answer(draft_results),
+        "latency_ms": int((perf_counter() - started) * 1000),
+        "model": "assistant-deterministic",
+        "references": _merge_assistant_references(
+            resolved_references["items"],
+            draft_references,
+        ),
+        "selected_references": resolved_references["items"],
+        "suggestions": ["查看并确认草案", "补齐阻塞字段"],
+        "tool_results": draft_results,
+    }
+
+
+def _action_draft_answer(draft_results: list[dict[str, Any]]) -> str:
+    draft_count = sum(len(result.get("items") or []) for result in draft_results)
+    if draft_count <= 1:
+        return "我已生成可确认的配置草案，确认前不会写入真实配置。"
+    return f"我已生成 {draft_count} 个可确认的配置草案，并标明前置依赖关系。"
 
 
 def _default_model_gateway_config(current_store: MemoryStore) -> dict[str, Any] | None:

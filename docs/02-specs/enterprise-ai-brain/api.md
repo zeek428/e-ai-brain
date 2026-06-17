@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.337 |
+| 功能版本 | v1.1.338 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.338 | 2026-06-17 | AI 助手动作草案支持 `create_ai_skill`/`create_ai_agent`，代码巡检 AI 草案可返回、确认并解析 AI 能力前置草案 | Codex |
 | v1.1.337 | 2026-06-17 | AI 助手引用候选/解析 API 支持 `knowledge_chunk`，可只注入用户显式选中的知识片段 | Codex |
 | v1.1.336 | 2026-06-17 | AI 助手动作草案前端契约补充当前页详情查看，run-once 工具结果补充前端轮询运行状态追踪 | Codex |
 | v1.1.335 | 2026-06-17 | AI 助手 `assistant.task_creation_guide` 的 `suggestions` 与五类任务向导项保持一致 | Codex |
@@ -577,7 +578,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/draft-templates` | 查询当前用户可见的 AI 助手草案模板市场目录；返回周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析模板的提示、角色、依赖、流程和接入状态。 |
 | Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；覆盖业务对象、可读知识文档/知识片段和管理员可见的定时作业/运行、插件动作、AI角色、Skill。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
-| Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持定时作业、插件连接和动作配置。 |
+| Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持 AI Skill、AI角色、定时作业、插件连接、动作配置和分析草案。 |
 | Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/cancel` | 取消 pending 草案，不产生领域写入。 |
@@ -1539,7 +1540,9 @@ POST /api/assistant/references/resolve
 }
 ```
 
-助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认或取消前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。前端“查看详情”不新增 API，直接复用 `assistant.action_draft.items[].payload` 与 `preview={diffs,validation,target}`，在当前对话页展示草案状态、动作、风险等级、payload JSON、字段差异和校验问题。
+助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_ai_skill`、`create_ai_agent`、`create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；可由 `assistant_tools` 构造的草案必须在模型调用前确定性返回，模型网关未配置时也不应阻塞草案生成。状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认或取消前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `ai_skills`、`ai_agents`、`scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。前端“查看详情”不新增 API，直接复用 `assistant.action_draft.items[].payload` 与 `preview={diffs,validation,target}`，在当前对话页展示草案状态、动作、风险等级、payload JSON、字段差异和校验问题。
+
+当聊天消息要求配置代码巡检定时作业且明确要求 AI/大模型分析扫描结果时，服务端必须生成 `intent=code_inspection_setup_draft` 的 `assistant.action_draft`。若系统缺少可用代码巡检 Skill 或 AI角色，`items[]` 应按 `create_ai_skill`、`create_ai_agent`、`create_scheduled_job` 顺序返回前置草案和最终作业草案；AI角色草案通过 `payload.assistant_prerequisite_draft_ids` 依赖 Skill 草案，定时作业草案通过同字段依赖 Skill/AI角色草案。`create_ai_skill` payload 至少包含 `name/code/prompt_template/required_context/risk_level/status`；`create_ai_agent` payload 至少包含 `name/code/brain_app_id/model_gateway_config_id/default_skill_ids/system_prompt/status`。前端必须把这两类草案展示为 AI 能力配置草案，确认前不提供“应用到定时作业表单”，确认后返回 `ai_skill` 或 `ai_agent` 资源入口。
 
 当聊天消息通过结构化 `scheduled_job` 引用或显式 `@定时作业名称` 并包含“执行一次/立即执行/run once”等意图时，助手确定性调用定时作业手动运行链路并返回 `tool=assistant.scheduled_job_run`。显式 @ 名称解析成功时优先级高于请求中由前端自动候选带入的 `scheduled_job` 引用；服务端必须先用完整 @ 文本按作业名称、标题、编码或 ID 做精确命中，语义匹配出现多个相近作业但存在唯一精确命中时仍执行该精确作业。若显式 @ 已尝试解析但没有唯一可执行作业，且文本命中“提取每周用户反馈有价值信息/周反馈洞察”等场景，聊天响应必须返回 `tool=assistant.action_draft`、`intent=scheduled_job_draft`，草案项 `client_draft_id=assistant_draft_weekly_feedback_insight/action=create_scheduled_job`，并在草案 payload 的 `config_json.assistant_run_once_request` 写入 `{"requested": true, "source_message": "<原始消息>"}`；服务端会持久化该草案并返回 `server_draft_id/status/preview`，但确认前不得创建真实作业或触发外部调用。用户确认带该 run-once 标记的草案后，`POST /api/assistant/action-drafts/{draft_id}/confirm` 的 `run.result_type` 仍为 `scheduled_job`，`run.result` 返回创建出的定时作业，并额外包含 `scheduled_job_run` 公开运行记录；`assistant_action_draft.confirmed` 审计 payload 同步包含 `scheduled_job_run_id`。客户端必须消费 `run.result.scheduled_job_run.id`，在草案卡确认成功状态中展示本次运行深链，例如 `/tasks/scheduled-jobs?job_id=<job_id>&run_id=<run_id>`。对于 `user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate` 这类 AI 处理链路较长的作业，聊天接口不得等待完整外部取数、模型处理和结果写入结束；后端在运行记录进入 `running` 或 `queued` 后立即返回运行 ID、状态、详情链接和引用，后台继续完成作业，用户可围绕该 `scheduled_job_run` 继续追问或在任务中心查看最终结果。前端收到 `assistant.scheduled_job_run.items[]/summary` 后必须展示运行记录卡；当状态为 `running/queued` 时，客户端复用 `GET /api/system/scheduled-job-runs?scheduled_job_id=<scheduled_job_id>` 查询同一运行 ID 并刷新状态、导入记录和错误信息，终态后停止轮询；该追踪不需要新增助手 API。
 
@@ -1608,7 +1611,7 @@ POST /api/assistant/action-drafts/{draft_id}/cancel
 }
 ```
 
-`confirm` 只接受仍处于 `pending` 的草案。若草案 `expires_at <= now()`，服务端先将其置为 `expired` 并返回 `409 DRAFT_EXPIRED`，不得调用领域 service、不得创建 `assistant_action_runs` 或业务资源。确认时必须重新走对应领域 service 或助手运行记录执行器：`create_scheduled_job` 调用 scheduled_jobs service 并把 `config_json.assistant_draft` 写入作业配置；若草案 payload 携带 `config_json.assistant_run_once_request.requested=true`，服务端创建作业后还会触发一次 `manual` 运行，并把公开运行记录嵌入 `run.result.scheduled_job_run`；`create_plugin_connection` 调用插件连接 service，`create_plugin_action` 调用动作 service，`create_analysis_draft` 不写业务配置表，只生成 `assistant_action_runs.result_type=assistant_analysis` 的可追踪结果。确认成功返回 `{"draft": ..., "run": ...}`，`run.result_type/result_id/result` 指向创建出的领域资源或助手分析结果；确认失败不得绕过对应 service/执行器。取消接口只把 `pending` 草案置为 `cancelled` 并记录原因，不产生领域写入；取消过期草案同样返回 `DRAFT_EXPIRED`。草案创建、确认、取消和过期分别写入 `assistant_action_draft.created`、`assistant_action_draft.confirmed`、`assistant_action_draft.cancelled` 和 `assistant_action_draft.expired` 审计事件。
+`confirm` 只接受仍处于 `pending` 的草案。若草案 `expires_at <= now()`，服务端先将其置为 `expired` 并返回 `409 DRAFT_EXPIRED`，不得调用领域 service、不得创建 `assistant_action_runs` 或业务资源。确认时必须先按 `payload.assistant_prerequisite_draft_ids` 读取同创建人的已确认前置草案运行结果，把 `ai_skill/ai_agent/plugin_connection/plugin_action` 真实资源 ID 回填到当前草案的 `default_skill_ids`、`agent_id`、`skill_ids`、`connection_id`、`plugin_connection_id(s)` 或 `plugin_action_id(s)` 并重新预检，再走对应领域 service 或助手运行记录执行器：`create_ai_skill` 调用 AI 能力配置 service 写入 `ai_skills`；`create_ai_agent` 调用 AI 能力配置 service 写入 `ai_agents`，并重新校验 `brain_app_id`、`model_gateway_config_id` 和 `default_skill_ids`；`create_scheduled_job` 调用 scheduled_jobs service 并把 `config_json.assistant_draft` 写入作业配置；若草案 payload 携带 `config_json.assistant_run_once_request.requested=true`，服务端创建作业后还会触发一次 `manual` 运行，并把公开运行记录嵌入 `run.result.scheduled_job_run`；`create_plugin_connection` 调用插件连接 service，`create_plugin_action` 调用动作 service，`create_analysis_draft` 不写业务配置表，只生成 `assistant_action_runs.result_type=assistant_analysis` 的可追踪结果。确认成功返回 `{"draft": ..., "run": ...}`，`run.result_type/result_id/result` 指向创建出的领域资源或助手分析结果；确认失败不得绕过对应 service/执行器。取消接口只把 `pending` 草案置为 `cancelled` 并记录原因，不产生领域写入；取消过期草案同样返回 `DRAFT_EXPIRED`。草案创建、确认、取消和过期分别写入 `assistant_action_draft.created`、`assistant_action_draft.confirmed`、`assistant_action_draft.cancelled` 和 `assistant_action_draft.expired` 审计事件。
 
 AI 助手草案模板市场：
 

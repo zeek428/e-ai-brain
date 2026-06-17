@@ -474,6 +474,24 @@ class AssistantDraftBuilder:
             predicate=lambda item: "inspection" in str(item.get("code") or "").lower()
             or "巡检" in str(item.get("name") or ""),
         ) or _first_active(self.context["ai_skills"])
+        if ai_requested and skill is None:
+            prerequisite_items.append(self._ai_skill_draft_item("code_inspection"))
+        if ai_requested and agent is None:
+            agent_prerequisite_draft_ids = [
+                item["draft_id"]
+                for item in prerequisite_items
+                if item.get("action") == "create_ai_skill"
+            ]
+            prerequisite_items.append(
+                self._ai_agent_draft_item(
+                    "code_inspection",
+                    default_skill_ids=[skill["id"]] if skill else [],
+                    model_gateway_config_id=(
+                        model_gateway.get("id") if model_gateway else None
+                    ),
+                    prerequisite_draft_ids=agent_prerequisite_draft_ids,
+                )
+            )
         payload = {
             "agent_id": agent.get("id") if ai_requested and agent else None,
             "cron_expression": defaults.get("cron_expression") or "0 2 * * MON",
@@ -645,6 +663,61 @@ class AssistantDraftBuilder:
             "requires_confirmation": True,
             "risk_level": "medium",
             "title": title,
+        }
+
+    @staticmethod
+    def _ai_skill_draft_item(scenario: str) -> dict[str, Any]:
+        if scenario != "code_inspection":
+            raise ValueError(f"Unsupported AI skill draft scenario: {scenario}")
+        return {
+            "action": "create_ai_skill",
+            "draft_id": "assistant_draft_code_inspection_ai_skill",
+            "payload": {
+                "code": "code_inspection_analysis",
+                "name": "代码巡检分析 Skill",
+                "prompt_template": (
+                    "请基于代码扫描结果归一化仓库、分支、提交、风险等级、摘要和"
+                    "finding 列表，并保留可追踪的证据字段。"
+                ),
+                "required_context": ["code_repository_inspection"],
+                "risk_level": "medium",
+                "status": "active",
+                "version": "1.0.0",
+            },
+            "requires_confirmation": True,
+            "risk_level": "medium",
+            "title": "代码巡检分析 Skill",
+        }
+
+    @staticmethod
+    def _ai_agent_draft_item(
+        scenario: str,
+        *,
+        default_skill_ids: list[str],
+        model_gateway_config_id: str | None,
+        prerequisite_draft_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if scenario != "code_inspection":
+            raise ValueError(f"Unsupported AI role draft scenario: {scenario}")
+        payload: dict[str, Any] = {
+            "brain_app_id": "rd_brain",
+            "code": "code_inspection_agent",
+            "default_skill_ids": default_skill_ids,
+            "description": "用于代码仓库质量、安全和规范巡检的 AI角色。",
+            "model_gateway_config_id": model_gateway_config_id,
+            "name": "代码巡检 AI角色",
+            "status": "active",
+            "system_prompt": "你负责分析代码仓库扫描结果，输出风险摘要和结构化整改建议。",
+        }
+        if prerequisite_draft_ids:
+            payload["assistant_prerequisite_draft_ids"] = prerequisite_draft_ids
+        return {
+            "action": "create_ai_agent",
+            "draft_id": "assistant_draft_code_inspection_ai_agent",
+            "payload": payload,
+            "requires_confirmation": True,
+            "risk_level": "medium",
+            "title": "代码巡检 AI角色",
         }
 
 

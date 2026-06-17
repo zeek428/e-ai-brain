@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './proComponentsMock';
 
 import ScheduledJobsPage from '../src/pages/ScheduledJobs';
-import { ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY } from '../src/services/aiBrain';
+import {
+  ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
+  ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+} from '../src/services/aiBrain';
 
 function installScheduledJobsFetchMock(
   options: {
@@ -1013,8 +1016,18 @@ describe('ScheduledJobsPage', () => {
   it('resolves assistant prerequisite drafts when opening a scheduled job draft', async () => {
     const { jobCreateBodies } = installScheduledJobsFetchMock();
     window.sessionStorage.setItem(
-      'ai_brain_assistant_draft_resolution',
+      ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
       JSON.stringify({
+        assistant_draft_code_inspection_ai_agent: {
+          resource_id: 'agent_insight',
+          resource_type: 'ai_agent',
+          title: '代码巡检 AI角色',
+        },
+        assistant_draft_code_inspection_ai_skill: {
+          resource_id: 'skill_feedback',
+          resource_type: 'ai_skill',
+          title: '代码巡检分析 Skill',
+        },
         assistant_draft_github_plugin_action: {
           resource_id: 'plugin_action_github_scan',
           resource_type: 'plugin_action',
@@ -1033,18 +1046,23 @@ describe('ScheduledJobsPage', () => {
         draftId: 'assistant_draft_code_repository_inspection',
         payload: {
           assistant_prerequisite_draft_ids: [
+            'assistant_draft_code_inspection_ai_skill',
+            'assistant_draft_code_inspection_ai_agent',
             'assistant_draft_github_plugin_connection',
             'assistant_draft_github_plugin_action',
           ],
           cron_expression: '0 2 * * MON',
           enabled: true,
-          execution_mode: 'deterministic',
+          execution_mode: 'ai_generated',
           job_type: 'code_repository_inspection',
+          agent_id: null,
+          model_gateway_config_id: 'model_gateway_scheduled_job',
           name: '代码仓库质量安全规范巡检',
           plugin_action_id: null,
           plugin_connection_id: null,
           product_id: 'product_ai_brain',
           schedule_type: 'cron',
+          skill_ids: [],
           source_system: 'code-inspection',
         },
         title: '代码仓库质量安全规范巡检',
@@ -1060,6 +1078,8 @@ describe('ScheduledJobsPage', () => {
       expect(jobCreateBodies[0]).toMatchObject({
         job_type: 'code_repository_inspection',
         name: '代码仓库质量安全规范巡检',
+        agent_id: 'agent_insight',
+        skill_ids: ['skill_feedback'],
         plugin_action_id: 'plugin_action_github_scan',
         plugin_connection_id: 'connection_github_prod',
       }),

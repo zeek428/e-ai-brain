@@ -1728,6 +1728,163 @@ describe('AssistantPage', () => {
     );
   });
 
+  it('renders and confirms AI capability prerequisite drafts from the draft card', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_ai_capability_drafts',
+              latency_ms: 18,
+              message: {
+                content: '我已生成 2 个可确认的 AI 能力草案。',
+                id: 'assistant_message_ai_capability_drafts',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'code_inspection_setup_draft',
+                    items: [
+                      {
+                        action: 'create_ai_skill',
+                        client_draft_id: 'assistant_draft_code_inspection_ai_skill',
+                        draft_id: 'assistant_action_draft_skill',
+                        payload: {
+                          code: 'code_inspection_analysis',
+                          name: '代码巡检分析 Skill',
+                          prompt_template: '请归一化代码扫描结果并输出风险摘要。',
+                          required_context: ['code_repository_inspection'],
+                          risk_level: 'medium',
+                          status: 'active',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        server_draft_id: 'assistant_action_draft_skill',
+                        status: 'pending',
+                        title: '代码巡检分析 Skill',
+                      },
+                      {
+                        action: 'create_ai_agent',
+                        client_draft_id: 'assistant_draft_code_inspection_ai_agent',
+                        draft_id: 'assistant_action_draft_agent',
+                        payload: {
+                          brain_app_id: 'rd_brain',
+                          code: 'code_inspection_agent',
+                          default_skill_ids: ['assistant_draft_code_inspection_ai_skill'],
+                          model_gateway_config_id: 'model_gateway_default',
+                          name: '代码巡检 AI角色',
+                          system_prompt: '你负责代码仓库质量、安全和规范巡检。',
+                          status: 'active',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        server_draft_id: 'assistant_action_draft_agent',
+                        status: 'pending',
+                        title: '代码巡检 AI角色',
+                      },
+                    ],
+                    summary: { draft_count: 2, requires_confirmation: true },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_skill/confirm') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              draft: {
+                action: 'create_ai_skill',
+                id: 'assistant_action_draft_skill',
+                payload: {},
+                status: 'confirmed',
+                title: '代码巡检分析 Skill',
+              },
+              run: {
+                action: 'create_ai_skill',
+                draft_id: 'assistant_action_draft_skill',
+                id: 'assistant_action_run_skill',
+                result_id: 'skill_001',
+                result_type: 'ai_skill',
+                status: 'succeeded',
+              },
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_agent/confirm') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              draft: {
+                action: 'create_ai_agent',
+                id: 'assistant_action_draft_agent',
+                payload: {},
+                status: 'confirmed',
+                title: '代码巡检 AI角色',
+              },
+              run: {
+                action: 'create_ai_agent',
+                draft_id: 'assistant_action_draft_agent',
+                id: 'assistant_action_run_agent',
+                result_id: 'agent_001',
+                result_type: 'ai_agent',
+                status: 'succeeded',
+              },
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我配置 AI 代码巡检定时作业草案' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findAllByText('代码巡检分析 Skill')).toHaveLength(2);
+    expect(screen.getByText('Prompt 模板')).toBeInTheDocument();
+    expect(screen.getByText('请归一化代码扫描结果并输出风险摘要。')).toBeInTheDocument();
+    expect(screen.getAllByText('代码巡检 AI角色')).toHaveLength(2);
+    expect(screen.getByText('系统 Prompt')).toBeInTheDocument();
+    expect(screen.getByText('你负责代码仓库质量、安全和规范巡检。')).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: /确认创建/ })[0]);
+
+    expect(await screen.findByRole('link', { name: '打开 Skill' })).toHaveAttribute(
+      'href',
+      '/tasks/ai-capabilities?skill_id=skill_001',
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: /确认创建/ })[0]);
+
+    expect(await screen.findByRole('link', { name: '打开 AI角色' })).toHaveAttribute(
+      'href',
+      '/tasks/ai-capabilities?agent_id=agent_001',
+    );
+  });
+
   it('shows assistant action draft precheck issues before confirmation', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

@@ -525,6 +525,10 @@ function scheduledJobValuesFromAssistantDraft(
   const resolvedPluginConnectionId =
     stringFromDraftPayload(payload, 'plugin_connection_id')
     ?? resolveAssistantDraftResourceId(payload, 'plugin_connection');
+  const resolvedAgentId =
+    stringFromDraftPayload(payload, 'agent_id')
+    ?? resolveAssistantDraftResourceId(payload, 'ai_agent');
+  const resolvedSkillId = resolveAssistantDraftResourceId(payload, 'ai_skill');
   const pluginActionIds = uniqueStringList([
     ...stringListFromDraftPayload(payload, 'plugin_action_ids'),
     resolvedPluginActionId,
@@ -533,8 +537,12 @@ function scheduledJobValuesFromAssistantDraft(
     ...stringListFromDraftPayload(payload, 'plugin_connection_ids'),
     resolvedPluginConnectionId,
   ]);
+  const skillIds = uniqueStringList([
+    ...stringListFromDraftPayload(payload, 'skill_ids'),
+    resolvedSkillId,
+  ]);
   return {
-    agent_id: stringFromDraftPayload(payload, 'agent_id'),
+    agent_id: resolvedAgentId,
     config_json: recordFromDraftPayload(payload, 'config_json'),
     cron_expression: stringFromDraftPayload(payload, 'cron_expression'),
     enabled: booleanFromDraftPayload(payload, 'enabled', true),
@@ -555,7 +563,7 @@ function scheduledJobValuesFromAssistantDraft(
     product_id: stringFromDraftPayload(payload, 'product_id'),
     result_actions: resultActionsFromDraftPayload(payload),
     schedule_type: stringFromDraftPayload(payload, 'schedule_type') ?? 'manual',
-    skill_ids: stringListFromDraftPayload(payload, 'skill_ids'),
+    skill_ids: skillIds,
     source_system: stringFromDraftPayload(payload, 'source_system') ?? 'ai-brain',
     template: undefined,
   };
