@@ -2571,7 +2571,7 @@ function AssistantMetricsPanel({
     { label: '@ 引用使用率', value: metricPercent(summary.reference_usage_rate) },
     { label: '作业运行成功率', value: metricPercent(summary.scheduled_job_run_success_rate) },
     { label: '失败修复率', value: metricPercent(summary.failed_run_repair_rate) },
-    { label: '知识命中率', value: metricPercent(summary.knowledge_reference_hit_rate) },
+    { label: '知识引用命中率', value: metricPercent(summary.knowledge_reference_hit_rate) },
   ];
   const draftStatusItems = [
     { label: '待确认', value: metricCount(summary.draft_pending_count) },

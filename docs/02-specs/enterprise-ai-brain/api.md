@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.355 |
+| 功能版本 | v1.1.356 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.356 | 2026-06-17 | 对齐 AI 助手效果指标前端展示名：知识引用命中率与接口字段保持一致 | Codex |
 | v1.1.355 | 2026-06-17 | AI 助手新增草案修改标记接口，并细化周反馈 run-once 官方作业消歧评分契约 | Codex |
 | v1.1.354 | 2026-06-17 | AI 助手动作草案详情响应补充 `wizard_steps[]`，用于深链和历史草案卡片恢复配置向导 | Codex |
 | v1.1.353 | 2026-06-17 | AI 助手 run-once 前端契约补充：运行状态未变化但 `execution_nodes` 更新时也必须刷新进度卡片 | Codex |
@@ -1752,7 +1753,7 @@ GET /api/assistant/metrics
 }
 ```
 
-该接口只返回当前登录用户范围内的助手效果数据。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + failed) / draft_total`，动作运行成功率为 `succeeded / action_run_total`，定时作业运行成功率为 `scheduled_job_run_succeeded_count / scheduled_job_run_total`，失败修复率为“失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用”的比例，显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。知识引用命中率为“用户在同一会话显式引用的知识对象，后续助手回复也引用该知识对象”的比例；用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，前端从助手草案带入定时作业表单并保存时，若最终 payload 与草案初始 payload 在受跟踪字段上有差异，必须先调用 `POST /api/assistant/action-drafts/{draft_id}/modification` 写入该元数据。AI 助手工作台侧栏可按需调用该接口展示草案生成数、草案确认率、用户修改率、`@` 引用使用率、作业运行成功率、失败修复率和知识命中率，并展示草案状态、草案类型、作业运行成功/失败/总数、失败运行已修复/失败总数、已引用用户消息/用户消息总数、知识命中/知识请求/知识引用数等分子分母计数，便于解释关键比率和定位闭环卡点。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
+该接口只返回当前登录用户范围内的助手效果数据。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + failed) / draft_total`，动作运行成功率为 `succeeded / action_run_total`，定时作业运行成功率为 `scheduled_job_run_succeeded_count / scheduled_job_run_total`，失败修复率为“失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用”的比例，显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。知识引用命中率为“用户在同一会话显式引用的知识对象，后续助手回复也引用该知识对象”的比例；用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，前端从助手草案带入定时作业表单并保存时，若最终 payload 与草案初始 payload 在受跟踪字段上有差异，必须先调用 `POST /api/assistant/action-drafts/{draft_id}/modification` 写入该元数据。AI 助手工作台侧栏可按需调用该接口展示草案生成数、草案确认率、用户修改率、`@` 引用使用率、作业运行成功率、失败修复率和知识引用命中率，并展示草案状态、草案类型、作业运行成功/失败/总数、失败运行已修复/失败总数、已引用用户消息/用户消息总数、知识命中/知识请求/知识引用数等分子分母计数，便于解释关键比率和定位闭环卡点。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
 
 `conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
 

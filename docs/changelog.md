@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手效果指标展示口径对齐：侧栏主指标将 `knowledge_reference_hit_rate` 显示为“知识引用命中率”，和接口语义保持一致。
 - AI 助手周反馈 run-once 官方作业消歧增强：`@提取每周用户反馈有价值信息 执行一次` 同时命中 MaxCompute 原始同步等相似任务时，按官方模板、作业类型和名称语义评分执行每周用户反馈洞察作业。
 - AI 助手草案用户修改率真实采集：从助手草案带入定时作业表单并保存时，如用户修改字段，会调用 `/api/assistant/action-drafts/{draft_id}/modification` 写入 `modified_fields/user_modified` 并进入效果指标。
 - AI 助手服务端草案详情保留配置向导：聊天草案项的 `wizard_steps` 会随服务端草案持久化并在 `/assistant?draft_id=...` 深链卡片中恢复展示，避免依赖关系只存在于原始对话里。

@@ -150,7 +150,7 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('指标 @ 引用使用率')).toHaveTextContent('75%');
     expect(screen.getByLabelText('指标 作业运行成功率')).toHaveTextContent('80%');
     expect(screen.getByLabelText('指标 失败修复率')).toHaveTextContent('100%');
-    expect(screen.getByLabelText('指标 知识命中率')).toHaveTextContent('60%');
+    expect(screen.getByLabelText('指标 知识引用命中率')).toHaveTextContent('60%');
     expect(screen.getByText('草案状态')).toBeInTheDocument();
     expect(screen.getByLabelText('草案状态 待确认')).toHaveTextContent('1');
     expect(screen.getByLabelText('草案状态 已应用')).toHaveTextContent('2');
