@@ -2962,6 +2962,7 @@ export default function AssistantPage() {
       );
       toast.success('草案已应用');
     } catch (error) {
+      setDraftStatusById((items) => ({ ...items, [draftId]: 'failed' }));
       toast.error(formatMutationError(error));
     } finally {
       setDraftMutationId(undefined);

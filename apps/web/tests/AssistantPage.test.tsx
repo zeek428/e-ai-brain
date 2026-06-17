@@ -2154,6 +2154,90 @@ describe('AssistantPage', () => {
     ]);
   });
 
+  it('marks assistant action drafts as failed when confirmation fails', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_failed_draft',
+              latency_ms: 128,
+              message: {
+                content: '我已生成一个服务端草案。',
+                id: 'assistant_message_failed_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        draft_id: 'assistant_action_draft_failed_confirm',
+                        payload: {
+                          execution_mode: 'deterministic',
+                          job_type: 'dashboard_snapshot_refresh',
+                          name: '会确认失败的定时任务',
+                          schedule_type: 'manual',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        server_draft_id: 'assistant_action_draft_failed_confirm',
+                        status: 'pending',
+                        title: '创建会失败的定时任务',
+                      },
+                    ],
+                    summary: { draft_count: 1, requires_confirmation: true },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_failed_confirm/confirm') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: 'DRAFT_VALIDATION_FAILED',
+              message: '草案校验失败：缺少数据连接',
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 409 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我创建一个会失败的草案' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /确认创建/ }));
+
+    expect(await screen.findByText('失败')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /确认创建/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('重新生成「创建会失败的定时任务」草案');
+  });
+
   it('makes run-once draft confirmation explicit when an @ command needs a new scheduled job', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
