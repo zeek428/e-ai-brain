@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手草案深链追踪：打开 `/assistant?draft_id=...` 会拉取服务端草案并复用草案卡片展示状态、预检、确认/取消、查看详情和后续资源入口。
 - AI 助手 `@` 候选面板显性化：候选项拆分展示引用类型、权限状态、来源模块、更新时间和摘要；无匹配候选时面板继续提示换词或检查权限，避免输入 `@` 后像是没有响应。
 - AI 助手 `@定时作业 执行一次` 权限结果可追踪：无定时作业执行权限时返回 `assistant.scheduled_job_run summary.status=permission_denied` 并说明需要 `system.scheduled_jobs.manage`，具备该权限的非管理员可通过显式 @ 命令触发定时作业。
 - AI 助手草案模板市场补齐发布风险分析角色范围：`test_owner`、`tester`、`release_owner` 现在和产品/评审角色一样可见发布风险分析模板，与测试/发布角色快捷任务保持一致。

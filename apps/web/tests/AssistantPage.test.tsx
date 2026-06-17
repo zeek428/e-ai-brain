@@ -2554,6 +2554,81 @@ describe('AssistantPage', () => {
     );
   });
 
+  it('loads a server-side draft from route query and renders its tracking card', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_deeplink') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              action: 'create_scheduled_job',
+              client_draft_id: 'assistant_draft_weekly_feedback_insight',
+              created_at: '2026-06-17T08:00:00+00:00',
+              created_by: 'user_admin',
+              id: 'assistant_action_draft_deeplink',
+              payload: {
+                cron_expression: '0 9 * * MON',
+                execution_mode: 'ai_agent',
+                job_type: 'user_feedback_insight_extract',
+                name: '每周用户反馈洞察',
+              },
+              preview: {
+                diffs: [
+                  {
+                    change_type: 'create',
+                    current: null,
+                    field: 'name',
+                    label: '作业名称',
+                    proposed: '每周用户反馈洞察',
+                  },
+                ],
+                validation: {
+                  issues: [],
+                  status: 'passed',
+                },
+              },
+              risk_level: 'medium',
+              status: 'pending',
+              title: '每周用户反馈洞察定时作业草案',
+              updated_at: '2026-06-17T08:00:00+00:00',
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    window.history.pushState({}, '', '/assistant?draft_id=assistant_action_draft_deeplink');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const draftLinkStatus = await screen.findByLabelText('草案链接状态');
+    expect(within(draftLinkStatus).getByText('已加载')).toBeInTheDocument();
+    expect(
+      within(draftLinkStatus).getByText('已从链接打开草案：每周用户反馈洞察定时作业草案'),
+    ).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByText('每周用户反馈洞察定时作业草案')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByText('待确认')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByText('应用前预检')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByText('作业名称')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByRole('button', { name: /确认创建/ })).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByRole('button', { name: /取消/ })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual(
+      expect.arrayContaining([
+        ['/api/assistant/conversations', 'GET'],
+        ['/api/assistant/action-drafts/assistant_action_draft_deeplink', 'GET'],
+      ]),
+    );
+  });
+
   it('confirms server-side assistant action drafts from the draft card', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

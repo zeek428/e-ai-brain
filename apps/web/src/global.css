@@ -1110,11 +1110,30 @@ body {
   background: #fbfdff;
 }
 
+.assistant-query-draft-status {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #dfe6f1;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
 .assistant-query-reference-status-loading {
   background: #f8fbff;
 }
 
+.assistant-query-draft-status-loading {
+  background: #f8fbff;
+}
+
 .assistant-query-reference-status-resolved {
+  border-color: #c7e7d4;
+  background: #f6fffa;
+}
+
+.assistant-query-draft-status-resolved {
   border-color: #c7e7d4;
   background: #f6fffa;
 }
@@ -1124,8 +1143,15 @@ body {
   background: #fff8f8;
 }
 
+.assistant-query-draft-status-failed {
+  border-color: #f2c6c6;
+  background: #fff8f8;
+}
+
 .assistant-query-reference-status .ant-space,
-.assistant-query-reference-status .ant-typography {
+.assistant-query-reference-status .ant-typography,
+.assistant-query-draft-status .ant-space,
+.assistant-query-draft-status .ant-typography {
   min-width: 0;
   overflow-wrap: anywhere;
 }

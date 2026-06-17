@@ -33,9 +33,11 @@ import {
   fetchAssistantReferenceCandidates,
   fetchScheduledJobRuns,
   fetchResultWriteTargets,
+  getAssistantActionDraft,
   getStoredCurrentUser,
   readAssistantDraftResolutions,
   rememberAssistantDraftResolution,
+  type AssistantActionDraftRecord,
   type AssistantActionDraftPreview,
   type AssistantChatResponse,
   type AssistantConversationMessage,
@@ -78,6 +80,13 @@ type QueryReferenceResolution = {
   message?: string;
   referenceId: string;
   referenceType: string;
+  status: 'failed' | 'loading' | 'resolved';
+  title?: string;
+};
+
+type QueryDraftResolution = {
+  draftId: string;
+  message?: string;
   status: 'failed' | 'loading' | 'resolved';
   title?: string;
 };
@@ -883,6 +892,30 @@ function assistantQueryReferenceParams() {
   };
 }
 
+function assistantQueryDraftId() {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+  return new URLSearchParams(window.location.search).get('draft_id')?.trim() || undefined;
+}
+
+function assistantActionDraftRecordToToolItem(
+  draft: AssistantActionDraftRecord,
+): AssistantToolResultItem {
+  return {
+    action: draft.action,
+    client_draft_id: draft.client_draft_id,
+    draft_id: draft.id,
+    payload: draft.payload,
+    preview: draft.preview,
+    requires_confirmation: true,
+    risk_level: draft.risk_level,
+    server_draft_id: draft.id,
+    status: draft.status,
+    title: draft.title,
+  };
+}
+
 function queryReferenceResolutionLabel(status: QueryReferenceResolution['status']) {
   if (status === 'loading') {
     return { color: 'processing', text: '解析中' };
@@ -891,6 +924,26 @@ function queryReferenceResolutionLabel(status: QueryReferenceResolution['status'
     return { color: 'green', text: '已带入' };
   }
   return { color: 'red', text: '未带入' };
+}
+
+function queryDraftResolutionLabel(status: QueryDraftResolution['status']) {
+  if (status === 'loading') {
+    return { color: 'processing', text: '加载中' };
+  }
+  if (status === 'resolved') {
+    return { color: 'green', text: '已加载' };
+  }
+  return { color: 'red', text: '加载失败' };
+}
+
+function queryDraftResolutionText(resolution: QueryDraftResolution) {
+  if (resolution.status === 'loading') {
+    return `正在加载草案：${resolution.draftId}`;
+  }
+  if (resolution.status === 'resolved') {
+    return `已从链接打开草案：${resolution.title || resolution.draftId}`;
+  }
+  return `草案加载失败：${resolution.draftId} ${resolution.message || '不存在或无权限'}`;
 }
 
 function queryReferenceResolutionText(resolution: QueryReferenceResolution) {
@@ -2767,12 +2820,15 @@ export default function AssistantPage() {
   const [dismissedReferencePickerValue, setDismissedReferencePickerValue] = useState<string>();
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
   const [recentReferences, setRecentReferences] = useState<AssistantReference[]>(() => readRecentReferences());
+  const [linkedDraft, setLinkedDraft] = useState<AssistantToolResultItem>();
   const [referenceDetail, setReferenceDetail] = useState<AssistantReference>();
+  const [queryDraftResolution, setQueryDraftResolution] = useState<QueryDraftResolution>();
   const [queryReferenceResolution, setQueryReferenceResolution] = useState<QueryReferenceResolution>();
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
   const messageListEndRef = useRef<HTMLDivElement | null>(null);
+  const queryDraftHydratedRef = useRef(false);
   const queryReferenceHydratedRef = useRef(false);
   const draftTemplatesLoadRequestedRef = useRef(false);
   const resultWriteTargetsLoadRequestedRef = useRef(false);
@@ -2876,6 +2932,50 @@ export default function AssistantPage() {
       window.clearInterval(pollTimer);
     };
   }, [activeRunPollTargets]);
+
+  useEffect(() => {
+    if (queryDraftHydratedRef.current) {
+      return undefined;
+    }
+    const draftId = assistantQueryDraftId();
+    if (!draftId) {
+      return undefined;
+    }
+    queryDraftHydratedRef.current = true;
+    let didCancel = false;
+    setQueryDraftResolution({
+      draftId,
+      status: 'loading',
+    });
+    getAssistantActionDraft(draftId)
+      .then((draft) => {
+        if (didCancel) {
+          return;
+        }
+        const toolItem = assistantActionDraftRecordToToolItem(draft);
+        setLinkedDraft(toolItem);
+        setDraftStatusById((items) => ({ ...items, [draft.id]: draft.status }));
+        setQueryDraftResolution({
+          draftId,
+          status: 'resolved',
+          title: draft.title,
+        });
+      })
+      .catch((error) => {
+        if (!didCancel) {
+          const messageText = formatMutationError(error);
+          toast.error(messageText);
+          setQueryDraftResolution({
+            draftId,
+            message: messageText,
+            status: 'failed',
+          });
+        }
+      });
+    return () => {
+      didCancel = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (queryReferenceHydratedRef.current) {
@@ -3064,6 +3164,8 @@ export default function AssistantPage() {
     setActiveReferenceIndex(-1);
     setReferenceCandidates([]);
     setReferenceDetail(undefined);
+    setLinkedDraft(undefined);
+    setQueryDraftResolution(undefined);
     setQueryReferenceResolution(undefined);
     setDismissedReferencePickerValue(undefined);
     setSelectedReferences([]);
@@ -3395,6 +3497,11 @@ export default function AssistantPage() {
     try {
       const result = await confirmAssistantActionDraft(draftId);
       setDraftStatusById((items) => ({ ...items, [draftId]: result.draft.status }));
+      setLinkedDraft((currentDraft) => (
+        assistantDraftId(currentDraft) === draftId
+          ? assistantActionDraftRecordToToolItem(result.draft)
+          : currentDraft
+      ));
       rememberDraftResolution(
         draft,
         result.run.result_id,
@@ -3420,6 +3527,11 @@ export default function AssistantPage() {
     try {
       const result = await cancelAssistantActionDraft(draftId, '用户在 AI 助手取消');
       setDraftStatusById((items) => ({ ...items, [draftId]: result.status }));
+      setLinkedDraft((currentDraft) => (
+        assistantDraftId(currentDraft) === draftId
+          ? assistantActionDraftRecordToToolItem(result)
+          : currentDraft
+      ));
       toast.success('草案已取消');
     } catch (error) {
       toast.error(formatMutationError(error));
@@ -3543,6 +3655,34 @@ export default function AssistantPage() {
               </Space>
             ) : null}
           </div>
+          {queryDraftResolution ? (
+            <div
+              aria-label="草案链接状态"
+              className={`assistant-query-draft-status assistant-query-draft-status-${queryDraftResolution.status}`}
+            >
+              <Space size={6} wrap>
+                <Tag color={queryDraftResolutionLabel(queryDraftResolution.status).color}>
+                  {queryDraftResolutionLabel(queryDraftResolution.status).text}
+                </Tag>
+                <Text type={queryDraftResolution.status === 'failed' ? 'danger' : 'secondary'}>
+                  {queryDraftResolutionText(queryDraftResolution)}
+                </Text>
+              </Space>
+              {linkedDraft ? (
+                <AssistantActionDraftCards
+                  draftMutationId={draftMutationId}
+                  draftResolutionById={draftResolutionById}
+                  drafts={[linkedDraft]}
+                  draftStatusById={draftStatusById}
+                  onCancelDraft={cancelDraft}
+                  onConfirmDraft={confirmDraft}
+                  onRegenerateDraft={regenerateDraft}
+                  onUseDraftWizardStepPrompt={setInputValue}
+                  resultWriteTargetLabels={resultWriteTargetLabels}
+                />
+              ) : null}
+            </div>
+          ) : null}
           <div className="assistant-message-list" aria-live="polite">
             {messages.map((item) => (
               <AssistantBubble
