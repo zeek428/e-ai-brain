@@ -410,6 +410,23 @@ describe('AssistantPage', () => {
     expect(
       within(selectedReferenceList as HTMLElement).getByRole('button', { name: '移除 支付页超时排障手册' }),
     ).toBeInTheDocument();
+    fireEvent.click(
+      within(selectedReferenceList as HTMLElement).getByRole(
+        'button',
+        { name: '查看摘要 支付页超时排障手册' },
+      ),
+    );
+    const referenceDialog = await screen.findByRole('dialog', { name: '引用摘要 - 支付页超时排障手册' });
+    expect(within(referenceDialog).getByText('引用类型')).toBeInTheDocument();
+    expect(within(referenceDialog).getByText('知识文档')).toBeInTheDocument();
+    expect(within(referenceDialog).getByText('来源模块')).toBeInTheDocument();
+    expect(within(referenceDialog).getByText('知识库')).toBeInTheDocument();
+    expect(within(referenceDialog).getByText('注入口径')).toBeInTheDocument();
+    expect(within(referenceDialog).getByText('2 个知识 chunk 将注入模型')).toBeInTheDocument();
+    expect(
+      within(referenceDialog).getByText('支付页提交无响应时，先检查网关超时、回调状态和前端埋点。'),
+    ).toBeInTheDocument();
+    fireEvent.click(within(referenceDialog).getByRole('button', { name: /Close/ }));
 
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
@@ -2050,6 +2067,93 @@ describe('AssistantPage', () => {
       '/api/assistant/action-drafts/assistant_action_draft_001/confirm',
       'POST',
     ]);
+  });
+
+  it('makes run-once draft confirmation explicit when an @ command needs a new scheduled job', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_run_once_draft',
+              latency_ms: 41,
+              message: {
+                content: '还没有找到可执行的定时作业：提取每周用户反馈有价值信息。我先生成周反馈洞察定时作业草案，确认并补齐校验项后再执行一次。',
+                id: 'assistant_message_run_once_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        client_draft_id: 'assistant_draft_weekly_feedback_insight',
+                        draft_id: 'assistant_action_draft_feedback_run_once',
+                        payload: {
+                          config_json: {
+                            assistant_run_once_request: {
+                              requested: true,
+                              source_message: '@提取每周用户反馈有价值信息 执行一次',
+                            },
+                          },
+                          execution_mode: 'ai_generated',
+                          job_type: 'user_feedback_insight_extract',
+                          name: '每周用户反馈洞察抽取',
+                          schedule_type: 'cron',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        run_once_requested: true,
+                        server_draft_id: 'assistant_action_draft_feedback_run_once',
+                        status: 'pending',
+                        title: '创建周反馈洞察定时作业',
+                      },
+                    ],
+                    summary: {
+                      draft_count: 1,
+                      requires_confirmation: true,
+                      run_once_requested: true,
+                      status: 'draft_required',
+                    },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: ['查看并确认草案'],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@提取每周用户反馈有价值信息 执行一次' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('确认后执行一次')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /确认并执行一次/ })).toBeInTheDocument();
+    expect(screen.getByText('确认前不会写入作业定义；确认后会立即执行一次')).toBeInTheDocument();
   });
 
   it('does not allow expired assistant drafts to be applied through forms', async () => {

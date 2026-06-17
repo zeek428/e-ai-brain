@@ -1111,6 +1111,29 @@ body {
   line-height: 1.45;
 }
 
+.assistant-reference-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.assistant-reference-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.assistant-reference-detail-grid span,
+.assistant-reference-detail-section {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.assistant-reference-detail-grid .ant-typography,
+.assistant-reference-detail-section .ant-typography {
+  overflow-wrap: anywhere;
+}
+
 .assistant-reference-candidate-group {
   display: grid;
   gap: 6px;
@@ -1283,6 +1306,10 @@ body {
   }
 
   .assistant-draft-wizard-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-reference-detail-grid {
     grid-template-columns: 1fr;
   }
 

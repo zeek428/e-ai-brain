@@ -354,6 +354,16 @@ function itemRecord(item: AssistantToolResultItem, field: string) {
     : {};
 }
 
+function assistantDraftRunOnceRequested(draft: AssistantToolResultItem) {
+  if (draft.run_once_requested === true) {
+    return true;
+  }
+  const payload = itemRecord(draft, 'payload');
+  const configJson = itemRecord(payload, 'config_json');
+  const runOnceRequest = itemRecord(configJson, 'assistant_run_once_request');
+  return runOnceRequest.requested === true || runOnceRequest.requested === 'true';
+}
+
 function diagnosticStageItems(item: AssistantToolResultItem) {
   return Array.isArray(item.stages)
     ? item.stages.filter(
@@ -899,6 +909,58 @@ function referenceSummaryText(reference: AssistantReference) {
   return summary || '暂无摘要，仅注入引用元数据。';
 }
 
+function AssistantReferenceDetailModal({
+  reference,
+  onClose,
+}: {
+  reference?: AssistantReference;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      footer={null}
+      open={Boolean(reference)}
+      title={`引用摘要 - ${reference?.title ?? '引用'}`}
+      width={640}
+      onCancel={onClose}
+    >
+      {reference ? (
+        <div className="assistant-reference-detail">
+          <div className="assistant-reference-detail-grid">
+            <span>
+              <Text type="secondary">引用类型</Text>
+              <Text>{referenceTypeLabel(reference.type)}</Text>
+            </span>
+            <span>
+              <Text type="secondary">来源模块</Text>
+              <Text>{reference.source_module ?? referenceSourceModule(reference.type)}</Text>
+            </span>
+            <span>
+              <Text type="secondary">权限状态</Text>
+              <Text>{reference.permission_label ?? '可引用'}</Text>
+            </span>
+            <span>
+              <Text type="secondary">更新时间</Text>
+              <Text>{referenceUpdatedDate(reference) ?? '-'}</Text>
+            </span>
+            <span>
+              <Text type="secondary">注入口径</Text>
+              <Text>{referenceInjectionText(reference)}</Text>
+            </span>
+          </div>
+          <div className="assistant-reference-detail-section">
+            <Text strong>摘要</Text>
+            <Text>{referenceSummaryText(reference)}</Text>
+          </div>
+          <Button href={reference.url} size="small" type="link">
+            查看来源
+          </Button>
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
 function normalizeRecentReferences(value: unknown): AssistantReference[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1293,6 +1355,7 @@ function AssistantActionDraftCards({
         const resolution = draftId ? draftResolutionById[draftId] : undefined;
         const resourceLink = draftResourceLink(resolution);
         const runResourceLink = draftRunResourceLink(resolution);
+        const isRunOnceDraft = assistantDraftRunOnceRequested(draft);
         const currentStatus = currentDraftStatus(draft);
         const statusLabel = draftStatusLabel(currentStatus);
         const isPending = currentStatus === 'pending';
@@ -1300,6 +1363,15 @@ function AssistantActionDraftCards({
         const previewStatus = draft.preview?.validation?.status;
         const isPreviewBlocked = previewStatus === 'blocked';
         const wizardSteps = draftWizardSteps(draft);
+        const writeNotice = isPluginConnectionDraft
+          ? '确认前不会写入插件连接'
+          : isPluginActionDraft
+            ? '确认前不会写入插件动作'
+            : isAiCapabilityDraft
+              ? '确认前不会写入 AI 能力配置'
+              : isAnalysisDraft
+                ? '确认前不会写入分析结果'
+                : '确认前不会写入作业定义';
         return (
           <div className="assistant-action-draft-card" key={draftId}>
             <div className="assistant-action-draft-header">
@@ -1308,17 +1380,10 @@ function AssistantActionDraftCards({
                 <Text strong>{draft.title ?? '配置草案'}</Text>
                 {draft.risk_level ? <Tag color="orange">风险：{draft.risk_level}</Tag> : null}
                 {draft.requires_confirmation ? <Tag color={statusLabel.color}>{statusLabel.text}</Tag> : null}
+                {isRunOnceDraft ? <Tag color="geekblue">确认后执行一次</Tag> : null}
               </Space>
               <Text type="secondary">
-                {isPluginConnectionDraft
-                  ? '确认前不会写入插件连接'
-                  : isPluginActionDraft
-                    ? '确认前不会写入插件动作'
-                    : isAiCapabilityDraft
-                      ? '确认前不会写入 AI 能力配置'
-                      : isAnalysisDraft
-                        ? '确认前不会写入分析结果'
-                        : '确认前不会写入作业定义'}
+                {isRunOnceDraft ? `${writeNotice}；确认后会立即执行一次` : writeNotice}
               </Text>
             </div>
             <div className="assistant-action-draft-grid">
@@ -1519,7 +1584,7 @@ function AssistantActionDraftCards({
                     type="primary"
                     onClick={() => onConfirmDraft(draft)}
                   >
-                    确认创建
+                    {isRunOnceDraft ? '确认并执行一次' : '确认创建'}
                   </Button>
                   <Button
                     icon={<CloseCircleOutlined />}
@@ -2253,6 +2318,7 @@ export default function AssistantPage() {
   const [activeReferenceIndex, setActiveReferenceIndex] = useState(-1);
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
   const [recentReferences, setRecentReferences] = useState<AssistantReference[]>(() => readRecentReferences());
+  const [referenceDetail, setReferenceDetail] = useState<AssistantReference>();
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
@@ -2516,6 +2582,7 @@ export default function AssistantPage() {
     setMessages(welcomeMessages);
     setActiveReferenceIndex(-1);
     setReferenceCandidates([]);
+    setReferenceDetail(undefined);
     setSelectedReferences([]);
   };
 
@@ -2544,6 +2611,11 @@ export default function AssistantPage() {
   };
 
   const removeSelectedReference = (reference: AssistantReference) => {
+    setReferenceDetail((currentReference) => (
+      currentReference?.id === reference.id && currentReference.type === reference.type
+        ? undefined
+        : currentReference
+    ));
     setSelectedReferences((items) => (
       items.filter((item) => !(item.id === reference.id && item.type === reference.type))
     ));
@@ -2695,6 +2767,7 @@ export default function AssistantPage() {
       setConversationId(response.conversationId);
       setLastResponse(response);
       setActiveReferenceIndex(-1);
+      setReferenceDetail(undefined);
       setSelectedReferences([]);
       setReferenceCandidates([]);
       setMessages((items) => [
@@ -3030,6 +3103,13 @@ export default function AssistantPage() {
                       >
                         {referenceInjectionText(reference)}
                       </Tag>
+                      <Button
+                        aria-label={`查看摘要 ${reference.title}`}
+                        size="small"
+                        onClick={() => setReferenceDetail(reference)}
+                      >
+                        查看摘要
+                      </Button>
                       <Button href={reference.url} size="small" type="link">
                         查看来源
                       </Button>
@@ -3037,6 +3117,10 @@ export default function AssistantPage() {
                   </div>
                 ))}
               </div>
+              <AssistantReferenceDetailModal
+                reference={referenceDetail}
+                onClose={() => setReferenceDetail(undefined)}
+              />
             </div>
           ) : null}
           {referenceCandidates.length || isLoadingReferences ? (
