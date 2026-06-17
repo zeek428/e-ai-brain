@@ -257,6 +257,13 @@ function actionDraftItems(toolResults?: AssistantToolResult[]) {
   return (toolResults ?? [])
     .filter((toolResult) => toolResult.tool === 'assistant.action_draft')
     .flatMap((toolResult) => toolResult.items ?? [])
+    .map((item) => {
+      const draftId = assistantDraftId(item);
+      if (!draftId || item.draft_id === draftId) {
+        return item;
+      }
+      return { ...item, draft_id: draftId };
+    })
     .filter(
       (item) =>
         (
@@ -267,7 +274,7 @@ function actionDraftItems(toolResults?: AssistantToolResult[]) {
           || item.action === 'create_plugin_connection'
           || item.action === 'create_analysis_draft'
         )
-        && item.draft_id,
+        && assistantDraftId(item),
     );
 }
 
@@ -724,6 +731,15 @@ function scheduledJobRunIdFromActionResult(result?: Record<string, unknown>) {
   return runId || undefined;
 }
 
+function assistantDraftId(draft?: Pick<AssistantToolResultItem, 'client_draft_id' | 'draft_id' | 'server_draft_id'>) {
+  if (!draft) {
+    return undefined;
+  }
+  return [draft.draft_id, draft.server_draft_id, draft.client_draft_id]
+    .map((value) => String(value ?? '').trim())
+    .find(Boolean);
+}
+
 function draftRegeneratePrompt(draft: AssistantToolResultItem) {
   return `重新生成「${draft.title ?? '配置草案'}」草案`;
 }
@@ -984,7 +1000,7 @@ function storeScheduledJobDraft(draft: AssistantToolResultItem) {
   window.sessionStorage.setItem(
     ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
     JSON.stringify({
-      draftId: draft.draft_id,
+      draftId: assistantDraftId(draft),
       payload: draft.payload,
       title: draft.title,
     }),
@@ -998,7 +1014,7 @@ function storePluginActionDraft(draft: AssistantToolResultItem) {
   window.sessionStorage.setItem(
     ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
     JSON.stringify({
-      draftId: draft.draft_id,
+      draftId: assistantDraftId(draft),
       payload: draft.payload,
       title: draft.title,
     }),
@@ -1012,7 +1028,7 @@ function storePluginConnectionDraft(draft: AssistantToolResultItem) {
   window.sessionStorage.setItem(
     ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
     JSON.stringify({
-      draftId: draft.draft_id,
+      draftId: assistantDraftId(draft),
       payload: draft.payload,
       title: draft.title,
     }),
@@ -1181,7 +1197,7 @@ function AssistantActionDraftCards({
 }) {
   const [detailDraft, setDetailDraft] = useState<AssistantToolResultItem>();
   const currentDraftStatus = (draft: AssistantToolResultItem) => {
-    const draftId = draft.draft_id;
+    const draftId = assistantDraftId(draft);
     const resolution = draftId ? draftResolutionById[draftId] : undefined;
     return resolution
       ? 'applied'
@@ -1200,7 +1216,7 @@ function AssistantActionDraftCards({
         const isAnalysisDraft = draft.action === 'create_analysis_draft';
         const isPluginActionDraft = draft.action === 'create_plugin_action';
         const isPluginConnectionDraft = draft.action === 'create_plugin_connection';
-        const draftId = draft.draft_id;
+        const draftId = assistantDraftId(draft);
         const resolution = draftId ? draftResolutionById[draftId] : undefined;
         const resourceLink = draftResourceLink(resolution);
         const runResourceLink = draftRunResourceLink(resolution);
@@ -1499,9 +1515,11 @@ function AssistantActionDraftCards({
               <Button size="small" onClick={() => setDetailDraft(draft)}>
                 查看详情
               </Button>
-              <Button href={`/assistant?draft_id=${draft.draft_id}`} size="small">
-                查看草案
-              </Button>
+              {draftId ? (
+                <Button href={`/assistant?draft_id=${draftId}`} size="small">
+                  查看草案
+                </Button>
+              ) : null}
               <Button
                 aria-label="重新生成"
                 icon={<ReloadOutlined />}
@@ -2542,10 +2560,10 @@ export default function AssistantPage() {
   };
 
   const confirmDraft = async (draft: AssistantToolResultItem) => {
-    if (!draft.draft_id) {
+    const draftId = assistantDraftId(draft);
+    if (!draftId) {
       return;
     }
-    const draftId = String(draft.draft_id);
     setDraftMutationId(draftId);
     try {
       const result = await confirmAssistantActionDraft(draftId);
@@ -2566,10 +2584,10 @@ export default function AssistantPage() {
   };
 
   const cancelDraft = async (draft: AssistantToolResultItem) => {
-    if (!draft.draft_id) {
+    const draftId = assistantDraftId(draft);
+    if (!draftId) {
       return;
     }
-    const draftId = String(draft.draft_id);
     setDraftMutationId(draftId);
     try {
       const result = await cancelAssistantActionDraft(draftId, '用户在 AI 助手取消');

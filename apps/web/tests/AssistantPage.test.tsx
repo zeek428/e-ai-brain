@@ -1724,6 +1724,76 @@ describe('AssistantPage', () => {
     );
   });
 
+  it('renders assistant draft cards when only server_draft_id is present', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_local_draft',
+              latency_ms: 88,
+              message: {
+                content: '我生成了一个本地配置草案。',
+                id: 'assistant_message_local_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        payload: {
+                          execution_mode: 'deterministic',
+                          job_type: 'dashboard_snapshot_refresh',
+                          name: '本地草案仪表盘刷新',
+                          schedule_type: 'manual',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        server_draft_id: 'assistant_action_draft_server_only',
+                        status: 'pending',
+                        title: '创建本地仪表盘刷新草案',
+                      },
+                    ],
+                    summary: { draft_count: 1, requires_confirmation: true },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我生成一个本地草案' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('我生成了一个本地配置草案。')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '查看详情' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看草案' })).toHaveAttribute(
+      'href',
+      '/assistant?draft_id=assistant_action_draft_server_only',
+    );
+  });
+
   it('confirms server-side assistant action drafts from the draft card', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
