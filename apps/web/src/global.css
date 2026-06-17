@@ -782,6 +782,44 @@ body {
   text-overflow: ellipsis;
 }
 
+.assistant-draft-wizard {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #d7e6d7;
+  border-radius: 8px;
+  background: #fbfefb;
+}
+
+.assistant-draft-wizard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.assistant-draft-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.assistant-draft-wizard-step {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #dcecdc;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.assistant-draft-wizard-step .ant-typography {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .assistant-task-guide {
   display: grid;
   gap: 10px;
@@ -1224,6 +1262,10 @@ body {
   }
 
   .assistant-task-guide-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-draft-wizard-steps {
     grid-template-columns: 1fr;
   }
 

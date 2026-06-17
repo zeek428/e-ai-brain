@@ -243,6 +243,14 @@ type AssistantScheduledJobRunItem = {
   url?: string;
 };
 
+type AssistantDraftWizardStep = {
+  depends_on?: string[];
+  key?: string;
+  status?: string;
+  summary?: string;
+  title?: string;
+};
+
 function actionDraftItems(toolResults?: AssistantToolResult[]) {
   return (toolResults ?? [])
     .filter((toolResult) => toolResult.tool === 'assistant.action_draft')
@@ -492,6 +500,43 @@ function draftPayloadLabel(
     return resultWriteTargetLabels.get(value) ?? value;
   }
   return value;
+}
+
+function draftWizardSteps(draft: AssistantToolResultItem): AssistantDraftWizardStep[] {
+  const value = draft.wizard_steps;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is Record<string, unknown> => (
+      Boolean(item) && typeof item === 'object' && !Array.isArray(item)
+    ))
+    .map((item) => ({
+      depends_on: Array.isArray(item.depends_on) ? item.depends_on.map(String) : [],
+      key: item.key ? String(item.key) : undefined,
+      status: item.status ? String(item.status) : undefined,
+      summary: item.summary ? String(item.summary) : undefined,
+      title: item.title ? String(item.title) : undefined,
+    }));
+}
+
+function draftWizardStatusLabel(status?: string) {
+  if (status === 'ready') {
+    return { color: 'green', text: '已就绪' };
+  }
+  if (status === 'needs_prerequisite') {
+    return { color: 'orange', text: '需先确认前置草案' };
+  }
+  if (status === 'pending') {
+    return { color: 'blue', text: '待确认' };
+  }
+  if (status === 'skipped') {
+    return { color: 'default', text: '已跳过' };
+  }
+  if (status === 'blocked') {
+    return { color: 'red', text: '已阻塞' };
+  }
+  return { color: 'default', text: status || '未设置' };
 }
 
 function activeMentionQuery(value: string) {
@@ -966,6 +1011,41 @@ function AssistantDraftPreviewBlock({ preview }: { preview?: AssistantActionDraf
   );
 }
 
+function AssistantDraftWizardBlock({ steps }: { steps: AssistantDraftWizardStep[] }) {
+  if (!steps.length) {
+    return null;
+  }
+  return (
+    <div className="assistant-draft-wizard">
+      <div className="assistant-draft-wizard-header">
+        <Space size={8} wrap>
+          <ProjectOutlined />
+          <Text strong>配置向导</Text>
+        </Space>
+      </div>
+      <div className="assistant-draft-wizard-steps">
+        {steps.map((step, index) => {
+          const label = draftWizardStatusLabel(step.status);
+          const title = step.title || step.key || `步骤 ${index + 1}`;
+          const dependsOn = step.depends_on ?? [];
+          return (
+            <div className="assistant-draft-wizard-step" key={step.key || title}>
+              <Space size={6} wrap>
+                <Text strong>{`${title}：${label.text}`}</Text>
+                <Tag color={label.color}>{label.text}</Tag>
+              </Space>
+              {step.summary ? <Text type="secondary">{step.summary}</Text> : null}
+              {dependsOn.length ? (
+                <Text type="secondary">依赖：{dependsOn.join('、')}</Text>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AssistantDraftDetailModal({
   draft,
   onClose,
@@ -1083,6 +1163,7 @@ function AssistantActionDraftCards({
         const isPending = currentStatus === 'pending';
         const previewStatus = draft.preview?.validation?.status;
         const isPreviewBlocked = previewStatus === 'blocked';
+        const wizardSteps = draftWizardSteps(draft);
         return (
           <div className="assistant-action-draft-card" key={draftId}>
             <div className="assistant-action-draft-header">
@@ -1285,6 +1366,7 @@ function AssistantActionDraftCards({
                 </>
               )}
             </div>
+            <AssistantDraftWizardBlock steps={wizardSteps} />
             <AssistantDraftPreviewBlock preview={draft.preview} />
             <Space size={8} wrap>
               {draftId && isPending ? (

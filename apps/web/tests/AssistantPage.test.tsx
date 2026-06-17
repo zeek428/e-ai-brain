@@ -1436,6 +1436,43 @@ describe('AssistantPage', () => {
                         requires_confirmation: true,
                         risk_level: 'medium',
                         title: '代码仓库质量安全规范巡检',
+                        wizard_steps: [
+                          {
+                            depends_on: [],
+                            key: 'data_source',
+                            status: 'ready',
+                            summary: '已选择 GitHub 代码巡检动作',
+                            title: '数据来源',
+                          },
+                          {
+                            depends_on: [],
+                            key: 'ai_processing',
+                            status: 'ready',
+                            summary: '已选择代码巡检 AI角色和 Skill',
+                            title: 'AI处理',
+                          },
+                          {
+                            depends_on: [],
+                            key: 'result_action',
+                            status: 'ready',
+                            summary: '写代码巡检报告、严重问题建 Bug、发送通知',
+                            title: '结果动作',
+                          },
+                          {
+                            depends_on: [],
+                            key: 'schedule',
+                            status: 'ready',
+                            summary: 'cron: 0 2 * * MON',
+                            title: '调度策略',
+                          },
+                          {
+                            depends_on: [],
+                            key: 'confirm',
+                            status: 'pending',
+                            summary: '确认后创建定时作业',
+                            title: '确认执行',
+                          },
+                        ],
                       },
                     ],
                     summary: {
@@ -1479,6 +1516,10 @@ describe('AssistantPage', () => {
     expect(screen.getByText('Skills')).toBeInTheDocument();
     expect(screen.getByText('skill_code_inspection')).toBeInTheDocument();
     expect(screen.getByText('connection_github_prod')).toBeInTheDocument();
+    expect(screen.getByText('配置向导')).toBeInTheDocument();
+    expect(screen.getByText('数据来源：已就绪')).toBeInTheDocument();
+    expect(screen.getByText('AI处理：已就绪')).toBeInTheDocument();
+    expect(screen.getByText('确认执行：待确认')).toBeInTheDocument();
     const applyDraftLink = screen.getByRole('link', { name: '应用到定时作业表单' });
     expect(applyDraftLink).toHaveAttribute(
       'href',

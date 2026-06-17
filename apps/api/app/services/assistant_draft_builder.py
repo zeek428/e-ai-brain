@@ -540,6 +540,15 @@ class AssistantDraftBuilder:
                 if ai_requested
                 else "代码仓库质量安全规范巡检"
             ),
+            "wizard_steps": _code_inspection_wizard_steps(
+                action=action,
+                ai_requested=ai_requested,
+                agent=agent,
+                connection=connection,
+                payload=payload,
+                prerequisite_items=prerequisite_items,
+                skill=skill,
+            ),
         }
         items = [*prerequisite_items, item]
         intent = "code_inspection_setup_draft" if prerequisite_items else "scheduled_job_draft"
@@ -867,6 +876,119 @@ def _first_indexed_knowledge_document(items: list[dict[str, Any]]) -> dict[str, 
         if status in {"indexed", "text_indexed", "vector_indexed"}:
             return item
     return None
+
+
+def _code_inspection_wizard_steps(
+    *,
+    action: dict[str, Any] | None,
+    ai_requested: bool,
+    agent: dict[str, Any] | None,
+    connection: dict[str, Any] | None,
+    payload: dict[str, Any],
+    prerequisite_items: list[dict[str, Any]],
+    skill: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    prerequisite_ids = [str(item["draft_id"]) for item in prerequisite_items]
+    data_source_prerequisites = [
+        str(item["draft_id"])
+        for item in prerequisite_items
+        if item.get("action") in {"create_plugin_connection", "create_plugin_action"}
+    ]
+    ai_prerequisites = [
+        str(item["draft_id"])
+        for item in prerequisite_items
+        if item.get("action") in {"create_ai_skill", "create_ai_agent"}
+    ]
+    action_name = str(action.get("name") or action.get("code")) if action else ""
+    data_source_ready = action is not None and connection is not None
+    if data_source_ready:
+        data_source_summary = f"已选择 {action_name}" if action_name else "已选择代码巡检动作"
+    elif data_source_prerequisites:
+        data_source_summary = "需先确认插件连接和代码巡检动作"
+    else:
+        data_source_summary = "需补齐代码仓库数据来源"
+
+    if not ai_requested:
+        ai_status = "skipped"
+        ai_summary = "不调用 AI"
+    elif ai_prerequisites:
+        ai_status = "needs_prerequisite"
+        ai_summary = f"需先确认{_draft_titles(ai_prerequisites, prerequisite_items)}"
+    elif agent is not None and skill is not None:
+        ai_status = "ready"
+        ai_summary = "已选择代码巡检 AI角色和 Skill"
+    else:
+        ai_status = "needs_prerequisite"
+        ai_summary = "需补齐代码巡检 AI角色和 Skill"
+
+    schedule_type = str(payload.get("schedule_type") or "manual")
+    cron_expression = payload.get("cron_expression")
+    schedule_summary = (
+        f"cron: {cron_expression}" if schedule_type == "cron" and cron_expression else schedule_type
+    )
+    return [
+        {
+            "depends_on": data_source_prerequisites,
+            "key": "data_source",
+            "status": "ready" if data_source_ready else "needs_prerequisite",
+            "summary": data_source_summary,
+            "title": "数据来源",
+        },
+        {
+            "depends_on": ai_prerequisites,
+            "key": "ai_processing",
+            "status": ai_status,
+            "summary": ai_summary,
+            "title": "AI处理",
+        },
+        {
+            "depends_on": [],
+            "key": "result_action",
+            "status": "ready",
+            "summary": _result_actions_summary(payload.get("result_actions")),
+            "title": "结果动作",
+        },
+        {
+            "depends_on": [],
+            "key": "schedule",
+            "status": "ready",
+            "summary": schedule_summary,
+            "title": "调度策略",
+        },
+        {
+            "depends_on": prerequisite_ids,
+            "key": "confirm",
+            "status": "pending",
+            "summary": "确认前置草案后创建定时作业"
+            if prerequisite_ids
+            else "确认后创建定时作业",
+            "title": "确认执行",
+        },
+    ]
+
+
+def _draft_titles(draft_ids: list[str], items: list[dict[str, Any]]) -> str:
+    titles = [
+        str(item.get("title") or item.get("draft_id"))
+        for item in items
+        if str(item.get("draft_id")) in draft_ids
+    ]
+    return "、".join(title for title in titles if title)
+
+
+def _result_actions_summary(result_actions: Any) -> str:
+    labels = []
+    for action in result_actions or []:
+        if not isinstance(action, dict):
+            continue
+        action_type = action.get("type")
+        if action_type == "write_code_inspection_report":
+            labels.append("写代码巡检报告")
+        elif action_type == "create_bug_for_severe_findings":
+            labels.append("严重问题建 Bug")
+        elif action_type == "send_notification":
+            labels.append("发送通知")
+    return "、".join(labels) if labels else "记录运行结果"
 
 
 def _references(entity_type: str, items: list[dict[str, Any]]) -> list[dict[str, str]]:

@@ -1005,6 +1005,12 @@ def _scheduled_job_references_from_explicit_mentions(
             if len(exact_matches) == 1:
                 matches = exact_matches
         if len(matches) != 1:
+            runnable_matches = [
+                job for job in matches if _scheduled_job_is_runnable_mention_match(job)
+            ]
+            if len(runnable_matches) == 1:
+                matches = runnable_matches
+        if len(matches) != 1:
             return {"attempted": True, "queries": queries, "references": []}
         job = matches[0]
         job_id = str(job["id"])
@@ -1083,6 +1089,10 @@ def _scheduled_job_exactly_matches_mention(job: dict[str, Any], query: str) -> b
             job.get("code"),
         )
     )
+
+
+def _scheduled_job_is_runnable_mention_match(job: dict[str, Any]) -> bool:
+    return bool(job.get("enabled")) and str(job.get("status") or "active") == "active"
 
 
 def _normalized_mention_token(value: Any) -> str:

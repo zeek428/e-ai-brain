@@ -2194,6 +2194,49 @@ def test_ai_assistant_chat_generates_ai_capability_prerequisites_for_ai_code_ins
     assert job_item["payload"]["execution_mode"] == "ai_generated"
     assert job_item["payload"]["plugin_action_id"] == "plugin_action_github_code_inspection"
     assert job_item["payload"]["model_gateway_config_id"] == "model_gateway_default"
+    assert job_item["wizard_steps"] == [
+        {
+            "depends_on": [],
+            "key": "data_source",
+            "status": "ready",
+            "summary": "已选择 GitHub 代码巡检动作",
+            "title": "数据来源",
+        },
+        {
+            "depends_on": [
+                skill_item["client_draft_id"],
+                agent_item["client_draft_id"],
+            ],
+            "key": "ai_processing",
+            "status": "needs_prerequisite",
+            "summary": "需先确认代码巡检分析 Skill、代码巡检 AI角色",
+            "title": "AI处理",
+        },
+        {
+            "depends_on": [],
+            "key": "result_action",
+            "status": "ready",
+            "summary": "写代码巡检报告、严重问题建 Bug、发送通知",
+            "title": "结果动作",
+        },
+        {
+            "depends_on": [],
+            "key": "schedule",
+            "status": "ready",
+            "summary": "cron: 0 2 * * MON",
+            "title": "调度策略",
+        },
+        {
+            "depends_on": [
+                skill_item["client_draft_id"],
+                agent_item["client_draft_id"],
+            ],
+            "key": "confirm",
+            "status": "pending",
+            "summary": "确认前置草案后创建定时作业",
+            "title": "确认执行",
+        },
+    ]
 
 
 def test_ai_assistant_generated_ai_code_inspection_drafts_confirm_in_order(monkeypatch):
@@ -2511,6 +2554,84 @@ def test_ai_assistant_chat_runs_exact_explicit_mention_when_similar_jobs_exist(
     assert run["scheduled_job_id"] == "scheduled_job_feedback_exact"
     assert message["tool_results"][0]["summary"]["scheduled_job_id"] == (
         "scheduled_job_feedback_exact"
+    )
+
+
+def test_ai_assistant_chat_prefers_enabled_job_when_run_once_alias_matches_history(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    base_job = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "execution_mode": "deterministic",
+        "interval_seconds": None,
+        "job_type": "dashboard_snapshot_refresh",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_feedback_active"] = {
+        **base_job,
+        "code": "weekly_feedback_insight",
+        "enabled": True,
+        "id": "scheduled_job_feedback_active",
+        "name": "每周用户反馈洞察抽取",
+        "status": "active",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_feedback_history"] = {
+        **base_job,
+        "code": "weekly_feedback_insight_history",
+        "enabled": False,
+        "id": "scheduled_job_feedback_history",
+        "name": "每周用户反馈洞察历史任务",
+        "status": "disabled",
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("assistant deterministic run should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "@提取每周用户反馈有价值信息 执行一次",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    assert "已执行「每周用户反馈洞察抽取」一次" in message["content"]
+    run = next(iter(app.state.store.scheduled_job_runs.values()))
+    assert run["scheduled_job_id"] == "scheduled_job_feedback_active"
+    assert message["tool_results"][0]["summary"]["scheduled_job_id"] == (
+        "scheduled_job_feedback_active"
     )
 
 
