@@ -1053,6 +1053,21 @@ describe('AssistantPage', () => {
     expect(screen.getByText('已刷新到最新状态：成功')).toBeInTheDocument();
     expect(screen.getByText('导入记录：19')).toBeInTheDocument();
     expect(scrollIntoViewMock).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '问这次运行' }));
+    expect(assistantInput).toHaveValue('@提取每周用户反馈有价值信息 / succeeded 为什么这次任务失败？');
+    const currentContext = screen.getByLabelText('本次上下文');
+    expect(within(currentContext).getByText('运行记录')).toBeInTheDocument();
+    expect(within(currentContext).getByText('任务中心 · 可引用')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '生成运行修复草案' }));
+    expect(assistantInput).toHaveValue(
+      '@提取每周用户反馈有价值信息 / succeeded 这次失败怎么修？帮我生成修复草案',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '对比这次运行' }));
+    expect(assistantInput).toHaveValue('@提取每周用户反馈有价值信息 / succeeded 和上次成功有什么不同？');
+
     expect(chatRequestBody).toMatchObject({
       message: '@提取每周用户反馈有价值信息 执行一次',
       references: [

@@ -430,12 +430,31 @@ function scheduledJobRunReferenceFromToolItem(
   };
 }
 
+function scheduledJobRunReferenceFromRunItem(
+  item: AssistantScheduledJobRunItem,
+): AssistantReference {
+  return {
+    id: item.id,
+    title: item.title,
+    type: 'scheduled_job_run',
+    url: item.url ?? `/tasks/scheduled-jobs?run_id=${encodeURIComponent(item.id)}`,
+  };
+}
+
 function scheduledJobRunFollowupPrompt(
   item: AssistantToolResultItem,
   prompt: string,
 ) {
   const reference = scheduledJobRunReferenceFromToolItem(item);
   return reference ? `@${reference.title} ${prompt}` : prompt;
+}
+
+function scheduledJobRunItemFollowupPrompt(
+  item: AssistantScheduledJobRunItem,
+  prompt: string,
+) {
+  const reference = scheduledJobRunReferenceFromRunItem(item);
+  return `@${reference.title} ${prompt}`;
 }
 
 function scheduledJobRunStatusLabel(status?: string) {
@@ -1737,8 +1756,10 @@ function AssistantTaskCreationGuideCards({
 
 function AssistantScheduledJobRunCards({
   items,
+  onUseRunFollowupPrompt,
 }: {
   items: AssistantScheduledJobRunItem[];
+  onUseRunFollowupPrompt: (item: AssistantScheduledJobRunItem, prompt: string) => void;
 }) {
   if (!items.length) {
     return null;
@@ -1789,6 +1810,32 @@ function AssistantScheduledJobRunCards({
             {item.errorMessage ? (
               <Text type="danger">错误：{item.errorMessage}</Text>
             ) : null}
+            <Space className="assistant-run-actions" size={8} wrap>
+              <Button
+                aria-label="问这次运行"
+                icon={<RobotOutlined />}
+                size="small"
+                onClick={() => onUseRunFollowupPrompt(item, '为什么这次任务失败？')}
+              >
+                问这次运行
+              </Button>
+              <Button
+                aria-label="生成运行修复草案"
+                icon={<FileTextOutlined />}
+                size="small"
+                onClick={() => onUseRunFollowupPrompt(item, '这次失败怎么修？帮我生成修复草案')}
+              >
+                生成修复草案
+              </Button>
+              <Button
+                aria-label="对比这次运行"
+                icon={<ReloadOutlined />}
+                size="small"
+                onClick={() => onUseRunFollowupPrompt(item, '和上次成功有什么不同？')}
+              >
+                对比上次成功
+              </Button>
+            </Space>
           </div>
         );
       })}
@@ -2234,6 +2281,7 @@ function AssistantBubble({
   onCancelDraft,
   onConfirmDraft,
   onRegenerateDraft,
+  onUseRunCardFollowupPrompt,
   onUseRunFollowupPrompt,
   onUseTaskGuidePrompt,
   resultWriteTargetLabels,
@@ -2246,6 +2294,7 @@ function AssistantBubble({
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
   onRegenerateDraft: (draft: AssistantToolResultItem) => void;
+  onUseRunCardFollowupPrompt: (item: AssistantScheduledJobRunItem, prompt: string) => void;
   onUseRunFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
   onUseTaskGuidePrompt: (prompt: string) => void;
   resultWriteTargetLabels: Map<string, string>;
@@ -2293,7 +2342,10 @@ function AssistantBubble({
           items={taskGuideItems}
           onUsePrompt={onUseTaskGuidePrompt}
         />
-        <AssistantScheduledJobRunCards items={runItems} />
+        <AssistantScheduledJobRunCards
+          items={runItems}
+          onUseRunFollowupPrompt={onUseRunCardFollowupPrompt}
+        />
         <AssistantScheduledJobDiagnosticCards
           items={diagnosticItems}
           onUseRunFollowupPrompt={onUseRunFollowupPrompt}
@@ -2884,6 +2936,14 @@ export default function AssistantPage() {
     setInputValue(scheduledJobRunFollowupPrompt(item, prompt));
   };
 
+  const useScheduledJobRunCardFollowupPrompt = (
+    item: AssistantScheduledJobRunItem,
+    prompt: string,
+  ) => {
+    addSelectedReference(scheduledJobRunReferenceFromRunItem(item));
+    setInputValue(scheduledJobRunItemFollowupPrompt(item, prompt));
+  };
+
   const confirmDraft = async (draft: AssistantToolResultItem) => {
     const draftId = assistantDraftId(draft);
     if (!draftId) {
@@ -3051,6 +3111,7 @@ export default function AssistantPage() {
                 onCancelDraft={cancelDraft}
                 onConfirmDraft={confirmDraft}
                 onRegenerateDraft={regenerateDraft}
+                onUseRunCardFollowupPrompt={useScheduledJobRunCardFollowupPrompt}
                 onUseRunFollowupPrompt={useScheduledJobRunFollowupPrompt}
                 onUseTaskGuidePrompt={setInputValue}
                 resultWriteTargetLabels={resultWriteTargetLabels}
