@@ -609,7 +609,7 @@ def test_ai_assistant_chat_returns_scheduled_job_run_diagnostic(monkeypatch):
     response = client.post(
         "/api/assistant/chat",
         json={
-            "message": "为什么这次定时任务失败？",
+            "message": "为什么这次失败？",
             "references": [
                 {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
             ],
@@ -708,7 +708,7 @@ def test_ai_assistant_chat_compares_run_with_previous_success(monkeypatch):
     response = client.post(
         "/api/assistant/chat",
         json={
-            "message": "这次任务和上次成功有什么不同？",
+            "message": "和上次成功有什么不同？",
             "references": [
                 {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
             ],
@@ -2002,6 +2002,45 @@ def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(
     }
     assert message["tool_results"][0]["tool"] == "assistant.scheduled_job_run"
     assert message["tool_results"][0]["summary"]["run_id"] == run["id"]
+
+
+def test_ai_assistant_chat_generates_feedback_draft_when_run_once_job_missing(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("assistant run-once fallback should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "@提取每周用户反馈有价值信息 执行一次",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    message = payload["message"]
+    assert payload["model"] == "assistant-deterministic"
+    assert "还没有找到可执行的定时作业" in message["content"]
+    assert app.state.store.scheduled_job_runs == {}
+    draft_result = message["tool_results"][0]
+    assert draft_result["tool"] == "assistant.action_draft"
+    assert draft_result["intent"] == "scheduled_job_draft"
+    assert draft_result["summary"]["run_once_requested"] is True
+    draft_item = draft_result["items"][0]
+    assert draft_item["client_draft_id"] == "assistant_draft_weekly_feedback_insight"
+    assert draft_item["server_draft_id"] in app.state.store.assistant_action_drafts
+    assert draft_item["payload"]["config_json"]["assistant_run_once_request"] == {
+        "requested": True,
+        "source_message": "@提取每周用户反馈有价值信息 执行一次",
+    }
 
 
 def test_ai_assistant_chat_runs_exact_explicit_mention_when_similar_jobs_exist(

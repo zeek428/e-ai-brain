@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.330 |
+| 功能版本 | v1.1.332 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.332 | 2026-06-17 | AI 助手 `@周反馈洞察 执行一次` 未命中已配置作业时返回可确认定时作业草案，不再停在找不到引用 | Codex |
+| v1.1.331 | 2026-06-17 | AI 助手已引用 `scheduled_job_run` 时，失败诊断和上次成功对比支持短追问触发 | Codex |
 | v1.1.330 | 2026-06-17 | AI 助手工作台侧栏按需消费 `/api/assistant/metrics`，展示当前用户草案闭环、引用和运行效果指标 | Codex |
 | v1.1.329 | 2026-06-17 | AI 助手聊天新增 `scheduled_job_run_repair_draft`，可从失败运行生成可确认的结果动作修复草案 | Codex |
 | v1.1.328 | 2026-06-17 | AI 助手 `@定时作业 执行一次` API 契约补充完整 @ 名称精确匹配优先，并覆盖错误自动候选引用 | Codex |
@@ -1414,7 +1416,7 @@ GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limi
 
 `type` 仍可选传，用于限定候选类型；不传时按权限返回混合候选。管理员可得到配置/运行类候选，普通用户只能得到业务对象和可读知识文档。候选可携带 `source_module`、`permission_label`、`updated_at` 和轻量 `summary`，供前端“本次上下文”展示来源、权限、更新时间、知识 chunk 注入状态和引用摘要；模型日志不得保存完整知识正文。
 
-当聊天消息显式引用 `scheduled_job_run` 且问题包含失败、原因、诊断或排查意图时，响应中的 `message.tool_results[]` 会包含：
+当聊天消息显式引用 `scheduled_job_run` 且问题包含失败、原因、诊断或排查意图时，响应中的 `message.tool_results[]` 会包含；因为引用本身已经提供运行上下文，短追问“为什么这次失败？”也必须触发该工具，不要求文本再次出现“任务/作业/run”等词：
 
 ```json
 {
@@ -1443,7 +1445,7 @@ GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limi
 
 `result_action` 段的结果写入字段来自与 `/api/system/result-write-records?scheduled_job_run_id=<run_id>` 同源的派生读模型，只返回记录 ID、状态、写入目标和标签等排障元数据，不返回完整插件请求/响应、模型 Prompt、模型输出或密钥。
 
-当聊天消息显式引用 `scheduled_job_run` 且问题包含“和上次成功有什么不同/对比/差异”意图时，响应中的 `message.tool_results[]` 会包含：
+当聊天消息显式引用 `scheduled_job_run` 且问题包含“和上次成功有什么不同/对比/差异”意图时，响应中的 `message.tool_results[]` 会包含；短追问“和上次成功有什么不同？”应直接使用已引用运行记录：
 
 ```json
 {
@@ -1515,7 +1517,7 @@ POST /api/assistant/references/resolve
 
 助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。支持的动作包括 `create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认或取消前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。
 
-当聊天消息通过结构化 `scheduled_job` 引用或显式 `@定时作业名称` 并包含“执行一次/立即执行/run once”等意图时，助手确定性调用定时作业手动运行链路并返回 `tool=assistant.scheduled_job_run`。显式 @ 名称解析成功时优先级高于请求中由前端自动候选带入的 `scheduled_job` 引用；服务端必须先用完整 @ 文本按作业名称、标题、编码或 ID 做精确命中，语义匹配出现多个相近作业但存在唯一精确命中时仍执行该精确作业。对于 `user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate` 这类 AI 处理链路较长的作业，聊天接口不得等待完整外部取数、模型处理和结果写入结束；后端在运行记录进入 `running` 或 `queued` 后立即返回运行 ID、状态、详情链接和引用，后台继续完成作业，用户可围绕该 `scheduled_job_run` 继续追问或在任务中心查看最终结果。
+当聊天消息通过结构化 `scheduled_job` 引用或显式 `@定时作业名称` 并包含“执行一次/立即执行/run once”等意图时，助手确定性调用定时作业手动运行链路并返回 `tool=assistant.scheduled_job_run`。显式 @ 名称解析成功时优先级高于请求中由前端自动候选带入的 `scheduled_job` 引用；服务端必须先用完整 @ 文本按作业名称、标题、编码或 ID 做精确命中，语义匹配出现多个相近作业但存在唯一精确命中时仍执行该精确作业。若显式 @ 已尝试解析但没有唯一可执行作业，且文本命中“提取每周用户反馈有价值信息/周反馈洞察”等场景，聊天响应必须返回 `tool=assistant.action_draft`、`intent=scheduled_job_draft`，草案项 `client_draft_id=assistant_draft_weekly_feedback_insight/action=create_scheduled_job`，并在草案 payload 的 `config_json.assistant_run_once_request` 写入 `{"requested": true, "source_message": "<原始消息>"}`；服务端会持久化该草案并返回 `server_draft_id/status/preview`，但确认前不得创建真实作业或触发外部调用。对于 `user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate` 这类 AI 处理链路较长的作业，聊天接口不得等待完整外部取数、模型处理和结果写入结束；后端在运行记录进入 `running` 或 `queued` 后立即返回运行 ID、状态、详情链接和引用，后台继续完成作业，用户可围绕该 `scheduled_job_run` 继续追问或在任务中心查看最终结果。
 
 当聊天消息包含“邮件摘要”“邮件收取”“邮箱摘要”“email digest”等意图，并明确要求生成定时作业草案时，`message.tool_results[]` 必须返回 `tool=assistant.action_draft`、`intent=email_digest_job_draft`。草案项 `client_draft_id=assistant_draft_email_digest`、`action=create_scheduled_job`、`title=邮件摘要收取`，payload 复用 `scheduled_job_templates.email_digest` 默认值，至少包含 `job_type=plugin_action_invoke`、`execution_mode=deterministic`、`schedule_type=cron`、`cron_expression=0 8 * * MON-FRI`、`source_system=email`、`plugin_input_mapping.poll_since={{current_date-1}}`，并在存在可用 `receive_email_messages` 动作和同插件邮箱连接时写入 `plugin_action_id` 与 `plugin_connection_id`。该草案同样会持久化为 `assistant_action_drafts`，确认前不创建真实定时作业。
 

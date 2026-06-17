@@ -20,7 +20,7 @@ def assistant_tool_results(
     """Deterministic read-model style tools used before asking the model."""
 
     context = _assistant_read_context(current_store, product_id=product_id)
-    intents = _assistant_tool_intents(message)
+    intents = _assistant_tool_intents(message, references=references or [])
     draft_builder = AssistantDraftBuilder(context)
     results: list[dict[str, Any]] = []
     for intent in intents:
@@ -156,8 +156,13 @@ def _assistant_read_context(current_store: Any, *, product_id: str | None) -> di
     }
 
 
-def _assistant_tool_intents(message: str) -> list[str]:
+def _assistant_tool_intents(
+    message: str,
+    *,
+    references: list[dict[str, Any]] | None = None,
+) -> list[str]:
     normalized = message.lower()
+    has_run_reference = _has_reference_type(references or [], "scheduled_job_run")
     intents: list[str] = []
     if _plugin_connection_draft_requested(normalized):
         intents.append("plugin_connection_draft")
@@ -178,9 +183,9 @@ def _assistant_tool_intents(message: str) -> list[str]:
         intents.append("release_risk_analysis_draft")
     if _scheduled_job_run_repair_draft_requested(normalized):
         intents.append("scheduled_job_run_repair_draft")
-    if _scheduled_job_run_comparison_requested(normalized):
+    if _scheduled_job_run_comparison_requested(normalized, has_run_reference=has_run_reference):
         intents.append("scheduled_job_run_comparison")
-    if _scheduled_job_diagnostic_requested(normalized):
+    if _scheduled_job_diagnostic_requested(normalized, has_run_reference=has_run_reference):
         intents.append("scheduled_job_diagnostic")
     keyword_map = [
         (("进展", "进度", "全链路", "项目", "开发情况", "progress"), "delivery_progress"),
@@ -198,7 +203,15 @@ def _assistant_tool_intents(message: str) -> list[str]:
     return _unique(intents)[:4]
 
 
-def _scheduled_job_diagnostic_requested(normalized_message: str) -> bool:
+def _has_reference_type(references: list[dict[str, Any]], reference_type: str) -> bool:
+    return any(reference.get("type") == reference_type for reference in references)
+
+
+def _scheduled_job_diagnostic_requested(
+    normalized_message: str,
+    *,
+    has_run_reference: bool = False,
+) -> bool:
     has_diagnostic_intent = any(
         keyword in normalized_message
         for keyword in ("为什么", "原因", "失败", "诊断", "排查", "failed", "failure", "diagnose")
@@ -207,10 +220,14 @@ def _scheduled_job_diagnostic_requested(normalized_message: str) -> bool:
         keyword in normalized_message
         for keyword in ("定时任务", "定时作业", "作业", "任务", "scheduled job", "run")
     )
-    return has_diagnostic_intent and has_scheduled_job_context
+    return has_diagnostic_intent and (has_scheduled_job_context or has_run_reference)
 
 
-def _scheduled_job_run_comparison_requested(normalized_message: str) -> bool:
+def _scheduled_job_run_comparison_requested(
+    normalized_message: str,
+    *,
+    has_run_reference: bool = False,
+) -> bool:
     has_compare_intent = any(
         keyword in normalized_message
         for keyword in (
@@ -229,7 +246,7 @@ def _scheduled_job_run_comparison_requested(normalized_message: str) -> bool:
         keyword in normalized_message
         for keyword in ("这次", "本次", "任务", "作业", "运行", "scheduled job", "run")
     )
-    return has_compare_intent and has_run_context
+    return has_compare_intent and (has_run_context or has_run_reference)
 
 
 def _scheduled_job_run_repair_draft_requested(normalized_message: str) -> bool:

@@ -400,6 +400,16 @@ def _deterministic_assistant_output(
         scheduled_job_references = mention_resolution["references"]
     elif not scheduled_job_references:
         if mention_resolution["attempted"]:
+            draft_output = _scheduled_job_run_once_missing_job_draft_output(
+                current_store=current_store,
+                message=payload.message,
+                product_id=payload.product_id,
+                queries=mention_resolution["queries"],
+                selected_references=selected_references,
+                user=user,
+            )
+            if draft_output is not None:
+                return draft_output
             return _scheduled_job_reference_needed_output(
                 attempted_queries=mention_resolution["queries"],
                 selected_references=selected_references,
@@ -825,6 +835,85 @@ def _scheduled_job_reference_needed_output(
             }
         ],
     }
+
+
+def _scheduled_job_run_once_missing_job_draft_output(
+    *,
+    current_store: MemoryStore,
+    message: str,
+    product_id: str | None,
+    queries: list[str],
+    selected_references: list[dict[str, str]],
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    if "admin" not in set(user.get("roles") or []):
+        return None
+    if not _weekly_feedback_run_once_draft_requested(message, queries):
+        return None
+    started = perf_counter()
+    tool_results = assistant_tool_results(
+        current_store,
+        message="请帮我生成每周用户反馈洞察定时作业草案",
+        product_id=product_id,
+        references=selected_references,
+    )
+    draft_results = [
+        result
+        for result in tool_results
+        if result.get("tool") == "assistant.action_draft"
+        and result.get("intent") == "scheduled_job_draft"
+    ]
+    if not draft_results:
+        return None
+    for result in draft_results:
+        summary = dict(result.get("summary") or {})
+        summary["run_once_requested"] = True
+        summary["status"] = "draft_required"
+        result["summary"] = summary
+        for item in result.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            payload = dict(item.get("payload") or {})
+            config_json = dict(payload.get("config_json") or {})
+            config_json["assistant_run_once_request"] = {
+                "requested": True,
+                "source_message": message,
+            }
+            payload["config_json"] = config_json
+            item["payload"] = payload
+            item["run_once_requested"] = True
+    draft_references = [
+        reference
+        for result in draft_results
+        for reference in result.get("references", [])
+        if isinstance(reference, dict)
+    ]
+    query_text = "、".join(queries) if queries else "这个 @ 引用"
+    return {
+        "answer": (
+            f"还没有找到可执行的定时作业：{query_text}。"
+            "我先生成周反馈洞察定时作业草案，确认并补齐校验项后再执行一次。"
+        ),
+        "latency_ms": int((perf_counter() - started) * 1000),
+        "model": "assistant-deterministic",
+        "references": _merge_assistant_references(selected_references, draft_references),
+        "selected_references": selected_references,
+        "suggestions": ["查看并确认草案", "补齐数据连接和结果动作"],
+        "tool_results": draft_results,
+    }
+
+
+def _weekly_feedback_run_once_draft_requested(message: str, queries: list[str]) -> bool:
+    normalized = f"{message} {' '.join(queries)}".lower()
+    has_feedback_context = any(
+        keyword in normalized
+        for keyword in ("用户反馈", "周反馈", "每周", "feedback", "user feedback")
+    )
+    has_insight_context = any(
+        keyword in normalized
+        for keyword in ("洞察", "提取", "抽取", "有价值", "价值", "信息", "insight", "extract")
+    )
+    return has_feedback_context and has_insight_context
 
 
 def _scheduled_job_references_from_explicit_mentions(
