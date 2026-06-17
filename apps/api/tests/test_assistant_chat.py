@@ -107,6 +107,32 @@ def seed_assistant_knowledge_reference_documents() -> None:
 
 def seed_assistant_operational_references() -> None:
     now = "2026-06-14T09:30:00+00:00"
+    app.state.store.integration_plugins["plugin_http"] = {
+        "code": "generic_http",
+        "created_at": now,
+        "description": "通用 HTTP 插件。",
+        "id": "plugin_http",
+        "name": "通用 HTTP 插件",
+        "plugin_type": "http",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.plugin_connections["plugin_connection_maxcompute"] = {
+        "auth_config": {},
+        "auth_type": "none",
+        "created_at": now,
+        "created_by": "user_admin",
+        "endpoint_url": "https://feedback.example.com",
+        "environment": "prod",
+        "id": "plugin_connection_maxcompute",
+        "max_retries": 0,
+        "name": "MaxCompute 用户反馈连接",
+        "plugin_id": "plugin_http",
+        "request_config": {},
+        "status": "active",
+        "timeout_seconds": 30,
+        "updated_at": now,
+    }
     app.state.store.ai_agents["ai_agent_feedback_ops"] = {
         "brain_app_id": "rd_brain",
         "code": "feedback_ops",
@@ -134,6 +160,10 @@ def seed_assistant_operational_references() -> None:
         "id": "plugin_action_feedback_write",
         "name": "反馈洞察写入动作",
         "plugin_id": "plugin_http",
+        "request_config": {
+            "body": {"token": "should-not-be-copied"},
+            "headers": {"Authorization": "Bearer should-not-be-copied"},
+        },
         "status": "active",
         "updated_at": now,
     }
@@ -733,6 +763,120 @@ def test_ai_assistant_chat_compares_run_with_previous_success(monkeypatch):
             "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_success",
         },
     ]
+
+
+def test_ai_assistant_chat_generates_repair_action_draft_for_failed_run(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": (
+                                            "我已生成结果动作修复草案，"
+                                            "确认前不会写入真实动作。"
+                                        ),
+                                        "suggestions": ["查看修复草案"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "这次失败怎么修？帮我生成修复草案",
+            "references": [
+                {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    draft_result = next(
+        result
+        for result in message["tool_results"]
+        if result["tool"] == "assistant.action_draft"
+        and result["intent"] == "scheduled_job_run_repair_draft"
+    )
+    assert draft_result["summary"] == {
+        "draft_count": 1,
+        "requires_confirmation": True,
+        "source_run_id": "scheduled_job_run_feedback_failed",
+        "target": "plugin_action",
+    }
+    draft_item = draft_result["items"][0]
+    assert draft_item["action"] == "create_plugin_action"
+    assert draft_item["client_draft_id"] == (
+        "assistant_draft_repair_scheduled_job_run_feedback_failed"
+    )
+    assert draft_item["draft_id"].startswith("assistant_action_draft_")
+    assert draft_item["server_draft_id"] == draft_item["draft_id"]
+    assert draft_item["status"] == "pending"
+    assert draft_item["title"] == "反馈洞察写入动作修复草案"
+    assert draft_item["requires_confirmation"] is True
+    assert draft_item["risk_level"] == "medium"
+    assert draft_item["references"] == [
+        {
+            "id": "scheduled_job_run_feedback_failed",
+            "title": "每周反馈洞察定时作业 / failed",
+            "type": "scheduled_job_run",
+            "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
+        }
+    ]
+    assert draft_item["payload"] == {
+        "action_type": "http_request",
+        "code": "feedback_write_repair",
+        "connection_id": "plugin_connection_maxcompute",
+        "description": (
+            "从失败运行 scheduled_job_run_feedback_failed 生成，"
+            "用于修复结果动作写入失败。"
+        ),
+        "name": "反馈洞察写入动作修复草案",
+        "plugin_id": "plugin_http",
+        "request_config": {"method": "POST", "path": "/feedback/insights"},
+        "result_mapping": {"write_target": "user_feedback_insights"},
+        "status": "active",
+    }
+
+    draft_response = client.get(
+        f"/api/assistant/action-drafts/{draft_item['draft_id']}",
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    assert draft["action"] == "create_plugin_action"
+    assert draft["client_draft_id"] == (
+        "assistant_draft_repair_scheduled_job_run_feedback_failed"
+    )
+    assert draft["source_message_id"] == message["id"]
+    assert draft["preview"]["validation"]["status"] == "passed"
 
 
 def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():

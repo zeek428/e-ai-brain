@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.328 |
+| 功能版本 | v1.1.329 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.329 | 2026-06-17 | AI 助手聊天新增 `scheduled_job_run_repair_draft`，可从失败运行生成可确认的结果动作修复草案 | Codex |
 | v1.1.328 | 2026-06-17 | AI 助手 `@定时作业 执行一次` API 契约补充完整 @ 名称精确匹配优先，并覆盖错误自动候选引用 | Codex |
 | v1.1.327 | 2026-06-17 | AI 助手聊天新增 `assistant.scheduled_job_run_comparison` 工具结果，对比当前运行和同作业上次成功运行差异 | Codex |
 | v1.1.326 | 2026-06-17 | AI 助手 `assistant.scheduled_job_diagnostic` 结果动作段补充结果写入记录 ID、写入目标和写入状态 | Codex |
@@ -1466,6 +1467,8 @@ GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limi
 ```
 
 该工具只对比同一 `scheduled_job_id` 下当前运行之前最近一次 `succeeded` 运行；无 baseline 时 `baseline_run=null` 且 differences 标记 `baseline_run` 缺失。响应不得包含完整插件请求/响应、模型 Prompt、模型输出或密钥。
+
+当聊天消息显式引用失败的 `scheduled_job_run` 且问题包含“怎么修/修复草案/repair draft”等意图时，响应中的 `message.tool_results[]` 会包含 `tool=assistant.action_draft`、`intent=scheduled_job_run_repair_draft`。草案项使用 `action=create_plugin_action`，`client_draft_id=assistant_draft_repair_<scheduled_job_run_id>`，payload 从失败运行的结果动作节点、关联插件调用日志和原插件动作配置中提取安全字段，至少包含 `plugin_id`、`connection_id`、`action_type`、`code`、`name`、`request_config.method/path`、`result_mapping.write_target` 和 `status=active`。服务端会把该工具项持久化为 `assistant_action_drafts`，并返回 `server_draft_id/status/preview`；确认前不得创建真实插件动作、修改原动作或触发外部调用。工具结果、草案元数据和模型日志不得保存完整插件请求/响应、Prompt、模型输出或密钥。
 
 引用解析：
 

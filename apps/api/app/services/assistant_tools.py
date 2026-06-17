@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from app.services.assistant_draft_builder import AssistantDraftBuilder
@@ -39,6 +40,14 @@ def assistant_tool_results(
             results.append(draft_builder.release_risk_analysis_draft())
         elif intent == "scheduled_job_draft":
             results.append(draft_builder.scheduled_job_draft())
+        elif intent == "scheduled_job_run_repair_draft":
+            results.append(
+                _scheduled_job_run_repair_draft_tool(
+                    context,
+                    limit=limit,
+                    references=references or [],
+                )
+            )
         elif intent == "scheduled_job_diagnostic":
             results.append(
                 _scheduled_job_diagnostic_tool(
@@ -167,6 +176,8 @@ def _assistant_tool_intents(message: str) -> list[str]:
         intents.append("knowledge_base_inspection_draft")
     if _release_risk_analysis_draft_requested(normalized):
         intents.append("release_risk_analysis_draft")
+    if _scheduled_job_run_repair_draft_requested(normalized):
+        intents.append("scheduled_job_run_repair_draft")
     if _scheduled_job_run_comparison_requested(normalized):
         intents.append("scheduled_job_run_comparison")
     if _scheduled_job_diagnostic_requested(normalized):
@@ -219,6 +230,26 @@ def _scheduled_job_run_comparison_requested(normalized_message: str) -> bool:
         for keyword in ("这次", "本次", "任务", "作业", "运行", "scheduled job", "run")
     )
     return has_compare_intent and has_run_context
+
+
+def _scheduled_job_run_repair_draft_requested(normalized_message: str) -> bool:
+    has_repair_intent = any(
+        keyword in normalized_message
+        for keyword in (
+            "怎么修",
+            "如何修",
+            "修复",
+            "修复草案",
+            "修复建议",
+            "repair",
+            "fix",
+        )
+    )
+    has_draft_intent = any(
+        keyword in normalized_message
+        for keyword in ("草案", "生成", "创建", "draft", "create")
+    )
+    return has_repair_intent and has_draft_intent
 
 
 def _scheduled_job_draft_requested(normalized_message: str) -> bool:
@@ -722,6 +753,209 @@ def _scheduled_job_run_comparison_tool(
         },
         "tool": "assistant.scheduled_job_run_comparison",
     }
+
+
+def _scheduled_job_run_repair_draft_tool(
+    context: dict[str, Any],
+    *,
+    limit: int,
+    references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    candidate_runs = _referenced_or_latest_failed_runs(
+        context["scheduled_job_runs"],
+        limit=limit,
+        references=references,
+    )
+    jobs_by_id = {
+        str(job["id"]): job
+        for job in context["scheduled_jobs"]
+        if job.get("id") is not None
+    }
+    plugin_actions_by_id = {
+        str(action["id"]): action
+        for action in context["plugin_actions"]
+        if action.get("id") is not None
+    }
+    plugin_logs_by_run_id = {
+        str(log.get("scheduled_job_run_id")): log
+        for log in context["plugin_invocation_logs"]
+        if log.get("scheduled_job_run_id") is not None
+    }
+    items: list[dict[str, Any]] = []
+    references_out: list[dict[str, Any]] = []
+    for run in candidate_runs[:limit]:
+        if run.get("status") != "failed":
+            continue
+        run_id = str(run.get("id") or "")
+        job = jobs_by_id.get(str(run.get("scheduled_job_id"))) or {}
+        plugin_log = plugin_logs_by_run_id.get(run_id)
+        source_action = _repair_source_plugin_action(
+            job=job,
+            plugin_actions_by_id=plugin_actions_by_id,
+            plugin_log=plugin_log,
+            run=run,
+        )
+        payload = _repair_plugin_action_payload(
+            plugin_log=plugin_log,
+            run=run,
+            source_action=source_action,
+        )
+        if not payload.get("plugin_id") or not payload.get("connection_id"):
+            continue
+        run_reference = _scheduled_job_run_tool_reference(job=job, run=run)
+        items.append(
+            {
+                "action": "create_plugin_action",
+                "draft_id": f"assistant_draft_repair_{run_id}",
+                "payload": payload,
+                "references": [run_reference],
+                "requires_confirmation": True,
+                "risk_level": "medium",
+                "title": payload["name"],
+            }
+        )
+        references_out.append(run_reference)
+    return {
+        "intent": "scheduled_job_run_repair_draft",
+        "items": items,
+        "references": normalize_assistant_references(references_out),
+        "summary": {
+            "draft_count": len(items),
+            "requires_confirmation": bool(items),
+            "source_run_id": str(candidate_runs[0].get("id")) if candidate_runs else None,
+            "target": "plugin_action",
+        },
+        "tool": "assistant.action_draft",
+    }
+
+
+def _referenced_or_latest_failed_runs(
+    runs: list[dict[str, Any]],
+    *,
+    limit: int,
+    references: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    referenced_run_ids = [
+        str(reference["id"])
+        for reference in references
+        if reference.get("type") == "scheduled_job_run" and reference.get("id")
+    ]
+    if referenced_run_ids:
+        run_by_id = {str(run["id"]): run for run in runs if run.get("id") is not None}
+        return [run_by_id[run_id] for run_id in referenced_run_ids if run_id in run_by_id]
+    return [run for run in _latest(runs) if run.get("status") == "failed"][:limit]
+
+
+def _repair_source_plugin_action(
+    *,
+    job: dict[str, Any],
+    plugin_actions_by_id: dict[str, dict[str, Any]],
+    plugin_log: dict[str, Any] | None,
+    run: dict[str, Any],
+) -> dict[str, Any]:
+    result_action = _result_action_node(run)
+    action_id = (
+        result_action.get("plugin_action_id")
+        or result_action.get("action_id")
+        or (plugin_log or {}).get("action_id")
+        or job.get("plugin_action_id")
+    )
+    if action_id and str(action_id) in plugin_actions_by_id:
+        return plugin_actions_by_id[str(action_id)]
+    return {}
+
+
+def _repair_plugin_action_payload(
+    *,
+    plugin_log: dict[str, Any] | None,
+    run: dict[str, Any],
+    source_action: dict[str, Any],
+) -> dict[str, Any]:
+    result_action = _result_action_node(run)
+    request_config = _repair_request_config(source_action, plugin_log)
+    result_mapping = _repair_result_mapping(source_action, result_action)
+    source_name = str(
+        source_action.get("name")
+        or source_action.get("code")
+        or (plugin_log or {}).get("action_id")
+        or "结果动作"
+    )
+    source_code = str(
+        source_action.get("code")
+        or (plugin_log or {}).get("action_id")
+        or "result_action"
+    )
+    return {
+        "action_type": str(source_action.get("action_type") or "http_request"),
+        "code": _repair_action_code(source_code),
+        "connection_id": source_action.get("connection_id")
+        or (plugin_log or {}).get("connection_id"),
+        "description": (
+            f"从失败运行 {run.get('id')} 生成，"
+            "用于修复结果动作写入失败。"
+        ),
+        "name": f"{source_name}修复草案",
+        "plugin_id": source_action.get("plugin_id") or (plugin_log or {}).get("plugin_id"),
+        "request_config": request_config,
+        "result_mapping": result_mapping,
+        "status": "active",
+    }
+
+
+def _repair_request_config(
+    source_action: dict[str, Any],
+    plugin_log: dict[str, Any] | None,
+) -> dict[str, Any]:
+    request_config: dict[str, Any] = {}
+    source_request_config = (
+        source_action.get("request_config")
+        if isinstance(source_action.get("request_config"), dict)
+        else {}
+    )
+    request_summary = (
+        plugin_log.get("request_summary")
+        if isinstance(plugin_log, dict) and isinstance(plugin_log.get("request_summary"), dict)
+        else {}
+    )
+    for field in ("method", "path"):
+        value = source_request_config.get(field) or request_summary.get(field)
+        if value:
+            request_config[field] = value
+    return request_config
+
+
+def _repair_result_mapping(
+    source_action: dict[str, Any],
+    result_action: dict[str, Any],
+) -> dict[str, Any]:
+    result_mapping = (
+        deepcopy(source_action.get("result_mapping"))
+        if isinstance(source_action.get("result_mapping"), dict)
+        else {}
+    )
+    if result_action.get("write_target") and not result_mapping.get("write_target"):
+        result_mapping["write_target"] = result_action["write_target"]
+    return result_mapping
+
+
+def _repair_action_code(source_code: str) -> str:
+    normalized = "_".join(str(source_code or "result_action").strip().split())
+    if normalized.endswith("_repair"):
+        return normalized
+    return f"{normalized}_repair"
+
+
+def _result_action_node(run: dict[str, Any]) -> dict[str, Any]:
+    result_summary = (
+        run.get("result_summary") if isinstance(run.get("result_summary"), dict) else {}
+    )
+    execution_nodes = (
+        result_summary.get("execution_nodes")
+        if isinstance(result_summary.get("execution_nodes"), dict)
+        else {}
+    )
+    node = execution_nodes.get("result_action")
+    return node if isinstance(node, dict) else {}
 
 
 def _previous_successful_scheduled_job_run(
