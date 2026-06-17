@@ -422,6 +422,11 @@ def _deterministic_assistant_output(
         scheduled_job_references = mention_resolution["references"]
     elif not scheduled_job_references:
         if mention_resolution["attempted"]:
+            if mention_resolution.get("blocked_reason") == "permission_denied":
+                return _scheduled_job_run_once_permission_denied_output(
+                    attempted_queries=mention_resolution["queries"],
+                    selected_references=selected_references,
+                )
             draft_output = _scheduled_job_run_once_missing_job_draft_output(
                 current_store=current_store,
                 message=payload.message,
@@ -1126,8 +1131,13 @@ def _scheduled_job_references_from_explicit_mentions(
     queries = _explicit_mention_queries_for_run_once(message)
     if not queries:
         return {"attempted": False, "queries": [], "references": []}
-    if "admin" not in set(user.get("roles") or []):
-        return {"attempted": True, "queries": queries, "references": []}
+    if not _user_can_run_scheduled_job_from_assistant(user):
+        return {
+            "attempted": True,
+            "blocked_reason": "permission_denied",
+            "queries": queries,
+            "references": [],
+        }
     jobs = list(getattr(current_store, "scheduled_jobs", {}).values())
     if product_id:
         jobs = [job for job in jobs if job.get("product_id") == product_id]
@@ -1195,6 +1205,38 @@ def _explicit_mention_queries_for_run_once(message: str) -> list[str]:
         seen.add(normalized_query)
         queries.append(query)
     return queries
+
+
+def _scheduled_job_run_once_permission_denied_output(
+    *,
+    attempted_queries: list[str],
+    selected_references: list[dict[str, str]],
+) -> dict[str, Any]:
+    query_text = "、".join(attempted_queries) if attempted_queries else "这个 @ 引用"
+    return {
+        "answer": (
+            f"我识别到你想执行定时作业：{query_text}，"
+            "但当前账号没有执行定时作业的权限。请使用管理员账号，"
+            "或让管理员授予定时作业管理权限后再执行。"
+        ),
+        "latency_ms": 0,
+        "model": "assistant-deterministic",
+        "references": selected_references,
+        "selected_references": selected_references,
+        "suggestions": ["联系管理员授权", "生成可确认的配置草案"],
+        "tool_results": [
+            {
+                "intent": "scheduled_job_run_once",
+                "items": [],
+                "summary": {
+                    "queries": attempted_queries,
+                    "required_permission": "system.scheduled_jobs.manage",
+                    "status": "permission_denied",
+                },
+                "tool": "assistant.scheduled_job_run",
+            }
+        ],
+    }
 
 
 def _scheduled_job_matches_mention(job: dict[str, Any], query: str) -> bool:
@@ -1276,6 +1318,16 @@ def _scheduled_job_is_weekly_feedback_insight_job(job: dict[str, Any]) -> bool:
 
 def _scheduled_job_is_runnable_mention_match(job: dict[str, Any]) -> bool:
     return bool(job.get("enabled")) and str(job.get("status") or "active") == "active"
+
+
+def _user_can_run_scheduled_job_from_assistant(user: dict[str, Any]) -> bool:
+    roles = set(user.get("roles") or [])
+    permissions = set(user.get("permissions") or [])
+    return (
+        "admin" in roles
+        or "system.admin" in permissions
+        or "system.scheduled_jobs.manage" in permissions
+    )
 
 
 def _normalized_mention_token(value: Any) -> str:

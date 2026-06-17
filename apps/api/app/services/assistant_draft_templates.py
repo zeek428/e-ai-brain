@@ -79,7 +79,7 @@ STANDARD_ASSISTANT_DRAFT_TEMPLATES = [
             "请基于当前发布记录、未关闭缺陷、测试结论和需求状态生成发布风险分析草案，"
             "并标出需要人工确认的风险项。"
         ),
-        "roles": ["product_owner", "reviewer"],
+        "roles": ["product_owner", "reviewer", "test_owner", "tester", "release_owner"],
         "source_module": "发布治理",
         "target_resource": "assistant_analysis",
         "template_version": "v1",

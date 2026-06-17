@@ -45,7 +45,13 @@ def test_ai_assistant_draft_templates_list_official_market_entries():
         "确认执行",
     ]
     assert "执行一次" in templates_by_code["weekly_feedback_insight"]["prompt"]
-    assert templates_by_code["release_risk_analysis"]["roles"] == ["product_owner", "reviewer"]
+    assert templates_by_code["release_risk_analysis"]["roles"] == [
+        "product_owner",
+        "reviewer",
+        "test_owner",
+        "tester",
+        "release_owner",
+    ]
     assert templates_by_code["knowledge_base_inspection"]["source_module"] == "知识库"
     assert templates_by_code["online_log_anomaly_analysis"]["available"] is True
 
@@ -95,6 +101,13 @@ def test_ai_assistant_allows_testing_delivery_roles_to_use_workbench_apis(monkey
 
             conversations_response = client.get("/api/assistant/conversations", headers=headers)
             assert conversations_response.status_code == 200, conversations_response.text
+
+            templates_response = client.get("/api/assistant/draft-templates", headers=headers)
+            assert templates_response.status_code == 200, templates_response.text
+            template_codes = {
+                item["code"] for item in templates_response.json()["data"]["items"]
+            }
+            assert "release_risk_analysis" in template_codes
 
             chat_response = client.post(
                 "/api/assistant/chat",
@@ -3203,6 +3216,79 @@ def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(
     }
     assert message["tool_results"][0]["tool"] == "assistant.scheduled_job_run"
     assert message["tool_results"][0]["summary"]["run_id"] == run["id"]
+
+
+def test_ai_assistant_chat_explains_run_once_permission_denied(monkeypatch):
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    app.state.store.scheduled_jobs["scheduled_job_feedback_insight"] = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": "scheduled_job_feedback_insight",
+        "interval_seconds": None,
+        "job_type": "dashboard_snapshot_refresh",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "name": "提取每周用户反馈有价值信息",
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+
+    def fail_if_model_or_run_called(*_args, **_kwargs):
+        raise AssertionError("permission-denied run-once command should be deterministic")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_or_run_called)
+    monkeypatch.setattr(
+        assistant_chat_service,
+        "run_scheduled_job_response",
+        fail_if_model_or_run_called,
+    )
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "@提取每周用户反馈有价值信息 执行一次",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    message = payload["message"]
+    assert payload["model"] == "assistant-deterministic"
+    assert "没有执行定时作业的权限" in message["content"]
+    assert app.state.store.scheduled_job_runs == {}
+    tool_result = message["tool_results"][0]
+    assert tool_result["tool"] == "assistant.scheduled_job_run"
+    assert tool_result["summary"] == {
+        "queries": ["提取每周用户反馈有价值信息"],
+        "required_permission": "system.scheduled_jobs.manage",
+        "status": "permission_denied",
+    }
 
 
 def test_ai_assistant_chat_reuses_active_run_once_execution(monkeypatch):

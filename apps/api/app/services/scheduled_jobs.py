@@ -12,7 +12,7 @@ from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_permissions
 from app.services.code_inspections import (
     execute_code_inspection_result_actions,
     sync_product_git_repository_store,
@@ -122,7 +122,7 @@ def ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None
 
 
 def require_admin(user: dict[str, Any]) -> None:
-    require_roles(user, {"admin"})
+    require_permissions(user, {"system.scheduled_jobs.manage"})
 
 
 def scheduled_job_timezone(job: dict[str, Any]) -> ZoneInfo:

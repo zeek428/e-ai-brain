@@ -1596,4 +1596,5 @@ def _scheduled_job_keyword_group_indexes(value: str) -> set[int]:
 
 def _user_can_reference_operational(user: dict[str, Any] | None) -> bool:
     roles = set(user.get("roles") or []) if isinstance(user, dict) else set()
-    return "admin" in roles
+    permissions = set(user.get("permissions") or []) if isinstance(user, dict) else set()
+    return "admin" in roles or "system.admin" in permissions
