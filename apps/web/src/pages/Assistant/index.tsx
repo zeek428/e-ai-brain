@@ -1844,6 +1844,7 @@ function AssistantScheduledJobDiagnosticCards({
                 const writeTargetLabel = itemText(stage, 'result_write_target_label');
                 const writeTarget = itemText(stage, 'result_write_target');
                 const errorMessage = itemText(stage, 'error_message');
+                const logId = itemText(stage, 'log_id');
                 const resultWriteRecordId = itemText(stage, 'result_write_record_id');
                 const resultWriteRecordUrl = diagnosticResultWriteRecordUrl(item, stage);
                 return (
@@ -1855,6 +1856,9 @@ function AssistantScheduledJobDiagnosticCards({
                       </Tag>
                     </Space>
                     <Text>{itemText(stage, 'summary')}</Text>
+                    {logId !== '-' ? (
+                      <Text type="secondary">关联日志：{logId}</Text>
+                    ) : null}
                     {writeTargetLabel !== '-' || writeTarget !== '-' ? (
                       <Text type="secondary">
                         写入目标：{writeTargetLabel !== '-' ? writeTargetLabel : writeTarget}

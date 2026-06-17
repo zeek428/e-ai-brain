@@ -1315,6 +1315,8 @@ describe('AssistantPage', () => {
     expect(screen.getByText('AI处理')).toBeInTheDocument();
     expect(screen.getByText('结果动作')).toBeInTheDocument();
     expect(screen.getByText('写入反馈洞察表失败。')).toBeInTheDocument();
+    expect(screen.getByText('关联日志：model_gateway_log_feedback_failed')).toBeInTheDocument();
+    expect(screen.getByText('关联日志：plugin_invocation_log_feedback_failed')).toBeInTheDocument();
     expect(screen.getByText('写入目标：用户洞察表')).toBeInTheDocument();
     expect(screen.getByText('错误：HTTP 500: downstream write failed')).toBeInTheDocument();
     expect(screen.getByRole('link', {
