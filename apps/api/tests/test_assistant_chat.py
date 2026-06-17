@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 import app.api.routers.assistant as assistant_router
 import app.services.assistant_chat as assistant_chat_service
+from app.core.security import hash_password
+from app.core.users import MemoryUserRepository
 from app.main import app
 
 client = TestClient(app)
@@ -45,6 +47,65 @@ def test_ai_assistant_draft_templates_list_official_market_entries():
     assert templates_by_code["release_risk_analysis"]["roles"] == ["product_owner", "reviewer"]
     assert templates_by_code["knowledge_base_inspection"]["source_module"] == "知识库"
     assert templates_by_code["online_log_anomaly_analysis"]["available"] is True
+
+
+def test_ai_assistant_allows_testing_delivery_roles_to_use_workbench_apis(monkeypatch):
+    original_user_repository = app.state.user_repository
+    app.state.store.reset()
+    app.state.user_repository = MemoryUserRepository(
+        {
+            "test-owner@example.com": {
+                "display_name": "测试负责人",
+                "id": "user_test_owner",
+                "password_hash": hash_password("test123"),
+                "roles": ["test_owner"],
+                "status": "active",
+                "username": "test-owner@example.com",
+            },
+            "tester@example.com": {
+                "display_name": "测试人员",
+                "id": "user_tester",
+                "password_hash": hash_password("test123"),
+                "roles": ["tester"],
+                "status": "active",
+                "username": "tester@example.com",
+            },
+            "release-owner@example.com": {
+                "display_name": "发布负责人",
+                "id": "user_release_owner",
+                "password_hash": hash_password("test123"),
+                "roles": ["release_owner"],
+                "status": "active",
+                "username": "release-owner@example.com",
+            },
+        },
+    )
+    def fail_urlopen(*_args, **_kwargs):
+        raise AssertionError("model gateway should not be called")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_urlopen)
+    try:
+        for username in (
+            "test-owner@example.com",
+            "tester@example.com",
+            "release-owner@example.com",
+        ):
+            headers = auth_headers(username, "test123")
+
+            conversations_response = client.get("/api/assistant/conversations", headers=headers)
+            assert conversations_response.status_code == 200, conversations_response.text
+
+            chat_response = client.post(
+                "/api/assistant/chat",
+                headers=headers,
+                json={"message": "我要新增任务"},
+            )
+            assert chat_response.status_code == 200, chat_response.text
+            assert chat_response.json()["data"]["message"]["tool_results"][0]["tool"] == (
+                "assistant.task_creation_guide"
+            )
+    finally:
+        app.state.user_repository = original_user_repository
 
 
 def seed_assistant_knowledge_reference_documents() -> None:

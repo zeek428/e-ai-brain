@@ -59,6 +59,9 @@ ASSISTANT_ACCESS_ROLES = {
     "product_owner",
     "rd_owner",
     "reviewer",
+    "release_owner",
+    "test_owner",
+    "tester",
 }
 SCHEDULED_JOB_RUN_ONCE_KEYWORDS = (
     "执行一次",
