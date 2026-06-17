@@ -339,6 +339,40 @@ def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents()
     ]
 
 
+def test_ai_assistant_reference_candidates_filter_readable_knowledge_chunks():
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_knowledge_reference_documents()
+
+    response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "loading", "type": "knowledge_chunk", "limit": 5},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["total"] == 1
+    assert payload["items"] == [
+        {
+            "chunk_count": 1,
+            "chunk_index": 0,
+            "document_id": "knowledge_payment_runbook",
+            "id": "knowledge_payment_runbook_chunk_001",
+            "permission_label": "可引用",
+            "source_module": "知识库",
+            "summary": "支付页提交无响应：检查网关 30 秒超时、回调幂等键和前端 loading 状态。",
+            "title": "支付页超时排障手册 #1",
+            "type": "knowledge_chunk",
+            "updated_at": "2026-06-14T08:00:00+00:00",
+            "url": (
+                "/knowledge/documents?document_id=knowledge_payment_runbook"
+                "&chunk_id=knowledge_payment_runbook_chunk_001"
+            ),
+        }
+    ]
+
+
 def test_ai_assistant_reference_candidates_include_admin_operational_objects():
     headers = auth_headers()
     reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
@@ -469,6 +503,59 @@ def test_ai_assistant_resolve_rejects_unreadable_knowledge_reference():
 
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "REFERENCE_NOT_FOUND"
+
+
+def test_ai_assistant_resolve_selected_knowledge_chunk_injects_only_that_chunk():
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_knowledge_reference_documents()
+    app.state.store.knowledge_chunks["knowledge_payment_runbook_chunk_002"] = {
+        "chunk_index": 1,
+        "content": "支付页第二段：检查浏览器控制台和订单状态机。",
+        "document_id": "knowledge_payment_runbook",
+        "embedding": [0.7, 0.8, 0.9],
+        "id": "knowledge_payment_runbook_chunk_002",
+        "metadata": {},
+        "permission_roles": ["reviewer"],
+        "permission_scope": {"roles": ["reviewer"]},
+    }
+
+    response = client.post(
+        "/api/assistant/references/resolve",
+        json={
+            "references": [
+                {"id": "knowledge_payment_runbook_chunk_002", "type": "knowledge_chunk"},
+            ]
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["items"] == [
+        {
+            "id": "knowledge_payment_runbook_chunk_002",
+            "title": "支付页超时排障手册 #2",
+            "type": "knowledge_chunk",
+            "url": (
+                "/knowledge/documents?document_id=knowledge_payment_runbook"
+                "&chunk_id=knowledge_payment_runbook_chunk_002"
+            ),
+        }
+    ]
+    assert payload["knowledge_context"] == [
+        {
+            "chunk_id": "knowledge_payment_runbook_chunk_002",
+            "chunk_index": 1,
+            "content": "支付页第二段：检查浏览器控制台和订单状态机。",
+            "document_id": "knowledge_payment_runbook",
+            "document_title": "支付页超时排障手册",
+            "source": {
+                "doc_type": "manual",
+                "knowledge_space_id": None,
+            },
+        }
+    ]
 
 
 def test_ai_assistant_chat_injects_selected_knowledge_chunks_without_logging_content(

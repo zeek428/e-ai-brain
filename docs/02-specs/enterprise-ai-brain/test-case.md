@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.499 |
+| 功能版本 | v1.1.500 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.500 | 2026-06-17 | 补充 AI 助手知识片段级 @ 引用验收：候选/解析支持 `knowledge_chunk`，聊天只注入被选中的片段 | Codex |
 | v1.1.499 | 2026-06-17 | 补充 AI 助手运行记录追踪与草案详情验收：执行一次后前端自动刷新运行终态，草案可在当前页查看 payload、差异和校验问题 | Codex |
 | v1.1.498 | 2026-06-17 | 补充 AI 助手新增任务向导验收：工具项和建议按钮均覆盖五类任务类型 | Codex |
 | v1.1.497 | 2026-06-17 | 补充 AI 助手 run-once 草案前端验收：确认后草案卡片必须展示本次运行深链 | Codex |
@@ -598,9 +599,9 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 
 | 编号 | 阶段 | 优先级 | 用例 | 预期 |
 |------|------|--------|------|------|
-| TC-AIBRAIN-ASSISTANT-FUNC-010 | v1.1 | P0 | 在 AI 助手输入框通过 `@` 搜索知识文档、业务对象、动作、AI角色/Skill、定时作业和运行记录 | 候选列表只展示当前用户有权读取或管理的对象；普通用户可见业务对象和可读知识文档，管理员额外可见 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`；选择后显示带类型标签的引用 chip，并随聊天请求提交结构化 `references`。 |
+| TC-AIBRAIN-ASSISTANT-FUNC-010 | v1.1 | P0 | 在 AI 助手输入框通过 `@` 搜索知识文档、知识片段、业务对象、动作、AI角色/Skill、定时作业和运行记录 | 候选列表只展示当前用户有权读取或管理的对象；普通用户可见业务对象、可读 `knowledge_document` 和可读 `knowledge_chunk`，管理员额外可见 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`；选择后显示带类型标签的引用 chip，并随聊天请求提交结构化 `references`。 |
 | TC-AIBRAIN-ASSISTANT-BOUND-011 | v1.1 | P0 | 用户提交无权、已删除或不可检索知识文档引用 | 后端拒绝该引用进入模型上下文，响应返回结构化错误；模型日志不出现该知识正文。 |
-| TC-AIBRAIN-ASSISTANT-FUNC-012 | v1.1 | P0 | 通过 `@knowledge_document` 聊天问答 | 后端按权限读取可检索 chunk，限量注入模型请求；助手回复包含知识来源引用，历史消息可恢复引用 metadata。 |
+| TC-AIBRAIN-ASSISTANT-FUNC-012 | v1.1 | P0 | 通过 `@knowledge_document` 或 `@knowledge_chunk` 聊天问答 | 后端按权限读取可检索 chunk，文档引用限量注入模型请求，片段引用只注入用户显式选择的单个 chunk；助手回复包含知识来源引用，历史消息可恢复引用 metadata，模型日志不得保存知识正文。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_reference_candidates_filter_readable_knowledge_chunks`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_resolve_selected_knowledge_chunk_injects_only_that_chunk` 和 `apps/web/tests/AssistantPage.test.tsx::selects a specific knowledge chunk with @ candidates and sends chunk reference`。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-013 | v1.1 | P0 | 用户要求创建 AI 能力、插件连接、动作或定时作业 | 系统只生成 `assistant_action_draft` 草案和风险/差异摘要；首批周反馈洞察定时作业草案通过 `assistant.action_draft` tool result 返回 `create_scheduled_job` payload，自动引用可用产品、数据连接、AI 模型、AI角色、Skill、知识文档、Cron 和动态变量映射；代码巡检定时作业草案自动引用可用产品、GitHub/GitLab 代码巡检动作、同插件连接、Cron 和写报告/建 Bug/通知默认结果动作；当用户要求创建代码巡检定时作业但系统缺少可用 GitHub/GitLab 连接或动作时，`assistant.action_draft.items[]` 必须按连接、动作、作业顺序返回 `create_plugin_connection`、`create_plugin_action` 和 `create_scheduled_job` 草案，动作 payload 和作业 payload 必须包含 `assistant_prerequisite_draft_ids`，助手卡片展示“前置草案”，用户确认前不得写入任何配置；当用户明确要求 AI/大模型分析代码巡检结果时，草案必须设置 `execution_mode=ai_generated` 并带出可用 `model_gateway_config_id`、`agent_id` 和 `skill_ids`；GitHub/GitLab/邮箱连接草案必须通过 `assistant.action_draft` 返回 `create_plugin_connection` payload，自动带出官方插件、Endpoint、环境、认证方式、Params 和 Headers；GitHub/GitLab 代码巡检动作和邮箱通知动作草案必须通过 `assistant.action_draft` 返回 `create_plugin_action` payload，自动带出官方插件、可用连接、请求路径、Params/Headers 和结果映射，其中邮箱通知动作草案必须使用 `result_mapping.write_target=email_notifications` 并包含收件人、主题、投递状态和消息 ID 路径；助手页面必须把聊天响应和历史消息里的 `assistant.action_draft.items[]` 显示为待确认配置草案卡片，定时作业草案展示标题、风险、作业类型、调度、执行模式、AI 模型、AI角色、Skills、连接、结果动作和前置草案摘要，插件连接草案展示插件、Endpoint、环境、认证方式、Params 和 Headers，动作草案展示动作类型、编码、插件、连接、请求方法、请求路径和中文写入目标，中文写入目标必须从 `/api/system/result-write-targets` 返回的 `form_label/label` 渲染，不得依赖前端本地硬编码映射；草案卡还必须提供“查看详情”，在当前页展示草案状态、Payload、字段差异和校验问题，阻塞型草案详情中能看到必填字段或依赖缺失原因；点击应用草案后，任务中心 / 定时作业新增表单必须回填作业草案字段，任务中心 / 插件管理新增连接表单必须回填插件连接草案字段，任务中心 / 插件管理新增动作表单必须回填动作草案字段；先应用并保存连接草案后，依赖该草案的动作草案必须自动回填真实 `connection_id`，再应用并保存动作草案后，依赖前置草案的定时作业草案必须自动回填真实 `plugin_connection_id` 和 `plugin_action_id`；用户确认保存定时作业时保留 `{{last_full_week.start}}`、`{{last_full_week.end}}` 等动态变量映射，并在作业 `config_json.assistant_draft` 与 `scheduled_job.created/updated` 审计 payload 中保留草案 ID、来源和标题；未确认前不得写入 `ai_skills`、`ai_agents`、`plugin_connections`、`plugin_actions` 或 `scheduled_jobs`。回归见 `apps/web/tests/AssistantPage.test.tsx::shows assistant action draft precheck issues before confirmation`。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-013A | v1.1 | P0 | 用户泛化输入“新增任务/创建任务”但未说明任务类型 | 后端返回 `assistant.task_creation_guide` 确定性工具结果且不调用模型网关；`items[]` 展示研发任务、定时作业、插件动作、代码巡检和反馈洞察五类任务；顶层 `suggestions` 同步返回 `新增研发任务`、`新增定时作业`、`新增插件动作`、`配置代码巡检定时作业`、`配置每周用户反馈洞察定时作业`；前端展示五张任务类型卡片和五个建议按钮，点击建议或卡片可把对应下一步草案生成提示回填到聊天输入框。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_guides_generic_new_task_without_model_gateway` 和 `apps/web/tests/AssistantPage.test.tsx::renders a task creation guide and lets users choose a draft-first path`。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-014 | v1.1 | P0 | 管理员确认定时作业创建草案 | 草案已持久化到 `assistant_action_drafts` 且状态为 `pending`；`POST /api/assistant/action-drafts/{draft_id}/confirm` 重新校验引用和权限，复用 scheduled_jobs service 写入作业、审计和配置快照，响应返回 `{draft, run}`、作业 ID 与管理页链接，草案状态变为 `confirmed`；若草案 payload 携带 `config_json.assistant_run_once_request.requested=true`，确认后必须再复用手动运行链路创建一次 `scheduled_job_run`，`run.result.scheduled_job_run` 返回运行记录，`assistant_action_draft.confirmed` 审计 payload 记录 `scheduled_job_run_id`；前端草案卡确认成功后必须展示“打开定时作业”和“打开本次运行”，本次运行链接携带 `job_id` 与 `run_id`。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_run_once_draft_confirm_triggers_scheduled_job_run` 和 `apps/web/tests/AssistantPage.test.tsx::confirms server-side assistant action drafts from the draft card`。 |

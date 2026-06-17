@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.336 |
+| 功能版本 | v1.1.337 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.337 | 2026-06-17 | AI 助手引用候选/解析 API 支持 `knowledge_chunk`，可只注入用户显式选中的知识片段 | Codex |
 | v1.1.336 | 2026-06-17 | AI 助手动作草案前端契约补充当前页详情查看，run-once 工具结果补充前端轮询运行状态追踪 | Codex |
 | v1.1.335 | 2026-06-17 | AI 助手 `assistant.task_creation_guide` 的 `suggestions` 与五类任务向导项保持一致 | Codex |
 | v1.1.334 | 2026-06-17 | AI 助手 run-once 草案确认响应中的 `scheduled_job_run` 被前端用于展示本次运行追踪入口 | Codex |
@@ -574,7 +575,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题。 |
 | Assistant | GET | `/api/assistant/draft-templates` | 查询当前用户可见的 AI 助手草案模板市场目录；返回周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析模板的提示、角色、依赖、流程和接入状态。 |
-| Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；覆盖业务对象、可读知识文档和管理员可见的定时作业/运行、插件动作、AI角色、Skill。 |
+| Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；覆盖业务对象、可读知识文档/知识片段和管理员可见的定时作业/运行、插件动作、AI角色、Skill。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
 | Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持定时作业、插件连接和动作配置。 |
 | Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情。 |
@@ -1380,11 +1381,11 @@ POST /api/assistant/chat
 }
 ```
 
-助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide` 和 `assistant.scheduled_job_diagnostic`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_document`，以及管理员可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
+助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide` 和 `assistant.scheduled_job_diagnostic`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_document`、`knowledge_chunk`，以及管理员可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
 
 当用户泛化发送“新增任务/创建任务/我要建任务”但没有说明任务类型时，`/api/assistant/chat` 必须返回 `tool=assistant.task_creation_guide` 的确定性工具结果，不调用模型网关。`tool_results[0].items[]` 和响应顶层 `suggestions` 必须同时覆盖五类入口：研发任务、定时作业、插件动作、代码巡检和反馈洞察；建议文案固定为 `新增研发任务`、`新增定时作业`、`新增插件动作`、`配置代码巡检定时作业`、`配置每周用户反馈洞察定时作业`，便于前端同时展示任务类型卡片和可点击建议按钮。
 
-显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。`knowledge_document` 候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。`scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent` 和 `ai_skill` 属于管理员运维配置引用，非管理员候选返回空集合，解析返回 `404 REFERENCE_NOT_FOUND`。未授权、不可读、不可检索或不存在的引用不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
+显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。`knowledge_document` 候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。`knowledge_chunk` 候选和解析只返回当前用户可读、所属文档可检索的知识片段，聊天时只注入被显式选中的单个片段。`scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent` 和 `ai_skill` 属于管理员运维配置引用，非管理员候选返回空集合，解析返回 `404 REFERENCE_NOT_FOUND`。未授权、不可读、不可检索或不存在的引用不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
 
 `@` 引用候选：
 
@@ -1410,17 +1411,30 @@ GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limi
       "summary": "用于判断反馈类别、严重度和后续转需求规则。"
     },
     {
+      "id": "knowledge_chunk_001",
+      "type": "knowledge_chunk",
+      "title": "反馈分类标准 #1",
+      "url": "/knowledge/documents?document_id=knowledge_doc_001&chunk_id=knowledge_chunk_001",
+      "chunk_count": 1,
+      "chunk_index": 0,
+      "document_id": "knowledge_doc_001",
+      "source_module": "知识库",
+      "permission_label": "可引用",
+      "updated_at": "2026-06-14T08:00:00+00:00",
+      "summary": "只用于模型上下文的这个片段摘要。"
+    },
+    {
       "id": "scheduled_job_run_001",
       "type": "scheduled_job_run",
       "title": "每周反馈洞察定时作业 / failed",
       "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_001"
     }
   ],
-  "total": 2
+  "total": 3
 }
 ```
 
-`type` 仍可选传，用于限定候选类型；不传时按权限返回混合候选。管理员可得到配置/运行类候选，普通用户只能得到业务对象和可读知识文档。候选可携带 `source_module`、`permission_label`、`updated_at` 和轻量 `summary`，供前端“本次上下文”展示来源、权限、更新时间、知识 chunk 注入状态和引用摘要；模型日志不得保存完整知识正文。
+`type` 仍可选传，用于限定候选类型；不传时按权限返回混合候选。管理员可得到配置/运行类候选，普通用户只能得到业务对象、可读知识文档和可读知识片段。候选可携带 `source_module`、`permission_label`、`updated_at` 和轻量 `summary`，供前端“本次上下文”展示来源、权限、更新时间、知识 chunk 注入状态和引用摘要；模型日志不得保存完整知识正文。
 
 当聊天消息显式引用 `scheduled_job_run` 且问题包含失败、原因、诊断或排查意图时，响应中的 `message.tool_results[]` 会包含；因为引用本身已经提供运行上下文，短追问“为什么这次失败？”也必须触发该工具，不要求文本再次出现“任务/作业/run”等词：
 
@@ -1490,7 +1504,7 @@ POST /api/assistant/references/resolve
 ```json
 {
   "references": [
-    {"type": "knowledge_document", "id": "knowledge_doc_001"}
+    {"type": "knowledge_chunk", "id": "knowledge_chunk_001"}
   ],
   "product_id": "product_001"
 }
@@ -1502,10 +1516,10 @@ POST /api/assistant/references/resolve
 {
   "items": [
     {
-      "id": "knowledge_doc_001",
-      "type": "knowledge_document",
-      "title": "反馈分类标准",
-      "url": "/knowledge/documents?document_id=knowledge_doc_001"
+      "id": "knowledge_chunk_001",
+      "type": "knowledge_chunk",
+      "title": "反馈分类标准 #1",
+      "url": "/knowledge/documents?document_id=knowledge_doc_001&chunk_id=knowledge_chunk_001"
     }
   ],
   "knowledge_context": [
@@ -1513,8 +1527,12 @@ POST /api/assistant/references/resolve
       "document_id": "knowledge_doc_001",
       "document_title": "反馈分类标准",
       "chunk_id": "knowledge_chunk_001",
-      "text": "用于模型上下文的有限 chunk 文本",
-      "metadata": {"chunk_index": 0}
+      "chunk_index": 0,
+      "content": "用于模型上下文的有限 chunk 文本",
+      "source": {
+        "doc_type": "manual",
+        "knowledge_space_id": null
+      }
     }
   ],
   "total": 1

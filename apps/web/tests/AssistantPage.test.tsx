@@ -379,6 +379,105 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('selects a specific knowledge chunk with @ candidates and sends chunk reference', async () => {
+    let chatRequestBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        expect(init?.method ?? 'GET').toBe('GET');
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('loading');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  chunk_count: 1,
+                  chunk_index: 0,
+                  document_id: 'knowledge_payment_runbook',
+                  id: 'knowledge_payment_runbook_chunk_001',
+                  permission_label: '可引用',
+                  source_module: '知识库',
+                  summary: '支付页提交无响应：检查网关 30 秒超时、回调幂等键和前端 loading 状态。',
+                  title: '支付页超时排障手册 #1',
+                  type: 'knowledge_chunk',
+                  updated_at: '2026-06-14T08:00:00+00:00',
+                  url: '/knowledge/documents?document_id=knowledge_payment_runbook&chunk_id=knowledge_payment_runbook_chunk_001',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        chatRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_chunk_reference',
+              latency_ms: 166,
+              message: {
+                content: '只使用这段 chunk 分析 loading 状态。',
+                id: 'assistant_message_chunk_reference',
+                references: [
+                  {
+                    id: 'knowledge_payment_runbook_chunk_001',
+                    title: '支付页超时排障手册 #1',
+                    type: 'knowledge_chunk',
+                    url: '/knowledge/documents?document_id=knowledge_payment_runbook&chunk_id=knowledge_payment_runbook_chunk_001',
+                  },
+                ],
+                role: 'assistant',
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '基于 @loading 分析支付页' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /支付页超时排障手册 #1/ }));
+
+    const selectedReferenceList = screen.getByText('本次上下文')
+      .closest('.assistant-selected-reference-list');
+    expect(selectedReferenceList).not.toBeNull();
+    expect(within(selectedReferenceList as HTMLElement).getAllByText(/1 个知识 chunk 将注入模型/).length)
+      .toBeGreaterThan(0);
+    expect(within(selectedReferenceList as HTMLElement).getByText('知识片段')).toBeInTheDocument();
+    expect(
+      within(selectedReferenceList as HTMLElement).getByText(
+        '支付页提交无响应：检查网关 30 秒超时、回调幂等键和前端 loading 状态。',
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('只使用这段 chunk 分析 loading 状态。')).toBeInTheDocument();
+    expect(chatRequestBody).toMatchObject({
+      message: '基于 @loading 分析支付页',
+      references: [{ id: 'knowledge_payment_runbook_chunk_001', type: 'knowledge_chunk' }],
+    });
+  });
+
   it('promotes previously selected @ references into a recent group', async () => {
     const referenceItems = [
       {

@@ -164,7 +164,9 @@ export type AssistantChatResponse = {
 
 export type AssistantReference = {
   chunk_count?: number;
+  chunk_index?: number;
   created_at?: string;
+  document_id?: string;
   id: string;
   index_status?: string;
   permission_label?: string;

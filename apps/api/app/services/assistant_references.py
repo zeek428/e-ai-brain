@@ -26,6 +26,7 @@ REFERENCE_SOURCE_MODULES = {
     "human_review": "需求交付",
     "iteration_version": "需求交付",
     "knowledge_deposit": "知识库",
+    "knowledge_chunk": "知识库",
     "knowledge_document": "知识库",
     "plugin_action": "插件管理",
     "product": "产品资产",
@@ -197,6 +198,15 @@ def assistant_reference_candidates_response(
         )
         enriched_items = _reference_candidates_with_metadata(current_store, items)
         return {"items": enriched_items, "total": len(enriched_items)}
+    if normalized_type == "knowledge_chunk":
+        items = _knowledge_chunk_reference_candidates(
+            current_store,
+            limit=normalized_limit,
+            query=message,
+            user=user,
+        )
+        enriched_items = _reference_candidates_with_metadata(current_store, items)
+        return {"items": enriched_items, "total": len(enriched_items)}
     if normalized_type:
         items = [
             reference
@@ -215,13 +225,25 @@ def assistant_reference_candidates_response(
             items[:normalized_limit],
         )
         return {"items": enriched_items, "total": len(enriched_items)}
-    items = _merge_reference_lists(
-        _knowledge_document_reference_candidates(
-            current_store,
+    knowledge_references = _knowledge_document_reference_candidates(
+        current_store,
+        limit=normalized_limit,
+        query=message,
+        user=user,
+    )
+    if message.strip():
+        knowledge_references = _merge_reference_lists(
+            _knowledge_chunk_reference_candidates(
+                current_store,
+                limit=normalized_limit,
+                query=message,
+                user=user,
+            ),
+            knowledge_references,
             limit=normalized_limit,
-            query=message,
-            user=user,
-        ),
+        )
+    items = _merge_reference_lists(
+        knowledge_references,
         assistant_reference_candidates(
             current_store,
             filter_by_query=True,
@@ -271,6 +293,23 @@ def resolve_assistant_references(
                     user=user,
                 )
             )
+            continue
+        if reference_type == "knowledge_chunk":
+            chunk_record = _readable_knowledge_chunk(
+                current_store,
+                chunk_id=reference_id,
+                user=user,
+            )
+            if chunk_record is None:
+                raise AssistantReferenceError(
+                    404,
+                    "REFERENCE_NOT_FOUND",
+                    "Assistant reference not found",
+                )
+            chunk, document = chunk_record
+            resolved.append(_knowledge_chunk_reference(document, chunk))
+            if len(knowledge_context) < max_chunks:
+                knowledge_context.append(_knowledge_context_for_chunk(document, chunk))
             continue
         entity_reference = _entity_reference_for_id(current_store, reference_type, reference_id)
         if reference_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational(
@@ -436,6 +475,44 @@ def _knowledge_document_reference_candidates(
     return references[:limit]
 
 
+def _knowledge_chunk_reference_candidates(
+    current_store: Any,
+    *,
+    limit: int,
+    query: str,
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    normalized_query = query.strip().lower()
+    candidates = _readable_knowledge_chunk_candidates(
+        current_store,
+        query=normalized_query or None,
+        user=user,
+    )
+    references = []
+    for candidate in candidates:
+        document = candidate["document"]
+        chunk = candidate["chunk"]
+        if chunk.get("metadata", {}).get("chunk_role") == "parent":
+            continue
+        references.append(
+            {
+                **_knowledge_chunk_reference(document, chunk),
+                "chunk_count": 1,
+                "chunk_index": int(chunk.get("chunk_index") or 0),
+                "document_id": str(document["id"]),
+                "summary": _summary_excerpt(str(chunk.get("content") or "")),
+                "updated_at": str(document.get("updated_at") or document.get("created_at") or ""),
+            }
+        )
+    references.sort(
+        key=lambda item: (
+            item.get("title", ""),
+            item.get("id", ""),
+        )
+    )
+    return references[:limit]
+
+
 def _readable_knowledge_documents(
     current_store: Any,
     *,
@@ -488,6 +565,67 @@ def _readable_knowledge_document(
     return None
 
 
+def _readable_knowledge_chunk(
+    current_store: Any,
+    *,
+    chunk_id: str,
+    user: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    for candidate in _readable_knowledge_chunk_candidates(
+        current_store,
+        query=None,
+        user=user,
+    ):
+        chunk = candidate["chunk"]
+        if chunk.get("metadata", {}).get("chunk_role") == "parent":
+            continue
+        if str(chunk.get("id")) == chunk_id:
+            return chunk, candidate["document"]
+    return None
+
+
+def _readable_knowledge_chunk_candidates(
+    current_store: Any,
+    *,
+    query: str | None,
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    repository = knowledge_query_repository(current_store)
+    search_chunks = getattr(repository, "search_knowledge_chunks", None)
+    if callable(search_chunks):
+        access_args = knowledge_repository_access_args(user)
+        try:
+            return search_chunks(
+                **access_args,
+                query=query,
+            )
+        except TypeError:
+            return search_chunks(
+                user_roles=access_args["user_roles"],
+                query=query,
+            )
+
+    candidates: list[dict[str, Any]] = []
+    for document in _readable_knowledge_documents(
+        current_store,
+        query=None,
+        user=user,
+    ):
+        if document.get("index_status") not in KNOWLEDGE_SEARCHABLE_STATUSES:
+            continue
+        for chunk in _readable_knowledge_chunks(
+            current_store,
+            document=document,
+            user=user,
+        ):
+            if query:
+                haystack = f"{document.get('title', '')} {chunk.get('content', '')}".lower()
+                if query not in haystack:
+                    continue
+            candidates.append({"chunk": chunk, "document": document})
+    return candidates
+
+
 def _knowledge_context_for_document(
     current_store: Any,
     *,
@@ -504,19 +642,7 @@ def _knowledge_context_for_document(
     )
     context_items = []
     for chunk in candidates[:max_chunks]:
-        context_items.append(
-            {
-                "chunk_id": str(chunk["id"]),
-                "chunk_index": int(chunk.get("chunk_index") or 0),
-                "content": str(chunk.get("content") or ""),
-                "document_id": str(document["id"]),
-                "document_title": str(document.get("title") or document["id"]),
-                "source": {
-                    "doc_type": document.get("doc_type"),
-                    "knowledge_space_id": document.get("knowledge_space_id"),
-                },
-            }
-        )
+        context_items.append(_knowledge_context_for_chunk(document, chunk))
     if context_items:
         return context_items
     content = str(document.get("content") or "").strip()
@@ -535,6 +661,23 @@ def _knowledge_context_for_document(
             },
         }
     ]
+
+
+def _knowledge_context_for_chunk(
+    document: dict[str, Any],
+    chunk: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "chunk_id": str(chunk["id"]),
+        "chunk_index": int(chunk.get("chunk_index") or 0),
+        "content": str(chunk.get("content") or ""),
+        "document_id": str(document["id"]),
+        "document_title": str(document.get("title") or document["id"]),
+        "source": {
+            "doc_type": document.get("doc_type"),
+            "knowledge_space_id": document.get("knowledge_space_id"),
+        },
+    }
 
 
 def _readable_knowledge_chunks(
@@ -604,10 +747,7 @@ def _knowledge_document_reference_summary(document: dict[str, Any]) -> dict[str,
     ).strip()
     if not summary:
         return {}
-    normalized = " ".join(summary.split())
-    if len(normalized) > 120:
-        normalized = f"{normalized[:117]}..."
-    return {"summary": normalized}
+    return {"summary": _summary_excerpt(summary)}
 
 
 def _knowledge_document_reference(document: dict[str, Any]) -> dict[str, str]:
@@ -618,6 +758,26 @@ def _knowledge_document_reference(document: dict[str, Any]) -> dict[str, str]:
         "type": "knowledge_document",
         "url": f"/knowledge/documents?document_id={document_id}",
     }
+
+
+def _knowledge_chunk_reference(document: dict[str, Any], chunk: dict[str, Any]) -> dict[str, str]:
+    document_id = str(document["id"])
+    chunk_id = str(chunk["id"])
+    chunk_number = int(chunk.get("chunk_index") or 0) + 1
+    title = f"{document.get('title') or document_id} #{chunk_number}"
+    return {
+        "id": chunk_id,
+        "title": title,
+        "type": "knowledge_chunk",
+        "url": f"/knowledge/documents?document_id={document_id}&chunk_id={chunk_id}",
+    }
+
+
+def _summary_excerpt(value: str) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) > 120:
+        return f"{normalized[:117]}..."
+    return normalized
 
 
 def _entity_reference_for_id(

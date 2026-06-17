@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.395 |
+| 功能版本 | v1.1.396 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.396 | 2026-06-17 | AI 助手显式知识引用从文档级补齐到知识 chunk 级，支持 @ 候选、解析和只注入被选中片段 | Codex |
 | v1.1.395 | 2026-06-17 | AI 助手执行一次运行记录在聊天气泡内展示状态追踪，并补齐草案详情弹窗展示 payload、字段差异和校验问题 | Codex |
 | v1.1.394 | 2026-06-17 | AI 助手“新增任务”向导的建议入口补齐研发任务、定时作业、插件动作、代码巡检和反馈洞察五类任务 | Codex |
 | v1.1.393 | 2026-06-17 | AI 助手 run-once 定时作业草案确认后，前端草案卡片展示创建作业和本次运行记录两个追踪入口 | Codex |
@@ -430,9 +431,9 @@
 
 AI 助手正在从只读问答页升级为统一工作台。整体目标仍详见 [AI 助手工作台升级整体方案](assistant-workbench-upgrade-design.md)：用户可在输入框通过 `@` 显式引用产品、需求、AI 任务、Bug、知识空间/目录/文档/chunk、插件、动作、AI角色/Skill、模型网关配置、定时作业和运行实例；后端必须先解析引用、校验权限、构造脱敏上下文，再进入模型网关调用或动作草案生成。知识库引入遵守显式范围、权限过滤和限量注入，完整知识正文不得写入模型日志。
 
-当前 P0 已落地 `knowledge_document` 显式引用：前端在 AI 助手输入框输入 `@` 后调用 `/api/assistant/reference-candidates` 拉取当前用户可读且可检索的知识文档候选，选择后在聊天框上方“本次上下文”区域展示引用类型、来源模块、权限状态、更新时间、知识 chunk 注入状态和轻量摘要，并随 `/api/assistant/chat.references` 提交结构化 ID；后端通过 `/api/assistant/references/resolve` 和聊天前解析流程校验引用，未授权、不可读、不可检索或不存在的文档返回 `REFERENCE_NOT_FOUND`，不得进入模型上下文。聊天调用会把已解析引用写入 `system_context.selected_references`，并按权限读取有限数量的知识 chunk 写入 `system_context.knowledge_context`；助手消息只持久化引用元数据和工具结果，模型日志继续只记录 provider、model、purpose、tokens、latency、status 和 error 等脱敏元数据，不保存完整知识正文。
+当前 P0 已落地 `knowledge_document` 和 `knowledge_chunk` 显式引用：前端在 AI 助手输入框输入 `@` 后调用 `/api/assistant/reference-candidates` 拉取当前用户可读且可检索的知识文档与知识片段候选，选择后在聊天框上方“本次上下文”区域展示引用类型、来源模块、权限状态、更新时间、知识 chunk 注入状态和轻量摘要，并随 `/api/assistant/chat.references` 提交结构化 ID；后端通过 `/api/assistant/references/resolve` 和聊天前解析流程校验引用，未授权、不可读、不可检索或不存在的文档/片段返回 `REFERENCE_NOT_FOUND`，不得进入模型上下文。引用文档时，聊天调用会按权限读取有限数量的知识 chunk 写入 `system_context.knowledge_context`；引用具体 `knowledge_chunk` 时只注入被选中的单个片段，避免整篇文档被误带入上下文。助手消息只持久化引用元数据和工具结果，模型日志继续只记录 provider、model、purpose、tokens、latency、status 和 error 等脱敏元数据，不保存完整知识正文。
 
-显式引用候选已继续扩展到研发业务对象和管理员运维配置对象：所有助手用户可按产品上下文引用 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit` 和可读 `knowledge_document`；仅管理员可引用 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`。前端 `@` 查询不再固定为知识文档类型，会展示引用类型标签并提交 `{type,id}`；已选择或发送过的引用会记录为本地“最近使用”，但仅在该对象仍出现在当前后端候选结果中时置顶展示，不能绕过后端权限过滤。后端候选和解析都按当前用户角色过滤，非管理员提交配置/运行类引用时返回空候选或 `REFERENCE_NOT_FOUND`。
+显式引用候选已继续扩展到研发业务对象和管理员运维配置对象：所有助手用户可按产品上下文引用 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、可读 `knowledge_document` 和可读 `knowledge_chunk`；仅管理员可引用 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`ai_agent`、`ai_skill`。前端 `@` 查询不再固定为知识文档类型，会展示引用类型标签并提交 `{type,id}`；已选择或发送过的引用会记录为本地“最近使用”，但仅在该对象仍出现在当前后端候选结果中时置顶展示，不能绕过后端权限过滤。后端候选和解析都按当前用户角色过滤，非管理员提交配置/运行类引用时返回空候选或 `REFERENCE_NOT_FOUND`。
 
 AI 助手侧栏提供“草案模板市场”显式入口，前端点击后调用 `GET /api/assistant/draft-templates` 拉取服务端目录，不在页面硬编码模板。模板目录按当前用户角色过滤，管理员可见全部；每个模板返回 `code/name/category/description/prompt/roles/source_module/draft_action/target_resource/dependencies/wizard_steps/template_version/available`。首批模板覆盖周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析；前端以模板卡片展示依赖、流程和接入状态，点击可用模板只回填聊天输入框，由用户确认发送后再生成草案或分析，不直接写配置或触发外部动作。
 

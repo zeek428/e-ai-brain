@@ -221,6 +221,7 @@ const queryReferenceTypes = new Set([
   'ai_agent',
   'ai_skill',
   'ai_task',
+  'knowledge_chunk',
   'knowledge_document',
   'plugin_action',
   'requirement',
@@ -659,6 +660,7 @@ function referenceTypeLabel(type: string) {
     human_review: '确认',
     iteration_version: '迭代',
     knowledge_deposit: '知识沉淀',
+    knowledge_chunk: '知识片段',
     knowledge_document: '知识文档',
     plugin_action: '插件动作',
     product: '产品',
@@ -679,6 +681,7 @@ function referenceSourceModule(type: string) {
     human_review: '需求交付',
     iteration_version: '需求交付',
     knowledge_deposit: '知识库',
+    knowledge_chunk: '知识库',
     knowledge_document: '知识库',
     plugin_action: '插件管理',
     product: '产品资产',
@@ -707,6 +710,9 @@ function referenceMetaText(reference: AssistantReference) {
 }
 
 function referenceInjectionText(reference: AssistantReference) {
+  if (reference.type === 'knowledge_chunk') {
+    return '1 个知识 chunk 将注入模型';
+  }
   if (reference.type === 'knowledge_document') {
     const chunkCount = Number(reference.chunk_count ?? 0);
     return chunkCount > 0
@@ -2516,7 +2522,13 @@ export default function AssistantPage() {
                       {referenceSummaryText(reference)}
                     </Text>
                     <Space size={6} wrap>
-                      <Tag color={reference.type === 'knowledge_document' ? 'green' : 'default'}>
+                      <Tag
+                        color={
+                          reference.type === 'knowledge_document' || reference.type === 'knowledge_chunk'
+                            ? 'green'
+                            : 'default'
+                        }
+                      >
                         {referenceInjectionText(reference)}
                       </Tag>
                       <Button href={reference.url} size="small" type="link">
