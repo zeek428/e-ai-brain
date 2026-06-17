@@ -2258,6 +2258,68 @@ describe('ScheduledJobsPage', () => {
     expect(screen.getByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
   });
 
+  it('opens and expands the linked result write record from route query parameters', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/tasks/scheduled-jobs?tab=runs&run_id=scheduled_job_run_write_trace&result_write_record_id=result_write_record_failed_trace',
+    );
+    const { resultWriteRecordCalls } = installScheduledJobsFetchMock({
+      resultWriteRecords: [
+        {
+          created_at: '2026-06-17T09:00:00Z',
+          feedback: {
+            error: 'downstream write failed',
+          },
+          id: 'result_write_record_failed_trace',
+          plugin_action_id: 'plugin_action_feedback_write',
+          plugin_invocation_log_id: 'plugin_invocation_log_failed_trace',
+          records_imported: 0,
+          scheduled_job_id: 'scheduled_job_feedback_trace',
+          scheduled_job_run_id: 'scheduled_job_run_write_trace',
+          source_type: 'scheduled_job_run',
+          status: 'failed',
+          summary_fields: {
+            error: 'downstream write failed',
+          },
+          write_target: 'user_feedback_insights',
+          write_target_label: '用户洞察表',
+        },
+      ],
+      runs: [
+        {
+          id: 'scheduled_job_run_write_trace',
+          records_imported: 0,
+          result_summary: {
+            execution_nodes: {
+              result_action: {
+                status: 'failed',
+                write_target: 'user_feedback_insights',
+                write_target_label: '用户洞察表',
+              },
+            },
+          },
+          scheduled_job_id: 'scheduled_job_feedback_trace',
+          status: 'failed',
+          trigger_type: 'manual',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    await waitFor(() =>
+      expect(resultWriteRecordCalls).toContain(
+        '/api/system/result-write-records?scheduled_job_run_id=scheduled_job_run_write_trace',
+      ),
+    );
+    expect(within(dialog).getByText('结果写入记录')).toBeInTheDocument();
+    expect(await within(dialog).findByText('执行反馈')).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/downstream write failed/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('tab', { name: '运行记录' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('can rerun a scheduled job from an existing run record', async () => {
     const { runJobBodies, runJobIds } = installScheduledJobsFetchMock({
       runResponse: Promise.resolve({

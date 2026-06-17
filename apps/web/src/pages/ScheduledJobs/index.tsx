@@ -684,12 +684,25 @@ function resultWriteRecordStatusColor(status?: string) {
 }
 
 function RunResultWriteRecords({
+  focusedRecordId,
   loading,
   records,
 }: {
+  focusedRecordId?: string;
   loading: boolean;
   records: ResultWriteRecord[];
 }) {
+  const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!focusedRecordId) {
+      setExpandedRowKeys([]);
+      return;
+    }
+    const hasFocusedRecord = records.some((record) => record.id === focusedRecordId);
+    setExpandedRowKeys(hasFocusedRecord ? [focusedRecordId] : []);
+  }, [focusedRecordId, records]);
+
   return (
     <Space orientation="vertical" size={8} style={{ width: '100%' }}>
       <Typography.Text strong>结果写入记录</Typography.Text>
@@ -741,6 +754,8 @@ function RunResultWriteRecords({
         ]}
         dataSource={records}
         expandable={{
+          expandedRowKeys,
+          onExpandedRowsChange: (keys) => setExpandedRowKeys(keys.map(String)),
           expandedRowRender: (record) => (
             <Space orientation="vertical" size={10} style={{ width: '100%' }}>
               <JsonPreview title="结果摘要字段" value={record.summary_fields} />
@@ -1499,13 +1514,18 @@ function scheduledJobTemplateValuesFromRecord(
   };
 }
 
-function scheduledJobRouteParams(): { runId?: string; tab?: ScheduledJobPageTab } {
+function scheduledJobRouteParams(): {
+  resultWriteRecordId?: string;
+  runId?: string;
+  tab?: ScheduledJobPageTab;
+} {
   if (typeof window === 'undefined') {
     return { runId: undefined, tab: undefined };
   }
   const params = new URLSearchParams(window.location.search);
   const tab = params.get('tab') === 'runs' ? 'runs' : params.get('tab') === 'jobs' ? 'jobs' : undefined;
   return {
+    resultWriteRecordId: params.get('result_write_record_id') ?? undefined,
     runId: params.get('run_id') ?? undefined,
     tab,
   };
@@ -1550,9 +1570,10 @@ export default function ScheduledJobsPage() {
     Pick<AssistantScheduledJobDraft, 'draftId' | 'title'> | undefined
   >();
   const [activeTab, setActiveTab] = useState<ScheduledJobPageTab>(initialScheduledJobPageTab);
-  const [handledRouteRunId, setHandledRouteRunId] = useState<string | undefined>();
+  const [handledRouteRunKey, setHandledRouteRunKey] = useState<string | undefined>();
   const [templateSource, setTemplateSource] = useState<ScheduledJobTemplateSource | undefined>();
   const [selectedRun, setSelectedRun] = useState<ScheduledJobRunRecord | undefined>();
+  const [linkedResultWriteRecordId, setLinkedResultWriteRecordId] = useState<string | undefined>();
   const [selectedRunResultWriteRecords, setSelectedRunResultWriteRecords] = useState<ResultWriteRecord[]>([]);
   const [selectedRunResultWriteRecordsLoading, setSelectedRunResultWriteRecordsLoading] = useState(false);
   const [generatedRunTemplate, setGeneratedRunTemplate] = useState<ScheduledJobTemplateRecord | undefined>();
@@ -2201,7 +2222,10 @@ export default function ScheduledJobsPage() {
     if (routeParams.tab) {
       setActiveTab(routeParams.tab);
     }
-    if (!routeParams.runId || handledRouteRunId === routeParams.runId) {
+    const routeRunKey = routeParams.runId
+      ? `${routeParams.runId}:${routeParams.resultWriteRecordId ?? ''}`
+      : undefined;
+    if (!routeParams.runId || handledRouteRunKey === routeRunKey) {
       return;
     }
     const routeRun = runs.find((run) => run.id === routeParams.runId);
@@ -2209,9 +2233,10 @@ export default function ScheduledJobsPage() {
       return;
     }
     setActiveTab('runs');
+    setLinkedResultWriteRecordId(routeParams.resultWriteRecordId);
     setSelectedRun(routeRun);
-    setHandledRouteRunId(routeParams.runId);
-  }, [handledRouteRunId, runs]);
+    setHandledRouteRunKey(routeRunKey);
+  }, [handledRouteRunKey, runs]);
 
   useEffect(() => {
     if (!selectedRun?.id) {
@@ -2325,6 +2350,7 @@ export default function ScheduledJobsPage() {
       pluginConnectionById,
     });
     setSelectedRun(undefined);
+    setLinkedResultWriteRecordId(undefined);
     setEditingJob(undefined);
     setAssistantDraftPayload(undefined);
     setAssistantDraftSource(undefined);
@@ -2370,6 +2396,7 @@ export default function ScheduledJobsPage() {
               : [],
       };
       setSelectedRun(undefined);
+      setLinkedResultWriteRecordId(undefined);
       setEditingJob(undefined);
       setAssistantDraftPayload(undefined);
       setAssistantDraftSource(undefined);
@@ -2600,6 +2627,7 @@ export default function ScheduledJobsPage() {
     setRunningJobId(jobId);
     try {
       const run = await runScheduledJob(jobId, triggerType, sourceRunId);
+      setLinkedResultWriteRecordId(undefined);
       setSelectedRun(run);
       if (run.status === 'succeeded') {
         message.success('作业运行完成');
@@ -2863,7 +2891,10 @@ export default function ScheduledJobsPage() {
                           <Button
                             aria-label={`查看运行结果 ${row.id}`}
                             icon={<EyeOutlined />}
-                            onClick={() => setSelectedRun(row)}
+                            onClick={() => {
+                              setLinkedResultWriteRecordId(undefined);
+                              setSelectedRun(row);
+                            }}
                             type="link"
                           >
                             详情
@@ -3459,7 +3490,14 @@ export default function ScheduledJobsPage() {
         destroyOnHidden
         footer={(
           <Space>
-            <Button onClick={() => setSelectedRun(undefined)}>关闭</Button>
+            <Button
+              onClick={() => {
+                setSelectedRun(undefined);
+                setLinkedResultWriteRecordId(undefined);
+              }}
+            >
+              关闭
+            </Button>
             {selectedRun?.status === 'succeeded' ? (
               <Button onClick={() => void generateTemplateFromRun(selectedRun)}>
                 生成模板
@@ -3484,7 +3522,10 @@ export default function ScheduledJobsPage() {
         open={Boolean(selectedRun)}
         title="运行结果详情"
         width={980}
-        onCancel={() => setSelectedRun(undefined)}
+        onCancel={() => {
+          setSelectedRun(undefined);
+          setLinkedResultWriteRecordId(undefined);
+        }}
       >
         {selectedRun ? (
           <Space orientation="vertical" size={16} style={{ width: '100%' }}>
@@ -3543,6 +3584,7 @@ export default function ScheduledJobsPage() {
             <RunExecutionChain run={selectedRun} />
             <RunTraceDag run={selectedRun} />
             <RunResultWriteRecords
+              focusedRecordId={linkedResultWriteRecordId}
               loading={selectedRunResultWriteRecordsLoading}
               records={selectedRunResultWriteRecords}
             />

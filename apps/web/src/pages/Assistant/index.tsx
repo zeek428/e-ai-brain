@@ -2321,6 +2321,27 @@ export default function AssistantPage() {
     return scheduledJobReference ? [scheduledJobReference] : [];
   };
 
+  const resolveCommandReferenceCandidates = async (messageText: string) => {
+    const currentCandidates = commandReferenceCandidates(messageText);
+    if (currentCandidates.length || !scheduledJobRunOnceRequested(messageText)) {
+      return currentCandidates;
+    }
+    const query = activeMentionQuery(messageText);
+    if (query === undefined) {
+      return [];
+    }
+    try {
+      const items = await fetchAssistantReferenceCandidates({
+        limit: ASSISTANT_REFERENCE_CANDIDATE_LIMIT,
+        query,
+      });
+      const scheduledJobReference = items.find((reference) => reference.type === 'scheduled_job');
+      return scheduledJobReference ? [scheduledJobReference] : [];
+    } catch {
+      return [];
+    }
+  };
+
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!orderedReferenceCandidates.length) {
       return;
@@ -2404,9 +2425,11 @@ export default function AssistantPage() {
     if (!content || isSending) {
       return;
     }
+    setIsSending(true);
+    const commandReferences = referenceOverrides ?? await resolveCommandReferenceCandidates(content);
     const referencesForRequest = mergeReferences(
       selectedReferences,
-      referenceOverrides ?? commandReferenceCandidates(content),
+      commandReferences,
     );
     if (referencesForRequest.length) {
       setRecentReferences((items) => {
@@ -2423,7 +2446,6 @@ export default function AssistantPage() {
     };
     setMessages((items) => [...items, userMessage]);
     setInputValue('');
-    setIsSending(true);
     try {
       const response = await chatWithAssistant({
         context: { source: 'assistant-page' },
