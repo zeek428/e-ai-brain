@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.504 |
+| 功能版本 | v1.1.505 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.505 | 2026-06-17 | 补充 AI 助手终态草案前端验收：已取消、已过期或失败草案不得再应用到配置表单 | Codex |
 | v1.1.504 | 2026-06-17 | 补充 AI 助手裸 `@` 默认候选均衡验收：知识文档不能挤掉需求、AI任务、定时作业、运行记录、插件动作、AI角色和 Skill | Codex |
 | v1.1.503 | 2026-06-17 | 补充 AI 助手定时作业草案向导验收：周反馈、邮件摘要和线上日志异常草案均必须返回 `wizard_steps` | Codex |
 | v1.1.502 | 2026-06-17 | 补充 AI 助手草案配置向导与 run-once 消歧验收：代码巡检作业草案必须展示 `wizard_steps`，相似历史任务存在时优先执行唯一启用 active 作业 | Codex |
@@ -614,7 +615,7 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 | TC-AIBRAIN-ASSISTANT-FUNC-015 | v1.1 | P0 | 管理员通过助理手动运行 `@scheduled_job` | 确认后复用现有 run service 创建运行实例；对话返回 run ID、状态、结果详情链接和三段执行节点摘要。显式 `@定时作业名称` 必须按完整名称、标题、编码或 ID 精确命中优先；当存在多个相近用户反馈洞察作业时，`@提取每周用户反馈有价值信息 执行一次` 仍执行完整名称唯一命中的作业；若语义匹配到多个相似历史任务但只有一个 `enabled=true/status=active` 的可执行作业，后端必须执行该作业，避免停用历史任务导致命令退回草案；当前端自动候选误带入相近或禁用的 `scheduled_job` 引用时，后端以成功解析的显式 @ 名称替换命令引用，避免不执行或执行错作业。若没有唯一可执行作业但命中周反馈洞察场景，助手必须返回 `assistant.action_draft intent=scheduled_job_draft`，持久化 `assistant_draft_weekly_feedback_insight` 服务端草案，在 payload 的 `config_json.assistant_run_once_request` 标记原始“执行一次”请求，且确认前不得创建作业或触发外部调用；用户确认该草案后必须创建作业并立即触发一次手动运行。对于 `user_feedback_insight_extract`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate` 等 AI 类长链路作业，助手不等待完整执行结束，运行记录进入 `running/queued` 后即返回“已触发”和 `assistant.scheduled_job_run` 工具结果，后台继续完成；前端助手气泡必须展示运行记录卡片，并在 running/queued 时轮询运行列表，终态后显示“运行状态：成功/失败”和导入记录，后续可通过运行详情或继续追问查看最终成功/失败原因。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_generates_feedback_draft_when_run_once_job_missing`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_runs_exact_explicit_mention_when_similar_jobs_exist`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_prefers_enabled_job_when_run_once_alias_matches_history`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_explicit_mention_overrides_wrong_command_reference`、`apps/api/tests/test_assistant_chat_service.py::test_assistant_chat_returns_running_record_for_long_ai_job_once_without_waiting` 和 `apps/web/tests/AssistantPage.test.tsx::sends @ scheduled job run-once commands with the active candidate reference`。 |
 | TC-AIBRAIN-ASSISTANT-ERR-016 | v1.1 | P0 | 非管理员尝试通过自然语言创建插件、修改模型配置或运行定时作业 | 接口返回权限错误，不生成可确认写入草案，不产生领域写入审计。 |
 | TC-AIBRAIN-ASSISTANT-BOUND-017 | v1.1 | P1 | 草案过期、引用失效或确认用户权限变化后再确认 | 确认失败并写入失败审计；不得使用草案生成时的旧权限绕过当前校验。 |
-| TC-AIBRAIN-ASSISTANT-FUNC-017B | v1.1 | P1 | 用户打开或确认已过期的服务端动作草案 | 草案创建或读取时若 `expires_at <= now()` 且状态仍为 `pending`，服务端自动将草案状态更新为 `expired`，公开响应返回 `expires_at/status=expired` 并写入 `assistant_action_draft.expired` 审计；用户确认或取消该草案返回 `409 DRAFT_EXPIRED`，不得调用 scheduled_jobs/plugin/analysis 执行器，不创建业务资源或 `assistant_action_runs`；`GET /api/assistant/metrics` 返回 `draft_expired_count`，草案处理率把 expired 算作已处理。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_expires_before_confirmation` 和 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage`。 |
+| TC-AIBRAIN-ASSISTANT-FUNC-017B | v1.1 | P1 | 用户打开或确认已过期的服务端动作草案 | 草案创建或读取时若 `expires_at <= now()` 且状态仍为 `pending`，服务端自动将草案状态更新为 `expired`，公开响应返回 `expires_at/status=expired` 并写入 `assistant_action_draft.expired` 审计；用户确认或取消该草案返回 `409 DRAFT_EXPIRED`，不得调用 scheduled_jobs/plugin/analysis 执行器，不创建业务资源或 `assistant_action_runs`；前端草案卡片展示“已过期”，不得展示“确认创建”“取消”或“应用到定时作业/插件连接/插件动作表单”，仅保留查看详情、查看草案和重新生成；`GET /api/assistant/metrics` 返回 `draft_expired_count`，草案处理率把 expired 算作已处理。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_expires_before_confirmation`、`apps/api/tests/test_assistant_chat.py::test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage` 和 `apps/web/tests/AssistantPage.test.tsx::does not allow expired assistant drafts to be applied through forms`。 |
 | TC-AIBRAIN-ASSISTANT-ERR-018 | v1.1 | P1 | 插件连接含密钥、Header、Token 或 Basic 密码时被 `@` 引入聊天 | 传给模型的上下文只能包含脱敏能力摘要；不得包含密钥、完整外部响应或认证 Header 明文。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-019 | v1.1 | P1 | 用户取消助理动作草案 | `POST /api/assistant/action-drafts/{draft_id}/cancel` 将草案状态变为 `cancelled`，记录取消原因和审计，不调用领域 service，不产生业务写入；已取消草案再次确认返回冲突错误。 |
 | TC-AIBRAIN-ASSISTANT-FUNC-020 | v1.1 | P1 | 管理员围绕一次失败的 `@scheduled_job_run` 继续追问失败原因 | 聊天响应包含 `assistant.scheduled_job_diagnostic` 工具结果，按数据连接、AI 处理、结果动作三段返回状态、摘要、错误信息和关联日志 ID；当请求已经显式引用 `scheduled_job_run` 时，“为什么这次失败？”这类短追问也必须触发诊断，不要求再次出现“任务/作业/运行”关键词；结果动作段必须从结果写入记录读模型补充 `result_write_record_id/result_write_status/result_write_target/result_write_target_label`，用于判断最终写入目标是否成功；助手回复和历史消息保留该工具结果；模型日志不保存完整插件请求/响应、Prompt、模型输出或密钥。回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_chat_returns_scheduled_job_run_diagnostic`。 |

@@ -1162,6 +1162,7 @@ function AssistantActionDraftCards({
         const currentStatus = currentDraftStatus(draft);
         const statusLabel = draftStatusLabel(currentStatus);
         const isPending = currentStatus === 'pending';
+        const canApplyDraftToForm = isPending;
         const previewStatus = draft.preview?.validation?.status;
         const isPreviewBlocked = previewStatus === 'blocked';
         const wizardSteps = draftWizardSteps(draft);
@@ -1412,7 +1413,7 @@ function AssistantActionDraftCards({
                   {runResourceLink.label}
                 </Button>
               ) : null}
-              {!resourceLink && isPluginConnectionDraft ? (
+              {canApplyDraftToForm && !resourceLink && isPluginConnectionDraft ? (
                 <Button
                   href="/tasks/plugins"
                   size="small"
@@ -1423,7 +1424,7 @@ function AssistantActionDraftCards({
                   应用到插件连接表单
                 </Button>
               ) : null}
-              {!resourceLink && isPluginActionDraft ? (
+              {canApplyDraftToForm && !resourceLink && isPluginActionDraft ? (
                 <Button
                   href="/tasks/plugins"
                   size="small"
@@ -1434,7 +1435,8 @@ function AssistantActionDraftCards({
                   应用到插件动作表单
                 </Button>
               ) : null}
-              {!resourceLink
+              {canApplyDraftToForm
+              && !resourceLink
               && !isAiCapabilityDraft
               && !isPluginConnectionDraft
               && !isPluginActionDraft

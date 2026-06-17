@@ -1663,6 +1663,79 @@ describe('AssistantPage', () => {
     ]);
   });
 
+  it('does not allow expired assistant drafts to be applied through forms', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_expired_draft',
+              latency_ms: 31,
+              message: {
+                content: '这个草案已经过期，需要重新生成后再确认。',
+                id: 'assistant_message_expired_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        client_draft_id: 'assistant_draft_expired_weekly_feedback',
+                        draft_id: 'assistant_action_draft_expired',
+                        payload: {
+                          execution_mode: 'ai_generated',
+                          job_type: 'user_feedback_insight_extract',
+                          name: '已过期的周反馈洞察草案',
+                          schedule_type: 'cron',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        server_draft_id: 'assistant_action_draft_expired',
+                        status: 'expired',
+                        title: '创建周反馈洞察定时作业',
+                      },
+                    ],
+                    summary: { draft_count: 1, requires_confirmation: false },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我创建周反馈洞察草案' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('已过期')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /确认创建/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '应用到定时作业表单' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('重新生成「创建周反馈洞察定时作业」草案');
+  });
+
   it('renders and confirms assistant analysis drafts from the draft card', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

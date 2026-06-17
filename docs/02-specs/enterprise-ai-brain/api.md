@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.341 |
+| 功能版本 | v1.1.342 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.342 | 2026-06-17 | AI 助手动作草案终态前端契约补充：已取消、已过期或失败草案不得再应用到配置表单 | Codex |
 | v1.1.341 | 2026-06-17 | AI 助手 `@` 默认候选未指定类型时按引用类型均衡合并，前端裸 `@` 请求足量候选以展示知识、业务对象和管理员运维对象 | Codex |
 | v1.1.340 | 2026-06-17 | AI 助手周反馈、邮件摘要和线上日志异常定时作业草案项统一返回 `wizard_steps[]`，前端可直接展示配置向导闭环 | Codex |
 | v1.1.339 | 2026-06-17 | AI 助手 `assistant.action_draft` 定时作业草案项补充 `wizard_steps` 配置向导状态，`@定时作业 执行一次` 语义匹配多个相似任务时优先唯一启用且 active 的可执行任务 | Codex |
@@ -1614,7 +1615,7 @@ POST /api/assistant/action-drafts/{draft_id}/cancel
 }
 ```
 
-`confirm` 只接受仍处于 `pending` 的草案。若草案 `expires_at <= now()`，服务端先将其置为 `expired` 并返回 `409 DRAFT_EXPIRED`，不得调用领域 service、不得创建 `assistant_action_runs` 或业务资源。确认时必须先按 `payload.assistant_prerequisite_draft_ids` 读取同创建人的已确认前置草案运行结果，把 `ai_skill/ai_agent/plugin_connection/plugin_action` 真实资源 ID 回填到当前草案的 `default_skill_ids`、`agent_id`、`skill_ids`、`connection_id`、`plugin_connection_id(s)` 或 `plugin_action_id(s)` 并重新预检，再走对应领域 service 或助手运行记录执行器：`create_ai_skill` 调用 AI 能力配置 service 写入 `ai_skills`；`create_ai_agent` 调用 AI 能力配置 service 写入 `ai_agents`，并重新校验 `brain_app_id`、`model_gateway_config_id` 和 `default_skill_ids`；`create_scheduled_job` 调用 scheduled_jobs service 并把 `config_json.assistant_draft` 写入作业配置；若草案 payload 携带 `config_json.assistant_run_once_request.requested=true`，服务端创建作业后还会触发一次 `manual` 运行，并把公开运行记录嵌入 `run.result.scheduled_job_run`；`create_plugin_connection` 调用插件连接 service，`create_plugin_action` 调用动作 service，`create_analysis_draft` 不写业务配置表，只生成 `assistant_action_runs.result_type=assistant_analysis` 的可追踪结果。确认成功返回 `{"draft": ..., "run": ...}`，`run.result_type/result_id/result` 指向创建出的领域资源或助手分析结果；确认失败不得绕过对应 service/执行器。取消接口只把 `pending` 草案置为 `cancelled` 并记录原因，不产生领域写入；取消过期草案同样返回 `DRAFT_EXPIRED`。草案创建、确认、取消和过期分别写入 `assistant_action_draft.created`、`assistant_action_draft.confirmed`、`assistant_action_draft.cancelled` 和 `assistant_action_draft.expired` 审计事件。
+`confirm` 只接受仍处于 `pending` 的草案。若草案 `expires_at <= now()`，服务端先将其置为 `expired` 并返回 `409 DRAFT_EXPIRED`，不得调用领域 service、不得创建 `assistant_action_runs` 或业务资源。确认时必须先按 `payload.assistant_prerequisite_draft_ids` 读取同创建人的已确认前置草案运行结果，把 `ai_skill/ai_agent/plugin_connection/plugin_action` 真实资源 ID 回填到当前草案的 `default_skill_ids`、`agent_id`、`skill_ids`、`connection_id`、`plugin_connection_id(s)` 或 `plugin_action_id(s)` 并重新预检，再走对应领域 service 或助手运行记录执行器：`create_ai_skill` 调用 AI 能力配置 service 写入 `ai_skills`；`create_ai_agent` 调用 AI 能力配置 service 写入 `ai_agents`，并重新校验 `brain_app_id`、`model_gateway_config_id` 和 `default_skill_ids`；`create_scheduled_job` 调用 scheduled_jobs service 并把 `config_json.assistant_draft` 写入作业配置；若草案 payload 携带 `config_json.assistant_run_once_request.requested=true`，服务端创建作业后还会触发一次 `manual` 运行，并把公开运行记录嵌入 `run.result.scheduled_job_run`；`create_plugin_connection` 调用插件连接 service，`create_plugin_action` 调用动作 service，`create_analysis_draft` 不写业务配置表，只生成 `assistant_action_runs.result_type=assistant_analysis` 的可追踪结果。确认成功返回 `{"draft": ..., "run": ...}`，`run.result_type/result_id/result` 指向创建出的领域资源或助手分析结果；确认失败不得绕过对应 service/执行器。取消接口只把 `pending` 草案置为 `cancelled` 并记录原因，不产生领域写入；取消过期草案同样返回 `DRAFT_EXPIRED`。前端只能对 `pending` 草案展示确认、取消或应用到配置表单入口；`cancelled`、`expired`、`failed` 等终态草案只能查看详情、查看草案和重新生成，避免绕过服务端草案生命周期。草案创建、确认、取消和过期分别写入 `assistant_action_draft.created`、`assistant_action_draft.confirmed`、`assistant_action_draft.cancelled` 和 `assistant_action_draft.expired` 审计事件。
 
 AI 助手草案模板市场：
 
