@@ -788,9 +788,10 @@ def _task_creation_guide_output(
         "selected_references": selected_references,
         "suggestions": [
             "新增研发任务",
+            "新增定时作业",
+            "新增插件动作",
             "配置代码巡检定时作业",
             "配置每周用户反馈洞察定时作业",
-            "新增插件动作",
         ],
         "tool_results": [
             {

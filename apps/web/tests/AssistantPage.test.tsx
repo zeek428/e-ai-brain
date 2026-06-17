@@ -2189,6 +2189,33 @@ describe('AssistantPage', () => {
                     intent: 'task_creation_guide',
                     items: [
                       {
+                        dependencies: [],
+                        description: '创建普通研发任务前，先补齐产品、需求、版本、负责人和验收标准。',
+                        draft_action: 'clarify_rd_task',
+                        prompt: '我要新增研发任务，请按产品、需求、版本、负责人和验收标准引导我补齐信息',
+                        title: '研发任务',
+                        type: 'rd_task',
+                        wizard_steps: ['任务目标', '产品/版本', '负责人', '验收标准', '确认创建'],
+                      },
+                      {
+                        dependencies: ['数据连接', 'AI能力', '结果动作'],
+                        description: '按数据来源、AI处理、结果动作和调度策略生成可确认的定时作业草案。',
+                        draft_action: 'create_scheduled_job',
+                        prompt: '帮我新增定时作业，先按数据来源、AI处理、结果动作和调度策略生成草案',
+                        title: '定时作业',
+                        type: 'scheduled_job',
+                        wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
+                      },
+                      {
+                        dependencies: ['插件连接'],
+                        description: '为 GitHub、GitLab、邮箱等插件生成结果动作草案，确认前不写入真实动作。',
+                        draft_action: 'create_plugin_action',
+                        prompt: '帮我新增插件动作，先生成可确认的动作草案',
+                        title: '插件动作',
+                        type: 'plugin_action',
+                        wizard_steps: ['插件', '连接', '请求配置', '结果映射', '确认创建'],
+                      },
+                      {
                         dependencies: ['GitHub/GitLab 连接', '代码巡检动作'],
                         description: '按仓库、分支、AI处理和结果动作生成定时作业草案。',
                         draft_action: 'create_scheduled_job',
@@ -2209,7 +2236,7 @@ describe('AssistantPage', () => {
                     ],
                     summary: {
                       draft_first: true,
-                      option_count: 2,
+                      option_count: 5,
                       wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
                     },
                     tool: 'assistant.task_creation_guide',
@@ -2217,7 +2244,13 @@ describe('AssistantPage', () => {
                 ],
               },
               model: 'assistant-deterministic',
-              suggestions: ['新增研发任务', '配置代码巡检定时作业'],
+              suggestions: [
+                '新增研发任务',
+                '新增定时作业',
+                '新增插件动作',
+                '配置代码巡检定时作业',
+                '配置每周用户反馈洞察定时作业',
+              ],
             },
           }),
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
@@ -2236,8 +2269,17 @@ describe('AssistantPage', () => {
 
     expect(await screen.findByText('任务类型向导')).toBeInTheDocument();
     expect(screen.getByText('数据来源 -> AI处理 -> 结果动作 -> 调度策略 -> 确认执行')).toBeInTheDocument();
+    expect(screen.getByText('研发任务')).toBeInTheDocument();
+    expect(screen.getByText('定时作业')).toBeInTheDocument();
+    expect(screen.getByText('插件动作')).toBeInTheDocument();
     expect(screen.getByText('代码巡检')).toBeInTheDocument();
+    expect(screen.getByText('反馈洞察')).toBeInTheDocument();
+    expect(screen.getByText('依赖：数据连接、AI能力、结果动作')).toBeInTheDocument();
+    expect(screen.getByText('依赖：插件连接')).toBeInTheDocument();
     expect(screen.getByText('依赖：GitHub/GitLab 连接、代码巡检动作')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '新增定时作业' }));
+    expect(assistantInput).toHaveValue('新增定时作业');
+    fireEvent.change(assistantInput, { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: '选择代码巡检' }));
     expect(assistantInput).toHaveValue('帮我配置代码巡检定时作业草案');
   });

@@ -1988,7 +1988,13 @@ def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeyp
     ]
     assert guide["items"][3]["draft_action"] == "create_scheduled_job"
     assert guide["items"][3]["dependencies"] == ["GitHub/GitLab 连接", "代码巡检动作"]
-    assert "新增研发任务" in payload["suggestions"]
+    assert payload["suggestions"] == [
+        "新增研发任务",
+        "新增定时作业",
+        "新增插件动作",
+        "配置代码巡检定时作业",
+        "配置每周用户反馈洞察定时作业",
+    ]
 
 
 def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(
