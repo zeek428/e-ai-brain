@@ -1037,6 +1037,13 @@ def _scheduled_job_references_from_explicit_mentions(
             if len(exact_matches) == 1:
                 matches = exact_matches
         if len(matches) != 1:
+            preferred_matches = _scheduled_job_preferred_run_once_mention_matches(
+                matches,
+                query,
+            )
+            if len(preferred_matches) == 1:
+                matches = preferred_matches
+        if len(matches) != 1:
             runnable_matches = [
                 job for job in matches if _scheduled_job_is_runnable_mention_match(job)
             ]
@@ -1120,6 +1127,46 @@ def _scheduled_job_exactly_matches_mention(job: dict[str, Any], query: str) -> b
             job.get("title"),
             job.get("code"),
         )
+    )
+
+
+def _scheduled_job_preferred_run_once_mention_matches(
+    jobs: list[dict[str, Any]],
+    query: str,
+) -> list[dict[str, Any]]:
+    if not _weekly_feedback_run_once_draft_requested(query, [query]):
+        return []
+    preferred_matches = [
+        job for job in jobs if _scheduled_job_is_weekly_feedback_insight_job(job)
+    ]
+    runnable_matches = [
+        job for job in preferred_matches if _scheduled_job_is_runnable_mention_match(job)
+    ]
+    if len(runnable_matches) == 1:
+        return runnable_matches
+    return preferred_matches
+
+
+def _scheduled_job_is_weekly_feedback_insight_job(job: dict[str, Any]) -> bool:
+    config_json = job.get("config_json")
+    assistant_template = (
+        config_json.get("assistant_template")
+        if isinstance(config_json, dict)
+        else None
+    )
+    template_code = (
+        assistant_template.get("code")
+        if isinstance(assistant_template, dict)
+        else None
+    )
+    code = str(job.get("code") or "").strip()
+    job_type = str(job.get("job_type") or "").strip()
+    source_system = str(job.get("source_system") or "").strip()
+    return (
+        code == "weekly_feedback_insight"
+        or job_type == "user_feedback_insight_extract"
+        or template_code == "weekly_feedback_insight"
+        or source_system == "aliyun-maxcompute"
     )
 
 

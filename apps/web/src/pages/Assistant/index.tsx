@@ -165,7 +165,7 @@ const assistantRoleQuickTaskGroups: AssistantRoleQuickTaskGroup[] = [
   {
     key: 'testing',
     label: '测试快捷任务',
-    roles: ['reviewer'],
+    roles: ['reviewer', 'test_owner', 'tester', 'release_owner'],
     tasks: [
       {
         key: 'test_defects',

@@ -3004,6 +3004,83 @@ def test_ai_assistant_chat_prefers_enabled_job_when_run_once_alias_matches_histo
     )
 
 
+def test_ai_assistant_chat_prefers_weekly_feedback_job_when_alias_matches_multiple_active_jobs(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    base_job = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "interval_seconds": None,
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_feedback_insight"] = {
+        **base_job,
+        "code": "weekly_feedback_insight",
+        "id": "scheduled_job_feedback_insight",
+        "job_type": "user_feedback_insight_extract",
+        "name": "每周用户反馈洞察抽取",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_feedback_sync"] = {
+        **base_job,
+        "code": "weekly_feedback_sync",
+        "id": "scheduled_job_feedback_sync",
+        "job_type": "plugin_action_invoke",
+        "name": "每周用户反馈原始数据同步",
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("assistant deterministic run should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "@提取每周用户反馈有价值信息 执行一次",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    assert "已执行「每周用户反馈洞察抽取」一次" in message["content"]
+    run = next(iter(app.state.store.scheduled_job_runs.values()))
+    assert run["scheduled_job_id"] == "scheduled_job_feedback_insight"
+    assert message["tool_results"][0]["summary"]["scheduled_job_id"] == (
+        "scheduled_job_feedback_insight"
+    )
+
+
 def test_ai_assistant_chat_explicit_mention_overrides_wrong_command_reference(
     monkeypatch,
 ):
