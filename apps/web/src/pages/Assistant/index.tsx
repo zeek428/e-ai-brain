@@ -242,6 +242,7 @@ const queryReferenceTypes = new Set([
   'knowledge_chunk',
   'knowledge_document',
   'plugin_action',
+  'plugin_connection',
   'requirement',
   'scheduled_job',
   'scheduled_job_run',
@@ -313,6 +314,13 @@ function taskCreationGuideItems(toolResults?: AssistantToolResult[]) {
 function scheduledJobDiagnosticItems(toolResults?: AssistantToolResult[]) {
   return (toolResults ?? [])
     .filter((toolResult) => toolResult.tool === 'assistant.scheduled_job_diagnostic')
+    .flatMap((toolResult) => toolResult.items ?? [])
+    .filter((item) => item.id || item.title);
+}
+
+function pluginConnectionDiagnosticItems(toolResults?: AssistantToolResult[]) {
+  return (toolResults ?? [])
+    .filter((toolResult) => toolResult.tool === 'assistant.plugin_connection_diagnostic')
     .flatMap((toolResult) => toolResult.items ?? [])
     .filter((item) => item.id || item.title);
 }
@@ -405,12 +413,33 @@ function diagnosticStageLabel(stage: string) {
   return labels[stage] ?? stage;
 }
 
+function pluginConnectionDiagnosticStageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    connection_config: '连接配置',
+    latest_test: '最近测试',
+    repair_suggestions: '修复建议',
+  };
+  return labels[stage] ?? stage;
+}
+
+function pluginConnectionRepairSuggestionItems(item: AssistantToolResultItem) {
+  return Array.isArray(item.repair_suggestions)
+    ? item.repair_suggestions.filter(
+      (suggestion): suggestion is AssistantToolResultItem =>
+        Boolean(suggestion) && typeof suggestion === 'object' && !Array.isArray(suggestion),
+    )
+    : [];
+}
+
 function diagnosticStatusColor(status: string) {
   if (status === 'succeeded') {
     return 'green';
   }
   if (status === 'failed') {
     return 'red';
+  }
+  if (status === 'warning') {
+    return 'orange';
   }
   if (status === 'running' || status === 'queued') {
     return 'blue';
@@ -477,6 +506,31 @@ function scheduledJobRunItemFollowupPrompt(
 ) {
   const reference = scheduledJobRunReferenceFromRunItem(item);
   return `@${reference.title} ${prompt}`;
+}
+
+function pluginConnectionReferenceFromDiagnosticItem(
+  item: AssistantToolResultItem,
+): AssistantReference | undefined {
+  const id = itemText(item, 'id');
+  if (id === '-') {
+    return undefined;
+  }
+  const title = itemText(item, 'title');
+  const url = itemText(item, 'url');
+  return {
+    id,
+    title: title === '-' ? id : title,
+    type: 'plugin_connection',
+    url: url === '-' ? `/tasks/plugins?connection_id=${encodeURIComponent(id)}` : url,
+  };
+}
+
+function pluginConnectionDiagnosticFollowupPrompt(
+  item: AssistantToolResultItem,
+  prompt: string,
+) {
+  const reference = pluginConnectionReferenceFromDiagnosticItem(item);
+  return reference ? `@${reference.title} ${prompt}` : prompt;
 }
 
 function scheduledJobRunStatusLabel(status?: string) {
@@ -950,6 +1004,7 @@ function referenceTypeLabel(type: string) {
     knowledge_chunk: '知识片段',
     knowledge_document: '知识文档',
     plugin_action: '插件动作',
+    plugin_connection: '插件连接',
     product: '产品',
     requirement: '需求',
     scheduled_job: '定时作业',
@@ -971,6 +1026,7 @@ function referenceSourceModule(type: string) {
     knowledge_chunk: '知识库',
     knowledge_document: '知识库',
     plugin_action: '插件管理',
+    plugin_connection: '插件管理',
     product: '产品资产',
     requirement: '需求交付',
     scheduled_job: '任务中心',
@@ -2084,6 +2140,109 @@ function AssistantScheduledJobDiagnosticCards({
   );
 }
 
+function AssistantPluginConnectionDiagnosticCards({
+  items,
+  onUseConnectionFollowupPrompt,
+}: {
+  items: AssistantToolResultItem[];
+  onUseConnectionFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
+}) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className="assistant-diagnostic-list">
+      {items.map((item) => {
+        const stages = diagnosticStageItems(item);
+        const suggestions = pluginConnectionRepairSuggestionItems(item);
+        const status = itemText(item, 'status');
+        return (
+          <div className="assistant-diagnostic-card" key={itemText(item, 'id')}>
+            <div className="assistant-diagnostic-header">
+              <Space size={8} wrap>
+                <LinkOutlined />
+                <Text strong>插件连接诊断</Text>
+                <Tag color={diagnosticStatusColor(status)}>{status}</Tag>
+              </Space>
+              {item.url ? (
+                <Button href={itemText(item, 'url')} icon={<LinkOutlined />} size="small" type="link">
+                  打开插件连接
+                </Button>
+              ) : null}
+            </div>
+            <Text className="assistant-diagnostic-title" strong>
+              {itemText(item, 'title')}
+            </Text>
+            <div className="assistant-comparison-metrics">
+              <span>
+                <Text type="secondary">失败步骤</Text>
+                <Text>{itemText(item, 'failed_step')}</Text>
+              </span>
+              <span>
+                <Text type="secondary">最近测试</Text>
+                <Text>{itemText(item, 'checked_at')}</Text>
+              </span>
+              <span>
+                <Text type="secondary">插件</Text>
+                <Text>{itemText(item, 'plugin_name')}</Text>
+              </span>
+            </div>
+            <Space className="assistant-diagnostic-actions" size={8} wrap>
+              <Button
+                aria-label="生成插件连接修复草案"
+                icon={<FileTextOutlined />}
+                size="small"
+                onClick={() => onUseConnectionFollowupPrompt(
+                  item,
+                  '这个插件连接失败怎么修？请生成修复草案',
+                )}
+              >
+                生成修复草案
+              </Button>
+              <Button
+                aria-label="继续排查插件连接"
+                icon={<ExclamationCircleOutlined />}
+                size="small"
+                onClick={() => onUseConnectionFollowupPrompt(
+                  item,
+                  '继续排查这个插件连接失败原因',
+                )}
+              >
+                继续排查
+              </Button>
+            </Space>
+            <div className="assistant-diagnostic-stage-grid">
+              {stages.map((stage) => (
+                <div className="assistant-diagnostic-stage" key={itemText(stage, 'stage')}>
+                  <Space size={6} wrap>
+                    <Tag color="blue">{pluginConnectionDiagnosticStageLabel(itemText(stage, 'stage'))}</Tag>
+                    <Tag color={diagnosticStatusColor(itemText(stage, 'status'))}>
+                      {itemText(stage, 'status')}
+                    </Tag>
+                  </Space>
+                  <Text>{itemText(stage, 'summary')}</Text>
+                </div>
+              ))}
+            </div>
+            {suggestions.length ? (
+              <div className="assistant-action-draft-precheck-issues">
+                {suggestions.map((suggestion) => (
+                  <Text key={itemText(suggestion, 'code')} type="warning">
+                    {itemText(suggestion, 'title')}：{itemText(suggestion, 'detail')}
+                  </Text>
+                ))}
+              </div>
+            ) : null}
+            {itemText(item, 'error_message') !== '-' ? (
+              <Text type="danger">错误：{itemText(item, 'error_message')}</Text>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AssistantScheduledJobComparisonCards({
   items,
   onUseRunFollowupPrompt,
@@ -2419,6 +2578,7 @@ function AssistantBubble({
   onCancelDraft,
   onConfirmDraft,
   onRegenerateDraft,
+  onUseConnectionFollowupPrompt,
   onUseRunCardFollowupPrompt,
   onUseRunFollowupPrompt,
   onUseTaskGuidePrompt,
@@ -2432,6 +2592,7 @@ function AssistantBubble({
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
   onRegenerateDraft: (draft: AssistantToolResultItem) => void;
+  onUseConnectionFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
   onUseRunCardFollowupPrompt: (item: AssistantScheduledJobRunItem, prompt: string) => void;
   onUseRunFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
   onUseTaskGuidePrompt: (prompt: string) => void;
@@ -2442,6 +2603,7 @@ function AssistantBubble({
   const taskGuideItems = taskCreationGuideItems(message.toolResults);
   const runItems = scheduledJobRunItems(message.toolResults, scheduledJobRunById);
   const diagnosticItems = scheduledJobDiagnosticItems(message.toolResults);
+  const pluginConnectionDiagnostics = pluginConnectionDiagnosticItems(message.toolResults);
   const comparisonItems = scheduledJobComparisonItems(message.toolResults);
   return (
     <div className={`assistant-bubble assistant-bubble-${message.role}`}>
@@ -2487,6 +2649,10 @@ function AssistantBubble({
         <AssistantScheduledJobDiagnosticCards
           items={diagnosticItems}
           onUseRunFollowupPrompt={onUseRunFollowupPrompt}
+        />
+        <AssistantPluginConnectionDiagnosticCards
+          items={pluginConnectionDiagnostics}
+          onUseConnectionFollowupPrompt={onUseConnectionFollowupPrompt}
         />
         <AssistantScheduledJobComparisonCards
           items={comparisonItems}
@@ -2881,6 +3047,7 @@ export default function AssistantPage() {
       const items = await fetchAssistantReferenceCandidates({
         limit: ASSISTANT_REFERENCE_CANDIDATE_LIMIT,
         query,
+        type: 'scheduled_job',
       });
       const scheduledJobReference = items.find((reference) => reference.type === 'scheduled_job');
       return scheduledJobReference ? [scheduledJobReference] : [];
@@ -2889,7 +3056,32 @@ export default function AssistantPage() {
     }
   };
 
+  const submitComposerEnter = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.shiftKey || event.nativeEvent.isComposing) {
+      return false;
+    }
+    event.preventDefault();
+    if (scheduledJobRunOnceRequested(inputValue)) {
+      const commandReferences = commandReferenceCandidates(inputValue);
+      void sendMessage(inputValue, commandReferences.length ? commandReferences : undefined);
+      return true;
+    }
+    const reference = orderedReferenceCandidates[Math.max(activeReferenceIndex, 0)];
+    if (reference) {
+      addSelectedReference(reference);
+      return true;
+    }
+    void sendMessage();
+    return true;
+  };
+
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.defaultPrevented) {
+      return;
+    }
+    if (event.key === 'Enter' && submitComposerEnter(event)) {
+      return;
+    }
     if (!orderedReferenceCandidates.length) {
       return;
     }
@@ -2903,20 +3095,6 @@ export default function AssistantPage() {
       setActiveReferenceIndex((index) => (
         index <= 0 ? orderedReferenceCandidates.length - 1 : index - 1
       ));
-      return;
-    }
-    if (event.key === 'Enter') {
-      const commandReferences = commandReferenceCandidates(inputValue);
-      if (commandReferences.length) {
-        event.preventDefault();
-        void sendMessage(inputValue, commandReferences);
-        return;
-      }
-      const reference = orderedReferenceCandidates[Math.max(activeReferenceIndex, 0)];
-      if (reference) {
-        event.preventDefault();
-        addSelectedReference(reference);
-      }
       return;
     }
     if (event.key === 'Escape') {
@@ -3108,6 +3286,17 @@ export default function AssistantPage() {
     setInputValue(scheduledJobRunItemFollowupPrompt(item, prompt));
   };
 
+  const usePluginConnectionFollowupPrompt = (
+    item: AssistantToolResultItem,
+    prompt: string,
+  ) => {
+    const reference = pluginConnectionReferenceFromDiagnosticItem(item);
+    if (reference) {
+      addSelectedReference(reference);
+    }
+    setInputValue(pluginConnectionDiagnosticFollowupPrompt(item, prompt));
+  };
+
   const confirmDraft = async (draft: AssistantToolResultItem) => {
     const draftId = assistantDraftId(draft);
     if (!draftId) {
@@ -3276,6 +3465,7 @@ export default function AssistantPage() {
                 onCancelDraft={cancelDraft}
                 onConfirmDraft={confirmDraft}
                 onRegenerateDraft={regenerateDraft}
+                onUseConnectionFollowupPrompt={usePluginConnectionFollowupPrompt}
                 onUseRunCardFollowupPrompt={useScheduledJobRunCardFollowupPrompt}
                 onUseRunFollowupPrompt={useScheduledJobRunFollowupPrompt}
                 onUseTaskGuidePrompt={setInputValue}
@@ -3443,13 +3633,8 @@ export default function AssistantPage() {
               onChange={(event) => setInputValue(event.target.value)}
               onKeyDown={handleComposerKeyDown}
               onPressEnter={(event) => {
-                if (referenceCandidates.length) {
-                  event.preventDefault();
+                if (event.defaultPrevented || submitComposerEnter(event)) {
                   return;
-                }
-                if (!event.shiftKey) {
-                  event.preventDefault();
-                  void sendMessage();
                 }
               }}
               placeholder="输入问题"

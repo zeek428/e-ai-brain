@@ -26,6 +26,8 @@ def assistant_tool_results(
     for intent in intents:
         if intent == "plugin_connection_draft":
             results.append(draft_builder.plugin_connection_draft(message=message))
+        elif intent == "plugin_connection_diagnostic":
+            results.append(_plugin_connection_diagnostic_tool(context, limit=limit))
         elif intent == "plugin_action_draft":
             results.append(draft_builder.plugin_action_draft(message=message))
         elif intent == "code_inspection_job_draft":
@@ -166,6 +168,8 @@ def _assistant_tool_intents(
     intents: list[str] = []
     if _plugin_connection_draft_requested(normalized):
         intents.append("plugin_connection_draft")
+    if _plugin_connection_diagnostic_requested(normalized):
+        intents.append("plugin_connection_diagnostic")
     if _plugin_action_draft_requested(normalized):
         intents.append("plugin_action_draft")
     if _scheduled_job_draft_requested(normalized):
@@ -429,6 +433,42 @@ def _plugin_connection_draft_requested(normalized_message: str) -> bool:
     )
 
 
+def _plugin_connection_diagnostic_requested(normalized_message: str) -> bool:
+    has_connection_context = any(
+        keyword in normalized_message
+        for keyword in (
+            "插件连接",
+            "连接失败",
+            "连接不可用",
+            "connection",
+            "connector",
+        )
+    )
+    has_failure_intent = any(
+        keyword in normalized_message
+        for keyword in (
+            "为什么",
+            "原因",
+            "失败",
+            "不可用",
+            "诊断",
+            "排查",
+            "怎么修",
+            "修复",
+            "failed",
+            "failure",
+            "diagnose",
+            "repair",
+            "fix",
+        )
+    )
+    has_create_intent = any(
+        keyword in normalized_message
+        for keyword in ("创建", "新增", "配置", "生成", "新建", "接入", "create", "draft")
+    )
+    return has_connection_context and has_failure_intent and not has_create_intent
+
+
 def _delivery_progress_tool(context: dict[str, Any], *, limit: int) -> dict[str, Any]:
     requirements = context["requirements"]
     tasks = context["tasks"]
@@ -581,6 +621,160 @@ def _bugs_tool(context: dict[str, Any], *, limit: int) -> dict[str, Any]:
         },
         "tool": "assistant.bugs",
     }
+
+
+def _plugin_connection_diagnostic_tool(
+    context: dict[str, Any],
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    connections = list(context["plugin_connections"])
+    failed_connections = [
+        connection
+        for connection in connections
+        if _connection_last_test_summary(connection).get("status") == "failed"
+    ]
+    candidate_connections = failed_connections or [
+        connection
+        for connection in connections
+        if _connection_last_test_summary(connection) or _connection_latest_test_history(connection)
+    ]
+    plugins_by_id = {
+        str(plugin["id"]): plugin
+        for plugin in context["integration_plugins"]
+        if plugin.get("id") is not None
+    }
+    items = [
+        _plugin_connection_diagnostic_item(
+            connection,
+            plugin=plugins_by_id.get(str(connection.get("plugin_id"))) or {},
+        )
+        for connection in _latest_connections_by_test(candidate_connections)[:limit]
+    ]
+    return {
+        "intent": "plugin_connection_diagnostic",
+        "items": items,
+        "references": _references("plugin_connection", items),
+        "summary": {
+            "diagnosed_count": len(items),
+            "failed_count": len(failed_connections),
+            "source": "plugin_connection.last_test_summary",
+        },
+        "tool": "assistant.plugin_connection_diagnostic",
+    }
+
+
+def _plugin_connection_diagnostic_item(
+    connection: dict[str, Any],
+    *,
+    plugin: dict[str, Any],
+) -> dict[str, Any]:
+    last_summary = _connection_last_test_summary(connection)
+    latest_history = _connection_latest_test_history(connection)
+    repair_suggestions = _connection_repair_suggestions(latest_history)
+    status = str(last_summary.get("status") or connection.get("status") or "not_run")
+    failed_step = last_summary.get("failed_step")
+    error_message = last_summary.get("error_message")
+    connection_name = str(connection.get("name") or connection.get("id") or "插件连接")
+    stages = [
+        {
+            "stage": "connection_config",
+            "status": "succeeded" if connection.get("status") == "active" else "warning",
+            "summary": (
+                f"连接状态 {connection.get('status') or '-'}，"
+                f"环境 {connection.get('environment') or 'default'}，"
+                f"插件 {plugin.get('name') or connection.get('plugin_id') or '-'}。"
+            ),
+        },
+        {
+            "stage": "latest_test",
+            "status": status,
+            "summary": _connection_test_summary_text(last_summary),
+        },
+        {
+            "stage": "repair_suggestions",
+            "status": "warning" if repair_suggestions else "succeeded",
+            "summary": (
+                f"已生成 {len(repair_suggestions)} 条修复建议。"
+                if repair_suggestions
+                else "最近测试未返回结构化修复建议。"
+            ),
+        },
+    ]
+    return {
+        "checked_at": last_summary.get("checked_at"),
+        "connection_status": connection.get("status"),
+        "endpoint_url": connection.get("endpoint_url"),
+        "environment": connection.get("environment"),
+        "error_code": last_summary.get("error_code"),
+        "error_message": error_message,
+        "failed_step": failed_step,
+        "id": connection.get("id"),
+        "plugin_id": connection.get("plugin_id"),
+        "plugin_name": plugin.get("name"),
+        "repair_suggestions": repair_suggestions,
+        "stages": stages,
+        "status": status,
+        "title": connection_name,
+        "url": f"/tasks/plugins?connection_id={connection.get('id')}",
+    }
+
+
+def _connection_last_test_summary(connection: dict[str, Any]) -> dict[str, Any]:
+    value = connection.get("last_test_summary")
+    return value if isinstance(value, dict) else {}
+
+
+def _connection_latest_test_history(connection: dict[str, Any]) -> dict[str, Any]:
+    history = connection.get("test_history")
+    if not isinstance(history, list):
+        return {}
+    latest = next((item for item in history if isinstance(item, dict)), None)
+    return latest or {}
+
+
+def _connection_repair_suggestions(history_entry: dict[str, Any]) -> list[dict[str, Any]]:
+    suggestions = history_entry.get("repair_suggestions")
+    if not isinstance(suggestions, list):
+        return []
+    return [
+        {
+            "code": suggestion.get("code"),
+            "detail": suggestion.get("detail"),
+            "title": suggestion.get("title"),
+        }
+        for suggestion in suggestions
+        if isinstance(suggestion, dict)
+    ]
+
+
+def _connection_test_summary_text(last_summary: dict[str, Any]) -> str:
+    if not last_summary:
+        return "还没有最近连接测试记录。"
+    failed_step = last_summary.get("failed_step")
+    error_message = last_summary.get("error_message")
+    status = last_summary.get("status") or "unknown"
+    if failed_step or error_message:
+        return (
+            f"最近测试状态 {status}，失败步骤 {failed_step or '-'}，"
+            f"错误：{error_message or '-'}。"
+        )
+    return f"最近测试状态 {status}。"
+
+
+def _connection_test_time(connection: dict[str, Any]) -> str:
+    last_summary = _connection_last_test_summary(connection)
+    return str(
+        last_summary.get("checked_at")
+        or connection.get("updated_at")
+        or connection.get("created_at")
+        or connection.get("id")
+        or ""
+    )
+
+
+def _latest_connections_by_test(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(items, key=_connection_test_time, reverse=True)
 
 
 def _scheduled_job_diagnostic_tool(

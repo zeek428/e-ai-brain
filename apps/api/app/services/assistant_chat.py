@@ -372,6 +372,20 @@ def _deterministic_assistant_output(
         except AssistantReferenceError as exc:
             raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
         return _task_creation_guide_output(selected_references=resolved_references["items"])
+    if _plugin_connection_diagnostic_requested(payload.message):
+        try:
+            resolved_references = resolve_assistant_references(
+                current_store,
+                references=payload.references,
+                user=user,
+            )
+        except AssistantReferenceError as exc:
+            raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
+        return _plugin_connection_diagnostic_output(
+            current_store,
+            payload=payload,
+            selected_references=resolved_references["items"],
+        )
     if not _scheduled_job_run_once_requested(payload.message):
         return _deterministic_action_draft_output(
             current_store,
@@ -869,6 +883,89 @@ def _task_creation_guide_requested(message: str) -> bool:
         )
     )
     return has_create_intent and has_task_context and not has_specific_task_type
+
+
+def _plugin_connection_diagnostic_requested(message: str) -> bool:
+    normalized = message.lower()
+    has_connection_context = any(
+        keyword in normalized
+        for keyword in ("插件连接", "连接失败", "连接不可用", "connection", "connector")
+    )
+    has_failure_intent = any(
+        keyword in normalized
+        for keyword in (
+            "为什么",
+            "原因",
+            "失败",
+            "不可用",
+            "诊断",
+            "排查",
+            "怎么修",
+            "修复",
+            "failed",
+            "failure",
+            "diagnose",
+            "repair",
+            "fix",
+        )
+    )
+    has_create_intent = any(
+        keyword in normalized
+        for keyword in ("创建", "新增", "配置", "生成", "新建", "接入", "create", "draft")
+    )
+    return has_connection_context and has_failure_intent and not has_create_intent
+
+
+def _plugin_connection_diagnostic_output(
+    current_store: MemoryStore,
+    *,
+    payload: AssistantChatRequest,
+    selected_references: list[dict[str, str]],
+) -> dict[str, Any]:
+    started = perf_counter()
+    tool_results = [
+        result
+        for result in assistant_tool_results(
+            current_store,
+            message=payload.message,
+            product_id=payload.product_id,
+            references=selected_references,
+        )
+        if result.get("tool") == "assistant.plugin_connection_diagnostic"
+    ]
+    diagnosed_count = sum(len(result.get("items") or []) for result in tool_results)
+    failed_count = sum(
+        int((result.get("summary") or {}).get("failed_count") or 0)
+        for result in tool_results
+    )
+    if diagnosed_count:
+        answer = (
+            f"我已读取最近插件连接测试记录，找到 {failed_count} 个失败连接，"
+            "并按连接配置、最近测试、修复建议整理如下。"
+        )
+    else:
+        answer = (
+            "我没有找到最近失败的插件连接测试记录。"
+            "请先在插件管理里执行一次连接测试，或补充具体连接名称后继续排查。"
+        )
+    diagnostic_references = [
+        reference
+        for result in tool_results
+        for reference in result.get("references", [])
+        if isinstance(reference, dict)
+    ]
+    return {
+        "answer": answer,
+        "latency_ms": int((perf_counter() - started) * 1000),
+        "model": "assistant-deterministic",
+        "references": _merge_assistant_references(
+            selected_references,
+            diagnostic_references,
+        ),
+        "selected_references": selected_references,
+        "suggestions": ["生成插件连接修复草案", "打开插件管理"],
+        "tool_results": tool_results,
+    }
 
 
 def _task_creation_guide_output(

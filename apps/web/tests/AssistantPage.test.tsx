@@ -1084,6 +1084,7 @@ describe('AssistantPage', () => {
 
   it('resolves @ scheduled job run-once commands when sent before candidates finish loading', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
+    const referenceRequestParams: URLSearchParams[] = [];
     const resolveReferenceRequests: Array<() => void> = [];
     const scheduledJobReference = {
       id: 'scheduled_job_feedback_weekly',
@@ -1112,6 +1113,8 @@ describe('AssistantPage', () => {
         });
       }
       if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1] ?? '');
+        referenceRequestParams.push(params);
         return new Promise<Response>((resolve) => {
           resolveReferenceRequests.push(() => resolve(referenceResponse()));
         });
@@ -1184,6 +1187,7 @@ describe('AssistantPage', () => {
     resolveReferenceRequests.splice(0).forEach((resolve) => resolve());
 
     await waitFor(() => expect(chatRequestBody).toBeDefined());
+    expect(referenceRequestParams.some((params) => params.get('type') === 'scheduled_job')).toBe(true);
     expect(chatRequestBody).toMatchObject({
       message: '@提取每周用户反馈有价值信息 执行一次',
       references: [
@@ -1554,6 +1558,137 @@ describe('AssistantPage', () => {
       message: '为什么 @反馈 这次失败？',
       references: [{ id: 'scheduled_job_run_feedback_failed', type: 'scheduled_job_run' }],
     });
+  });
+
+  it('renders plugin connection diagnostics and lets users continue with the connection reference', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          message: '为什么插件连接失败？',
+        });
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_plugin_connection_diagnostic',
+              latency_ms: 9,
+              message: {
+                content: '我已读取最近插件连接测试记录，找到 1 个失败连接。',
+                id: 'assistant_message_plugin_connection_diagnostic',
+                references: [
+                  {
+                    id: 'plugin_connection_maxcompute',
+                    title: 'MaxCompute 用户反馈连接',
+                    type: 'plugin_connection',
+                    url: '/tasks/plugins?connection_id=plugin_connection_maxcompute',
+                  },
+                ],
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'plugin_connection_diagnostic',
+                    items: [
+                      {
+                        checked_at: '2026-06-17T09:20:00+00:00',
+                        connection_status: 'active',
+                        endpoint_url: 'https://feedback.example.com',
+                        environment: 'prod',
+                        error_code: 'HTTP_ERROR',
+                        error_message: 'HTTP 403: forbidden',
+                        failed_step: 'http_request',
+                        id: 'plugin_connection_maxcompute',
+                        plugin_id: 'plugin_http',
+                        plugin_name: '通用 HTTP 插件',
+                        repair_suggestions: [
+                          {
+                            code: 'http_authentication_failed',
+                            detail: '检查认证方式、Token/API Key、Header 名和目标环境权限。',
+                            title: '检查认证配置',
+                          },
+                        ],
+                        stages: [
+                          {
+                            stage: 'connection_config',
+                            status: 'succeeded',
+                            summary: '连接状态 active，环境 prod，插件 通用 HTTP 插件。',
+                          },
+                          {
+                            stage: 'latest_test',
+                            status: 'failed',
+                            summary: '最近测试状态 failed，失败步骤 http_request，错误：HTTP 403: forbidden。',
+                          },
+                          {
+                            stage: 'repair_suggestions',
+                            status: 'warning',
+                            summary: '已生成 1 条修复建议。',
+                          },
+                        ],
+                        status: 'failed',
+                        title: 'MaxCompute 用户反馈连接',
+                        url: '/tasks/plugins?connection_id=plugin_connection_maxcompute',
+                      },
+                    ],
+                    summary: {
+                      diagnosed_count: 1,
+                      failed_count: 1,
+                      source: 'plugin_connection.last_test_summary',
+                    },
+                    tool: 'assistant.plugin_connection_diagnostic',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: ['生成插件连接修复草案', '打开插件管理'],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, { target: { value: '为什么插件连接失败？' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('插件连接诊断')).toBeInTheDocument();
+    expect(screen.getAllByText('MaxCompute 用户反馈连接').length).toBeGreaterThan(0);
+    expect(screen.getByText('失败步骤')).toBeInTheDocument();
+    expect(screen.getByText('http_request')).toBeInTheDocument();
+    expect(screen.getByText('连接配置')).toBeInTheDocument();
+    expect(screen.getAllByText('最近测试').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('修复建议').length).toBeGreaterThan(0);
+    expect(screen.getByText('最近测试状态 failed，失败步骤 http_request，错误：HTTP 403: forbidden。'))
+      .toBeInTheDocument();
+    expect(screen.getByText('检查认证配置：检查认证方式、Token/API Key、Header 名和目标环境权限。'))
+      .toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /打开插件连接/ })).toHaveAttribute(
+      'href',
+      '/tasks/plugins?connection_id=plugin_connection_maxcompute',
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: '生成插件连接修复草案' })[0]);
+
+    expect(assistantInput).toHaveValue(
+      '@MaxCompute 用户反馈连接 这个插件连接失败怎么修？请生成修复草案',
+    );
+    const selectedReferenceList = screen.getByText('本次上下文')
+      .closest('.assistant-selected-reference-list');
+    expect(selectedReferenceList).not.toBeNull();
+    expect(within(selectedReferenceList as HTMLElement).getByText('插件连接')).toBeInTheDocument();
+    expect(within(selectedReferenceList as HTMLElement).getByText('MaxCompute 用户反馈连接'))
+      .toBeInTheDocument();
   });
 
   it('renders scheduled job run comparison tool results', async () => {

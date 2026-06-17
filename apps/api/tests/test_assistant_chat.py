@@ -2335,6 +2335,86 @@ def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeyp
     ]
 
 
+def test_ai_assistant_chat_diagnoses_failed_plugin_connection_without_model_gateway(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    connection = app.state.store.plugin_connections["plugin_connection_maxcompute"]
+    connection["last_test_summary"] = {
+        "checked_at": "2026-06-17T09:20:00+00:00",
+        "error_code": "HTTP_ERROR",
+        "error_message": "HTTP 403: forbidden",
+        "failed_step": "http_request",
+        "latency_ms": 320,
+        "response_status_code": 403,
+        "status": "failed",
+    }
+    connection["test_history"] = [
+        {
+            "checked_at": "2026-06-17T09:20:00+00:00",
+            "error_code": "HTTP_ERROR",
+            "error_message": "HTTP 403: forbidden",
+            "repair_suggestions": [
+                {
+                    "code": "http_authentication_failed",
+                    "detail": "检查认证方式、Token/API Key、Header 名和目标环境权限。",
+                    "title": "检查认证配置",
+                }
+            ],
+            "request_summary": {
+                "headers": {"Authorization": "***"},
+                "method": "GET",
+                "url": "https://feedback.example.com",
+            },
+            "response_summary": {"status_code": 403},
+            "status": "failed",
+        }
+    ]
+    connection["auth_config"] = {"token": "should-not-leak"}
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("plugin connection diagnostics should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "为什么插件连接失败？"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    message = payload["message"]
+    assert payload["model"] == "assistant-deterministic"
+    assert "找到 1 个失败连接" in message["content"]
+    diagnostic = message["tool_results"][0]
+    assert diagnostic["tool"] == "assistant.plugin_connection_diagnostic"
+    assert diagnostic["summary"] == {
+        "diagnosed_count": 1,
+        "failed_count": 1,
+        "source": "plugin_connection.last_test_summary",
+    }
+    item = diagnostic["items"][0]
+    assert item["id"] == "plugin_connection_maxcompute"
+    assert item["status"] == "failed"
+    assert item["failed_step"] == "http_request"
+    assert item["error_message"] == "HTTP 403: forbidden"
+    assert item["repair_suggestions"] == [
+        {
+            "code": "http_authentication_failed",
+            "detail": "检查认证方式、Token/API Key、Header 名和目标环境权限。",
+            "title": "检查认证配置",
+        }
+    ]
+    serialized_item = json.dumps(item, ensure_ascii=False)
+    assert "should-not-leak" not in serialized_item
+    assert "Authorization" not in serialized_item
+    assert payload["suggestions"] == ["生成插件连接修复草案", "打开插件管理"]
+    assert message["references"][0]["type"] == "plugin_connection"
+
+
 def _seed_ai_code_inspection_draft_context() -> None:
     now = "2026-06-17T09:00:00+00:00"
     app.state.store.products["product_rd"] = {
