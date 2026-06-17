@@ -523,6 +523,103 @@ describe('AssistantPage', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('selects knowledge space references with scoped chunk injection copy', async () => {
+    let chatRequestBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('知识空间');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  chunk_count: 12,
+                  document_count: 3,
+                  id: 'knowledge_space_support',
+                  permission_label: '可引用',
+                  source_module: '知识库',
+                  summary: '支付与订单支持知识空间。3 篇可检索知识文档，12 个知识 chunk 可按权限注入。',
+                  title: '支付支持知识空间',
+                  type: 'knowledge_space',
+                  updated_at: '2026-06-14T08:30:00+00:00',
+                  url: '/knowledge/documents?knowledge_space_id=knowledge_space_support',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        chatRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_space_reference',
+              latency_ms: 120,
+              message: {
+                content: '已基于支付支持知识空间总结排障重点。',
+                id: 'assistant_message_space_reference',
+                references: [
+                  {
+                    id: 'knowledge_space_support',
+                    title: '支付支持知识空间',
+                    type: 'knowledge_space',
+                    url: '/knowledge/documents?knowledge_space_id=knowledge_space_support',
+                  },
+                ],
+                role: 'assistant',
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '基于 @知识空间 总结支付排障重点' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /支付支持知识空间/ }));
+
+    const selectedReferenceList = screen.getByText('本次上下文')
+      .closest('.assistant-selected-reference-list');
+    expect(selectedReferenceList).not.toBeNull();
+    expect(within(selectedReferenceList as HTMLElement).getByText('知识空间')).toBeInTheDocument();
+    expect(
+      within(selectedReferenceList as HTMLElement).getAllByText(/最多 8 个知识 chunk 将按权限注入模型/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(selectedReferenceList as HTMLElement).getByText(
+        '支付与订单支持知识空间。3 篇可检索知识文档，12 个知识 chunk 可按权限注入。',
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('已基于支付支持知识空间总结排障重点。')).toBeInTheDocument();
+    expect(chatRequestBody).toMatchObject({
+      message: '基于 @知识空间 总结支付排障重点',
+      references: [{ id: 'knowledge_space_support', type: 'knowledge_space' }],
+    });
+  });
+
   it('selects a specific knowledge chunk with @ candidates and sends chunk reference', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
@@ -1221,6 +1318,7 @@ describe('AssistantPage', () => {
   });
 
   it('shows active run progress for @ scheduled job run-once commands', async () => {
+    let runPollCount = 0;
     const scheduledJobReference = {
       id: 'scheduled_job_feedback_weekly',
       permission_label: '管理员可引用',
@@ -1296,6 +1394,7 @@ describe('AssistantPage', () => {
         );
       }
       if (input === '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_feedback_weekly') {
+        runPollCount += 1;
         return new Response(
           JSON.stringify({
             data: {
@@ -1306,26 +1405,31 @@ describe('AssistantPage', () => {
                   finished_at: null,
                   id: 'scheduled_job_run_001',
                   records_imported: 0,
-                  result_summary: {
-                    execution_nodes: {
-                      data_connection: {
-                        label: '数据连接获取内容',
-                        status: 'succeeded',
+                  result_summary: runPollCount === 1
+                    ? {}
+                    : {
+                        execution_nodes: {
+                          data_connection: {
+                            label: '数据连接获取内容',
+                            status: 'succeeded',
+                          },
+                          result_action: {
+                            label: '动作反馈内容',
+                            status: 'waiting_runner',
+                          },
+                          runner_execution: {
+                            label: 'AI 执行器执行内容',
+                            status: 'queued',
+                          },
+                        },
                       },
-                      result_action: {
-                        label: '动作反馈内容',
-                        status: 'waiting_runner',
-                      },
-                      runner_execution: {
-                        label: 'AI 执行器执行内容',
-                        status: 'queued',
-                      },
-                    },
-                  },
                   scheduled_job_id: 'scheduled_job_feedback_weekly',
                   started_at: '2026-06-17T02:53:15.835137+00:00',
                   status: 'running',
                   trigger_type: 'manual',
+                  updated_at: runPollCount === 1
+                    ? '2026-06-17T02:53:15.835137+00:00'
+                    : '2026-06-17T02:53:20.835137+00:00',
                 },
               ],
               total: 1,
@@ -1347,6 +1451,7 @@ describe('AssistantPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText(/已触发「提取每周用户反馈有价值信息」执行一次/)).toBeInTheDocument();
+    await waitFor(() => expect(runPollCount).toBeGreaterThanOrEqual(2));
     expect(await screen.findByText('执行进度：AI 执行器执行内容（排队中）')).toBeInTheDocument();
   });
 

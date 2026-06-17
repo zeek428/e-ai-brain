@@ -29,6 +29,8 @@ REFERENCE_SOURCE_MODULES = {
     "knowledge_deposit": "知识库",
     "knowledge_chunk": "知识库",
     "knowledge_document": "知识库",
+    "knowledge_folder": "知识库",
+    "knowledge_space": "知识库",
     "plugin_action": "插件管理",
     "plugin_connection": "插件管理",
     "product": "产品资产",
@@ -37,6 +39,8 @@ REFERENCE_SOURCE_MODULES = {
     "scheduled_job_run": "任务中心",
 }
 DEFAULT_REFERENCE_TYPE_ORDER = (
+    "knowledge_space",
+    "knowledge_folder",
     "knowledge_document",
     "knowledge_chunk",
     "requirement",
@@ -65,6 +69,8 @@ REFERENCE_TYPE_QUERY_ALIASES = {
     "knowledge_chunk": ("知识片段", "chunk", "片段"),
     "knowledge_deposit": ("知识沉淀", "沉淀"),
     "knowledge_document": ("知识文档", "知识库", "文档"),
+    "knowledge_folder": ("知识目录", "目录", "folder"),
+    "knowledge_space": ("知识空间", "空间", "knowledge space"),
     "plugin_action": ("插件动作", "动作", "plugin action"),
     "plugin_connection": ("插件连接", "连接", "connection"),
     "product": ("产品", "product"),
@@ -159,6 +165,16 @@ def assistant_reference_candidates(
         for deposit in current_store.knowledge_deposits.values()
         if str(deposit.get("ai_task_id")) in task_ids
     ]
+    knowledge_spaces = _readable_knowledge_spaces(
+        current_store,
+        query=None,
+        user=user or {},
+    )
+    knowledge_folders = _readable_knowledge_folders(
+        current_store,
+        query=None,
+        user=user or {},
+    )
     scheduled_jobs = [
         job
         for job in getattr(current_store, "scheduled_jobs", {}).values()
@@ -171,6 +187,8 @@ def assistant_reference_candidates(
         if not scheduled_job_ids or str(run.get("scheduled_job_id")) in scheduled_job_ids
     ]
     pools: list[tuple[str, list[dict[str, Any]]]] = [
+        ("knowledge_space", knowledge_spaces),
+        ("knowledge_folder", knowledge_folders),
         ("product", products),
         ("iteration_version", versions),
         ("requirement", requirements),
@@ -254,7 +272,7 @@ def assistant_reference_candidates_response(
             query=message,
             user=user,
         )
-        enriched_items = _reference_candidates_with_metadata(current_store, items)
+        enriched_items = _reference_candidates_with_metadata(current_store, items, user=user)
         return {"items": enriched_items, "total": len(enriched_items)}
     if normalized_type == "knowledge_chunk":
         items = _knowledge_chunk_reference_candidates(
@@ -263,7 +281,7 @@ def assistant_reference_candidates_response(
             query=message,
             user=user,
         )
-        enriched_items = _reference_candidates_with_metadata(current_store, items)
+        enriched_items = _reference_candidates_with_metadata(current_store, items, user=user)
         return {"items": enriched_items, "total": len(enriched_items)}
     if normalized_type:
         candidate_limit = max(
@@ -286,6 +304,7 @@ def assistant_reference_candidates_response(
         enriched_items = _reference_candidates_with_metadata(
             current_store,
             items[:normalized_limit],
+            user=user,
         )
         return {"items": enriched_items, "total": len(enriched_items)}
     knowledge_references = _knowledge_document_reference_candidates(
@@ -318,7 +337,7 @@ def assistant_reference_candidates_response(
         ),
         limit=normalized_limit,
     )
-    enriched_items = _reference_candidates_with_metadata(current_store, items)
+    enriched_items = _reference_candidates_with_metadata(current_store, items, user=user)
     return {"items": enriched_items, "total": len(enriched_items)}
 
 
@@ -374,6 +393,54 @@ def resolve_assistant_references(
             resolved.append(_knowledge_chunk_reference(document, chunk))
             if len(knowledge_context) < max_chunks:
                 knowledge_context.append(_knowledge_context_for_chunk(document, chunk))
+            continue
+        if reference_type == "knowledge_space":
+            space = _readable_knowledge_space(
+                current_store,
+                space_id=reference_id,
+                user=user,
+            )
+            if space is None:
+                raise AssistantReferenceError(
+                    404,
+                    "REFERENCE_NOT_FOUND",
+                    "Assistant reference not found",
+                )
+            resolved.append(
+                _knowledge_space_reference_with_metadata(current_store, space, user=user)
+            )
+            knowledge_context.extend(
+                _knowledge_context_for_space(
+                    current_store,
+                    max_chunks=max_chunks - len(knowledge_context),
+                    space=space,
+                    user=user,
+                )
+            )
+            continue
+        if reference_type == "knowledge_folder":
+            folder = _readable_knowledge_folder(
+                current_store,
+                folder_id=reference_id,
+                user=user,
+            )
+            if folder is None:
+                raise AssistantReferenceError(
+                    404,
+                    "REFERENCE_NOT_FOUND",
+                    "Assistant reference not found",
+                )
+            resolved.append(
+                _knowledge_folder_reference_with_metadata(current_store, folder, user=user)
+            )
+            knowledge_context.extend(
+                _knowledge_context_for_folder(
+                    current_store,
+                    folder=folder,
+                    max_chunks=max_chunks - len(knowledge_context),
+                    user=user,
+                )
+            )
             continue
         entity_reference = _entity_reference_for_id(current_store, reference_type, reference_id)
         if reference_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational(
@@ -450,6 +517,8 @@ def normalize_assistant_references(value: Any) -> list[dict[str, str]]:
 def _reference_candidates_with_metadata(
     current_store: Any,
     references: list[dict[str, Any]],
+    *,
+    user: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = []
     for reference in references:
@@ -472,6 +541,24 @@ def _reference_candidates_with_metadata(
         }
         if updated_at:
             enriched_item["updated_at"] = str(updated_at)
+        if reference_type == "knowledge_space" and item is not None:
+            enriched_item.update(
+                _knowledge_scope_reference_metadata(
+                    current_store,
+                    folder=None,
+                    space=item,
+                    user=user,
+                )
+            )
+        if reference_type == "knowledge_folder" and item is not None:
+            enriched_item.update(
+                _knowledge_scope_reference_metadata(
+                    current_store,
+                    folder=item,
+                    space=None,
+                    user=user,
+                )
+            )
         enriched.append(enriched_item)
     return enriched
 
@@ -491,6 +578,8 @@ def _entity_for_reference(
         "iteration_version": "product_versions",
         "knowledge_deposit": "knowledge_deposits",
         "knowledge_document": "knowledge_documents",
+        "knowledge_folder": "knowledge_folders",
+        "knowledge_space": "knowledge_spaces",
         "plugin_action": "plugin_actions",
         "plugin_connection": "plugin_connections",
         "product": "products",
@@ -503,6 +592,132 @@ def _entity_for_reference(
         return None
     item = getattr(current_store, collection_name, {}).get(item_id)
     return item if isinstance(item, dict) else None
+
+
+def _refresh_knowledge_scope_collections_from_repository(current_store: Any) -> None:
+    repository = getattr(current_store, "repository", None)
+    load_knowledge = getattr(repository, "load_knowledge", None)
+    if not callable(load_knowledge):
+        return
+    payload = load_knowledge() or {}
+    for collection_name in (
+        "knowledge_folders",
+        "knowledge_space_members",
+        "knowledge_spaces",
+    ):
+        collection = payload.get(collection_name)
+        if isinstance(collection, dict):
+            setattr(current_store, collection_name, collection)
+
+
+def _readable_knowledge_spaces(
+    current_store: Any,
+    *,
+    query: str | None,
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    from app.services.knowledge_management import user_can_access_space
+
+    _refresh_knowledge_scope_collections_from_repository(current_store)
+    normalized_query = (query or "").strip().lower()
+    spaces = []
+    for space in getattr(current_store, "knowledge_spaces", {}).values():
+        if not isinstance(space, dict):
+            continue
+        space_id = str(space.get("id") or "")
+        if not space_id:
+            continue
+        if not user_can_access_space(current_store, user, space_id=space_id, required="read"):
+            continue
+        if normalized_query:
+            haystack = " ".join(
+                str(value or "")
+                for value in (
+                    space.get("id"),
+                    space.get("code"),
+                    space.get("name"),
+                    space.get("description"),
+                )
+            ).lower()
+            if normalized_query not in haystack:
+                continue
+        spaces.append(dict(space))
+    spaces.sort(key=lambda item: (item.get("code") or item.get("name") or "", item.get("id") or ""))
+    return spaces
+
+
+def _readable_knowledge_space(
+    current_store: Any,
+    *,
+    space_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    for space in _readable_knowledge_spaces(current_store, query=None, user=user):
+        if str(space.get("id")) == space_id:
+            return space
+    return None
+
+
+def _readable_knowledge_folders(
+    current_store: Any,
+    *,
+    query: str | None,
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    from app.services.knowledge_management import (
+        folder_is_effectively_active,
+        folder_path,
+        user_can_access_space,
+    )
+
+    _refresh_knowledge_scope_collections_from_repository(current_store)
+    normalized_query = (query or "").strip().lower()
+    folders = []
+    for folder in getattr(current_store, "knowledge_folders", {}).values():
+        if not isinstance(folder, dict):
+            continue
+        folder_id = str(folder.get("id") or "")
+        space_id = str(folder.get("knowledge_space_id") or "")
+        if not folder_id or not space_id:
+            continue
+        if not user_can_access_space(current_store, user, space_id=space_id, required="read"):
+            continue
+        if not folder_is_effectively_active(current_store, folder_id):
+            continue
+        folder_item = {**folder, "path": folder.get("path") or folder_path(current_store, folder)}
+        if normalized_query:
+            haystack = " ".join(
+                str(value or "")
+                for value in (
+                    folder_item.get("id"),
+                    folder_item.get("name"),
+                    folder_item.get("path"),
+                )
+            ).lower()
+            if normalized_query not in haystack:
+                continue
+        folders.append(folder_item)
+    folders.sort(
+        key=lambda item: (
+            item.get("knowledge_space_id") or "",
+            item.get("sort_order") or 0,
+            item.get("path") or item.get("name") or "",
+            item.get("id") or "",
+        )
+    )
+    return folders
+
+
+def _readable_knowledge_folder(
+    current_store: Any,
+    *,
+    folder_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    for folder in _readable_knowledge_folders(current_store, query=None, user=user):
+        if str(folder.get("id")) == folder_id:
+            return folder
+    return None
 
 
 def _knowledge_document_reference_candidates(
@@ -576,6 +791,177 @@ def _knowledge_chunk_reference_candidates(
         )
     )
     return references[:limit]
+
+
+def _knowledge_scope_documents(
+    current_store: Any,
+    *,
+    folder_id: str | None,
+    searchable_only: bool = True,
+    space_id: str,
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    folder_ids: set[str] | None = None
+    if folder_id is not None:
+        from app.services.knowledge_management import folder_descendant_ids
+
+        folder_ids = {folder_id, *folder_descendant_ids(current_store, folder_id)}
+    documents = [
+        document
+        for document in _readable_knowledge_documents(
+            current_store,
+            query=None,
+            user=user,
+        )
+        if document.get("knowledge_space_id") == space_id
+        and (folder_ids is None or document.get("folder_id") in folder_ids)
+        and (
+            not searchable_only
+            or document.get("index_status") in KNOWLEDGE_SEARCHABLE_STATUSES
+        )
+    ]
+    documents.sort(
+        key=lambda item: (
+            item.get("updated_at") or item.get("created_at") or "",
+            item.get("title") or "",
+            item.get("id") or "",
+        ),
+        reverse=True,
+    )
+    return documents
+
+
+def _knowledge_scope_chunk_count(
+    current_store: Any,
+    *,
+    documents: list[dict[str, Any]],
+    user: dict[str, Any],
+) -> int:
+    return sum(
+        len(_readable_knowledge_chunks(current_store, document=document, user=user))
+        for document in documents
+    )
+
+
+def _knowledge_scope_reference_metadata(
+    current_store: Any,
+    *,
+    folder: dict[str, Any] | None,
+    space: dict[str, Any] | None,
+    user: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if user is None:
+        return {}
+    if folder is not None:
+        space_id = str(folder.get("knowledge_space_id") or "")
+        folder_id = str(folder.get("id") or "")
+    elif space is not None:
+        space_id = str(space.get("id") or "")
+        folder_id = None
+    else:
+        return {}
+    if not space_id:
+        return {}
+    documents = _knowledge_scope_documents(
+        current_store,
+        folder_id=folder_id,
+        space_id=space_id,
+        user=user,
+    )
+    chunk_count = _knowledge_scope_chunk_count(
+        current_store,
+        documents=documents,
+        user=user,
+    )
+    if folder is not None:
+        folder_title = str(folder.get("path") or folder.get("name") or folder.get("id") or "")
+        summary = (
+            f"{folder_title} 下 {len(documents)} 篇可检索知识文档，"
+            f"{chunk_count} 个知识 chunk 可按权限注入。"
+        )
+        return {
+            "chunk_count": chunk_count,
+            "document_count": len(documents),
+            "folder_path": folder.get("path") or folder.get("name"),
+            "knowledge_space_id": space_id,
+            "summary": summary,
+        }
+    space_title = str(space.get("name") or space.get("code") or space_id)
+    description = str(space.get("description") or "").strip()
+    summary = (
+        f"{space_title} 下 {len(documents)} 篇可检索知识文档，"
+        f"{chunk_count} 个知识 chunk 可按权限注入。"
+    )
+    if description:
+        summary = f"{description} {summary}"
+    return {
+        "chunk_count": chunk_count,
+        "document_count": len(documents),
+        "summary": _summary_excerpt(summary),
+    }
+
+
+def _knowledge_context_for_space(
+    current_store: Any,
+    *,
+    max_chunks: int,
+    space: dict[str, Any],
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return _knowledge_context_for_scope(
+        current_store,
+        folder_id=None,
+        max_chunks=max_chunks,
+        space_id=str(space["id"]),
+        user=user,
+    )
+
+
+def _knowledge_context_for_folder(
+    current_store: Any,
+    *,
+    folder: dict[str, Any],
+    max_chunks: int,
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return _knowledge_context_for_scope(
+        current_store,
+        folder_id=str(folder["id"]),
+        max_chunks=max_chunks,
+        space_id=str(folder["knowledge_space_id"]),
+        user=user,
+    )
+
+
+def _knowledge_context_for_scope(
+    current_store: Any,
+    *,
+    folder_id: str | None,
+    max_chunks: int,
+    space_id: str,
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if max_chunks <= 0:
+        return []
+    context_items: list[dict[str, Any]] = []
+    for document in _knowledge_scope_documents(
+        current_store,
+        folder_id=folder_id,
+        space_id=space_id,
+        user=user,
+    ):
+        remaining = max_chunks - len(context_items)
+        if remaining <= 0:
+            break
+        context_items.extend(
+            _knowledge_context_for_document(
+                current_store,
+                document=document,
+                max_chunks=remaining,
+                user=user,
+            )
+        )
+    return context_items[:max_chunks]
 
 
 def _readable_knowledge_documents(
@@ -815,6 +1201,61 @@ def _knowledge_document_reference_summary(document: dict[str, Any]) -> dict[str,
     return {"summary": _summary_excerpt(summary)}
 
 
+def _knowledge_space_reference(space: dict[str, Any]) -> dict[str, str]:
+    space_id = str(space["id"])
+    return {
+        "id": space_id,
+        "title": str(space.get("name") or space.get("code") or space_id),
+        "type": "knowledge_space",
+        "url": f"/knowledge/documents?knowledge_space_id={space_id}",
+    }
+
+
+def _knowledge_space_reference_with_metadata(
+    current_store: Any,
+    space: dict[str, Any],
+    *,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **_knowledge_space_reference(space),
+        **_knowledge_scope_reference_metadata(
+            current_store,
+            folder=None,
+            space=space,
+            user=user,
+        ),
+    }
+
+
+def _knowledge_folder_reference(folder: dict[str, Any]) -> dict[str, str]:
+    folder_id = str(folder["id"])
+    space_id = str(folder.get("knowledge_space_id") or "")
+    return {
+        "id": folder_id,
+        "title": str(folder.get("path") or folder.get("name") or folder_id),
+        "type": "knowledge_folder",
+        "url": f"/knowledge/documents?knowledge_space_id={space_id}&folder_id={folder_id}",
+    }
+
+
+def _knowledge_folder_reference_with_metadata(
+    current_store: Any,
+    folder: dict[str, Any],
+    *,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **_knowledge_folder_reference(folder),
+        **_knowledge_scope_reference_metadata(
+            current_store,
+            folder=folder,
+            space=None,
+            user=user,
+        ),
+    }
+
+
 def _knowledge_document_reference(document: dict[str, Any]) -> dict[str, str]:
     document_id = str(document["id"])
     return {
@@ -857,6 +1298,8 @@ def _entity_reference_for_id(
         "human_review": "human_reviews",
         "iteration_version": "product_versions",
         "knowledge_deposit": "knowledge_deposits",
+        "knowledge_folder": "knowledge_folders",
+        "knowledge_space": "knowledge_spaces",
         "plugin_action": "plugin_actions",
         "plugin_connection": "plugin_connections",
         "product": "products",
@@ -958,6 +1401,8 @@ def _assistant_reference_type_preferences(message: str) -> dict[str, int]:
         (("迭代", "版本", "version"), ["iteration_version", "requirement"]),
         (("产品", "product"), ["product"]),
         (("代码", "pr", "github"), ["code_review_report", "ai_task"]),
+        (("知识空间", "knowledge space"), ["knowledge_space"]),
+        (("知识目录", "目录", "folder"), ["knowledge_folder"]),
         (("知识", "沉淀"), ["knowledge_deposit"]),
     ]
     for keywords, entity_types in keyword_map:
@@ -972,6 +1417,8 @@ def _assistant_reference_type_preferences(message: str) -> dict[str, int]:
             "iteration_version",
             "code_review_report",
             "knowledge_deposit",
+            "knowledge_space",
+            "knowledge_folder",
             "product",
             "scheduled_job_run",
             "scheduled_job",
@@ -1016,6 +1463,11 @@ def _assistant_reference_for_entity(
         "human_review": f"/delivery/rd-tasks?review_id={item_id}",
         "iteration_version": f"/delivery/versions?version_id={item_id}",
         "knowledge_deposit": f"/knowledge/documents?deposit_id={item_id}",
+        "knowledge_folder": (
+            f"/knowledge/documents?knowledge_space_id={item.get('knowledge_space_id')}"
+            f"&folder_id={item_id}"
+        ),
+        "knowledge_space": f"/knowledge/documents?knowledge_space_id={item_id}",
         "plugin_action": f"/tasks/plugins?action_id={item_id}",
         "plugin_connection": f"/tasks/plugins?connection_id={item_id}",
         "product": f"/assets/products?product_id={item_id}",
@@ -1037,6 +1489,8 @@ def _assistant_reference_title(
     *,
     current_store: Any | None,
 ) -> str:
+    if entity_type == "knowledge_folder":
+        return str(item.get("path") or item.get("name") or item.get("id") or "")
     if entity_type == "scheduled_job_run":
         job_id = item.get("scheduled_job_id")
         job = (
@@ -1072,7 +1526,9 @@ def _assistant_reference_matches_query(
         for value in (
             item.get("id"),
             item.get("code"),
+            item.get("description"),
             item.get("name"),
+            item.get("path"),
             item.get("status"),
             item.get("summary"),
             item.get("title"),

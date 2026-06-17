@@ -8,6 +8,7 @@ import app.services.assistant_chat as assistant_chat_service
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
 from app.main import app
+from app.services.assistant_references import assistant_reference_candidates_response
 
 client = TestClient(app)
 
@@ -165,6 +166,100 @@ def seed_assistant_knowledge_reference_documents() -> None:
         "metadata": {},
         "permission_roles": ["knowledge_owner"],
         "permission_scope": {"roles": ["knowledge_owner"]},
+    }
+
+
+def seed_assistant_knowledge_space_references() -> None:
+    now = "2026-06-14T08:30:00+00:00"
+    app.state.store.knowledge_spaces["knowledge_space_support"] = {
+        "code": "support",
+        "created_at": now,
+        "created_by": "user_admin",
+        "description": "支付与订单支持知识空间。",
+        "id": "knowledge_space_support",
+        "name": "支付支持知识空间",
+        "owner_user_id": "user_admin",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.knowledge_space_members[
+        "knowledge_space_support:user_reviewer:reader"
+    ] = {
+        "created_at": now,
+        "granted_by": "user_admin",
+        "knowledge_space_id": "knowledge_space_support",
+        "space_role": "reader",
+        "status": "active",
+        "updated_at": now,
+        "user_id": "user_reviewer",
+    }
+    app.state.store.knowledge_folders["knowledge_folder_payment_support"] = {
+        "created_at": now,
+        "created_by": "user_admin",
+        "id": "knowledge_folder_payment_support",
+        "knowledge_space_id": "knowledge_space_support",
+        "name": "支付排障目录",
+        "parent_folder_id": None,
+        "path": "支付排障目录",
+        "sort_order": 1,
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.knowledge_documents["knowledge_space_payment_runbook"] = {
+        "brain_app_id": "rd_brain",
+        "content": "支付空间文档：检查支付网关、订单回调和风控状态。",
+        "created_at": now,
+        "created_by": "knowledge_owner@example.com",
+        "doc_type": "manual",
+        "folder_id": "knowledge_folder_payment_support",
+        "id": "knowledge_space_payment_runbook",
+        "index_status": "indexed",
+        "knowledge_space_id": "knowledge_space_support",
+        "permission_roles": [],
+        "permission_scope": {"knowledge_space_id": "knowledge_space_support"},
+        "product_id": None,
+        "source_type": "manual",
+        "tags": ["payment"],
+        "title": "空间支付排障手册",
+        "updated_at": now,
+        "vector_index_error": None,
+        "version_id": None,
+    }
+    app.state.store.knowledge_chunks["knowledge_space_payment_runbook_chunk_001"] = {
+        "chunk_index": 0,
+        "content": "空间支付排障：检查支付网关、订单回调和风控状态。",
+        "document_id": "knowledge_space_payment_runbook",
+        "embedding": [0.2, 0.3, 0.4],
+        "id": "knowledge_space_payment_runbook_chunk_001",
+        "metadata": {
+            "folder_id": "knowledge_folder_payment_support",
+            "knowledge_space_id": "knowledge_space_support",
+        },
+        "permission_roles": [],
+        "permission_scope": {"knowledge_space_id": "knowledge_space_support"},
+    }
+    app.state.store.knowledge_spaces["knowledge_space_private"] = {
+        "code": "private",
+        "created_at": now,
+        "created_by": "user_admin",
+        "description": "非授权私有知识空间。",
+        "id": "knowledge_space_private",
+        "name": "私有知识空间",
+        "owner_user_id": "user_admin",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.knowledge_folders["knowledge_folder_private"] = {
+        "created_at": now,
+        "created_by": "user_admin",
+        "id": "knowledge_folder_private",
+        "knowledge_space_id": "knowledge_space_private",
+        "name": "私有目录",
+        "parent_folder_id": None,
+        "path": "私有目录",
+        "sort_order": 1,
+        "status": "active",
+        "updated_at": now,
     }
 
 
@@ -434,6 +529,132 @@ def test_ai_assistant_reference_candidates_filter_readable_knowledge_chunks():
             ),
         }
     ]
+
+
+def test_ai_assistant_reference_candidates_include_readable_knowledge_spaces_and_folders():
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_knowledge_space_references()
+
+    space_response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "知识空间", "limit": 5},
+        headers=headers,
+    )
+
+    assert space_response.status_code == 200
+    space_items = space_response.json()["data"]["items"]
+    assert space_items[0] == {
+        "chunk_count": 1,
+        "document_count": 1,
+        "id": "knowledge_space_support",
+        "permission_label": "可引用",
+        "source_module": "知识库",
+        "summary": (
+            "支付与订单支持知识空间。 支付支持知识空间 下 1 篇可检索知识文档，"
+            "1 个知识 chunk 可按权限注入。"
+        ),
+        "title": "支付支持知识空间",
+        "type": "knowledge_space",
+        "updated_at": "2026-06-14T08:30:00+00:00",
+        "url": "/knowledge/documents?knowledge_space_id=knowledge_space_support",
+    }
+    assert all(item["id"] != "knowledge_space_private" for item in space_items)
+
+    folder_response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "支付排障目录", "limit": 5},
+        headers=headers,
+    )
+
+    assert folder_response.status_code == 200
+    folder_items = folder_response.json()["data"]["items"]
+    assert folder_items[0] == {
+        "chunk_count": 1,
+        "document_count": 1,
+        "folder_path": "支付排障目录",
+        "id": "knowledge_folder_payment_support",
+        "knowledge_space_id": "knowledge_space_support",
+        "permission_label": "可引用",
+        "source_module": "知识库",
+        "summary": "支付排障目录 下 1 篇可检索知识文档，1 个知识 chunk 可按权限注入。",
+        "title": "支付排障目录",
+        "type": "knowledge_folder",
+        "updated_at": "2026-06-14T08:30:00+00:00",
+        "url": (
+            "/knowledge/documents?knowledge_space_id=knowledge_space_support"
+            "&folder_id=knowledge_folder_payment_support"
+        ),
+    }
+    assert all(item["id"] != "knowledge_folder_private" for item in folder_items)
+
+
+def test_ai_assistant_reference_candidates_read_knowledge_scopes_from_repository():
+    class FakeKnowledgeRepository:
+        def load_knowledge(self):
+            return {
+                "knowledge_folders": {},
+                "knowledge_space_members": {},
+                "knowledge_spaces": {
+                    "knowledge_space_repository": {
+                        "code": "repository",
+                        "description": "Repository backed knowledge space.",
+                        "id": "knowledge_space_repository",
+                        "name": "Repository 知识空间",
+                        "owner_user_id": "user_admin",
+                        "status": "active",
+                        "updated_at": "2026-06-14T08:30:00+00:00",
+                    }
+                },
+            }
+
+    store = SimpleNamespace(
+        ai_agents={},
+        ai_skills={},
+        ai_tasks={},
+        bugs={},
+        code_review_reports={},
+        human_reviews={},
+        knowledge_chunks={},
+        knowledge_deposits={},
+        knowledge_documents={},
+        knowledge_folders={},
+        knowledge_space_members={},
+        knowledge_spaces={},
+        plugin_actions={},
+        plugin_connections={},
+        product_versions={},
+        products={},
+        repository=FakeKnowledgeRepository(),
+        requirements={},
+        scheduled_job_runs={},
+        scheduled_jobs={},
+    )
+
+    payload = assistant_reference_candidates_response(
+        store,
+        limit=5,
+        message="知识空间",
+        product_id=None,
+        reference_type=None,
+        user={"id": "user_admin", "roles": ["admin"]},
+    )
+
+    assert payload["items"][0] == {
+        "chunk_count": 0,
+        "document_count": 0,
+        "id": "knowledge_space_repository",
+        "permission_label": "可引用",
+        "source_module": "知识库",
+        "summary": (
+            "Repository backed knowledge space. Repository 知识空间 下 "
+            "0 篇可检索知识文档，0 个知识 chunk 可按权限注入。"
+        ),
+        "title": "Repository 知识空间",
+        "type": "knowledge_space",
+        "updated_at": "2026-06-14T08:30:00+00:00",
+        "url": "/knowledge/documents?knowledge_space_id=knowledge_space_repository",
+    }
 
 
 def test_ai_assistant_reference_candidates_include_admin_operational_objects():
@@ -726,6 +947,81 @@ def test_ai_assistant_resolve_rejects_unreadable_knowledge_reference():
 
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "REFERENCE_NOT_FOUND"
+
+
+def test_ai_assistant_resolve_knowledge_space_and_folder_injects_scoped_chunks():
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_knowledge_space_references()
+
+    space_response = client.post(
+        "/api/assistant/references/resolve",
+        json={
+            "references": [
+                {"id": "knowledge_space_support", "type": "knowledge_space"},
+            ]
+        },
+        headers=headers,
+    )
+
+    assert space_response.status_code == 200
+    space_payload = space_response.json()["data"]
+    assert space_payload["items"] == [
+        {
+            "chunk_count": 1,
+            "document_count": 1,
+            "id": "knowledge_space_support",
+            "summary": (
+                "支付与订单支持知识空间。 支付支持知识空间 下 1 篇可检索知识文档，"
+                "1 个知识 chunk 可按权限注入。"
+            ),
+            "title": "支付支持知识空间",
+            "type": "knowledge_space",
+            "url": "/knowledge/documents?knowledge_space_id=knowledge_space_support",
+        }
+    ]
+    assert space_payload["knowledge_context"] == [
+        {
+            "chunk_id": "knowledge_space_payment_runbook_chunk_001",
+            "chunk_index": 0,
+            "content": "空间支付排障：检查支付网关、订单回调和风控状态。",
+            "document_id": "knowledge_space_payment_runbook",
+            "document_title": "空间支付排障手册",
+            "source": {
+                "doc_type": "manual",
+                "knowledge_space_id": "knowledge_space_support",
+            },
+        }
+    ]
+
+    folder_response = client.post(
+        "/api/assistant/references/resolve",
+        json={
+            "references": [
+                {"id": "knowledge_folder_payment_support", "type": "knowledge_folder"},
+            ]
+        },
+        headers=headers,
+    )
+
+    assert folder_response.status_code == 200
+    folder_payload = folder_response.json()["data"]
+    assert folder_payload["items"][0]["type"] == "knowledge_folder"
+    assert folder_payload["items"][0]["chunk_count"] == 1
+    assert folder_payload["items"][0]["document_count"] == 1
+    assert folder_payload["knowledge_context"] == space_payload["knowledge_context"]
+
+    private_response = client.post(
+        "/api/assistant/references/resolve",
+        json={
+            "references": [
+                {"id": "knowledge_space_private", "type": "knowledge_space"},
+            ]
+        },
+        headers=headers,
+    )
+    assert private_response.status_code == 404
+    assert private_response.json()["detail"]["code"] == "REFERENCE_NOT_FOUND"
 
 
 def test_ai_assistant_resolve_selected_knowledge_chunk_injects_only_that_chunk():

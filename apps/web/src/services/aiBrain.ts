@@ -166,9 +166,12 @@ export type AssistantReference = {
   chunk_count?: number;
   chunk_index?: number;
   created_at?: string;
+  document_count?: number;
   document_id?: string;
+  folder_path?: string;
   id: string;
   index_status?: string;
+  knowledge_space_id?: string;
   permission_label?: string;
   source_module?: string;
   summary?: string;
@@ -4169,6 +4172,7 @@ export type ScheduledJobRunRecord = {
   status: string;
   tool_policy_snapshot?: Record<string, unknown>;
   trigger_type?: string;
+  updated_at?: string | null;
 };
 
 export type ScheduledJobRunObservability = {

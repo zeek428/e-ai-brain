@@ -575,6 +575,29 @@ function scheduledJobRunExecutionProgressText(run?: ScheduledJobRunRecord) {
   return undefined;
 }
 
+function scheduledJobRunExecutionFingerprint(run?: ScheduledJobRunRecord) {
+  const summary = unknownRecord(run?.result_summary);
+  const nodes = unknownRecord(summary?.execution_nodes);
+  if (!nodes) {
+    return '';
+  }
+  return JSON.stringify(
+    Object.entries(nodes).map(([nodeKey, rawNode]) => {
+      const node = unknownRecord(rawNode);
+      return {
+        errorCode: optionalText(node?.error_code),
+        errorMessage: optionalText(node?.error_message),
+        key: nodeKey,
+        label: optionalText(node?.label),
+        modelGatewayLogId: optionalText(node?.model_gateway_log_id),
+        pluginInvocationLogId: optionalText(node?.plugin_invocation_log_id),
+        runnerTaskId: optionalText(node?.runner_task_id),
+        status: optionalText(node?.status),
+      };
+    }),
+  );
+}
+
 function scheduledJobRunIsActive(status?: string) {
   return status === 'queued' || status === 'running';
 }
@@ -588,8 +611,11 @@ function scheduledJobRunRecordChanged(
     || current.error_code !== next.error_code
     || current.error_message !== next.error_message
     || current.finished_at !== next.finished_at
+    || current.plugin_invocation_log_id !== next.plugin_invocation_log_id
     || current.records_imported !== next.records_imported
+    || scheduledJobRunExecutionFingerprint(current) !== scheduledJobRunExecutionFingerprint(next)
     || current.status !== next.status
+    || current.updated_at !== next.updated_at
   );
 }
 
@@ -1003,6 +1029,8 @@ function referenceTypeLabel(type: string) {
     knowledge_deposit: '知识沉淀',
     knowledge_chunk: '知识片段',
     knowledge_document: '知识文档',
+    knowledge_folder: '知识目录',
+    knowledge_space: '知识空间',
     plugin_action: '插件动作',
     plugin_connection: '插件连接',
     product: '产品',
@@ -1025,6 +1053,8 @@ function referenceSourceModule(type: string) {
     knowledge_deposit: '知识库',
     knowledge_chunk: '知识库',
     knowledge_document: '知识库',
+    knowledge_folder: '知识库',
+    knowledge_space: '知识库',
     plugin_action: '插件管理',
     plugin_connection: '插件管理',
     product: '产品资产',
@@ -1056,7 +1086,7 @@ function referenceKnowledgeChunkCount(reference: AssistantReference) {
   if (reference.type === 'knowledge_chunk') {
     return 1;
   }
-  if (reference.type !== 'knowledge_document') {
+  if (!['knowledge_document', 'knowledge_folder', 'knowledge_space'].includes(reference.type)) {
     return 0;
   }
   return Number(reference.chunk_count ?? 0);
@@ -1066,14 +1096,14 @@ function referenceInjectionText(reference: AssistantReference) {
   if (reference.type === 'knowledge_chunk') {
     return '1 个知识 chunk 将注入模型';
   }
-  if (reference.type === 'knowledge_document') {
+  if (['knowledge_document', 'knowledge_folder', 'knowledge_space'].includes(reference.type)) {
     const chunkCount = referenceKnowledgeChunkCount(reference);
     if (chunkCount > ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT) {
       return `最多 ${ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT} 个知识 chunk 将按权限注入模型`;
     }
     return chunkCount > 0
       ? `${chunkCount} 个知识 chunk 将注入模型`
-      : '知识文档元数据将注入模型';
+      : '知识元数据将注入模型';
   }
   return '引用元数据将注入模型';
 }
@@ -3550,7 +3580,10 @@ export default function AssistantPage() {
                     <Space size={6} wrap>
                       <Tag
                         color={
-                          reference.type === 'knowledge_document' || reference.type === 'knowledge_chunk'
+                          reference.type === 'knowledge_document'
+                          || reference.type === 'knowledge_chunk'
+                          || reference.type === 'knowledge_folder'
+                          || reference.type === 'knowledge_space'
                             ? 'green'
                             : 'default'
                         }
