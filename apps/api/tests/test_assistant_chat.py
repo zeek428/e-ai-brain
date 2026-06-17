@@ -1639,6 +1639,43 @@ def test_ai_assistant_chat_generates_email_digest_job_draft(monkeypatch):
         "schedule_type": "cron",
         "source_system": "email",
     }
+    assert draft_item["wizard_steps"] == [
+        {
+            "depends_on": [],
+            "key": "data_source",
+            "status": "ready",
+            "summary": "已选择 收取邮箱邮件",
+            "title": "数据来源",
+        },
+        {
+            "depends_on": [],
+            "key": "ai_processing",
+            "status": "skipped",
+            "summary": "不调用 AI",
+            "title": "AI处理",
+        },
+        {
+            "depends_on": [],
+            "key": "result_action",
+            "status": "ready",
+            "summary": "记录运行结果",
+            "title": "结果动作",
+        },
+        {
+            "depends_on": [],
+            "key": "schedule",
+            "status": "ready",
+            "summary": "cron: 0 8 * * MON-FRI",
+            "title": "调度策略",
+        },
+        {
+            "depends_on": [],
+            "key": "confirm",
+            "status": "pending",
+            "summary": "确认后创建定时作业",
+            "title": "确认执行",
+        },
+    ]
     draft_response = client.get(
         f"/api/assistant/action-drafts/{draft_item['draft_id']}",
         headers=headers,
@@ -1817,6 +1854,43 @@ def test_ai_assistant_chat_generates_online_log_anomaly_job_draft(monkeypatch):
         "skill_ids": ["ai_skill_online_log_anomaly"],
         "source_system": "online-log",
     }
+    assert draft_item["wizard_steps"] == [
+        {
+            "depends_on": [],
+            "key": "data_source",
+            "status": "ready",
+            "summary": "已选择 查询线上日志指标",
+            "title": "数据来源",
+        },
+        {
+            "depends_on": [],
+            "key": "ai_processing",
+            "status": "ready",
+            "summary": "已选择 AI角色和 Skill",
+            "title": "AI处理",
+        },
+        {
+            "depends_on": [],
+            "key": "result_action",
+            "status": "ready",
+            "summary": "发送通知",
+            "title": "结果动作",
+        },
+        {
+            "depends_on": [],
+            "key": "schedule",
+            "status": "ready",
+            "summary": "cron: */30 * * * *",
+            "title": "调度策略",
+        },
+        {
+            "depends_on": [],
+            "key": "confirm",
+            "status": "pending",
+            "summary": "确认后创建定时作业",
+            "title": "确认执行",
+        },
+    ]
     draft_response = client.get(
         f"/api/assistant/action-drafts/{draft_item['draft_id']}",
         headers=headers,

@@ -122,6 +122,14 @@ class AssistantDraftBuilder:
             "requires_confirmation": True,
             "risk_level": "medium",
             "title": template.get("name") or "每周用户反馈洞察抽取",
+            "wizard_steps": _scheduled_job_wizard_steps(
+                action=action,
+                agent=agent,
+                connection=connection,
+                payload=payload,
+                result_action_summary="写入用户反馈洞察",
+                skill=skill,
+            ),
         }
         return {
             "intent": "scheduled_job_draft",
@@ -169,6 +177,13 @@ class AssistantDraftBuilder:
             "requires_confirmation": True,
             "risk_level": "medium",
             "title": template.get("name") or "邮件摘要收取",
+            "wizard_steps": _scheduled_job_wizard_steps(
+                action=action,
+                agent=None,
+                connection=connection,
+                payload=payload,
+                skill=None,
+            ),
         }
         return {
             "intent": "email_digest_job_draft",
@@ -240,6 +255,13 @@ class AssistantDraftBuilder:
             "requires_confirmation": True,
             "risk_level": "medium",
             "title": template.get("name") or "线上日志异常分析",
+            "wizard_steps": _scheduled_job_wizard_steps(
+                action=action,
+                agent=agent,
+                connection=connection,
+                payload=payload,
+                skill=skill,
+            ),
         }
         return {
             "intent": "online_log_anomaly_job_draft",
@@ -876,6 +898,84 @@ def _first_indexed_knowledge_document(items: list[dict[str, Any]]) -> dict[str, 
         if status in {"indexed", "text_indexed", "vector_indexed"}:
             return item
     return None
+
+
+def _scheduled_job_wizard_steps(
+    *,
+    action: dict[str, Any] | None,
+    agent: dict[str, Any] | None,
+    connection: dict[str, Any] | None,
+    payload: dict[str, Any],
+    skill: dict[str, Any] | None,
+    result_action_summary: str | None = None,
+) -> list[dict[str, Any]]:
+    action_name = str(action.get("name") or action.get("code")) if action else ""
+    data_source_ready = action is not None and connection is not None
+    if data_source_ready:
+        data_source_summary = f"已选择 {action_name}" if action_name else "已选择数据来源"
+    elif action is None:
+        data_source_summary = "需补齐插件动作"
+    else:
+        data_source_summary = "需补齐插件连接"
+
+    execution_mode = str(payload.get("execution_mode") or "")
+    if execution_mode == "deterministic":
+        ai_status = "skipped"
+        ai_summary = "不调用 AI"
+    elif (
+        bool(payload.get("agent_id") or agent)
+        and bool(payload.get("model_gateway_config_id"))
+        and bool(payload.get("skill_ids") or skill)
+    ):
+        ai_status = "ready"
+        ai_summary = "已选择 AI角色和 Skill"
+    else:
+        ai_status = "needs_prerequisite"
+        ai_summary = "需补齐 AI角色和 Skill"
+
+    schedule_type = str(payload.get("schedule_type") or "manual")
+    cron_expression = payload.get("cron_expression")
+    schedule_summary = (
+        f"cron: {cron_expression}" if schedule_type == "cron" and cron_expression else schedule_type
+    )
+    return [
+        {
+            "depends_on": [],
+            "key": "data_source",
+            "status": "ready" if data_source_ready else "needs_prerequisite",
+            "summary": data_source_summary,
+            "title": "数据来源",
+        },
+        {
+            "depends_on": [],
+            "key": "ai_processing",
+            "status": ai_status,
+            "summary": ai_summary,
+            "title": "AI处理",
+        },
+        {
+            "depends_on": [],
+            "key": "result_action",
+            "status": "ready",
+            "summary": result_action_summary
+            or _result_actions_summary(payload.get("result_actions")),
+            "title": "结果动作",
+        },
+        {
+            "depends_on": [],
+            "key": "schedule",
+            "status": "ready",
+            "summary": schedule_summary,
+            "title": "调度策略",
+        },
+        {
+            "depends_on": [],
+            "key": "confirm",
+            "status": "pending",
+            "summary": "确认后创建定时作业",
+            "title": "确认执行",
+        },
+    ]
 
 
 def _code_inspection_wizard_steps(

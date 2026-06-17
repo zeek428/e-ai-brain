@@ -326,6 +326,43 @@ def test_assistant_tool_results_can_generate_scheduled_job_action_draft():
         "requires_confirmation": True,
         "risk_level": "medium",
         "title": "每周用户反馈洞察抽取",
+        "wizard_steps": [
+            {
+                "depends_on": [],
+                "key": "data_source",
+                "status": "ready",
+                "summary": "已选择 获取本周用户反馈数据",
+                "title": "数据来源",
+            },
+            {
+                "depends_on": [],
+                "key": "ai_processing",
+                "status": "ready",
+                "summary": "已选择 AI角色和 Skill",
+                "title": "AI处理",
+            },
+            {
+                "depends_on": [],
+                "key": "result_action",
+                "status": "ready",
+                "summary": "写入用户反馈洞察",
+                "title": "结果动作",
+            },
+            {
+                "depends_on": [],
+                "key": "schedule",
+                "status": "ready",
+                "summary": "cron: 0 9 * * MON",
+                "title": "调度策略",
+            },
+            {
+                "depends_on": [],
+                "key": "confirm",
+                "status": "pending",
+                "summary": "确认后创建定时作业",
+                "title": "确认执行",
+            },
+        ],
     }
     assert tool_results[0]["references"] == [
         {

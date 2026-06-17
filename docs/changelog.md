@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手周反馈、邮件摘要和线上日志异常定时作业草案统一返回“配置向导”：`assistant.action_draft.items[].wizard_steps` 明确展示数据来源、AI处理、结果动作、调度策略和确认执行，确定性插件任务会把 AI处理标记为 skipped。
 - AI 助手代码巡检定时作业草案新增“配置向导”：`assistant.action_draft.items[].wizard_steps` 明确展示数据来源、AI处理、结果动作、调度策略和确认执行的状态、摘要与前置依赖，前端草案卡片直接呈现每步是否就绪。
 - AI 助手 `@定时作业 执行一次` 增强相似任务消歧：语义命中多个周反馈/洞察历史任务但只有一个启用且 active 的可执行作业时，后端直接执行该作业，避免被停用历史任务拖回草案生成。
 - AI 助手代码巡检 AI 能力前置草案：明确要求大模型分析但缺少代码巡检 Skill/AI角色时，聊天接口确定性返回 `create_ai_skill`、`create_ai_agent` 和 `create_scheduled_job` 草案组，确认前不写配置，确认后可追踪到 AI 能力配置页。
