@@ -379,6 +379,64 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('shows the backend injection limit for large knowledge document references', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('上线');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  chunk_count: 24,
+                  id: 'knowledge_release_runbook',
+                  index_status: 'indexed',
+                  permission_label: '可引用',
+                  source_module: '知识库',
+                  summary: '上线排障手册包含发布、回滚、监控和复盘步骤。',
+                  title: '上线排障手册',
+                  type: 'knowledge_document',
+                  updated_at: '2026-06-16T08:00:00+00:00',
+                  url: '/knowledge/documents?document_id=knowledge_release_runbook',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '基于 @上线 总结风险' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /上线排障手册/ }));
+
+    const selectedReferenceList = screen.getByText('本次上下文')
+      .closest('.assistant-selected-reference-list');
+    expect(selectedReferenceList).not.toBeNull();
+    expect(
+      within(selectedReferenceList as HTMLElement).getAllByText(/最多 8 个知识 chunk 将按权限注入模型/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(selectedReferenceList as HTMLElement).queryByText(/24 个知识 chunk 将注入模型/),
+    ).not.toBeInTheDocument();
+  });
+
   it('selects a specific knowledge chunk with @ candidates and sends chunk reference', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {

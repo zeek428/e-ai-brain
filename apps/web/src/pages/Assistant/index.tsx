@@ -55,6 +55,7 @@ import { formatMutationError } from '../../utils/managementCrud';
 const { Text, Title } = Typography;
 const { TextArea } = Input;
 const ASSISTANT_REFERENCE_CANDIDATE_LIMIT = 12;
+const ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT = 8;
 
 type ChatMessage = {
   content: string;
@@ -769,17 +770,44 @@ function referenceMetaText(reference: AssistantReference) {
   ].filter(Boolean).join(' · ');
 }
 
+function referenceKnowledgeChunkCount(reference: AssistantReference) {
+  if (reference.type === 'knowledge_chunk') {
+    return 1;
+  }
+  if (reference.type !== 'knowledge_document') {
+    return 0;
+  }
+  return Number(reference.chunk_count ?? 0);
+}
+
 function referenceInjectionText(reference: AssistantReference) {
   if (reference.type === 'knowledge_chunk') {
     return '1 个知识 chunk 将注入模型';
   }
   if (reference.type === 'knowledge_document') {
-    const chunkCount = Number(reference.chunk_count ?? 0);
+    const chunkCount = referenceKnowledgeChunkCount(reference);
+    if (chunkCount > ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT) {
+      return `最多 ${ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT} 个知识 chunk 将按权限注入模型`;
+    }
     return chunkCount > 0
       ? `${chunkCount} 个知识 chunk 将注入模型`
       : '知识文档元数据将注入模型';
   }
   return '引用元数据将注入模型';
+}
+
+function selectedReferenceInjectionSummary(references: AssistantReference[]) {
+  const knowledgeChunkCount = references.reduce(
+    (total, reference) => total + referenceKnowledgeChunkCount(reference),
+    0,
+  );
+  if (!knowledgeChunkCount) {
+    return '元数据将注入模型';
+  }
+  if (knowledgeChunkCount > ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT) {
+    return `最多 ${ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT} 个知识 chunk 将按权限注入模型`;
+  }
+  return `${knowledgeChunkCount} 个知识 chunk 将注入模型`;
 }
 
 function referenceSummaryText(reference: AssistantReference) {
@@ -1984,8 +2012,8 @@ export default function AssistantPage() {
     [orderedReferenceCandidates, recentReferences],
   );
   const roleQuickTaskGroups = useMemo(() => selectedAssistantRoleQuickTaskGroups(), []);
-  const selectedKnowledgeChunkCount = useMemo(
-    () => selectedReferences.reduce((total, reference) => total + Number(reference.chunk_count ?? 0), 0),
+  const selectedReferenceInjectionText = useMemo(
+    () => selectedReferenceInjectionSummary(selectedReferences),
     [selectedReferences],
   );
   const activeRunPollTargets = useMemo(
@@ -2659,10 +2687,7 @@ export default function AssistantPage() {
               <div className="assistant-selected-reference-header">
                 <Text strong>本次上下文</Text>
                 <Text type="secondary">
-                  {selectedReferences.length} 个引用
-                  {selectedKnowledgeChunkCount
-                    ? ` · ${selectedKnowledgeChunkCount} 个知识 chunk 将注入模型`
-                    : ' · 元数据将注入模型'}
+                  {selectedReferences.length} 个引用 · {selectedReferenceInjectionText}
                 </Text>
               </div>
               <div className="assistant-selected-reference-tags">
