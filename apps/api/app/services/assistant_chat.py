@@ -388,20 +388,23 @@ def _deterministic_assistant_output(
         product_id=payload.product_id,
         user=user,
     )
-    if not scheduled_job_references:
-        if mention_resolution["references"]:
-            selected_references = _merge_assistant_references(
-                selected_references,
-                mention_resolution["references"],
-            )
-            scheduled_job_references = mention_resolution["references"]
-        elif mention_resolution["attempted"]:
+    if mention_resolution["references"]:
+        selected_references = _merge_assistant_references(
+            [
+                reference
+                for reference in selected_references
+                if reference.get("type") != "scheduled_job"
+            ],
+            mention_resolution["references"],
+        )
+        scheduled_job_references = mention_resolution["references"]
+    elif not scheduled_job_references:
+        if mention_resolution["attempted"]:
             return _scheduled_job_reference_needed_output(
                 attempted_queries=mention_resolution["queries"],
                 selected_references=selected_references,
             )
-        else:
-            return None
+        return None
     started = perf_counter()
     if len(scheduled_job_references) > 1:
         answer = "我检测到多个定时作业引用。请只保留一个定时作业后，再发送“执行一次”。"
@@ -843,6 +846,12 @@ def _scheduled_job_references_from_explicit_mentions(
     for query in queries:
         matches = [job for job in jobs if _scheduled_job_matches_mention(job, query)]
         if len(matches) != 1:
+            exact_matches = [
+                job for job in matches if _scheduled_job_exactly_matches_mention(job, query)
+            ]
+            if len(exact_matches) == 1:
+                matches = exact_matches
+        if len(matches) != 1:
             return {"attempted": True, "queries": queries, "references": []}
         job = matches[0]
         job_id = str(job["id"])
@@ -906,6 +915,25 @@ def _scheduled_job_matches_mention(job: dict[str, Any], query: str) -> bool:
         query,
         current_store=None,
     )
+
+
+def _scheduled_job_exactly_matches_mention(job: dict[str, Any], query: str) -> bool:
+    normalized_query = _normalized_mention_token(query)
+    if not normalized_query:
+        return False
+    return any(
+        _normalized_mention_token(value) == normalized_query
+        for value in (
+            job.get("id"),
+            job.get("name"),
+            job.get("title"),
+            job.get("code"),
+        )
+    )
+
+
+def _normalized_mention_token(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
 
 
 def _scheduled_job_run_should_return_immediately(job: dict[str, Any]) -> bool:
