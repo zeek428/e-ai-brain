@@ -419,6 +419,72 @@ def test_ai_assistant_reference_candidates_include_admin_operational_objects():
     assert reviewer_response.json()["data"] == {"items": [], "total": 0}
 
 
+def test_ai_assistant_default_reference_candidates_are_balanced_across_types():
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_knowledge_reference_documents()
+    seed_assistant_operational_references()
+    for index in range(8):
+        doc_id = f"knowledge_extra_runbook_{index}"
+        app.state.store.knowledge_documents[doc_id] = {
+            "brain_app_id": "rd_brain",
+            "content": f"默认 @ 候选知识文档 {index}",
+            "created_at": f"2026-06-14T08:0{index}:00+00:00",
+            "created_by": "knowledge_owner@example.com",
+            "doc_type": "manual",
+            "id": doc_id,
+            "index_status": "indexed",
+            "permission_roles": ["admin"],
+            "permission_scope": {},
+            "product_id": None,
+            "source_type": "manual",
+            "tags": ["assistant"],
+            "title": f"默认候选知识文档 {index}",
+            "updated_at": f"2026-06-14T08:0{index}:00+00:00",
+            "vector_index_error": None,
+            "version_id": None,
+        }
+    app.state.store.requirements["requirement_assistant_workbench"] = {
+        "created_at": "2026-06-14T09:10:00+00:00",
+        "id": "requirement_assistant_workbench",
+        "product_id": None,
+        "status": "approved",
+        "summary": "AI 助手工作台升级",
+        "title": "AI 助手工作台升级",
+        "updated_at": "2026-06-14T09:10:00+00:00",
+    }
+    app.state.store.ai_tasks["ai_task_assistant_workbench"] = {
+        "assignee": "rd@example.com",
+        "created_at": "2026-06-14T09:20:00+00:00",
+        "id": "ai_task_assistant_workbench",
+        "product_id": None,
+        "requirement_id": "requirement_assistant_workbench",
+        "status": "running",
+        "summary": "补齐助手闭环",
+        "title": "补齐助手闭环",
+        "updated_at": "2026-06-14T09:20:00+00:00",
+    }
+
+    response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "", "limit": 12},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    assert [item["type"] for item in items[:8]] == [
+        "knowledge_document",
+        "requirement",
+        "ai_task",
+        "scheduled_job",
+        "scheduled_job_run",
+        "plugin_action",
+        "ai_agent",
+        "ai_skill",
+    ]
+
+
 def test_ai_assistant_reference_candidates_match_weekly_feedback_alias():
     headers = auth_headers()
     app.state.store.reset()
@@ -440,6 +506,54 @@ def test_ai_assistant_reference_candidates_match_weekly_feedback_alias():
             "permission_label": "管理员可引用",
             "source_module": "任务中心",
             "title": "每周用户反馈洞察抽取",
+            "type": "scheduled_job",
+            "updated_at": "2026-06-14T09:30:00+00:00",
+            "url": "/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly",
+        }
+    ]
+
+
+def test_ai_assistant_type_specific_default_candidates_are_not_globally_truncated():
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    for index in range(8):
+        requirement_id = f"requirement_irrelevant_{index}"
+        app.state.store.requirements[requirement_id] = {
+            "created_at": f"2026-06-14T08:2{index}:00+00:00",
+            "id": requirement_id,
+            "product_id": None,
+            "status": "approved",
+            "summary": f"无关需求 {index}",
+            "title": f"无关需求 {index}",
+            "updated_at": f"2026-06-14T08:2{index}:00+00:00",
+        }
+        task_id = f"ai_task_irrelevant_{index}"
+        app.state.store.ai_tasks[task_id] = {
+            "assignee": "rd@example.com",
+            "created_at": f"2026-06-14T08:3{index}:00+00:00",
+            "id": task_id,
+            "product_id": None,
+            "requirement_id": requirement_id,
+            "status": "running",
+            "summary": f"无关 AI 任务 {index}",
+            "title": f"无关 AI 任务 {index}",
+            "updated_at": f"2026-06-14T08:3{index}:00+00:00",
+        }
+
+    response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "", "type": "scheduled_job", "limit": 5},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["items"] == [
+        {
+            "id": "scheduled_job_feedback_weekly",
+            "permission_label": "管理员可引用",
+            "source_module": "任务中心",
+            "title": "每周反馈洞察定时作业",
             "type": "scheduled_job",
             "updated_at": "2026-06-14T09:30:00+00:00",
             "url": "/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly",

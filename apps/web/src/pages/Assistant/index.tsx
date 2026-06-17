@@ -54,6 +54,7 @@ import { formatMutationError } from '../../utils/managementCrud';
 
 const { Text, Title } = Typography;
 const { TextArea } = Input;
+const ASSISTANT_REFERENCE_CANDIDATE_LIMIT = 12;
 
 type ChatMessage = {
   content: string;
@@ -2110,7 +2111,7 @@ export default function AssistantPage() {
     let didCancel = false;
     setIsLoadingReferences(true);
     fetchAssistantReferenceCandidates({
-      limit: 6,
+      limit: ASSISTANT_REFERENCE_CANDIDATE_LIMIT,
       query,
     })
       .then((items) => {

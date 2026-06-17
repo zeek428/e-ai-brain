@@ -634,6 +634,7 @@ describe('AssistantPage', () => {
         const params = new URLSearchParams(String(input).split('?')[1]);
         expect(params.get('query')).toBe('');
         expect(params.get('type')).toBeNull();
+        expect(params.get('limit')).toBe('12');
         return new Response(
           JSON.stringify({
             data: {

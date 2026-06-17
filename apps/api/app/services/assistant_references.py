@@ -34,6 +34,23 @@ REFERENCE_SOURCE_MODULES = {
     "scheduled_job": "任务中心",
     "scheduled_job_run": "任务中心",
 }
+DEFAULT_REFERENCE_TYPE_ORDER = (
+    "knowledge_document",
+    "knowledge_chunk",
+    "requirement",
+    "ai_task",
+    "scheduled_job",
+    "scheduled_job_run",
+    "plugin_action",
+    "ai_agent",
+    "ai_skill",
+    "human_review",
+    "bug",
+    "iteration_version",
+    "code_review_report",
+    "knowledge_deposit",
+    "product",
+)
 SCHEDULED_JOB_QUERY_KEYWORD_GROUPS = (
     ("用户反馈", "反馈", "feedback", "user feedback"),
     ("洞察", "insight", "insights"),
@@ -63,6 +80,7 @@ def assistant_reference_candidates(
     product_id: str | None,
     filter_by_query: bool = False,
     limit: int = 6,
+    per_type_limit: int = 3,
     user: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     products = list(current_store.products.values())
@@ -156,7 +174,7 @@ def assistant_reference_candidates(
                     current_store=current_store,
                 )
             ]
-        for item in pool_items[:3]:
+        for item in pool_items[:per_type_limit]:
             reference = _assistant_reference_for_entity(
                 entity_type,
                 item,
@@ -208,13 +226,18 @@ def assistant_reference_candidates_response(
         enriched_items = _reference_candidates_with_metadata(current_store, items)
         return {"items": enriched_items, "total": len(enriched_items)}
     if normalized_type:
+        candidate_limit = max(
+            normalized_limit * len(DEFAULT_REFERENCE_TYPE_ORDER),
+            len(DEFAULT_REFERENCE_TYPE_ORDER) * 3,
+        )
         items = [
             reference
             for reference in assistant_reference_candidates(
                 current_store,
                 filter_by_query=True,
-                limit=normalized_limit,
+                limit=candidate_limit,
                 message=message,
+                per_type_limit=normalized_limit,
                 product_id=product_id,
                 user=user,
             )
@@ -242,12 +265,13 @@ def assistant_reference_candidates_response(
             knowledge_references,
             limit=normalized_limit,
         )
-    items = _merge_reference_lists(
+    candidate_limit = max(normalized_limit * 4, len(DEFAULT_REFERENCE_TYPE_ORDER) * 3)
+    items = _merge_reference_lists_by_type(
         knowledge_references,
         assistant_reference_candidates(
             current_store,
             filter_by_query=True,
-            limit=normalized_limit,
+            limit=candidate_limit,
             message=message,
             product_id=product_id,
             user=user,
@@ -827,6 +851,49 @@ def _merge_reference_lists(
             if len(references) >= limit:
                 return references
     return references
+
+
+def _merge_reference_lists_by_type(
+    *reference_lists: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for reference_list in reference_lists:
+        for reference in reference_list:
+            key = (str(reference.get("type")), str(reference.get("id")))
+            if key in seen:
+                continue
+            if not all(reference.get(field) for field in ("id", "title", "type", "url")):
+                continue
+            seen.add(key)
+            item = dict(reference)
+            references.append(item)
+            buckets.setdefault(str(item["type"]), []).append(item)
+
+    merged: list[dict[str, Any]] = []
+    merged_keys: set[tuple[str, str]] = set()
+    for reference_type in DEFAULT_REFERENCE_TYPE_ORDER:
+        for reference in buckets.get(reference_type, []):
+            key = (str(reference["type"]), str(reference["id"]))
+            if key in merged_keys:
+                continue
+            merged.append(reference)
+            merged_keys.add(key)
+            break
+        if len(merged) >= limit:
+            return merged
+
+    for reference in references:
+        key = (str(reference["type"]), str(reference["id"]))
+        if key in merged_keys:
+            continue
+        merged.append(reference)
+        merged_keys.add(key)
+        if len(merged) >= limit:
+            break
+    return merged
 
 
 def _assistant_reference_type_preferences(message: str) -> dict[str, int]:
