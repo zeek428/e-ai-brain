@@ -943,6 +943,67 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     ]
 
 
+def test_ai_assistant_run_once_draft_confirm_triggers_scheduled_job_run():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "config_json": {
+                    "assistant_run_once_request": {
+                        "requested": True,
+                        "source_message": "@提取每周用户反馈有价值信息 执行一次",
+                    },
+                },
+                "enabled": True,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "确认后立即执行的反馈洞察作业",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": "创建并执行反馈洞察定时作业",
+        },
+        headers=headers,
+    )
+
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 200
+    payload = confirm_response.json()["data"]
+    scheduled_job = payload["run"]["result"]
+    triggered_run = scheduled_job["scheduled_job_run"]
+    assert payload["run"]["result_type"] == "scheduled_job"
+    assert triggered_run["scheduled_job_id"] == scheduled_job["id"]
+    assert triggered_run["trigger_type"] == "manual"
+    assert triggered_run["status"] == "succeeded"
+    assert triggered_run["id"] in app.state.store.scheduled_job_runs
+    assert scheduled_job["config_json"]["assistant_run_once_request"] == {
+        "requested": True,
+        "source_message": "@提取每周用户反馈有价值信息 执行一次",
+    }
+    audit_events = client.get(
+        "/api/audit/events?subject_type=assistant_action_draft",
+        headers=headers,
+    ).json()["data"]["items"]
+    confirmed_event = next(
+        item
+        for item in audit_events
+        if item["event_type"] == "assistant_action_draft.confirmed"
+    )
+    assert confirmed_event["payload"]["scheduled_job_run_id"] == triggered_run["id"]
+
+
 def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
     headers = auth_headers()
     app.state.store.reset()

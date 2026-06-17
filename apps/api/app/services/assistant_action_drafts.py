@@ -18,6 +18,7 @@ from app.services.scheduled_jobs import (
     create_scheduled_job_response,
     effective_scheduled_job_execution_mode,
     effective_scheduled_job_type,
+    run_scheduled_job_response,
 )
 
 ASSISTANT_ACTION_DRAFT_STATUSES = {
@@ -203,6 +204,7 @@ def confirm_assistant_action_draft_response(
             "result_id": result_id,
             "result_type": result_type,
             "run_id": run["id"],
+            **_assistant_action_confirm_audit_extras(result),
         },
     )
     save_assistant_action_records(
@@ -319,6 +321,18 @@ def execute_assistant_action_draft(
             payload=SimpleNamespace(**payload),
             user=user,
         )
+        if _assistant_run_once_after_confirm_requested(payload):
+            scheduled_job_run = run_scheduled_job_response(
+                current_store=current_store,
+                job_id=str(result["id"]),
+                source_run_id=None,
+                trigger_type="manual",
+                user=user,
+            )
+            result = {
+                **result,
+                "scheduled_job_run": scheduled_job_run,
+            }
         return "scheduled_job", str(result["id"]), result
     if action == "create_plugin_connection":
         payload = with_defaults(PLUGIN_CONNECTION_DEFAULTS, payload)
@@ -345,6 +359,24 @@ def execute_assistant_action_draft(
         }
         return "assistant_analysis", draft["id"], result
     raise api_error(400, "UNSUPPORTED_DRAFT_ACTION", "Unsupported assistant draft action")
+
+
+def _assistant_run_once_after_confirm_requested(payload: dict[str, Any]) -> bool:
+    config_json = payload.get("config_json")
+    if not isinstance(config_json, dict):
+        return False
+    request = config_json.get("assistant_run_once_request")
+    return isinstance(request, dict) and request.get("requested") is True
+
+
+def _assistant_action_confirm_audit_extras(result: dict[str, Any]) -> dict[str, Any]:
+    scheduled_job_run = result.get("scheduled_job_run")
+    if not isinstance(scheduled_job_run, dict):
+        return {}
+    run_id = str(scheduled_job_run.get("id") or "").strip()
+    if not run_id:
+        return {}
+    return {"scheduled_job_run_id": run_id}
 
 
 def get_assistant_action_draft(
