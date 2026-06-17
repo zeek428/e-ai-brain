@@ -1282,18 +1282,38 @@ def _scheduled_job_preferred_run_once_mention_matches(
 ) -> list[dict[str, Any]]:
     if not _weekly_feedback_run_once_draft_requested(query, [query]):
         return []
+    scored_matches = [
+        (_scheduled_job_weekly_feedback_insight_score(job), job)
+        for job in jobs
+    ]
     preferred_matches = [
-        job for job in jobs if _scheduled_job_is_weekly_feedback_insight_job(job)
+        (score, job)
+        for score, job in scored_matches
+        if score > 0
     ]
+    if not preferred_matches:
+        return []
     runnable_matches = [
-        job for job in preferred_matches if _scheduled_job_is_runnable_mention_match(job)
+        (score, job)
+        for score, job in preferred_matches
+        if _scheduled_job_is_runnable_mention_match(job)
     ]
-    if len(runnable_matches) == 1:
-        return runnable_matches
-    return preferred_matches
+    candidates = runnable_matches or preferred_matches
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            item[0],
+            str(item[1].get("updated_at") or item[1].get("created_at") or ""),
+            str(item[1].get("id") or ""),
+        ),
+        reverse=True,
+    )
+    if len(ranked) == 1 or ranked[0][0] > ranked[1][0]:
+        return [ranked[0][1]]
+    return [job for _, job in ranked]
 
 
-def _scheduled_job_is_weekly_feedback_insight_job(job: dict[str, Any]) -> bool:
+def _scheduled_job_weekly_feedback_insight_score(job: dict[str, Any]) -> int:
     config_json = job.get("config_json")
     assistant_template = (
         config_json.get("assistant_template")
@@ -1307,13 +1327,39 @@ def _scheduled_job_is_weekly_feedback_insight_job(job: dict[str, Any]) -> bool:
     )
     code = str(job.get("code") or "").strip()
     job_type = str(job.get("job_type") or "").strip()
-    source_system = str(job.get("source_system") or "").strip()
-    return (
-        code == "weekly_feedback_insight"
-        or job_type == "user_feedback_insight_extract"
-        or template_code == "weekly_feedback_insight"
-        or source_system == "aliyun-maxcompute"
+    title = _normalized_mention_token(
+        " ".join(
+            str(value or "")
+            for value in (
+                job.get("name"),
+                job.get("title"),
+                job.get("description"),
+                job.get("summary"),
+            )
+        )
     )
+    source_system = str(job.get("source_system") or "").strip()
+    score = 0
+    if code == "weekly_feedback_insight":
+        score += 70
+    if template_code == "weekly_feedback_insight":
+        score += 65
+    if job_type == "user_feedback_insight_extract":
+        score += 60
+    if "用户反馈" in title or "feedback" in title:
+        score += 20
+    if any(
+        keyword in title
+        for keyword in ("洞察", "提取", "抽取", "有价值", "价值", "insight", "extract")
+    ):
+        score += 20
+    if "每周" in title or "weekly" in title:
+        score += 10
+    if source_system == "aliyun-maxcompute":
+        score += 5
+    if _scheduled_job_is_runnable_mention_match(job):
+        score += 5
+    return score
 
 
 def _scheduled_job_is_runnable_mention_match(job: dict[str, Any]) -> bool:

@@ -291,6 +291,47 @@ def cancel_assistant_action_draft_response(
     return public_assistant_action_draft(draft, current_store=current_store)
 
 
+def mark_assistant_action_draft_modified_response(
+    *,
+    current_store: Any,
+    draft_id: str,
+    modified_fields: list[str],
+    user: dict[str, Any],
+    user_modified: bool = True,
+) -> dict[str, Any]:
+    ensure_action_collections(current_store)
+    draft = get_assistant_action_draft(current_store, draft_id=draft_id)
+    ensure_draft_access(draft, user=user)
+    draft = refresh_assistant_action_draft_expiry(current_store, draft)
+    now = now_iso()
+    cleaned_fields = _clean_modified_fields(modified_fields)
+    metadata_json = deepcopy(draft.get("metadata_json") or {})
+    metadata_json["user_modified"] = bool(user_modified or cleaned_fields)
+    if cleaned_fields:
+        metadata_json["modified_fields"] = cleaned_fields
+    metadata_json["modified_at"] = now
+    metadata_json["modified_by"] = user["id"]
+    draft.update(
+        {
+            "metadata_json": metadata_json,
+            "updated_at": now,
+        }
+    )
+    current_store.assistant_action_drafts[draft["id"]] = draft
+    audit_event = current_store.audit(
+        event_type="assistant_action_draft.modified",
+        actor_id=user["id"],
+        subject_type="assistant_action_draft",
+        subject_id=draft["id"],
+        payload={
+            "modified_field_count": len(cleaned_fields),
+            "modified_fields": cleaned_fields,
+        },
+    )
+    save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
+    return public_assistant_action_draft(draft, current_store=current_store)
+
+
 def persist_assistant_action_drafts_from_tool_results(
     current_store: Any,
     *,
@@ -659,6 +700,18 @@ def save_assistant_action_records(
 
 def assistant_action_repository(current_store: Any) -> Any | None:
     return getattr(current_store, "repository", None)
+
+
+def _clean_modified_fields(modified_fields: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for field in modified_fields:
+        value = str(field).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+    return cleaned
 
 
 def ensure_action_collections(current_store: Any) -> None:

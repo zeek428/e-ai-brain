@@ -14,6 +14,7 @@ from app.services.assistant_action_drafts import (
     confirm_assistant_action_draft_response,
     create_assistant_action_draft_response,
     get_assistant_action_draft_response,
+    mark_assistant_action_draft_modified_response,
 )
 from app.services.assistant_chat import (
     ASSISTANT_ACCESS_ROLES,
@@ -58,6 +59,11 @@ class AssistantActionDraftRequest(BaseModel):
 
 class AssistantActionDraftCancelRequest(BaseModel):
     reason: str | None = None
+
+
+class AssistantActionDraftModificationRequest(BaseModel):
+    modified_fields: list[str] = Field(default_factory=list)
+    user_modified: bool = True
 
 
 @router.get("/conversations")
@@ -128,6 +134,24 @@ def cancel_assistant_action_draft(
         draft_id=draft_id,
         reason=payload.reason if payload else None,
         user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/action-drafts/{draft_id}/modification")
+def mark_assistant_action_draft_modified(
+    draft_id: str,
+    request: Request,
+    payload: AssistantActionDraftModificationRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    result = mark_assistant_action_draft_modified_response(
+        current_store=store(request),
+        draft_id=draft_id,
+        modified_fields=payload.modified_fields,
+        user=user,
+        user_modified=payload.user_modified,
     )
     return envelope(result, get_trace_id(request))
 

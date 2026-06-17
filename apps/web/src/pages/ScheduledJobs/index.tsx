@@ -52,6 +52,7 @@ import {
   fetchScheduledJobRuns,
   fetchScheduledJobs,
   generateScheduledJobTemplateFromRun,
+  markAssistantActionDraftModified,
   resolveAssistantDraftResourceId,
   runScheduledJob,
   testPluginConnection,
@@ -120,6 +121,30 @@ type TemplateSourceView = {
 };
 
 type ScheduledJobPageTab = 'jobs' | 'runs';
+
+const assistantDraftTrackedFields = [
+  'agent_id',
+  'config_json',
+  'cron_expression',
+  'enabled',
+  'execution_mode',
+  'interval_seconds',
+  'job_type',
+  'knowledge_document_ids',
+  'model_gateway_config_id',
+  'name',
+  'plugin_action_id',
+  'plugin_action_ids',
+  'plugin_connection_id',
+  'plugin_connection_ids',
+  'plugin_input_mapping',
+  'plugin_output_mapping',
+  'product_id',
+  'result_actions',
+  'schedule_type',
+  'skill_ids',
+  'source_system',
+] as const;
 
 type ScheduledJobOrchestrationNode = {
   action?: ReactNode;
@@ -591,6 +616,35 @@ function isEmptyJsonValue(value: unknown): boolean {
       && !Array.isArray(value)
       && Object.keys(value as Record<string, unknown>).length === 0)
   );
+}
+
+function comparableDraftValue(value: unknown): unknown {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return value.map(comparableDraftValue);
+  }
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, comparableDraftValue(item)]),
+    );
+  }
+  return value;
+}
+
+function scheduledJobAssistantDraftModifiedFields(
+  initialPayload: Partial<ScheduledJobRecord>,
+  currentPayload: Partial<ScheduledJobRecord>,
+): string[] {
+  const initialRecord = initialPayload as Record<string, unknown>;
+  const currentRecord = currentPayload as Record<string, unknown>;
+  return assistantDraftTrackedFields.filter((field) => (
+    JSON.stringify(comparableDraftValue(initialRecord[field]))
+    !== JSON.stringify(comparableDraftValue(currentRecord[field]))
+  ));
 }
 
 function formatJsonValue(value: unknown): string {
@@ -1574,6 +1628,9 @@ export default function ScheduledJobsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<ScheduledJobRecord | undefined>();
   const [assistantDraftPayload, setAssistantDraftPayload] = useState<Record<string, unknown> | undefined>();
+  const [assistantDraftInitialValues, setAssistantDraftInitialValues] = useState<
+    ScheduledJobFormValues | undefined
+  >();
   const [assistantDraftSource, setAssistantDraftSource] = useState<
     Pick<AssistantScheduledJobDraft, 'draftId' | 'title'> | undefined
   >();
@@ -2293,6 +2350,7 @@ export default function ScheduledJobsPage() {
       const draftValues = scheduledJobValuesFromAssistantDraft(draft);
       setEditingJob(undefined);
       setAssistantDraftPayload(draft.payload);
+      setAssistantDraftInitialValues(draftValues);
       setAssistantDraftSource({ draftId: draft.draftId, title: draft.title });
       setConnectionTestResult(undefined);
       form.resetFields();
@@ -2301,6 +2359,7 @@ export default function ScheduledJobsPage() {
       message.success('已载入 AI 助手生成的定时作业草案，请确认后保存');
     } catch {
       setAssistantDraftPayload(undefined);
+      setAssistantDraftInitialValues(undefined);
       setAssistantDraftSource(undefined);
       message.error('AI 助手定时作业草案格式无效');
     }
@@ -2309,6 +2368,7 @@ export default function ScheduledJobsPage() {
   const openCreateJobModal = () => {
     setEditingJob(undefined);
     setAssistantDraftPayload(undefined);
+    setAssistantDraftInitialValues(undefined);
     setAssistantDraftSource(undefined);
     setTemplateSource(undefined);
     setGeneratedRunTemplate(undefined);
@@ -2333,6 +2393,7 @@ export default function ScheduledJobsPage() {
     });
     setEditingJob(undefined);
     setAssistantDraftPayload(undefined);
+    setAssistantDraftInitialValues(undefined);
     setAssistantDraftSource(undefined);
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
@@ -2361,6 +2422,7 @@ export default function ScheduledJobsPage() {
     setLinkedResultWriteRecordId(undefined);
     setEditingJob(undefined);
     setAssistantDraftPayload(undefined);
+    setAssistantDraftInitialValues(undefined);
     setAssistantDraftSource(undefined);
     setGeneratedRunTemplate(undefined);
     setConnectionTestResult(undefined);
@@ -2407,6 +2469,7 @@ export default function ScheduledJobsPage() {
       setLinkedResultWriteRecordId(undefined);
       setEditingJob(undefined);
       setAssistantDraftPayload(undefined);
+      setAssistantDraftInitialValues(undefined);
       setAssistantDraftSource(undefined);
       setConnectionTestResult(undefined);
       setDryRunResult(undefined);
@@ -2440,6 +2503,7 @@ export default function ScheduledJobsPage() {
     const nativeCodeScan = codeInspectionUsesNativeScan(job.job_type, editConfigJson);
     setEditingJob(job);
     setAssistantDraftPayload(undefined);
+    setAssistantDraftInitialValues(undefined);
     setAssistantDraftSource(undefined);
     setTemplateSource(undefined);
     setGeneratedRunTemplate(undefined);
@@ -2478,6 +2542,7 @@ export default function ScheduledJobsPage() {
     setModalOpen(false);
     setEditingJob(undefined);
     setAssistantDraftPayload(undefined);
+    setAssistantDraftInitialValues(undefined);
     setAssistantDraftSource(undefined);
     setTemplateSource(undefined);
     setGeneratedRunTemplate(undefined);
@@ -2610,8 +2675,11 @@ export default function ScheduledJobsPage() {
 
   const submitJob = async () => {
     let requestPayload: Partial<ScheduledJobRecord>;
+    let formValues: ScheduledJobFormValues;
     try {
-      requestPayload = await currentValidatedJobPayload();
+      await form.validateFields();
+      formValues = form.getFieldsValue(true) as ScheduledJobFormValues;
+      requestPayload = buildJobRequestPayload(formValues);
     } catch {
       return;
     }
@@ -2620,6 +2688,23 @@ export default function ScheduledJobsPage() {
       message.success('定时作业已更新');
     } else {
       await createScheduledJob(requestPayload);
+      if (assistantDraftSource?.draftId && assistantDraftInitialValues) {
+        const initialPayload = buildJobRequestPayload(assistantDraftInitialValues);
+        const modifiedFields = scheduledJobAssistantDraftModifiedFields(
+          initialPayload,
+          requestPayload,
+        );
+        if (modifiedFields.length) {
+          try {
+            await markAssistantActionDraftModified(
+              assistantDraftSource.draftId,
+              modifiedFields,
+            );
+          } catch {
+            message.warning('定时作业已创建，但助手草案修改指标记录失败');
+          }
+        }
+      }
       message.success('定时作业已创建');
     }
     closeJobModal();

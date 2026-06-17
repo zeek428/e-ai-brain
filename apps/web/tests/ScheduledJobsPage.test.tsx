@@ -23,6 +23,7 @@ function installScheduledJobsFetchMock(
   const jobDeleteIds: string[] = [];
   const jobDryRunBodies: unknown[] = [];
   const jobUpdateBodies: unknown[] = [];
+  const assistantDraftModificationBodies: unknown[] = [];
   const connectionTestIds: string[] = [];
   const generatedTemplateRequests: string[] = [];
   const runJobBodies: unknown[] = [];
@@ -226,6 +227,26 @@ function installScheduledJobsFetchMock(
       const body = JSON.parse(String(init.body));
       jobCreateBodies.push(body);
       return jsonResponse({ data: { id: `scheduled_job_${jobCreateBodies.length}`, ...body, status: 'active' } });
+    }
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/assistant/action-drafts/')
+      && input.endsWith('/modification')
+      && init?.method === 'POST'
+    ) {
+      const body = JSON.parse(String(init.body));
+      assistantDraftModificationBodies.push(body);
+      return jsonResponse({
+        data: {
+          action: 'create_scheduled_job',
+          id: input.split('/').at(-2),
+          metadata_json: body,
+          payload: {},
+          risk_level: 'medium',
+          status: 'pending',
+          title: 'AI 助手草案',
+        },
+      });
     }
     if (input === '/api/system/scheduled-jobs/dry-run' && init?.method === 'POST') {
       const body = JSON.parse(String(init.body));
@@ -545,6 +566,7 @@ function installScheduledJobsFetchMock(
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
   vi.stubGlobal('fetch', fetchMock);
   return {
+    assistantDraftModificationBodies,
     connectionTestIds,
     generatedTemplateRequests,
     jobCreateBodies,
@@ -942,7 +964,7 @@ describe('ScheduledJobsPage', () => {
   }, 15000);
 
   it('opens the create dialog from an assistant scheduled job draft', async () => {
-    const { jobCreateBodies } = installScheduledJobsFetchMock();
+    const { assistantDraftModificationBodies, jobCreateBodies } = installScheduledJobsFetchMock();
     window.sessionStorage.setItem(
       ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
       JSON.stringify({
@@ -981,6 +1003,9 @@ describe('ScheduledJobsPage', () => {
     expect(within(dialog).getByDisplayValue('0 9 * * MON')).toBeInTheDocument();
     expect(window.sessionStorage.getItem(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY)).toBeNull();
 
+    fireEvent.change(within(dialog).getByLabelText('名称'), {
+      target: { value: '每周用户反馈洞察抽取 - 人工调整' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() =>
@@ -998,7 +1023,7 @@ describe('ScheduledJobsPage', () => {
         job_type: 'user_feedback_insight_extract',
         knowledge_document_ids: ['knowledge_payment_runbook'],
         model_gateway_config_id: 'model_gateway_scheduled_job',
-        name: '每周用户反馈洞察抽取',
+        name: '每周用户反馈洞察抽取 - 人工调整',
         plugin_action_id: 'plugin_action_maxcompute',
         plugin_connection_id: 'connection_maxcompute_prod',
         plugin_input_mapping: {
@@ -1010,6 +1035,14 @@ describe('ScheduledJobsPage', () => {
         skill_ids: ['skill_feedback'],
         source_system: 'aliyun-maxcompute',
       }),
+    );
+    await waitFor(() =>
+      expect(assistantDraftModificationBodies).toEqual([
+        {
+          modified_fields: ['name'],
+          user_modified: true,
+        },
+      ]),
     );
   });
 

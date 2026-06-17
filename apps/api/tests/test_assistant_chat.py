@@ -1877,6 +1877,73 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
     ]
 
 
+def test_ai_assistant_action_draft_modification_updates_metrics_and_audit():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "enabled": True,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "AI 助手草案仪表盘刷新",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": "创建仪表盘刷新定时任务",
+        },
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    draft_id = draft_response.json()["data"]["id"]
+
+    modification_response = client.post(
+        f"/api/assistant/action-drafts/{draft_id}/modification",
+        json={
+            "modified_fields": [
+                "cron_expression",
+                "",
+                "cron_expression",
+                "plugin_action_id",
+            ]
+        },
+        headers=headers,
+    )
+
+    assert modification_response.status_code == 200
+    draft = modification_response.json()["data"]
+    assert draft["metadata_json"]["user_modified"] is True
+    assert draft["metadata_json"]["modified_fields"] == [
+        "cron_expression",
+        "plugin_action_id",
+    ]
+    assert draft["metadata_json"]["modified_by"] == "user_admin"
+
+    metrics = client.get("/api/assistant/metrics", headers=headers).json()["data"]
+    assert metrics["summary"]["draft_total"] == 1
+    assert metrics["summary"]["draft_user_modified_count"] == 1
+    assert metrics["summary"]["draft_user_modified_rate"] == 1.0
+
+    audit_events = client.get(
+        "/api/audit/events?subject_type=assistant_action_draft",
+        headers=headers,
+    ).json()["data"]["items"]
+    modified_event = next(
+        item
+        for item in audit_events
+        if item["event_type"] == "assistant_action_draft.modified"
+    )
+    assert modified_event["subject_id"] == draft_id
+    assert modified_event["payload"] == {
+        "modified_field_count": 2,
+        "modified_fields": ["cron_expression", "plugin_action_id"],
+    }
+
+
 def test_ai_assistant_action_draft_previews_diff_and_blocks_invalid_confirmation():
     headers = auth_headers()
     app.state.store.reset()
@@ -3730,6 +3797,90 @@ def test_ai_assistant_chat_prefers_weekly_feedback_job_when_alias_matches_multip
         "/api/assistant/chat",
         json={
             "message": "@提取每周用户反馈有价值信息 执行一次",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    assert "已执行「每周用户反馈洞察抽取」一次" in message["content"]
+    run = next(iter(app.state.store.scheduled_job_runs.values()))
+    assert run["scheduled_job_id"] == "scheduled_job_feedback_insight"
+    assert message["tool_results"][0]["summary"]["scheduled_job_id"] == (
+        "scheduled_job_feedback_insight"
+    )
+
+
+def test_ai_assistant_chat_prefers_official_feedback_insight_over_generic_maxcompute_job(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    base_job = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "interval_seconds": None,
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "aliyun-maxcompute",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_feedback_insight"] = {
+        **base_job,
+        "code": "weekly_feedback_insight",
+        "config_json": {"assistant_template": {"code": "weekly_feedback_insight"}},
+        "id": "scheduled_job_feedback_insight",
+        "job_type": "user_feedback_insight_extract",
+        "name": "每周用户反馈洞察抽取",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_feedback_raw_sync"] = {
+        **base_job,
+        "code": "weekly_feedback_raw_sync",
+        "id": "scheduled_job_feedback_raw_sync",
+        "job_type": "plugin_action_invoke",
+        "name": "每周用户反馈原始数据同步",
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("assistant deterministic run should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "@提取每周用户反馈有价值信息 执行一次",
+            "references": [
+                {
+                    "id": "scheduled_job_feedback_raw_sync",
+                    "type": "scheduled_job",
+                }
+            ],
         },
         headers=headers,
     )

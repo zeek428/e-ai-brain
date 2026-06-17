@@ -2457,6 +2457,24 @@ export async function cancelAssistantActionDraft(
   );
 }
 
+export async function markAssistantActionDraftModified(
+  draftId: string,
+  modifiedFields: string[],
+): Promise<AssistantActionDraftRecord> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionDraftRecord>(
+    `/api/assistant/action-drafts/${draftId}/modification`,
+    {
+      body: {
+        modified_fields: modifiedFields,
+        user_modified: true,
+      },
+      method: 'POST',
+      token,
+    },
+  );
+}
+
 export async function fetchAssistantConversations(): Promise<AssistantConversationSummary[]> {
   const token = requireAccessToken();
   const response = await apiRequest<ListResponse<AssistantConversationApiRecord>>(
