@@ -1146,6 +1146,12 @@ describe('AssistantPage', () => {
     expect(screen.getByText('写入反馈洞察表失败。')).toBeInTheDocument();
     expect(screen.getByText('写入目标：用户洞察表')).toBeInTheDocument();
     expect(screen.getByText('错误：HTTP 500: downstream write failed')).toBeInTheDocument();
+    expect(screen.getByRole('link', {
+      name: '查看写入记录 result_write_record_scheduled_job_run_feedback_failed',
+    })).toHaveAttribute(
+      'href',
+      '/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed&result_write_record_id=result_write_record_scheduled_job_run_feedback_failed',
+    );
     expect(chatRequestBody).toMatchObject({
       message: '为什么 @反馈 这次失败？',
       references: [{ id: 'scheduled_job_run_feedback_failed', type: 'scheduled_job_run' }],

@@ -363,6 +363,23 @@ function diagnosticStatusColor(status: string) {
   return 'default';
 }
 
+function diagnosticResultWriteRecordUrl(item: AssistantToolResultItem, stage: AssistantToolResultItem) {
+  const recordId = itemText(stage, 'result_write_record_id');
+  if (recordId === '-') {
+    return undefined;
+  }
+  const itemUrl = itemText(item, 'url');
+  const runId = itemText(item, 'id');
+  const baseUrl = itemUrl !== '-'
+    ? itemUrl
+    : (runId !== '-' ? `/tasks/scheduled-jobs?run_id=${encodeURIComponent(runId)}` : undefined);
+  if (!baseUrl) {
+    return undefined;
+  }
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${separator}result_write_record_id=${encodeURIComponent(recordId)}`;
+}
+
 function scheduledJobRunStatusLabel(status?: string) {
   const labels: Record<string, string> = {
     cancelled: '已取消',
@@ -1647,6 +1664,8 @@ function AssistantScheduledJobDiagnosticCards({
                 const writeTargetLabel = itemText(stage, 'result_write_target_label');
                 const writeTarget = itemText(stage, 'result_write_target');
                 const errorMessage = itemText(stage, 'error_message');
+                const resultWriteRecordId = itemText(stage, 'result_write_record_id');
+                const resultWriteRecordUrl = diagnosticResultWriteRecordUrl(item, stage);
                 return (
                   <div className="assistant-diagnostic-stage" key={itemText(stage, 'stage')}>
                     <Space size={6} wrap>
@@ -1661,10 +1680,22 @@ function AssistantScheduledJobDiagnosticCards({
                         写入目标：{writeTargetLabel !== '-' ? writeTargetLabel : writeTarget}
                       </Text>
                     ) : null}
-                    {itemText(stage, 'result_write_record_id') !== '-' ? (
-                      <Text type="secondary">
-                        写入记录：{itemText(stage, 'result_write_record_id')}
-                      </Text>
+                    {resultWriteRecordId !== '-' ? (
+                      resultWriteRecordUrl ? (
+                        <Button
+                          aria-label={`查看写入记录 ${resultWriteRecordId}`}
+                          href={resultWriteRecordUrl}
+                          icon={<LinkOutlined />}
+                          size="small"
+                          type="link"
+                        >
+                          写入记录：{resultWriteRecordId}
+                        </Button>
+                      ) : (
+                        <Text type="secondary">
+                          写入记录：{resultWriteRecordId}
+                        </Text>
+                      )
                     ) : null}
                     {errorMessage !== '-' ? (
                       <Text type="danger">错误：{errorMessage}</Text>
