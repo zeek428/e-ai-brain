@@ -897,8 +897,17 @@ describe('AssistantPage', () => {
                   updated_at: '2026-06-14T09:00:00+08:00',
                   url: '/tasks/ai-capabilities?skill_id=ai_skill_feedback_summary',
                 },
+                {
+                  id: 'ai_task_feedback_analysis',
+                  permission_label: '可引用',
+                  source_module: '需求交付',
+                  title: '反馈洞察研发任务',
+                  type: 'ai_task',
+                  updated_at: '2026-06-13T10:00:00+08:00',
+                  url: '/delivery/rd-tasks?task_id=ai_task_feedback_analysis',
+                },
               ],
-              total: 3,
+              total: 5,
             },
           }),
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
@@ -917,9 +926,10 @@ describe('AssistantPage', () => {
     });
 
     expect((await screen.findAllByText('知识文档')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('研发任务').length).toBeGreaterThan(0);
     expect(screen.getAllByText('定时作业').length).toBeGreaterThan(0);
     expect(screen.getAllByText('插件连接').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('AI能力').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Skill').length).toBeGreaterThan(0);
     expect(screen.getByText('知识库 · 可引用 · 2026-06-16')).toBeInTheDocument();
     expect(screen.getByText('任务中心 · 管理员可引用 · 2026-06-15')).toBeInTheDocument();
     expect(screen.getByText('插件管理 · 管理员可引用 · 2026-06-15')).toBeInTheDocument();

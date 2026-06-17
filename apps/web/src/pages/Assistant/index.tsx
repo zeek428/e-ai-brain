@@ -994,8 +994,8 @@ function draftRegeneratePrompt(draft: AssistantToolResultItem) {
 function referenceTypeLabel(type: string) {
   const labels: Record<string, string> = {
     ai_agent: 'AI角色',
-    ai_skill: 'AI能力',
-    ai_task: '任务',
+    ai_skill: 'Skill',
+    ai_task: '研发任务',
     bug: '缺陷',
     code_review_report: '代码评审',
     human_review: '确认',
