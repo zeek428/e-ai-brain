@@ -6,7 +6,6 @@ from typing import Any
 ASSISTANT_DRAFT_WIZARD_STEPS = [
     "数据来源",
     "AI处理",
-    "知识引用",
     "结果动作",
     "调度策略",
     "确认执行",

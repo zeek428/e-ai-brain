@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手草案模板市场流程收敛：`/api/assistant/draft-templates` 返回的 `wizard_steps` 与新增任务引导、草案卡片统一为“数据来源、AI处理、结果动作、调度策略、确认执行”五步，知识引用纳入 AI 处理上下文，避免模板市场展示额外流程步骤。
 - AI 助手效果指标展示口径对齐：侧栏主指标将 `knowledge_reference_hit_rate` 显示为“知识引用命中率”，和接口语义保持一致。
 - AI 助手周反馈 run-once 官方作业消歧增强：`@提取每周用户反馈有价值信息 执行一次` 同时命中 MaxCompute 原始同步等相似任务时，按官方模板、作业类型和名称语义评分执行每周用户反馈洞察作业。
 - AI 助手草案用户修改率真实采集：从助手草案带入定时作业表单并保存时，如用户修改字段，会调用 `/api/assistant/action-drafts/{draft_id}/modification` 写入 `modified_fields/user_modified` 并进入效果指标。

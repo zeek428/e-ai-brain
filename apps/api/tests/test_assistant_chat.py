@@ -36,14 +36,17 @@ def test_ai_assistant_draft_templates_list_official_market_entries():
     }
     assert templates_by_code["weekly_feedback_insight"]["draft_action"] == "create_scheduled_job"
     assert templates_by_code["weekly_feedback_insight"]["target_resource"] == "scheduled_job"
-    assert templates_by_code["weekly_feedback_insight"]["wizard_steps"] == [
+    expected_wizard_steps = [
         "数据来源",
         "AI处理",
-        "知识引用",
         "结果动作",
         "调度策略",
         "确认执行",
     ]
+    assert all(
+        item["wizard_steps"] == expected_wizard_steps
+        for item in templates_by_code.values()
+    )
     assert "执行一次" in templates_by_code["weekly_feedback_insight"]["prompt"]
     assert templates_by_code["release_risk_analysis"]["roles"] == [
         "product_owner",
