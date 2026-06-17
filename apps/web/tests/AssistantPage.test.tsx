@@ -1265,6 +1265,15 @@ describe('AssistantPage', () => {
       'href',
       '/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed&result_write_record_id=result_write_record_scheduled_job_run_feedback_failed',
     );
+    fireEvent.click(screen.getByRole('button', { name: '生成修复草案' }));
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '@每周反馈洞察定时作业 / failed 这次失败怎么修？帮我生成修复草案',
+    );
+    const selectedReferenceList = screen.getByText('本次上下文')
+      .closest('.assistant-selected-reference-list');
+    expect(selectedReferenceList).not.toBeNull();
+    expect(within(selectedReferenceList as HTMLElement).getByText('每周反馈洞察定时作业 / failed'))
+      .toBeInTheDocument();
     expect(chatRequestBody).toMatchObject({
       message: '为什么 @反馈 这次失败？',
       references: [{ id: 'scheduled_job_run_feedback_failed', type: 'scheduled_job_run' }],

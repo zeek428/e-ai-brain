@@ -387,6 +387,31 @@ function diagnosticResultWriteRecordUrl(item: AssistantToolResultItem, stage: As
   return `${baseUrl}${separator}result_write_record_id=${encodeURIComponent(recordId)}`;
 }
 
+function scheduledJobRunReferenceFromToolItem(
+  item: AssistantToolResultItem,
+): AssistantReference | undefined {
+  const id = itemText(item, 'id');
+  if (id === '-') {
+    return undefined;
+  }
+  const title = itemText(item, 'title');
+  const url = itemText(item, 'url');
+  return {
+    id,
+    title: title === '-' ? id : title,
+    type: 'scheduled_job_run',
+    url: url === '-' ? `/tasks/scheduled-jobs?run_id=${encodeURIComponent(id)}` : url,
+  };
+}
+
+function scheduledJobRunFollowupPrompt(
+  item: AssistantToolResultItem,
+  prompt: string,
+) {
+  const reference = scheduledJobRunReferenceFromToolItem(item);
+  return reference ? `@${reference.title} ${prompt}` : prompt;
+}
+
 function scheduledJobRunStatusLabel(status?: string) {
   const labels: Record<string, string> = {
     cancelled: '已取消',
@@ -1648,8 +1673,10 @@ function AssistantScheduledJobRunCards({
 
 function AssistantScheduledJobDiagnosticCards({
   items,
+  onUseRunFollowupPrompt,
 }: {
   items: AssistantToolResultItem[];
+  onUseRunFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
 }) {
   if (!items.length) {
     return null;
@@ -1677,6 +1704,24 @@ function AssistantScheduledJobDiagnosticCards({
             <Text className="assistant-diagnostic-title" strong>
               {itemText(item, 'title')}
             </Text>
+            <Space className="assistant-diagnostic-actions" size={8} wrap>
+              <Button
+                aria-label="生成修复草案"
+                icon={<FileTextOutlined />}
+                size="small"
+                onClick={() => onUseRunFollowupPrompt(item, '这次失败怎么修？帮我生成修复草案')}
+              >
+                生成修复草案
+              </Button>
+              <Button
+                aria-label="对比上次成功"
+                icon={<ReloadOutlined />}
+                size="small"
+                onClick={() => onUseRunFollowupPrompt(item, '和上次成功有什么不同？')}
+              >
+                对比上次成功
+              </Button>
+            </Space>
             <div className="assistant-diagnostic-stage-grid">
               {stages.map((stage) => {
                 const writeTargetLabel = itemText(stage, 'result_write_target_label');
@@ -1731,8 +1776,10 @@ function AssistantScheduledJobDiagnosticCards({
 
 function AssistantScheduledJobComparisonCards({
   items,
+  onUseRunFollowupPrompt,
 }: {
   items: AssistantToolResultItem[];
+  onUseRunFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
 }) {
   if (!items.length) {
     return null;
@@ -1765,6 +1812,24 @@ function AssistantScheduledJobComparisonCards({
             <Text className="assistant-comparison-title" strong>
               {itemText(item, 'title')}
             </Text>
+            <Space className="assistant-comparison-actions" size={8} wrap>
+              <Button
+                aria-label="生成修复草案"
+                icon={<FileTextOutlined />}
+                size="small"
+                onClick={() => onUseRunFollowupPrompt(item, '这次失败怎么修？帮我生成修复草案')}
+              >
+                生成修复草案
+              </Button>
+              <Button
+                aria-label="继续诊断"
+                icon={<ExclamationCircleOutlined />}
+                size="small"
+                onClick={() => onUseRunFollowupPrompt(item, '为什么这次任务失败？')}
+              >
+                继续诊断
+              </Button>
+            </Space>
             <div className="assistant-comparison-metrics">
               <span>
                 <Text type="secondary">当前导入</Text>
@@ -1945,6 +2010,7 @@ function AssistantBubble({
   onCancelDraft,
   onConfirmDraft,
   onRegenerateDraft,
+  onUseRunFollowupPrompt,
   onUseTaskGuidePrompt,
   resultWriteTargetLabels,
   scheduledJobRunById,
@@ -1956,6 +2022,7 @@ function AssistantBubble({
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
   onRegenerateDraft: (draft: AssistantToolResultItem) => void;
+  onUseRunFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
   onUseTaskGuidePrompt: (prompt: string) => void;
   resultWriteTargetLabels: Map<string, string>;
   scheduledJobRunById: Record<string, ScheduledJobRunRecord>;
@@ -2002,8 +2069,14 @@ function AssistantBubble({
           onUsePrompt={onUseTaskGuidePrompt}
         />
         <AssistantScheduledJobRunCards items={runItems} />
-        <AssistantScheduledJobDiagnosticCards items={diagnosticItems} />
-        <AssistantScheduledJobComparisonCards items={comparisonItems} />
+        <AssistantScheduledJobDiagnosticCards
+          items={diagnosticItems}
+          onUseRunFollowupPrompt={onUseRunFollowupPrompt}
+        />
+        <AssistantScheduledJobComparisonCards
+          items={comparisonItems}
+          onUseRunFollowupPrompt={onUseRunFollowupPrompt}
+        />
       </div>
     </div>
   );
@@ -2559,6 +2632,17 @@ export default function AssistantPage() {
     setInputValue(draftRegeneratePrompt(draft));
   };
 
+  const useScheduledJobRunFollowupPrompt = (
+    item: AssistantToolResultItem,
+    prompt: string,
+  ) => {
+    const reference = scheduledJobRunReferenceFromToolItem(item);
+    if (reference) {
+      addSelectedReference(reference);
+    }
+    setInputValue(scheduledJobRunFollowupPrompt(item, prompt));
+  };
+
   const confirmDraft = async (draft: AssistantToolResultItem) => {
     const draftId = assistantDraftId(draft);
     if (!draftId) {
@@ -2726,6 +2810,7 @@ export default function AssistantPage() {
                 onCancelDraft={cancelDraft}
                 onConfirmDraft={confirmDraft}
                 onRegenerateDraft={regenerateDraft}
+                onUseRunFollowupPrompt={useScheduledJobRunFollowupPrompt}
                 onUseTaskGuidePrompt={setInputValue}
                 resultWriteTargetLabels={resultWriteTargetLabels}
                 scheduledJobRunById={scheduledJobRunById}
