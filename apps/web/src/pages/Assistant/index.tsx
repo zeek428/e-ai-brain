@@ -245,6 +245,7 @@ const SCHEDULED_JOB_RUN_POLL_INTERVAL_MS = 5000;
 type AssistantScheduledJobRunItem = {
   errorMessage?: string | null;
   id: string;
+  latestStatusRefreshed?: boolean;
   recordsImported?: number;
   scheduledJobId?: string;
   status: string;
@@ -506,9 +507,11 @@ function scheduledJobRunItems(
       return item;
     }
     const latestStatus = latestRun.status || item.status;
+    const latestStatusRefreshed = latestStatus !== item.status;
     return {
       ...item,
       errorMessage: latestRun.error_message ?? item.errorMessage,
+      latestStatusRefreshed,
       recordsImported: latestRun.records_imported ?? item.recordsImported,
       scheduledJobId: latestRun.scheduled_job_id ?? item.scheduledJobId,
       status: latestStatus,
@@ -1778,6 +1781,11 @@ function AssistantScheduledJobRunCards({
             {isActive ? (
               <Text type="secondary">正在执行，完成后会自动刷新状态。</Text>
             ) : null}
+            {item.latestStatusRefreshed ? (
+              <Text type="secondary">
+                已刷新到最新状态：{scheduledJobRunStatusLabel(item.status)}
+              </Text>
+            ) : null}
             {item.errorMessage ? (
               <Text type="danger">错误：{item.errorMessage}</Text>
             ) : null}
@@ -2326,6 +2334,7 @@ export default function AssistantPage() {
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
+  const messageListEndRef = useRef<HTMLDivElement | null>(null);
   const queryReferenceHydratedRef = useRef(false);
   const draftTemplatesLoadRequestedRef = useRef(false);
   const resultWriteTargetsLoadRequestedRef = useRef(false);
@@ -2360,6 +2369,13 @@ export default function AssistantPage() {
     () => scheduledJobRunPollTargets(messages, scheduledJobRunById),
     [messages, scheduledJobRunById],
   );
+
+  useEffect(() => {
+    if (typeof messageListEndRef.current?.scrollIntoView !== 'function') {
+      return;
+    }
+    messageListEndRef.current.scrollIntoView({ block: 'end' });
+  }, [isLoadingMessages, isSending, messages, scheduledJobRunById]);
 
   useEffect(() => {
     if (!activeRunPollTargets.length) {
@@ -3053,6 +3069,7 @@ export default function AssistantPage() {
                 <Text type="secondary">生成中</Text>
               </div>
             ) : null}
+            <div ref={messageListEndRef} aria-hidden="true" />
           </div>
           {lastResponse?.suggestions.length ? (
             <div className="assistant-suggestions">
@@ -3063,14 +3080,16 @@ export default function AssistantPage() {
               ))}
             </div>
           ) : null}
-          {selectedReferences.length ? (
-            <div className="assistant-selected-reference-list">
-              <div className="assistant-selected-reference-header">
-                <Text strong>本次上下文</Text>
-                <Text type="secondary">
-                  {selectedReferences.length} 个引用 · {selectedReferenceInjectionText}
-                </Text>
-              </div>
+          <div aria-label="本次上下文" className="assistant-selected-reference-list">
+            <div className="assistant-selected-reference-header">
+              <Text strong>本次上下文</Text>
+              <Text type="secondary">
+                {selectedReferences.length
+                  ? `${selectedReferences.length} 个引用 · ${selectedReferenceInjectionText}`
+                  : '0 个显式引用 · 0 个知识 chunk 注入模型'}
+              </Text>
+            </div>
+            {selectedReferences.length ? (
               <div className="assistant-selected-reference-tags">
                 {selectedReferences.map((reference) => (
                   <div
@@ -3121,12 +3140,21 @@ export default function AssistantPage() {
                   </div>
                 ))}
               </div>
-              <AssistantReferenceDetailModal
-                reference={referenceDetail}
-                onClose={() => setReferenceDetail(undefined)}
-              />
-            </div>
-          ) : null}
+            ) : (
+              <div className="assistant-selected-reference-empty">
+                <Space size={6} wrap>
+                  <Tag color="default">0 个显式引用</Tag>
+                  <Tag color="default">0 个知识 chunk 注入模型</Tag>
+                  <Tag color="default">未注入知识正文</Tag>
+                </Space>
+                <Text type="secondary">仅使用系统上下文和当前会话</Text>
+              </div>
+            )}
+            <AssistantReferenceDetailModal
+              reference={referenceDetail}
+              onClose={() => setReferenceDetail(undefined)}
+            />
+          </div>
           {referenceCandidates.length || isLoadingReferences ? (
             <div
               aria-label="引用候选"

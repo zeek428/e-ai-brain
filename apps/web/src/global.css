@@ -1087,6 +1087,17 @@ body {
   background: #f8fbff;
 }
 
+.assistant-selected-reference-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px dashed #d7dfec;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
 .assistant-selected-reference-card-header {
   display: flex;
   align-items: center;
@@ -1291,6 +1302,11 @@ body {
   .assistant-chat-header,
   .assistant-composer {
     grid-template-columns: 1fr;
+  }
+
+  .assistant-selected-reference-empty {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .assistant-chat-header {

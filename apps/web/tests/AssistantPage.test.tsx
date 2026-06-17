@@ -55,6 +55,31 @@ function resultWriteTargetsResponse() {
 }
 
 describe('AssistantPage', () => {
+  it('shows a transparent current-context summary even before references are selected', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const currentContext = await screen.findByLabelText('本次上下文');
+    expect(within(currentContext).getByText('本次上下文')).toBeInTheDocument();
+    expect(within(currentContext).getByText('0 个显式引用')).toBeInTheDocument();
+    expect(within(currentContext).getByText('0 个知识 chunk 注入模型')).toBeInTheDocument();
+    expect(within(currentContext).getByText('未注入知识正文')).toBeInTheDocument();
+    expect(within(currentContext).getByText('仅使用系统上下文和当前会话')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/assistant/conversations']);
+  });
+
   it('loads assistant effectiveness metrics from the workbench sidebar', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
@@ -894,6 +919,11 @@ describe('AssistantPage', () => {
 
   it('sends @ scheduled job run-once commands with the active candidate reference', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
+    const scrollIntoViewMock = vi.fn();
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoViewMock,
+    });
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (input === '/api/assistant/conversations') {
@@ -1020,7 +1050,9 @@ describe('AssistantPage', () => {
 
     expect(await screen.findByText(/已触发「提取每周用户反馈有价值信息」执行一次/)).toBeInTheDocument();
     expect(await screen.findByText('运行状态：成功')).toBeInTheDocument();
+    expect(screen.getByText('已刷新到最新状态：成功')).toBeInTheDocument();
     expect(screen.getByText('导入记录：19')).toBeInTheDocument();
+    expect(scrollIntoViewMock).toHaveBeenCalled();
     expect(chatRequestBody).toMatchObject({
       message: '@提取每周用户反馈有价值信息 执行一次',
       references: [
