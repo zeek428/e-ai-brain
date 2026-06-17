@@ -620,7 +620,8 @@ def test_assistant_metrics_use_repository_when_runtime_store_is_stale():
                 "id": "assistant_message_repo_admin",
                 "metadata_json": {
                     "references": [
-                        {"id": "knowledge_repo_doc", "type": "knowledge_document"}
+                        {"id": "knowledge_repo_doc", "type": "knowledge_document"},
+                        {"id": "knowledge_repo_folder", "type": "knowledge_folder"},
                     ]
                 },
                 "role": "user",
@@ -660,7 +661,7 @@ def test_assistant_metrics_use_repository_when_runtime_store_is_stale():
         assert summary["draft_user_modified_count"] == 1
         assert summary["action_run_total"] == 1
         assert summary["action_run_succeeded_count"] == 1
-        assert summary["knowledge_reference_count"] == 1
+        assert summary["knowledge_reference_count"] == 2
         assert summary["reference_usage_rate"] == 1.0
     finally:
         app.state.store = original_store

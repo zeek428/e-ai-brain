@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
 from app.core.repositories.assistant_chat import AssistantChatReadRepository
 from app.core.repositories.audit import AuditReadRepository
@@ -16,6 +18,7 @@ from app.core.repositories.system_state import SystemStateRepository
 from app.core.repositories.table_maintenance import TableMaintenanceRepository
 from app.core.repositories.tasks import TaskReadRepository
 from app.core.repositories.user_insights import UserInsightReadRepository
+from app.services.assistant_action_drafts import ASSISTANT_DRAFT_ACTIONS
 from tests.test_database_persistence import FakeSnapshotRepository
 
 
@@ -143,6 +146,21 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "054_assistant_action_drafts.sql" in applied_migrations
     assert "058_assistant_action_draft_expiry.sql" in applied_migrations
     assert "059_assistant_rd_task_drafts.sql" in applied_migrations
+
+
+def test_assistant_action_draft_constraint_migrations_cover_supported_actions():
+    migrations_dir = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
+
+    for filename in (
+        "054_assistant_action_drafts.sql",
+        "057_assistant_analysis_drafts.sql",
+        "059_assistant_rd_task_drafts.sql",
+    ):
+        sql = (migrations_dir / filename).read_text(encoding="utf-8")
+        missing_actions = sorted(
+            action for action in ASSISTANT_DRAFT_ACTIONS if f"'{action}'" not in sql
+        )
+        assert missing_actions == []
 
 
 def test_postgres_brain_app_read_models_delegate_to_domain_repository(monkeypatch):

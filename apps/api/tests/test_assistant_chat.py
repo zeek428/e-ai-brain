@@ -1779,6 +1779,7 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
                 "references": [
                     {"id": "knowledge_payment_runbook", "type": "knowledge_document"},
                     {"id": "knowledge_checkout_runbook", "type": "knowledge_document"},
+                    {"id": "knowledge_folder_checkout", "type": "knowledge_folder"},
                     {"id": "scheduled_job_feedback_weekly", "type": "scheduled_job"},
                 ]
             },
@@ -1794,7 +1795,8 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "id": "assistant_message_assistant_refs",
             "metadata_json": {
                 "references": [
-                    {"id": "knowledge_payment_runbook", "type": "knowledge_document"}
+                    {"id": "knowledge_payment_runbook", "type": "knowledge_document"},
+                    {"id": "knowledge_folder_checkout", "type": "knowledge_folder"},
                 ]
             },
             "role": "assistant",
@@ -1826,12 +1828,12 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
         "failed_run_repair_rate": 1.0,
         "failed_run_repaired_count": 1,
         "failed_run_total": 1,
-        "knowledge_reference_count": 3,
-        "knowledge_reference_hit_count": 1,
-        "knowledge_reference_hit_rate": 0.5,
-        "knowledge_reference_request_count": 2,
+        "knowledge_reference_count": 5,
+        "knowledge_reference_hit_count": 2,
+        "knowledge_reference_hit_rate": 0.667,
+        "knowledge_reference_request_count": 3,
         "message_total": 3,
-        "reference_total": 4,
+        "reference_total": 6,
         "reference_usage_rate": 0.5,
         "referenced_user_message_count": 1,
         "scheduled_job_run_failed_count": 1,

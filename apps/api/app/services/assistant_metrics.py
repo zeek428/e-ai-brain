@@ -5,7 +5,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 ASSISTANT_DRAFT_STATUSES = ("pending", "confirmed", "cancelled", "expired", "failed")
-KNOWLEDGE_REFERENCE_TYPES = {"knowledge_chunk", "knowledge_document", "knowledge_space"}
+KNOWLEDGE_REFERENCE_TYPES = {
+    "knowledge_chunk",
+    "knowledge_document",
+    "knowledge_folder",
+    "knowledge_space",
+}
 
 
 def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> dict[str, Any]:
