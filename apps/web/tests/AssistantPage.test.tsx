@@ -422,7 +422,16 @@ describe('AssistantPage', () => {
     fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
       target: { value: '基于 @支付 分析提交无响应' },
     });
-    fireEvent.click(await screen.findByRole('button', { name: /支付页超时排障手册/ }));
+    const referenceCandidatePanel = await screen.findByLabelText('引用候选');
+    expect(within(referenceCandidatePanel).getByText('权限：可引用')).toBeInTheDocument();
+    expect(within(referenceCandidatePanel).getByText('来源：知识库')).toBeInTheDocument();
+    expect(within(referenceCandidatePanel).getByText('更新：2026-06-14')).toBeInTheDocument();
+    expect(
+      within(referenceCandidatePanel).getByText(
+        '支付页提交无响应时，先检查网关超时、回调状态和前端埋点。',
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(within(referenceCandidatePanel).getByRole('button', { name: /支付页超时排障手册/ }));
 
     const selectedReferenceList = screen.getByText('本次上下文')
       .closest('.assistant-selected-reference-list');
@@ -463,6 +472,50 @@ describe('AssistantPage', () => {
       message: '基于 @支付 分析提交无响应',
       references: [{ id: 'knowledge_payment_runbook', type: 'knowledge_document' }],
     });
+  });
+
+  it('keeps the @ reference picker visible when no candidates match', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('不存在');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [],
+              total: 0,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@不存在' },
+    });
+
+    const referenceCandidatePanel = await screen.findByLabelText('引用候选');
+    expect(await within(referenceCandidatePanel).findByText('无匹配引用')).toBeInTheDocument();
+    expect(
+      within(referenceCandidatePanel).getByText('请换个关键词，或确认你是否有权限访问该对象。'),
+    ).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+      ['/api/assistant/conversations', 'GET'],
+      ['/api/assistant/reference-candidates?query=%E4%B8%8D%E5%AD%98%E5%9C%A8&limit=12', 'GET'],
+    ]);
   });
 
   it('shows the backend injection limit for large knowledge document references', async () => {
@@ -1022,14 +1075,19 @@ describe('AssistantPage', () => {
       target: { value: '@' },
     });
 
-    expect((await screen.findAllByText('知识文档')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('研发任务').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('定时作业').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('插件连接').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Skill').length).toBeGreaterThan(0);
-    expect(screen.getByText('知识库 · 可引用 · 2026-06-16')).toBeInTheDocument();
-    expect(screen.getByText('任务中心 · 管理员可引用 · 2026-06-15')).toBeInTheDocument();
-    expect(screen.getByText('插件管理 · 管理员可引用 · 2026-06-15')).toBeInTheDocument();
+    const referenceCandidatePanel = await screen.findByLabelText('引用候选');
+    expect(within(referenceCandidatePanel).getAllByText('知识文档').length).toBeGreaterThan(0);
+    expect(within(referenceCandidatePanel).getAllByText('研发任务').length).toBeGreaterThan(0);
+    expect(within(referenceCandidatePanel).getAllByText('定时作业').length).toBeGreaterThan(0);
+    expect(within(referenceCandidatePanel).getAllByText('插件连接').length).toBeGreaterThan(0);
+    expect(within(referenceCandidatePanel).getAllByText('Skill').length).toBeGreaterThan(0);
+    expect(within(referenceCandidatePanel).getByText('来源：知识库')).toBeInTheDocument();
+    expect(within(referenceCandidatePanel).getAllByText('权限：可引用').length).toBeGreaterThan(0);
+    expect(within(referenceCandidatePanel).getByText('更新：2026-06-16')).toBeInTheDocument();
+    expect(within(referenceCandidatePanel).getByText('来源：任务中心')).toBeInTheDocument();
+    expect(within(referenceCandidatePanel).getAllByText('权限：管理员可引用').length).toBeGreaterThan(0);
+    expect(within(referenceCandidatePanel).getAllByText('更新：2026-06-15').length).toBeGreaterThan(0);
+    expect(within(referenceCandidatePanel).getByText('来源：插件管理')).toBeInTheDocument();
 
     fireEvent.keyDown(assistantInput, { key: 'ArrowDown' });
     fireEvent.keyDown(assistantInput, { key: 'Enter' });

@@ -1190,11 +1190,18 @@ body {
   font-size: 12px;
 }
 
+.assistant-reference-candidates-empty {
+  padding: 10px;
+  border: 1px dashed #d7dfec;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
 .assistant-reference-candidates .ant-btn {
   justify-content: flex-start;
   width: 100%;
   height: auto;
-  min-height: 42px;
+  min-height: 58px;
   padding: 7px 10px;
   text-align: left;
 }
@@ -1212,12 +1219,22 @@ body {
 }
 
 .assistant-reference-candidate-title,
-.assistant-reference-candidate-meta {
+.assistant-reference-candidate-summary {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.assistant-reference-candidate-meta {
+.assistant-reference-candidate-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.assistant-reference-candidate-chips .ant-tag {
+  margin-inline-end: 0;
+}
+
+.assistant-reference-candidate-summary {
   color: rgba(15, 23, 42, 0.56);
   font-size: 12px;
   line-height: 1.35;
@@ -1339,6 +1356,10 @@ body {
   .assistant-selected-reference-empty {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .assistant-reference-candidate-chips {
+    gap: 3px;
   }
 
   .assistant-chat-header {

@@ -1082,6 +1082,17 @@ function referenceUpdatedDate(reference: AssistantReference) {
   return /^\d{4}-\d{2}-\d{2}/.test(normalized) ? normalized.slice(0, 10) : normalized;
 }
 
+function referencePermissionTagColor(reference: AssistantReference) {
+  const label = String(reference.permission_label ?? '').toLowerCase();
+  if (label.includes('无权限') || label.includes('denied') || label.includes('forbidden')) {
+    return 'red';
+  }
+  if (label.includes('受限') || label.includes('limited')) {
+    return 'orange';
+  }
+  return 'green';
+}
+
 function referenceMetaText(reference: AssistantReference) {
   return [
     reference.source_module ?? referenceSourceModule(reference.type),
@@ -2753,6 +2764,7 @@ export default function AssistantPage() {
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
   const [activeReferenceIndex, setActiveReferenceIndex] = useState(-1);
+  const [dismissedReferencePickerValue, setDismissedReferencePickerValue] = useState<string>();
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
   const [recentReferences, setRecentReferences] = useState<AssistantReference[]>(() => readRecentReferences());
   const [referenceDetail, setReferenceDetail] = useState<AssistantReference>();
@@ -2778,6 +2790,9 @@ export default function AssistantPage() {
     () => new Set(selectedReferences.map(referenceKey)),
     [selectedReferences],
   );
+  const activeMention = useMemo(() => activeMentionQuery(inputValue), [inputValue]);
+  const shouldShowReferenceCandidates = activeMention !== undefined
+    && dismissedReferencePickerValue !== inputValue;
   const orderedReferenceCandidates = useMemo(
     () => orderReferenceCandidatesByRecent(referenceCandidates, recentReferences),
     [recentReferences, referenceCandidates],
@@ -2946,9 +2961,11 @@ export default function AssistantPage() {
     })
       .then((items) => {
         if (!didCancel) {
-          setReferenceCandidates(
-            items.filter((reference) => !selectedReferenceKeys.has(referenceKey(reference))),
+          const nextCandidates = items.filter(
+            (reference) => !selectedReferenceKeys.has(referenceKey(reference)),
           );
+          setReferenceCandidates(nextCandidates);
+          setActiveReferenceIndex(nextCandidates.length ? 0 : -1);
         }
       })
       .catch((error) => {
@@ -3048,6 +3065,7 @@ export default function AssistantPage() {
     setReferenceCandidates([]);
     setReferenceDetail(undefined);
     setQueryReferenceResolution(undefined);
+    setDismissedReferencePickerValue(undefined);
     setSelectedReferences([]);
   };
 
@@ -3061,6 +3079,7 @@ export default function AssistantPage() {
   };
 
   const addSelectedReference = (reference: AssistantReference) => {
+    setDismissedReferencePickerValue(inputValue);
     setSelectedReferences((items) => (
       items.some((item) => item.id === reference.id && item.type === reference.type)
         ? items
@@ -3659,16 +3678,26 @@ export default function AssistantPage() {
               onClose={() => setReferenceDetail(undefined)}
             />
           </div>
-          {referenceCandidates.length || isLoadingReferences ? (
+          {shouldShowReferenceCandidates ? (
             <div
               aria-label="引用候选"
               className="assistant-reference-candidates"
             >
               <div className="assistant-reference-candidates-header">
                 <Text strong>引用候选</Text>
-                <Text type="secondary">↑↓ 选择，Enter 添加</Text>
+                <Text type="secondary">
+                  {activeMention ? `搜索：${activeMention}` : '↑↓ 选择，Enter 添加'}
+                </Text>
               </div>
               {isLoadingReferences ? <Spin size="small" /> : null}
+              {!isLoadingReferences && !referenceCandidates.length ? (
+                <div className="assistant-reference-candidates-empty">
+                  <Space size={[6, 6]} wrap>
+                    <Tag color="default">无匹配引用</Tag>
+                    <Text type="secondary">请换个关键词，或确认你是否有权限访问该对象。</Text>
+                  </Space>
+                </div>
+              ) : null}
               {referenceCandidateGroups.map((group) => (
                 <div className="assistant-reference-candidate-group" key={group.type}>
                   <div className="assistant-reference-candidate-group-title">
@@ -3688,11 +3717,22 @@ export default function AssistantPage() {
                       >
                         <span className="assistant-reference-candidate-main">
                           <span className="assistant-reference-candidate-title">{reference.title}</span>
-                          <span className="assistant-reference-candidate-meta">
-                            {referenceMetaText(reference)}
+                          <span className="assistant-reference-candidate-chips">
+                            <Tag color="default">{referenceTypeLabel(reference.type)}</Tag>
+                            <Tag color={referencePermissionTagColor(reference)}>
+                              权限：{reference.permission_label ?? '可引用'}
+                            </Tag>
+                            <Tag color="blue">
+                              来源：{reference.source_module ?? referenceSourceModule(reference.type)}
+                            </Tag>
+                            <Tag color="default">
+                              更新：{referenceUpdatedDate(reference) ?? '暂无'}
+                            </Tag>
+                          </span>
+                          <span className="assistant-reference-candidate-summary">
+                            {referenceSummaryText(reference)}
                           </span>
                         </span>
-                        <Tag color="default">{referenceTypeLabel(reference.type)}</Tag>
                       </Button>
                     );
                   })}
@@ -3703,7 +3743,10 @@ export default function AssistantPage() {
           <div className="assistant-composer">
             <TextArea
               aria-label="发送给 AI 助手"
-              onChange={(event) => setInputValue(event.target.value)}
+              onChange={(event) => {
+                setInputValue(event.target.value);
+                setDismissedReferencePickerValue(undefined);
+              }}
               onKeyDown={handleComposerKeyDown}
               onPressEnter={(event) => {
                 if (event.defaultPrevented || submitComposerEnter(event)) {
