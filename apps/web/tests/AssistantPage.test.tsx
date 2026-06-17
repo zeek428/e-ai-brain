@@ -1901,6 +1901,10 @@ describe('AssistantPage', () => {
     expect(screen.getByText('数据来源：已就绪')).toBeInTheDocument();
     expect(screen.getByText('AI处理：已就绪')).toBeInTheDocument();
     expect(screen.getByText('确认执行：待确认')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'AI生成数据来源草案' }));
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '为「代码仓库质量安全规范巡检」生成或调整「数据来源」步骤草案。当前状态：已就绪。请给出建议配置、字段校验和下一步确认动作',
+    );
     const applyDraftLink = screen.getByRole('link', { name: '应用到定时作业表单' });
     expect(applyDraftLink).toHaveAttribute(
       'href',
@@ -2011,6 +2015,7 @@ describe('AssistantPage', () => {
     expect(await screen.findByText('数据来源：需先确认前置草案')).toBeInTheDocument();
     expect(screen.getByText('AI处理：已阻塞')).toBeInTheDocument();
     expect(screen.getByText('依赖：GitHub 连接、代码巡检动作')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'AI生成AI处理草案' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '手动调整数据来源' })).toHaveAttribute(
       'href',
       '/tasks/plugins',

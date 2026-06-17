@@ -652,6 +652,14 @@ function draftWizardPrerequisitePrompt(draftTitle: string | undefined, step: Ass
   return `为「${draftTitle || '配置草案'}」补齐「${stepTitle}」前置配置草案${dependencyText}`;
 }
 
+function draftWizardStepDraftPrompt(draftTitle: string | undefined, step: AssistantDraftWizardStep) {
+  const stepTitle = step.title || step.key || '当前步骤';
+  const dependencies = step.depends_on ?? [];
+  const dependencyText = dependencies.length ? `。依赖：${dependencies.join('、')}` : '';
+  const statusText = draftWizardStatusLabel(step.status).text;
+  return `为「${draftTitle || '配置草案'}」生成或调整「${stepTitle}」步骤草案。当前状态：${statusText}${dependencyText}。请给出建议配置、字段校验和下一步确认动作`;
+}
+
 function canGenerateWizardPrerequisite(step: AssistantDraftWizardStep) {
   return step.status === 'needs_prerequisite' || step.status === 'blocked';
 }
@@ -1291,6 +1299,7 @@ function AssistantDraftWizardBlock({
           const dependsOn = step.depends_on ?? [];
           const canGeneratePrerequisite = Boolean(onUsePrerequisitePrompt)
             && canGenerateWizardPrerequisite(step);
+          const canGenerateStepDraft = Boolean(onUsePrerequisitePrompt);
           const manualAdjustUrl = draftWizardManualAdjustUrl(step);
           return (
             <div className="assistant-draft-wizard-step" key={step.key || title}>
@@ -1302,8 +1311,18 @@ function AssistantDraftWizardBlock({
               {dependsOn.length ? (
                 <Text type="secondary">依赖：{dependsOn.join('、')}</Text>
               ) : null}
-              {canGeneratePrerequisite || manualAdjustUrl ? (
+              {canGenerateStepDraft || canGeneratePrerequisite || manualAdjustUrl ? (
                 <Space size={6} wrap>
+                  {canGenerateStepDraft ? (
+                    <Button
+                      size="small"
+                      onClick={() => onUsePrerequisitePrompt?.(
+                        draftWizardStepDraftPrompt(draftTitle, step),
+                      )}
+                    >
+                      AI生成{title}草案
+                    </Button>
+                  ) : null}
                   {canGeneratePrerequisite ? (
                     <Button
                       size="small"

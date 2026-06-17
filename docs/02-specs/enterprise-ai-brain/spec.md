@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.422 |
+| 功能版本 | v1.1.423 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.423 | 2026-06-17 | AI 助手草案配置向导每个步骤新增“AI生成<步骤>草案”回填入口，ready/pending 步骤也可由 AI 调整草案 | Codex |
 | v1.1.422 | 2026-06-17 | AI 助手从运行详情链接带入 `scheduled_job_run` 时，在“本次上下文”常驻展示引用解析中、已带入或失败状态 | Codex |
 | v1.1.421 | 2026-06-17 | AI 助手配置向导每步补齐“手动调整”入口，数据来源/结果动作跳插件管理，AI处理跳 AI 能力配置，调度/确认跳定时作业配置 | Codex |
 | v1.1.420 | 2026-06-17 | AI 助手草案确认失败后前端草案卡片显式进入“失败”状态，不再停留在待确认并仅依赖 toast 提示 | Codex |
@@ -1321,7 +1322,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 | `AiExecutorRunnerService` | 管理系统默认执行器与隔离 Runner：系统默认执行器 `ai_executor_runner_system_default` 使用 `model_gateway` 执行类型，直接调用平台默认 AI 大模型并返回结构化执行结果，不参与 Runner Token、心跳或任务认领；本地 Runner 负责注册、心跳、Token 校验和轮换、任务队列、OpenClaw/Codex/Claude/Hermes 执行类型校验、任务认领、日志追加、管理员取消、超时熔断和完成回写；管理员侧测试接口只读取 Runner 配置与健康投影，返回诊断项并写轻量审计，不下发真实任务；完成回写不得执行外部命令，只更新任务状态、插件日志、定时作业运行、collector run 和作业最近运行字段。 |
 | `ScheduledJobObservabilityService` | 聚合运行健康概览、失败原因、慢运行和 AI/插件/动作写入指标；只读取运行实例、作业定义和模型日志元数据，不参与作业执行。 |
 | `ConnectionDiagnosticsService` | 构造插件连接测试诊断步骤、请求回放 cURL、动作模板草案、失败修复建议、最近测试历史和轻量测试摘要；真实网络请求、审计和连接记录持久化仍由插件服务编排。 |
-| `AssistantDraftBuilder` | 构造 AI 助手确认式配置草案，包括 AI Skill、AI角色、插件连接、动作、每周反馈洞察作业、代码巡检作业、邮件摘要收取作业和分析类草案；复用插件连接默认模板、动作模板目录和定时作业模板目录，代码巡检 AI 模式在缺少可用代码巡检 Skill 或 AI角色时必须先生成 `create_ai_skill` / `create_ai_agent` 前置草案，再生成依赖前置草案的 `create_scheduled_job`；所有助手生成的 `create_scheduled_job` 草案必须返回 `wizard_steps[]`，按数据来源、AI处理、结果动作、调度策略、确认执行给出 `ready/needs_prerequisite/pending/skipped/blocked` 状态、摘要和依赖，确定性插件任务的 AI处理步骤展示为 `skipped`，前端对 `needs_prerequisite/blocked` 步骤提供生成前置草案提示回填入口；配置向导每个步骤还必须提供“手动调整<步骤>”入口，数据来源和结果动作跳转任务中心 / 插件管理，AI处理跳转 AI 能力配置，调度策略和确认执行跳转任务中心 / 定时作业，让用户可在 AI 生成草案与人工调整之间切换；邮件摘要意图必须使用 `scheduled_job_templates.email_digest` 默认 payload，并绑定可用 `receive_email_messages` 动作和同插件邮箱连接生成 `create_scheduled_job` 草案；发布风险分析和知识库巡检生成 `create_analysis_draft`，确认后只生成可追踪 `assistant_analysis` 结果，不写业务配置表；`assistant_tools` 保留意图识别、读模型工具和结果汇总；泛化“新增任务”由 AI 助手确定性返回任务类型向导，引导用户选择草案路径后再生成具体配置，建议按钮与向导卡片均覆盖研发任务、定时作业、插件动作、代码巡检和反馈洞察。 |
+| `AssistantDraftBuilder` | 构造 AI 助手确认式配置草案，包括 AI Skill、AI角色、插件连接、动作、每周反馈洞察作业、代码巡检作业、邮件摘要收取作业和分析类草案；复用插件连接默认模板、动作模板目录和定时作业模板目录，代码巡检 AI 模式在缺少可用代码巡检 Skill 或 AI角色时必须先生成 `create_ai_skill` / `create_ai_agent` 前置草案，再生成依赖前置草案的 `create_scheduled_job`；所有助手生成的 `create_scheduled_job` 草案必须返回 `wizard_steps[]`，按数据来源、AI处理、结果动作、调度策略、确认执行给出 `ready/needs_prerequisite/pending/skipped/blocked` 状态、摘要和依赖，确定性插件任务的 AI处理步骤展示为 `skipped`，前端对 `needs_prerequisite/blocked` 步骤提供生成前置草案提示回填入口；配置向导每个步骤还必须提供“AI生成<步骤>草案”和“手动调整<步骤>”入口，ready/pending/skipped 步骤也可一键回填 AI 调整提示，数据来源和结果动作手动跳转任务中心 / 插件管理，AI处理跳转 AI 能力配置，调度策略和确认执行跳转任务中心 / 定时作业，让用户可在 AI 生成草案与人工调整之间切换；邮件摘要意图必须使用 `scheduled_job_templates.email_digest` 默认 payload，并绑定可用 `receive_email_messages` 动作和同插件邮箱连接生成 `create_scheduled_job` 草案；发布风险分析和知识库巡检生成 `create_analysis_draft`，确认后只生成可追踪 `assistant_analysis` 结果，不写业务配置表；`assistant_tools` 保留意图识别、读模型工具和结果汇总；泛化“新增任务”由 AI 助手确定性返回任务类型向导，引导用户选择草案路径后再生成具体配置，建议按钮与向导卡片均覆盖研发任务、定时作业、插件动作、代码巡检和反馈洞察。 |
 | `AIExecutionConfigResolver` | 解析 AI角色（Agent）、Skill、模型网关和作业覆盖项，生成不可变运行快照。 |
 | `SkillOrchestrator` | 合并 agent system prompt、skill prompt、工具结果和 expected output schema，调用模型网关前做脱敏和限长，输出后做 schema 校验。 |
 
