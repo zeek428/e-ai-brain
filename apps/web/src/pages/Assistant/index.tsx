@@ -62,6 +62,7 @@ const assistantDraftActionLabels: Record<string, string> = {
   create_analysis_draft: '创建分析草案',
   create_plugin_action: '创建插件动作',
   create_plugin_connection: '创建插件连接',
+  create_rd_task: '创建研发任务',
   create_scheduled_job: '创建定时作业',
 };
 
@@ -291,6 +292,7 @@ function actionDraftItems(toolResults?: AssistantToolResult[]) {
           || item.action === 'create_ai_skill'
           || item.action === 'create_plugin_action'
           || item.action === 'create_plugin_connection'
+          || item.action === 'create_rd_task'
           || item.action === 'create_analysis_draft'
         )
         && assistantDraftId(item),
@@ -975,6 +977,12 @@ function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
       url: `/assistant?draft_id=${resolution.resource_id}`,
     };
   }
+  if (resolution.resource_type === 'ai_task') {
+    return {
+      label: '打开研发任务',
+      url: `/delivery/rd-tasks?task_id=${resolution.resource_id}`,
+    };
+  }
   return {
     label: '打开插件连接',
     url: `/tasks/plugins?connection_id=${resolution.resource_id}`,
@@ -1588,6 +1596,7 @@ function AssistantActionDraftCards({
         const isAnalysisDraft = draft.action === 'create_analysis_draft';
         const isPluginActionDraft = draft.action === 'create_plugin_action';
         const isPluginConnectionDraft = draft.action === 'create_plugin_connection';
+        const isRdTaskDraft = draft.action === 'create_rd_task';
         const draftId = assistantDraftId(draft);
         const resolution = draftId ? draftResolutionById[draftId] : undefined;
         const resourceLink = draftResourceLink(resolution);
@@ -1606,6 +1615,8 @@ function AssistantActionDraftCards({
             ? '确认前不会写入插件动作'
             : isAiCapabilityDraft
               ? '确认前不会写入 AI 能力配置'
+              : isRdTaskDraft
+                ? '确认前不会创建研发任务'
               : isAnalysisDraft
                 ? '确认前不会写入分析结果'
                 : '确认前不会写入作业定义';
@@ -1680,6 +1691,25 @@ function AssistantActionDraftCards({
                   <span>
                     <Text type="secondary">写入目标</Text>
                     <Text>{draftPayloadLabel(payload, 'result_mapping.write_target', resultWriteTargetLabels)}</Text>
+                  </span>
+                </>
+              ) : isRdTaskDraft ? (
+                <>
+                  <span>
+                    <Text type="secondary">需求</Text>
+                    <Text>{draftPayloadText(payload, 'requirement_id')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">任务类型</Text>
+                    <Text>{draftPayloadText(payload, 'task_type')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">负责人角色</Text>
+                    <Text>{draftPayloadText(payload, 'input.owner_role')}</Text>
+                  </span>
+                  <span>
+                    <Text type="secondary">验收标准</Text>
+                    <Text>{draftPayloadText(payload, 'input.acceptance_criteria')}</Text>
                   </span>
                 </>
               ) : isAiSkillDraft ? (
@@ -1880,6 +1910,7 @@ function AssistantActionDraftCards({
               && !isAiCapabilityDraft
               && !isPluginConnectionDraft
               && !isPluginActionDraft
+              && !isRdTaskDraft
               && !isAnalysisDraft ? (
                 <Button
                   href="/tasks/scheduled-jobs"
@@ -1951,7 +1982,15 @@ function AssistantTaskCreationGuideCards({
             <div className="assistant-task-guide-card" key={itemText(item, 'type')}>
               <div className="assistant-task-guide-card-title">
                 <Text strong>{title}</Text>
-                <Tag color={item.draft_action === 'create_scheduled_job' ? 'green' : 'default'}>
+                <Tag
+                  color={
+                    item.draft_action === 'create_scheduled_job'
+                      ? 'green'
+                      : item.draft_action === 'create_rd_task'
+                        ? 'blue'
+                        : 'default'
+                  }
+                >
                   {itemText(item, 'draft_action')}
                 </Tag>
               </div>
@@ -3254,6 +3293,7 @@ export default function AssistantPage() {
       resourceType !== 'assistant_analysis'
       && resourceType !== 'ai_agent'
       && resourceType !== 'ai_skill'
+      && resourceType !== 'ai_task'
       && resourceType !== 'plugin_action'
       && resourceType !== 'plugin_connection'
       && resourceType !== 'scheduled_job'

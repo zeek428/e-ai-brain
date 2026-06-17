@@ -13,6 +13,7 @@ export default defineConfig({
   layout: {
     locale: false,
   },
+  mfsu: false,
   model: {},
   npmClient: 'npm',
   proxy: {

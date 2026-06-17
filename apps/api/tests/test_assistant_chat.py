@@ -2677,6 +2677,96 @@ def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeyp
     ]
 
 
+def test_ai_assistant_chat_generates_and_confirms_rd_task_draft_from_requirement_reference(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.products["product_assistant_rd"] = {
+        "code": "assistant-rd",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "id": "product_assistant_rd",
+        "name": "AI 助手研发产品",
+        "status": "active",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.product_versions["version_assistant_rd"] = {
+        "code": "v1.0",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "id": "version_assistant_rd",
+        "name": "v1.0",
+        "product_id": "product_assistant_rd",
+        "status": "planning",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+    }
+    app.state.store.requirements["requirement_assistant_rd"] = {
+        "brain_app_id": "rd_brain",
+        "content": "AI 助手需要能从 @需求 创建研发任务草案。",
+        "created_at": "2026-06-17T08:00:00+00:00",
+        "created_by": "user_admin",
+        "id": "requirement_assistant_rd",
+        "module_code": None,
+        "priority": "P1",
+        "product_id": "product_assistant_rd",
+        "source": "product_planning",
+        "status": "planned",
+        "task_ids": [],
+        "title": "AI 助手研发任务闭环",
+        "updated_at": "2026-06-17T08:00:00+00:00",
+        "version_id": "version_assistant_rd",
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("rd task draft should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "请基于 @需求 新增研发任务",
+            "references": [{"id": "requirement_assistant_rd", "type": "requirement"}],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    message = response.json()["data"]["message"]
+    assert "可确认" in message["content"]
+    tool_result = message["tool_results"][0]
+    assert tool_result["tool"] == "assistant.action_draft"
+    assert tool_result["intent"] == "rd_task_draft"
+    draft_item = tool_result["items"][0]
+    assert draft_item["action"] == "create_rd_task"
+    assert draft_item["client_draft_id"] == (
+        "assistant_draft_rd_task_requirement_assistant_rd"
+    )
+    assert draft_item["payload"]["requirement_id"] == "requirement_assistant_rd"
+    assert draft_item["payload"]["task_type"] == "product_detail_design"
+    assert draft_item["preview"]["target"]["resource_type"] == "ai_task"
+    assert draft_item["preview"]["validation"]["status"] == "passed"
+    assert draft_item["status"] == "pending"
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft_item['draft_id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 200, confirm_response.text
+    confirm_payload = confirm_response.json()["data"]
+    assert confirm_payload["draft"]["status"] == "confirmed"
+    run = confirm_payload["run"]
+    assert run["action"] == "create_rd_task"
+    assert run["result_type"] == "ai_task"
+    task_id = run["result_id"]
+    task = app.state.store.ai_tasks[task_id]
+    assert task["task_type"] == "product_detail_design"
+    assert task["requirement_id"] == "requirement_assistant_rd"
+    assert app.state.store.requirements["requirement_assistant_rd"]["status"] == "designing"
+    assert app.state.store.requirements["requirement_assistant_rd"]["task_ids"] == [task_id]
+
+
 def test_ai_assistant_chat_diagnoses_failed_plugin_connection_without_model_gateway(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()

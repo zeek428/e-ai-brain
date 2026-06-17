@@ -10,6 +10,10 @@ from app.services.plugins import (
     create_plugin_action_response,
     create_plugin_connection_response,
 )
+from app.services.requirements import (
+    generate_requirement_task_result,
+    requirement_write_store,
+)
 from app.services.scheduled_jobs import (
     AI_REQUIRED_SCHEDULED_JOB_TYPES,
     SCHEDULED_JOB_EXECUTION_MODES,
@@ -22,6 +26,7 @@ from app.services.scheduled_jobs import (
     effective_scheduled_job_type,
     run_scheduled_job_response,
 )
+from app.services.version_status import canonical_requirement_status
 
 ASSISTANT_ACTION_DRAFT_STATUSES = {
     "cancelled",
@@ -37,6 +42,7 @@ ASSISTANT_DRAFT_ACTIONS = {
     "create_analysis_draft",
     "create_plugin_action",
     "create_plugin_connection",
+    "create_rd_task",
     "create_scheduled_job",
 }
 AI_AGENT_DEFAULTS = {
@@ -103,6 +109,10 @@ PLUGIN_ACTION_DEFAULTS = {
     "requires_human_review": False,
     "result_mapping": {},
     "status": "active",
+}
+RD_TASK_DEFAULTS = {
+    "input": {},
+    "task_type": "product_detail_design",
 }
 
 
@@ -375,6 +385,30 @@ def execute_assistant_action_draft(
             user=user,
         )
         return "plugin_action", str(result["id"]), result
+    if action == "create_rd_task":
+        payload = with_defaults(RD_TASK_DEFAULTS, payload)
+        requirement_id = ensure_non_blank(
+            str(payload.get("requirement_id") or ""),
+            "requirement_id",
+        )
+        task_type = str(payload.get("task_type") or "product_detail_design")
+        if task_type != "product_detail_design":
+            raise api_error(
+                400,
+                "VALIDATION_ERROR",
+                "Only product_detail_design rd task drafts are supported",
+            )
+        result = generate_requirement_task_result(
+            current_store=requirement_write_store(current_store),
+            requirement_id=requirement_id,
+            user=user,
+        )
+        result = {
+            **result,
+            "source_draft_id": draft["id"],
+            "title": payload.get("title") or draft["title"],
+        }
+        return "ai_task", str(result["task_id"]), result
     if action == "create_ai_skill":
         payload = with_defaults(AI_SKILL_DEFAULTS, payload)
         result = create_ai_skill_response(
@@ -735,6 +769,8 @@ def assistant_action_draft_preview(
         )
         _append_plugin_action_validation(current_store, draft, preview)
         return preview
+    if action == "create_rd_task":
+        return _rd_task_draft_preview(current_store, draft)
     if action == "create_ai_skill":
         return _generic_create_draft_preview(
             draft,
@@ -827,6 +863,89 @@ def _scheduled_job_draft_preview(
         if not isinstance(interval_seconds, int) or interval_seconds <= 0:
             _add_issue(validation, "interval_seconds", "error", "interval_seconds is required")
     _append_scheduled_job_reference_validation(current_store, payload, validation)
+    _finalize_validation(validation)
+    return preview
+
+
+def _rd_task_draft_preview(
+    current_store: Any,
+    draft: dict[str, Any],
+) -> dict[str, Any]:
+    payload = with_defaults(RD_TASK_DEFAULTS, draft.get("payload") or {})
+    preview = _generic_create_draft_preview(
+        {"action": draft["action"], "payload": payload},
+        diff_fields=[
+            ("requirement_id", "需求"),
+            ("task_type", "任务类型"),
+            ("title", "标题"),
+            ("input.owner_role", "负责人角色"),
+            ("input.acceptance_criteria", "验收标准"),
+        ],
+        required_fields=["requirement_id", "task_type"],
+        resource_type="ai_task",
+    )
+    validation = preview["validation"]
+    task_type = str(payload.get("task_type") or "product_detail_design")
+    if task_type != "product_detail_design":
+        _add_issue(
+            validation,
+            "task_type",
+            "error",
+            "Only product_detail_design rd task drafts are supported",
+        )
+    requirement_id = str(payload.get("requirement_id") or "").strip()
+    if not requirement_id:
+        _finalize_validation(validation)
+        return preview
+    requirement = current_store.requirements.get(requirement_id)
+    if requirement is None:
+        _add_issue(
+            validation,
+            "requirement_id",
+            "error",
+            f"Requirement not found: {requirement_id}",
+        )
+        _finalize_validation(validation)
+        return preview
+    if canonical_requirement_status(requirement.get("status")) != "planned":
+        _add_issue(
+            validation,
+            "requirement_id",
+            "error",
+            "Requirement must be planned before creating an rd task",
+        )
+    if requirement.get("task_ids"):
+        _add_issue(
+            validation,
+            "requirement_id",
+            "error",
+            "Requirement already has linked tasks",
+        )
+    product_id = str(requirement.get("product_id") or "").strip()
+    if not product_id or product_id not in current_store.products:
+        _add_issue(
+            validation,
+            "product_id",
+            "error",
+            "Requirement product is missing or inactive",
+        )
+    else:
+        product = current_store.products[product_id]
+        if product.get("status") and product.get("status") != "active":
+            _add_issue(
+                validation,
+                "product_id",
+                "error",
+                "Requirement product is inactive",
+            )
+    version_id = str(requirement.get("version_id") or "").strip()
+    if not version_id or version_id not in current_store.product_versions:
+        _add_issue(
+            validation,
+            "version_id",
+            "error",
+            "Planned requirement must have a version before creating an rd task",
+        )
     _finalize_validation(validation)
     return preview
 

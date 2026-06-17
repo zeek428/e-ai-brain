@@ -24,7 +24,14 @@ def assistant_tool_results(
     draft_builder = AssistantDraftBuilder(context)
     results: list[dict[str, Any]] = []
     for intent in intents:
-        if intent == "plugin_connection_draft":
+        if intent == "rd_task_draft":
+            results.append(
+                draft_builder.rd_task_draft(
+                    message=message,
+                    references=references or [],
+                )
+            )
+        elif intent == "plugin_connection_draft":
             results.append(draft_builder.plugin_connection_draft(message=message))
         elif intent == "plugin_connection_diagnostic":
             results.append(_plugin_connection_diagnostic_tool(context, limit=limit))
@@ -166,6 +173,8 @@ def _assistant_tool_intents(
     normalized = message.lower()
     has_run_reference = _has_reference_type(references or [], "scheduled_job_run")
     intents: list[str] = []
+    if _rd_task_draft_requested(normalized):
+        intents.append("rd_task_draft")
     if _plugin_connection_draft_requested(normalized):
         intents.append("plugin_connection_draft")
     if _plugin_connection_diagnostic_requested(normalized):
@@ -271,6 +280,27 @@ def _scheduled_job_run_repair_draft_requested(normalized_message: str) -> bool:
         for keyword in ("草案", "生成", "创建", "draft", "create")
     )
     return has_repair_intent and has_draft_intent
+
+
+def _rd_task_draft_requested(normalized_message: str) -> bool:
+    has_create_intent = any(
+        keyword in normalized_message
+        for keyword in ("创建", "新增", "新建", "生成", "增加", "create", "add", "draft")
+    )
+    has_rd_task = any(
+        keyword in normalized_message
+        for keyword in (
+            "研发任务",
+            "ai任务",
+            "ai 任务",
+            "普通任务",
+            "产品详细设计",
+            "产品细节设计",
+            "product detail design",
+            "rd task",
+        )
+    )
+    return has_create_intent and has_rd_task
 
 
 def _scheduled_job_draft_requested(normalized_message: str) -> bool:

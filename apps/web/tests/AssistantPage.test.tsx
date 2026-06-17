@@ -3734,12 +3734,12 @@ describe('AssistantPage', () => {
                     items: [
                       {
                         dependencies: [],
-                        description: '创建普通研发任务前，先补齐产品、需求、版本、负责人和验收标准。',
-                        draft_action: 'clarify_rd_task',
-                        prompt: '我要新增研发任务，请按产品、需求、版本、负责人和验收标准引导我补齐信息',
+                        description: '选择或 @ 一个已规划需求后，生成可确认的产品详细设计研发任务草案。',
+                        draft_action: 'create_rd_task',
+                        prompt: '我要新增研发任务，请先让我 @需求 后生成产品详细设计任务草案',
                         title: '研发任务',
                         type: 'rd_task',
-                        wizard_steps: ['任务目标', '产品/版本', '负责人', '验收标准', '确认创建'],
+                        wizard_steps: ['选择需求', '产品/版本', '任务类型', '确认创建'],
                       },
                       {
                         dependencies: ['数据连接', 'AI能力', '结果动作'],

@@ -18,6 +18,103 @@ class AssistantDraftBuilder:
     def __init__(self, context: dict[str, Any]) -> None:
         self.context = context
 
+    def rd_task_draft(
+        self,
+        *,
+        message: str,
+        references: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        requirement = _referenced_requirement(
+            self.context["requirements"],
+            references or [],
+        ) or _single_planned_requirement(self.context["requirements"])
+        product = _find_by_id(
+            self.context["products"],
+            str(requirement.get("product_id") or "") if requirement else "",
+        )
+        version = _find_by_id(
+            self.context["versions"],
+            str(requirement.get("version_id") or "") if requirement else "",
+        )
+        requirement_id = requirement.get("id") if requirement else None
+        requirement_title = requirement.get("title") if requirement else None
+        payload = {
+            "input": {
+                "acceptance_criteria": [],
+                "owner_role": "rd_owner",
+                "source": "ai_assistant",
+            },
+            "requirement_id": requirement_id,
+            "task_type": "product_detail_design",
+            "title": (
+                f"产品详细设计：{requirement_title}"
+                if requirement_title
+                else "产品详细设计任务"
+            ),
+        }
+        item = {
+            "action": "create_rd_task",
+            "draft_id": (
+                f"assistant_draft_rd_task_{requirement_id}"
+                if requirement_id
+                else "assistant_draft_rd_task"
+            ),
+            "payload": payload,
+            "requires_confirmation": True,
+            "risk_level": "medium",
+            "title": payload["title"],
+            "wizard_steps": [
+                {
+                    "depends_on": [],
+                    "key": "requirement",
+                    "status": "ready" if requirement_id else "blocked",
+                    "summary": requirement_title or "请先 @ 一个已规划需求",
+                    "title": "选择需求",
+                },
+                {
+                    "depends_on": ["requirement"],
+                    "key": "product_version",
+                    "status": "ready" if product and version else "blocked",
+                    "summary": _rd_task_product_version_summary(product, version),
+                    "title": "产品/版本",
+                },
+                {
+                    "depends_on": ["requirement"],
+                    "key": "task_type",
+                    "status": "ready",
+                    "summary": "产品详细设计",
+                    "title": "任务类型",
+                },
+                {
+                    "depends_on": ["requirement", "product_version", "task_type"],
+                    "key": "confirmation",
+                    "status": "pending",
+                    "summary": "确认后创建 AI 研发任务并更新需求状态",
+                    "title": "确认创建",
+                },
+            ],
+        }
+        return {
+            "intent": "rd_task_draft",
+            "items": [item],
+            "references": _references(
+                "assistant_action_draft",
+                [
+                    {
+                        "id": item["draft_id"],
+                        "title": item["title"],
+                        "url": f"/assistant?draft_id={item['draft_id']}",
+                    }
+                ],
+            ),
+            "summary": {
+                "draft_count": 1,
+                "requires_confirmation": True,
+                "target": "ai_tasks",
+            },
+            "tool": "assistant.action_draft",
+        }
+
     def plugin_connection_draft(self, *, message: str) -> dict[str, Any]:
         scenario = self._plugin_connection_scenario(message.lower())
         plugin = _find_plugin_by_code(self.context["integration_plugins"], scenario)
@@ -796,6 +893,51 @@ def _find_by_code(items: list[dict[str, Any]], code: str) -> dict[str, Any] | No
         (item for item in items if item.get("code") == code),
         None,
     )
+
+
+def _find_by_id(items: list[dict[str, Any]], item_id: str) -> dict[str, Any] | None:
+    if not item_id:
+        return None
+    return next((item for item in items if str(item.get("id") or "") == item_id), None)
+
+
+def _referenced_requirement(
+    requirements: list[dict[str, Any]],
+    references: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    requirement_ids = [
+        str(reference.get("id") or "")
+        for reference in references
+        if reference.get("type") == "requirement"
+    ]
+    for requirement_id in requirement_ids:
+        if requirement := _find_by_id(requirements, requirement_id):
+            return requirement
+    return None
+
+
+def _single_planned_requirement(
+    requirements: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    planned = [
+        requirement
+        for requirement in requirements
+        if str(requirement.get("status") or "") == "planned"
+    ]
+    return planned[0] if len(planned) == 1 else None
+
+
+def _rd_task_product_version_summary(
+    product: dict[str, Any] | None,
+    version: dict[str, Any] | None,
+) -> str:
+    product_name = str(product.get("name") or product.get("code") or "").strip() if product else ""
+    version_name = str(version.get("name") or version.get("code") or "").strip() if version else ""
+    if product_name and version_name:
+        return f"{product_name} / {version_name}"
+    if product_name:
+        return f"{product_name} / 请补齐版本"
+    return "请先选择已规划需求"
 
 
 def _find_plugin_by_code(items: list[dict[str, Any]], code: str) -> dict[str, Any] | None:
