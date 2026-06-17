@@ -586,6 +586,42 @@ def test_ai_assistant_reference_candidates_match_weekly_feedback_alias():
     ]
 
 
+def test_ai_assistant_reference_candidates_prioritize_scheduled_jobs_for_job_type_words():
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+
+    response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "定时作业", "limit": 3},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    assert items
+    assert items[0]["type"] == "scheduled_job"
+    assert items[0]["id"] == "scheduled_job_feedback_weekly"
+
+
+def test_ai_assistant_reference_candidates_prioritize_runs_for_run_failure_words():
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+
+    response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "为什么这次任务失败", "limit": 3},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    assert items
+    assert items[0]["type"] == "scheduled_job_run"
+    assert items[0]["id"] == "scheduled_job_run_feedback_failed"
+
+
 def test_ai_assistant_type_specific_default_candidates_are_not_globally_truncated():
     headers = auth_headers()
     app.state.store.reset()

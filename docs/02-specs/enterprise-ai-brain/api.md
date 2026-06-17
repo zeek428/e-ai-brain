@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.350 |
+| 功能版本 | v1.1.351 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.351 | 2026-06-17 | AI 助手引用候选搜索契约补充：定时作业类型词不再优先匹配运行记录，运行/失败词才优先匹配 `scheduled_job_run` | Codex |
 | v1.1.350 | 2026-06-17 | AI 助手前端 `@` 候选标签契约补充：`ai_task` 显示“研发任务”，`ai_skill` 显示“Skill” | Codex |
 | v1.1.349 | 2026-06-17 | AI 助手 `@` 默认候选补齐 `plugin_connection`，管理员裸 `@` 可见插件连接配置引用 | Codex |
 | v1.1.348 | 2026-06-17 | AI 助手 run-once 前端契约补充：点击发送或按 Enter 时用当前 @ 文本按 `type=scheduled_job` 补查引用候选 | Codex |
@@ -1394,7 +1395,7 @@ POST /api/assistant/chat
 }
 ```
 
-助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_document`、`knowledge_chunk`，以及管理员可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
+助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_document`、`knowledge_chunk`，以及管理员可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。引用候选 query 识别类型词时，`定时作业/定时任务` 优先匹配 `scheduled_job`，`运行记录/失败` 优先匹配 `scheduled_job_run`，避免用户在执行一次或失败诊断前选到错误上下文。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
 
 当用户泛化发送“新增任务/创建任务/我要建任务”但没有说明任务类型时，`/api/assistant/chat` 必须返回 `tool=assistant.task_creation_guide` 的确定性工具结果，不调用模型网关。`tool_results[0].items[]` 和响应顶层 `suggestions` 必须同时覆盖五类入口：研发任务、定时作业、插件动作、代码巡检和反馈洞察；建议文案固定为 `新增研发任务`、`新增定时作业`、`新增插件动作`、`配置代码巡检定时作业`、`配置每周用户反馈洞察定时作业`，便于前端同时展示任务类型卡片和可点击建议按钮。
 

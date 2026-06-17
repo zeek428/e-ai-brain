@@ -54,6 +54,39 @@ DEFAULT_REFERENCE_TYPE_ORDER = (
     "knowledge_deposit",
     "product",
 )
+REFERENCE_TYPE_QUERY_ALIASES = {
+    "ai_agent": ("ai角色", "ai 角色", "智能体", "agent", "角色"),
+    "ai_skill": ("skill", "能力", "ai能力", "ai 能力"),
+    "ai_task": ("研发任务", "ai任务", "任务", "task"),
+    "bug": ("bug", "缺陷", "阻塞"),
+    "code_review_report": ("代码评审", "代码巡检", "code review", "pr"),
+    "human_review": ("确认", "待确认", "评审", "review"),
+    "iteration_version": ("迭代", "版本", "version"),
+    "knowledge_chunk": ("知识片段", "chunk", "片段"),
+    "knowledge_deposit": ("知识沉淀", "沉淀"),
+    "knowledge_document": ("知识文档", "知识库", "文档"),
+    "plugin_action": ("插件动作", "动作", "plugin action"),
+    "plugin_connection": ("插件连接", "连接", "connection"),
+    "product": ("产品", "product"),
+    "requirement": ("需求", "requirement"),
+    "scheduled_job": (
+        "定时作业",
+        "定时任务",
+        "作业定义",
+        "任务配置",
+        "scheduled job",
+        "job",
+    ),
+    "scheduled_job_run": (
+        "运行记录",
+        "运行实例",
+        "执行记录",
+        "执行结果",
+        "失败",
+        "failed",
+        "run",
+    ),
+}
 SCHEDULED_JOB_QUERY_KEYWORD_GROUPS = (
     ("用户反馈", "反馈", "feedback", "user feedback"),
     ("洞察", "insight", "insights"),
@@ -910,11 +943,12 @@ def _assistant_reference_type_preferences(message: str) -> dict[str, int]:
     ordered: list[str] = []
     keyword_map = [
         (("需求", "requirement"), ["requirement"]),
+        (("运行记录", "运行", "run", "失败"), ["scheduled_job_run"]),
         (("bug", "缺陷", "阻塞"), ["bug", "requirement"]),
         (("任务", "task"), ["ai_task", "human_review"]),
         (
-            ("定时", "作业", "scheduled", "schedule"),
-            ["scheduled_job_run", "scheduled_job"],
+            ("定时作业", "定时任务", "定时", "作业", "scheduled", "schedule"),
+            ["scheduled_job"],
         ),
         (("插件动作", "动作", "plugin action"), ["plugin_action"]),
         (("插件连接", "连接失败", "connection"), ["plugin_connection"]),
@@ -1047,6 +1081,8 @@ def _assistant_reference_matches_query(
     ).lower()
     if normalized_query in haystack:
         return True
+    if _assistant_reference_matches_type_alias(entity_type, normalized_query):
+        return True
     return _scheduled_job_reference_matches_semantic_query(
         entity_type,
         normalized_query,
@@ -1066,6 +1102,14 @@ def assistant_reference_matches_query(
         item,
         query,
         current_store=current_store,
+    )
+
+
+def _assistant_reference_matches_type_alias(entity_type: str, normalized_query: str) -> bool:
+    aliases = REFERENCE_TYPE_QUERY_ALIASES.get(entity_type, ())
+    return any(
+        alias in normalized_query or normalized_query in alias
+        for alias in aliases
     )
 
 
