@@ -659,6 +659,10 @@ function scheduledJobRunIsActive(status?: string) {
   return status === 'queued' || status === 'running';
 }
 
+function scheduledJobRunDefaultFollowupPrompt(status?: string) {
+  return status === 'failed' ? '为什么这次任务失败？' : '帮我分析这次运行结果';
+}
+
 function scheduledJobRunRecordChanged(
   current: ScheduledJobRunRecord | undefined,
   next: ScheduledJobRunRecord,
@@ -2300,7 +2304,7 @@ function AssistantScheduledJobRunCards({
                 aria-label="问这次运行"
                 icon={<RobotOutlined />}
                 size="small"
-                onClick={() => onUseRunFollowupPrompt(item, '为什么这次任务失败？')}
+                onClick={() => onUseRunFollowupPrompt(item, scheduledJobRunDefaultFollowupPrompt(item.status))}
               >
                 问这次运行
               </Button>

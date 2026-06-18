@@ -1317,7 +1317,7 @@ describe('AssistantPage', () => {
     expect(scrollIntoViewMock).toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: '问这次运行' }));
-    expect(assistantInput).toHaveValue('@提取每周用户反馈有价值信息 / succeeded 为什么这次任务失败？');
+    expect(assistantInput).toHaveValue('@提取每周用户反馈有价值信息 / succeeded 帮我分析这次运行结果');
     const currentContext = screen.getByLabelText('本次上下文');
     expect(within(currentContext).getByText('运行记录')).toBeInTheDocument();
     expect(within(currentContext).getByText('任务中心 · 可引用')).toBeInTheDocument();
