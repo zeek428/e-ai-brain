@@ -437,6 +437,14 @@ class AssistantDraftBuilder:
             "requires_confirmation": True,
             "risk_level": "medium",
             "title": "知识库巡检",
+            "wizard_steps": _analysis_draft_wizard_steps(
+                ai_summary="生成索引失败、权限异常、过期知识和沉淀候选巡检结论",
+                data_dependencies=["知识文档索引", "知识沉淀候选"],
+                data_summary=(
+                    f"读取 {len(documents)} 篇知识文档和 "
+                    f"{len(pending_deposits)} 条待处理知识沉淀"
+                ),
+            ),
         }
         return {
             "intent": "knowledge_base_inspection_draft",
@@ -521,6 +529,14 @@ class AssistantDraftBuilder:
             "requires_confirmation": True,
             "risk_level": "high" if critical_open_bugs else "medium",
             "title": "发布风险分析",
+            "wizard_steps": _analysis_draft_wizard_steps(
+                ai_summary="生成发布风险、阻塞项和需人工确认的风险结论",
+                data_dependencies=["发布记录", "缺陷列表", "需求状态"],
+                data_summary=(
+                    f"读取 {len(active_release_versions)} 个发布版本、"
+                    f"{len(unclosed_requirements)} 条未关闭需求和 {len(open_bugs)} 个未关闭缺陷"
+                ),
+            ),
         }
         return {
             "intent": "release_risk_analysis_draft",
@@ -1115,6 +1131,51 @@ def _scheduled_job_wizard_steps(
             "key": "confirm",
             "status": "pending",
             "summary": "确认后创建定时作业",
+            "title": "确认执行",
+        },
+    ]
+
+
+def _analysis_draft_wizard_steps(
+    *,
+    ai_summary: str,
+    data_dependencies: list[str],
+    data_summary: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "depends_on": data_dependencies,
+            "key": "data_source",
+            "status": "ready",
+            "summary": data_summary,
+            "title": "数据来源",
+        },
+        {
+            "depends_on": [],
+            "key": "ai_processing",
+            "status": "ready",
+            "summary": ai_summary,
+            "title": "AI处理",
+        },
+        {
+            "depends_on": [],
+            "key": "result_action",
+            "status": "ready",
+            "summary": "确认后写入助手分析结果并提供追踪入口",
+            "title": "结果动作",
+        },
+        {
+            "depends_on": [],
+            "key": "schedule",
+            "status": "skipped",
+            "summary": "一次性分析草案，不创建定时调度",
+            "title": "调度策略",
+        },
+        {
+            "depends_on": [],
+            "key": "confirm",
+            "status": "pending",
+            "summary": "等待人工确认后归档分析结果",
             "title": "确认执行",
         },
     ]

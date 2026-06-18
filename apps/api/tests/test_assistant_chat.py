@@ -2599,6 +2599,43 @@ def test_ai_assistant_chat_generates_knowledge_inspection_analysis_draft(monkeyp
         "knowledge_document_count": 2,
         "pending_deposit_count": 1,
     }
+    assert draft_item["wizard_steps"] == [
+        {
+            "depends_on": ["知识文档索引", "知识沉淀候选"],
+            "key": "data_source",
+            "status": "ready",
+            "summary": "读取 2 篇知识文档和 1 条待处理知识沉淀",
+            "title": "数据来源",
+        },
+        {
+            "depends_on": [],
+            "key": "ai_processing",
+            "status": "ready",
+            "summary": "生成索引失败、权限异常、过期知识和沉淀候选巡检结论",
+            "title": "AI处理",
+        },
+        {
+            "depends_on": [],
+            "key": "result_action",
+            "status": "ready",
+            "summary": "确认后写入助手分析结果并提供追踪入口",
+            "title": "结果动作",
+        },
+        {
+            "depends_on": [],
+            "key": "schedule",
+            "status": "skipped",
+            "summary": "一次性分析草案，不创建定时调度",
+            "title": "调度策略",
+        },
+        {
+            "depends_on": [],
+            "key": "confirm",
+            "status": "pending",
+            "summary": "等待人工确认后归档分析结果",
+            "title": "确认执行",
+        },
+    ]
     assert draft_item["payload"]["findings"][0]["type"] == "index_failed"
     assert draft_item["payload"]["findings"][0]["document_id"] == "knowledge_doc_failed"
 
@@ -2715,6 +2752,43 @@ def test_ai_assistant_chat_generates_release_risk_analysis_draft(monkeypatch):
         "open_bug_count": 1,
         "unclosed_requirement_count": 1,
     }
+    assert draft_item["wizard_steps"] == [
+        {
+            "depends_on": ["发布记录", "缺陷列表", "需求状态"],
+            "key": "data_source",
+            "status": "ready",
+            "summary": "读取 1 个发布版本、1 条未关闭需求和 1 个未关闭缺陷",
+            "title": "数据来源",
+        },
+        {
+            "depends_on": [],
+            "key": "ai_processing",
+            "status": "ready",
+            "summary": "生成发布风险、阻塞项和需人工确认的风险结论",
+            "title": "AI处理",
+        },
+        {
+            "depends_on": [],
+            "key": "result_action",
+            "status": "ready",
+            "summary": "确认后写入助手分析结果并提供追踪入口",
+            "title": "结果动作",
+        },
+        {
+            "depends_on": [],
+            "key": "schedule",
+            "status": "skipped",
+            "summary": "一次性分析草案，不创建定时调度",
+            "title": "调度策略",
+        },
+        {
+            "depends_on": [],
+            "key": "confirm",
+            "status": "pending",
+            "summary": "等待人工确认后归档分析结果",
+            "title": "确认执行",
+        },
+    ]
 
 
 def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeypatch):

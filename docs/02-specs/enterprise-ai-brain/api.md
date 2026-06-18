@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.359 |
+| 功能版本 | v1.1.360 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.360 | 2026-06-18 | AI 助手 `create_analysis_draft` 工具项补充五步 `wizard_steps`，分析草案卡片可显示配置向导 | Codex |
 | v1.1.359 | 2026-06-18 | AI 助手 run-once 契约补充：周反馈官方作业消歧先于停用或非洞察的精确同名作业 | Codex |
 | v1.1.358 | 2026-06-18 | AI 助手运行诊断前端契约补充：三段状态需展示为“是否成功”的用户可读判断 | Codex |
 | v1.1.357 | 2026-06-18 | AI 助手草案模板市场 `wizard_steps` 收敛为五步闭环流程，知识引用不再作为单独模板步骤 | Codex |
@@ -1574,7 +1575,7 @@ POST /api/assistant/references/resolve
 
 当聊天消息包含“线上日志异常”“日志异常”“online log anomaly”等意图，并明确要求生成定时作业草案时，`message.tool_results[]` 必须返回 `tool=assistant.action_draft`、`intent=online_log_anomaly_job_draft`。草案项 `client_draft_id=assistant_draft_online_log_anomaly_analysis`、`action=create_scheduled_job`、`title=线上日志异常分析`，payload 复用 `scheduled_job_templates.online_log_anomaly_analysis` 默认值，至少包含 `job_type=online_log_ai_analysis`、`execution_mode=ai_generated`、`schedule_type=cron`、`cron_expression=*/30 * * * *`、`source_system=online-log`、`plugin_input_mapping.window_start={{current_date}}`、`plugin_input_mapping.window_end={{now}}`、`result_actions[].type=send_notification`，并在存在可用线上日志动作、同插件连接、active AI角色、active Skill 和 active 模型网关时写入 `plugin_action_id`、`plugin_connection_id`、`agent_id`、`skill_ids` 与 `model_gateway_config_id`。草案项必须包含 `wizard_steps[]`，展示数据来源、AI处理、结果动作、调度策略和确认执行各步骤状态与摘要。该草案同样会持久化为 `assistant_action_drafts`，确认前不创建真实定时作业；草案预览必须提前校验 AI 装配和动作/连接引用。
 
-当聊天消息包含“发布风险分析/版本风险”或“知识库巡检/知识治理”等意图，并明确要求生成草案时，`message.tool_results[]` 必须返回 `tool=assistant.action_draft`，其中发布风险使用 `intent=release_risk_analysis_draft`、`client_draft_id=assistant_draft_release_risk_analysis`，知识库巡检使用 `intent=knowledge_base_inspection_draft`、`client_draft_id=assistant_draft_knowledge_base_inspection`。草案项 `action=create_analysis_draft`，payload 至少包含 `analysis_type`、`title`、`source_module`、`summary` 和 `findings[]`。确认该草案不会写入业务配置表，而是创建一条 `assistant_action_runs` 记录，`run.result_type=assistant_analysis`、`run.result_id=<draft_id>`，`run.result` 保存确认后的分析摘要、治理项和 `source_draft_id`，便于草案卡片展示“已应用”和后续追踪。
+当聊天消息包含“发布风险分析/版本风险”或“知识库巡检/知识治理”等意图，并明确要求生成草案时，`message.tool_results[]` 必须返回 `tool=assistant.action_draft`，其中发布风险使用 `intent=release_risk_analysis_draft`、`client_draft_id=assistant_draft_release_risk_analysis`，知识库巡检使用 `intent=knowledge_base_inspection_draft`、`client_draft_id=assistant_draft_knowledge_base_inspection`。草案项 `action=create_analysis_draft`，payload 至少包含 `analysis_type`、`title`、`source_module`、`summary` 和 `findings[]`；草案项必须包含 `wizard_steps[]`，统一展示“数据来源、AI处理、结果动作、调度策略、确认执行”五步，其中调度策略状态为 `skipped` 且说明一次性分析草案不创建定时调度，前端分析草案卡片必须展示“配置向导”。确认该草案不会写入业务配置表，而是创建一条 `assistant_action_runs` 记录，`run.result_type=assistant_analysis`、`run.result_id=<draft_id>`，`run.result` 保存确认后的分析摘要、治理项和 `source_draft_id`，便于草案卡片展示“已应用”和后续追踪。
 
 助理动作草案接口：
 
