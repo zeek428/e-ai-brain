@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手 run-once 执行闭环补齐：具备 `system.scheduled_jobs.manage` 的非 admin 用户在 `@提取每周用户反馈有价值信息 执行一次` 未命中现成作业时，也会获得“确认后执行一次”的服务端草案；前端对权限不足、未找到唯一作业或运行未创建的结果展示“执行状态”卡，明确本次尚未执行的原因。
 - AI 助手插件草案权限边界修正：确认插件连接 / 插件动作草案时使用 `system.plugins.manage`，不再仅要求 admin 角色。
 - AI 助手 AI 能力草案权限边界修正：确认 Skill / AI角色草案时使用 `system.ai_capabilities.manage`，不再误要求 `system.scheduled_jobs.manage`。
 - AI 助手新增任务向导统一五步闭环：研发任务、定时作业、插件动作、代码巡检和反馈洞察的任务项均展示“数据来源、AI处理、结果动作、调度策略、确认执行”，`@需求` 生成的研发任务草案也使用同一闭环并将调度策略标记为 skipped。

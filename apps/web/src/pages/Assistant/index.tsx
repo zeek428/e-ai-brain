@@ -299,6 +299,15 @@ type AssistantScheduledJobRunItem = {
   url?: string;
 };
 
+type AssistantScheduledJobRunNoticeItem = {
+  description: string;
+  key: string;
+  requiredPermission?: string;
+  scheduledJobId?: string;
+  status: string;
+  title: string;
+};
+
 type AssistantDraftWizardStep = {
   depends_on?: string[];
   key?: string;
@@ -492,10 +501,10 @@ function diagnosticStatusColor(status: string) {
   if (status === 'succeeded') {
     return 'green';
   }
-  if (status === 'failed') {
+  if (status === 'failed' || status === 'permission_denied') {
     return 'red';
   }
-  if (status === 'warning') {
+  if (status === 'warning' || status === 'needs_scheduled_job_reference' || status === 'needs_single_reference') {
     return 'orange';
   }
   if (status === 'running' || status === 'queued') {
@@ -594,7 +603,10 @@ function scheduledJobRunStatusLabel(status?: string) {
   const labels: Record<string, string> = {
     cancelled: '已取消',
     failed: '失败',
+    needs_scheduled_job_reference: '未执行',
+    needs_single_reference: '未执行',
     not_run: '未运行',
+    permission_denied: '权限不足',
     queued: '排队中',
     running: '运行中',
     succeeded: '成功',
@@ -708,6 +720,68 @@ function scheduledJobRunBaseItems(toolResults?: AssistantToolResult[]) {
       });
     });
   return [...byRunId.values()];
+}
+
+function scheduledJobRunNoticeDescription(summary: Record<string, unknown>, status: string) {
+  const requiredPermission = optionalText(summary.required_permission) ?? 'system.scheduled_jobs.manage';
+  const errorMessage = optionalText(summary.error_message);
+  if (status === 'permission_denied') {
+    return `当前账号缺少 ${requiredPermission}，本次尚未执行。`;
+  }
+  if (status === 'needs_single_reference') {
+    return '检测到多个定时作业引用，本次尚未执行。请只保留一个定时作业后再发送。';
+  }
+  if (status === 'needs_scheduled_job_reference') {
+    return '没有找到唯一可执行的定时作业，本次尚未执行。请从 @ 候选选择定时作业，或先确认生成的作业草案。';
+  }
+  if (status === 'failed') {
+    return errorMessage ? `运行未创建成功：${errorMessage}` : '运行未创建成功，请检查定时作业配置。';
+  }
+  return '本次没有生成新的运行记录，请根据提示补齐配置后再执行。';
+}
+
+function scheduledJobRunNoticeTitle(summary: Record<string, unknown>) {
+  const jobName = optionalText(summary.scheduled_job_name);
+  if (jobName) {
+    return jobName;
+  }
+  const queries = Array.isArray(summary.queries)
+    ? summary.queries.map((query) => String(query)).filter(Boolean)
+    : [];
+  return queries.length ? `执行一次：${queries.join('、')}` : '定时作业执行一次';
+}
+
+function scheduledJobRunNoticeItems(toolResults?: AssistantToolResult[]) {
+  const visibleStatuses = new Set([
+    'failed',
+    'needs_scheduled_job_reference',
+    'needs_single_reference',
+    'permission_denied',
+  ]);
+  return (toolResults ?? [])
+    .filter((toolResult) => toolResult.tool === 'assistant.scheduled_job_run')
+    .flatMap((toolResult, index) => {
+      const summary = toolResult.summary ?? {};
+      const hasRunItem = Boolean(optionalText(summary.run_id))
+        || Boolean((toolResult.items ?? []).some((item) => optionalText(item.id ?? item.run_id)));
+      if (hasRunItem) {
+        return [];
+      }
+      const status = optionalText(summary.status) ?? 'not_run';
+      if (!visibleStatuses.has(status)) {
+        return [];
+      }
+      return [
+        {
+          description: scheduledJobRunNoticeDescription(summary, status),
+          key: `${toolResult.intent ?? 'scheduled_job_run_once'}:${status}:${index}`,
+          requiredPermission: optionalText(summary.required_permission),
+          scheduledJobId: optionalText(summary.scheduled_job_id),
+          status,
+          title: scheduledJobRunNoticeTitle(summary),
+        },
+      ];
+    });
 }
 
 function scheduledJobRunItems(
@@ -2335,6 +2409,50 @@ function AssistantScheduledJobRunCards({
   );
 }
 
+function AssistantScheduledJobRunNoticeCards({
+  items,
+}: {
+  items: AssistantScheduledJobRunNoticeItem[];
+}) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className="assistant-run-list">
+      {items.map((item) => (
+        <div className="assistant-run-card" key={item.key}>
+          <div className="assistant-run-header">
+            <Space size={8} wrap>
+              <ExclamationCircleOutlined />
+              <Text strong>执行状态</Text>
+              <Tag color={diagnosticStatusColor(item.status)}>
+                {scheduledJobRunStatusLabel(item.status)}
+              </Tag>
+            </Space>
+            {item.scheduledJobId ? (
+              <Button
+                href={`/tasks/scheduled-jobs?job_id=${encodeURIComponent(item.scheduledJobId)}`}
+                icon={<LinkOutlined />}
+                size="small"
+                type="link"
+              >
+                查看定时作业
+              </Button>
+            ) : null}
+          </div>
+          <Text className="assistant-run-title" strong>
+            {item.title}
+          </Text>
+          <Text>{item.description}</Text>
+          {item.requiredPermission ? (
+            <Text type="secondary">所需权限：{item.requiredPermission}</Text>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AssistantScheduledJobDiagnosticCards({
   items,
   onUseRunFollowupPrompt,
@@ -2908,6 +3026,7 @@ function AssistantBubble({
 }) {
   const drafts = actionDraftItems(message.toolResults);
   const taskGuideItems = taskCreationGuideItems(message.toolResults);
+  const runNoticeItems = scheduledJobRunNoticeItems(message.toolResults);
   const runItems = scheduledJobRunItems(message.toolResults, scheduledJobRunById);
   const diagnosticItems = scheduledJobDiagnosticItems(message.toolResults);
   const pluginConnectionDiagnostics = pluginConnectionDiagnosticItems(message.toolResults);
@@ -2949,6 +3068,7 @@ function AssistantBubble({
           items={taskGuideItems}
           onUsePrompt={onUseTaskGuidePrompt}
         />
+        <AssistantScheduledJobRunNoticeCards items={runNoticeItems} />
         <AssistantScheduledJobRunCards
           items={runItems}
           onUseRunFollowupPrompt={onUseRunCardFollowupPrompt}

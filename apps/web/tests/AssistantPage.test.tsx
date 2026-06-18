@@ -1338,6 +1338,72 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('shows run-once non-execution status when the assistant cannot start a run', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(
+          JSON.stringify({ data: { items: [], total: 0 } }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_run_once_denied',
+              latency_ms: 3,
+              message: {
+                content: '我识别到你想执行定时作业，但当前账号没有执行定时作业的权限。',
+                id: 'assistant_message_run_once_denied',
+                references: [],
+                role: 'assistant',
+                suggestions: ['联系管理员授权'],
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_run_once',
+                    items: [],
+                    summary: {
+                      queries: ['提取每周用户反馈有价值信息'],
+                      required_permission: 'system.scheduled_jobs.manage',
+                      status: 'permission_denied',
+                    },
+                    tool: 'assistant.scheduled_job_run',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: ['联系管理员授权'],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@提取每周用户反馈有价值信息 执行一次' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('执行状态')).toBeInTheDocument();
+    expect(screen.getByText('权限不足')).toBeInTheDocument();
+    expect(screen.getByText('执行一次：提取每周用户反馈有价值信息')).toBeInTheDocument();
+    expect(screen.getByText('当前账号缺少 system.scheduled_jobs.manage，本次尚未执行。')).toBeInTheDocument();
+    expect(screen.getByText('所需权限：system.scheduled_jobs.manage')).toBeInTheDocument();
+  });
+
   it('resolves @ scheduled job run-once commands when sent before candidates finish loading', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     const referenceRequestParams: URLSearchParams[] = [];

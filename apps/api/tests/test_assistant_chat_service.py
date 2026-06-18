@@ -350,6 +350,40 @@ def test_assistant_chat_allows_run_once_with_scheduled_job_permission():
     assert response["message"]["tool_results"][0]["summary"]["status"] == "succeeded"
 
 
+def test_assistant_chat_generates_run_once_draft_with_scheduled_job_permission():
+    store = MemoryStore()
+
+    response = assistant_chat_response(
+        store,
+        model_gateway_api_key="",
+        model_gateway_base_url="",
+        model_gateway_default_chat_model="",
+        model_gateway_status="not_configured",
+        payload=AssistantChatRequest(
+            message="@提取每周用户反馈有价值信息 执行一次",
+        ),
+        user={
+            "id": "user_ops",
+            "permissions": ["system.scheduled_jobs.manage"],
+            "roles": ["release_owner"],
+        },
+    )
+
+    assert response["model"] == "assistant-deterministic"
+    assert "尚未执行" in response["message"]["content"]
+    assert store.scheduled_job_runs == {}
+    draft_result = response["message"]["tool_results"][0]
+    assert draft_result["tool"] == "assistant.action_draft"
+    assert draft_result["intent"] == "scheduled_job_draft"
+    assert draft_result["summary"]["run_once_requested"] is True
+    draft_item = draft_result["items"][0]
+    assert draft_item["server_draft_id"] in store.assistant_action_drafts
+    assert draft_item["payload"]["config_json"]["assistant_run_once_request"] == {
+        "requested": True,
+        "source_message": "@提取每周用户反馈有价值信息 执行一次",
+    }
+
+
 def test_assistant_chat_returns_running_record_for_long_ai_job_once_without_waiting(
     monkeypatch,
 ):

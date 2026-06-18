@@ -1053,7 +1053,7 @@ def _scheduled_job_run_once_missing_job_draft_output(
     selected_references: list[dict[str, str]],
     user: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if "admin" not in set(user.get("roles") or []):
+    if not _user_can_run_scheduled_job_from_assistant(user):
         return None
     if not _weekly_feedback_run_once_draft_requested(message, queries):
         return None
