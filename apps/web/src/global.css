@@ -1223,6 +1223,12 @@ body {
   background: #fbfdff;
 }
 
+.assistant-reference-candidates .assistant-reference-candidates-empty-actions .ant-btn {
+  width: auto;
+  min-height: 0;
+  padding-inline: 0;
+}
+
 .assistant-reference-candidates .ant-btn {
   justify-content: flex-start;
   width: 100%;

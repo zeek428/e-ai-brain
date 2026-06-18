@@ -1033,6 +1033,27 @@ function scheduledJobRunOnceRequested(value: string) {
   return scheduledJobRunOnceKeywords.some((keyword) => normalized.includes(keyword));
 }
 
+function assistantReferenceEmptyState(value: string) {
+  if (scheduledJobRunOnceRequested(value)) {
+    return {
+      actionHref: '/tasks/scheduled-jobs',
+      actionLabel: '去任务中心新增定时作业',
+      description: '请先新增或确认一个定时作业，再回到助手里 @ 它执行一次。',
+      prompt: '我要新增任务，请先帮我选择任务类型并生成可确认的配置草案',
+      promptLabel: '让 AI 生成任务草案',
+      title: '没有找到可执行的定时作业引用',
+    };
+  }
+  return {
+    actionHref: '/knowledge/documents',
+    actionLabel: '去知识库查看文档',
+    description: '请换个关键词，或确认你是否有权限访问该对象。',
+    prompt: '我要新增任务，请先帮我选择任务类型并生成可确认的配置草案',
+    promptLabel: '让 AI 生成任务草案',
+    title: '无匹配引用',
+  };
+}
+
 function currentUserCanRunScheduledJobFromAssistant() {
   const currentUser = getStoredCurrentUser();
   const roles = new Set(currentUser?.roles ?? []);
@@ -3166,6 +3187,10 @@ export default function AssistantPage() {
     () => groupedReferenceCandidates(orderedReferenceCandidates, recentReferences),
     [orderedReferenceCandidates, recentReferences],
   );
+  const referenceEmptyState = useMemo(
+    () => assistantReferenceEmptyState(inputValue),
+    [inputValue],
+  );
   const roleQuickTaskGroups = useMemo(() => selectedAssistantRoleQuickTaskGroups(), []);
   const selectedReferenceInjectionText = useMemo(
     () => selectedReferenceInjectionSummary(selectedReferences),
@@ -4160,9 +4185,27 @@ export default function AssistantPage() {
               {isLoadingReferences ? <Spin size="small" /> : null}
               {!isLoadingReferences && !referenceCandidates.length ? (
                 <div className="assistant-reference-candidates-empty">
-                  <Space size={[6, 6]} wrap>
-                    <Tag color="default">无匹配引用</Tag>
-                    <Text type="secondary">请换个关键词，或确认你是否有权限访问该对象。</Text>
+                  <Space orientation="vertical" size={8}>
+                    <Space size={[6, 6]} wrap>
+                      <Tag color="default">{referenceEmptyState.title}</Tag>
+                      <Text type="secondary">{referenceEmptyState.description}</Text>
+                    </Space>
+                    <Space className="assistant-reference-candidates-empty-actions" size={8} wrap>
+                      <Button href={referenceEmptyState.actionHref} size="small" type="link">
+                        {referenceEmptyState.actionLabel}
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          setInputValue(referenceEmptyState.prompt);
+                          setReferenceCandidates([]);
+                          setActiveReferenceIndex(-1);
+                          setDismissedReferencePickerValue(undefined);
+                        }}
+                      >
+                        {referenceEmptyState.promptLabel}
+                      </Button>
+                    </Space>
                   </Space>
                 </div>
               ) : null}

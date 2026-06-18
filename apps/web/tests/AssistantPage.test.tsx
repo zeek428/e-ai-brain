@@ -258,6 +258,48 @@ describe('AssistantPage', () => {
     ]);
   });
 
+  it('shows actionable guidance when scheduled job @ candidates are empty', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('提取每周用户反馈有价值信息');
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(await screen.findByLabelText('发送给 AI 助手'), {
+      target: { value: '@提取每周用户反馈有价值信息 执行一次' },
+    });
+
+    const candidatePanel = await screen.findByLabelText('引用候选');
+    expect(within(candidatePanel).getByText('没有找到可执行的定时作业引用')).toBeInTheDocument();
+    expect(within(candidatePanel).getByText('请先新增或确认一个定时作业，再回到助手里 @ 它执行一次。')).toBeInTheDocument();
+    expect(
+      within(candidatePanel).getByRole('link', { name: '去任务中心新增定时作业' }),
+    ).toHaveAttribute('href', '/tasks/scheduled-jobs');
+
+    fireEvent.click(within(candidatePanel).getByRole('button', { name: '让 AI 生成任务草案' }));
+
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '我要新增任务，请先帮我选择任务类型并生成可确认的配置草案',
+    );
+  });
+
   it('renders an AI assistant chat surface that can answer AI Brain progress questions', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
