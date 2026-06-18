@@ -926,7 +926,7 @@ function draftWizardManualAdjustUrl(step: AssistantDraftWizardStep) {
 }
 
 function activeMentionQuery(value: string) {
-  const markerIndex = value.lastIndexOf('@');
+  const markerIndex = Math.max(value.lastIndexOf('@'), value.lastIndexOf('＠'));
   if (markerIndex < 0) {
     return undefined;
   }
@@ -2308,14 +2308,16 @@ function AssistantScheduledJobRunCards({
               >
                 问这次运行
               </Button>
-              <Button
-                aria-label="生成运行修复草案"
-                icon={<FileTextOutlined />}
-                size="small"
-                onClick={() => onUseRunFollowupPrompt(item, '这次失败怎么修？帮我生成修复草案')}
-              >
-                生成修复草案
-              </Button>
+              {item.status === 'failed' ? (
+                <Button
+                  aria-label="生成运行修复草案"
+                  icon={<FileTextOutlined />}
+                  size="small"
+                  onClick={() => onUseRunFollowupPrompt(item, '这次失败怎么修？帮我生成修复草案')}
+                >
+                  生成修复草案
+                </Button>
+              ) : null}
               <Button
                 aria-label="对比这次运行"
                 icon={<ReloadOutlined />}

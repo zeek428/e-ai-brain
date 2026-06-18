@@ -4333,6 +4333,68 @@ def test_ai_assistant_chat_runs_explicit_mention_job_once_without_model_gateway(
     assert message["tool_results"][0]["summary"]["run_id"] == run["id"]
 
 
+def test_ai_assistant_chat_runs_fullwidth_explicit_mention_job_once(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.scheduled_jobs["scheduled_job_feedback_insight"] = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": "scheduled_job_feedback_insight",
+        "interval_seconds": None,
+        "job_type": "dashboard_snapshot_refresh",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 999999999,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "name": "提取每周用户反馈有价值信息",
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("assistant deterministic run should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "＠提取每周用户反馈有价值信息 执行一次"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    message = payload["message"]
+    assert payload["model"] == "assistant-deterministic"
+    assert "已执行" in message["content"]
+    run = next(iter(app.state.store.scheduled_job_runs.values()))
+    assert run["scheduled_job_id"] == "scheduled_job_feedback_insight"
+    assert message["tool_results"][0]["tool"] == "assistant.scheduled_job_run"
+
+
 def test_ai_assistant_chat_explains_run_once_permission_denied(monkeypatch):
     headers = auth_headers("reviewer@example.com", "reviewer123")
     app.state.store.reset()

@@ -1195,7 +1195,7 @@ def _scheduled_job_references_from_explicit_mentions(
 def _explicit_mention_queries_for_run_once(message: str) -> list[str]:
     queries: list[str] = []
     seen: set[str] = set()
-    for match in re.finditer(r"@([^@\n]+)", message):
+    for match in re.finditer(r"[@＠]([^@＠\n]+)", message):
         raw_tail = match.group(1).strip()
         if not raw_tail:
             continue
