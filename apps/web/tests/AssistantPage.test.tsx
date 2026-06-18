@@ -1034,6 +1034,12 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请检查自动化测试相关任务、失败原因和可生成的测试草案。',
     );
+
+    fireEvent.click(screen.getByRole('button', { name: '发布风险' }));
+
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '请生成发布风险分析草案，基于测试结果、未关闭缺陷和发布记录评估当前发布风险。',
+    );
   });
 
   it('shows knowledge quick tasks for knowledge_owner users', async () => {

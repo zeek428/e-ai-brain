@@ -199,7 +199,7 @@ const assistantRoleQuickTaskGroups: AssistantRoleQuickTaskGroup[] = [
       {
         key: 'release_risk',
         label: '发布风险',
-        prompt: '请从测试结果、未关闭缺陷和发布记录评估当前发布风险。',
+        prompt: '请生成发布风险分析草案，基于测试结果、未关闭缺陷和发布记录评估当前发布风险。',
       },
     ],
   },
