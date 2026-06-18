@@ -237,6 +237,7 @@ def test_role_definitions_keep_new_roles_within_reviewed_defaults():
             "test.execution.manage",
             "test.bug.verify",
             "assistant.chat",
+            "system.scheduled_jobs.run",
             "workspace.read",
         },
         "tester": {
@@ -246,6 +247,7 @@ def test_role_definitions_keep_new_roles_within_reviewed_defaults():
             "test.execution.manage",
             "test.bug.verify",
             "assistant.chat",
+            "system.scheduled_jobs.run",
             "workspace.read",
         },
         "release_owner": {
@@ -255,6 +257,7 @@ def test_role_definitions_keep_new_roles_within_reviewed_defaults():
             "release.decide",
             "devops.read",
             "assistant.chat",
+            "system.scheduled_jobs.run",
             "workspace.read",
         },
     }
@@ -263,7 +266,7 @@ def test_role_definitions_keep_new_roles_within_reviewed_defaults():
 
     forbidden_permissions = {
         "developer": {"bug.manage", "knowledge.manage", "workspace.write"},
-        "test_owner": {"bug.manage", "workspace.write"},
+        "test_owner": {"bug.manage", "system.scheduled_jobs.manage", "workspace.write"},
         "tester": {
             "bug.manage",
             "task.create",
@@ -271,7 +274,12 @@ def test_role_definitions_keep_new_roles_within_reviewed_defaults():
             "review.decide",
             "release.decide",
         },
-        "release_owner": {"review.decide", "audit.read", "workspace.write"},
+        "release_owner": {
+            "audit.read",
+            "review.decide",
+            "system.scheduled_jobs.manage",
+            "workspace.write",
+        },
     }
     for role_code, permissions in forbidden_permissions.items():
         assert _role_permissions(role_code).isdisjoint(permissions)

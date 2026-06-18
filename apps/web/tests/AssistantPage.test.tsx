@@ -1465,7 +1465,7 @@ describe('AssistantPage', () => {
                     items: [],
                     summary: {
                       queries: ['提取每周用户反馈有价值信息'],
-                      required_permission: 'system.scheduled_jobs.manage',
+                      required_permission: 'system.scheduled_jobs.run',
                       status: 'permission_denied',
                     },
                     tool: 'assistant.scheduled_job_run',
@@ -1494,8 +1494,8 @@ describe('AssistantPage', () => {
     expect(await screen.findByText('执行状态')).toBeInTheDocument();
     expect(screen.getByText('权限不足')).toBeInTheDocument();
     expect(screen.getByText('执行一次：提取每周用户反馈有价值信息')).toBeInTheDocument();
-    expect(screen.getByText('当前账号缺少 system.scheduled_jobs.manage，本次尚未执行。')).toBeInTheDocument();
-    expect(screen.getByText('所需权限：system.scheduled_jobs.manage')).toBeInTheDocument();
+    expect(screen.getByText('当前账号缺少 system.scheduled_jobs.run，本次尚未执行。')).toBeInTheDocument();
+    expect(screen.getByText('所需权限：system.scheduled_jobs.run')).toBeInTheDocument();
   });
 
   it('warns product users before sending scheduled job run-once commands without permission', async () => {
@@ -1533,7 +1533,45 @@ describe('AssistantPage', () => {
     const permissionHint = await screen.findByLabelText('执行权限提示');
     expect(permissionHint).toHaveTextContent('当前账号没有执行定时作业权限');
     expect(permissionHint).toHaveTextContent('本次不会直接执行');
-    expect(permissionHint).toHaveTextContent('system.scheduled_jobs.manage');
+    expect(permissionHint).toHaveTextContent('system.scheduled_jobs.run');
+  });
+
+  it('does not warn users with scheduled job run permission before run-once commands', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-test-owner' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-test-owner');
+    saveCurrentUser({
+      display_name: '测试负责人',
+      id: 'user_test_owner',
+      permissions: ['system.scheduled_jobs.run'],
+      roles: ['test_owner'],
+      username: 'test-owner@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@提取每周用户反馈有价值信息 执行一次' },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText('执行权限提示')).not.toBeInTheDocument();
+    });
   });
 
   it('shows AI executor waiting progress for run-once commands', async () => {

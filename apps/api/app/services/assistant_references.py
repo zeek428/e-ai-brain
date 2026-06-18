@@ -18,18 +18,19 @@ OPERATIONAL_REFERENCE_TYPES = {
     "scheduled_job",
     "scheduled_job_run",
 }
-OPERATIONAL_REFERENCE_PERMISSION_BY_TYPE = {
-    "ai_agent": "system.ai_capabilities.manage",
-    "ai_skill": "system.ai_capabilities.manage",
-    "plugin_action": "system.plugins.manage",
-    "plugin_connection": "system.plugins.manage",
-    "scheduled_job": "system.scheduled_jobs.manage",
-    "scheduled_job_run": "system.scheduled_jobs.manage",
+OPERATIONAL_REFERENCE_PERMISSIONS_BY_TYPE = {
+    "ai_agent": ("system.ai_capabilities.manage",),
+    "ai_skill": ("system.ai_capabilities.manage",),
+    "plugin_action": ("system.plugins.manage",),
+    "plugin_connection": ("system.plugins.manage",),
+    "scheduled_job": ("system.scheduled_jobs.manage", "system.scheduled_jobs.run"),
+    "scheduled_job_run": ("system.scheduled_jobs.manage", "system.scheduled_jobs.run"),
 }
 OPERATIONAL_REFERENCE_PERMISSION_LABEL_BY_PERMISSION = {
     "system.ai_capabilities.manage": "AI能力管理权限可引用",
     "system.plugins.manage": "插件管理权限可引用",
     "system.scheduled_jobs.manage": "定时作业管理权限可引用",
+    "system.scheduled_jobs.run": "定时作业执行权限可引用",
 }
 REFERENCE_SOURCE_MODULES = {
     "ai_agent": "AI能力配置",
@@ -1631,11 +1632,14 @@ def _user_can_reference_operational_type(
 ) -> bool:
     roles = set(user.get("roles") or []) if isinstance(user, dict) else set()
     permissions = set(user.get("permissions") or []) if isinstance(user, dict) else set()
-    required_permission = OPERATIONAL_REFERENCE_PERMISSION_BY_TYPE.get(reference_type)
+    required_permissions = OPERATIONAL_REFERENCE_PERMISSIONS_BY_TYPE.get(reference_type)
     return (
         "admin" in roles
         or "system.admin" in permissions
-        or (required_permission is not None and required_permission in permissions)
+        or (
+            required_permissions is not None
+            and bool(permissions.intersection(required_permissions))
+        )
     )
 
 
@@ -1649,10 +1653,14 @@ def _reference_permission_label(
     permissions = set(user.get("permissions") or []) if isinstance(user, dict) else set()
     if "admin" in roles or "system.admin" in permissions:
         return "管理员可引用"
-    required_permission = OPERATIONAL_REFERENCE_PERMISSION_BY_TYPE.get(reference_type)
-    if required_permission and required_permission in permissions:
+    required_permissions = OPERATIONAL_REFERENCE_PERMISSIONS_BY_TYPE.get(reference_type) or ()
+    granted_permission = next(
+        (permission for permission in required_permissions if permission in permissions),
+        None,
+    )
+    if granted_permission:
         return OPERATIONAL_REFERENCE_PERMISSION_LABEL_BY_PERMISSION.get(
-            required_permission,
+            granted_permission,
             "已授权可引用",
         )
     return "需授权"

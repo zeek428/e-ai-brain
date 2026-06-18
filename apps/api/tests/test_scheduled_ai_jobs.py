@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 
 import app.services.scheduled_jobs as scheduled_jobs_service
+from app.core.security import hash_password
+from app.core.users import MemoryUserRepository
 from app.main import app
 from app.services.dynamic_parameters import dynamic_time_parameters
 from app.services.scheduled_job_execution_engine import ScheduledJobExecutionEngine
@@ -270,6 +272,115 @@ def test_successful_scheduled_job_run_can_generate_template_and_trace_graph():
         "title": "每周数据同步",
     }
     assert template["wizard_steps"][0]["key"] == "data_connection"
+
+
+def test_scheduled_job_run_permission_can_trigger_without_manage_permission():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    original_user_repository = app.state.user_repository
+
+    plugin = client.post(
+        "/api/system/plugins",
+        json={
+            "category": "data_warehouse",
+            "code": "runner_permission_warehouse",
+            "name": "执行权限测试仓库",
+            "protocol": "http",
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    connection = client.post(
+        "/api/system/plugin-connections",
+        json={
+            "auth_type": "none",
+            "endpoint_url": "https://runner-permission.example.com",
+            "environment": "prod",
+            "name": "执行权限测试连接",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    action = client.post(
+        "/api/system/plugin-actions",
+        json={
+            "action_type": "http_request",
+            "code": "fetch_runner_permission_rows",
+            "connection_id": connection["id"],
+            "name": "拉取执行权限测试数据",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {"row_count": 1, "rows": [{"id": 1}]},
+                "path": "/rows",
+            },
+            "result_mapping": {
+                "records_imported_path": "$.row_count",
+                "write_target": "scheduled_job_result",
+            },
+            "status": "active",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "plugin_action_invoke",
+            "name": "执行权限测试作业",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "schedule_type": "manual",
+            "source_system": "warehouse",
+        },
+        headers=admin_headers,
+    ).json()["data"]
+
+    app.state.user_repository = MemoryUserRepository(
+        {
+            "test-owner@example.com": {
+                "display_name": "测试负责人",
+                "id": "user_test_owner",
+                "password_hash": hash_password("test123"),
+                "roles": ["test_owner"],
+                "status": "active",
+                "username": "test-owner@example.com",
+            },
+        },
+    )
+
+    try:
+        runner_headers = auth_headers("test-owner@example.com", "test123")
+
+        forbidden_create = client.post(
+            "/api/system/scheduled-jobs",
+            json={
+                "enabled": True,
+                "execution_mode": "deterministic",
+                "job_type": "plugin_action_invoke",
+                "name": "执行权限不应能创建作业",
+                "plugin_action_id": action["id"],
+                "plugin_connection_id": connection["id"],
+                "schedule_type": "manual",
+                "source_system": "warehouse",
+            },
+            headers=runner_headers,
+        )
+        assert forbidden_create.status_code == 403
+
+        run_response = client.post(
+            f"/api/system/scheduled-jobs/{job['id']}/run",
+            headers=runner_headers,
+        )
+        assert run_response.status_code == 200, run_response.text
+        run = run_response.json()["data"]
+        assert run["trigger_type"] == "manual"
+        assert run["status"] == "succeeded"
+        assert run["records_imported"] == 1
+    finally:
+        app.state.user_repository = original_user_repository
 
 
 def test_scheduled_job_preserves_multiple_plugin_connections_and_actions():

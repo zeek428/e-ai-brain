@@ -12,7 +12,7 @@ from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.api.deps import api_error, require_permissions
+from app.api.deps import api_error, require_any_permission, require_permissions
 from app.services.code_inspections import (
     execute_code_inspection_result_actions,
     sync_product_git_repository_store,
@@ -121,8 +121,27 @@ def ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None
         raise api_error(400, "VALIDATION_ERROR", f"Unsupported {field}")
 
 
+SCHEDULED_JOB_MANAGE_PERMISSION = "system.scheduled_jobs.manage"
+SCHEDULED_JOB_RUN_PERMISSION = "system.scheduled_jobs.run"
+
+
 def require_admin(user: dict[str, Any]) -> None:
-    require_permissions(user, {"system.scheduled_jobs.manage"})
+    require_permissions(user, {SCHEDULED_JOB_MANAGE_PERMISSION})
+
+
+def require_scheduled_job_runner(user: dict[str, Any]) -> None:
+    require_any_permission(
+        user,
+        {SCHEDULED_JOB_MANAGE_PERMISSION, SCHEDULED_JOB_RUN_PERMISSION},
+    )
+
+
+def scheduled_job_plugin_invocation_user(user: dict[str, Any]) -> dict[str, Any]:
+    permissions = set(user.get("permissions") or [])
+    permissions.add("system.plugins.manage")
+    # Running a configured job authorizes invoking its bound action; direct plugin APIs
+    # still require plugin management permission at the router/service boundary.
+    return {**user, "permissions": sorted(permissions)}
 
 
 def require_ai_capabilities_manager(user: dict[str, Any]) -> None:
@@ -2473,7 +2492,7 @@ def invoke_job_data_connections(
             scheduled_job_id=job["id"],
             scheduled_job_run_id=run_id,
             trigger_type=trigger_type,
-            user=user,
+            user=scheduled_job_plugin_invocation_user(user),
         )
         summary = plugin_summary_from_log(current_store, plugin_log)
         summaries.append(summary)
@@ -3064,7 +3083,7 @@ def run_scheduled_job_response(
     trigger_type: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_admin(user)
+    require_scheduled_job_runner(user)
     ensure_enum(trigger_type, SCHEDULED_JOB_RUN_TRIGGER_TYPES, "scheduled job run trigger_type")
     sync_scheduled_job_store(current_store)
     sync_ai_agent_store(current_store)

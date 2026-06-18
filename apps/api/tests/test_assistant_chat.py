@@ -128,6 +128,84 @@ def test_ai_assistant_allows_testing_delivery_roles_to_use_workbench_apis(monkey
         app.state.user_repository = original_user_repository
 
 
+def test_ai_assistant_test_owner_can_run_explicit_mention_job_once(monkeypatch):
+    original_user_repository = app.state.user_repository
+    app.state.store.reset()
+    app.state.user_repository = MemoryUserRepository(
+        {
+            "test-owner@example.com": {
+                "display_name": "测试负责人",
+                "id": "user_test_owner",
+                "password_hash": hash_password("test123"),
+                "roles": ["test_owner"],
+                "status": "active",
+                "username": "test-owner@example.com",
+            },
+        },
+    )
+    app.state.store.scheduled_jobs["scheduled_job_feedback_insight"] = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": "scheduled_job_feedback_insight",
+        "interval_seconds": None,
+        "job_type": "dashboard_snapshot_refresh",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "name": "提取每周用户反馈有价值信息",
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("assistant deterministic run should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+    try:
+        response = client.post(
+            "/api/assistant/chat",
+            json={
+                "message": "@提取每周用户反馈有价值信息 执行一次",
+            },
+            headers=auth_headers("test-owner@example.com", "test123"),
+        )
+    finally:
+        app.state.user_repository = original_user_repository
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    message = payload["message"]
+    assert payload["model"] == "assistant-deterministic"
+    assert "已执行「提取每周用户反馈有价值信息」一次" in message["content"]
+    run = next(iter(app.state.store.scheduled_job_runs.values()))
+    assert run["scheduled_job_id"] == "scheduled_job_feedback_insight"
+    assert message["tool_results"][0]["summary"]["status"] == "succeeded"
+
+
 def seed_assistant_knowledge_reference_documents() -> None:
     now = "2026-06-14T08:00:00+00:00"
     app.state.store.knowledge_documents["knowledge_payment_runbook"] = {
@@ -879,7 +957,7 @@ def test_ai_assistant_reference_candidates_match_weekly_feedback_alias():
     ]
 
 
-def test_ai_assistant_reference_candidates_allow_scheduled_job_managers():
+def test_ai_assistant_reference_candidates_allow_scheduled_job_runners():
     app.state.store.reset()
     seed_assistant_operational_references()
 
@@ -891,7 +969,7 @@ def test_ai_assistant_reference_candidates_allow_scheduled_job_managers():
         reference_type="scheduled_job",
         user={
             "id": "user_ops",
-            "permissions": ["system.scheduled_jobs.manage"],
+            "permissions": ["system.scheduled_jobs.run"],
             "roles": ["release_owner"],
         },
     )
@@ -899,7 +977,7 @@ def test_ai_assistant_reference_candidates_allow_scheduled_job_managers():
     assert payload["items"] == [
         {
             "id": "scheduled_job_feedback_weekly",
-            "permission_label": "定时作业管理权限可引用",
+            "permission_label": "定时作业执行权限可引用",
             "source_module": "任务中心",
             "title": "每周反馈洞察定时作业",
             "type": "scheduled_job",
@@ -916,7 +994,7 @@ def test_ai_assistant_reference_candidates_allow_scheduled_job_managers():
         reference_type="plugin_action",
         user={
             "id": "user_ops",
-            "permissions": ["system.scheduled_jobs.manage"],
+            "permissions": ["system.scheduled_jobs.run"],
             "roles": ["release_owner"],
         },
     )
@@ -4980,7 +5058,7 @@ def test_ai_assistant_chat_explains_run_once_permission_denied(monkeypatch):
     assert tool_result["tool"] == "assistant.scheduled_job_run"
     assert tool_result["summary"] == {
         "queries": ["提取每周用户反馈有价值信息"],
-        "required_permission": "system.scheduled_jobs.manage",
+        "required_permission": "system.scheduled_jobs.run",
         "status": "permission_denied",
     }
 

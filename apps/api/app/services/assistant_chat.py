@@ -86,6 +86,8 @@ ASSISTANT_ASYNC_SCHEDULED_JOB_TYPES = {
 ASSISTANT_ASYNC_RUN_START_TIMEOUT_SECONDS = 2.0
 ASSISTANT_ASYNC_RUN_POLL_SECONDS = 0.05
 ASSISTANT_TRACKED_RUN_STATUSES = {"queued", "running"}
+SCHEDULED_JOB_MANAGE_PERMISSION = "system.scheduled_jobs.manage"
+SCHEDULED_JOB_RUN_PERMISSION = "system.scheduled_jobs.run"
 TASK_CREATION_WIZARD_STEPS = ["数据来源", "AI处理", "结果动作", "调度策略", "确认执行"]
 TASK_CREATION_GUIDE_ITEMS = [
     {
@@ -1286,7 +1288,7 @@ def _scheduled_job_run_once_permission_denied_output(
         "answer": (
             f"我识别到你想执行定时作业：{query_text}，"
             "但当前账号没有执行定时作业的权限。请使用管理员账号，"
-            "或让管理员授予定时作业管理权限后再执行。"
+            "或让管理员授予定时作业执行权限后再执行。"
         ),
         "latency_ms": 0,
         "model": "assistant-deterministic",
@@ -1299,7 +1301,7 @@ def _scheduled_job_run_once_permission_denied_output(
                 "items": [],
                 "summary": {
                     "queries": attempted_queries,
-                    "required_permission": "system.scheduled_jobs.manage",
+                    "required_permission": SCHEDULED_JOB_RUN_PERMISSION,
                     "status": "permission_denied",
                 },
                 "tool": "assistant.scheduled_job_run",
@@ -1469,7 +1471,8 @@ def _user_can_run_scheduled_job_from_assistant(user: dict[str, Any]) -> bool:
     return (
         "admin" in roles
         or "system.admin" in permissions
-        or "system.scheduled_jobs.manage" in permissions
+        or SCHEDULED_JOB_MANAGE_PERMISSION in permissions
+        or SCHEDULED_JOB_RUN_PERMISSION in permissions
     )
 
 

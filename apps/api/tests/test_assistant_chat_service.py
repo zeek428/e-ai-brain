@@ -338,7 +338,7 @@ def test_assistant_chat_allows_run_once_with_scheduled_job_permission():
         ),
         user={
             "id": "user_ops",
-            "permissions": ["system.scheduled_jobs.manage"],
+            "permissions": ["system.scheduled_jobs.run"],
             "roles": ["release_owner"],
         },
     )
@@ -364,7 +364,7 @@ def test_assistant_chat_generates_run_once_draft_with_scheduled_job_permission()
         ),
         user={
             "id": "user_ops",
-            "permissions": ["system.scheduled_jobs.manage"],
+            "permissions": ["system.scheduled_jobs.run"],
             "roles": ["release_owner"],
         },
     )

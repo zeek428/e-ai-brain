@@ -185,6 +185,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "059_assistant_rd_task_drafts.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "060_scheduled_job_run_permission.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

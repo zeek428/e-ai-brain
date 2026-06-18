@@ -724,7 +724,7 @@ function scheduledJobRunBaseItems(toolResults?: AssistantToolResult[]) {
 }
 
 function scheduledJobRunNoticeDescription(summary: Record<string, unknown>, status: string) {
-  const requiredPermission = optionalText(summary.required_permission) ?? 'system.scheduled_jobs.manage';
+  const requiredPermission = optionalText(summary.required_permission) ?? 'system.scheduled_jobs.run';
   const errorMessage = optionalText(summary.error_message);
   if (status === 'permission_denied') {
     return `当前账号缺少 ${requiredPermission}，本次尚未执行。`;
@@ -1061,6 +1061,7 @@ function currentUserCanRunScheduledJobFromAssistant() {
   return (
     roles.has('admin')
     || permissions.has('system.admin')
+    || permissions.has('system.scheduled_jobs.run')
     || permissions.has('system.scheduled_jobs.manage')
   );
 }
@@ -4257,7 +4258,7 @@ export default function AssistantPage() {
                 <ExclamationCircleOutlined />
                 <Text type="warning">
                   当前账号没有执行定时作业权限，本次不会直接执行；请使用管理员账号或授予
-                  system.scheduled_jobs.manage 后再发送。
+                  system.scheduled_jobs.run 后再发送。
                 </Text>
               </div>
             ) : null}

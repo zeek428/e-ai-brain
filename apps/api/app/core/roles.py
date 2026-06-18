@@ -27,6 +27,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "system.model_gateway.manage",
             "system.ai_capabilities.manage",
             "system.scheduled_jobs.manage",
+            "system.scheduled_jobs.run",
             "system.plugins.manage",
             "code_inspection.read",
             "audit.read",
@@ -63,6 +64,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "planning.decide",
             "bug.manage",
             "code_inspection.read",
+            "system.scheduled_jobs.run",
             "workspace.read",
             "workspace.write",
         ],
@@ -96,6 +98,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "code_inspection.read",
             "knowledge.manage",
             "bug.manage",
+            "system.scheduled_jobs.run",
             "workspace.read",
             "workspace.write",
         ],
@@ -234,6 +237,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "test.execution.manage",
             "test.bug.verify",
             "assistant.chat",
+            "system.scheduled_jobs.run",
             "workspace.read",
         ],
         "responsibilities": [
@@ -265,6 +269,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "test.execution.manage",
             "test.bug.verify",
             "assistant.chat",
+            "system.scheduled_jobs.run",
             "workspace.read",
         ],
         "responsibilities": [
@@ -296,6 +301,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "release.decide",
             "devops.read",
             "assistant.chat",
+            "system.scheduled_jobs.run",
             "workspace.read",
         ],
         "responsibilities": [
