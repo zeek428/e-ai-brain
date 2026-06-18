@@ -1155,10 +1155,12 @@ describe('AssistantPage', () => {
 
     const assistantInput = screen.getByLabelText('发送给 AI 助手');
     fireEvent.change(assistantInput, {
-      target: { value: '@' },
+      target: { value: '@反馈' },
     });
 
     const referenceCandidatePanel = await screen.findByLabelText('引用候选');
+    expect(within(referenceCandidatePanel).getByText('搜索：反馈')).toBeInTheDocument();
+    expect(within(referenceCandidatePanel).getByText('↑↓ 选择，Enter 添加')).toBeInTheDocument();
     expect(within(referenceCandidatePanel).getAllByText('知识文档').length).toBeGreaterThan(0);
     expect(within(referenceCandidatePanel).getAllByText('研发任务').length).toBeGreaterThan(0);
     expect(within(referenceCandidatePanel).getAllByText('定时作业').length).toBeGreaterThan(0);

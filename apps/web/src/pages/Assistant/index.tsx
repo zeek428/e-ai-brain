@@ -4137,9 +4137,10 @@ export default function AssistantPage() {
             >
               <div className="assistant-reference-candidates-header">
                 <Text strong>引用候选</Text>
-                <Text type="secondary">
-                  {activeMention ? `搜索：${activeMention}` : '↑↓ 选择，Enter 添加'}
-                </Text>
+                <Space size={8} wrap>
+                  {activeMention ? <Text type="secondary">{`搜索：${activeMention}`}</Text> : null}
+                  <Text type="secondary">↑↓ 选择，Enter 添加</Text>
+                </Space>
               </div>
               {isLoadingReferences ? <Spin size="small" /> : null}
               {!isLoadingReferences && !referenceCandidates.length ? (
