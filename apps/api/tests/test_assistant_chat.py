@@ -826,6 +826,50 @@ def test_ai_assistant_reference_candidates_match_weekly_feedback_alias():
     ]
 
 
+def test_ai_assistant_reference_candidates_allow_scheduled_job_managers():
+    app.state.store.reset()
+    seed_assistant_operational_references()
+
+    payload = assistant_reference_candidates_response(
+        app.state.store,
+        limit=5,
+        message="@提取每周用户反馈有价值信息 执行一次",
+        product_id=None,
+        reference_type="scheduled_job",
+        user={
+            "id": "user_ops",
+            "permissions": ["system.scheduled_jobs.manage"],
+            "roles": ["release_owner"],
+        },
+    )
+
+    assert payload["items"] == [
+        {
+            "id": "scheduled_job_feedback_weekly",
+            "permission_label": "管理员可引用",
+            "source_module": "任务中心",
+            "title": "每周反馈洞察定时作业",
+            "type": "scheduled_job",
+            "updated_at": "2026-06-14T09:30:00+00:00",
+            "url": "/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly",
+        }
+    ]
+
+    plugin_payload = assistant_reference_candidates_response(
+        app.state.store,
+        limit=5,
+        message="插件动作",
+        product_id=None,
+        reference_type="plugin_action",
+        user={
+            "id": "user_ops",
+            "permissions": ["system.scheduled_jobs.manage"],
+            "roles": ["release_owner"],
+        },
+    )
+    assert plugin_payload == {"items": [], "total": 0}
+
+
 def test_ai_assistant_reference_candidates_prioritize_scheduled_jobs_for_job_type_words():
     headers = auth_headers()
     app.state.store.reset()

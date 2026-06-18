@@ -741,13 +741,17 @@ function comparisonDifferenceItems(item: AssistantToolResultItem) {
     : [];
 }
 
-function draftPayloadText(payload: Record<string, unknown> | undefined, field: string) {
-  const value = field.split('.').reduce<unknown>((current, key) => {
+function draftPayloadValue(payload: Record<string, unknown> | undefined, field: string) {
+  return field.split('.').reduce<unknown>((current, key) => {
     if (!current || typeof current !== 'object' || Array.isArray(current)) {
       return undefined;
     }
     return (current as Record<string, unknown>)[key];
   }, payload);
+}
+
+function draftPayloadText(payload: Record<string, unknown> | undefined, field: string) {
+  const value = draftPayloadValue(payload, field);
   if (Array.isArray(value)) {
     return value.length ? value.join('、') : '-';
   }
@@ -755,6 +759,22 @@ function draftPayloadText(payload: Record<string, unknown> | undefined, field: s
     return JSON.stringify(value);
   }
   return value === undefined || value === null || value === '' ? '-' : String(value);
+}
+
+function draftPrerequisiteText(
+  payload: Record<string, unknown> | undefined,
+  dependencyLabels: Map<string, string>,
+) {
+  const value = draftPayloadValue(payload, 'assistant_prerequisite_draft_ids');
+  if (!Array.isArray(value) || !value.length) {
+    return '-';
+  }
+  return value
+    .map((item) => {
+      const dependencyId = String(item ?? '').trim();
+      return dependencyLabels.get(dependencyId) ?? dependencyId;
+    })
+    .join('、');
 }
 
 function draftPayloadLabel(
@@ -769,7 +789,29 @@ function draftPayloadLabel(
   return value;
 }
 
-function draftWizardSteps(draft: AssistantToolResultItem): AssistantDraftWizardStep[] {
+function assistantDraftDependencyIds(
+  draft: Pick<AssistantToolResultItem, 'client_draft_id' | 'draft_id' | 'server_draft_id'>,
+) {
+  return [draft.draft_id, draft.server_draft_id, draft.client_draft_id]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+}
+
+function assistantDraftDependencyLabelMap(drafts: AssistantToolResultItem[]) {
+  const items = new Map<string, string>();
+  drafts.forEach((draft) => {
+    const title = String(draft.title ?? '').trim();
+    assistantDraftDependencyIds(draft).forEach((draftId) => {
+      items.set(draftId, title || draftId);
+    });
+  });
+  return items;
+}
+
+function draftWizardSteps(
+  draft: AssistantToolResultItem,
+  dependencyLabels: Map<string, string> = new Map(),
+): AssistantDraftWizardStep[] {
   const value = draft.wizard_steps;
   if (!Array.isArray(value)) {
     return [];
@@ -779,7 +821,12 @@ function draftWizardSteps(draft: AssistantToolResultItem): AssistantDraftWizardS
       Boolean(item) && typeof item === 'object' && !Array.isArray(item)
     ))
     .map((item) => ({
-      depends_on: Array.isArray(item.depends_on) ? item.depends_on.map(String) : [],
+      depends_on: Array.isArray(item.depends_on)
+        ? item.depends_on.map((dependency) => {
+          const dependencyId = String(dependency);
+          return dependencyLabels.get(dependencyId) ?? dependencyId;
+        })
+        : [],
       key: item.key ? String(item.key) : undefined,
       status: item.status ? String(item.status) : undefined,
       summary: item.summary ? String(item.summary) : undefined,
@@ -1713,6 +1760,10 @@ function AssistantActionDraftCards({
   resultWriteTargetLabels: Map<string, string>;
 }) {
   const [detailDraft, setDetailDraft] = useState<AssistantToolResultItem>();
+  const draftDependencyLabels = useMemo(
+    () => assistantDraftDependencyLabelMap(drafts),
+    [drafts],
+  );
   const currentDraftStatus = (draft: AssistantToolResultItem) => {
     const draftId = assistantDraftId(draft);
     const resolution = draftId ? draftResolutionById[draftId] : undefined;
@@ -1745,7 +1796,7 @@ function AssistantActionDraftCards({
         const canApplyDraftToForm = isPending;
         const previewStatus = draft.preview?.validation?.status;
         const isPreviewBlocked = previewStatus === 'blocked';
-        const wizardSteps = draftWizardSteps(draft);
+        const wizardSteps = draftWizardSteps(draft, draftDependencyLabels);
         const writeNotice = isPluginConnectionDraft
           ? '确认前不会写入插件连接'
           : isPluginActionDraft
@@ -1905,7 +1956,7 @@ function AssistantActionDraftCards({
                   {draftPayloadText(payload, 'assistant_prerequisite_draft_ids') !== '-' ? (
                     <span>
                       <Text type="secondary">前置草案</Text>
-                      <Text>{draftPayloadText(payload, 'assistant_prerequisite_draft_ids')}</Text>
+                      <Text>{draftPrerequisiteText(payload, draftDependencyLabels)}</Text>
                     </span>
                   ) : null}
                 </>
@@ -1965,7 +2016,7 @@ function AssistantActionDraftCards({
                   {draftPayloadText(payload, 'assistant_prerequisite_draft_ids') !== '-' ? (
                     <span>
                       <Text type="secondary">前置草案</Text>
-                      <Text>{draftPayloadText(payload, 'assistant_prerequisite_draft_ids')}</Text>
+                      <Text>{draftPrerequisiteText(payload, draftDependencyLabels)}</Text>
                     </span>
                   ) : null}
                 </>

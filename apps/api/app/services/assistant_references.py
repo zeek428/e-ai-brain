@@ -18,6 +18,14 @@ OPERATIONAL_REFERENCE_TYPES = {
     "scheduled_job",
     "scheduled_job_run",
 }
+OPERATIONAL_REFERENCE_PERMISSION_BY_TYPE = {
+    "ai_agent": "system.ai_capabilities.manage",
+    "ai_skill": "system.ai_capabilities.manage",
+    "plugin_action": "system.plugins.manage",
+    "plugin_connection": "system.plugins.manage",
+    "scheduled_job": "system.scheduled_jobs.manage",
+    "scheduled_job_run": "system.scheduled_jobs.manage",
+}
 REFERENCE_SOURCE_MODULES = {
     "ai_agent": "AI能力配置",
     "ai_skill": "AI能力配置",
@@ -198,20 +206,22 @@ def assistant_reference_candidates(
         ("code_review_report", code_reviews),
         ("knowledge_deposit", deposits),
     ]
-    if _user_can_reference_operational(user):
-        pools.extend(
-            [
-                ("scheduled_job", scheduled_jobs),
-                ("scheduled_job_run", scheduled_job_runs),
-                ("plugin_action", list(getattr(current_store, "plugin_actions", {}).values())),
-                (
-                    "plugin_connection",
-                    list(getattr(current_store, "plugin_connections", {}).values()),
-                ),
-                ("ai_agent", list(getattr(current_store, "ai_agents", {}).values())),
-                ("ai_skill", list(getattr(current_store, "ai_skills", {}).values())),
-            ]
-        )
+    operational_pools = [
+        ("scheduled_job", scheduled_jobs),
+        ("scheduled_job_run", scheduled_job_runs),
+        ("plugin_action", list(getattr(current_store, "plugin_actions", {}).values())),
+        (
+            "plugin_connection",
+            list(getattr(current_store, "plugin_connections", {}).values()),
+        ),
+        ("ai_agent", list(getattr(current_store, "ai_agents", {}).values())),
+        ("ai_skill", list(getattr(current_store, "ai_skills", {}).values())),
+    ]
+    pools.extend(
+        (entity_type, items)
+        for entity_type, items in operational_pools
+        if _user_can_reference_operational_type(user, entity_type)
+    )
     references: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     preferred_types = _assistant_reference_type_preferences(message)
@@ -261,8 +271,9 @@ def assistant_reference_candidates_response(
 ) -> dict[str, Any]:
     normalized_type = (reference_type or "").strip() or None
     normalized_limit = min(max(limit, 1), 20)
-    if normalized_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational(
+    if normalized_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational_type(
         user,
+        normalized_type,
     ):
         return {"items": [], "total": 0}
     if normalized_type == "knowledge_document":
@@ -443,8 +454,9 @@ def resolve_assistant_references(
             )
             continue
         entity_reference = _entity_reference_for_id(current_store, reference_type, reference_id)
-        if reference_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational(
+        if reference_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational_type(
             user,
+            reference_type,
         ):
             entity_reference = None
         if entity_reference is None:
@@ -1594,7 +1606,15 @@ def _scheduled_job_keyword_group_indexes(value: str) -> set[int]:
     }
 
 
-def _user_can_reference_operational(user: dict[str, Any] | None) -> bool:
+def _user_can_reference_operational_type(
+    user: dict[str, Any] | None,
+    reference_type: str,
+) -> bool:
     roles = set(user.get("roles") or []) if isinstance(user, dict) else set()
     permissions = set(user.get("permissions") or []) if isinstance(user, dict) else set()
-    return "admin" in roles or "system.admin" in permissions
+    required_permission = OPERATIONAL_REFERENCE_PERMISSION_BY_TYPE.get(reference_type)
+    return (
+        "admin" in roles
+        or "system.admin" in permissions
+        or (required_permission is not None and required_permission in permissions)
+    )

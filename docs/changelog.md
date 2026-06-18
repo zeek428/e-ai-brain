@@ -8,6 +8,8 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手 `@` 定时作业候选权限补齐：具备 `system.scheduled_jobs.manage` 的非 admin 用户也能引用并执行定时作业，同时保持插件和 AI 能力引用的独立权限边界。
+- AI 助手前置草案依赖展示优化：配置向导和回填提示会把 `assistant_prerequisite_draft_ids` / `wizard_steps.depends_on` 中的草案 ID 映射为同批草案标题，避免用户看到机器 ID。
 - AI 助手配置向导前置草案链继续补齐：邮件摘要缺邮箱连接/邮件收取动作时会生成“连接 -> 收取动作 -> 作业”草案链；线上日志异常分析缺可观测连接、日志查询动作、异常检测 Skill 或 AI角色时会生成完整前置草案链，并新增官方可观测平台插件和线上日志指标查询动作模板。
 - AI 助手已应用草案深链追踪补齐：`GET /api/assistant/action-drafts/{draft_id}` 返回公开动作运行 `result_run`，前端从 `/assistant?draft_id=...` 打开已确认草案时可恢复“已应用”、真实资源入口和“打开本次运行”链接。
 - AI 助手草案确认失败持久化：确认草案时若预检或领域执行器返回业务错误，服务端会把草案写入 `failed` 状态，创建 failed 动作运行并记录 `assistant_action_draft.failed` 审计，效果指标可统计真实失败草案。

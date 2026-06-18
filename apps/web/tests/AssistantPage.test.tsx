@@ -2820,6 +2820,130 @@ describe('AssistantPage', () => {
     );
   });
 
+  it('renders wizard prerequisite draft ids as readable draft titles', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/system/result-write-targets') {
+        return resultWriteTargetsResponse();
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_observability_prerequisites',
+              latency_ms: 143,
+              message: {
+                content: '我已生成线上日志异常分析配置草案链。',
+                id: 'assistant_message_observability_prerequisites',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'online_log_anomaly_setup_draft',
+                    items: [
+                      {
+                        action: 'create_plugin_connection',
+                        draft_id: 'assistant_draft_observability_plugin_connection',
+                        payload: {
+                          auth_type: 'api_key_header',
+                          endpoint_url: 'https://logs.example.com/api',
+                          environment: 'prod',
+                          plugin_id: 'plugin_standard_observability',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: '可观测平台连接',
+                      },
+                      {
+                        action: 'create_plugin_action',
+                        draft_id: 'assistant_draft_observability_online_log_action',
+                        payload: {
+                          action_type: 'http_request',
+                          code: 'query_online_log_metrics',
+                          plugin_id: 'plugin_standard_observability',
+                          result_mapping: { write_target: 'scheduled_job_result' },
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: '线上日志查询动作',
+                      },
+                      {
+                        action: 'create_scheduled_job',
+                        draft_id: 'assistant_draft_online_log_anomaly_analysis',
+                        payload: {
+                          assistant_prerequisite_draft_ids: [
+                            'assistant_draft_observability_plugin_connection',
+                            'assistant_draft_observability_online_log_action',
+                          ],
+                          execution_mode: 'ai_generated',
+                          job_type: 'online_log_ai_analysis',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        title: '线上日志异常分析',
+                        wizard_steps: [
+                          {
+                            depends_on: [
+                              'assistant_draft_observability_plugin_connection',
+                              'assistant_draft_observability_online_log_action',
+                            ],
+                            key: 'data_source',
+                            status: 'needs_prerequisite',
+                            summary: '需先确认可观测平台连接和线上日志查询动作',
+                            title: '数据来源',
+                          },
+                        ],
+                      },
+                    ],
+                    summary: {
+                      draft_count: 3,
+                      requires_confirmation: true,
+                      target: 'online_log_anomaly_setup',
+                    },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '请生成线上日志异常分析定时作业草案' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('我已生成线上日志异常分析配置草案链。')).toBeInTheDocument();
+    expect(screen.getByText('依赖：可观测平台连接、线上日志查询动作')).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        '依赖：assistant_draft_observability_plugin_connection、assistant_draft_observability_online_log_action',
+      ),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '生成数据来源前置草案' }));
+
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '为「线上日志异常分析」补齐「数据来源」前置配置草案。依赖：可观测平台连接、线上日志查询动作',
+    );
+  });
+
   it('renders assistant draft cards when only server_draft_id is present', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
@@ -4309,7 +4433,10 @@ describe('AssistantPage', () => {
     expect(screen.getByRole('link', { name: '应用到定时作业表单' })).toHaveAttribute('href', '/tasks/scheduled-jobs');
     expect(await screen.findByText('代码巡检报告')).toBeInTheDocument();
     expect(screen.getByText('前置草案')).toBeInTheDocument();
-    expect(screen.getByText('assistant_draft_github_plugin_connection、assistant_draft_github_plugin_action')).toBeInTheDocument();
+    expect(screen.getByText('GitHub API 连接、GitHub 代码巡检动作')).toBeInTheDocument();
+    expect(
+      screen.queryByText('assistant_draft_github_plugin_connection、assistant_draft_github_plugin_action'),
+    ).not.toBeInTheDocument();
   });
 
   it('renders a task creation guide and lets users choose a draft-first path', async () => {
