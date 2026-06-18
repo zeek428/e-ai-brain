@@ -1623,6 +1623,143 @@ def test_ai_assistant_chat_compares_run_with_previous_success(monkeypatch):
     ]
 
 
+def test_ai_assistant_chat_compares_referenced_scheduled_job_latest_failure_with_previous_success(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    seed_previous_successful_feedback_run()
+    app.state.store.scheduled_jobs["scheduled_job_order_sync"] = {
+        "agent_id": "ai_agent_feedback_ops",
+        "created_at": "2026-06-15T08:00:00+00:00",
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": "scheduled_job_order_sync",
+        "job_type": "order_sync",
+        "name": "订单同步定时作业",
+        "plugin_action_id": "plugin_action_feedback_write",
+        "product_id": None,
+        "schedule_type": "cron",
+        "skill_ids": [],
+        "source_system": "ai-assistant-test",
+        "status": "active",
+        "updated_at": "2026-06-15T08:00:00+00:00",
+    }
+    app.state.store.scheduled_job_runs["scheduled_job_run_order_sync_failed"] = {
+        "completed_at": "2026-06-15T08:05:00+00:00",
+        "duration_ms": 1800,
+        "error_message": "订单同步接口超时",
+        "id": "scheduled_job_run_order_sync_failed",
+        "records_imported": 0,
+        "result_summary": {
+            "execution_nodes": {
+                "data_connection": {
+                    "error_message": "upstream timeout",
+                    "status": "failed",
+                    "summary": "订单源接口超时。",
+                }
+            },
+            "records_imported": 0,
+        },
+        "scheduled_job_id": "scheduled_job_order_sync",
+        "started_at": "2026-06-15T08:03:00+00:00",
+        "status": "failed",
+        "trigger_type": "scheduler",
+        "updated_at": "2026-06-15T08:05:00+00:00",
+    }
+    app.state.store.scheduled_job_runs["scheduled_job_run_feedback_failed_older"] = {
+        "completed_at": "2026-06-13T09:35:00+00:00",
+        "duration_ms": 3900,
+        "error_message": "历史写入动作失败",
+        "id": "scheduled_job_run_feedback_failed_older",
+        "records_imported": 118,
+        "result_summary": {
+            "execution_nodes": {
+                "data_connection": {
+                    "status": "succeeded",
+                    "summary": "从 MaxCompute 读取 118 条反馈。",
+                },
+                "result_action": {
+                    "status": "failed",
+                    "summary": "历史写入反馈洞察表失败。",
+                    "write_target": "user_feedback_insights",
+                },
+            },
+            "records_imported": 118,
+        },
+        "scheduled_job_id": "scheduled_job_feedback_weekly",
+        "started_at": "2026-06-13T09:31:00+00:00",
+        "status": "failed",
+        "trigger_type": "scheduler",
+        "updated_at": "2026-06-13T09:35:00+00:00",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": (
+                                            "已限定到引用的定时作业，"
+                                            "对比最近失败运行和上次成功运行。"
+                                        ),
+                                        "suggestions": ["检查用户洞察表写入接口"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "这个定时作业和上次成功有什么不同？",
+            "references": [
+                {"id": "scheduled_job_feedback_weekly", "type": "scheduled_job"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    comparison = next(
+        result
+        for result in message["tool_results"]
+        if result["tool"] == "assistant.scheduled_job_run_comparison"
+    )
+    assert comparison["summary"] == {"baseline_found_count": 1, "comparison_count": 1}
+    item = comparison["items"][0]
+    assert item["current_run"]["id"] == "scheduled_job_run_feedback_failed"
+    assert item["baseline_run"]["id"] == "scheduled_job_run_feedback_success"
+    assert item["scheduled_job_id"] == "scheduled_job_feedback_weekly"
+    assert {reference["id"] for reference in comparison["references"]} == {
+        "scheduled_job_run_feedback_failed",
+        "scheduled_job_run_feedback_success",
+    }
+
+
 def test_ai_assistant_chat_generates_repair_action_draft_for_failed_run(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()

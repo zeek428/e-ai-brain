@@ -936,12 +936,13 @@ def _scheduled_job_run_comparison_tool(
     limit: int,
     references: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    referenced_run_ids = [
-        str(reference["id"])
-        for reference in references
-        if reference.get("type") == "scheduled_job_run" and reference.get("id")
-    ]
-    if not referenced_run_ids:
+    runs = context["scheduled_job_runs"]
+    candidate_runs = _scheduled_job_run_comparison_candidates(
+        runs,
+        limit=limit,
+        references=references,
+    )
+    if not candidate_runs:
         return {
             "intent": "scheduled_job_run_comparison",
             "items": [],
@@ -949,8 +950,6 @@ def _scheduled_job_run_comparison_tool(
             "summary": {"baseline_found_count": 0, "comparison_count": 0},
             "tool": "assistant.scheduled_job_run_comparison",
         }
-    runs = context["scheduled_job_runs"]
-    run_by_id = {str(run["id"]): run for run in runs if run.get("id") is not None}
     jobs_by_id = {
         str(job["id"]): job
         for job in context["scheduled_jobs"]
@@ -973,9 +972,9 @@ def _scheduled_job_run_comparison_tool(
     }
     items: list[dict[str, Any]] = []
     references_out: list[dict[str, Any]] = []
-    for run_id in referenced_run_ids[:limit]:
-        current_run = run_by_id.get(run_id)
-        if current_run is None:
+    for current_run in candidate_runs[:limit]:
+        run_id = str(current_run.get("id") or "")
+        if not run_id:
             continue
         baseline_run = _previous_successful_scheduled_job_run(runs, current_run)
         job = jobs_by_id.get(str(current_run.get("scheduled_job_id"))) or {}
@@ -1142,6 +1141,47 @@ def _referenced_or_latest_failed_runs(
             and str(run.get("scheduled_job_id")) in referenced_job_ids
         ][:limit]
     return [run for run in _latest(runs) if run.get("status") == "failed"][:limit]
+
+
+def _scheduled_job_run_comparison_candidates(
+    runs: list[dict[str, Any]],
+    *,
+    limit: int,
+    references: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    referenced_run_ids = [
+        str(reference["id"])
+        for reference in references
+        if reference.get("type") == "scheduled_job_run" and reference.get("id")
+    ]
+    if referenced_run_ids:
+        run_by_id = {str(run["id"]): run for run in runs if run.get("id") is not None}
+        return [run_by_id[run_id] for run_id in referenced_run_ids if run_id in run_by_id]
+
+    referenced_job_ids = _unique(
+        [
+            str(reference["id"])
+            for reference in references
+            if reference.get("type") == "scheduled_job" and reference.get("id")
+        ]
+    )
+    if not referenced_job_ids:
+        return []
+
+    latest_failed_by_job_id: dict[str, dict[str, Any]] = {}
+    for run in _latest(runs):
+        scheduled_job_id = str(run.get("scheduled_job_id") or "")
+        if (
+            run.get("status") == "failed"
+            and scheduled_job_id in referenced_job_ids
+            and scheduled_job_id not in latest_failed_by_job_id
+        ):
+            latest_failed_by_job_id[scheduled_job_id] = run
+    return [
+        latest_failed_by_job_id[job_id]
+        for job_id in referenced_job_ids
+        if job_id in latest_failed_by_job_id
+    ][:limit]
 
 
 def _repair_source_plugin_action(
