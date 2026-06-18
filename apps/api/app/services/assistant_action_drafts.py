@@ -192,7 +192,7 @@ def create_assistant_action_draft_response(
     )
     save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
     draft = refresh_assistant_action_draft_expiry(current_store, draft)
-    return public_assistant_action_draft(draft, current_store=current_store)
+    return public_assistant_action_draft(draft, current_store=current_store, user=user)
 
 
 def get_assistant_action_draft_response(
@@ -204,7 +204,7 @@ def get_assistant_action_draft_response(
     draft = get_assistant_action_draft(current_store, draft_id=draft_id)
     ensure_draft_access(draft, user=user)
     draft = refresh_assistant_action_draft_expiry(current_store, draft)
-    return public_assistant_action_draft(draft, current_store=current_store)
+    return public_assistant_action_draft(draft, current_store=current_store, user=user)
 
 
 def confirm_assistant_action_draft_response(
@@ -222,7 +222,7 @@ def confirm_assistant_action_draft_response(
     if draft.get("status") != "pending":
         raise api_error(409, "DRAFT_NOT_PENDING", "Assistant action draft is not pending")
     effective_draft = _draft_with_resolved_prerequisites(current_store, draft)
-    preview = assistant_action_draft_preview(current_store, effective_draft)
+    preview = assistant_action_draft_preview(current_store, effective_draft, user=user)
     if preview["validation"]["status"] == "blocked":
         _fail_assistant_action_draft(
             current_store,
@@ -307,7 +307,11 @@ def confirm_assistant_action_draft_response(
         audit_events=[audit_event],
     )
     return {
-        "draft": public_assistant_action_draft(draft, current_store=current_store),
+        "draft": public_assistant_action_draft(
+            draft,
+            current_store=current_store,
+            user=user,
+        ),
         "run": public_assistant_action_run(run),
     }
 
@@ -420,7 +424,7 @@ def cancel_assistant_action_draft_response(
         payload={"reason": draft.get("cancel_reason")},
     )
     save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
-    return public_assistant_action_draft(draft, current_store=current_store)
+    return public_assistant_action_draft(draft, current_store=current_store, user=user)
 
 
 def mark_assistant_action_draft_modified_response(
@@ -461,7 +465,7 @@ def mark_assistant_action_draft_modified_response(
         },
     )
     save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
-    return public_assistant_action_draft(draft, current_store=current_store)
+    return public_assistant_action_draft(draft, current_store=current_store, user=user)
 
 
 def persist_assistant_action_drafts_from_tool_results(
@@ -995,24 +999,34 @@ def _parse_draft_datetime(value: str | None) -> datetime | None:
 def assistant_action_draft_preview(
     current_store: Any,
     draft: dict[str, Any],
+    *,
+    user: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _sync_assistant_draft_reference_store(current_store)
     action = draft["action"]
     if action == "create_scheduled_job":
-        return _scheduled_job_draft_preview(current_store, draft)
+        return _with_action_permission_preview(
+            _scheduled_job_draft_preview(current_store, draft),
+            action=action,
+            user=user,
+        )
     if action == "create_plugin_connection":
-        return _generic_create_draft_preview(
-            draft,
-            diff_fields=[
-                ("name", "名称"),
-                ("plugin_id", "插件"),
-                ("endpoint_url", "Endpoint"),
-                ("environment", "环境"),
-                ("auth_type", "认证"),
-                ("status", "状态"),
-            ],
-            required_fields=["name", "plugin_id", "endpoint_url"],
-            resource_type="plugin_connection",
+        return _with_action_permission_preview(
+            _generic_create_draft_preview(
+                draft,
+                diff_fields=[
+                    ("name", "名称"),
+                    ("plugin_id", "插件"),
+                    ("endpoint_url", "Endpoint"),
+                    ("environment", "环境"),
+                    ("auth_type", "认证"),
+                    ("status", "状态"),
+                ],
+                required_fields=["name", "plugin_id", "endpoint_url"],
+                resource_type="plugin_connection",
+            ),
+            action=action,
+            user=user,
         )
     if action == "create_plugin_action":
         preview = _generic_create_draft_preview(
@@ -1031,22 +1045,30 @@ def assistant_action_draft_preview(
             resource_type="plugin_action",
         )
         _append_plugin_action_validation(current_store, draft, preview)
-        return preview
+        return _with_action_permission_preview(preview, action=action, user=user)
     if action == "create_rd_task":
-        return _rd_task_draft_preview(current_store, draft)
+        return _with_action_permission_preview(
+            _rd_task_draft_preview(current_store, draft),
+            action=action,
+            user=user,
+        )
     if action == "create_ai_skill":
-        return _generic_create_draft_preview(
-            draft,
-            diff_fields=[
-                ("name", "名称"),
-                ("code", "编码"),
-                ("prompt_template", "Prompt 模板"),
-                ("required_context", "上下文"),
-                ("risk_level", "风险等级"),
-                ("status", "状态"),
-            ],
-            required_fields=["name", "code", "prompt_template"],
-            resource_type="ai_skill",
+        return _with_action_permission_preview(
+            _generic_create_draft_preview(
+                draft,
+                diff_fields=[
+                    ("name", "名称"),
+                    ("code", "编码"),
+                    ("prompt_template", "Prompt 模板"),
+                    ("required_context", "上下文"),
+                    ("risk_level", "风险等级"),
+                    ("status", "状态"),
+                ],
+                required_fields=["name", "code", "prompt_template"],
+                resource_type="ai_skill",
+            ),
+            action=action,
+            user=user,
         )
     if action == "create_ai_agent":
         preview = _generic_create_draft_preview(
@@ -1064,25 +1086,33 @@ def assistant_action_draft_preview(
             resource_type="ai_agent",
         )
         _append_ai_agent_validation(current_store, draft, preview)
-        return preview
+        return _with_action_permission_preview(preview, action=action, user=user)
     if action == "create_analysis_draft":
-        return _generic_create_draft_preview(
-            draft,
-            diff_fields=[
-                ("title", "标题"),
-                ("analysis_type", "分析类型"),
-                ("source_module", "来源模块"),
-                ("summary", "摘要指标"),
-                ("findings", "风险/治理项"),
-            ],
-            required_fields=["title", "analysis_type"],
-            resource_type="assistant_analysis",
+        return _with_action_permission_preview(
+            _generic_create_draft_preview(
+                draft,
+                diff_fields=[
+                    ("title", "标题"),
+                    ("analysis_type", "分析类型"),
+                    ("source_module", "来源模块"),
+                    ("summary", "摘要指标"),
+                    ("findings", "风险/治理项"),
+                ],
+                required_fields=["title", "analysis_type"],
+                resource_type="assistant_analysis",
+            ),
+            action=action,
+            user=user,
         )
-    return _generic_create_draft_preview(
-        draft,
-        diff_fields=[],
-        required_fields=[],
-        resource_type=action,
+    return _with_action_permission_preview(
+        _generic_create_draft_preview(
+            draft,
+            diff_fields=[],
+            required_fields=[],
+            resource_type=action,
+        ),
+        action=action,
+        user=user,
     )
 
 
@@ -1358,6 +1388,64 @@ def _append_ai_agent_validation(
     _finalize_validation(preview["validation"])
 
 
+def _with_action_permission_preview(
+    preview: dict[str, Any],
+    *,
+    action: str,
+    user: dict[str, Any] | None,
+) -> dict[str, Any]:
+    _append_action_permission_validation(preview["validation"], action=action, user=user)
+    _finalize_validation(preview["validation"])
+    return preview
+
+
+def _append_action_permission_validation(
+    validation: dict[str, Any],
+    *,
+    action: str,
+    user: dict[str, Any] | None,
+) -> None:
+    if user is None:
+        return
+    if action in {"create_ai_agent", "create_ai_skill", "create_scheduled_job"}:
+        if not _user_has_permission(user, "system.scheduled_jobs.manage"):
+            _add_issue(
+                validation,
+                "permission",
+                "error",
+                "system.scheduled_jobs.manage is required to confirm this draft",
+            )
+        return
+    if action in {"create_plugin_action", "create_plugin_connection"}:
+        if "admin" not in set(user.get("roles") or []):
+            _add_issue(
+                validation,
+                "permission",
+                "error",
+                "admin role is required to confirm this draft",
+            )
+        return
+    if action == "create_rd_task":
+        roles = set(user.get("roles") or [])
+        if "admin" not in roles and not roles.intersection({"product_owner", "rd_owner"}):
+            _add_issue(
+                validation,
+                "permission",
+                "error",
+                "product_owner or rd_owner role is required to confirm this draft",
+            )
+
+
+def _user_has_permission(user: dict[str, Any], permission: str) -> bool:
+    roles = set(user.get("roles") or [])
+    permissions = set(user.get("permissions") or [])
+    return (
+        "admin" in roles
+        or "system.admin" in permissions
+        or permission in permissions
+    )
+
+
 def _generic_create_draft_preview(
     draft: dict[str, Any],
     *,
@@ -1574,6 +1662,7 @@ def public_assistant_action_draft(
     draft: dict[str, Any],
     *,
     current_store: Any,
+    user: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     draft = refresh_assistant_action_draft_expiry(current_store, draft)
     public = {
@@ -1604,7 +1693,11 @@ def public_assistant_action_draft(
     if result_run is not None:
         public["result_run"] = result_run
     preview_draft = _draft_with_resolved_prerequisites(current_store, draft)
-    public["preview"] = assistant_action_draft_preview(current_store, preview_draft)
+    public["preview"] = assistant_action_draft_preview(
+        current_store,
+        preview_draft,
+        user=user,
+    )
     return {key: value for key, value in public.items() if value is not None}
 
 

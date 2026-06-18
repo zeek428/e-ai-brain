@@ -2726,6 +2726,43 @@ def test_ai_assistant_scheduled_job_draft_precheck_blocks_invalid_cron_expressio
     assert confirm_response.json()["detail"]["code"] == "DRAFT_PRECHECK_FAILED"
 
 
+def test_ai_assistant_scheduled_job_draft_precheck_blocks_missing_manage_permission():
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "评审角色创建的看板刷新作业",
+                "schedule_type": "manual",
+            },
+            "risk_level": "medium",
+            "title": "创建看板刷新定时任务",
+        },
+        headers=headers,
+    )
+
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    validation = draft["preview"]["validation"]
+    assert validation["status"] == "blocked"
+    issues_by_field = {item["field"]: item for item in validation["issues"]}
+    assert issues_by_field["permission"]["severity"] == "error"
+    assert "system.scheduled_jobs.manage" in issues_by_field["permission"]["message"]
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 409
+    assert confirm_response.json()["detail"]["code"] == "DRAFT_PRECHECK_FAILED"
+
+
 def test_ai_assistant_action_draft_precheck_blocks_failed_plugin_connection():
     headers = auth_headers()
     app.state.store.reset()
