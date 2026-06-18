@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import app.api.routers.assistant as assistant_router
+import app.services.assistant_action_drafts as assistant_action_drafts_service
 import app.services.assistant_chat as assistant_chat_service
+from app.api.deps import api_error
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
 from app.main import app
@@ -1564,6 +1566,84 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
         "assistant_action_draft.created",
         "assistant_action_draft.confirmed",
     ]
+
+
+def test_ai_assistant_action_draft_confirm_failure_is_persisted(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "enabled": False,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "会确认失败的定时任务",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": "创建会确认失败的定时任务",
+        },
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    draft_id = draft_response.json()["data"]["id"]
+
+    def failing_create_scheduled_job_response(*, current_store, payload, user):
+        raise api_error(400, "SCHEDULED_JOB_INVALID", "模拟定时任务保存失败")
+
+    monkeypatch.setattr(
+        assistant_action_drafts_service,
+        "create_scheduled_job_response",
+        failing_create_scheduled_job_response,
+    )
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft_id}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 400
+    assert confirm_response.json()["detail"]["code"] == "SCHEDULED_JOB_INVALID"
+
+    detail_response = client.get(
+        f"/api/assistant/action-drafts/{draft_id}",
+        headers=headers,
+    )
+    assert detail_response.status_code == 200
+    draft = detail_response.json()["data"]
+    assert draft["status"] == "failed"
+    assert draft["metadata_json"]["failure"] == {
+        "code": "SCHEDULED_JOB_INVALID",
+        "message": "模拟定时任务保存失败",
+    }
+
+    run_id = draft["result_run_id"]
+    run = app.state.store.assistant_action_runs[run_id]
+    assert run["draft_id"] == draft_id
+    assert run["status"] == "failed"
+    assert run["error_code"] == "SCHEDULED_JOB_INVALID"
+    assert run["error_message"] == "模拟定时任务保存失败"
+
+    metrics = client.get("/api/assistant/metrics", headers=headers).json()["data"]
+    assert metrics["summary"]["draft_failed_count"] == 1
+    assert metrics["summary"]["action_run_failed_count"] == 1
+
+    audit_events = client.get(
+        "/api/audit/events?subject_type=assistant_action_draft",
+        headers=headers,
+    ).json()["data"]["items"]
+    failed_event = next(
+        item
+        for item in audit_events
+        if item["event_type"] == "assistant_action_draft.failed"
+    )
+    assert failed_event["subject_id"] == draft_id
+    assert failed_event["payload"]["error_code"] == "SCHEDULED_JOB_INVALID"
+    assert failed_event["payload"]["run_id"] == run_id
 
 
 def test_ai_assistant_run_once_draft_confirm_triggers_scheduled_job_run():

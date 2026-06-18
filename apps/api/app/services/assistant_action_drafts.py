@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.api.deps import api_error
 from app.services.plugins import (
     create_plugin_action_response,
@@ -199,13 +201,41 @@ def confirm_assistant_action_draft_response(
     effective_draft = _draft_with_resolved_prerequisites(current_store, draft)
     preview = assistant_action_draft_preview(current_store, effective_draft)
     if preview["validation"]["status"] == "blocked":
+        _fail_assistant_action_draft(
+            current_store,
+            draft=draft,
+            error_code="DRAFT_PRECHECK_FAILED",
+            error_message="Assistant action draft precheck failed",
+            user=user,
+        )
         raise api_error(409, "DRAFT_PRECHECK_FAILED", "Assistant action draft precheck failed")
 
-    result_type, result_id, result = execute_assistant_action_draft(
-        current_store,
-        draft=effective_draft,
-        user=user,
-    )
+    try:
+        result_type, result_id, result = execute_assistant_action_draft(
+            current_store,
+            draft=effective_draft,
+            user=user,
+        )
+    except HTTPException as exc:
+        error_code, error_message = _http_exception_code_and_message(exc)
+        _fail_assistant_action_draft(
+            current_store,
+            draft=draft,
+            error_code=error_code,
+            error_message=error_message,
+            user=user,
+        )
+        raise
+    except Exception as exc:
+        error_message = str(exc) or "Assistant action draft confirmation failed"
+        _fail_assistant_action_draft(
+            current_store,
+            draft=draft,
+            error_code="DRAFT_CONFIRM_FAILED",
+            error_message=error_message,
+            user=user,
+        )
+        raise api_error(500, "DRAFT_CONFIRM_FAILED", error_message) from exc
     now = now_iso()
     run = {
         "action": draft["action"],
@@ -257,6 +287,80 @@ def confirm_assistant_action_draft_response(
         "draft": public_assistant_action_draft(draft, current_store=current_store),
         "run": public_assistant_action_run(run),
     }
+
+
+def _fail_assistant_action_draft(
+    current_store: Any,
+    *,
+    draft: dict[str, Any],
+    error_code: str,
+    error_message: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    ensure_action_collections(current_store)
+    now = now_iso()
+    metadata_json = deepcopy(draft.get("metadata_json") or {})
+    metadata_json["failure"] = {
+        "code": error_code,
+        "message": error_message,
+    }
+    metadata_json["failed_at"] = now
+    metadata_json["failed_by"] = user["id"]
+    run = {
+        "action": draft["action"],
+        "created_at": now,
+        "draft_id": draft["id"],
+        "error_code": error_code,
+        "error_message": error_message,
+        "executed_by": user["id"],
+        "finished_at": now,
+        "id": current_store.new_id("assistant_action_run"),
+        "result": {},
+        "result_id": None,
+        "result_type": None,
+        "started_at": now,
+        "status": "failed",
+        "updated_at": now,
+    }
+    current_store.assistant_action_runs[run["id"]] = run
+    draft.update(
+        {
+            "metadata_json": metadata_json,
+            "result_run_id": run["id"],
+            "status": "failed",
+            "updated_at": now,
+        }
+    )
+    current_store.assistant_action_drafts[draft["id"]] = draft
+    audit_event = current_store.audit(
+        event_type="assistant_action_draft.failed",
+        actor_id=user["id"],
+        subject_type="assistant_action_draft",
+        subject_id=draft["id"],
+        payload={
+            "action": draft["action"],
+            "error_code": error_code,
+            "error_message": error_message,
+            "run_id": run["id"],
+        },
+    )
+    save_assistant_action_records(
+        current_store,
+        draft=draft,
+        run=run,
+        audit_events=[audit_event],
+    )
+    return draft
+
+
+def _http_exception_code_and_message(exc: HTTPException) -> tuple[str, str]:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        code = str(detail.get("code") or exc.status_code)
+        message = str(detail.get("message") or code)
+        return code, message
+    message = str(detail or "Assistant action draft confirmation failed")
+    return str(exc.status_code), message
 
 
 def cancel_assistant_action_draft_response(
