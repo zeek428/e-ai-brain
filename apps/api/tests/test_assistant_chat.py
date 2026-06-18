@@ -1737,6 +1737,143 @@ def test_ai_assistant_chat_generates_repair_action_draft_for_failed_run(monkeypa
     assert draft["preview"]["validation"]["status"] == "passed"
 
 
+def test_ai_assistant_chat_scopes_repair_draft_to_referenced_scheduled_job(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    app.state.store.plugin_actions["plugin_action_other_write"] = {
+        "action_type": "http_request",
+        "code": "other_write",
+        "created_at": "2026-06-15T09:00:00+00:00",
+        "id": "plugin_action_other_write",
+        "name": "其他写入动作",
+        "plugin_id": "plugin_http",
+        "request_config": {"method": "POST", "path": "/other/results"},
+        "status": "active",
+        "updated_at": "2026-06-15T09:00:00+00:00",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_other_failed"] = {
+        "created_at": "2026-06-15T09:00:00+00:00",
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": "scheduled_job_other_failed",
+        "job_type": "dashboard_snapshot_refresh",
+        "name": "其他失败定时作业",
+        "plugin_action_id": "plugin_action_other_write",
+        "product_id": None,
+        "schedule_type": "manual",
+        "source_system": "ai-assistant-test",
+        "status": "active",
+        "updated_at": "2026-06-15T09:00:00+00:00",
+    }
+    app.state.store.scheduled_job_runs["scheduled_job_run_other_failed"] = {
+        "completed_at": "2026-06-15T09:20:00+00:00",
+        "duration_ms": 3000,
+        "error_message": "其他作业失败",
+        "id": "scheduled_job_run_other_failed",
+        "result_summary": {
+            "execution_nodes": {
+                "result_action": {
+                    "plugin_invocation_log_id": "plugin_invocation_log_other_failed",
+                    "status": "failed",
+                    "summary": "其他作业写入失败。",
+                    "write_target": "dashboard_metric_snapshots",
+                },
+            }
+        },
+        "scheduled_job_id": "scheduled_job_other_failed",
+        "started_at": "2026-06-15T09:18:00+00:00",
+        "status": "failed",
+        "trigger_type": "manual",
+        "updated_at": "2026-06-15T09:20:00+00:00",
+    }
+    app.state.store.plugin_invocation_logs["plugin_invocation_log_other_failed"] = {
+        "action_id": "plugin_action_other_write",
+        "connection_id": "plugin_connection_other",
+        "created_at": "2026-06-15T09:19:58+00:00",
+        "duration_ms": 1200,
+        "error_message": "HTTP 500: other failed",
+        "id": "plugin_invocation_log_other_failed",
+        "plugin_id": "plugin_http",
+        "request_summary": {"method": "POST", "path": "/other/results"},
+        "response_summary": {"status_code": 500},
+        "scheduled_job_id": "scheduled_job_other_failed",
+        "scheduled_job_run_id": "scheduled_job_run_other_failed",
+        "status": "failed",
+        "trigger_type": "scheduled_job",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "已按所引用的定时作业生成修复草案。",
+                                        "suggestions": ["查看修复草案"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "这个定时作业失败怎么修？帮我生成修复草案",
+            "references": [
+                {"id": "scheduled_job_feedback_weekly", "type": "scheduled_job"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    draft_result = next(
+        result
+        for result in message["tool_results"]
+        if result["tool"] == "assistant.action_draft"
+        and result["intent"] == "scheduled_job_run_repair_draft"
+    )
+    assert draft_result["summary"]["source_run_id"] == "scheduled_job_run_feedback_failed"
+    draft_item = draft_result["items"][0]
+    assert draft_item["client_draft_id"] == (
+        "assistant_draft_repair_scheduled_job_run_feedback_failed"
+    )
+    assert draft_item["references"] == [
+        {
+            "id": "scheduled_job_run_feedback_failed",
+            "title": "每周反馈洞察定时作业 / failed",
+            "type": "scheduled_job_run",
+            "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
+        }
+    ]
+    assert draft_item["payload"]["description"] == (
+        "从失败运行 scheduled_job_run_feedback_failed 生成，"
+        "用于修复结果动作写入失败。"
+    )
+
+
 def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     headers = auth_headers()
     app.state.store.reset()

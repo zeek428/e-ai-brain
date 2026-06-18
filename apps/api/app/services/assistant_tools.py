@@ -1126,9 +1126,21 @@ def _referenced_or_latest_failed_runs(
         for reference in references
         if reference.get("type") == "scheduled_job_run" and reference.get("id")
     ]
+    referenced_job_ids = {
+        str(reference["id"])
+        for reference in references
+        if reference.get("type") == "scheduled_job" and reference.get("id")
+    }
     if referenced_run_ids:
         run_by_id = {str(run["id"]): run for run in runs if run.get("id") is not None}
         return [run_by_id[run_id] for run_id in referenced_run_ids if run_id in run_by_id]
+    if referenced_job_ids:
+        return [
+            run
+            for run in _latest(runs)
+            if run.get("status") == "failed"
+            and str(run.get("scheduled_job_id")) in referenced_job_ids
+        ][:limit]
     return [run for run in _latest(runs) if run.get("status") == "failed"][:limit]
 
 
