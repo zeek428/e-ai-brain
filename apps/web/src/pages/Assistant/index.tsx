@@ -710,6 +710,7 @@ function scheduledJobRunBaseItems(toolResults?: AssistantToolResult[]) {
         byRunId.set(id, {
           errorMessage: optionalText(item.error_message ?? summary.error_message),
           id,
+          progressText: optionalText(item.progress_text ?? summary.progress_text),
           recordsImported: optionalNumber(item.records_imported ?? summary.records_imported),
           scheduledJobId: optionalText(item.scheduled_job_id ?? summary.scheduled_job_id),
           status,
@@ -799,7 +800,7 @@ function scheduledJobRunItems(
       ...item,
       errorMessage: latestRun.error_message ?? item.errorMessage,
       latestStatusRefreshed,
-      progressText: scheduledJobRunExecutionProgressText(latestRun),
+      progressText: scheduledJobRunExecutionProgressText(latestRun) ?? item.progressText,
       recordsImported: latestRun.records_imported ?? item.recordsImported,
       scheduledJobId: latestRun.scheduled_job_id ?? item.scheduledJobId,
       status: latestStatus,

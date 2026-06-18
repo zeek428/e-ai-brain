@@ -542,9 +542,11 @@ def _deterministic_assistant_output(
     run_status = str(run.get("status") or "unknown")
     run_id = str(run.get("id") or "")
     if run_status in {"queued", "running"}:
+        progress_text = _scheduled_job_run_progress_text(run)
+        progress_suffix = f"{progress_text}。" if progress_text else ""
         answer = (
             f"已触发「{_scheduled_job_title(job, job_id)}」执行一次，"
-            f"运行记录 {run_id} 当前状态为 {run_status}。"
+            f"运行记录 {run_id} 当前状态为 {run_status}。{progress_suffix}"
         )
     elif run_status == "succeeded":
         answer = (
@@ -1646,33 +1648,62 @@ def _scheduled_job_run_tool_result(
             "tool": "assistant.scheduled_job_run",
         }
     run_reference = _scheduled_job_run_reference(job=job, job_id=job_id, run=run)
+    progress_text = _scheduled_job_run_progress_text(run)
+    item = {
+        "id": run_reference["id"],
+        "records_imported": int(run.get("records_imported") or 0),
+        "scheduled_job_id": job_id,
+        "status": str(run.get("status") or "unknown"),
+        "title": run_reference["title"],
+        "trigger_type": str(run.get("trigger_type") or "manual"),
+        "type": "scheduled_job_run",
+        "url": run_reference["url"],
+    }
+    if progress_text:
+        item["progress_text"] = progress_text
+    summary = {
+        "error_code": error_code,
+        "error_message": error_message,
+        "records_imported": int(run.get("records_imported") or 0),
+        "run_id": run_reference["id"],
+        "scheduled_job_id": job_id,
+        "scheduled_job_name": job_name,
+        "status": str(run.get("status") or "unknown"),
+        "trigger_type": str(run.get("trigger_type") or "manual"),
+    }
+    if progress_text:
+        summary["progress_text"] = progress_text
     return {
         "intent": "scheduled_job_run_once",
-        "items": [
-            {
-                "id": run_reference["id"],
-                "records_imported": int(run.get("records_imported") or 0),
-                "scheduled_job_id": job_id,
-                "status": str(run.get("status") or "unknown"),
-                "title": run_reference["title"],
-                "trigger_type": str(run.get("trigger_type") or "manual"),
-                "type": "scheduled_job_run",
-                "url": run_reference["url"],
-            }
-        ],
+        "items": [item],
         "references": [run_reference],
-        "summary": {
-            "error_code": error_code,
-            "error_message": error_message,
-            "records_imported": int(run.get("records_imported") or 0),
-            "run_id": run_reference["id"],
-            "scheduled_job_id": job_id,
-            "scheduled_job_name": job_name,
-            "status": str(run.get("status") or "unknown"),
-            "trigger_type": str(run.get("trigger_type") or "manual"),
-        },
+        "summary": summary,
         "tool": "assistant.scheduled_job_run",
     }
+
+
+def _scheduled_job_run_progress_text(run: dict[str, Any]) -> str | None:
+    result_summary = run.get("result_summary")
+    if not isinstance(result_summary, dict):
+        return None
+    execution_nodes = result_summary.get("execution_nodes")
+    if not isinstance(execution_nodes, dict):
+        return None
+    runner_node = execution_nodes.get("runner_execution")
+    if not isinstance(runner_node, dict):
+        return None
+    runner_status = str(runner_node.get("status") or "").strip()
+    if runner_status not in {"claimed", "queued", "running"}:
+        return None
+    executor_type = str(runner_node.get("executor_type") or "AI 执行器").strip()
+    runner_task_id = str(runner_node.get("runner_task_id") or "").strip()
+    status_labels = {
+        "claimed": "等待 AI 执行器开始执行",
+        "queued": "等待 AI 执行器接单",
+        "running": "AI 执行器执行中",
+    }
+    suffix = f"{executor_type} / {runner_task_id}" if runner_task_id else executor_type
+    return f"{status_labels[runner_status]}：{suffix}"
 
 
 def _merge_assistant_references(

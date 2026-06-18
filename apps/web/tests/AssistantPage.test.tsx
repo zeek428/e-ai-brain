@@ -1406,6 +1406,87 @@ describe('AssistantPage', () => {
     expect(screen.getByText('所需权限：system.scheduled_jobs.manage')).toBeInTheDocument();
   });
 
+  it('shows AI executor waiting progress for run-once commands', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_run_once_waiting_runner',
+              latency_ms: 9,
+              message: {
+                content:
+                  '已触发「提取每周用户反馈有价值信息」执行一次，运行记录 scheduled_job_run_waiting_runner 当前状态为 running。等待 AI 执行器接单：openclaw / ai_executor_task_feedback。',
+                id: 'assistant_message_run_once_waiting_runner',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_run_once',
+                    items: [
+                      {
+                        id: 'scheduled_job_run_waiting_runner',
+                        progress_text: '等待 AI 执行器接单：openclaw / ai_executor_task_feedback',
+                        records_imported: 0,
+                        scheduled_job_id: 'scheduled_job_feedback_weekly',
+                        status: 'running',
+                        title: '提取每周用户反馈有价值信息 / running',
+                        trigger_type: 'manual',
+                        type: 'scheduled_job_run',
+                        url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_waiting_runner',
+                      },
+                    ],
+                    summary: {
+                      progress_text: '等待 AI 执行器接单：openclaw / ai_executor_task_feedback',
+                      run_id: 'scheduled_job_run_waiting_runner',
+                      scheduled_job_id: 'scheduled_job_feedback_weekly',
+                      status: 'running',
+                    },
+                    tool: 'assistant.scheduled_job_run',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_feedback_weekly') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@提取每周用户反馈有价值信息 执行一次' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText(/已触发「提取每周用户反馈有价值信息」执行一次/)).toBeInTheDocument();
+    expect(screen.getByText('等待 AI 执行器接单：openclaw / ai_executor_task_feedback')).toBeInTheDocument();
+  });
+
   it('resolves @ scheduled job run-once commands when sent before candidates finish loading', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     const referenceRequestParams: URLSearchParams[] = [];

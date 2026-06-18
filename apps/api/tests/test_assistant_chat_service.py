@@ -496,3 +496,115 @@ def test_assistant_chat_returns_running_record_for_long_ai_job_once_without_wait
     assert response["message"]["tool_results"][0]["summary"]["status"] == "running"
     release.set()
     assert completed.wait(timeout=1)
+
+
+def test_assistant_chat_explains_run_once_waiting_for_ai_executor(monkeypatch):
+    store = MemoryStore()
+    store.scheduled_jobs["scheduled_job_feedback_insight"] = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": "scheduled_job_feedback_insight",
+        "interval_seconds": None,
+        "job_type": "dashboard_snapshot_refresh",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "name": "提取每周用户反馈有价值信息",
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+
+    def fake_run_scheduled_job_response(
+        *,
+        current_store,
+        job_id,
+        source_run_id,
+        trigger_type,
+        user,
+    ):
+        del source_run_id, user
+        run = {
+            "collector_run_id": "collector_run_feedback_insight",
+            "config_snapshot": {},
+            "created_at": "2026-06-16T08:01:00+00:00",
+            "error_code": None,
+            "error_message": None,
+            "finished_at": None,
+            "id": "scheduled_job_run_feedback_waiting_runner",
+            "plugin_invocation_log_id": "plugin_invocation_log_feedback",
+            "records_imported": 0,
+            "result_summary": {
+                "execution_nodes": {
+                    "result_action": {
+                        "label": "结果动作反馈内容",
+                        "status": "waiting_runner",
+                    },
+                    "runner_execution": {
+                        "executor_type": "openclaw",
+                        "label": "AI 执行器执行内容",
+                        "runner_task_id": "ai_executor_task_feedback",
+                        "status": "queued",
+                    },
+                }
+            },
+            "scheduled_for": "2026-06-16T08:01:00+00:00",
+            "scheduled_job_id": job_id,
+            "source_run_id": None,
+            "started_at": "2026-06-16T08:01:00+00:00",
+            "status": "running",
+            "trigger_type": trigger_type,
+            "updated_at": "2026-06-16T08:01:00+00:00",
+        }
+        current_store.scheduled_job_runs[run["id"]] = run
+        return run
+
+    monkeypatch.setattr(
+        assistant_chat_service,
+        "run_scheduled_job_response",
+        fake_run_scheduled_job_response,
+    )
+
+    response = assistant_chat_service.assistant_chat_response(
+        store,
+        model_gateway_api_key="",
+        model_gateway_base_url="",
+        model_gateway_default_chat_model="",
+        model_gateway_status="not_configured",
+        payload=AssistantChatRequest(
+            message="@提取每周用户反馈有价值信息 执行一次",
+        ),
+        user={"id": "user_admin", "roles": ["admin"]},
+    )
+
+    assert "已触发" in response["message"]["content"]
+    assert "等待 AI 执行器" in response["message"]["content"]
+    run_item = response["message"]["tool_results"][0]["items"][0]
+    assert run_item["progress_text"] == (
+        "等待 AI 执行器接单：openclaw / ai_executor_task_feedback"
+    )
+    assert response["message"]["tool_results"][0]["summary"]["progress_text"] == (
+        "等待 AI 执行器接单：openclaw / ai_executor_task_feedback"
+    )
