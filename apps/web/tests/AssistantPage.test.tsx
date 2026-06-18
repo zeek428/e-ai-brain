@@ -2146,7 +2146,7 @@ describe('AssistantPage', () => {
                         stages: [
                           {
                             error_message: null,
-                            log_id: null,
+                            log_id: 'plugin_invocation_log_feedback_fetch',
                             stage: 'data_connection',
                             status: 'succeeded',
                             summary: '从 MaxCompute 读取 128 条反馈。',
@@ -2211,6 +2211,7 @@ describe('AssistantPage', () => {
     expect(screen.getByText('AI处理是否成功：成功')).toBeInTheDocument();
     expect(screen.getByText('结果动作是否写入成功：失败')).toBeInTheDocument();
     expect(screen.getByText('写入反馈洞察表失败。')).toBeInTheDocument();
+    expect(screen.getByText('关联日志：plugin_invocation_log_feedback_fetch')).toBeInTheDocument();
     expect(screen.getByText('关联日志：model_gateway_log_feedback_failed')).toBeInTheDocument();
     expect(screen.getByText('关联日志：plugin_invocation_log_feedback_failed')).toBeInTheDocument();
     expect(screen.getByText('写入目标：用户洞察表')).toBeInTheDocument();

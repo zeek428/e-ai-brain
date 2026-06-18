@@ -1486,6 +1486,8 @@ def _diagnostic_log_id(
 ) -> str | None:
     if stage_name == "ai_processing":
         return node.get("model_gateway_log_id") or node.get("log_id")
+    if stage_name == "data_connection":
+        return node.get("plugin_invocation_log_id") or node.get("log_id")
     if stage_name == "result_action":
         return (
             node.get("plugin_invocation_log_id")

@@ -1419,6 +1419,88 @@ def test_ai_assistant_chat_returns_scheduled_job_run_diagnostic(monkeypatch):
     ]
 
 
+def test_ai_assistant_run_diagnostic_keeps_data_connection_plugin_log(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    failed_run = app.state.store.scheduled_job_runs["scheduled_job_run_feedback_failed"]
+    failed_run["result_summary"]["execution_nodes"]["data_connection"][
+        "plugin_invocation_log_id"
+    ] = "plugin_invocation_log_feedback_fetch"
+    app.state.store.plugin_invocation_logs["plugin_invocation_log_feedback_fetch"] = {
+        "action_id": "plugin_action_feedback_fetch",
+        "connection_id": "plugin_connection_maxcompute",
+        "created_at": "2026-06-14T09:31:20+00:00",
+        "duration_ms": 720,
+        "error_message": None,
+        "id": "plugin_invocation_log_feedback_fetch",
+        "plugin_id": "plugin_http",
+        "request_summary": {"method": "GET", "path": "/feedback/raw"},
+        "response_summary": {"status_code": 200},
+        "scheduled_job_id": "scheduled_job_feedback_weekly",
+        "scheduled_job_run_id": "scheduled_job_run_feedback_failed",
+        "status": "succeeded",
+        "trigger_type": "scheduled_job",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "这次失败发生在结果动作写入阶段。",
+                                        "suggestions": ["查看数据连接和结果动作日志"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "为什么这次任务失败？",
+            "references": [
+                {"id": "scheduled_job_run_feedback_failed", "type": "scheduled_job_run"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    diagnostic = next(
+        result
+        for result in response.json()["data"]["message"]["tool_results"]
+        if result["tool"] == "assistant.scheduled_job_diagnostic"
+    )
+    stages = {
+        stage["stage"]: stage
+        for stage in diagnostic["items"][0]["stages"]
+    }
+    assert stages["data_connection"]["log_id"] == "plugin_invocation_log_feedback_fetch"
+    assert stages["result_action"]["log_id"] == "plugin_invocation_log_feedback_failed"
+
+
 def test_ai_assistant_chat_scopes_diagnostic_to_referenced_scheduled_job(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
