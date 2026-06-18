@@ -937,7 +937,11 @@ function activeMentionQuery(value: string) {
   if (tail.length > 0 && /^\s/.test(tail)) {
     return undefined;
   }
-  return tail.split(/\s+/)[0] ?? '';
+  const query = tail.split(/\s+/)[0] ?? '';
+  if (!scheduledJobRunOnceRequested(value)) {
+    return query;
+  }
+  return trimRunOnceCommandFromMentionQuery(query);
 }
 
 function uniqueScheduledJobReferenceCandidate(references: AssistantReference[]) {
@@ -948,6 +952,18 @@ function uniqueScheduledJobReferenceCandidate(references: AssistantReference[]) 
 function scheduledJobRunOnceRequested(value: string) {
   const normalized = value.toLowerCase();
   return scheduledJobRunOnceKeywords.some((keyword) => normalized.includes(keyword));
+}
+
+function trimRunOnceCommandFromMentionQuery(query: string) {
+  const normalizedQuery = query.toLowerCase();
+  let endIndex = query.length;
+  scheduledJobRunOnceKeywords.forEach((keyword) => {
+    const keywordIndex = normalizedQuery.indexOf(keyword);
+    if (keywordIndex >= 0) {
+      endIndex = Math.min(endIndex, keywordIndex);
+    }
+  });
+  return query.slice(0, endIndex).trim().replace(/[，,。；;：:]+$/u, '');
 }
 
 function mergeReferences(...referenceLists: AssistantReference[][]) {
