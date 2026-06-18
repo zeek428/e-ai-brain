@@ -251,6 +251,8 @@ const queryReferenceTypes = new Set([
   'ai_task',
   'knowledge_chunk',
   'knowledge_document',
+  'knowledge_folder',
+  'knowledge_space',
   'plugin_action',
   'plugin_connection',
   'requirement',

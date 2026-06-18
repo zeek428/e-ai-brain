@@ -2099,6 +2099,102 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('preselects knowledge space references from route query parameters', async () => {
+    let chatRequestBody: Record<string, unknown> | undefined;
+    window.history.pushState(
+      {},
+      '',
+      '/assistant?reference_type=knowledge_space&reference_id=knowledge_space_support&prompt=%E6%80%BB%E7%BB%93%E8%BF%99%E4%B8%AA%E7%9F%A5%E8%AF%86%E7%A9%BA%E9%97%B4',
+    );
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        expect(init?.method ?? 'GET').toBe('GET');
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('knowledge_space_support');
+        expect(params.get('type')).toBe('knowledge_space');
+        expect(params.get('limit')).toBe('1');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  chunk_count: 12,
+                  document_count: 3,
+                  id: 'knowledge_space_support',
+                  permission_label: '可引用',
+                  source_module: '知识库',
+                  summary: '支付与订单支持知识空间。3 篇可检索知识文档，12 个知识 chunk 可按权限注入。',
+                  title: '支付支持知识空间',
+                  type: 'knowledge_space',
+                  updated_at: '2026-06-14T08:30:00+00:00',
+                  url: '/knowledge/documents?knowledge_space_id=knowledge_space_support',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        expect(init?.method).toBe('POST');
+        chatRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_knowledge_space_route_reference',
+              latency_ms: 120,
+              message: {
+                content: '已基于支付支持知识空间总结上下文。',
+                id: 'assistant_message_knowledge_space_route_reference',
+                references: [
+                  {
+                    id: 'knowledge_space_support',
+                    title: '支付支持知识空间',
+                    type: 'knowledge_space',
+                    url: '/knowledge/documents?knowledge_space_id=knowledge_space_support',
+                  },
+                ],
+                role: 'assistant',
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const currentContext = await screen.findByLabelText('本次上下文');
+    expect(within(currentContext).getByText('已从链接带入知识空间：支付支持知识空间')).toBeInTheDocument();
+    expect(within(currentContext).getByText('知识空间')).toBeInTheDocument();
+    expect(
+      within(currentContext).getAllByText(/最多 8 个知识 chunk 将按权限注入模型/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('总结这个知识空间');
+
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('已基于支付支持知识空间总结上下文。')).toBeInTheDocument();
+    expect(chatRequestBody).toMatchObject({
+      message: '总结这个知识空间',
+      references: [{ id: 'knowledge_space_support', type: 'knowledge_space' }],
+    });
+  });
+
   it('keeps route reference resolution status visible when the linked context is missing', async () => {
     window.history.pushState(
       {},
