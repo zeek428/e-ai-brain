@@ -95,7 +95,7 @@ TASK_CREATION_GUIDE_ITEMS = [
         "prompt": "我要新增研发任务，请先让我 @需求 后生成产品详细设计任务草案",
         "title": "研发任务",
         "type": "rd_task",
-        "wizard_steps": ["选择需求", "产品/版本", "任务类型", "确认创建"],
+        "wizard_steps": TASK_CREATION_WIZARD_STEPS,
     },
     {
         "dependencies": ["数据连接", "AI能力", "结果动作"],
@@ -113,7 +113,7 @@ TASK_CREATION_GUIDE_ITEMS = [
         "prompt": "帮我新增插件动作，先生成可确认的动作草案",
         "title": "插件动作",
         "type": "plugin_action",
-        "wizard_steps": ["插件", "连接", "请求配置", "结果映射", "确认创建"],
+        "wizard_steps": TASK_CREATION_WIZARD_STEPS,
     },
     {
         "dependencies": ["GitHub/GitLab 连接", "代码巡检动作"],

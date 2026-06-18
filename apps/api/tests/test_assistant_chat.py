@@ -3902,6 +3902,10 @@ def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeyp
         "code_inspection",
         "feedback_insight",
     ]
+    assert all(
+        item["wizard_steps"] == guide["summary"]["wizard_steps"]
+        for item in guide["items"]
+    )
     assert guide["items"][3]["draft_action"] == "create_scheduled_job"
     assert guide["items"][3]["dependencies"] == ["GitHub/GitLab 连接", "代码巡检动作"]
     assert payload["suggestions"] == [
@@ -3983,6 +3987,14 @@ def test_ai_assistant_chat_generates_and_confirms_rd_task_draft_from_requirement
     assert draft_item["preview"]["target"]["resource_type"] == "ai_task"
     assert draft_item["preview"]["validation"]["status"] == "passed"
     assert draft_item["status"] == "pending"
+    assert [step["title"] for step in draft_item["wizard_steps"]] == [
+        "数据来源",
+        "AI处理",
+        "结果动作",
+        "调度策略",
+        "确认执行",
+    ]
+    assert draft_item["wizard_steps"][3]["status"] == "skipped"
 
     confirm_response = client.post(
         f"/api/assistant/action-drafts/{draft_item['draft_id']}/confirm",

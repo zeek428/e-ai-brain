@@ -39,6 +39,7 @@ class AssistantDraftBuilder:
         )
         requirement_id = requirement.get("id") if requirement else None
         requirement_title = requirement.get("title") if requirement else None
+        product_version_summary = _rd_task_product_version_summary(product, version)
         payload = {
             "input": {
                 "acceptance_criteria": [],
@@ -67,31 +68,42 @@ class AssistantDraftBuilder:
             "wizard_steps": [
                 {
                     "depends_on": [],
-                    "key": "requirement",
-                    "status": "ready" if requirement_id else "blocked",
-                    "summary": requirement_title or "请先 @ 一个已规划需求",
-                    "title": "选择需求",
+                    "key": "data_source",
+                    "status": "ready" if requirement_id and product and version else "blocked",
+                    "summary": (
+                        f"{requirement_title} · {product_version_summary}"
+                        if requirement_title
+                        else "请先 @ 一个已规划需求"
+                    ),
+                    "title": "数据来源",
                 },
                 {
-                    "depends_on": ["requirement"],
-                    "key": "product_version",
-                    "status": "ready" if product and version else "blocked",
-                    "summary": _rd_task_product_version_summary(product, version),
-                    "title": "产品/版本",
+                    "depends_on": ["data_source"],
+                    "key": "ai_processing",
+                    "status": "ready" if requirement_id and product and version else "blocked",
+                    "summary": "生成产品详细设计 AI 研发任务草案",
+                    "title": "AI处理",
                 },
                 {
-                    "depends_on": ["requirement"],
-                    "key": "task_type",
-                    "status": "ready",
-                    "summary": "产品详细设计",
-                    "title": "任务类型",
+                    "depends_on": ["ai_processing"],
+                    "key": "result_action",
+                    "status": "ready" if requirement_id and product and version else "blocked",
+                    "summary": "创建 AI 研发任务并推进需求状态",
+                    "title": "结果动作",
                 },
                 {
-                    "depends_on": ["requirement", "product_version", "task_type"],
+                    "depends_on": [],
+                    "key": "schedule",
+                    "status": "skipped",
+                    "summary": "研发任务创建为一次性确认动作，不创建定时调度",
+                    "title": "调度策略",
+                },
+                {
+                    "depends_on": ["data_source", "ai_processing", "result_action"],
                     "key": "confirmation",
                     "status": "pending",
                     "summary": "确认后创建 AI 研发任务并更新需求状态",
-                    "title": "确认创建",
+                    "title": "确认执行",
                 },
             ],
         }
