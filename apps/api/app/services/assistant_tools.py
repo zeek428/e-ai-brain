@@ -37,6 +37,8 @@ def assistant_tool_results(
             results.append(_plugin_connection_diagnostic_tool(context, limit=limit))
         elif intent == "plugin_action_draft":
             results.append(draft_builder.plugin_action_draft(message=message))
+        elif intent == "ai_capability_draft":
+            results.append(draft_builder.ai_capability_draft(message=message))
         elif intent == "code_inspection_job_draft":
             results.append(draft_builder.code_inspection_job_draft(message=message))
         elif intent == "email_digest_job_draft":
@@ -181,6 +183,8 @@ def _assistant_tool_intents(
         intents.append("plugin_connection_diagnostic")
     if _plugin_action_draft_requested(normalized):
         intents.append("plugin_action_draft")
+    if _ai_capability_draft_requested(normalized):
+        intents.append("ai_capability_draft")
     if _scheduled_job_draft_requested(normalized):
         if _code_inspection_draft_requested(normalized):
             intents.append("code_inspection_job_draft")
@@ -372,6 +376,35 @@ def _online_log_anomaly_draft_requested(normalized_message: str) -> bool:
             "online_log",
             "log anomaly",
         )
+    )
+
+
+def _ai_capability_draft_requested(normalized_message: str) -> bool:
+    has_create_intent = any(
+        keyword in normalized_message
+        for keyword in ("创建", "新增", "配置", "生成", "新建", "create", "draft")
+    )
+    has_ai_capability = any(
+        keyword in normalized_message
+        for keyword in (
+            "ai 能力",
+            "ai能力",
+            "ai 角色",
+            "ai角色",
+            "模型能力",
+            "智能体",
+            "skill",
+            "agent",
+        )
+    )
+    has_supported_scenario = _code_inspection_draft_requested(
+        normalized_message
+    ) or _online_log_anomaly_draft_requested(normalized_message)
+    return (
+        has_create_intent
+        and has_ai_capability
+        and has_supported_scenario
+        and not _scheduled_job_draft_requested(normalized_message)
     )
 
 

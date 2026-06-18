@@ -3613,6 +3613,62 @@ def test_ai_assistant_chat_generates_ai_capability_prerequisites_for_ai_code_ins
     ]
 
 
+def test_ai_assistant_chat_generates_ai_capability_drafts_directly(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    now = "2026-06-18T08:00:00+00:00"
+    app.state.store.model_gateway_configs["model_gateway_default"] = {
+        "api_key_secret_ref": "env:MODEL_GATEWAY_API_KEY",
+        "base_url": "https://model.example.test/v1",
+        "chat_model": "gpt-4.1-mini",
+        "created_at": now,
+        "created_by": "user_admin",
+        "id": "model_gateway_default",
+        "name": "默认模型网关",
+        "provider": "openai_compatible",
+        "status": "active",
+        "updated_at": now,
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("AI capability draft generation should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "帮我新增代码巡检 AI 能力配置草案"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["model"] == "assistant-deterministic"
+    message = payload["message"]
+    assert "AI 能力草案" in message["content"]
+    draft_result = message["tool_results"][0]
+    assert draft_result["tool"] == "assistant.action_draft"
+    assert draft_result["intent"] == "ai_capability_draft"
+    assert draft_result["summary"] == {
+        "draft_count": 2,
+        "scenario": "code_inspection",
+        "target": "ai_capabilities",
+    }
+    skill_item, agent_item = draft_result["items"]
+    assert skill_item["action"] == "create_ai_skill"
+    assert skill_item["client_draft_id"] == "assistant_draft_code_inspection_ai_skill"
+    assert skill_item["server_draft_id"] in app.state.store.assistant_action_drafts
+    assert skill_item["status"] == "pending"
+    assert agent_item["action"] == "create_ai_agent"
+    assert agent_item["client_draft_id"] == "assistant_draft_code_inspection_ai_agent"
+    assert agent_item["server_draft_id"] in app.state.store.assistant_action_drafts
+    assert agent_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        "assistant_draft_code_inspection_ai_skill"
+    ]
+    assert agent_item["payload"]["model_gateway_config_id"] == "model_gateway_default"
+
+
 def test_ai_assistant_generated_ai_code_inspection_drafts_confirm_in_order(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()

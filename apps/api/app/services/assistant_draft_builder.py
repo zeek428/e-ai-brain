@@ -176,6 +176,42 @@ class AssistantDraftBuilder:
             "tool": "assistant.action_draft",
         }
 
+    def ai_capability_draft(self, *, message: str) -> dict[str, Any]:
+        scenario = self._ai_capability_scenario(message.lower())
+        model_gateway = _first_active(
+            self.context["model_gateway_configs"],
+            predicate=lambda item: item.get("is_default") is True,
+        ) or _first_active(self.context["model_gateway_configs"])
+        skill_item = self._ai_skill_draft_item(scenario)
+        agent_item = self._ai_agent_draft_item(
+            scenario,
+            default_skill_ids=[],
+            model_gateway_config_id=model_gateway.get("id") if model_gateway else None,
+            prerequisite_draft_ids=[skill_item["draft_id"]],
+        )
+        items = [skill_item, agent_item]
+        return {
+            "intent": "ai_capability_draft",
+            "items": items,
+            "references": _references(
+                "assistant_action_draft",
+                [
+                    {
+                        "id": draft_item["draft_id"],
+                        "title": draft_item["title"],
+                        "url": f"/assistant?draft_id={draft_item['draft_id']}",
+                    }
+                    for draft_item in items
+                ],
+            ),
+            "summary": {
+                "draft_count": len(items),
+                "scenario": scenario,
+                "target": "ai_capabilities",
+            },
+            "tool": "assistant.action_draft",
+        }
+
     def scheduled_job_draft(self) -> dict[str, Any]:
         template = scheduled_job_template_by_code("weekly_feedback_insight") or {}
         defaults = _template_payload_defaults(template)
@@ -874,6 +910,22 @@ class AssistantDraftBuilder:
         if _find_plugin_by_code(self.context["integration_plugins"], "github"):
             return "github"
         return "gitlab"
+
+    @staticmethod
+    def _ai_capability_scenario(normalized_message: str) -> str:
+        if any(
+            keyword in normalized_message
+            for keyword in (
+                "online_log",
+                "online log",
+                "log anomaly",
+                "线上日志",
+                "日志异常",
+                "日志分析",
+            )
+        ):
+            return "online_log_anomaly"
+        return "code_inspection"
 
     @staticmethod
     def _plugin_connection_draft_item(scenario: str, *, plugin_id: str) -> dict[str, Any]:

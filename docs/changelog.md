@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手直接生成 AI 能力草案：用户发送“新增代码巡检 AI 能力配置草案”等请求时，不再落到模型网关，而是确定性返回 Skill 和 AI角色服务端草案。
 - AI 助手知识负责人角色化入口：`knowledge_owner` 进入助手时展示知识库巡检、知识沉淀和知识权限快捷任务，点击仅回填输入框，便于继续生成知识库巡检草案或排查知识权限风险。
 - AI 助手 `@` 定时作业候选权限补齐：具备 `system.scheduled_jobs.manage` 的非 admin 用户也能引用并执行定时作业，同时保持插件和 AI 能力引用的独立权限边界。
 - AI 助手前置草案依赖展示优化：配置向导和回填提示会把 `assistant_prerequisite_draft_ids` / `wizard_steps.depends_on` 中的草案 ID 映射为同批草案标题，避免用户看到机器 ID。

@@ -626,6 +626,8 @@ def _deterministic_action_draft_output(
 
 def _action_draft_answer(draft_results: list[dict[str, Any]]) -> str:
     draft_count = sum(len(result.get("items") or []) for result in draft_results)
+    if any(result.get("intent") == "ai_capability_draft" for result in draft_results):
+        return "我已生成 AI 能力草案，确认前不会写入真实 Skill 或 AI角色配置。"
     if draft_count <= 1:
         return "我已生成可确认的配置草案，确认前不会写入真实配置。"
     return f"我已生成 {draft_count} 个可确认的配置草案，并标明前置依赖关系。"
