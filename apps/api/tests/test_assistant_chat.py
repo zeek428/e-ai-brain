@@ -2079,6 +2079,102 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
     ]
 
 
+def test_ai_assistant_ai_capability_draft_can_be_confirmed_by_ai_capability_manager():
+    app.state.store.reset()
+    user = {
+        "id": "user_ai_capability_manager",
+        "permissions": ["system.ai_capabilities.manage"],
+        "roles": [],
+    }
+
+    draft = assistant_action_drafts_service.create_assistant_action_draft_response(
+        current_store=app.state.store,
+        payload=SimpleNamespace(
+            action="create_ai_skill",
+            client_draft_id=None,
+            metadata_json={},
+            payload={
+                "allowed_tools": [],
+                "code": "feedback_signal_extract",
+                "description": "提取用户反馈中的高价值信号。",
+                "input_schema": {},
+                "name": "反馈价值信号提取",
+                "output_schema": {},
+                "prompt_template": "提取用户反馈中的需求、缺陷和风险信号。",
+                "required_context": [],
+                "requires_human_review": False,
+                "risk_level": "medium",
+                "status": "active",
+                "version": "1.0.0",
+            },
+            risk_level="medium",
+            source_message_id=None,
+            title="创建反馈价值信号 Skill",
+        ),
+        user=user,
+    )
+
+    assert draft["preview"]["validation"]["status"] == "passed"
+
+    confirmed = assistant_action_drafts_service.confirm_assistant_action_draft_response(
+        current_store=app.state.store,
+        draft_id=draft["id"],
+        user=user,
+    )
+
+    assert confirmed["draft"]["status"] == "confirmed"
+    assert confirmed["run"]["result_type"] == "ai_skill"
+    assert confirmed["run"]["result"]["code"] == "feedback_signal_extract"
+    assert confirmed["run"]["result"]["id"] in app.state.store.ai_skills
+
+
+def test_ai_assistant_ai_agent_draft_can_be_confirmed_by_ai_capability_manager():
+    app.state.store.reset()
+    user = {
+        "id": "user_ai_capability_manager",
+        "permissions": ["system.ai_capabilities.manage"],
+        "roles": [],
+    }
+
+    draft = assistant_action_drafts_service.create_assistant_action_draft_response(
+        current_store=app.state.store,
+        payload=SimpleNamespace(
+            action="create_ai_agent",
+            client_draft_id=None,
+            metadata_json={},
+            payload={
+                "brain_app_id": "rd_brain",
+                "code": "feedback_agent",
+                "default_skill_ids": [],
+                "description": "负责用户反馈分析。",
+                "execution_policy": {},
+                "model_gateway_config_id": None,
+                "name": "反馈洞察 AI 角色",
+                "status": "active",
+                "system_prompt": "你负责把用户反馈归纳为可行动洞察。",
+                "tool_policy": {},
+            },
+            risk_level="medium",
+            source_message_id=None,
+            title="创建反馈洞察 AI 角色",
+        ),
+        user=user,
+    )
+
+    assert draft["preview"]["validation"]["status"] == "passed"
+
+    confirmed = assistant_action_drafts_service.confirm_assistant_action_draft_response(
+        current_store=app.state.store,
+        draft_id=draft["id"],
+        user=user,
+    )
+
+    assert confirmed["draft"]["status"] == "confirmed"
+    assert confirmed["run"]["result_type"] == "ai_agent"
+    assert confirmed["run"]["result"]["code"] == "feedback_agent"
+    assert confirmed["run"]["result"]["id"] in app.state.store.ai_agents
+
+
 def test_ai_assistant_action_draft_confirm_failure_is_persisted(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()

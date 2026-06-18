@@ -1407,7 +1407,16 @@ def _append_action_permission_validation(
 ) -> None:
     if user is None:
         return
-    if action in {"create_ai_agent", "create_ai_skill", "create_scheduled_job"}:
+    if action in {"create_ai_agent", "create_ai_skill"}:
+        if not _user_has_permission(user, "system.ai_capabilities.manage"):
+            _add_issue(
+                validation,
+                "permission",
+                "error",
+                "system.ai_capabilities.manage is required to confirm this draft",
+            )
+        return
+    if action == "create_scheduled_job":
         if not _user_has_permission(user, "system.scheduled_jobs.manage"):
             _add_issue(
                 validation,

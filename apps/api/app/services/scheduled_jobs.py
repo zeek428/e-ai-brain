@@ -125,6 +125,10 @@ def require_admin(user: dict[str, Any]) -> None:
     require_permissions(user, {"system.scheduled_jobs.manage"})
 
 
+def require_ai_capabilities_manager(user: dict[str, Any]) -> None:
+    require_permissions(user, {"system.ai_capabilities.manage"})
+
+
 def scheduled_job_timezone(job: dict[str, Any]) -> ZoneInfo:
     timezone_name = str(job.get("timezone") or "UTC")
     try:
@@ -329,7 +333,7 @@ def create_ai_skill_response(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_admin(user)
+    require_ai_capabilities_manager(user)
     ensure_enum(payload.status, AI_SKILL_STATUSES, "status")
     now = datetime.now(UTC).isoformat()
     skill_id = current_store.new_id("skill")
@@ -388,7 +392,7 @@ def create_ai_skill_package_response(
     user: dict[str, Any],
     version: str,
 ) -> dict[str, Any]:
-    require_admin(user)
+    require_ai_capabilities_manager(user)
     ensure_enum(status, AI_SKILL_STATUSES, "status")
     now = datetime.now(UTC).isoformat()
     skill_code = ensure_non_blank(code, "code")
@@ -459,7 +463,7 @@ def patch_ai_skill_response(
     skill_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_admin(user)
+    require_ai_capabilities_manager(user)
     sync_ai_skill_store(current_store)
     skill = current_store.ai_skills.get(skill_id)
     if skill is None:
@@ -540,7 +544,7 @@ def create_ai_agent_response(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_admin(user)
+    require_ai_capabilities_manager(user)
     sync_ai_skill_store(current_store)
     sync_reference_store(current_store)
     ensure_enum(payload.status, AI_AGENT_STATUSES, "status")
@@ -589,7 +593,7 @@ def patch_ai_agent_response(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    require_admin(user)
+    require_ai_capabilities_manager(user)
     sync_ai_agent_store(current_store)
     sync_ai_skill_store(current_store)
     sync_reference_store(current_store)
