@@ -1277,6 +1277,17 @@ body {
   background: #ffffff;
 }
 
+.assistant-composer-warning {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid rgba(250, 173, 20, 0.42);
+  border-radius: 6px;
+  background: #fffbe6;
+}
+
 .assistant-composer .ant-btn {
   min-width: 88px;
   height: 40px;

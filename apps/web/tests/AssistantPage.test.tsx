@@ -878,6 +878,46 @@ describe('AssistantPage', () => {
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/assistant/conversations']);
   });
 
+  it('shows product quick tasks and routes feedback and risk into draft-first prompts', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-product' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-product');
+    saveCurrentUser({
+      display_name: '产品负责人',
+      id: 'user_product',
+      roles: ['product_owner'],
+      username: 'product@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    expect(screen.getByText('角色快捷任务')).toBeInTheDocument();
+    expect(screen.getByText('产品快捷任务')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '需求进展' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '反馈洞察' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '版本风险' })).toBeInTheDocument();
+    expect(screen.queryByText('管理员快捷任务')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '反馈洞察' }));
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '请帮我生成每周用户反馈洞察定时作业草案，并说明数据来源、AI处理、结果动作和调度策略。',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '版本风险' }));
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '请生成发布风险分析草案，基于需求、缺陷、发布记录和用户反馈评估当前版本风险。',
+    );
+  });
+
   it('shows engineering quick tasks for rd_owner users', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-rd' });
@@ -1404,6 +1444,44 @@ describe('AssistantPage', () => {
     expect(screen.getByText('执行一次：提取每周用户反馈有价值信息')).toBeInTheDocument();
     expect(screen.getByText('当前账号缺少 system.scheduled_jobs.manage，本次尚未执行。')).toBeInTheDocument();
     expect(screen.getByText('所需权限：system.scheduled_jobs.manage')).toBeInTheDocument();
+  });
+
+  it('warns product users before sending scheduled job run-once commands without permission', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-product' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-product');
+    saveCurrentUser({
+      display_name: '产品负责人',
+      id: 'user_product',
+      roles: ['product_owner'],
+      username: 'product@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@提取每周用户反馈有价值信息 执行一次' },
+    });
+
+    const permissionHint = await screen.findByLabelText('执行权限提示');
+    expect(permissionHint).toHaveTextContent('当前账号没有执行定时作业权限');
+    expect(permissionHint).toHaveTextContent('本次不会直接执行');
+    expect(permissionHint).toHaveTextContent('system.scheduled_jobs.manage');
   });
 
   it('shows AI executor waiting progress for run-once commands', async () => {

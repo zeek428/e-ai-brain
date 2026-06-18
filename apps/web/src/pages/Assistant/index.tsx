@@ -150,12 +150,12 @@ const assistantRoleQuickTaskGroups: AssistantRoleQuickTaskGroup[] = [
       {
         key: 'feedback_insights',
         label: '反馈洞察',
-        prompt: '请汇总最近用户反馈洞察，指出高频问题、影响范围和建议转需求项。',
+        prompt: '请帮我生成每周用户反馈洞察定时作业草案，并说明数据来源、AI处理、结果动作和调度策略。',
       },
       {
         key: 'version_risk',
         label: '版本风险',
-        prompt: '请从需求、缺陷、发布和用户反馈角度评估当前版本风险。',
+        prompt: '请生成发布风险分析草案，基于需求、缺陷、发布记录和用户反馈评估当前版本风险。',
       },
     ],
   },
@@ -1031,6 +1031,17 @@ function uniqueScheduledJobReferenceCandidate(references: AssistantReference[]) 
 function scheduledJobRunOnceRequested(value: string) {
   const normalized = value.toLowerCase();
   return scheduledJobRunOnceKeywords.some((keyword) => normalized.includes(keyword));
+}
+
+function currentUserCanRunScheduledJobFromAssistant() {
+  const currentUser = getStoredCurrentUser();
+  const roles = new Set(currentUser?.roles ?? []);
+  const permissions = new Set(currentUser?.permissions ?? []);
+  return (
+    roles.has('admin')
+    || permissions.has('system.admin')
+    || permissions.has('system.scheduled_jobs.manage')
+  );
 }
 
 function trimRunOnceCommandFromMentionQuery(query: string) {
@@ -3142,6 +3153,9 @@ export default function AssistantPage() {
     [selectedReferences],
   );
   const activeMention = useMemo(() => activeMentionQuery(inputValue), [inputValue]);
+  const runOncePermissionHint = useMemo(() => (
+    scheduledJobRunOnceRequested(inputValue) && !currentUserCanRunScheduledJobFromAssistant()
+  ), [inputValue]);
   const shouldShowReferenceCandidates = activeMention !== undefined
     && dismissedReferencePickerValue !== inputValue;
   const orderedReferenceCandidates = useMemo(
@@ -4195,6 +4209,15 @@ export default function AssistantPage() {
             </div>
           ) : null}
           <div className="assistant-composer">
+            {runOncePermissionHint ? (
+              <div aria-label="执行权限提示" className="assistant-composer-warning">
+                <ExclamationCircleOutlined />
+                <Text type="warning">
+                  当前账号没有执行定时作业权限，本次不会直接执行；请使用管理员账号或授予
+                  system.scheduled_jobs.manage 后再发送。
+                </Text>
+              </div>
+            ) : null}
             <TextArea
               aria-label="发送给 AI 助手"
               onChange={(event) => {
