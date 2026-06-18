@@ -740,6 +740,11 @@ body {
   white-space: pre-wrap;
 }
 
+.assistant-intent-hint {
+  margin-bottom: 6px;
+  white-space: normal;
+}
+
 .assistant-reference-list {
   display: flex;
   flex-wrap: wrap;
@@ -819,6 +824,20 @@ body {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
+}
+
+.assistant-action-draft-precheck,
+.assistant-action-draft-precheck-issues {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-action-draft-precheck-issues span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .assistant-draft-wizard-step {

@@ -31,6 +31,7 @@ import {
   fetchAssistantDraftTemplates,
   fetchAssistantMetrics,
   fetchAssistantReferenceCandidates,
+  fetchAssistantRoleQuickTasks,
   fetchScheduledJobRuns,
   fetchResultWriteTargets,
   getAssistantActionDraft,
@@ -48,6 +49,9 @@ import {
   type AssistantDraftResolutionMap,
   type AssistantDraftResolutionRecord,
   type AssistantDraftResourceType,
+  type AssistantIntent,
+  type AssistantRepairAction,
+  type AssistantRoleQuickTaskGroup,
   type AssistantToolResult,
   type AssistantToolResultItem,
   type ResultWriteTargetRecord,
@@ -72,6 +76,7 @@ const assistantDraftActionLabels: Record<string, string> = {
 type ChatMessage = {
   content: string;
   id: string;
+  intent?: AssistantIntent;
   references?: AssistantReference[];
   role: 'assistant' | 'user';
   toolResults?: AssistantToolResult[];
@@ -120,137 +125,6 @@ const starterPrompts = [
     icon: <ClockCircleOutlined />,
     label: '模型网关',
     prompt: '模型网关和 GitHub PR Review 链路现在是否可用？',
-  },
-];
-
-type AssistantRoleQuickTask = {
-  key: string;
-  label: string;
-  prompt: string;
-};
-
-type AssistantRoleQuickTaskGroup = {
-  key: string;
-  label: string;
-  roles: string[];
-  tasks: AssistantRoleQuickTask[];
-};
-
-const assistantRoleQuickTaskGroups: AssistantRoleQuickTaskGroup[] = [
-  {
-    key: 'product',
-    label: '产品快捷任务',
-    roles: ['product_owner'],
-    tasks: [
-      {
-        key: 'requirement_progress',
-        label: '需求进展',
-        prompt: '请按产品视角总结当前需求进展、阻塞和下一步推进建议。',
-      },
-      {
-        key: 'feedback_insights',
-        label: '反馈洞察',
-        prompt: '请帮我生成每周用户反馈洞察定时作业草案，并说明数据来源、AI处理、结果动作和调度策略。',
-      },
-      {
-        key: 'version_risk',
-        label: '版本风险',
-        prompt: '请生成发布风险分析草案，基于需求、缺陷、发布记录和用户反馈评估当前版本风险。',
-      },
-    ],
-  },
-  {
-    key: 'engineering',
-    label: '研发快捷任务',
-    roles: ['rd_owner'],
-    tasks: [
-      {
-        key: 'task_blockers',
-        label: '任务阻塞',
-        prompt: '请列出当前研发任务阻塞、待确认项和建议处理顺序。',
-      },
-      {
-        key: 'code_inspection',
-        label: '代码巡检',
-        prompt: '请帮我生成或检查代码巡检任务草案，并说明数据连接、AI处理和结果动作依赖。',
-      },
-      {
-        key: 'defect_fix',
-        label: '缺陷修复',
-        prompt: '请按严重度梳理待修复缺陷，给出修复优先级和关联需求/任务。',
-      },
-    ],
-  },
-  {
-    key: 'testing',
-    label: '测试快捷任务',
-    roles: ['reviewer', 'test_owner', 'tester', 'release_owner'],
-    tasks: [
-      {
-        key: 'test_defects',
-        label: '测试缺陷',
-        prompt: '请汇总当前测试缺陷、复现状态、阻塞发布的问题和建议责任归属。',
-      },
-      {
-        key: 'automated_tests',
-        label: '自动化测试',
-        prompt: '请检查自动化测试相关任务、失败原因和可生成的测试草案。',
-      },
-      {
-        key: 'release_risk',
-        label: '发布风险',
-        prompt: '请生成发布风险分析草案，基于测试结果、未关闭缺陷和发布记录评估当前发布风险。',
-      },
-    ],
-  },
-  {
-    key: 'knowledge',
-    label: '知识快捷任务',
-    roles: ['knowledge_owner'],
-    tasks: [
-      {
-        key: 'knowledge_base_inspection',
-        label: '知识库巡检',
-        prompt: '请生成知识库巡检草案，检查索引失败、权限异常、过期知识和待处理知识沉淀。',
-      },
-      {
-        key: 'knowledge_deposits',
-        label: '知识沉淀',
-        prompt: '请汇总待处理知识沉淀候选，按来源任务、价值和风险给出处理优先级。',
-      },
-      {
-        key: 'knowledge_permissions',
-        label: '知识权限',
-        prompt: '请检查知识空间、目录和文档的权限风险，指出需要调整或复核的对象。',
-      },
-    ],
-  },
-  {
-    key: 'admin',
-    label: '管理员快捷任务',
-    roles: ['admin'],
-    tasks: [
-      {
-        key: 'plugin_connections',
-        label: '插件连接',
-        prompt: '请检查插件连接配置状态，指出失败连接和可生成的连接草案。',
-      },
-      {
-        key: 'ai_capabilities',
-        label: 'AI能力',
-        prompt: '我要新增 AI能力配置',
-      },
-      {
-        key: 'scheduled_jobs',
-        label: '定时作业',
-        prompt: '请汇总定时作业配置、运行健康和需要补齐的依赖。',
-      },
-      {
-        key: 'run_failures',
-        label: '运行失败',
-        prompt: '请诊断最近失败的定时作业运行，按数据连接、AI处理、结果动作给出原因和修复建议。',
-      },
-    ],
   },
 ];
 
@@ -1098,13 +972,6 @@ function referenceKey(reference: Pick<AssistantReference, 'id' | 'type'>) {
   return `${reference.type}:${reference.id}`;
 }
 
-function selectedAssistantRoleQuickTaskGroups() {
-  const roleSet = new Set(getStoredCurrentUser()?.roles ?? []);
-  return assistantRoleQuickTaskGroups.filter((group) => (
-    group.roles.some((role) => roleSet.has(role))
-  ));
-}
-
 function assistantQueryReferenceParams() {
   if (typeof window === 'undefined') {
     return undefined;
@@ -1264,6 +1131,39 @@ function draftPreviewValueText(value: unknown): string {
     return JSON.stringify(value);
   }
   return String(value);
+}
+
+function assistantRepairActionUrl(action?: AssistantRepairAction) {
+  if (!action || action.action !== 'open_plugin_connection_test' || !action.resource_id) {
+    return undefined;
+  }
+  return `/tasks/plugins?connection_id=${encodeURIComponent(action.resource_id)}&open_test=1`;
+}
+
+function assistantRepairActionPrompt(
+  draftTitle: string | undefined,
+  action: AssistantRepairAction,
+) {
+  const targetTitle = draftTitle ? `「${draftTitle}」` : '当前草案';
+  if (action.action === 'generate_plugin_action_draft') {
+    return `请为${targetTitle}补齐结果动作草案`;
+  }
+  if (action.action === 'generate_connection_draft') {
+    return `请为${targetTitle}补齐数据连接草案`;
+  }
+  if (action.action === 'generate_ai_agent_draft') {
+    return `请为${targetTitle}补齐 AI角色草案`;
+  }
+  if (action.action === 'generate_ai_skill_draft') {
+    return `请为${targetTitle}补齐 AI Skill 草案`;
+  }
+  if (action.action === 'select_model_gateway') {
+    return `请为${targetTitle}选择可用模型网关配置`;
+  }
+  if (action.action === 'edit_field') {
+    return `请修正${targetTitle}的 ${action.field ?? '阻塞字段'}`;
+  }
+  return `请修复${targetTitle}的校验问题：${action.label ?? action.action}`;
 }
 
 function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
@@ -1708,7 +1608,15 @@ function storePluginConnectionDraft(draft: AssistantToolResultItem) {
   );
 }
 
-function AssistantDraftPreviewBlock({ preview }: { preview?: AssistantActionDraftPreview }) {
+function AssistantDraftPreviewBlock({
+  draftTitle,
+  onUseRepairAction,
+  preview,
+}: {
+  draftTitle?: string;
+  onUseRepairAction?: (prompt: string) => void;
+  preview?: AssistantActionDraftPreview;
+}) {
   if (!preview) {
     return null;
   }
@@ -1735,11 +1643,28 @@ function AssistantDraftPreviewBlock({ preview }: { preview?: AssistantActionDraf
       ) : null}
       {issues.length ? (
         <div className="assistant-action-draft-precheck-issues">
-          {issues.map((issue) => (
-            <Text key={`${issue.field}:${issue.message}`} type={issue.severity === 'error' ? 'danger' : 'warning'}>
-              {issue.message}
-            </Text>
-          ))}
+          {issues.map((issue) => {
+            const repairAction = issue.repair_action;
+            const repairUrl = assistantRepairActionUrl(repairAction);
+            return (
+              <span key={`${issue.field}:${issue.message}`}>
+                <Text type={issue.severity === 'error' ? 'danger' : 'warning'}>
+                  {issue.message}
+                </Text>
+                {repairAction?.label ? (
+                  <Button
+                    href={repairUrl}
+                    size="small"
+                    onClick={repairUrl ? undefined : () => onUseRepairAction?.(
+                      assistantRepairActionPrompt(draftTitle, repairAction),
+                    )}
+                  >
+                    {repairAction.label}
+                  </Button>
+                ) : null}
+              </span>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -2188,7 +2113,11 @@ function AssistantActionDraftCards({
               steps={wizardSteps}
               onUsePrerequisitePrompt={onUseDraftWizardStepPrompt}
             />
-            <AssistantDraftPreviewBlock preview={draft.preview} />
+            <AssistantDraftPreviewBlock
+              draftTitle={draft.title}
+              preview={draft.preview}
+              onUseRepairAction={onUseDraftWizardStepPrompt}
+            />
             <Space size={8} wrap>
               {draftId && isPending ? (
                 <>
@@ -2913,6 +2842,9 @@ function AssistantMetricsPanel({
     { label: '失败', value: metricCount(summary.draft_failed_count) },
   ];
   const draftActionItems = metrics?.drafts_by_action ?? [];
+  const funnelStages = [...(metrics?.funnel?.stages ?? [])].sort(
+    (left, right) => Number(left.sort_order ?? 0) - Number(right.sort_order ?? 0),
+  );
   const runTrackingItems = [
     {
       label: '作业运行',
@@ -2967,6 +2899,22 @@ function AssistantMetricsPanel({
               </div>
             ))}
           </div>
+          {funnelStages.length ? (
+            <div className="assistant-metrics-breakdown">
+              <Text strong>效果漏斗</Text>
+              <div className="assistant-metrics-action-list">
+                {funnelStages.map((stage) => (
+                  <Text
+                    aria-label={`效果漏斗 ${stage.label}`}
+                    key={stage.key}
+                    type="secondary"
+                  >
+                    {stage.label}：{metricCount(stage.count)}
+                  </Text>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="assistant-metrics-breakdown">
             <Text strong>草案状态</Text>
             <Space size={[4, 4]} wrap>
@@ -3078,6 +3026,11 @@ function AssistantBubble({
         {message.role === 'assistant' ? <RobotOutlined /> : '我'}
       </div>
       <div className="assistant-bubble-content">
+        {message.role === 'assistant' && message.intent?.summary ? (
+          <div className="assistant-intent-hint">
+            <Tag color="geekblue">{message.intent.summary}</Tag>
+          </div>
+        ) : null}
         <Text>{message.content}</Text>
         {message.references?.length ? (
           <div className="assistant-reference-list">
@@ -3160,6 +3113,7 @@ export default function AssistantPage() {
   const [queryDraftResolution, setQueryDraftResolution] = useState<QueryDraftResolution>();
   const [queryReferenceResolution, setQueryReferenceResolution] = useState<QueryReferenceResolution>();
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
+  const [roleQuickTaskGroups, setRoleQuickTaskGroups] = useState<AssistantRoleQuickTaskGroup[]>([]);
   const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
   const messageListEndRef = useRef<HTMLDivElement | null>(null);
@@ -3167,6 +3121,7 @@ export default function AssistantPage() {
   const queryReferenceHydratedRef = useRef(false);
   const draftTemplatesLoadRequestedRef = useRef(false);
   const resultWriteTargetsLoadRequestedRef = useRef(false);
+  const roleQuickTasksLoadRequestedRef = useRef(false);
 
   const canSend = useMemo(() => inputValue.trim().length > 0 && !isSending, [inputValue, isSending]);
   const hasPluginActionDraft = useMemo(
@@ -3199,7 +3154,6 @@ export default function AssistantPage() {
     () => assistantReferenceEmptyState(inputValue),
     [inputValue],
   );
-  const roleQuickTaskGroups = useMemo(() => selectedAssistantRoleQuickTaskGroups(), []);
   const selectedReferenceInjectionText = useMemo(
     () => selectedReferenceInjectionSummary(selectedReferences),
     [selectedReferences],
@@ -3481,6 +3435,28 @@ export default function AssistantPage() {
     void loadConversations();
   }, [loadConversations]);
 
+  useEffect(() => {
+    if (!getStoredCurrentUser() || roleQuickTasksLoadRequestedRef.current) {
+      return undefined;
+    }
+    let didCancel = false;
+    roleQuickTasksLoadRequestedRef.current = true;
+    fetchAssistantRoleQuickTasks()
+      .then((groups) => {
+        if (!didCancel) {
+          setRoleQuickTaskGroups(groups);
+        }
+      })
+      .catch(() => {
+        if (!didCancel) {
+          setRoleQuickTaskGroups([]);
+        }
+      });
+    return () => {
+      didCancel = true;
+    };
+  }, []);
+
   const loadDraftTemplates = useCallback(async () => {
     if (draftTemplatesLoadRequestedRef.current) {
       return;
@@ -3670,6 +3646,7 @@ export default function AssistantPage() {
           ? history.map((item: AssistantConversationMessage) => ({
               content: item.content,
               id: item.id,
+              intent: item.intent,
               references: item.references,
               role: item.role,
               toolResults: item.toolResults,
@@ -3682,6 +3659,7 @@ export default function AssistantPage() {
           ? {
               content: latestAssistantMessage.content,
               conversationId: targetConversationId,
+              intent: latestAssistantMessage.intent,
               latencyMs: 0,
               messageId: latestAssistantMessage.id,
               model: latestAssistantMessage.model ?? '',
@@ -3739,6 +3717,7 @@ export default function AssistantPage() {
         {
           content: response.content,
           id: response.messageId,
+          intent: response.intent,
           references: response.references,
           role: 'assistant',
           toolResults: response.toolResults,

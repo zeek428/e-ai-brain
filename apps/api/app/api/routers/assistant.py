@@ -32,6 +32,7 @@ from app.services.assistant_references import (
     assistant_reference_candidates_response,
     resolve_assistant_references,
 )
+from app.services.assistant_role_quick_tasks import list_assistant_role_quick_tasks_response
 
 settings = get_settings()
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
@@ -176,6 +177,16 @@ def list_assistant_draft_templates(
 ) -> dict[str, Any]:
     require_roles(user, ASSISTANT_ACCESS_ROLES)
     payload = list_assistant_draft_templates_response(user=user)
+    return envelope(payload, get_trace_id(request))
+
+
+@router.get("/role-quick-tasks")
+def list_assistant_role_quick_tasks(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    payload = list_assistant_role_quick_tasks_response(user=user)
     return envelope(payload, get_trace_id(request))
 
 

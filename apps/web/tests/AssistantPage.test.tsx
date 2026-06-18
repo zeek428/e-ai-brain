@@ -54,6 +54,18 @@ function resultWriteTargetsResponse() {
   );
 }
 
+function roleQuickTasksResponse(groups: Array<Record<string, unknown>>) {
+  return new Response(
+    JSON.stringify({
+      data: {
+        items: groups,
+        total: groups.length,
+      },
+    }),
+    { headers: { 'Content-Type': 'application/json' }, status: 200 },
+  );
+}
+
 describe('AssistantPage', () => {
   it('shows a transparent current-context summary even before references are selected', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
@@ -63,6 +75,21 @@ describe('AssistantPage', () => {
           headers: { 'Content-Type': 'application/json' },
           status: 200,
         });
+      }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([
+          {
+            key: 'admin',
+            label: '管理员快捷任务',
+            roles: ['admin'],
+            tasks: [
+              { key: 'plugin_connections', label: '插件连接', prompt: '请检查插件连接配置状态，指出失败连接和可生成的连接草案。' },
+              { key: 'ai_capabilities', label: 'AI能力', prompt: '我要新增 AI能力配置' },
+              { key: 'scheduled_jobs', label: '定时作业', prompt: '请汇总定时作业配置、运行健康和需要补齐的依赖。' },
+              { key: 'run_failures', label: '运行失败', prompt: '请诊断最近失败的定时作业运行，按数据连接、AI处理、结果动作给出原因和修复建议。' },
+            ],
+          },
+        ]);
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
@@ -104,6 +131,22 @@ describe('AssistantPage', () => {
                   total: 4,
                 },
               ],
+              funnel: {
+                stages: [
+                  { count: 4, key: 'intent_triggered', label: '触发意图', sort_order: 10 },
+                  { count: 4, key: 'draft_generated', label: '生成草案', sort_order: 20 },
+                  { count: 2, key: 'draft_viewed', label: '查看详情', sort_order: 30 },
+                  { count: 1, key: 'draft_modified', label: '修改字段', sort_order: 40 },
+                  { count: 2, key: 'draft_confirmed', label: '确认草案', sort_order: 50 },
+                  { count: 4, key: 'run_succeeded', label: '运行成功', sort_order: 60 },
+                  {
+                    count: 1,
+                    key: 'continued_followup_or_repair',
+                    label: '继续追问/修复',
+                    sort_order: 70,
+                  },
+                ],
+              },
               summary: {
                 draft_adoption_rate: 0.5,
                 draft_cancelled_count: 1,
@@ -179,6 +222,10 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('引用追踪 知识命中')).toHaveTextContent(
       '命中 3 · 请求 5 · 知识引用 6',
     );
+    expect(screen.getByText('效果漏斗')).toBeInTheDocument();
+    expect(screen.getByLabelText('效果漏斗 触发意图')).toHaveTextContent('4');
+    expect(screen.getByLabelText('效果漏斗 查看详情')).toHaveTextContent('2');
+    expect(screen.getByLabelText('效果漏斗 继续追问/修复')).toHaveTextContent('1');
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/assistant/conversations', 'GET'],
       ['/api/assistant/metrics', 'GET'],
@@ -330,6 +377,12 @@ describe('AssistantPage', () => {
               message: {
                 content: 'AI Brain 已完成 GitHub PR Review 支持，当前正在开发 AI 助手聊天界面。',
                 id: 'assistant_message_api',
+                intent: {
+                  confidence: 0.95,
+                  intent_code: 'task_creation_guide',
+                  required_refs: [],
+                  summary: '将执行：任务类型向导',
+                },
                 references: [
                   {
                     id: 'requirement_084',
@@ -375,6 +428,7 @@ describe('AssistantPage', () => {
     expect(
       await screen.findByText('AI Brain 已完成 GitHub PR Review 支持，当前正在开发 AI 助手聊天界面。'),
     ).toBeInTheDocument();
+    expect(screen.getByText('将执行：任务类型向导')).toBeInTheDocument();
     expect(screen.getByText('查看任务中心')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /AI 助手历史记录迭代/ })).toHaveAttribute(
       'href',
@@ -900,6 +954,21 @@ describe('AssistantPage', () => {
           status: 200,
         });
       }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([
+          {
+            key: 'admin',
+            label: '管理员快捷任务',
+            roles: ['admin'],
+            tasks: [
+              { key: 'plugin_connections', label: '插件连接', prompt: '请检查插件连接配置状态，指出失败连接和可生成的连接草案。' },
+              { key: 'ai_capabilities', label: 'AI能力', prompt: '我要新增 AI能力配置' },
+              { key: 'scheduled_jobs', label: '定时作业', prompt: '请汇总定时作业配置、运行健康和需要补齐的依赖。' },
+              { key: 'run_failures', label: '运行失败', prompt: '请诊断最近失败的定时作业运行，按数据连接、AI处理、结果动作给出原因和修复建议。' },
+            ],
+          },
+        ]);
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -913,7 +982,7 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(screen.getByText('角色快捷任务')).toBeInTheDocument();
+    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
     expect(screen.getByText('管理员快捷任务')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '插件连接' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'AI能力' })).toBeInTheDocument();
@@ -928,7 +997,10 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请诊断最近失败的定时作业运行，按数据连接、AI处理、结果动作给出原因和修复建议。',
     );
-    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/assistant/conversations']);
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      '/api/assistant/conversations',
+      '/api/assistant/role-quick-tasks',
+    ]);
   });
 
   it('shows product quick tasks and routes feedback and risk into draft-first prompts', async () => {
@@ -939,6 +1011,20 @@ describe('AssistantPage', () => {
           headers: { 'Content-Type': 'application/json' },
           status: 200,
         });
+      }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([
+          {
+            key: 'product',
+            label: '产品快捷任务',
+            roles: ['product_owner'],
+            tasks: [
+              { key: 'requirement_progress', label: '需求进展', prompt: '请按产品视角总结当前需求进展、阻塞和下一步推进建议。' },
+              { key: 'feedback_insights', label: '反馈洞察', prompt: '请帮我生成每周用户反馈洞察定时作业草案，并说明数据来源、AI处理、结果动作和调度策略。' },
+              { key: 'version_risk', label: '版本风险', prompt: '请生成发布风险分析草案，基于需求、缺陷、发布记录和用户反馈评估当前版本风险。' },
+            ],
+          },
+        ]);
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
@@ -953,7 +1039,7 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(screen.getByText('角色快捷任务')).toBeInTheDocument();
+    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
     expect(screen.getByText('产品快捷任务')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '需求进展' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '反馈洞察' })).toBeInTheDocument();
@@ -980,6 +1066,20 @@ describe('AssistantPage', () => {
           status: 200,
         });
       }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([
+          {
+            key: 'engineering',
+            label: '研发快捷任务',
+            roles: ['rd_owner'],
+            tasks: [
+              { key: 'task_blockers', label: '任务阻塞', prompt: '请列出当前研发任务阻塞、待确认项和建议处理顺序。' },
+              { key: 'code_inspection', label: '代码巡检', prompt: '请帮我生成或检查代码巡检任务草案，并说明数据连接、AI处理和结果动作依赖。' },
+              { key: 'defect_fix', label: '缺陷修复', prompt: '请按严重度梳理待修复缺陷，给出修复优先级和关联需求/任务。' },
+            ],
+          },
+        ]);
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-rd');
@@ -993,7 +1093,7 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(screen.getByText('角色快捷任务')).toBeInTheDocument();
+    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
     expect(screen.getByText('研发快捷任务')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '任务阻塞' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '代码巡检' })).toBeInTheDocument();
@@ -1016,6 +1116,20 @@ describe('AssistantPage', () => {
           status: 200,
         });
       }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([
+          {
+            key: 'testing',
+            label: '测试快捷任务',
+            roles: ['test_owner'],
+            tasks: [
+              { key: 'test_defects', label: '测试缺陷', prompt: '请汇总当前测试缺陷、复现状态、阻塞发布的问题和建议责任归属。' },
+              { key: 'automated_tests', label: '自动化测试', prompt: '请检查自动化测试相关任务、失败原因和可生成的测试草案。' },
+              { key: 'release_risk', label: '发布风险', prompt: '请生成发布风险分析草案，基于测试结果、未关闭缺陷和发布记录评估当前发布风险。' },
+            ],
+          },
+        ]);
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-test-owner');
@@ -1029,7 +1143,7 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(screen.getByText('角色快捷任务')).toBeInTheDocument();
+    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
     expect(screen.getByText('测试快捷任务')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '测试缺陷' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '自动化测试' })).toBeInTheDocument();
@@ -1058,6 +1172,20 @@ describe('AssistantPage', () => {
           status: 200,
         });
       }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([
+          {
+            key: 'knowledge',
+            label: '知识快捷任务',
+            roles: ['knowledge_owner'],
+            tasks: [
+              { key: 'knowledge_base_inspection', label: '知识库巡检', prompt: '请生成知识库巡检草案，检查索引失败、权限异常、过期知识和待处理知识沉淀。' },
+              { key: 'knowledge_deposits', label: '知识沉淀', prompt: '请汇总待处理知识沉淀候选，按来源任务、价值和风险给出处理优先级。' },
+              { key: 'knowledge_permissions', label: '知识权限', prompt: '请检查知识空间、目录和文档的权限风险，指出需要调整或复核的对象。' },
+            ],
+          },
+        ]);
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-knowledge-owner');
@@ -1071,7 +1199,7 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(screen.getByText('角色快捷任务')).toBeInTheDocument();
+    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
     expect(screen.getByText('知识快捷任务')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '知识库巡检' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '知识沉淀' })).toBeInTheDocument();
@@ -4512,11 +4640,21 @@ describe('AssistantPage', () => {
                               {
                                 field: 'cron_expression',
                                 message: 'cron_expression is required',
+                                repair_action: {
+                                  action: 'edit_field',
+                                  field: 'cron_expression',
+                                  label: '修正 Cron 表达式',
+                                },
                                 severity: 'error',
                               },
                               {
                                 field: 'plugin_action_id',
                                 message: 'user_feedback_insight_extract requires plugin_action_id',
+                                repair_action: {
+                                  action: 'generate_plugin_action_draft',
+                                  field: 'plugin_action_id',
+                                  label: '生成结果动作草案',
+                                },
                                 severity: 'error',
                               },
                             ],
@@ -4562,6 +4700,11 @@ describe('AssistantPage', () => {
     expect(screen.getByText('- -> 缺少配置的反馈洞察作业')).toBeInTheDocument();
     expect(screen.getByText('cron_expression is required')).toBeInTheDocument();
     expect(screen.getByText('user_feedback_insight_extract requires plugin_action_id')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '修正 Cron 表达式' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '生成结果动作草案' }));
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '请为「创建反馈洞察定时任务」补齐结果动作草案',
+    );
     expect(screen.getByRole('button', { name: /确认创建/ })).toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: '查看详情' }));

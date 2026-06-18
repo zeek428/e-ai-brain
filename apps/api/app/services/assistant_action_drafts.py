@@ -1603,6 +1603,13 @@ def _validate_plugin_connection_ref(
         field,
         "error",
         f"Plugin connection last test failed: {failure_message}",
+        repair_action={
+            "action": "open_plugin_connection_test",
+            "field": field,
+            "label": "打开连接测试",
+            "resource_id": item_id,
+            "resource_type": "plugin_connection",
+        },
     )
 
 
@@ -1690,14 +1697,66 @@ def _add_issue(
     field: str,
     severity: str,
     message: str,
+    *,
+    repair_action: dict[str, Any] | None = None,
 ) -> None:
+    issue = {
+        "field": field,
+        "message": message,
+        "severity": severity,
+    }
+    resolved_repair_action = repair_action or _default_repair_action(field)
+    if resolved_repair_action is not None:
+        issue["repair_action"] = resolved_repair_action
     validation.setdefault("issues", []).append(
-        {
-            "field": field,
-            "message": message,
-            "severity": severity,
-        }
+        issue
     )
+
+
+def _default_repair_action(field: str) -> dict[str, Any] | None:
+    if field in {"cron_expression", "interval_seconds"}:
+        return {
+            "action": "edit_field",
+            "field": field,
+            "label": "修正 Cron 表达式" if field == "cron_expression" else "修正间隔时间",
+        }
+    if field in {"plugin_action_id", "plugin_action_ids"}:
+        return {
+            "action": "generate_plugin_action_draft",
+            "field": field,
+            "label": "生成结果动作草案",
+        }
+    if field in {"plugin_connection_id", "plugin_connection_ids", "connection_id"}:
+        return {
+            "action": "generate_connection_draft",
+            "field": field,
+            "label": "生成连接草案",
+        }
+    if field == "model_gateway_config_id":
+        return {
+            "action": "select_model_gateway",
+            "field": field,
+            "label": "选择模型网关",
+        }
+    if field == "agent_id":
+        return {
+            "action": "generate_ai_agent_draft",
+            "field": field,
+            "label": "生成AI角色草案",
+        }
+    if field == "skill_ids":
+        return {
+            "action": "generate_ai_skill_draft",
+            "field": field,
+            "label": "生成Skill草案",
+        }
+    if field == "permission":
+        return {
+            "action": "request_permission",
+            "field": field,
+            "label": "申请权限",
+        }
+    return None
 
 
 def _finalize_validation(validation: dict[str, Any]) -> None:

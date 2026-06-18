@@ -62,6 +62,31 @@ def test_ai_assistant_draft_templates_list_official_market_entries():
     assert all(template["available"] is True for template in templates_by_code.values())
 
 
+def test_ai_assistant_role_quick_tasks_are_backend_configured():
+    response = client.get("/api/assistant/role-quick-tasks", headers=auth_headers())
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["total"] >= 1
+    admin_group = next(item for item in payload["items"] if item["key"] == "admin")
+    assert admin_group["label"] == "管理员快捷任务"
+    assert admin_group["enabled"] is True
+    assert admin_group["sort_order"] > 0
+    scheduled_job_task = next(
+        task for task in admin_group["tasks"] if task["key"] == "scheduled_jobs"
+    )
+    assert scheduled_job_task == {
+        "analytics_key": "admin.scheduled_jobs",
+        "enabled": True,
+        "key": "scheduled_jobs",
+        "label": "定时作业",
+        "permissions": ["system.scheduled_jobs.manage"],
+        "prompt": "请汇总定时作业配置、运行健康和需要补齐的依赖。",
+        "sort_order": 30,
+        "target_draft_type": "create_scheduled_job",
+    }
+
+
 def test_ai_assistant_allows_testing_delivery_roles_to_use_workbench_apis(monkeypatch):
     original_user_repository = app.state.user_repository
     app.state.store.reset()
@@ -115,6 +140,18 @@ def test_ai_assistant_allows_testing_delivery_roles_to_use_workbench_apis(monkey
             }
             assert "release_risk_analysis" in template_codes
 
+            quick_tasks_response = client.get(
+                "/api/assistant/role-quick-tasks",
+                headers=headers,
+            )
+            assert quick_tasks_response.status_code == 200, quick_tasks_response.text
+            quick_task_keys = {
+                task["key"]
+                for group in quick_tasks_response.json()["data"]["items"]
+                for task in group["tasks"]
+            }
+            assert "release_risk" in quick_task_keys
+
             chat_response = client.post(
                 "/api/assistant/chat",
                 headers=headers,
@@ -126,6 +163,34 @@ def test_ai_assistant_allows_testing_delivery_roles_to_use_workbench_apis(monkey
             )
     finally:
         app.state.user_repository = original_user_repository
+
+
+def test_ai_assistant_chat_returns_registered_intent_metadata(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("task guide should be handled by registered deterministic intent")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        headers=headers,
+        json={"message": "我要新增任务"},
+    )
+
+    assert response.status_code == 200, response.text
+    message = response.json()["data"]["message"]
+    assert message["intent"] == {
+        "confidence": 0.95,
+        "intent_code": "task_creation_guide",
+        "required_refs": [],
+        "summary": "将执行：任务类型向导",
+    }
+    assert message["tool_results"][0]["intent_code"] == "task_creation_guide"
+    assert message["tool_results"][0]["intent_confidence"] == 0.95
 
 
 def test_ai_assistant_test_owner_can_run_explicit_mention_job_once(monkeypatch):
@@ -2621,7 +2686,7 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "created_at": now,
             "created_by": "user_admin",
             "id": "assistant_action_draft_confirmed",
-            "metadata_json": {"modified_fields": ["cron_expression"]},
+            "metadata_json": {"modified_fields": ["cron_expression"], "viewed_at": now},
             "payload": {"name": "已确认草案"},
             "result_run_id": "assistant_action_run_succeeded",
             "risk_level": "medium",
@@ -2878,6 +2943,52 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "total": 3,
         },
     ]
+    assert metrics["funnel"] == {
+        "stages": [
+            {
+                "count": 2,
+                "key": "intent_triggered",
+                "label": "触发意图",
+                "sort_order": 10,
+            },
+            {
+                "count": 4,
+                "key": "draft_generated",
+                "label": "生成草案",
+                "sort_order": 20,
+            },
+            {
+                "count": 1,
+                "key": "draft_viewed",
+                "label": "查看详情",
+                "sort_order": 30,
+            },
+            {
+                "count": 1,
+                "key": "draft_modified",
+                "label": "修改字段",
+                "sort_order": 40,
+            },
+            {
+                "count": 1,
+                "key": "draft_confirmed",
+                "label": "确认草案",
+                "sort_order": 50,
+            },
+            {
+                "count": 2,
+                "key": "run_succeeded",
+                "label": "运行成功",
+                "sort_order": 60,
+            },
+            {
+                "count": 0,
+                "key": "continued_followup_or_repair",
+                "label": "继续追问/修复",
+                "sort_order": 70,
+            },
+        ]
+    }
 
 
 def test_ai_assistant_metrics_reads_scheduled_job_runs_from_repository_read_model():
@@ -3086,6 +3197,16 @@ def test_ai_assistant_action_draft_previews_diff_and_blocks_invalid_confirmation
     issues_by_field = {item["field"]: item for item in validation["issues"]}
     assert issues_by_field["cron_expression"]["severity"] == "error"
     assert issues_by_field["plugin_action_id"]["severity"] == "error"
+    assert issues_by_field["cron_expression"]["repair_action"] == {
+        "action": "edit_field",
+        "field": "cron_expression",
+        "label": "修正 Cron 表达式",
+    }
+    assert issues_by_field["plugin_action_id"]["repair_action"] == {
+        "action": "generate_plugin_action_draft",
+        "field": "plugin_action_id",
+        "label": "生成结果动作草案",
+    }
 
     confirm_response = client.post(
         f"/api/assistant/action-drafts/{draft['id']}/confirm",
@@ -3124,6 +3245,11 @@ def test_ai_assistant_scheduled_job_draft_precheck_blocks_invalid_cron_expressio
     issues_by_field = {item["field"]: item for item in validation["issues"]}
     assert issues_by_field["cron_expression"]["severity"] == "error"
     assert "Invalid cron_expression" in issues_by_field["cron_expression"]["message"]
+    assert issues_by_field["cron_expression"]["repair_action"] == {
+        "action": "edit_field",
+        "field": "cron_expression",
+        "label": "修正 Cron 表达式",
+    }
 
     confirm_response = client.post(
         f"/api/assistant/action-drafts/{draft['id']}/confirm",
@@ -3208,6 +3334,13 @@ def test_ai_assistant_action_draft_precheck_blocks_failed_plugin_connection():
     assert issues_by_field["connection_id"]["severity"] == "error"
     assert "last test failed" in issues_by_field["connection_id"]["message"]
     assert "HTTP 403: forbidden" in issues_by_field["connection_id"]["message"]
+    assert issues_by_field["connection_id"]["repair_action"] == {
+        "action": "open_plugin_connection_test",
+        "field": "connection_id",
+        "label": "打开连接测试",
+        "resource_id": "plugin_connection_maxcompute",
+        "resource_type": "plugin_connection",
+    }
 
     confirm_response = client.post(
         f"/api/assistant/action-drafts/{draft['id']}/confirm",
@@ -5385,6 +5518,79 @@ def test_ai_assistant_chat_runs_exact_explicit_mention_when_similar_jobs_exist(
     assert message["tool_results"][0]["summary"]["scheduled_job_id"] == (
         "scheduled_job_feedback_exact"
     )
+
+
+def test_ai_assistant_chat_prioritizes_structured_reference_over_text_mention(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    base_job = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "interval_seconds": None,
+        "job_type": "dashboard_snapshot_refresh",
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "source_system": "ai-brain",
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_selected"] = {
+        **base_job,
+        "id": "scheduled_job_selected",
+        "name": "结构化引用选中的作业",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_text"] = {
+        **base_job,
+        "id": "scheduled_job_text",
+        "name": "文本里另一个作业",
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("structured run should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "@文本里另一个作业 执行一次",
+            "references": [{"id": "scheduled_job_selected", "type": "scheduled_job"}],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    run = next(iter(app.state.store.scheduled_job_runs.values()))
+    assert run["scheduled_job_id"] == "scheduled_job_selected"
+    message = response.json()["data"]["message"]
+    assert "已执行「结构化引用选中的作业」一次" in message["content"]
+    assert message["intent"]["intent_code"] == "scheduled_job_run_once"
 
 
 def test_ai_assistant_chat_prefers_enabled_job_when_run_once_alias_matches_history(

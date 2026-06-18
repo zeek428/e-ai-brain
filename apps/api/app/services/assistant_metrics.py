@@ -51,10 +51,23 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
         for reference in _message_references(message)
     ]
     draft_user_modified_count = sum(1 for draft in drafts if _draft_was_user_modified(draft))
+    draft_viewed_count = sum(1 for draft in drafts if _draft_was_viewed(draft))
     knowledge_request_count, knowledge_hit_count = _knowledge_reference_hit_stats(messages)
+    continued_followup_or_repair_count = _continued_followup_or_repair_count(user_messages)
 
     return {
         "drafts_by_action": _drafts_by_action(drafts),
+        "funnel": {
+            "stages": _assistant_effectiveness_funnel_stages(
+                draft_confirmed_count=draft_status_counts["confirmed"],
+                draft_generated_count=draft_total,
+                draft_modified_count=draft_user_modified_count,
+                draft_viewed_count=draft_viewed_count,
+                intent_triggered_count=len(user_messages),
+                run_succeeded_count=scheduled_job_run_succeeded_count,
+                continued_followup_or_repair_count=continued_followup_or_repair_count,
+            )
+        },
         "summary": {
             "action_run_failed_count": run_failed_count,
             "action_run_succeeded_count": run_succeeded_count,
@@ -309,6 +322,95 @@ def _message_references(message: dict[str, Any]) -> list[dict[str, Any]]:
 def _draft_was_user_modified(draft: dict[str, Any]) -> bool:
     metadata = draft.get("metadata_json") or {}
     return metadata.get("user_modified") is True or bool(metadata.get("modified_fields"))
+
+
+def _draft_was_viewed(draft: dict[str, Any]) -> bool:
+    metadata = draft.get("metadata_json") or {}
+    return bool(
+        metadata.get("viewed_at")
+        or metadata.get("detail_viewed_at")
+        or metadata.get("last_viewed_at")
+    )
+
+
+def _continued_followup_or_repair_count(messages: list[dict[str, Any]]) -> int:
+    count = 0
+    for message in messages:
+        content = str(message.get("content") or "")
+        references = _message_references(message)
+        has_run_reference = any(
+            reference.get("type") == "scheduled_job_run" for reference in references
+        )
+        asks_repair = any(
+            keyword in content
+            for keyword in (
+                "继续追问",
+                "为什么这次任务失败",
+                "为什么失败",
+                "修复草案",
+                "重新执行",
+                "重跑",
+            )
+        )
+        if has_run_reference or asks_repair:
+            count += 1
+    return count
+
+
+def _assistant_effectiveness_funnel_stages(
+    *,
+    intent_triggered_count: int,
+    draft_generated_count: int,
+    draft_viewed_count: int,
+    draft_modified_count: int,
+    draft_confirmed_count: int,
+    run_succeeded_count: int,
+    continued_followup_or_repair_count: int,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "count": intent_triggered_count,
+            "key": "intent_triggered",
+            "label": "触发意图",
+            "sort_order": 10,
+        },
+        {
+            "count": draft_generated_count,
+            "key": "draft_generated",
+            "label": "生成草案",
+            "sort_order": 20,
+        },
+        {
+            "count": draft_viewed_count,
+            "key": "draft_viewed",
+            "label": "查看详情",
+            "sort_order": 30,
+        },
+        {
+            "count": draft_modified_count,
+            "key": "draft_modified",
+            "label": "修改字段",
+            "sort_order": 40,
+        },
+        {
+            "count": draft_confirmed_count,
+            "key": "draft_confirmed",
+            "label": "确认草案",
+            "sort_order": 50,
+        },
+        {
+            "count": run_succeeded_count,
+            "key": "run_succeeded",
+            "label": "运行成功",
+            "sort_order": 60,
+        },
+        {
+            "count": continued_followup_or_repair_count,
+            "key": "continued_followup_or_repair",
+            "label": "继续追问/修复",
+            "sort_order": 70,
+        },
+    ]
 
 
 def _effective_draft_status(draft: dict[str, Any]) -> str:

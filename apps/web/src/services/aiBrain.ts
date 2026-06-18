@@ -154,12 +154,20 @@ export type SystemRoleRecord = UserRoleDefinition & {
 export type AssistantChatResponse = {
   content: string;
   conversationId: string;
+  intent?: AssistantIntent;
   latencyMs: number;
   messageId: string;
   model: string;
   references: AssistantReference[];
   suggestions: string[];
   toolResults: AssistantToolResult[];
+};
+
+export type AssistantIntent = {
+  confidence?: number;
+  intent_code?: string;
+  required_refs?: string[];
+  summary?: string;
 };
 
 export type AssistantReference = {
@@ -240,9 +248,39 @@ export type AssistantDraftActionMetric = {
   total?: number;
 };
 
+export type AssistantFunnelStage = {
+  count?: number;
+  key: string;
+  label: string;
+  sort_order?: number;
+};
+
 export type AssistantMetrics = {
   drafts_by_action: AssistantDraftActionMetric[];
+  funnel?: {
+    stages?: AssistantFunnelStage[];
+  };
   summary: AssistantMetricsSummary;
+};
+
+export type AssistantRoleQuickTask = {
+  analytics_key?: string;
+  enabled?: boolean;
+  key: string;
+  label: string;
+  permissions?: string[];
+  prompt: string;
+  sort_order?: number;
+  target_draft_type?: string | null;
+};
+
+export type AssistantRoleQuickTaskGroup = {
+  enabled?: boolean;
+  key: string;
+  label: string;
+  roles?: string[];
+  sort_order?: number;
+  tasks: AssistantRoleQuickTask[];
 };
 
 export type AssistantToolResultItem = {
@@ -376,6 +414,7 @@ export type AssistantConversationMessage = {
   content: string;
   createdAt?: string;
   id: string;
+  intent?: AssistantIntent;
   model?: string;
   productId?: string;
   role: 'assistant' | 'user';
@@ -390,6 +429,7 @@ type AssistantChatApiResponse = {
   message: {
     content?: string;
     id?: string;
+    intent?: AssistantIntent;
     references?: AssistantReference[];
     role?: string;
     tool_results?: AssistantToolResult[];
@@ -414,6 +454,7 @@ type AssistantMessageApiRecord = {
   content?: string;
   created_at?: string;
   id?: string;
+  intent?: AssistantIntent;
   model?: string;
   product_id?: string;
   role?: string;
@@ -460,7 +501,16 @@ export type AssistantActionDraftPreviewDiff = {
 export type AssistantActionDraftPreviewIssue = {
   field: string;
   message: string;
+  repair_action?: AssistantRepairAction;
   severity: 'error' | 'warning' | string;
+};
+
+export type AssistantRepairAction = {
+  action: string;
+  field?: string;
+  label?: string;
+  resource_id?: string;
+  resource_type?: string;
 };
 
 export type AssistantActionDraftPreview = {
@@ -2372,6 +2422,7 @@ export async function chatWithAssistant(
   return {
     content: response.message.content ?? '',
     conversationId: response.conversation_id,
+    intent: response.message.intent,
     latencyMs: Number(response.latency_ms ?? 0),
     messageId: response.message.id ?? response.conversation_id,
     model: response.model ?? '',
@@ -2423,6 +2474,18 @@ export async function fetchAssistantMetrics(): Promise<AssistantMetrics> {
     method: 'GET',
     token,
   });
+}
+
+export async function fetchAssistantRoleQuickTasks(): Promise<AssistantRoleQuickTaskGroup[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<AssistantRoleQuickTaskGroup>>(
+    '/api/assistant/role-quick-tasks',
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return response.items;
 }
 
 export async function getAssistantActionDraft(
@@ -2516,6 +2579,7 @@ export async function fetchAssistantConversationMessages(
     content: item.content ?? '',
     createdAt: item.created_at,
     id: item.id ?? conversationId,
+    intent: item.intent,
     model: item.model,
     productId: item.product_id,
     references: item.references ?? [],

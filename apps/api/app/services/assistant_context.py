@@ -323,6 +323,9 @@ def public_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
     references = message.get("references") or (message.get("metadata_json") or {}).get("references")
     if references:
         public_message["references"] = normalize_assistant_references(references)
+    intent = (message.get("metadata_json") or {}).get("intent")
+    if isinstance(intent, dict) and intent:
+        public_message["intent"] = intent
     tool_results = (message.get("metadata_json") or {}).get("tool_results")
     if isinstance(tool_results, list) and tool_results:
         public_message["tool_results"] = tool_results

@@ -600,16 +600,17 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | System | GET | `/api/model-gateway/logs` | 查询模型调用元数据日志，不返回完整 prompt 或输出。 |
 | Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
-| Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题。 |
+| Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题；确定性意图返回 `message.intent={intent_code,confidence,summary,required_refs}`，工具结果顶层可带 `intent_code/intent_confidence/required_refs`，`summary` 保持业务摘要；请求中的结构化 `references[]` 优先进入上下文，文本 `@...执行一次` 仅作兜底解析，但停用/不可运行引用和官方周反馈洞察消歧仍可按后端规则纠偏。 |
+| Assistant | GET | `/api/assistant/role-quick-tasks` | 查询当前用户可见的 AI 助手角色快捷任务组，后端按角色、权限、启用状态和排序过滤，返回 `key/label/prompt/permissions/target_draft_type/analytics_key/sort_order`，前端不得再硬编码角色入口。 |
 | Assistant | GET | `/api/assistant/draft-templates` | 查询当前用户可见的 AI 助手草案模板市场目录；返回周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析模板的提示、角色、依赖、流程和接入状态。 |
 | Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；覆盖业务对象、可读知识空间/知识目录/知识文档/知识片段和管理员可见的定时作业/运行、插件动作、插件连接、AI角色、Skill；未指定 type 的默认候选按类型均衡合并。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
 | Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持研发任务、AI Skill、AI角色、定时作业、插件连接、动作配置和分析草案。 |
-| Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情。 |
+| Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情；`preview.validation.issues[]` 可返回 `repair_action={action,label,field,resource_type,resource_id}`，用于前端展示修正字段、生成前置草案或打开连接测试等操作。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/cancel` | 取消 pending 草案，不产生领域写入。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/modification` | 标记当前用户对草案应用后的字段修改，写入用户修改率指标元数据。 |
-| Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，包括草案采纳、运行成功、用户修改和显式引用使用情况。 |
+| Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，包括草案采纳、运行成功、用户修改、显式引用使用情况和 `funnel.stages[]` 效果漏斗（触发意图、生成草案、查看详情、修改字段、确认草案、运行成功、继续追问/修复）。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |

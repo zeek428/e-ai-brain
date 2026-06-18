@@ -143,6 +143,7 @@ def append_assistant_message(
     *,
     content: str,
     conversation: dict[str, Any],
+    intent: dict[str, Any] | None = None,
     now: str,
     role: str,
     user_id: str,
@@ -152,6 +153,8 @@ def append_assistant_message(
     tool_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     metadata_json = {"references": references or []}
+    if intent is not None:
+        metadata_json["intent"] = intent
     if tool_results is not None:
         metadata_json["tool_results"] = tool_results
     message = {

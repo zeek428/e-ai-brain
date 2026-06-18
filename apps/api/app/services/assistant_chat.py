@@ -318,6 +318,7 @@ def _persist_assistant_chat_output(
         current_store,
         content=assistant_output["answer"],
         conversation=conversation,
+        intent=assistant_output.get("intent"),
         model=assistant_output["model"],
         now=now,
         references=assistant_output["references"],
@@ -342,6 +343,8 @@ def _persist_assistant_chat_output(
         "suggestion_count": len(assistant_output["suggestions"]),
         "tool_count": len(assistant_output["tool_results"]),
     }
+    if assistant_output.get("intent"):
+        audit_payload["intent"] = assistant_output["intent"]
     if model_log is not None:
         audit_payload["model_log_id"] = model_log["id"]
     current_store.audit(
@@ -373,6 +376,7 @@ def _deterministic_assistant_output(
     payload: AssistantChatRequest,
     user: dict[str, Any],
 ) -> dict[str, Any] | None:
+    intent_match = _match_deterministic_intent(payload.message)
     if _task_creation_guide_requested(payload.message):
         try:
             resolved_references = resolve_assistant_references(
@@ -382,7 +386,10 @@ def _deterministic_assistant_output(
             )
         except AssistantReferenceError as exc:
             raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
-        return _task_creation_guide_output(selected_references=resolved_references["items"])
+        return _with_intent_metadata(
+            _task_creation_guide_output(selected_references=resolved_references["items"]),
+            intent_match,
+        )
     if _plugin_connection_diagnostic_requested(payload.message):
         try:
             resolved_references = resolve_assistant_references(
@@ -392,17 +399,39 @@ def _deterministic_assistant_output(
             )
         except AssistantReferenceError as exc:
             raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
-        return _plugin_connection_diagnostic_output(
-            current_store,
-            payload=payload,
-            selected_references=resolved_references["items"],
+        return _with_intent_metadata(
+            _plugin_connection_diagnostic_output(
+                current_store,
+                payload=payload,
+                selected_references=resolved_references["items"],
+            ),
+            intent_match,
         )
     if not _scheduled_job_run_once_requested(payload.message):
-        return _deterministic_action_draft_output(
+        return _with_intent_metadata(
+            _deterministic_action_draft_output(
+                current_store,
+                payload=payload,
+                user=user,
+            ),
+            intent_match,
+        )
+    return _with_intent_metadata(
+        _deterministic_scheduled_job_run_once_output(
             current_store,
             payload=payload,
             user=user,
-        )
+        ),
+        intent_match,
+    )
+
+
+def _deterministic_scheduled_job_run_once_output(
+    current_store: MemoryStore,
+    *,
+    payload: AssistantChatRequest,
+    user: dict[str, Any],
+) -> dict[str, Any]:
     try:
         resolved_references = resolve_assistant_references(
             current_store,
@@ -421,7 +450,24 @@ def _deterministic_assistant_output(
         product_id=payload.product_id,
         user=user,
     )
-    if mention_resolution["references"]:
+    if scheduled_job_references:
+        if _scheduled_job_mentions_should_override_structured_references(
+            current_store,
+            mention_references=mention_resolution.get("references") or [],
+            structured_references=scheduled_job_references,
+        ):
+            selected_references = _merge_assistant_references(
+                [
+                    reference
+                    for reference in selected_references
+                    if reference.get("type") != "scheduled_job"
+                ],
+                mention_resolution["references"],
+            )
+            scheduled_job_references = mention_resolution["references"]
+        else:
+            mention_resolution = {"attempted": False, "queries": [], "references": []}
+    elif mention_resolution["references"]:
         selected_references = _merge_assistant_references(
             [
                 reference
@@ -587,6 +633,66 @@ def _deterministic_assistant_output(
             )
         ],
     }
+
+
+def _deterministic_intent_registry() -> list[dict[str, Any]]:
+    return [
+        {
+            "confidence": 0.95,
+            "detector": _task_creation_guide_requested,
+            "intent_code": "task_creation_guide",
+            "required_refs": [],
+            "summary": "将执行：任务类型向导",
+        },
+        {
+            "confidence": 0.9,
+            "detector": _plugin_connection_diagnostic_requested,
+            "intent_code": "plugin_connection_diagnostic",
+            "required_refs": ["plugin_connection"],
+            "summary": "将执行：插件连接诊断",
+        },
+        {
+            "confidence": 0.95,
+            "detector": _scheduled_job_run_once_requested,
+            "intent_code": "scheduled_job_run_once",
+            "required_refs": ["scheduled_job"],
+            "summary": "将执行：运行定时作业一次",
+        },
+        {
+            "confidence": 0.7,
+            "detector": lambda _message: True,
+            "intent_code": "action_draft",
+            "required_refs": [],
+            "summary": "将执行：生成可确认草案",
+        },
+    ]
+
+
+def _match_deterministic_intent(message: str) -> dict[str, Any] | None:
+    for intent in _deterministic_intent_registry():
+        detector = intent["detector"]
+        if detector(message):
+            return {
+                "confidence": intent["confidence"],
+                "intent_code": intent["intent_code"],
+                "required_refs": list(intent["required_refs"]),
+                "summary": intent["summary"],
+            }
+    return None
+
+
+def _with_intent_metadata(
+    output: dict[str, Any] | None,
+    intent: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if output is None or intent is None:
+        return output
+    output["intent"] = intent
+    for tool_result in output.get("tool_results") or []:
+        tool_result.setdefault("intent_code", intent["intent_code"])
+        tool_result.setdefault("intent_confidence", intent["confidence"])
+        tool_result.setdefault("required_refs", intent["required_refs"])
+    return output
 
 
 def _deterministic_action_draft_output(
@@ -1251,6 +1357,38 @@ def _scheduled_job_references_from_explicit_mentions(
         "queries": queries,
         "references": _merge_assistant_references(references),
     }
+
+
+def _scheduled_job_mentions_should_override_structured_references(
+    current_store: MemoryStore,
+    *,
+    mention_references: list[dict[str, Any]],
+    structured_references: list[dict[str, Any]],
+) -> bool:
+    if not mention_references:
+        return False
+    structured_jobs = [
+        getattr(current_store, "scheduled_jobs", {}).get(str(reference.get("id") or ""))
+        for reference in structured_references
+    ]
+    mention_jobs = [
+        getattr(current_store, "scheduled_jobs", {}).get(str(reference.get("id") or ""))
+        for reference in mention_references
+    ]
+    if any(
+        isinstance(job, dict) and not _scheduled_job_is_runnable_mention_match(job)
+        for job in structured_jobs
+    ):
+        return True
+    structured_has_official_feedback = any(
+        isinstance(job, dict) and _scheduled_job_is_official_weekly_feedback_insight(job)
+        for job in structured_jobs
+    )
+    mention_has_official_feedback = any(
+        isinstance(job, dict) and _scheduled_job_is_official_weekly_feedback_insight(job)
+        for job in mention_jobs
+    )
+    return mention_has_official_feedback and not structured_has_official_feedback
 
 
 def _explicit_mention_queries_for_run_once(message: str) -> list[str]:
