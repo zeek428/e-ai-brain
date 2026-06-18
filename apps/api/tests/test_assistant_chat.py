@@ -59,7 +59,7 @@ def test_ai_assistant_draft_templates_list_official_market_entries():
         "release_owner",
     ]
     assert templates_by_code["knowledge_base_inspection"]["source_module"] == "知识库"
-    assert templates_by_code["online_log_anomaly_analysis"]["available"] is True
+    assert all(template["available"] is True for template in templates_by_code.values())
 
 
 def test_ai_assistant_allows_testing_delivery_roles_to_use_workbench_apis(monkeypatch):

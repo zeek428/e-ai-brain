@@ -245,12 +245,19 @@ describe('AssistantPage', () => {
 
     expect(await screen.findByText('周反馈洞察')).toBeInTheDocument();
     expect(screen.getByText('每周从用户反馈中提取高价值洞察。')).toBeInTheDocument();
-    expect(screen.getByText('暂未完整接入')).toBeInTheDocument();
+    expect(screen.queryByText('暂未完整接入')).not.toBeInTheDocument();
+    expect(screen.getAllByText('可生成草案')).toHaveLength(2);
 
     fireEvent.click(screen.getByRole('button', { name: '使用模板 周反馈洞察' }));
 
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请帮我生成每周用户反馈洞察定时作业草案，并在确认后执行一次。',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '使用模板 线上日志异常分析' }));
+
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '请生成线上日志异常分析定时作业草案。',
     );
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/assistant/conversations', 'GET'],

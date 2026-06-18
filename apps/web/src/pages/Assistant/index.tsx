@@ -2839,9 +2839,7 @@ function AssistantDraftTemplateMarket({
           <div className="assistant-template-card" key={template.code}>
             <div className="assistant-template-card-title">
               <Text strong>{template.name}</Text>
-              <Tag color={template.available === false ? 'default' : 'green'}>
-                {template.available === false ? '暂未完整接入' : '可生成草案'}
-              </Tag>
+              <Tag color="green">可生成草案</Tag>
             </div>
             <Text className="assistant-template-description" type="secondary">
               {template.description}
@@ -2863,7 +2861,6 @@ function AssistantDraftTemplateMarket({
             ) : null}
             <Button
               aria-label={`使用模板 ${template.name}`}
-              disabled={template.available === false}
               size="small"
               onClick={() => onUseTemplate(template)}
             >
