@@ -147,7 +147,7 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert marketplace.status_code == 200
     items = marketplace.json()["data"]["items"]
     by_code = {item["code"]: item for item in items}
-    assert set(by_code) == {"ai_executor", "email", "github", "gitlab"}
+    assert set(by_code) == {"ai_executor", "email", "github", "gitlab", "observability"}
     assert by_code["ai_executor"]["installed"] is True
     assert by_code["ai_executor"]["is_system"] is True
     assert by_code["ai_executor"]["latest_template_version"] == "v1"
@@ -231,6 +231,13 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert email_query["mailbox_folder"] == "INBOX"
     assert email_query["poll_since"] == "{{current_date-7}}"
     assert by_code["email"]["connection_schema"]["sections"][1]["title"] == "收件配置"
+    observability_defaults = by_code["observability"]["connection_defaults"]
+    assert by_code["observability"]["plugin_id"] == "plugin_standard_observability"
+    assert by_code["observability"]["publisher"] == "AI Brain 官方"
+    assert "线上日志指标查询" in by_code["observability"]["action_templates"]
+    assert observability_defaults["auth_type"] == "api_key_header"
+    assert observability_defaults["endpoint_url"] == "https://logs.example.com/api"
+    assert observability_defaults["request_config"]["query"]["window_minutes"] == 30
     assert by_code["github"]["connection_count"] == 0
     assert by_code["github"]["action_count"] == 0
 
@@ -313,6 +320,7 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
         "email_receive",
         "github_code_inspection",
         "gitlab_code_inspection",
+        "observability_online_log_metrics",
     }
     assert "maxcompute_weekly_feedback" not in by_code
     ai_command_template = by_code["ai_executor_command"]
@@ -329,6 +337,11 @@ def test_plugin_action_templates_are_structured_for_dynamic_forms():
     assert ai_command_template["request_config"]["instruction_timeout_seconds"] == (
         "{{instruction_timeout_seconds}}"
     )
+    observability_template = by_code["observability_online_log_metrics"]
+    assert observability_template["plugin_code"] == "observability"
+    assert observability_template["default_code"] == "query_online_log_metrics"
+    assert observability_template["request_config"]["path"] == "/logs/anomaly-metrics"
+    assert observability_template["result_mapping"]["write_target"] == "scheduled_job_result"
     assert ai_command_template["request_config"]["query"]["runner_id"] == "{{runner_id}}"
     assert ai_command_template["request_config"]["wait_for_completion"] is True
     assert ai_command_template["result_mapping"]["write_target"] == "scheduled_job_result"

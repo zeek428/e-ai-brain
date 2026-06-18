@@ -6,6 +6,7 @@ from app.services.assistant_references import normalize_assistant_references
 from app.services.plugin_templates import (
     STANDARD_PLUGIN_IDS_BY_CODE,
     plugin_action_payload_from_template,
+    plugin_action_template_by_code,
     plugin_action_template_for_plugin_code,
     plugin_connection_payload_from_template,
 )
@@ -252,8 +253,37 @@ class AssistantDraftBuilder:
     def email_digest_job_draft(self) -> dict[str, Any]:
         template = scheduled_job_template_by_code("email_digest") or {}
         defaults = _template_payload_defaults(template)
+        plugin = _find_plugin_by_code(self.context["integration_plugins"], "email")
+        plugin_id = _plugin_id_for_code(plugin, "email")
         action = _find_by_code(self.context["plugin_actions"], "receive_email_messages")
         connection = _connection_for_action(self.context["plugin_connections"], action)
+        prerequisite_items: list[dict[str, Any]] = []
+        if connection is None:
+            connection = _first_active(
+                self.context["plugin_connections"],
+                predicate=lambda item: item.get("plugin_id") == plugin_id,
+            )
+        if connection is None:
+            prerequisite_items.append(
+                self._plugin_connection_draft_item("email", plugin_id=plugin_id),
+            )
+        if action is None:
+            action_prerequisite_draft_ids = [
+                item["draft_id"]
+                for item in prerequisite_items
+                if item.get("action") == "create_plugin_connection"
+            ]
+            prerequisite_items.append(
+                self._plugin_action_draft_item(
+                    "email",
+                    action_template_code="email_receive",
+                    connection_id=connection.get("id") if connection else None,
+                    draft_id="assistant_draft_email_receive_action",
+                    plugin_id=plugin_id,
+                    prerequisite_draft_ids=action_prerequisite_draft_ids,
+                    title="邮件收取动作",
+                ),
+            )
         payload = {
             "cron_expression": defaults.get("cron_expression") or "0 8 * * MON-FRI",
             "enabled": defaults.get("enabled", True),
@@ -267,6 +297,10 @@ class AssistantDraftBuilder:
             "schedule_type": defaults.get("schedule_type") or "cron",
             "source_system": defaults.get("source_system") or "email",
         }
+        if prerequisite_items:
+            payload["assistant_prerequisite_draft_ids"] = [
+                item["draft_id"] for item in prerequisite_items
+            ]
         item = {
             "action": "create_scheduled_job",
             "draft_id": "assistant_draft_email_digest",
@@ -279,26 +313,32 @@ class AssistantDraftBuilder:
                 agent=None,
                 connection=connection,
                 payload=payload,
+                prerequisite_items=prerequisite_items,
+                prerequisite_summary="需先确认邮箱连接和邮件收取动作",
                 skill=None,
             ),
         }
+        items = [*prerequisite_items, item]
         return {
-            "intent": "email_digest_job_draft",
-            "items": [item],
+            "intent": "email_digest_setup_draft"
+            if prerequisite_items
+            else "email_digest_job_draft",
+            "items": items,
             "references": _references(
                 "assistant_action_draft",
                 [
                     {
-                        "id": item["draft_id"],
-                        "title": item["title"],
-                        "url": f"/assistant?draft_id={item['draft_id']}",
+                        "id": draft_item["draft_id"],
+                        "title": draft_item["title"],
+                        "url": f"/assistant?draft_id={draft_item['draft_id']}",
                     }
+                    for draft_item in items
                 ],
             ),
             "summary": {
-                "draft_count": 1,
+                "draft_count": len(items),
                 "requires_confirmation": True,
-                "target": "scheduled_jobs",
+                "target": "email_digest_setup" if prerequisite_items else "scheduled_jobs",
             },
             "tool": "assistant.action_draft",
         }
@@ -307,8 +347,37 @@ class AssistantDraftBuilder:
         template = scheduled_job_template_by_code("online_log_anomaly_analysis") or {}
         defaults = _template_payload_defaults(template)
         product = _first_active(self.context["products"])
+        plugin = _find_plugin_by_code(self.context["integration_plugins"], "observability")
+        plugin_id = _plugin_id_for_code(plugin, "observability")
         action = _find_online_log_action(self.context["plugin_actions"])
         connection = _connection_for_action(self.context["plugin_connections"], action)
+        prerequisite_items: list[dict[str, Any]] = []
+        if connection is None:
+            connection = _first_active(
+                self.context["plugin_connections"],
+                predicate=lambda item: item.get("plugin_id") == plugin_id,
+            )
+        if connection is None:
+            prerequisite_items.append(
+                self._plugin_connection_draft_item("observability", plugin_id=plugin_id),
+            )
+        if action is None:
+            action_prerequisite_draft_ids = [
+                item["draft_id"]
+                for item in prerequisite_items
+                if item.get("action") == "create_plugin_connection"
+            ]
+            prerequisite_items.append(
+                self._plugin_action_draft_item(
+                    "observability",
+                    action_template_code="observability_online_log_metrics",
+                    connection_id=connection.get("id") if connection else None,
+                    draft_id="assistant_draft_observability_online_log_action",
+                    plugin_id=plugin_id,
+                    prerequisite_draft_ids=action_prerequisite_draft_ids,
+                    title="线上日志查询动作",
+                ),
+            )
         model_gateway = _first_active(
             self.context["model_gateway_configs"],
             predicate=lambda item: item.get("is_default") is True,
@@ -318,6 +387,24 @@ class AssistantDraftBuilder:
             self.context["ai_skills"],
             predicate=_is_online_log_skill,
         ) or _first_active(self.context["ai_skills"])
+        if skill is None:
+            prerequisite_items.append(self._ai_skill_draft_item("online_log_anomaly"))
+        if agent is None:
+            agent_prerequisite_draft_ids = [
+                item["draft_id"]
+                for item in prerequisite_items
+                if item.get("action") == "create_ai_skill"
+            ]
+            prerequisite_items.append(
+                self._ai_agent_draft_item(
+                    "online_log_anomaly",
+                    default_skill_ids=[skill["id"]] if skill else [],
+                    model_gateway_config_id=(
+                        model_gateway.get("id") if model_gateway else None
+                    ),
+                    prerequisite_draft_ids=agent_prerequisite_draft_ids,
+                ),
+            )
         knowledge_document = _first_indexed_knowledge_document(
             self.context["knowledge_documents"],
         )
@@ -345,6 +432,20 @@ class AssistantDraftBuilder:
             "skill_ids": [skill["id"]] if skill else [],
             "source_system": defaults.get("source_system") or "online-log",
         }
+        if prerequisite_items:
+            payload["assistant_prerequisite_draft_ids"] = [
+                item["draft_id"] for item in prerequisite_items
+            ]
+        data_source_prerequisites = [
+            item["draft_id"]
+            for item in prerequisite_items
+            if item.get("action") in {"create_plugin_connection", "create_plugin_action"}
+        ]
+        ai_prerequisites = [
+            item["draft_id"]
+            for item in prerequisite_items
+            if item.get("action") in {"create_ai_skill", "create_ai_agent"}
+        ]
         item = {
             "action": "create_scheduled_job",
             "draft_id": "assistant_draft_online_log_anomaly_analysis",
@@ -357,26 +458,46 @@ class AssistantDraftBuilder:
                 agent=agent,
                 connection=connection,
                 payload=payload,
+                data_source_prerequisite_ids=data_source_prerequisites,
+                ai_prerequisite_ids=ai_prerequisites,
+                ai_prerequisite_summary=(
+                    f"需先确认{_draft_titles(ai_prerequisites, prerequisite_items)}"
+                    if ai_prerequisites
+                    else None
+                ),
+                confirm_prerequisite_ids=[
+                    item["draft_id"] for item in prerequisite_items
+                ],
+                prerequisite_items=prerequisite_items,
+                prerequisite_summary="需先确认可观测平台连接和线上日志查询动作"
+                if data_source_prerequisites
+                else None,
                 skill=skill,
             ),
         }
+        items = [*prerequisite_items, item]
         return {
-            "intent": "online_log_anomaly_job_draft",
-            "items": [item],
+            "intent": "online_log_anomaly_setup_draft"
+            if prerequisite_items
+            else "online_log_anomaly_job_draft",
+            "items": items,
             "references": _references(
                 "assistant_action_draft",
                 [
                     {
-                        "id": item["draft_id"],
-                        "title": item["title"],
-                        "url": f"/assistant?draft_id={item['draft_id']}",
+                        "id": draft_item["draft_id"],
+                        "title": draft_item["title"],
+                        "url": f"/assistant?draft_id={draft_item['draft_id']}",
                     }
+                    for draft_item in items
                 ],
             ),
             "summary": {
-                "draft_count": 1,
+                "draft_count": len(items),
                 "requires_confirmation": True,
-                "target": "scheduled_jobs",
+                "target": "online_log_anomaly_setup"
+                if prerequisite_items
+                else "scheduled_jobs",
             },
             "tool": "assistant.action_draft",
         }
@@ -761,6 +882,7 @@ class AssistantDraftBuilder:
             "email": "邮箱通知连接",
             "github": "GitHub API 连接",
             "gitlab": "GitLab API 连接",
+            "observability": "可观测平台连接",
         }[scenario]
         return {
             "action": "create_plugin_connection",
@@ -775,42 +897,68 @@ class AssistantDraftBuilder:
     def _plugin_action_draft_item(
         scenario: str,
         *,
+        action_template_code: str | None = None,
         connection_id: str | None,
+        draft_id: str | None = None,
         plugin_id: str,
         prerequisite_draft_ids: list[str] | None = None,
+        title: str | None = None,
     ) -> dict[str, Any]:
         payload = _plugin_action_payload(
             scenario,
+            action_template_code=action_template_code,
             connection_id=connection_id,
             plugin_id=plugin_id,
         )
-        title = {
+        default_title = {
             "email": "邮箱通知发送动作",
             "github": "GitHub 代码巡检动作",
             "gitlab": "GitLab 代码巡检动作",
+            "observability": "线上日志查询动作",
         }[scenario]
         if payload is None:
             return {
                 "action": "missing_plugin_action_template",
-                "draft_id": f"assistant_draft_{scenario}_plugin_action_template_missing",
+                "draft_id": draft_id
+                or f"assistant_draft_{scenario}_plugin_action_template_missing",
                 "payload": {"plugin_code": scenario},
                 "requires_confirmation": False,
                 "risk_level": "low",
-                "title": f"{title}模板缺失",
+                "title": f"{title or default_title}模板缺失",
             }
         if prerequisite_draft_ids:
             payload["assistant_prerequisite_draft_ids"] = prerequisite_draft_ids
         return {
             "action": "create_plugin_action",
-            "draft_id": f"assistant_draft_{scenario}_plugin_action",
+            "draft_id": draft_id or f"assistant_draft_{scenario}_plugin_action",
             "payload": payload,
             "requires_confirmation": True,
             "risk_level": "medium",
-            "title": title,
+            "title": title or default_title,
         }
 
     @staticmethod
     def _ai_skill_draft_item(scenario: str) -> dict[str, Any]:
+        if scenario == "online_log_anomaly":
+            return {
+                "action": "create_ai_skill",
+                "draft_id": "assistant_draft_online_log_anomaly_ai_skill",
+                "payload": {
+                    "code": "online_log_anomaly_detection",
+                    "name": "线上日志异常检测 Skill",
+                    "prompt_template": (
+                        "请基于线上日志指标、错误样本和延迟分布识别异常模式，"
+                        "输出影响范围、根因假设、处置建议和需追踪的证据。"
+                    ),
+                    "required_context": ["online_log_metrics"],
+                    "risk_level": "medium",
+                    "status": "active",
+                    "version": "1.0.0",
+                },
+                "requires_confirmation": True,
+                "risk_level": "medium",
+                "title": "线上日志异常检测 Skill",
+            }
         if scenario != "code_inspection":
             raise ValueError(f"Unsupported AI skill draft scenario: {scenario}")
         return {
@@ -841,6 +989,30 @@ class AssistantDraftBuilder:
         model_gateway_config_id: str | None,
         prerequisite_draft_ids: list[str] | None = None,
     ) -> dict[str, Any]:
+        if scenario == "online_log_anomaly":
+            payload = {
+                "brain_app_id": "rd_brain",
+                "code": "online_log_anomaly_agent",
+                "default_skill_ids": default_skill_ids,
+                "description": "用于线上日志异常检测、影响分析和处置建议的 AI角色。",
+                "model_gateway_config_id": model_gateway_config_id,
+                "name": "线上日志分析 AI角色",
+                "status": "active",
+                "system_prompt": (
+                    "你负责分析线上日志、错误率和延迟指标，输出异常归因、"
+                    "修复建议和结果动作摘要。"
+                ),
+            }
+            if prerequisite_draft_ids:
+                payload["assistant_prerequisite_draft_ids"] = prerequisite_draft_ids
+            return {
+                "action": "create_ai_agent",
+                "draft_id": "assistant_draft_online_log_anomaly_ai_agent",
+                "payload": payload,
+                "requires_confirmation": True,
+                "risk_level": "medium",
+                "title": "线上日志分析 AI角色",
+            }
         if scenario != "code_inspection":
             raise ValueError(f"Unsupported AI role draft scenario: {scenario}")
         payload: dict[str, Any] = {
@@ -877,10 +1049,15 @@ def _template_payload_defaults(template: dict[str, Any]) -> dict[str, Any]:
 def _plugin_action_payload(
     scenario: str,
     *,
+    action_template_code: str | None = None,
     connection_id: str | None,
     plugin_id: str,
 ) -> dict[str, Any] | None:
-    template = plugin_action_template_for_plugin_code(scenario)
+    template = (
+        plugin_action_template_by_code(action_template_code)
+        if action_template_code
+        else plugin_action_template_for_plugin_code(scenario)
+    )
     if template is None:
         return None
     return plugin_action_payload_from_template(
@@ -1062,15 +1239,38 @@ def _scheduled_job_wizard_steps(
     *,
     action: dict[str, Any] | None,
     agent: dict[str, Any] | None,
+    ai_prerequisite_ids: list[str] | None = None,
+    ai_prerequisite_summary: str | None = None,
     connection: dict[str, Any] | None,
+    confirm_prerequisite_ids: list[str] | None = None,
+    data_source_prerequisite_ids: list[str] | None = None,
     payload: dict[str, Any],
+    prerequisite_items: list[dict[str, Any]] | None = None,
+    prerequisite_summary: str | None = None,
     skill: dict[str, Any] | None,
     result_action_summary: str | None = None,
 ) -> list[dict[str, Any]]:
+    prerequisite_ids = [
+        str(item["draft_id"])
+        for item in prerequisite_items or []
+        if item.get("requires_confirmation") is not False
+    ]
+    data_source_dependency_ids = (
+        data_source_prerequisite_ids
+        if data_source_prerequisite_ids is not None
+        else prerequisite_ids
+    )
+    confirm_dependency_ids = (
+        confirm_prerequisite_ids
+        if confirm_prerequisite_ids is not None
+        else prerequisite_ids
+    )
     action_name = str(action.get("name") or action.get("code")) if action else ""
     data_source_ready = action is not None and connection is not None
     if data_source_ready:
         data_source_summary = f"已选择 {action_name}" if action_name else "已选择数据来源"
+    elif data_source_dependency_ids and prerequisite_summary:
+        data_source_summary = prerequisite_summary
     elif action is None:
         data_source_summary = "需补齐插件动作"
     else:
@@ -1080,6 +1280,9 @@ def _scheduled_job_wizard_steps(
     if execution_mode == "deterministic":
         ai_status = "skipped"
         ai_summary = "不调用 AI"
+    elif ai_prerequisite_ids:
+        ai_status = "needs_prerequisite"
+        ai_summary = ai_prerequisite_summary or "需补齐 AI角色和 Skill"
     elif (
         bool(payload.get("agent_id") or agent)
         and bool(payload.get("model_gateway_config_id"))
@@ -1098,14 +1301,14 @@ def _scheduled_job_wizard_steps(
     )
     return [
         {
-            "depends_on": [],
+            "depends_on": [] if data_source_ready else data_source_dependency_ids,
             "key": "data_source",
             "status": "ready" if data_source_ready else "needs_prerequisite",
             "summary": data_source_summary,
             "title": "数据来源",
         },
         {
-            "depends_on": [],
+            "depends_on": ai_prerequisite_ids or [],
             "key": "ai_processing",
             "status": ai_status,
             "summary": ai_summary,
@@ -1127,10 +1330,12 @@ def _scheduled_job_wizard_steps(
             "title": "调度策略",
         },
         {
-            "depends_on": [],
+            "depends_on": confirm_dependency_ids,
             "key": "confirm",
             "status": "pending",
-            "summary": "确认后创建定时作业",
+            "summary": "确认前置草案后创建定时作业"
+            if confirm_dependency_ids
+            else "确认后创建定时作业",
             "title": "确认执行",
         },
     ]

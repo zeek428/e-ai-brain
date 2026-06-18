@@ -2477,6 +2477,94 @@ def test_ai_assistant_chat_generates_email_digest_job_draft(monkeypatch):
     assert draft["wizard_steps"] == draft_item["wizard_steps"]
 
 
+def test_ai_assistant_email_digest_draft_generates_missing_prerequisites(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.integration_plugins["plugin_standard_email"] = {
+        "category": "collaboration",
+        "code": "email",
+        "id": "plugin_standard_email",
+        "is_system": True,
+        "name": "邮箱",
+        "protocol": "http",
+        "risk_level": "medium",
+        "status": "active",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "我已生成邮件摘要配置草案链。",
+                                        "suggestions": ["先确认邮箱连接", "再确认邮件收取动作"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setattr(assistant_router, "urlopen", lambda _request, timeout: FakeResponse())
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "请帮我生成邮件摘要收取定时作业草案，先检查邮箱连接和邮件收取动作"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    tool_result = response.json()["data"]["message"]["tool_results"][0]
+    assert tool_result["tool"] == "assistant.action_draft"
+    assert tool_result["intent"] == "email_digest_setup_draft"
+    assert tool_result["summary"]["draft_count"] == 3
+    connection_item, action_item, job_item = tool_result["items"]
+    assert connection_item["action"] == "create_plugin_connection"
+    assert connection_item["client_draft_id"] == "assistant_draft_email_plugin_connection"
+    assert action_item["action"] == "create_plugin_action"
+    assert action_item["title"] == "邮件收取动作"
+    assert action_item["payload"]["code"] == "receive_email_messages"
+    assert action_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        "assistant_draft_email_plugin_connection"
+    ]
+    assert job_item["action"] == "create_scheduled_job"
+    assert job_item["client_draft_id"] == "assistant_draft_email_digest"
+    assert job_item["payload"]["plugin_action_id"] is None
+    assert job_item["payload"]["plugin_connection_id"] is None
+    assert job_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        "assistant_draft_email_plugin_connection",
+        "assistant_draft_email_receive_action",
+    ]
+    assert job_item["wizard_steps"][0] == {
+        "depends_on": [
+            "assistant_draft_email_plugin_connection",
+            "assistant_draft_email_receive_action",
+        ],
+        "key": "data_source",
+        "status": "needs_prerequisite",
+        "summary": "需先确认邮箱连接和邮件收取动作",
+        "title": "数据来源",
+    }
+    assert job_item["wizard_steps"][-1]["depends_on"] == [
+        "assistant_draft_email_plugin_connection",
+        "assistant_draft_email_receive_action",
+    ]
+    assert job_item["wizard_steps"][-1]["summary"] == "确认前置草案后创建定时作业"
+
+
 def test_ai_assistant_chat_generates_online_log_anomaly_job_draft(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
@@ -2692,6 +2780,137 @@ def test_ai_assistant_chat_generates_online_log_anomaly_job_draft(monkeypatch):
     draft = draft_response.json()["data"]
     assert draft["client_draft_id"] == "assistant_draft_online_log_anomaly_analysis"
     assert draft["preview"]["target"]["resource_type"] == "scheduled_job"
+
+
+def test_ai_assistant_online_log_draft_generates_missing_prerequisites(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.products["product_online_ops"] = {
+        "code": "online_ops",
+        "created_at": "2026-06-18T08:00:00+00:00",
+        "id": "product_online_ops",
+        "name": "线上运营系统",
+        "status": "active",
+        "updated_at": "2026-06-18T08:00:00+00:00",
+    }
+    app.state.store.model_gateway_configs["model_gateway_online_log"] = {
+        "api_key": "sk-online-log-test",
+        "base_url": "https://models.example.com/v1",
+        "created_at": "2026-06-18T08:00:00+00:00",
+        "default_chat_model": "ops-chat",
+        "default_embedding_model": "ops-embedding",
+        "id": "model_gateway_online_log",
+        "is_default": True,
+        "model": "ops-chat",
+        "name": "运维模型",
+        "provider": "openai_compatible",
+        "status": "active",
+        "timeout_seconds": 60,
+        "updated_at": "2026-06-18T08:00:00+00:00",
+    }
+    app.state.store.integration_plugins["plugin_standard_observability"] = {
+        "category": "operations",
+        "code": "observability",
+        "id": "plugin_standard_observability",
+        "is_system": True,
+        "name": "可观测平台",
+        "protocol": "http",
+        "risk_level": "medium",
+        "status": "active",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "我已生成线上日志异常分析配置草案链。",
+                                        "suggestions": ["先确认数据来源", "再确认 AI 能力"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setattr(assistant_router, "urlopen", lambda _request, timeout: FakeResponse())
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": (
+                "请生成线上日志异常分析定时作业草案，"
+                "说明需要的数据连接、AI处理、结果动作和调度策略"
+            )
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    tool_result = response.json()["data"]["message"]["tool_results"][0]
+    assert tool_result["tool"] == "assistant.action_draft"
+    assert tool_result["intent"] == "online_log_anomaly_setup_draft"
+    assert tool_result["summary"]["draft_count"] == 5
+    connection_item, action_item, skill_item, agent_item, job_item = tool_result["items"]
+    assert connection_item["action"] == "create_plugin_connection"
+    assert connection_item["client_draft_id"] == "assistant_draft_observability_plugin_connection"
+    assert action_item["action"] == "create_plugin_action"
+    assert action_item["title"] == "线上日志查询动作"
+    assert action_item["payload"]["code"] == "query_online_log_metrics"
+    assert action_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        "assistant_draft_observability_plugin_connection"
+    ]
+    assert skill_item["action"] == "create_ai_skill"
+    assert skill_item["client_draft_id"] == "assistant_draft_online_log_anomaly_ai_skill"
+    assert agent_item["action"] == "create_ai_agent"
+    assert agent_item["client_draft_id"] == "assistant_draft_online_log_anomaly_ai_agent"
+    assert agent_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        "assistant_draft_online_log_anomaly_ai_skill"
+    ]
+    assert job_item["action"] == "create_scheduled_job"
+    assert job_item["client_draft_id"] == "assistant_draft_online_log_anomaly_analysis"
+    assert job_item["payload"]["assistant_prerequisite_draft_ids"] == [
+        "assistant_draft_observability_plugin_connection",
+        "assistant_draft_observability_online_log_action",
+        "assistant_draft_online_log_anomaly_ai_skill",
+        "assistant_draft_online_log_anomaly_ai_agent",
+    ]
+    assert job_item["wizard_steps"][0] == {
+        "depends_on": [
+            "assistant_draft_observability_plugin_connection",
+            "assistant_draft_observability_online_log_action",
+        ],
+        "key": "data_source",
+        "status": "needs_prerequisite",
+        "summary": "需先确认可观测平台连接和线上日志查询动作",
+        "title": "数据来源",
+    }
+    assert job_item["wizard_steps"][1] == {
+        "depends_on": [
+            "assistant_draft_online_log_anomaly_ai_skill",
+            "assistant_draft_online_log_anomaly_ai_agent",
+        ],
+        "key": "ai_processing",
+        "status": "needs_prerequisite",
+        "summary": "需先确认线上日志异常检测 Skill、线上日志分析 AI角色",
+        "title": "AI处理",
+    }
+    assert job_item["wizard_steps"][-1]["depends_on"] == job_item["payload"][
+        "assistant_prerequisite_draft_ids"
+    ]
 
 
 def test_ai_assistant_chat_generates_knowledge_inspection_analysis_draft(monkeypatch):

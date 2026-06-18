@@ -66,6 +66,17 @@ STANDARD_PLUGINS = [
         "risk_level": "medium",
         "status": "active",
     },
+    {
+        "category": "operations",
+        "code": "observability",
+        "description": "官方标准可观测平台插件，用于读取线上日志、错误率、延迟和异常指标。",
+        "id": "plugin_standard_observability",
+        "is_system": True,
+        "name": "可观测平台",
+        "protocol": "http",
+        "risk_level": "medium",
+        "status": "active",
+    },
 ]
 
 STANDARD_PLUGIN_IDS_BY_CODE = {
@@ -110,6 +121,12 @@ STANDARD_PLUGIN_MARKETPLACE_METADATA = {
         "publisher": "AI Brain 官方",
         "recommended_scenarios": ["代码仓库质量巡检", "漏洞发现同步", "MR 上下文读取"],
         "summary": "连接 GitLab API，读取项目、分支、MR、提交和代码质量数据。",
+    },
+    "observability": {
+        "action_templates": ["线上日志指标查询"],
+        "publisher": "AI Brain 官方",
+        "recommended_scenarios": ["线上日志异常发现", "错误率突增分析", "生产告警复盘"],
+        "summary": "连接可观测平台，读取线上日志、错误率、延迟和异常指标。",
     },
 }
 
@@ -213,6 +230,28 @@ STANDARD_PLUGIN_CONNECTION_DEFAULTS = {
                 "api_version": "v4",
                 "project_id": "",
                 "project_path": "",
+            },
+        },
+        "status": "active",
+        "timeout_seconds": 30,
+    },
+    "observability": {
+        "auth_config": {
+            "header_name": "Authorization",
+            "secret_ref": "vault/observability/api_key",
+        },
+        "auth_type": "api_key_header",
+        "endpoint_url": "https://logs.example.com/api",
+        "environment": "prod",
+        "max_retries": 1,
+        "name": "生产可观测平台连接",
+        "request_config": {
+            "headers": {"Content-Type": "application/json"},
+            "query": {
+                "app": "",
+                "environment": "prod",
+                "service": "",
+                "window_minutes": 30,
             },
         },
         "status": "active",
@@ -556,6 +595,37 @@ STANDARD_PLUGIN_ACTION_TEMPLATES = [
         "result_mapping": result_write_target_default_mapping("email_notifications"),
         "template_version": "v1",
     },
+    {
+        "action_type": "http_request",
+        "code": "observability_online_log_metrics",
+        "default_code": "query_online_log_metrics",
+        "default_name": "查询线上日志指标",
+        "description": "从可观测平台读取指定窗口内的错误率、延迟、异常日志和采样记录。",
+        "form_defaults": {
+            "window_end": "{{now}}",
+            "window_start": "{{current_date}}",
+        },
+        "name": "线上日志指标查询",
+        "plugin_code": "observability",
+        "request_config": {
+            "headers": {"Content-Type": "application/json"},
+            "method": "GET",
+            "path": "/logs/anomaly-metrics",
+            "query": {
+                "app": "{{app}}",
+                "environment": "{{environment}}",
+                "service": "{{service}}",
+                "window_end": "{{window_end}}",
+                "window_start": "{{window_start}}",
+            },
+        },
+        "result_mapping": {
+            "records_imported_path": "$.row_count",
+            "source_rows_path": "$.logs",
+            "write_target": "scheduled_job_result",
+        },
+        "template_version": "v1",
+    },
 ]
 
 DEFAULT_ACTION_TEMPLATE_BY_PLUGIN_CODE = {
@@ -563,6 +633,7 @@ DEFAULT_ACTION_TEMPLATE_BY_PLUGIN_CODE = {
     "email": "email_notification",
     "github": "github_code_inspection",
     "gitlab": "gitlab_code_inspection",
+    "observability": "observability_online_log_metrics",
 }
 
 
