@@ -2895,6 +2895,16 @@ export default function AssistantPage() {
     () => scheduledJobRunPollTargets(messages, scheduledJobRunById),
     [messages, scheduledJobRunById],
   );
+  const rememberReferences = useCallback((references: AssistantReference[]) => {
+    if (!references.length) {
+      return;
+    }
+    setRecentReferences((items) => {
+      const nextItems = nextRecentReferences(items, references);
+      writeRecentReferences(nextItems);
+      return nextItems;
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof messageListEndRef.current?.scrollIntoView !== 'function') {
@@ -3057,6 +3067,7 @@ export default function AssistantPage() {
             ? currentItems
             : [...currentItems, reference]
         ));
+        rememberReferences([reference]);
       })
       .catch((error) => {
         if (!didCancel) {
@@ -3073,7 +3084,7 @@ export default function AssistantPage() {
     return () => {
       didCancel = true;
     };
-  }, []);
+  }, [rememberReferences]);
 
   useEffect(() => {
     const query = activeMentionQuery(inputValue);
@@ -3216,11 +3227,7 @@ export default function AssistantPage() {
         ? items
         : [...items, reference]
     ));
-    setRecentReferences((items) => {
-      const nextItems = nextRecentReferences(items, [reference]);
-      writeRecentReferences(nextItems);
-      return nextItems;
-    });
+    rememberReferences([reference]);
     setActiveReferenceIndex(-1);
     setReferenceCandidates([]);
   };
@@ -3375,13 +3382,7 @@ export default function AssistantPage() {
       selectedReferences,
       commandReferences,
     );
-    if (referencesForRequest.length) {
-      setRecentReferences((items) => {
-        const nextItems = nextRecentReferences(items, referencesForRequest);
-        writeRecentReferences(nextItems);
-        return nextItems;
-      });
-    }
+    rememberReferences(referencesForRequest);
     const userMessage: ChatMessage = {
       content,
       id: `user-${Date.now()}`,

@@ -2195,6 +2195,96 @@ describe('AssistantPage', () => {
     });
   });
 
+  it('promotes route-preselected references into the recent group', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/assistant?reference_type=knowledge_space&reference_id=knowledge_space_support&prompt=%E6%80%BB%E7%BB%93%E8%BF%99%E4%B8%AA%E7%9F%A5%E8%AF%86%E7%A9%BA%E9%97%B4',
+    );
+    const routeReference = {
+      chunk_count: 12,
+      document_count: 3,
+      id: 'knowledge_space_support',
+      permission_label: '可引用',
+      source_module: '知识库',
+      summary: '支付与订单支持知识空间。3 篇可检索知识文档，12 个知识 chunk 可按权限注入。',
+      title: '支付支持知识空间',
+      type: 'knowledge_space',
+      updated_at: '2026-06-14T08:30:00+00:00',
+      url: '/knowledge/documents?knowledge_space_id=knowledge_space_support',
+    };
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        expect(init?.method ?? 'GET').toBe('GET');
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        if (params.get('query') === 'knowledge_space_support') {
+          expect(params.get('type')).toBe('knowledge_space');
+          expect(params.get('limit')).toBe('1');
+          return new Response(
+            JSON.stringify({
+              data: {
+                items: [routeReference],
+                total: 1,
+              },
+            }),
+            { headers: { 'Content-Type': 'application/json' }, status: 200 },
+          );
+        }
+        expect(params.get('query')).toBe('');
+        expect(params.get('type')).toBeNull();
+        expect(params.get('limit')).toBe('12');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                routeReference,
+                {
+                  chunk_count: 4,
+                  document_count: 1,
+                  id: 'knowledge_space_refund',
+                  permission_label: '可引用',
+                  source_module: '知识库',
+                  summary: '退款支持知识空间。',
+                  title: '退款支持知识空间',
+                  type: 'knowledge_space',
+                  updated_at: '2026-06-13T08:30:00+00:00',
+                  url: '/knowledge/documents?knowledge_space_id=knowledge_space_refund',
+                },
+              ],
+              total: 2,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const currentContext = await screen.findByLabelText('本次上下文');
+    expect(within(currentContext).getByText('已从链接带入知识空间：支付支持知识空间')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '移除 支付支持知识空间' }));
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@' },
+    });
+
+    const referenceCandidatePanel = await screen.findByLabelText('引用候选');
+    expect(within(referenceCandidatePanel).getByText('最近使用')).toBeInTheDocument();
+    expect(within(referenceCandidatePanel).getAllByRole('button', { name: /支付支持知识空间/ })).toHaveLength(1);
+    expect(within(referenceCandidatePanel).getByRole('button', { name: /退款支持知识空间/ })).toBeInTheDocument();
+  });
+
   it('keeps route reference resolution status visible when the linked context is missing', async () => {
     window.history.pushState(
       {},
