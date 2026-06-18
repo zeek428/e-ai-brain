@@ -884,7 +884,7 @@ describe('AssistantPage', () => {
     expect(within(referenceCandidatePanel).getByRole('button', { name: /收银台提交排障手册/ })).toBeInTheDocument();
   });
 
-  it('shows admin role quick tasks and fills the run-failure prompt', async () => {
+  it('shows admin role quick tasks and routes AI capability into a draft-first guide prompt', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (input === '/api/assistant/conversations') {
@@ -911,6 +911,10 @@ describe('AssistantPage', () => {
     expect(screen.getByRole('button', { name: '插件连接' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'AI能力' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '定时作业' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI能力' }));
+
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('我要新增 AI能力配置');
 
     fireEvent.click(screen.getByRole('button', { name: '运行失败' }));
 

@@ -238,7 +238,7 @@ const assistantRoleQuickTaskGroups: AssistantRoleQuickTaskGroup[] = [
       {
         key: 'ai_capabilities',
         label: 'AI能力',
-        prompt: '请检查 AI 模型、AI角色和 Skill 配置是否完整，并指出缺口。',
+        prompt: '我要新增 AI能力配置',
       },
       {
         key: 'scheduled_jobs',
