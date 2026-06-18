@@ -97,6 +97,29 @@ SCHEDULED_JOB_DEFAULTS = {
     "timeout_seconds": 600,
     "timezone": "Asia/Shanghai",
 }
+CRON_MONTH_NAMES = {
+    "JAN": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AUG": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DEC": 12,
+}
+CRON_WEEKDAY_NAMES = {
+    "SUN": 0,
+    "MON": 1,
+    "TUE": 2,
+    "WED": 3,
+    "THU": 4,
+    "FRI": 5,
+    "SAT": 6,
+}
 PLUGIN_CONNECTION_DEFAULTS = {
     "auth_config": {},
     "auth_type": "none",
@@ -1104,8 +1127,17 @@ def _scheduled_job_draft_preview(
     _validate_enum(validation, "execution_mode", execution_mode, SCHEDULED_JOB_EXECUTION_MODES)
     schedule_type = payload.get("schedule_type")
     _validate_enum(validation, "schedule_type", schedule_type, SCHEDULED_JOB_SCHEDULE_TYPES)
-    if schedule_type == "cron" and not payload.get("cron_expression"):
-        _add_issue(validation, "cron_expression", "error", "cron_expression is required")
+    if schedule_type == "cron":
+        cron_expression = str(payload.get("cron_expression") or "").strip()
+        if not cron_expression:
+            _add_issue(validation, "cron_expression", "error", "cron_expression is required")
+        elif not _valid_cron_expression(cron_expression):
+            _add_issue(
+                validation,
+                "cron_expression",
+                "error",
+                "Invalid cron_expression",
+            )
     if schedule_type == "interval":
         interval_seconds = payload.get("interval_seconds")
         if not isinstance(interval_seconds, int) or interval_seconds <= 0:
@@ -1417,6 +1449,75 @@ def _validate_enum(
 ) -> None:
     if value not in allowed_values:
         _add_issue(validation, field, "error", f"Unsupported {field}")
+
+
+def _valid_cron_expression(expression: str) -> bool:
+    fields = expression.split()
+    if len(fields) != 5:
+        return False
+    validators = (
+        (0, 59, {}),
+        (0, 23, {}),
+        (1, 31, {}),
+        (1, 12, CRON_MONTH_NAMES),
+        (0, 7, CRON_WEEKDAY_NAMES),
+    )
+    return all(
+        _valid_cron_field(field, minimum, maximum, aliases)
+        for field, (minimum, maximum, aliases) in zip(fields, validators, strict=True)
+    )
+
+
+def _valid_cron_field(
+    field: str,
+    minimum: int,
+    maximum: int,
+    aliases: dict[str, int],
+) -> bool:
+    if not field:
+        return False
+    return all(
+        _valid_cron_part(part, minimum, maximum, aliases)
+        for part in field.upper().split(",")
+    )
+
+
+def _valid_cron_part(
+    part: str,
+    minimum: int,
+    maximum: int,
+    aliases: dict[str, int],
+) -> bool:
+    if not part:
+        return False
+    base, _, step = part.partition("/")
+    if step:
+        if not step.isdigit() or int(step) <= 0:
+            return False
+    if base == "*":
+        return True
+    start, separator, end = base.partition("-")
+    if not _valid_cron_token(start, minimum, maximum, aliases):
+        return False
+    if not separator:
+        return True
+    return _valid_cron_token(end, minimum, maximum, aliases)
+
+
+def _valid_cron_token(
+    token: str,
+    minimum: int,
+    maximum: int,
+    aliases: dict[str, int],
+) -> bool:
+    if not token:
+        return False
+    if token in aliases:
+        return minimum <= aliases[token] <= maximum
+    if not token.isdigit():
+        return False
+    value = int(token)
+    return minimum <= value <= maximum
 
 
 def _add_issue(

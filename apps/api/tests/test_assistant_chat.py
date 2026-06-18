@@ -2688,6 +2688,44 @@ def test_ai_assistant_action_draft_previews_diff_and_blocks_invalid_confirmation
     assert confirm_response.json()["detail"]["code"] == "DRAFT_PRECHECK_FAILED"
 
 
+def test_ai_assistant_scheduled_job_draft_precheck_blocks_invalid_cron_expression():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "cron_expression": "61 8 * * MON",
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "非法 Cron 的看板刷新作业",
+                "schedule_type": "cron",
+            },
+            "risk_level": "medium",
+            "title": "创建非法 Cron 定时任务",
+        },
+        headers=headers,
+    )
+
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    validation = draft["preview"]["validation"]
+    assert validation["status"] == "blocked"
+    issues_by_field = {item["field"]: item for item in validation["issues"]}
+    assert issues_by_field["cron_expression"]["severity"] == "error"
+    assert "Invalid cron_expression" in issues_by_field["cron_expression"]["message"]
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 409
+    assert confirm_response.json()["detail"]["code"] == "DRAFT_PRECHECK_FAILED"
+
+
 def test_ai_assistant_action_draft_precheck_blocks_failed_plugin_connection():
     headers = auth_headers()
     app.state.store.reset()
