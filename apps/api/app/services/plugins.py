@@ -9,7 +9,7 @@ from urllib.parse import quote, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.api.deps import api_error, require_roles
+from app.api.deps import api_error, require_permissions
 from app.services.ai_executor_runners import (
     AI_EXECUTOR_TYPES,
     SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
@@ -69,7 +69,7 @@ DEPRECATED_STANDARD_PLUGIN_CODES = {"aliyun_maxcompute"}
 
 
 def require_admin(user: dict[str, Any]) -> None:
-    require_roles(user, {"admin"})
+    require_permissions(user, {"system.plugins.manage"})
 
 
 def latest_standard_plugin_template_version(plugin_code: str | None = None) -> str:

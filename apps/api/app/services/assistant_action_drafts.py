@@ -1426,12 +1426,12 @@ def _append_action_permission_validation(
             )
         return
     if action in {"create_plugin_action", "create_plugin_connection"}:
-        if "admin" not in set(user.get("roles") or []):
+        if not _user_has_permission(user, "system.plugins.manage"):
             _add_issue(
                 validation,
                 "permission",
                 "error",
-                "admin role is required to confirm this draft",
+                "system.plugins.manage is required to confirm this draft",
             )
         return
     if action == "create_rd_task":

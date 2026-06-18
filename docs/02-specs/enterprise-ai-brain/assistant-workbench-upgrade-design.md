@@ -262,7 +262,7 @@ pending | confirmed | cancelled | failed
 ## 权限与安全
 
 - `@` 候选必须按当前用户权限过滤；前端不展示无权对象，后端仍强制校验。
-- 配置写入第一阶段仅允许 `admin`；后续可拆分为 `system.plugins.manage`、`system.scheduled_jobs.manage`、`system.model_gateway.manage` 等权限点。
+- 配置写入必须按动作类型校验专项权限：插件连接/动作使用 `system.plugins.manage`，AI Skill/AI角色使用 `system.ai_capabilities.manage`，定时作业使用 `system.scheduled_jobs.manage`；`admin` 与 `system.admin` 继续作为兜底高权限。
 - 模型请求不得包含 API Key、Bearer Token、Basic 密码、Git 凭据、插件连接密钥或完整外部响应。
 - 插件调用日志可为管理员调试返回明文请求摘要，但传给模型的上下文必须使用脱敏摘要。
 - 知识检索必须在 repository/query 层做权限过滤，不能先查全量再由模型判断。

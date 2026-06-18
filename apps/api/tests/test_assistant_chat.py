@@ -2175,6 +2175,101 @@ def test_ai_assistant_ai_agent_draft_can_be_confirmed_by_ai_capability_manager()
     assert confirmed["run"]["result"]["id"] in app.state.store.ai_agents
 
 
+def test_ai_assistant_plugin_connection_draft_can_be_confirmed_by_plugin_manager():
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    user = {
+        "id": "user_plugin_manager",
+        "permissions": ["system.plugins.manage"],
+        "roles": [],
+    }
+
+    draft = assistant_action_drafts_service.create_assistant_action_draft_response(
+        current_store=app.state.store,
+        payload=SimpleNamespace(
+            action="create_plugin_connection",
+            client_draft_id=None,
+            metadata_json={},
+            payload={
+                "auth_config": {},
+                "auth_type": "none",
+                "endpoint_url": "https://plugins.example.com",
+                "environment": "prod",
+                "name": "插件管理连接",
+                "plugin_id": "plugin_http",
+                "request_config": {},
+                "status": "active",
+            },
+            risk_level="medium",
+            source_message_id=None,
+            title="创建插件管理连接",
+        ),
+        user=user,
+    )
+
+    assert draft["preview"]["validation"]["status"] == "passed"
+
+    confirmed = assistant_action_drafts_service.confirm_assistant_action_draft_response(
+        current_store=app.state.store,
+        draft_id=draft["id"],
+        user=user,
+    )
+
+    assert confirmed["draft"]["status"] == "confirmed"
+    assert confirmed["run"]["result_type"] == "plugin_connection"
+    assert confirmed["run"]["result"]["name"] == "插件管理连接"
+    assert confirmed["run"]["result"]["id"] in app.state.store.plugin_connections
+
+
+def test_ai_assistant_plugin_action_draft_can_be_confirmed_by_plugin_manager():
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    user = {
+        "id": "user_plugin_manager",
+        "permissions": ["system.plugins.manage"],
+        "roles": [],
+    }
+
+    draft = assistant_action_drafts_service.create_assistant_action_draft_response(
+        current_store=app.state.store,
+        payload=SimpleNamespace(
+            action="create_plugin_action",
+            client_draft_id=None,
+            metadata_json={},
+            payload={
+                "action_type": "http_request",
+                "code": "feedback_signal_write",
+                "connection_id": "plugin_connection_maxcompute",
+                "name": "反馈信号写入动作",
+                "plugin_id": "plugin_http",
+                "request_config": {
+                    "method": "POST",
+                    "path": "/feedback/signals",
+                },
+                "result_mapping": {"write_target": "user_feedback_insights"},
+                "status": "active",
+            },
+            risk_level="medium",
+            source_message_id=None,
+            title="创建反馈信号写入动作",
+        ),
+        user=user,
+    )
+
+    assert draft["preview"]["validation"]["status"] == "passed"
+
+    confirmed = assistant_action_drafts_service.confirm_assistant_action_draft_response(
+        current_store=app.state.store,
+        draft_id=draft["id"],
+        user=user,
+    )
+
+    assert confirmed["draft"]["status"] == "confirmed"
+    assert confirmed["run"]["result_type"] == "plugin_action"
+    assert confirmed["run"]["result"]["code"] == "feedback_signal_write"
+    assert confirmed["run"]["result"]["id"] in app.state.store.plugin_actions
+
+
 def test_ai_assistant_action_draft_confirm_failure_is_persisted(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
