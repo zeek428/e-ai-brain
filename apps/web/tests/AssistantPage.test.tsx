@@ -997,6 +997,53 @@ describe('AssistantPage', () => {
     expect(screen.getAllByText('需求').length).toBeGreaterThan(0);
   });
 
+  it('does not treat email addresses as @ references', async () => {
+    const referenceCandidateRequests: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        referenceCandidateRequests.push(String(input));
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'requirement_email_noise',
+                  title: '邮箱噪声不应触发引用',
+                  type: 'requirement',
+                  url: '/delivery/requirements?requirement_id=requirement_email_noise',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '请联系 admin@example.com 跟进登录失败问题' },
+    });
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 0);
+    });
+
+    expect(referenceCandidateRequests).toEqual([]);
+    expect(screen.queryByLabelText('引用候选')).not.toBeInTheDocument();
+  });
+
   it('groups @ reference candidates with metadata and supports keyboard selection', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
@@ -1372,6 +1419,106 @@ describe('AssistantPage', () => {
           type: 'scheduled_job',
         },
       ],
+    });
+  });
+
+  it('lets the backend disambiguate run-once @ commands when scheduled job lookup returns multiple candidates', async () => {
+    let chatRequestBody: Record<string, unknown> | undefined;
+    const referenceRequestParams: URLSearchParams[] = [];
+    const resolveReferenceRequests: Array<() => void> = [];
+    const inactiveLegacyJob = {
+      id: 'scheduled_job_feedback_legacy_disabled',
+      permission_label: '管理员可引用',
+      source_module: '任务中心',
+      title: '提取每周用户反馈有价值信息',
+      type: 'scheduled_job',
+      updated_at: '2026-06-14T18:00:00+08:00',
+      url: '/tasks/scheduled-jobs?job_id=scheduled_job_feedback_legacy_disabled',
+    };
+    const activeOfficialJob = {
+      id: 'scheduled_job_feedback_weekly',
+      permission_label: '管理员可引用',
+      source_module: '任务中心',
+      title: '每周用户反馈洞察抽取',
+      type: 'scheduled_job',
+      updated_at: '2026-06-15T18:00:00+08:00',
+      url: '/tasks/scheduled-jobs?job_id=scheduled_job_feedback_weekly',
+    };
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1] ?? '');
+        referenceRequestParams.push(params);
+        return new Promise<Response>((resolve) => {
+          resolveReferenceRequests.push(() => resolve(
+            new Response(
+              JSON.stringify({
+                data: {
+                  items: [inactiveLegacyJob, activeOfficialJob],
+                  total: 2,
+                },
+              }),
+              { headers: { 'Content-Type': 'application/json' }, status: 200 },
+            ),
+          ));
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        chatRequestBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_run_once',
+              latency_ms: 12,
+              message: {
+                content: '已触发「每周用户反馈洞察抽取」执行一次，运行记录 scheduled_job_run_001 当前状态为 running。',
+                id: 'assistant_message_run_once',
+                references: [
+                  activeOfficialJob,
+                  {
+                    id: 'scheduled_job_run_001',
+                    title: '每周用户反馈洞察抽取 / running',
+                    type: 'scheduled_job_run',
+                    url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_001',
+                  },
+                ],
+                role: 'assistant',
+                suggestions: [],
+                tool_results: [],
+              },
+              model: 'assistant-deterministic',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@提取每周用户反馈有价值信息 执行一次' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(resolveReferenceRequests.length).toBeGreaterThan(0));
+    resolveReferenceRequests.splice(0).forEach((resolve) => resolve());
+
+    await waitFor(() => expect(chatRequestBody).toBeDefined());
+    expect(referenceRequestParams.some((params) => params.get('type') === 'scheduled_job')).toBe(true);
+    expect(chatRequestBody).toMatchObject({
+      message: '@提取每周用户反馈有价值信息 执行一次',
+      references: [],
     });
   });
 

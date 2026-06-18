@@ -856,6 +856,10 @@ function activeMentionQuery(value: string) {
   if (markerIndex < 0) {
     return undefined;
   }
+  const previousChar = markerIndex > 0 ? value[markerIndex - 1] : '';
+  if (previousChar && /[A-Za-z0-9._%+-]/.test(previousChar)) {
+    return undefined;
+  }
   const tail = value.slice(markerIndex + 1);
   if (tail.includes('\n')) {
     return undefined;
@@ -864,6 +868,11 @@ function activeMentionQuery(value: string) {
     return undefined;
   }
   return tail.split(/\s+/)[0] ?? '';
+}
+
+function uniqueScheduledJobReferenceCandidate(references: AssistantReference[]) {
+  const scheduledJobReferences = references.filter((reference) => reference.type === 'scheduled_job');
+  return scheduledJobReferences.length === 1 ? scheduledJobReferences[0] : undefined;
 }
 
 function scheduledJobRunOnceRequested(value: string) {
@@ -3253,10 +3262,7 @@ export default function AssistantPage() {
     if (!scheduledJobRunOnceRequested(messageText)) {
       return [];
     }
-    const activeReference = orderedReferenceCandidates[Math.max(activeReferenceIndex, 0)];
-    const scheduledJobReference = activeReference?.type === 'scheduled_job'
-      ? activeReference
-      : orderedReferenceCandidates.find((reference) => reference.type === 'scheduled_job');
+    const scheduledJobReference = uniqueScheduledJobReferenceCandidate(orderedReferenceCandidates);
     return scheduledJobReference ? [scheduledJobReference] : [];
   };
 
@@ -3275,7 +3281,7 @@ export default function AssistantPage() {
         query,
         type: 'scheduled_job',
       });
-      const scheduledJobReference = items.find((reference) => reference.type === 'scheduled_job');
+      const scheduledJobReference = uniqueScheduledJobReferenceCandidate(items);
       return scheduledJobReference ? [scheduledJobReference] : [];
     } catch {
       return [];
