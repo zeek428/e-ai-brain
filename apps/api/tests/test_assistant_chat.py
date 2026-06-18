@@ -1555,7 +1555,11 @@ def test_ai_assistant_action_draft_can_be_confirmed_into_scheduled_job():
 
     get_response = client.get(f"/api/assistant/action-drafts/{draft['id']}", headers=headers)
     assert get_response.status_code == 200
-    assert get_response.json()["data"]["status"] == "confirmed"
+    persisted_draft = get_response.json()["data"]
+    assert persisted_draft["status"] == "confirmed"
+    assert persisted_draft["result_run"]["id"] == payload["run"]["id"]
+    assert persisted_draft["result_run"]["result_type"] == "scheduled_job"
+    assert persisted_draft["result_run"]["result_id"] == scheduled_job["id"]
 
     audit_events = client.get(
         "/api/audit/events?subject_type=assistant_action_draft",

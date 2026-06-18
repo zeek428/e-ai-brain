@@ -1469,9 +1469,25 @@ def public_assistant_action_draft(
     wizard_steps = public["metadata_json"].get("wizard_steps")
     if isinstance(wizard_steps, list):
         public["wizard_steps"] = deepcopy(wizard_steps)
+    result_run = _assistant_public_result_run(current_store, draft)
+    if result_run is not None:
+        public["result_run"] = result_run
     preview_draft = _draft_with_resolved_prerequisites(current_store, draft)
     public["preview"] = assistant_action_draft_preview(current_store, preview_draft)
     return {key: value for key, value in public.items() if value is not None}
+
+
+def _assistant_public_result_run(
+    current_store: Any,
+    draft: dict[str, Any],
+) -> dict[str, Any] | None:
+    run_id = str(draft.get("result_run_id") or "").strip()
+    if not run_id:
+        return None
+    run = _assistant_action_runs_by_id(current_store).get(run_id)
+    if not run:
+        return None
+    return public_assistant_action_run(run)
 
 
 def public_assistant_action_run(run: dict[str, Any]) -> dict[str, Any]:

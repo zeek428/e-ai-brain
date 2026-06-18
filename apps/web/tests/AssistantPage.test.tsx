@@ -2993,6 +2993,74 @@ describe('AssistantPage', () => {
     );
   });
 
+  it('restores applied draft result links from a route-loaded server draft', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_applied') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              action: 'create_scheduled_job',
+              created_at: '2026-06-18T08:00:00+00:00',
+              created_by: 'user_admin',
+              id: 'assistant_action_draft_applied',
+              payload: {
+                execution_mode: 'deterministic',
+                job_type: 'dashboard_snapshot_refresh',
+                name: '已应用的仪表盘刷新作业',
+                schedule_type: 'manual',
+              },
+              result_run: {
+                action: 'create_scheduled_job',
+                draft_id: 'assistant_action_draft_applied',
+                id: 'assistant_action_run_applied',
+                result: {
+                  scheduled_job_run: {
+                    id: 'scheduled_job_run_applied',
+                    scheduled_job_id: 'scheduled_job_applied',
+                    status: 'succeeded',
+                  },
+                },
+                result_id: 'scheduled_job_applied',
+                result_type: 'scheduled_job',
+                status: 'succeeded',
+              },
+              result_run_id: 'assistant_action_run_applied',
+              risk_level: 'medium',
+              status: 'confirmed',
+              title: '已应用的仪表盘刷新作业草案',
+              updated_at: '2026-06-18T08:00:00+00:00',
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    window.history.pushState({}, '', '/assistant?draft_id=assistant_action_draft_applied');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const draftLinkStatus = await screen.findByLabelText('草案链接状态');
+    expect(within(draftLinkStatus).getByText('已应用')).toBeInTheDocument();
+    expect(within(draftLinkStatus).getByRole('link', { name: '打开定时作业' })).toHaveAttribute(
+      'href',
+      '/tasks/scheduled-jobs?job_id=scheduled_job_applied',
+    );
+    expect(within(draftLinkStatus).getByRole('link', { name: '打开本次运行' })).toHaveAttribute(
+      'href',
+      '/tasks/scheduled-jobs?job_id=scheduled_job_applied&run_id=scheduled_job_run_applied',
+    );
+  });
+
   it('confirms server-side assistant action drafts from the draft card', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

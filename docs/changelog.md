@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- AI 助手已应用草案深链追踪补齐：`GET /api/assistant/action-drafts/{draft_id}` 返回公开动作运行 `result_run`，前端从 `/assistant?draft_id=...` 打开已确认草案时可恢复“已应用”、真实资源入口和“打开本次运行”链接。
 - AI 助手草案确认失败持久化：确认草案时若预检或领域执行器返回业务错误，服务端会把草案写入 `failed` 状态，创建 failed 动作运行并记录 `assistant_action_draft.failed` 审计，效果指标可统计真实失败草案。
 - AI 助手前置草案 DB-first 确认修复：确认依赖前置草案的 AI角色、插件动作或定时作业时，会从 repository 读取已确认草案和动作运行结果，并在预检前解析真实资源 ID，避免服务重启或 PostgreSQL 运行态下草案看得到但确认不执行。
 - AI 助手效果指标 DB-first 运行追踪修复：PostgreSQL/repository 运行态现在通过 `list_scheduled_job_runs()` 读取定时作业运行记录，再按当前用户草案和消息引用过滤，避免侧栏作业运行成功率、失败修复率在持久化环境下显示为 0。

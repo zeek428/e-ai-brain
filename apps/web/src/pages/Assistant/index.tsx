@@ -47,6 +47,7 @@ import {
   type AssistantConversationSummary,
   type AssistantDraftResolutionMap,
   type AssistantDraftResolutionRecord,
+  type AssistantDraftResourceType,
   type AssistantToolResult,
   type AssistantToolResultItem,
   type ResultWriteTargetRecord,
@@ -947,6 +948,45 @@ function assistantActionDraftRecordToToolItem(
     title: draft.title,
     wizard_steps: draft.wizard_steps,
   };
+}
+
+function assistantDraftResultRunResolution(
+  draft: AssistantActionDraftRecord,
+): AssistantDraftResolutionRecord | undefined {
+  const run = draft.result_run;
+  if (!run?.result_id || !run.result_type) {
+    return undefined;
+  }
+  const resourceType = run.result_type as AssistantDraftResourceType;
+  if (
+    resourceType !== 'assistant_analysis'
+    && resourceType !== 'ai_agent'
+    && resourceType !== 'ai_skill'
+    && resourceType !== 'ai_task'
+    && resourceType !== 'plugin_action'
+    && resourceType !== 'plugin_connection'
+    && resourceType !== 'scheduled_job'
+  ) {
+    return undefined;
+  }
+  const resolution: AssistantDraftResolutionRecord = {
+    resource_id: run.result_id,
+    resource_type: resourceType,
+    title: draft.title,
+  };
+  const scheduledJobRunId = scheduledJobRunIdFromActionResult(run.result);
+  if (scheduledJobRunId) {
+    resolution.scheduled_job_run_id = scheduledJobRunId;
+  }
+  return resolution;
+}
+
+function assistantDraftResolutionIds(
+  draft: Pick<AssistantActionDraftRecord, 'client_draft_id' | 'id'>,
+) {
+  return [draft.id, draft.client_draft_id]
+    .map((value) => (value ? String(value) : undefined))
+    .filter(Boolean) as string[];
 }
 
 function queryReferenceResolutionLabel(status: QueryReferenceResolution['status']) {
@@ -3003,6 +3043,26 @@ export default function AssistantPage() {
         const toolItem = assistantActionDraftRecordToToolItem(draft);
         setLinkedDraft(toolItem);
         setDraftStatusById((items) => ({ ...items, [draft.id]: draft.status }));
+        const resultResolution = assistantDraftResultRunResolution(draft);
+        if (resultResolution) {
+          const draftIds = assistantDraftResolutionIds(draft);
+          draftIds.forEach((itemDraftId) => {
+            rememberAssistantDraftResolution({
+              draftId: itemDraftId,
+              resourceId: resultResolution.resource_id,
+              resourceType: resultResolution.resource_type,
+              scheduledJobRunId: resultResolution.scheduled_job_run_id,
+              title: resultResolution.title,
+            });
+          });
+          setDraftResolutionById((items) => {
+            const nextItems = { ...items };
+            draftIds.forEach((itemDraftId) => {
+              nextItems[itemDraftId] = resultResolution;
+            });
+            return nextItems;
+          });
+        }
         setQueryDraftResolution({
           draftId,
           status: 'resolved',

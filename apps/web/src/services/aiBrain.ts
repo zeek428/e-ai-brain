@@ -439,6 +439,7 @@ export type AssistantActionDraftRecord = {
   id: string;
   payload: Record<string, unknown>;
   preview?: AssistantActionDraftPreview;
+  result_run?: AssistantActionRunRecord;
   result_run_id?: string;
   risk_level?: string;
   source_message_id?: string;
