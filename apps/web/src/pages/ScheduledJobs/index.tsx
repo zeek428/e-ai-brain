@@ -3608,6 +3608,13 @@ export default function ScheduledJobsPage() {
             {selectedRun?.status === 'failed' ? (
               <>
                 <Button
+                  aria-label="继续诊断"
+                  href={assistantRunFollowupUrl(selectedRun, assistantRunFollowupPrompt(selectedRun))}
+                  icon={<RobotOutlined />}
+                >
+                  继续诊断
+                </Button>
+                <Button
                   aria-label="生成修复草案"
                   href={assistantRunFollowupUrl(selectedRun, assistantRunRepairDraftPrompt())}
                   icon={<EditOutlined />}

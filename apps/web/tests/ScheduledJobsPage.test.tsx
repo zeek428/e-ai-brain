@@ -2515,6 +2515,13 @@ describe('ScheduledJobsPage', () => {
     expect(askAiParams.get('reference_id')).toBe('scheduled_job_run_code_inspection_failed');
     expect(askAiParams.get('prompt')).toBe('为什么这次任务失败？');
 
+    const diagnosticLink = within(dialog).getByRole('link', { name: '继续诊断' });
+    const diagnosticHref = diagnosticLink.getAttribute('href') ?? '';
+    const diagnosticParams = new URLSearchParams(diagnosticHref.split('?')[1]);
+    expect(diagnosticParams.get('reference_type')).toBe('scheduled_job_run');
+    expect(diagnosticParams.get('reference_id')).toBe('scheduled_job_run_code_inspection_failed');
+    expect(diagnosticParams.get('prompt')).toBe('为什么这次任务失败？');
+
     const repairDraftLink = within(dialog).getByRole('link', { name: '生成修复草案' });
     const repairDraftHref = repairDraftLink.getAttribute('href') ?? '';
     const repairDraftParams = new URLSearchParams(repairDraftHref.split('?')[1]);
