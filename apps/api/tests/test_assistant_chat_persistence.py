@@ -178,6 +178,50 @@ class ScheduledJobAssistantRepository(FakeSnapshotRepository):
             self._append_direct_audit_event(audit_event)
 
 
+class AssistantPrerequisiteRepository(FakeSnapshotRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ai_skills_payload: dict[str, dict] = {}
+
+    def list_ai_agents(
+        self,
+        *,
+        brain_app_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        return []
+
+    def list_ai_skills(
+        self,
+        *,
+        code: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        items = [dict(skill) for skill in self.ai_skills_payload.values()]
+        if code is not None:
+            items = [skill for skill in items if skill.get("code") == code]
+        if status is not None:
+            items = [skill for skill in items if skill.get("status") == status]
+        return items
+
+    def list_scheduled_jobs(
+        self,
+        *,
+        enabled: bool | None = None,
+        job_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        return []
+
+    def list_scheduled_job_runs(
+        self,
+        *,
+        scheduled_job_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        return []
+
+
 def test_assistant_chat_history_is_persisted_through_fine_grained_repository_payload():
     repository = AssistantChatRepositoryStub()
     current_store = PersistentMemoryStore.from_repository(repository)
@@ -416,6 +460,128 @@ def test_assistant_chat_writes_repository_without_request_persist(monkeypatch):
             and event["payload"]["status"] == "failed"
             for event in repository.audit_events_payload["audit_events"]
         )
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
+def test_assistant_prerequisite_draft_resolution_reads_repository_action_runs(monkeypatch):
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = AssistantPrerequisiteRepository()
+    now = "2026-06-14T08:00:00+00:00"
+    repository.ai_skills_payload = {
+        "ai_skill_feedback_summary": {
+            "allowed_tools": [],
+            "code": "feedback_summary",
+            "created_at": now,
+            "created_by": "user_admin",
+            "description": None,
+            "id": "ai_skill_feedback_summary",
+            "input_schema": {},
+            "name": "反馈摘要 Skill",
+            "output_schema": {},
+            "prompt_template": "请总结用户反馈。",
+            "required_context": [],
+            "requires_human_review": False,
+            "risk_level": "medium",
+            "status": "active",
+            "updated_at": now,
+            "version": "1.0.0",
+        }
+    }
+    repository.assistant_chat_payload = {
+        "assistant_action_drafts": {
+            "assistant_action_draft_repo_skill": {
+                "action": "create_ai_skill",
+                "confirmed_at": now,
+                "confirmed_by": "user_admin",
+                "created_at": now,
+                "created_by": "user_admin",
+                "id": "assistant_action_draft_repo_skill",
+                "metadata_json": {},
+                "payload": {"code": "feedback_summary", "name": "反馈摘要 Skill"},
+                "result_run_id": "assistant_action_run_repo_skill",
+                "risk_level": "medium",
+                "status": "confirmed",
+                "title": "反馈摘要 Skill",
+                "updated_at": now,
+            },
+            "assistant_action_draft_repo_agent": {
+                "action": "create_ai_agent",
+                "created_at": now,
+                "created_by": "user_admin",
+                "id": "assistant_action_draft_repo_agent",
+                "metadata_json": {},
+                "payload": {
+                    "assistant_prerequisite_draft_ids": [
+                        "assistant_action_draft_repo_skill"
+                    ],
+                    "brain_app_id": "rd_brain",
+                    "code": "feedback_analysis_agent",
+                    "default_skill_ids": ["assistant_action_draft_repo_skill"],
+                    "name": "反馈分析 AI 角色",
+                    "system_prompt": "请总结用户反馈。",
+                },
+                "risk_level": "medium",
+                "status": "pending",
+                "title": "反馈分析 AI 角色",
+                "updated_at": now,
+            },
+        },
+        "assistant_action_runs": {
+            "assistant_action_run_repo_skill": {
+                "action": "create_ai_skill",
+                "created_at": now,
+                "draft_id": "assistant_action_draft_repo_skill",
+                "executed_by": "user_admin",
+                "finished_at": now,
+                "id": "assistant_action_run_repo_skill",
+                "result": {"id": "ai_skill_feedback_summary"},
+                "result_id": "ai_skill_feedback_summary",
+                "result_type": "ai_skill",
+                "started_at": now,
+                "status": "succeeded",
+                "updated_at": now,
+            },
+        },
+        "assistant_conversations": {},
+        "assistant_messages": {},
+    }
+    stale_store = PostgresRuntimeStore(repository)
+    stale_store.assistant_action_drafts = {}
+    stale_store.assistant_action_runs = {}
+    app.state.store = stale_store
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    def fake_create_ai_agent_response(*, current_store, payload, user):
+        assert isinstance(current_store, PostgresRuntimeStore)
+        assert payload.default_skill_ids == ["ai_skill_feedback_summary"]
+        assert user["id"] == "user_admin"
+        return {
+            "default_skill_ids": payload.default_skill_ids,
+            "id": "ai_agent_feedback_analysis",
+            "name": payload.name,
+        }
+
+    monkeypatch.setattr(
+        assistant_action_drafts_service,
+        "create_ai_agent_response",
+        fake_create_ai_agent_response,
+    )
+
+    try:
+        response = client.post(
+            "/api/assistant/action-drafts/assistant_action_draft_repo_agent/confirm",
+            headers=auth_headers(),
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()["data"]
+        assert payload["run"]["result_id"] == "ai_agent_feedback_analysis"
+        assert payload["run"]["result"]["default_skill_ids"] == [
+            "ai_skill_feedback_summary"
+        ]
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users

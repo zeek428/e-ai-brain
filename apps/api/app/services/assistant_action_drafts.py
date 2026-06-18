@@ -9,6 +9,8 @@ from app.api.deps import api_error
 from app.services.plugins import (
     create_plugin_action_response,
     create_plugin_connection_response,
+    sync_plugin_action_store,
+    sync_plugin_connection_store,
 )
 from app.services.requirements import (
     generate_requirement_task_result,
@@ -25,6 +27,9 @@ from app.services.scheduled_jobs import (
     effective_scheduled_job_execution_mode,
     effective_scheduled_job_type,
     run_scheduled_job_response,
+    sync_ai_agent_store,
+    sync_ai_skill_store,
+    sync_reference_store,
 )
 from app.services.version_status import canonical_requirement_status
 
@@ -569,23 +574,32 @@ def _assistant_prerequisite_resolutions(
     draft: dict[str, Any],
     prerequisite_ids: list[str],
 ) -> list[dict[str, str]]:
+    draft_items = _assistant_prerequisite_draft_items(
+        current_store,
+        draft=draft,
+        prerequisite_ids=prerequisite_ids,
+    )
+    drafts_by_id = {
+        str(item.get("id")): item
+        for item in draft_items
+        if item.get("id")
+    }
     drafts_by_client_id = {
         str(item.get("client_draft_id")): item
-        for item in current_store.assistant_action_drafts.values()
+        for item in draft_items
         if item.get("client_draft_id")
     }
+    runs_by_id = _assistant_action_runs_by_id(current_store)
     resolutions: list[dict[str, str]] = []
     for prerequisite_id in prerequisite_ids:
-        prerequisite = current_store.assistant_action_drafts.get(
+        prerequisite = drafts_by_id.get(prerequisite_id) or drafts_by_client_id.get(
             prerequisite_id
-        ) or drafts_by_client_id.get(prerequisite_id)
+        )
         if not prerequisite or prerequisite.get("status") != "confirmed":
             continue
         if prerequisite.get("created_by") != draft.get("created_by"):
             continue
-        run = current_store.assistant_action_runs.get(
-            str(prerequisite.get("result_run_id") or "")
-        )
+        run = runs_by_id.get(str(prerequisite.get("result_run_id") or ""))
         if not run or run.get("status") != "succeeded":
             continue
         result_type = str(run.get("result_type") or "").strip()
@@ -593,6 +607,71 @@ def _assistant_prerequisite_resolutions(
         if result_type and result_id:
             resolutions.append({"result_id": result_id, "result_type": result_type})
     return resolutions
+
+
+def _assistant_prerequisite_draft_items(
+    current_store: Any,
+    *,
+    draft: dict[str, Any],
+    prerequisite_ids: list[str],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    def append(item: dict[str, Any] | None) -> None:
+        if not isinstance(item, dict):
+            return
+        item_id = str(item.get("id") or "").strip()
+        if item_id and item_id in seen_ids:
+            return
+        if item_id:
+            seen_ids.add(item_id)
+        items.append(item)
+
+    for item in getattr(current_store, "assistant_action_drafts", {}).values():
+        append(item)
+
+    repository = assistant_action_repository(current_store)
+    user_id = str(draft.get("created_by") or "").strip()
+    list_drafts = getattr(repository, "list_assistant_action_drafts", None)
+    if callable(list_drafts) and user_id:
+        for item in list_drafts(user_id=user_id) or []:
+            append(item)
+
+    get_draft = getattr(repository, "get_assistant_action_draft", None)
+    if callable(get_draft):
+        known_lookup_keys = {
+            str(item.get("id") or "").strip()
+            for item in items
+            if item.get("id")
+        } | {
+            str(item.get("client_draft_id") or "").strip()
+            for item in items
+            if item.get("client_draft_id")
+        }
+        for prerequisite_id in prerequisite_ids:
+            if prerequisite_id in known_lookup_keys:
+                continue
+            append(get_draft(draft_id=prerequisite_id))
+
+    return items
+
+
+def _assistant_action_runs_by_id(current_store: Any) -> dict[str, dict[str, Any]]:
+    runs_by_id = {
+        str(run_id): run
+        for run_id, run in getattr(current_store, "assistant_action_runs", {}).items()
+        if isinstance(run, dict)
+    }
+    repository = assistant_action_repository(current_store)
+    load_chat = getattr(repository, "load_assistant_chat", None)
+    if not callable(load_chat):
+        return runs_by_id
+    payload = load_chat() or {}
+    for run_id, run in (payload.get("assistant_action_runs") or {}).items():
+        if isinstance(run, dict):
+            runs_by_id.setdefault(str(run.get("id") or run_id), run)
+    return runs_by_id
 
 
 def _set_payload_scalar_id(
@@ -790,6 +869,7 @@ def assistant_action_draft_preview(
     current_store: Any,
     draft: dict[str, Any],
 ) -> dict[str, Any]:
+    _sync_assistant_draft_reference_store(current_store)
     action = draft["action"]
     if action == "create_scheduled_job":
         return _scheduled_job_draft_preview(current_store, draft)
@@ -877,6 +957,14 @@ def assistant_action_draft_preview(
         required_fields=[],
         resource_type=action,
     )
+
+
+def _sync_assistant_draft_reference_store(current_store: Any) -> None:
+    sync_reference_store(current_store)
+    sync_ai_skill_store(current_store)
+    sync_ai_agent_store(current_store)
+    sync_plugin_connection_store(current_store)
+    sync_plugin_action_store(current_store)
 
 
 def _scheduled_job_draft_preview(
