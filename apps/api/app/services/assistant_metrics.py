@@ -254,7 +254,9 @@ def _repaired_failed_run_count(scheduled_job_runs: list[dict[str, Any]]) -> int:
     successful_rerun_source_ids = {
         str(run.get("source_run_id"))
         for run in scheduled_job_runs
-        if run.get("status") == "succeeded" and run.get("source_run_id")
+        if run.get("status") == "succeeded"
+        and run.get("trigger_type") == "manual_rerun"
+        and run.get("source_run_id")
     }
     return sum(
         1
