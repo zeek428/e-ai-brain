@@ -1088,17 +1088,19 @@ def _scheduled_job_run_repair_draft_tool(
         if not payload.get("plugin_id") or not payload.get("connection_id"):
             continue
         run_reference = _scheduled_job_run_tool_reference(job=job, run=run)
-        items.append(
-            {
-                "action": "create_plugin_action",
-                "draft_id": f"assistant_draft_repair_{run_id}",
-                "payload": payload,
-                "references": [run_reference],
-                "requires_confirmation": True,
-                "risk_level": "medium",
-                "title": payload["name"],
-            }
-        )
+        item = {
+            "action": "create_plugin_action",
+            "draft_id": f"assistant_draft_repair_{run_id}",
+            "payload": payload,
+            "references": [run_reference],
+            "requires_confirmation": True,
+            "risk_level": "medium",
+            "title": payload["name"],
+        }
+        source_resource = _plugin_action_source_resource(source_action)
+        if source_resource:
+            item["source_resource"] = source_resource
+        items.append(item)
         references_out.append(run_reference)
     return {
         "intent": "scheduled_job_run_repair_draft",
@@ -1201,6 +1203,19 @@ def _repair_source_plugin_action(
     if action_id and str(action_id) in plugin_actions_by_id:
         return plugin_actions_by_id[str(action_id)]
     return {}
+
+
+def _plugin_action_source_resource(source_action: dict[str, Any]) -> dict[str, str] | None:
+    action_id = str(source_action.get("id") or "").strip()
+    if not action_id:
+        return None
+    title = str(source_action.get("name") or source_action.get("code") or action_id)
+    return {
+        "id": action_id,
+        "title": title,
+        "type": "plugin_action",
+        "url": f"/tasks/plugins?action_id={action_id}",
+    }
 
 
 def _repair_plugin_action_payload(

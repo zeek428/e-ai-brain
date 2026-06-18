@@ -1832,6 +1832,10 @@ function AssistantDraftDetailModal({
   const statusLabel = draftStatusLabel(status ?? draft?.status);
   const diffs = draft?.preview?.diffs ?? [];
   const issues = draft?.preview?.validation?.issues ?? [];
+  const sourceResource = draft?.preview?.target?.source_resource;
+  const sourceResourceTitle = optionalText(
+    sourceResource?.title ?? sourceResource?.resource_id,
+  );
   return (
     <Modal
       footer={null}
@@ -1848,6 +1852,12 @@ function AssistantDraftDetailModal({
             <Tag color="default">{draft.action ?? 'unknown_action'}</Tag>
             {draft.risk_level ? <Tag color="orange">风险：{draft.risk_level}</Tag> : null}
           </Space>
+          {sourceResourceTitle ? (
+            <div className="assistant-draft-detail-section">
+              <Text strong>对比来源</Text>
+              <Text>{sourceResourceTitle}</Text>
+            </div>
+          ) : null}
           <div className="assistant-draft-detail-section">
             <Text strong>Payload</Text>
             <pre>{JSON.stringify(draft.payload ?? {}, null, 2)}</pre>

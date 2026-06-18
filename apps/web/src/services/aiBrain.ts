@@ -469,6 +469,11 @@ export type AssistantActionDraftPreview = {
     operation?: string;
     resource_id?: string | null;
     resource_type?: string;
+    source_resource?: {
+      resource_id?: string | null;
+      resource_type?: string;
+      title?: string;
+    };
   };
   validation?: {
     issues?: AssistantActionDraftPreviewIssue[];

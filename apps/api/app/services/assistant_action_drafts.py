@@ -493,6 +493,8 @@ def persist_assistant_action_drafts_from_tool_results(
             }
             if isinstance(item.get("wizard_steps"), list):
                 metadata_json["wizard_steps"] = deepcopy(item["wizard_steps"])
+            if isinstance(item.get("source_resource"), dict):
+                metadata_json["source_resource"] = deepcopy(item["source_resource"])
             draft = create_assistant_action_draft_response(
                 current_store=current_store,
                 payload=SimpleNamespace(
@@ -1029,6 +1031,14 @@ def assistant_action_draft_preview(
             user=user,
         )
     if action == "create_plugin_action":
+        source_resource = _draft_source_resource(
+            draft,
+            expected_type="plugin_action",
+        )
+        source_action = _draft_source_plugin_action(
+            current_store,
+            source_resource=source_resource,
+        )
         preview = _generic_create_draft_preview(
             draft,
             diff_fields=[
@@ -1043,6 +1053,8 @@ def assistant_action_draft_preview(
             ],
             required_fields=["name", "code", "plugin_id", "action_type"],
             resource_type="plugin_action",
+            source_payload=source_action,
+            source_resource=source_resource,
         )
         _append_plugin_action_validation(current_store, draft, preview)
         return _with_action_permission_preview(preview, action=action, user=user)
@@ -1461,33 +1473,89 @@ def _generic_create_draft_preview(
     diff_fields: list[tuple[str, str]],
     required_fields: list[str],
     resource_type: str,
+    source_payload: dict[str, Any] | None = None,
+    source_resource: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = draft.get("payload") or {}
     validation = {"issues": [], "status": "passed"}
     for field in required_fields:
         if _nested_value(payload, field) in (None, "", []):
             _add_issue(validation, field, "error", f"{field} is required")
-    preview = {
-        "diffs": [
+    diffs = []
+    for field, label in diff_fields:
+        proposed = _nested_value(payload, field)
+        if proposed in (None, "", []):
+            continue
+        current = _nested_value(source_payload, field) if source_payload else None
+        if source_payload is not None and current == proposed:
+            continue
+        change_type = (
+            "update"
+            if source_payload is not None and current not in (None, "", [])
+            else "create"
+        )
+        diffs.append(
             {
-                "change_type": "create",
-                "current": None,
+                "change_type": change_type,
+                "current": deepcopy(current),
                 "field": field,
                 "label": label,
-                "proposed": deepcopy(value),
+                "proposed": deepcopy(proposed),
             }
-            for field, label in diff_fields
-            if (value := _nested_value(payload, field)) not in (None, "", [])
-        ],
-        "target": {
-            "operation": "create",
-            "resource_id": None,
-            "resource_type": resource_type,
-        },
+        )
+    target = {
+        "operation": "create",
+        "resource_id": None,
+        "resource_type": resource_type,
+    }
+    if source_resource:
+        target["source_resource"] = _preview_source_resource(source_resource)
+    preview = {
+        "diffs": diffs,
+        "target": target,
         "validation": validation,
     }
     _finalize_validation(validation)
     return preview
+
+
+def _draft_source_resource(
+    draft: dict[str, Any],
+    *,
+    expected_type: str,
+) -> dict[str, Any] | None:
+    metadata_json = (
+        draft.get("metadata_json")
+        if isinstance(draft.get("metadata_json"), dict)
+        else {}
+    )
+    source_resource = metadata_json.get("source_resource")
+    if not isinstance(source_resource, dict):
+        return None
+    if str(source_resource.get("type") or "") != expected_type:
+        return None
+    if not str(source_resource.get("id") or "").strip():
+        return None
+    return source_resource
+
+
+def _draft_source_plugin_action(
+    current_store: Any,
+    *,
+    source_resource: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not source_resource:
+        return None
+    action_id = str(source_resource.get("id") or "").strip()
+    return current_store.plugin_actions.get(action_id)
+
+
+def _preview_source_resource(source_resource: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "resource_id": str(source_resource.get("id") or ""),
+        "resource_type": str(source_resource.get("type") or ""),
+        "title": str(source_resource.get("title") or source_resource.get("id") or ""),
+    }
 
 
 def _validate_collection_ref(

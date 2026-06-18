@@ -2031,6 +2031,33 @@ def test_ai_assistant_chat_generates_repair_action_draft_for_failed_run(monkeypa
         "assistant_draft_repair_scheduled_job_run_feedback_failed"
     )
     assert draft["source_message_id"] == message["id"]
+    assert draft_item["source_resource"] == {
+        "id": "plugin_action_feedback_write",
+        "title": "反馈洞察写入动作",
+        "type": "plugin_action",
+        "url": "/tasks/plugins?action_id=plugin_action_feedback_write",
+    }
+    assert draft["metadata_json"]["source_resource"] == draft_item["source_resource"]
+    assert draft["preview"]["target"]["source_resource"] == {
+        "resource_id": "plugin_action_feedback_write",
+        "resource_type": "plugin_action",
+        "title": "反馈洞察写入动作",
+    }
+    diff_by_field = {item["field"]: item for item in draft["preview"]["diffs"]}
+    assert diff_by_field["code"] == {
+        "change_type": "update",
+        "current": "feedback_write",
+        "field": "code",
+        "label": "编码",
+        "proposed": "feedback_write_repair",
+    }
+    assert diff_by_field["name"] == {
+        "change_type": "update",
+        "current": "反馈洞察写入动作",
+        "field": "name",
+        "label": "名称",
+        "proposed": "反馈洞察写入动作修复草案",
+    }
     assert draft["preview"]["validation"]["status"] == "passed"
 
 

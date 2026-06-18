@@ -4501,6 +4501,11 @@ describe('AssistantPage', () => {
                             operation: 'create',
                             resource_id: null,
                             resource_type: 'scheduled_job',
+                            source_resource: {
+                              resource_id: 'plugin_action_feedback_write',
+                              resource_type: 'plugin_action',
+                              title: '反馈洞察写入动作',
+                            },
                           },
                           validation: {
                             issues: [
@@ -4565,6 +4570,8 @@ describe('AssistantPage', () => {
     expect(within(detailDialog).getByText('草案状态')).toBeInTheDocument();
     expect(within(detailDialog).getByText('待确认')).toBeInTheDocument();
     expect(within(detailDialog).getByText('Payload')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('对比来源')).toBeInTheDocument();
+    expect(within(detailDialog).getByText('反馈洞察写入动作')).toBeInTheDocument();
     expect(detailDialog).toHaveTextContent('"job_type": "user_feedback_insight_extract"');
     expect(within(detailDialog).getByText('字段差异')).toBeInTheDocument();
     expect(detailDialog).toHaveTextContent('名称');
