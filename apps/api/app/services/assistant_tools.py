@@ -851,10 +851,22 @@ def _scheduled_job_diagnostic_tool(
         for reference in references
         if reference.get("type") == "scheduled_job_run" and reference.get("id")
     ]
+    referenced_job_ids = {
+        str(reference["id"])
+        for reference in references
+        if reference.get("type") == "scheduled_job" and reference.get("id")
+    }
     runs = context["scheduled_job_runs"]
     if referenced_run_ids:
         run_id_set = set(referenced_run_ids)
         candidate_runs = [run for run in runs if str(run.get("id")) in run_id_set]
+    elif referenced_job_ids:
+        candidate_runs = [
+            run
+            for run in runs
+            if run.get("status") == "failed"
+            and str(run.get("scheduled_job_id")) in referenced_job_ids
+        ]
     else:
         candidate_runs = [run for run in runs if run.get("status") == "failed"]
     jobs_by_id = {

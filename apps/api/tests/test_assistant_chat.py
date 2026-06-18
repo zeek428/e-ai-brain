@@ -1419,6 +1419,108 @@ def test_ai_assistant_chat_returns_scheduled_job_run_diagnostic(monkeypatch):
     ]
 
 
+def test_ai_assistant_chat_scopes_diagnostic_to_referenced_scheduled_job(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    app.state.store.scheduled_jobs["scheduled_job_other_failed"] = {
+        "created_at": "2026-06-15T09:00:00+00:00",
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": "scheduled_job_other_failed",
+        "job_type": "dashboard_snapshot_refresh",
+        "name": "其他失败定时作业",
+        "product_id": None,
+        "schedule_type": "manual",
+        "source_system": "ai-assistant-test",
+        "status": "active",
+        "updated_at": "2026-06-15T09:00:00+00:00",
+    }
+    app.state.store.scheduled_job_runs["scheduled_job_run_other_failed"] = {
+        "completed_at": "2026-06-15T09:20:00+00:00",
+        "duration_ms": 3000,
+        "error_message": "其他作业失败",
+        "id": "scheduled_job_run_other_failed",
+        "result_summary": {
+            "execution_nodes": {
+                "result_action": {
+                    "status": "failed",
+                    "summary": "其他作业写入失败。",
+                },
+            }
+        },
+        "scheduled_job_id": "scheduled_job_other_failed",
+        "started_at": "2026-06-15T09:18:00+00:00",
+        "status": "failed",
+        "trigger_type": "manual",
+        "updated_at": "2026-06-15T09:20:00+00:00",
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "已按所引用的定时作业诊断最近失败运行。",
+                                        "suggestions": ["查看本次运行记录"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout):
+        del timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "为什么这个定时作业失败？",
+            "references": [
+                {"id": "scheduled_job_feedback_weekly", "type": "scheduled_job"},
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    message = response.json()["data"]["message"]
+    diagnostic = next(
+        result
+        for result in message["tool_results"]
+        if result["tool"] == "assistant.scheduled_job_diagnostic"
+    )
+    assert diagnostic["summary"] == {"failed_count": 1, "run_count": 1}
+    assert [item["id"] for item in diagnostic["items"]] == [
+        "scheduled_job_run_feedback_failed",
+    ]
+    assert diagnostic["references"] == [
+        {
+            "id": "scheduled_job_run_feedback_failed",
+            "title": "每周反馈洞察定时作业 / failed",
+            "type": "scheduled_job_run",
+            "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_feedback_failed",
+        }
+    ]
+
+
 def test_ai_assistant_chat_compares_run_with_previous_success(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
