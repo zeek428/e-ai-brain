@@ -107,6 +107,15 @@ TASK_CREATION_GUIDE_ITEMS = [
         "wizard_steps": TASK_CREATION_WIZARD_STEPS,
     },
     {
+        "dependencies": ["业务场景", "模型网关", "Skill", "AI角色"],
+        "description": "选择代码巡检或线上日志等场景后，生成 Skill 和 AI角色配置草案。",
+        "draft_action": "create_ai_capability",
+        "prompt": "帮我新增代码巡检 AI能力配置草案，生成 Skill 和 AI角色草案",
+        "title": "AI能力配置",
+        "type": "ai_capability",
+        "wizard_steps": TASK_CREATION_WIZARD_STEPS,
+    },
+    {
         "dependencies": ["插件连接"],
         "description": "为 GitHub、GitLab、邮箱等插件生成结果动作草案，确认前不写入真实动作。",
         "draft_action": "create_plugin_action",
@@ -895,7 +904,53 @@ def _task_creation_guide_requested(message: str) -> bool:
             "feedback",
         )
     )
-    return has_create_intent and has_task_context and not has_specific_task_type
+    has_generic_ai_capability_config = any(
+        keyword in normalized
+        for keyword in (
+            "ai 能力配置",
+            "ai能力配置",
+            "ai 能力",
+            "ai能力",
+            "ai 角色",
+            "ai角色",
+            "skill",
+            "agent",
+            "智能体",
+        )
+    )
+    has_specific_ai_capability_scenario = (
+        _ai_capability_specific_scenario_requested(normalized)
+    )
+    return (
+        has_create_intent
+        and (
+            (has_task_context and not has_specific_task_type)
+            or (
+                has_generic_ai_capability_config
+                and not has_specific_ai_capability_scenario
+            )
+        )
+    )
+
+
+def _ai_capability_specific_scenario_requested(normalized_message: str) -> bool:
+    return any(
+        keyword in normalized_message
+        for keyword in (
+            "代码巡检",
+            "code inspection",
+            "github",
+            "gitlab",
+            "线上日志异常",
+            "线上日志分析",
+            "日志异常",
+            "日志分析",
+            "online log anomaly",
+            "online_log_anomaly",
+            "online_log",
+            "log anomaly",
+        )
+    )
 
 
 def _plugin_connection_diagnostic_requested(message: str) -> bool:
@@ -997,6 +1052,7 @@ def _task_creation_guide_output(
         "suggestions": [
             "新增研发任务",
             "新增定时作业",
+            "新增AI能力配置",
             "新增插件动作",
             "配置代码巡检定时作业",
             "配置每周用户反馈洞察定时作业",

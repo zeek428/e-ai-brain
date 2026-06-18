@@ -4195,12 +4195,13 @@ def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeyp
     assert guide["intent"] == "task_creation_guide"
     assert guide["summary"] == {
         "draft_first": True,
-        "option_count": 5,
+        "option_count": 6,
         "wizard_steps": ["数据来源", "AI处理", "结果动作", "调度策略", "确认执行"],
     }
     assert [item["type"] for item in guide["items"]] == [
         "rd_task",
         "scheduled_job",
+        "ai_capability",
         "plugin_action",
         "code_inspection",
         "feedback_insight",
@@ -4209,15 +4210,54 @@ def test_ai_assistant_chat_guides_generic_new_task_without_model_gateway(monkeyp
         item["wizard_steps"] == guide["summary"]["wizard_steps"]
         for item in guide["items"]
     )
-    assert guide["items"][3]["draft_action"] == "create_scheduled_job"
-    assert guide["items"][3]["dependencies"] == ["GitHub/GitLab 连接", "代码巡检动作"]
+    assert guide["items"][2]["draft_action"] == "create_ai_capability"
+    assert guide["items"][2]["dependencies"] == ["业务场景", "模型网关", "Skill", "AI角色"]
+    assert guide["items"][4]["draft_action"] == "create_scheduled_job"
+    assert guide["items"][4]["dependencies"] == ["GitHub/GitLab 连接", "代码巡检动作"]
     assert payload["suggestions"] == [
         "新增研发任务",
         "新增定时作业",
+        "新增AI能力配置",
         "新增插件动作",
         "配置代码巡检定时作业",
         "配置每周用户反馈洞察定时作业",
     ]
+
+
+def test_ai_assistant_chat_guides_generic_ai_capability_configuration_without_model_gateway(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("generic AI capability guide should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "我要新增 AI能力配置"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    message = payload["message"]
+    assert payload["model"] == "assistant-deterministic"
+    assert "你想新增哪类任务" in message["content"]
+    guide = message["tool_results"][0]
+    assert guide["tool"] == "assistant.task_creation_guide"
+    assert guide["summary"]["draft_first"] is True
+    assert guide["summary"]["option_count"] == 6
+    ai_capability_item = next(
+        item for item in guide["items"] if item["type"] == "ai_capability"
+    )
+    assert ai_capability_item["title"] == "AI能力配置"
+    assert ai_capability_item["draft_action"] == "create_ai_capability"
+    assert ai_capability_item["wizard_steps"] == guide["summary"]["wizard_steps"]
+    assert "新增AI能力配置" in payload["suggestions"]
 
 
 def test_ai_assistant_chat_generates_and_confirms_rd_task_draft_from_requirement_reference(

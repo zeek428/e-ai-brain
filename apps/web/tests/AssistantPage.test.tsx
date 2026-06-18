@@ -5027,6 +5027,15 @@ describe('AssistantPage', () => {
                         wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
                       },
                       {
+                        dependencies: ['业务场景', '模型网关', 'Skill', 'AI角色'],
+                        description: '选择代码巡检或线上日志等场景后，生成 Skill 和 AI角色配置草案。',
+                        draft_action: 'create_ai_capability',
+                        prompt: '帮我新增代码巡检 AI能力配置草案，生成 Skill 和 AI角色草案',
+                        title: 'AI能力配置',
+                        type: 'ai_capability',
+                        wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
+                      },
+                      {
                         dependencies: ['插件连接'],
                         description: '为 GitHub、GitLab、邮箱等插件生成结果动作草案，确认前不写入真实动作。',
                         draft_action: 'create_plugin_action',
@@ -5056,7 +5065,7 @@ describe('AssistantPage', () => {
                     ],
                     summary: {
                       draft_first: true,
-                      option_count: 5,
+                      option_count: 6,
                       wizard_steps: ['数据来源', 'AI处理', '结果动作', '调度策略', '确认执行'],
                     },
                     tool: 'assistant.task_creation_guide',
@@ -5067,6 +5076,7 @@ describe('AssistantPage', () => {
               suggestions: [
                 '新增研发任务',
                 '新增定时作业',
+                '新增AI能力配置',
                 '新增插件动作',
                 '配置代码巡检定时作业',
                 '配置每周用户反馈洞察定时作业',
@@ -5091,17 +5101,22 @@ describe('AssistantPage', () => {
     expect(screen.getByText('数据来源 -> AI处理 -> 结果动作 -> 调度策略 -> 确认执行')).toBeInTheDocument();
     expect(
       screen.getAllByText('流程：数据来源、AI处理、结果动作、调度策略、确认执行'),
-    ).toHaveLength(5);
+    ).toHaveLength(6);
     expect(screen.getByText('研发任务')).toBeInTheDocument();
     expect(screen.getByText('定时作业')).toBeInTheDocument();
+    expect(screen.getByText('AI能力配置')).toBeInTheDocument();
     expect(screen.getByText('插件动作')).toBeInTheDocument();
     expect(screen.getByText('代码巡检')).toBeInTheDocument();
     expect(screen.getByText('反馈洞察')).toBeInTheDocument();
     expect(screen.getByText('依赖：数据连接、AI能力、结果动作')).toBeInTheDocument();
+    expect(screen.getByText('依赖：业务场景、模型网关、Skill、AI角色')).toBeInTheDocument();
     expect(screen.getByText('依赖：插件连接')).toBeInTheDocument();
     expect(screen.getByText('依赖：GitHub/GitLab 连接、代码巡检动作')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '新增定时作业' }));
     expect(assistantInput).toHaveValue('新增定时作业');
+    fireEvent.change(assistantInput, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: '选择AI能力配置' }));
+    expect(assistantInput).toHaveValue('帮我新增代码巡检 AI能力配置草案，生成 Skill 和 AI角色草案');
     fireEvent.change(assistantInput, { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: '选择代码巡检' }));
     expect(assistantInput).toHaveValue('帮我配置代码巡检定时作业草案');
