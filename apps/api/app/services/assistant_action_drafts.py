@@ -1231,11 +1231,10 @@ def _append_scheduled_job_reference_validation(
             validation=validation,
         )
     for connection_id in plugin_connection_ids:
-        _validate_collection_ref(
-            current_store.plugin_connections,
+        _validate_plugin_connection_ref(
+            current_store,
             connection_id,
             field="plugin_connection_id",
-            label="Plugin connection",
             validation=validation,
         )
     ai_processing_job = (
@@ -1292,11 +1291,10 @@ def _append_plugin_action_validation(
     payload = draft.get("payload") or {}
     connection_id = payload.get("connection_id")
     if connection_id:
-        _validate_collection_ref(
-            current_store.plugin_connections,
+        _validate_plugin_connection_ref(
+            current_store,
             str(connection_id),
             field="connection_id",
-            label="Plugin connection",
             validation=preview["validation"],
         )
     _finalize_validation(preview["validation"])
@@ -1377,6 +1375,38 @@ def _validate_collection_ref(
         return
     if item.get("status") and item.get("status") != "active":
         _add_issue(validation, field, "error", f"{label} is inactive: {item_id}")
+
+
+def _validate_plugin_connection_ref(
+    current_store: Any,
+    item_id: str,
+    *,
+    field: str,
+    validation: dict[str, Any],
+) -> None:
+    item = current_store.plugin_connections.get(item_id)
+    if item is None:
+        _add_issue(validation, field, "error", f"Plugin connection not found: {item_id}")
+        return
+    if item.get("status") and item.get("status") != "active":
+        _add_issue(validation, field, "error", f"Plugin connection is inactive: {item_id}")
+        return
+    last_test_summary = item.get("last_test_summary")
+    if not isinstance(last_test_summary, dict):
+        return
+    if str(last_test_summary.get("status") or "").lower() not in {"failed", "error"}:
+        return
+    failure_message = (
+        str(last_test_summary.get("error_message") or "").strip()
+        or str(last_test_summary.get("error_code") or "").strip()
+        or "unknown error"
+    )
+    _add_issue(
+        validation,
+        field,
+        "error",
+        f"Plugin connection last test failed: {failure_message}",
+    )
 
 
 def _validate_enum(

@@ -2688,6 +2688,93 @@ def test_ai_assistant_action_draft_previews_diff_and_blocks_invalid_confirmation
     assert confirm_response.json()["detail"]["code"] == "DRAFT_PRECHECK_FAILED"
 
 
+def test_ai_assistant_action_draft_precheck_blocks_failed_plugin_connection():
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    connection = app.state.store.plugin_connections["plugin_connection_maxcompute"]
+    connection["last_test_summary"] = {
+        "checked_at": "2026-06-17T09:20:00+00:00",
+        "error_code": "HTTP_ERROR",
+        "error_message": "HTTP 403: forbidden",
+        "status": "failed",
+    }
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_plugin_action",
+            "payload": {
+                "action_type": "http_request",
+                "code": "feedback_write_retry",
+                "connection_id": "plugin_connection_maxcompute",
+                "name": "反馈洞察写入动作",
+                "plugin_id": "plugin_http",
+            },
+            "risk_level": "medium",
+            "title": "创建反馈洞察写入动作",
+        },
+        headers=headers,
+    )
+
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    validation = draft["preview"]["validation"]
+    assert validation["status"] == "blocked"
+    issues_by_field = {item["field"]: item for item in validation["issues"]}
+    assert issues_by_field["connection_id"]["severity"] == "error"
+    assert "last test failed" in issues_by_field["connection_id"]["message"]
+    assert "HTTP 403: forbidden" in issues_by_field["connection_id"]["message"]
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft['id']}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 409
+    assert confirm_response.json()["detail"]["code"] == "DRAFT_PRECHECK_FAILED"
+
+
+def test_ai_assistant_scheduled_job_draft_precheck_blocks_failed_plugin_connection():
+    headers = auth_headers()
+    app.state.store.reset()
+    seed_assistant_operational_references()
+    connection = app.state.store.plugin_connections["plugin_connection_maxcompute"]
+    connection["last_test_summary"] = {
+        "checked_at": "2026-06-17T09:20:00+00:00",
+        "error_code": "HTTP_ERROR",
+        "error_message": "HTTP 403: forbidden",
+        "status": "failed",
+    }
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "execution_mode": "deterministic",
+                "job_type": "plugin_action_invoke",
+                "name": "使用失败连接的定时任务",
+                "plugin_action_id": "plugin_action_feedback_write",
+                "plugin_connection_id": "plugin_connection_maxcompute",
+                "schedule_type": "manual",
+            },
+            "risk_level": "medium",
+            "title": "创建使用失败连接的定时任务",
+        },
+        headers=headers,
+    )
+
+    assert draft_response.status_code == 200
+    draft = draft_response.json()["data"]
+    validation = draft["preview"]["validation"]
+    assert validation["status"] == "blocked"
+    issues_by_field = {item["field"]: item for item in validation["issues"]}
+    assert issues_by_field["plugin_connection_id"]["severity"] == "error"
+    assert "last test failed" in issues_by_field["plugin_connection_id"]["message"]
+    assert "HTTP 403: forbidden" in issues_by_field["plugin_connection_id"]["message"]
+
+
 def test_ai_assistant_action_draft_cancel_prevents_confirmation():
     headers = auth_headers()
     app.state.store.reset()
