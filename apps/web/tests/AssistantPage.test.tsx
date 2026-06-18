@@ -950,6 +950,42 @@ describe('AssistantPage', () => {
     );
   });
 
+  it('shows knowledge quick tasks for knowledge_owner users', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-knowledge-owner' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-knowledge-owner');
+    saveCurrentUser({
+      display_name: '知识负责人',
+      id: 'user_knowledge_owner',
+      roles: ['knowledge_owner'],
+      username: 'knowledge-owner@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    expect(screen.getByText('角色快捷任务')).toBeInTheDocument();
+    expect(screen.getByText('知识快捷任务')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '知识库巡检' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '知识沉淀' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '知识权限' })).toBeInTheDocument();
+    expect(screen.queryByText('管理员快捷任务')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库巡检' }));
+
+    expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
+      '请生成知识库巡检草案，检查索引失败、权限异常、过期知识和待处理知识沉淀。',
+    );
+  });
+
   it('opens default reference candidates when the user types a bare @', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

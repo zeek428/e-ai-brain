@@ -204,6 +204,28 @@ const assistantRoleQuickTaskGroups: AssistantRoleQuickTaskGroup[] = [
     ],
   },
   {
+    key: 'knowledge',
+    label: '知识快捷任务',
+    roles: ['knowledge_owner'],
+    tasks: [
+      {
+        key: 'knowledge_base_inspection',
+        label: '知识库巡检',
+        prompt: '请生成知识库巡检草案，检查索引失败、权限异常、过期知识和待处理知识沉淀。',
+      },
+      {
+        key: 'knowledge_deposits',
+        label: '知识沉淀',
+        prompt: '请汇总待处理知识沉淀候选，按来源任务、价值和风险给出处理优先级。',
+      },
+      {
+        key: 'knowledge_permissions',
+        label: '知识权限',
+        prompt: '请检查知识空间、目录和文档的权限风险，指出需要调整或复核的对象。',
+      },
+    ],
+  },
+  {
     key: 'admin',
     label: '管理员快捷任务',
     roles: ['admin'],
