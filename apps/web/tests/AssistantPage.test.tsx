@@ -1718,6 +1718,9 @@ describe('AssistantPage', () => {
     expect(screen.getByText('数据连接')).toBeInTheDocument();
     expect(screen.getByText('AI处理')).toBeInTheDocument();
     expect(screen.getByText('结果动作')).toBeInTheDocument();
+    expect(screen.getByText('数据连接是否成功：成功')).toBeInTheDocument();
+    expect(screen.getByText('AI处理是否成功：成功')).toBeInTheDocument();
+    expect(screen.getByText('结果动作是否写入成功：失败')).toBeInTheDocument();
     expect(screen.getByText('写入反馈洞察表失败。')).toBeInTheDocument();
     expect(screen.getByText('关联日志：model_gateway_log_feedback_failed')).toBeInTheDocument();
     expect(screen.getByText('关联日志：plugin_invocation_log_feedback_failed')).toBeInTheDocument();

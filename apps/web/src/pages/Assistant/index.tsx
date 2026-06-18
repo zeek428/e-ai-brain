@@ -424,6 +424,27 @@ function diagnosticStageLabel(stage: string) {
   return labels[stage] ?? stage;
 }
 
+function diagnosticStageQuestion(stage: string) {
+  const labels: Record<string, string> = {
+    ai_processing: 'AI处理是否成功',
+    data_connection: '数据连接是否成功',
+    result_action: '结果动作是否写入成功',
+  };
+  return labels[stage] ?? `${diagnosticStageLabel(stage)}是否成功`;
+}
+
+function diagnosticStageOutcome(status: string) {
+  const labels: Record<string, string> = {
+    failed: '失败',
+    queued: '排队中',
+    running: '执行中',
+    skipped: '已跳过',
+    succeeded: '成功',
+    warning: '有告警',
+  };
+  return labels[status] ?? (status === '-' ? '未记录' : status);
+}
+
 function pluginConnectionDiagnosticStageLabel(stage: string) {
   const labels: Record<string, string> = {
     connection_config: '连接配置',
@@ -2226,12 +2247,17 @@ function AssistantScheduledJobDiagnosticCards({
                 const logId = itemText(stage, 'log_id');
                 const resultWriteRecordId = itemText(stage, 'result_write_record_id');
                 const resultWriteRecordUrl = diagnosticResultWriteRecordUrl(item, stage);
+                const stageName = itemText(stage, 'stage');
+                const stageStatus = itemText(stage, 'status');
                 return (
-                  <div className="assistant-diagnostic-stage" key={itemText(stage, 'stage')}>
+                  <div className="assistant-diagnostic-stage" key={stageName}>
+                    <Text strong>
+                      {diagnosticStageQuestion(stageName)}：{diagnosticStageOutcome(stageStatus)}
+                    </Text>
                     <Space size={6} wrap>
-                      <Tag color="blue">{diagnosticStageLabel(itemText(stage, 'stage'))}</Tag>
-                      <Tag color={diagnosticStatusColor(itemText(stage, 'status'))}>
-                        {itemText(stage, 'status')}
+                      <Tag color="blue">{diagnosticStageLabel(stageName)}</Tag>
+                      <Tag color={diagnosticStatusColor(stageStatus)}>
+                        {stageStatus}
                       </Tag>
                     </Space>
                     <Text>{itemText(stage, 'summary')}</Text>

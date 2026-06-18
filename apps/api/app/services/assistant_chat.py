@@ -1144,6 +1144,13 @@ def _scheduled_job_references_from_explicit_mentions(
     references: list[dict[str, str]] = []
     for query in queries:
         matches = [job for job in jobs if _scheduled_job_matches_mention(job, query)]
+        preferred_matches = _scheduled_job_preferred_run_once_mention_matches(
+            matches,
+            query,
+            require_official_insight=True,
+        )
+        if len(preferred_matches) == 1:
+            matches = preferred_matches
         if len(matches) != 1:
             exact_matches = [
                 job for job in matches if _scheduled_job_exactly_matches_mention(job, query)
@@ -1154,6 +1161,7 @@ def _scheduled_job_references_from_explicit_mentions(
             preferred_matches = _scheduled_job_preferred_run_once_mention_matches(
                 matches,
                 query,
+                require_official_insight=False,
             )
             if len(preferred_matches) == 1:
                 matches = preferred_matches
@@ -1279,6 +1287,8 @@ def _scheduled_job_exactly_matches_mention(job: dict[str, Any], query: str) -> b
 def _scheduled_job_preferred_run_once_mention_matches(
     jobs: list[dict[str, Any]],
     query: str,
+    *,
+    require_official_insight: bool = False,
 ) -> list[dict[str, Any]]:
     if not _weekly_feedback_run_once_draft_requested(query, [query]):
         return []
@@ -1299,6 +1309,14 @@ def _scheduled_job_preferred_run_once_mention_matches(
         if _scheduled_job_is_runnable_mention_match(job)
     ]
     candidates = runnable_matches or preferred_matches
+    if require_official_insight:
+        candidates = [
+            (score, job)
+            for score, job in candidates
+            if _scheduled_job_is_official_weekly_feedback_insight(job)
+        ]
+        if not candidates:
+            return []
     ranked = sorted(
         candidates,
         key=lambda item: (
@@ -1311,6 +1329,24 @@ def _scheduled_job_preferred_run_once_mention_matches(
     if len(ranked) == 1 or ranked[0][0] > ranked[1][0]:
         return [ranked[0][1]]
     return [job for _, job in ranked]
+
+
+def _scheduled_job_is_official_weekly_feedback_insight(job: dict[str, Any]) -> bool:
+    config_json = job.get("config_json")
+    assistant_template = (
+        config_json.get("assistant_template")
+        if isinstance(config_json, dict)
+        else None
+    )
+    template_code = (
+        assistant_template.get("code")
+        if isinstance(assistant_template, dict)
+        else None
+    )
+    return (
+        template_code == "weekly_feedback_insight"
+        or str(job.get("job_type") or "").strip() == "user_feedback_insight_extract"
+    )
 
 
 def _scheduled_job_weekly_feedback_insight_score(job: dict[str, Any]) -> int:
