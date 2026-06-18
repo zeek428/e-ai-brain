@@ -8,6 +8,7 @@ import app.services.assistant_chat as assistant_chat_service
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
 from app.main import app
+from app.services.assistant_metrics import assistant_metrics_response
 from app.services.assistant_references import assistant_reference_candidates_response
 
 client = TestClient(app)
@@ -1878,6 +1879,108 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "total": 3,
         },
     ]
+
+
+def test_ai_assistant_metrics_reads_scheduled_job_runs_from_repository_read_model():
+    now = "2026-06-16T10:00:00+00:00"
+
+    class RepositoryBackedMetricsStore:
+        def list_assistant_action_drafts(self, *, user_id: str):
+            assert user_id == "user_admin"
+            return [
+                {
+                    "action": "create_scheduled_job",
+                    "confirmed_at": now,
+                    "confirmed_by": "user_admin",
+                    "created_at": now,
+                    "created_by": "user_admin",
+                    "id": "assistant_action_draft_db",
+                    "metadata_json": {},
+                    "payload": {"name": "DB-first 作业草案"},
+                    "result_run_id": "assistant_action_run_db",
+                    "risk_level": "medium",
+                    "status": "confirmed",
+                    "title": "DB-first 作业草案",
+                    "updated_at": now,
+                }
+            ]
+
+        def load_assistant_chat(self):
+            return {
+                "assistant_action_runs": {
+                    "assistant_action_run_db": {
+                        "action": "create_scheduled_job",
+                        "created_at": now,
+                        "draft_id": "assistant_action_draft_db",
+                        "executed_by": "user_admin",
+                        "finished_at": now,
+                        "id": "assistant_action_run_db",
+                        "result": {"id": "scheduled_job_db"},
+                        "result_id": "scheduled_job_db",
+                        "result_type": "scheduled_job",
+                        "started_at": now,
+                        "status": "succeeded",
+                        "updated_at": now,
+                    }
+                },
+                "assistant_messages": {},
+            }
+
+        def list_scheduled_job_runs(
+            self,
+            *,
+            scheduled_job_id: str | None = None,
+            status: str | None = None,
+        ):
+            runs = [
+                {
+                    "created_at": now,
+                    "error_code": "RESULT_ACTION_FAILED",
+                    "error_message": "结果写入失败",
+                    "finished_at": now,
+                    "id": "scheduled_job_run_db_failed",
+                    "records_imported": 0,
+                    "result_summary": {},
+                    "scheduled_job_id": "scheduled_job_db",
+                    "source_run_id": None,
+                    "started_at": now,
+                    "status": "failed",
+                    "trigger_type": "manual",
+                    "updated_at": now,
+                },
+                {
+                    "created_at": now,
+                    "error_code": None,
+                    "error_message": None,
+                    "finished_at": now,
+                    "id": "scheduled_job_run_db_repaired",
+                    "records_imported": 8,
+                    "result_summary": {},
+                    "scheduled_job_id": "scheduled_job_db",
+                    "source_run_id": "scheduled_job_run_db_failed",
+                    "started_at": now,
+                    "status": "succeeded",
+                    "trigger_type": "manual_rerun",
+                    "updated_at": now,
+                },
+            ]
+            if scheduled_job_id is not None:
+                runs = [run for run in runs if run["scheduled_job_id"] == scheduled_job_id]
+            if status is not None:
+                runs = [run for run in runs if run["status"] == status]
+            return runs
+
+    metrics = assistant_metrics_response(
+        SimpleNamespace(repository=RepositoryBackedMetricsStore(), scheduled_job_runs={}),
+        user={"id": "user_admin"},
+    )
+
+    assert metrics["summary"]["scheduled_job_run_total"] == 2
+    assert metrics["summary"]["scheduled_job_run_failed_count"] == 1
+    assert metrics["summary"]["scheduled_job_run_succeeded_count"] == 1
+    assert metrics["summary"]["scheduled_job_run_success_rate"] == 0.5
+    assert metrics["summary"]["failed_run_repaired_count"] == 1
+    assert metrics["summary"]["failed_run_repair_rate"] == 1.0
 
 
 def test_ai_assistant_action_draft_modification_updates_metrics_and_audit():

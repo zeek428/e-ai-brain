@@ -124,7 +124,9 @@ def _assistant_metric_rows(
         messages = _dict_values(payload.get("assistant_messages", {}))
         if not messages:
             messages = _dict_values(getattr(current_store, "assistant_messages", {}))
-        scheduled_job_runs = _dict_values(getattr(current_store, "scheduled_job_runs", {}))
+        scheduled_job_runs = _repository_scheduled_job_runs(repository)
+        if not scheduled_job_runs:
+            scheduled_job_runs = _dict_values(getattr(current_store, "scheduled_job_runs", {}))
         return drafts, runs, messages, scheduled_job_runs
     drafts = [
         dict(draft)
@@ -154,6 +156,13 @@ def _repository_assistant_chat(repository: Any) -> dict[str, Any]:
     if not callable(load_chat):
         return {}
     return load_chat() or {}
+
+
+def _repository_scheduled_job_runs(repository: Any) -> list[dict[str, Any]]:
+    list_runs = getattr(repository, "list_scheduled_job_runs", None)
+    if not callable(list_runs):
+        return []
+    return [dict(run) for run in list_runs() if isinstance(run, dict)]
 
 
 def _dict_values(value: Any) -> list[dict[str, Any]]:
