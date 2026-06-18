@@ -1012,6 +1012,40 @@ def test_ai_assistant_resolve_rejects_unreadable_knowledge_reference():
     assert response.json()["detail"]["code"] == "REFERENCE_NOT_FOUND"
 
 
+def test_ai_assistant_resolve_rejects_unsearchable_knowledge_document_reference():
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_knowledge_reference_documents()
+    app.state.store.knowledge_documents["knowledge_index_failed_runbook"] = {
+        "brain_app_id": "rd_brain",
+        "content": "索引失败的文档正文不应进入 AI 助手上下文。",
+        "created_at": "2026-06-14T08:00:00+00:00",
+        "created_by": "reviewer@example.com",
+        "doc_type": "manual",
+        "id": "knowledge_index_failed_runbook",
+        "index_error": "embedding failed",
+        "index_status": "index_failed",
+        "permission_roles": ["reviewer"],
+        "status": "active",
+        "tags": ["runbook"],
+        "title": "索引失败的排障手册",
+        "updated_at": "2026-06-14T08:00:00+00:00",
+    }
+
+    response = client.post(
+        "/api/assistant/references/resolve",
+        json={
+            "references": [
+                {"id": "knowledge_index_failed_runbook", "type": "knowledge_document"},
+            ]
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "REFERENCE_NOT_FOUND"
+
+
 def test_ai_assistant_resolve_knowledge_space_and_folder_injects_scoped_chunks():
     headers = auth_headers("reviewer@example.com", "reviewer123")
     app.state.store.reset()

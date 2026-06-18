@@ -454,9 +454,12 @@ def resolve_assistant_references(
             )
             continue
         entity_reference = _entity_reference_for_id(current_store, reference_type, reference_id)
-        if reference_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational_type(
-            user,
-            reference_type,
+        if (
+            reference_type in OPERATIONAL_REFERENCE_TYPES
+            and not _user_can_reference_operational_type(
+                user,
+                reference_type,
+            )
         ):
             entity_reference = None
         if entity_reference is None:
@@ -1023,7 +1026,10 @@ def _readable_knowledge_document(
         query=None,
         user=user,
     ):
-        if str(document.get("id")) == document_id:
+        if (
+            str(document.get("id")) == document_id
+            and document.get("index_status") in KNOWLEDGE_SEARCHABLE_STATUSES
+        ):
             return document
     return None
 
