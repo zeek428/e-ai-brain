@@ -516,6 +516,59 @@ def test_ai_assistant_reference_candidates_filter_readable_knowledge_documents()
     ]
 
 
+def test_ai_assistant_reference_candidates_count_only_injectable_document_chunks():
+    headers = auth_headers("reviewer@example.com", "reviewer123")
+    app.state.store.reset()
+    seed_assistant_knowledge_reference_documents()
+    document = app.state.store.knowledge_documents["knowledge_payment_runbook"]
+    document["active_chunk_set_id"] = "knowledge_payment_runbook_chunk_set_active"
+    app.state.store.knowledge_chunks["knowledge_payment_runbook_chunk_001"][
+        "chunk_set_id"
+    ] = "knowledge_payment_runbook_chunk_set_active"
+    app.state.store.knowledge_chunks["knowledge_payment_runbook_parent_chunk"] = {
+        "chunk_index": 0,
+        "chunk_set_id": "knowledge_payment_runbook_chunk_set_active",
+        "content": "父级聚合 chunk 不应计入可注入数量。",
+        "document_id": "knowledge_payment_runbook",
+        "embedding": [0.1, 0.2, 0.3],
+        "id": "knowledge_payment_runbook_parent_chunk",
+        "metadata": {"chunk_role": "parent"},
+        "permission_roles": ["reviewer"],
+        "permission_scope": {"roles": ["reviewer"]},
+    }
+    app.state.store.knowledge_chunks["knowledge_payment_runbook_stale_chunk"] = {
+        "chunk_index": 1,
+        "chunk_set_id": "knowledge_payment_runbook_chunk_set_old",
+        "content": "历史 chunk set 不应计入可注入数量。",
+        "document_id": "knowledge_payment_runbook",
+        "embedding": [0.1, 0.2, 0.3],
+        "id": "knowledge_payment_runbook_stale_chunk",
+        "metadata": {},
+        "permission_roles": ["reviewer"],
+        "permission_scope": {"roles": ["reviewer"]},
+    }
+
+    candidate_response = client.get(
+        "/api/assistant/reference-candidates",
+        params={"query": "支付", "type": "knowledge_document", "limit": 5},
+        headers=headers,
+    )
+    resolve_response = client.post(
+        "/api/assistant/references/resolve",
+        json={
+            "references": [
+                {"id": "knowledge_payment_runbook", "type": "knowledge_document"},
+            ]
+        },
+        headers=headers,
+    )
+
+    assert candidate_response.status_code == 200, candidate_response.text
+    assert resolve_response.status_code == 200, resolve_response.text
+    assert candidate_response.json()["data"]["items"][0]["chunk_count"] == 1
+    assert len(resolve_response.json()["data"]["knowledge_context"]) == 1
+
+
 def test_ai_assistant_reference_candidates_filter_readable_knowledge_chunks():
     headers = auth_headers("reviewer@example.com", "reviewer123")
     app.state.store.reset()

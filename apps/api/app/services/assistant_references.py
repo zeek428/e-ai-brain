@@ -751,9 +751,10 @@ def _knowledge_document_reference_candidates(
     references = [
         {
             **_knowledge_document_reference(document),
-            "chunk_count": int(
-                document.get("chunk_count")
-                or _knowledge_chunk_count(current_store, document)
+            "chunk_count": _knowledge_document_injectable_chunk_count(
+                current_store,
+                document=document,
+                user=user,
             ),
             "index_status": str(document.get("index_status") or ""),
             **_knowledge_document_reference_summary(document),
@@ -1196,13 +1197,22 @@ def _readable_knowledge_chunks(
     return sorted(chunks, key=lambda chunk: (chunk.get("chunk_index", 0), chunk.get("id", "")))
 
 
-def _knowledge_chunk_count(current_store: Any, document: dict[str, Any]) -> int:
+def _knowledge_document_injectable_chunk_count(
+    current_store: Any,
+    *,
+    document: dict[str, Any],
+    user: dict[str, Any],
+) -> int:
+    repository = knowledge_query_repository(current_store)
+    search_chunks = getattr(repository, "search_knowledge_chunks", None)
+    if repository is not None and not callable(search_chunks):
+        return int(document.get("chunk_count") or 0)
     return len(
-        [
-            chunk
-            for chunk in getattr(current_store, "knowledge_chunks", {}).values()
-            if chunk.get("document_id") == document.get("id")
-        ]
+        _readable_knowledge_chunks(
+            current_store,
+            document=document,
+            user=user,
+        )
     )
 
 
