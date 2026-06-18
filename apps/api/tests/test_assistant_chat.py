@@ -4834,6 +4834,7 @@ def test_ai_assistant_chat_generates_feedback_draft_when_run_once_job_missing(
     message = payload["message"]
     assert payload["model"] == "assistant-deterministic"
     assert "还没有找到可执行的定时作业" in message["content"]
+    assert "尚未执行" in message["content"]
     assert app.state.store.scheduled_job_runs == {}
     draft_result = message["tool_results"][0]
     assert draft_result["tool"] == "assistant.action_draft"

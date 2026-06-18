@@ -3742,6 +3742,7 @@ describe('AssistantPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('确认后执行一次')).toBeInTheDocument();
+    expect(screen.getByText('尚未执行')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /确认并执行一次/ })).toBeInTheDocument();
     expect(screen.getByText('确认前不会写入作业定义；确认后会立即执行一次')).toBeInTheDocument();
   });

@@ -1859,6 +1859,7 @@ function AssistantActionDraftCards({
                 {draft.risk_level ? <Tag color="orange">风险：{draft.risk_level}</Tag> : null}
                 {draft.requires_confirmation ? <Tag color={statusLabel.color}>{statusLabel.text}</Tag> : null}
                 {isRunOnceDraft ? <Tag color="geekblue">确认后执行一次</Tag> : null}
+                {isRunOnceDraft && isPending ? <Tag color="gold">尚未执行</Tag> : null}
               </Space>
               <Text type="secondary">
                 {isRunOnceDraft ? `${writeNotice}；确认后会立即执行一次` : writeNotice}

@@ -1099,7 +1099,8 @@ def _scheduled_job_run_once_missing_job_draft_output(
     return {
         "answer": (
             f"还没有找到可执行的定时作业：{query_text}。"
-            "我先生成周反馈洞察定时作业草案，确认并补齐校验项后再执行一次。"
+            "当前尚未执行；我先生成周反馈洞察定时作业草案，"
+            "确认并补齐校验项后再执行一次。"
         ),
         "latency_ms": int((perf_counter() - started) * 1000),
         "model": "assistant-deterministic",
