@@ -899,7 +899,7 @@ def test_ai_assistant_reference_candidates_allow_scheduled_job_managers():
     assert payload["items"] == [
         {
             "id": "scheduled_job_feedback_weekly",
-            "permission_label": "管理员可引用",
+            "permission_label": "定时作业管理权限可引用",
             "source_module": "任务中心",
             "title": "每周反馈洞察定时作业",
             "type": "scheduled_job",

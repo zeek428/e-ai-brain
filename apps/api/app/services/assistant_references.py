@@ -26,6 +26,11 @@ OPERATIONAL_REFERENCE_PERMISSION_BY_TYPE = {
     "scheduled_job": "system.scheduled_jobs.manage",
     "scheduled_job_run": "system.scheduled_jobs.manage",
 }
+OPERATIONAL_REFERENCE_PERMISSION_LABEL_BY_PERMISSION = {
+    "system.ai_capabilities.manage": "AI能力管理权限可引用",
+    "system.plugins.manage": "插件管理权限可引用",
+    "system.scheduled_jobs.manage": "定时作业管理权限可引用",
+}
 REFERENCE_SOURCE_MODULES = {
     "ai_agent": "AI能力配置",
     "ai_skill": "AI能力配置",
@@ -549,9 +554,7 @@ def _reference_candidates_with_metadata(
         )
         enriched_item = {
             **reference,
-            "permission_label": "管理员可引用"
-            if reference_type in OPERATIONAL_REFERENCE_TYPES
-            else "可引用",
+            "permission_label": _reference_permission_label(user, reference_type),
             "source_module": REFERENCE_SOURCE_MODULES.get(reference_type, "AI Brain"),
         }
         if updated_at:
@@ -1634,3 +1637,22 @@ def _user_can_reference_operational_type(
         or "system.admin" in permissions
         or (required_permission is not None and required_permission in permissions)
     )
+
+
+def _reference_permission_label(
+    user: dict[str, Any] | None,
+    reference_type: str,
+) -> str:
+    if reference_type not in OPERATIONAL_REFERENCE_TYPES:
+        return "可引用"
+    roles = set(user.get("roles") or []) if isinstance(user, dict) else set()
+    permissions = set(user.get("permissions") or []) if isinstance(user, dict) else set()
+    if "admin" in roles or "system.admin" in permissions:
+        return "管理员可引用"
+    required_permission = OPERATIONAL_REFERENCE_PERMISSION_BY_TYPE.get(reference_type)
+    if required_permission and required_permission in permissions:
+        return OPERATIONAL_REFERENCE_PERMISSION_LABEL_BY_PERMISSION.get(
+            required_permission,
+            "已授权可引用",
+        )
+    return "需授权"
