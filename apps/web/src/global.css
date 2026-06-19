@@ -363,7 +363,7 @@ body {
 .assistant-workspace {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
-  height: calc(100dvh - 132px);
+  height: calc(100dvh - 88px);
   min-height: 0;
   overflow: hidden;
   background: #f5f7fb;

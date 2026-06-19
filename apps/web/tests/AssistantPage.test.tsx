@@ -433,6 +433,7 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
+    expect(screen.queryByLabelText('面包屑')).not.toBeInTheDocument();
     expect(screen.getAllByText('AI 助手').length).toBeGreaterThan(0);
     expect(screen.getAllByText('项目进展').length).toBeGreaterThan(0);
     expect(screen.getAllByText('阻塞与待确认').length).toBeGreaterThan(0);

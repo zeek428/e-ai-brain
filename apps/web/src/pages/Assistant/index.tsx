@@ -4036,10 +4036,7 @@ export default function AssistantPage() {
   };
 
   return (
-    <PageContainer
-      breadcrumb={{ items: [{ title: 'AI 助手' }] }}
-      title={false}
-    >
+    <PageContainer title={false}>
       <div className="assistant-workspace">
         <aside className="assistant-sidebar">
           <Title level={3}>AI 助手</Title>
