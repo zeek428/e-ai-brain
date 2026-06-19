@@ -3198,6 +3198,8 @@ export default function AssistantPage() {
   const [roleQuickTaskGroups, setRoleQuickTaskGroups] = useState<AssistantRoleQuickTaskGroup[]>([]);
   const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
+  const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const addMenuTriggerRef = useRef<HTMLElement | null>(null);
   const messageListEndRef = useRef<HTMLDivElement | null>(null);
   const queryDraftHydratedRef = useRef(false);
   const queryReferenceHydratedRef = useRef(false);
@@ -3287,6 +3289,31 @@ export default function AssistantPage() {
       setCommittedActionCommand(undefined);
     }
   }, [committedActionCommand, inputValue]);
+
+  useEffect(() => {
+    if (!isAddMenuOpen) {
+      return undefined;
+    }
+    const closeOnOutsideClick = (event: globalThis.MouseEvent | TouchEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (
+        addMenuRef.current?.contains(target)
+        || addMenuTriggerRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setIsAddMenuOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    document.addEventListener('touchstart', closeOnOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick);
+      document.removeEventListener('touchstart', closeOnOutsideClick);
+    };
+  }, [isAddMenuOpen]);
 
   useEffect(() => {
     if (!activeRunPollTargets.length) {
@@ -4402,6 +4429,7 @@ export default function AssistantPage() {
                 aria-label="快捷添加 @ 能力"
                 className="assistant-add-menu"
                 id="assistant-add-menu"
+                ref={addMenuRef}
               >
                 <div className="assistant-add-menu-header">
                   <Text strong>添加</Text>
@@ -4559,6 +4587,9 @@ export default function AssistantPage() {
                 aria-label="添加 @ 能力"
                 className="assistant-composer-add-button"
                 icon={<PlusOutlined />}
+                ref={(node) => {
+                  addMenuTriggerRef.current = node;
+                }}
                 onClick={toggleAddMenu}
               />
               <Button

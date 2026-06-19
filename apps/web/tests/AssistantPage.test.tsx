@@ -1656,7 +1656,19 @@ describe('AssistantPage', () => {
     expect(await within(addMenu).findByText('新建需求')).toBeInTheDocument();
     expect(within(addMenu).getByText('新建定时作业')).toBeInTheDocument();
 
-    fireEvent.click(within(addMenu).getByRole('button', { name: /新建需求/ }));
+    fireEvent.mouseDown(addMenu);
+    expect(screen.getByLabelText('快捷添加 @ 能力')).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => {
+      expect(screen.queryByLabelText('快捷添加 @ 能力')).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '添加 @ 能力' }));
+    const reopenedAddMenu = await screen.findByLabelText('快捷添加 @ 能力');
+    expect(await within(reopenedAddMenu).findByText('新建需求')).toBeInTheDocument();
+
+    fireEvent.click(within(reopenedAddMenu).getByRole('button', { name: /新建需求/ }));
 
     expect(assistantInput).toHaveValue('@新建需求 需要后续变更');
     expect(screen.queryByLabelText('快捷添加 @ 能力')).not.toBeInTheDocument();
