@@ -372,10 +372,10 @@ body {
 .assistant-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
   min-height: 0;
   overflow: auto;
-  padding: 22px;
+  padding: 20px;
   border-right: 1px solid #e6ebf2;
   background: #ffffff;
 }
@@ -389,14 +389,51 @@ body {
   margin: 0;
 }
 
+.assistant-sidebar-section,
+.assistant-sidebar-more-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .assistant-prompt-list {
   display: grid;
   gap: 10px;
 }
 
+.assistant-prompt-list-compact,
+.assistant-sidebar-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .assistant-prompt-list .ant-btn {
   justify-content: flex-start;
   height: 40px;
+}
+
+.assistant-prompt-list-compact .ant-btn,
+.assistant-sidebar-tool-grid .ant-btn {
+  justify-content: flex-start;
+  height: 36px;
+  min-width: 0;
+  width: 100%;
+  padding-inline: 10px;
+}
+
+.assistant-prompt-list .ant-btn > span:last-child,
+.assistant-sidebar-tool-grid .ant-btn > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .assistant-role-task-groups,
@@ -542,7 +579,8 @@ body {
 .assistant-history-panel {
   display: grid;
   gap: 10px;
-  min-height: 0;
+  flex: 1 0 180px;
+  min-height: 160px;
 }
 
 .assistant-history-title {
@@ -555,8 +593,8 @@ body {
 .assistant-history-list {
   display: grid;
   gap: 8px;
-  max-height: 260px;
-  min-height: 0;
+  max-height: min(280px, 100%);
+  min-height: 96px;
   overflow: auto;
   padding-right: 4px;
 }
@@ -687,9 +725,9 @@ body {
 
 .assistant-context-panel {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   margin-top: auto;
-  padding-top: 18px;
+  padding-top: 12px;
   border-top: 1px solid #edf1f7;
 }
 

@@ -198,9 +198,10 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    fireEvent.click(screen.getByRole('button', { name: '查看指标' }));
+    expect(screen.queryByText('助手效果指标')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看助手效果指标' }));
 
-    expect(screen.getByText('助手效果指标')).toBeInTheDocument();
+    expect(await screen.findByText('助手效果指标')).toBeInTheDocument();
     expect(await screen.findByLabelText('指标 草案生成数')).toHaveTextContent('4');
     expect(screen.getByLabelText('指标 草案确认率')).toHaveTextContent('50%');
     expect(screen.getByLabelText('指标 用户修改率')).toHaveTextContent('25%');
@@ -435,9 +436,12 @@ describe('AssistantPage', () => {
 
     expect(screen.queryByLabelText('面包屑')).not.toBeInTheDocument();
     expect(screen.getAllByText('AI 助手').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('项目进展').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('阻塞与待确认').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('模型网关').length).toBeGreaterThan(0);
+    const quickEntryPanel = screen.getByLabelText('常用入口');
+    expect(within(quickEntryPanel).getByRole('button', { name: /项目进展/ })).toBeInTheDocument();
+    expect(within(quickEntryPanel).getByRole('button', { name: /阻塞与待确认/ })).toBeInTheDocument();
+    expect(within(quickEntryPanel).queryByRole('button', { name: /模型网关/ })).not.toBeInTheDocument();
+    fireEvent.click(within(quickEntryPanel).getByRole('button', { name: '展开更多常用入口' }));
+    expect(within(quickEntryPanel).getByRole('button', { name: /模型网关/ })).toBeInTheDocument();
     const assistantInput = screen.getByLabelText('发送给 AI 助手');
     expect(assistantInput).toHaveAttribute('rows', '3');
     fireEvent.change(assistantInput, {

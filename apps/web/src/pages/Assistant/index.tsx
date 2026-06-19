@@ -132,6 +132,13 @@ const starterPrompts = [
     prompt: '模型网关和 GitHub PR Review 链路现在是否可用？',
   },
 ];
+const primaryStarterPromptLabels = new Set(['项目进展', '阻塞与待确认']);
+const primaryStarterPrompts = starterPrompts.filter((item) =>
+  primaryStarterPromptLabels.has(item.label),
+);
+const secondaryStarterPrompts = starterPrompts.filter((item) =>
+  !primaryStarterPromptLabels.has(item.label),
+);
 
 const scheduledJobRunOnceKeywords = [
   '执行一次',
@@ -3182,6 +3189,7 @@ export default function AssistantPage() {
   const [isLoadingReferences, setIsLoadingReferences] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
+  const [metricsPanelOpened, setMetricsPanelOpened] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
   const [activeReferenceIndex, setActiveReferenceIndex] = useState(-1);
   const [addActionCandidates, setAddActionCandidates] = useState<AssistantReference[]>([]);
@@ -3198,6 +3206,7 @@ export default function AssistantPage() {
   const [roleQuickTaskGroups, setRoleQuickTaskGroups] = useState<AssistantRoleQuickTaskGroup[]>([]);
   const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
+  const [starterPromptsExpanded, setStarterPromptsExpanded] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const addMenuTriggerRef = useRef<HTMLElement | null>(null);
   const messageListEndRef = useRef<HTMLDivElement | null>(null);
@@ -3683,6 +3692,14 @@ export default function AssistantPage() {
     void loadDraftTemplates();
   };
 
+  const toggleMetricsPanel = () => {
+    const shouldOpen = !metricsPanelOpened;
+    setMetricsPanelOpened(shouldOpen);
+    if (shouldOpen && !assistantMetrics) {
+      void loadAssistantMetrics();
+    }
+  };
+
   const useDraftTemplate = (template: AssistantDraftTemplate) => {
     setCommittedActionCommand(undefined);
     setInputValue(template.prompt);
@@ -3741,7 +3758,7 @@ export default function AssistantPage() {
     }
   };
 
-  const useAddActionCandidate = (reference: AssistantReference) => {
+  const selectAddActionCandidate = (reference: AssistantReference) => {
     addSelectedReference(reference);
     setIsAddMenuOpen(false);
   };
@@ -4125,33 +4142,44 @@ export default function AssistantPage() {
           <Button block icon={<PlusOutlined />} onClick={startNewConversation}>
             新对话
           </Button>
-          <div className="assistant-prompt-list">
-            {starterPrompts.map((item) => (
+          <div aria-label="常用入口" className="assistant-sidebar-section">
+            <div className="assistant-sidebar-section-header">
+              <Text strong>常用入口</Text>
               <Button
-                block
-                icon={item.icon}
-                key={item.label}
-                onClick={() => void sendMessage(item.prompt)}
+                aria-label={starterPromptsExpanded ? '收起更多常用入口' : '展开更多常用入口'}
+                icon={starterPromptsExpanded ? <UpOutlined /> : <DownOutlined />}
+                size="small"
+                type="text"
+                onClick={() => setStarterPromptsExpanded((expanded) => !expanded)}
               >
-                {item.label}
+                {starterPromptsExpanded ? '收起' : `更多 ${secondaryStarterPrompts.length}`}
               </Button>
-            ))}
+            </div>
+            <div className="assistant-prompt-list assistant-prompt-list-compact">
+              {primaryStarterPrompts.map((item) => (
+                <Button
+                  block
+                  icon={item.icon}
+                  key={item.label}
+                  onClick={() => void sendMessage(item.prompt)}
+                >
+                  {item.label}
+                </Button>
+              ))}
+              {starterPromptsExpanded
+                ? secondaryStarterPrompts.map((item) => (
+                    <Button
+                      block
+                      icon={item.icon}
+                      key={item.label}
+                      onClick={() => void sendMessage(item.prompt)}
+                    >
+                      {item.label}
+                    </Button>
+                  ))
+                : null}
+            </div>
           </div>
-          <Button
-            aria-label="草案模板市场"
-            block
-            icon={<AppstoreOutlined />}
-            onClick={openDraftTemplateMarket}
-          >
-            草案模板市场
-          </Button>
-          {draftTemplateMarketOpened ? (
-            <AssistantDraftTemplateMarket
-              isLoading={isLoadingDraftTemplates}
-              templates={draftTemplates}
-              onUseTemplate={useDraftTemplate}
-            />
-          ) : null}
           <div className="assistant-history-panel">
             <div className="assistant-history-title">
               <Text strong>最近对话</Text>
@@ -4220,11 +4248,42 @@ export default function AssistantPage() {
               ) : null}
             </div>
           ) : null}
-          <AssistantMetricsPanel
-            isLoading={isLoadingMetrics}
-            metrics={assistantMetrics}
-            onRefresh={() => void loadAssistantMetrics()}
-          />
+          <div className="assistant-sidebar-more-panel">
+            <div className="assistant-sidebar-section-header">
+              <Text strong>更多能力</Text>
+            </div>
+            <div className="assistant-sidebar-tool-grid">
+              <Button
+                aria-label="草案模板市场"
+                icon={<AppstoreOutlined />}
+                onClick={openDraftTemplateMarket}
+              >
+                草案模板
+              </Button>
+              <Button
+                aria-label={metricsPanelOpened ? '隐藏助手效果指标' : '查看助手效果指标'}
+                icon={<BarChartOutlined />}
+                loading={isLoadingMetrics}
+                onClick={toggleMetricsPanel}
+              >
+                {metricsPanelOpened ? '隐藏指标' : '效果指标'}
+              </Button>
+            </div>
+          </div>
+          {draftTemplateMarketOpened ? (
+            <AssistantDraftTemplateMarket
+              isLoading={isLoadingDraftTemplates}
+              templates={draftTemplates}
+              onUseTemplate={useDraftTemplate}
+            />
+          ) : null}
+          {metricsPanelOpened ? (
+            <AssistantMetricsPanel
+              isLoading={isLoadingMetrics}
+              metrics={assistantMetrics}
+              onRefresh={() => void loadAssistantMetrics()}
+            />
+          ) : null}
           <div className="assistant-context-panel">
             <Text strong>上下文</Text>
             <Space size={[6, 6]} wrap>
@@ -4462,7 +4521,7 @@ export default function AssistantPage() {
                       icon={<PlusOutlined />}
                       key={`${reference.type}:${reference.id}`}
                       type="text"
-                      onClick={() => useAddActionCandidate(reference)}
+                      onClick={() => selectAddActionCandidate(reference)}
                     >
                       <span className="assistant-add-menu-item-main">
                         <span className="assistant-add-menu-item-title">{reference.title}</span>
