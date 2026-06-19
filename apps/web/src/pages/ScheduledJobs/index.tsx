@@ -35,6 +35,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+  confirmAssistantActionDraft,
   createScheduledJob,
   deleteScheduledJob,
   dryRunScheduledJob,
@@ -52,11 +53,12 @@ import {
   fetchScheduledJobRuns,
   fetchScheduledJobs,
   generateScheduledJobTemplateFromRun,
-  markAssistantActionDraftModified,
+  rememberAssistantDraftResolution,
   resolveAssistantDraftResourceId,
   runScheduledJob,
   testPluginConnection,
   updateScheduledJob,
+  updateAssistantActionDraft,
   type AiAgentRecord,
   type AiSkillRecord,
   type AssistantScheduledJobDraft,
@@ -645,6 +647,15 @@ function scheduledJobAssistantDraftModifiedFields(
     JSON.stringify(comparableDraftValue(initialRecord[field]))
     !== JSON.stringify(comparableDraftValue(currentRecord[field]))
   ));
+}
+
+function scheduledJobRunIdFromAssistantResult(result?: Record<string, unknown>) {
+  const run = result?.scheduled_job_run;
+  if (!run || typeof run !== 'object') {
+    return undefined;
+  }
+  const runId = (run as { id?: unknown }).id;
+  return typeof runId === 'string' && runId ? runId : undefined;
 }
 
 function formatJsonValue(value: unknown): string {
@@ -2686,25 +2697,28 @@ export default function ScheduledJobsPage() {
     if (editingJob) {
       await updateScheduledJob(editingJob.id, requestPayload);
       message.success('定时作业已更新');
+    } else if (assistantDraftSource?.draftId && assistantDraftInitialValues) {
+      const initialPayload = buildJobRequestPayload(assistantDraftInitialValues);
+      const modifiedFields = scheduledJobAssistantDraftModifiedFields(
+        initialPayload,
+        requestPayload,
+      );
+      await updateAssistantActionDraft(
+        assistantDraftSource.draftId,
+        requestPayload as Record<string, unknown>,
+        modifiedFields,
+      );
+      const confirmed = await confirmAssistantActionDraft(assistantDraftSource.draftId);
+      rememberAssistantDraftResolution({
+        draftId: assistantDraftSource.draftId,
+        resourceId: confirmed.run.result_id,
+        resourceType: 'scheduled_job',
+        scheduledJobRunId: scheduledJobRunIdFromAssistantResult(confirmed.run.result),
+        title: assistantDraftSource.title ?? formValues.name,
+      });
+      message.success('助手草案已确认并创建定时作业');
     } else {
       await createScheduledJob(requestPayload);
-      if (assistantDraftSource?.draftId && assistantDraftInitialValues) {
-        const initialPayload = buildJobRequestPayload(assistantDraftInitialValues);
-        const modifiedFields = scheduledJobAssistantDraftModifiedFields(
-          initialPayload,
-          requestPayload,
-        );
-        if (modifiedFields.length) {
-          try {
-            await markAssistantActionDraftModified(
-              assistantDraftSource.draftId,
-              modifiedFields,
-            );
-          } catch {
-            message.warning('定时作业已创建，但助手草案修改指标记录失败');
-          }
-        }
-      }
       message.success('定时作业已创建');
     }
     closeJobModal();

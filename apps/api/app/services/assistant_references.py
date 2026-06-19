@@ -139,10 +139,23 @@ def assistant_reference_candidates(
     per_type_limit: int = 3,
     user: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
-    products = list(current_store.products.values())
-    if product_id:
-        products = [product for product in products if product.get("id") == product_id]
+    current_user = user or {}
+    products = _reference_products_for_user(
+        list(current_store.products.values()),
+        current_user,
+    )
+    requested_product_id = str(product_id).strip() if product_id else ""
+    if requested_product_id:
+        products = [
+            product
+            for product in products
+            if str(product.get("id")) == requested_product_id
+        ]
     product_ids = {str(product["id"]) for product in products if product.get("id") is not None}
+    has_global_product_access, _ = _user_reference_product_access(current_user)
+    restrict_to_product_ids = bool(requested_product_id) or not has_global_product_access or bool(
+        product_ids
+    )
     requirements = [
         requirement
         for requirement in current_store.requirements.values()
@@ -182,23 +195,28 @@ def assistant_reference_candidates(
     knowledge_spaces = _readable_knowledge_spaces(
         current_store,
         query=None,
-        user=user or {},
+        user=current_user,
     )
     knowledge_folders = _readable_knowledge_folders(
         current_store,
         query=None,
-        user=user or {},
+        user=current_user,
     )
     scheduled_jobs = [
         job
         for job in getattr(current_store, "scheduled_jobs", {}).values()
-        if not product_ids or job.get("product_id") in product_ids
+        if not restrict_to_product_ids or str(job.get("product_id")) in product_ids
+        if _user_can_reference_operational_product_scope(current_user, job.get("product_id"))
     ]
     scheduled_job_ids = {str(job["id"]) for job in scheduled_jobs if job.get("id") is not None}
+    restrict_to_scheduled_job_ids = (
+        bool(requested_product_id) or not has_global_product_access or bool(scheduled_job_ids)
+    )
     scheduled_job_runs = [
         run
         for run in getattr(current_store, "scheduled_job_runs", {}).values()
-        if not scheduled_job_ids or str(run.get("scheduled_job_id")) in scheduled_job_ids
+        if not restrict_to_scheduled_job_ids
+        or str(run.get("scheduled_job_id")) in scheduled_job_ids
     ]
     pools: list[tuple[str, list[dict[str, Any]]]] = [
         ("knowledge_space", knowledge_spaces),
@@ -226,7 +244,7 @@ def assistant_reference_candidates(
     pools.extend(
         (entity_type, items)
         for entity_type, items in operational_pools
-        if _user_can_reference_operational_type(user, entity_type)
+        if _user_can_reference_operational_type(current_user, entity_type)
     )
     references: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -1641,6 +1659,55 @@ def _user_can_reference_operational_type(
             and bool(permissions.intersection(required_permissions))
         )
     )
+
+
+def _reference_products_for_user(
+    products: list[dict[str, Any]],
+    user: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    global_access, product_ids = _user_reference_product_access(user)
+    if global_access:
+        return products
+    return [
+        product
+        for product in products
+        if product.get("id") is not None and str(product.get("id")) in product_ids
+    ]
+
+
+def _user_can_reference_operational_product_scope(
+    user: dict[str, Any] | None,
+    product_id: Any,
+) -> bool:
+    global_access, product_ids = _user_reference_product_access(user)
+    if global_access:
+        return True
+    return product_id is not None and str(product_id) in product_ids
+
+
+def _user_reference_product_access(user: dict[str, Any] | None) -> tuple[bool, set[str]]:
+    if not isinstance(user, dict):
+        return True, set()
+    roles = set(user.get("roles") or [])
+    permissions = set(user.get("permissions") or [])
+    if "admin" in roles or "system.admin" in permissions:
+        return True, set()
+    scope_summary = user.get("scope_summary") or []
+    if not scope_summary:
+        return True, set()
+    product_ids: set[str] = set()
+    for scope in scope_summary:
+        if not isinstance(scope, dict):
+            continue
+        if scope.get("access_level") not in {"admin", "read", "write"}:
+            continue
+        scope_type = scope.get("scope_type")
+        scope_id = scope.get("scope_id")
+        if scope_type == "global" and scope_id == "*":
+            return True, set()
+        if scope_type == "product" and scope_id:
+            product_ids.add(str(scope_id))
+    return False, product_ids
 
 
 def _reference_permission_label(

@@ -16,6 +16,7 @@ from app.services.assistant_action_drafts import (
     get_assistant_action_draft_response,
     mark_assistant_action_draft_modified_response,
     mark_assistant_action_draft_viewed_response,
+    patch_assistant_action_draft_response,
 )
 from app.services.assistant_chat import (
     ASSISTANT_ACCESS_ROLES,
@@ -73,6 +74,12 @@ class AssistantActionDraftCancelRequest(BaseModel):
 
 class AssistantActionDraftModificationRequest(BaseModel):
     modified_fields: list[str] = Field(default_factory=list)
+    user_modified: bool = True
+
+
+class AssistantActionDraftPatchRequest(BaseModel):
+    modified_fields: list[str] = Field(default_factory=list)
+    payload: dict[str, Any] = Field(default_factory=dict)
     user_modified: bool = True
 
 
@@ -216,6 +223,25 @@ def mark_assistant_action_draft_modified(
         current_store=store(request),
         draft_id=draft_id,
         modified_fields=payload.modified_fields,
+        user=user,
+        user_modified=payload.user_modified,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.patch("/action-drafts/{draft_id}")
+def patch_assistant_action_draft(
+    draft_id: str,
+    request: Request,
+    payload: AssistantActionDraftPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    result = patch_assistant_action_draft_response(
+        current_store=store(request),
+        draft_id=draft_id,
+        modified_fields=payload.modified_fields,
+        payload=payload.payload,
         user=user,
         user_modified=payload.user_modified,
     )

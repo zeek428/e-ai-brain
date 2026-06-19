@@ -371,6 +371,104 @@ def test_ai_assistant_allows_testing_delivery_roles_to_use_workbench_apis(monkey
         app.state.user_repository = original_user_repository
 
 
+def test_ai_assistant_reference_candidates_filter_operational_items_by_product_scope():
+    app.state.store.reset()
+    app.state.store.products = {
+        "product_allowed": {
+            "code": "allowed",
+            "id": "product_allowed",
+            "name": "允许产品",
+            "status": "active",
+        },
+        "product_denied": {
+            "code": "denied",
+            "id": "product_denied",
+            "name": "无权产品",
+            "status": "active",
+        },
+    }
+    app.state.store.scheduled_jobs = {
+        "scheduled_job_allowed": {
+            "id": "scheduled_job_allowed",
+            "job_type": "dashboard_snapshot_refresh",
+            "name": "允许产品定时作业",
+            "product_id": "product_allowed",
+            "status": "active",
+        },
+        "scheduled_job_denied": {
+            "id": "scheduled_job_denied",
+            "job_type": "dashboard_snapshot_refresh",
+            "name": "无权产品定时作业",
+            "product_id": "product_denied",
+            "status": "active",
+        },
+    }
+    app.state.store.scheduled_job_runs = {
+        "scheduled_job_run_allowed": {
+            "id": "scheduled_job_run_allowed",
+            "scheduled_job_id": "scheduled_job_allowed",
+            "status": "failed",
+        },
+        "scheduled_job_run_denied": {
+            "id": "scheduled_job_run_denied",
+            "scheduled_job_id": "scheduled_job_denied",
+            "status": "failed",
+        },
+    }
+    scoped_user = {
+        "id": "user_ops",
+        "permissions": ["system.scheduled_jobs.run"],
+        "roles": ["rd_owner"],
+        "scope_summary": [
+            {
+                "access_level": "read",
+                "scope_id": "product_allowed",
+                "scope_type": "product",
+            }
+        ],
+    }
+
+    jobs = assistant_reference_candidates_response(
+        app.state.store,
+        limit=10,
+        message="定时作业",
+        product_id=None,
+        reference_type="scheduled_job",
+        user=scoped_user,
+    )["items"]
+    runs = assistant_reference_candidates_response(
+        app.state.store,
+        limit=10,
+        message="运行记录",
+        product_id=None,
+        reference_type="scheduled_job_run",
+        user=scoped_user,
+    )["items"]
+
+    assert [item["id"] for item in jobs] == ["scheduled_job_allowed"]
+    assert [item["id"] for item in runs] == ["scheduled_job_run_allowed"]
+
+    denied_product_jobs = assistant_reference_candidates_response(
+        app.state.store,
+        limit=10,
+        message="定时作业",
+        product_id="product_denied",
+        reference_type="scheduled_job",
+        user=scoped_user,
+    )["items"]
+    denied_product_runs = assistant_reference_candidates_response(
+        app.state.store,
+        limit=10,
+        message="运行记录",
+        product_id="product_denied",
+        reference_type="scheduled_job_run",
+        user=scoped_user,
+    )["items"]
+
+    assert denied_product_jobs == []
+    assert denied_product_runs == []
+
+
 def test_ai_assistant_chat_returns_registered_intent_metadata(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()
@@ -2896,6 +2994,146 @@ def test_ai_assistant_action_draft_confirm_failure_is_persisted(monkeypatch):
     assert failed_event["subject_id"] == draft_id
     assert failed_event["payload"]["error_code"] == "SCHEDULED_JOB_INVALID"
     assert failed_event["payload"]["run_id"] == run_id
+
+
+def test_ai_assistant_action_draft_payload_update_marks_modified_before_confirmation():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "enabled": True,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "原始草案作业",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": "创建可编辑的定时任务",
+        },
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    draft_id = draft_response.json()["data"]["id"]
+
+    patch_response = client.patch(
+        f"/api/assistant/action-drafts/{draft_id}",
+        json={
+            "modified_fields": ["name"],
+            "payload": {
+                "enabled": True,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "表单调整后的草案作业",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+        },
+        headers=headers,
+    )
+
+    assert patch_response.status_code == 200
+    draft = patch_response.json()["data"]
+    assert draft["status"] == "pending"
+    assert draft["payload"]["name"] == "表单调整后的草案作业"
+    assert draft["metadata_json"]["user_modified"] is True
+    assert draft["metadata_json"]["modified_fields"] == ["name"]
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft_id}/confirm",
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 200
+    result = confirm_response.json()["data"]["run"]["result"]
+    assert result["name"] == "表单调整后的草案作业"
+
+
+def test_ai_assistant_action_draft_confirm_is_idempotent_after_success():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "enabled": True,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "幂等确认定时任务",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": "创建幂等确认定时任务",
+        },
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    draft_id = draft_response.json()["data"]["id"]
+
+    first_response = client.post(
+        f"/api/assistant/action-drafts/{draft_id}/confirm",
+        headers=headers,
+    )
+    second_response = client.post(
+        f"/api/assistant/action-drafts/{draft_id}/confirm",
+        headers=headers,
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    first = first_response.json()["data"]
+    second = second_response.json()["data"]
+    assert second["draft"]["status"] == "confirmed"
+    assert second["run"]["id"] == first["run"]["id"]
+    assert second["run"]["result_id"] == first["run"]["result_id"]
+    assert len(app.state.store.scheduled_jobs) == 1
+    assert len(app.state.store.assistant_action_runs) == 1
+
+
+def test_ai_assistant_action_draft_modification_rejects_terminal_status():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "enabled": True,
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "已确认后不可修改的定时任务",
+                "schedule_type": "manual",
+                "source_system": "ai-assistant",
+            },
+            "risk_level": "medium",
+            "title": "创建确认后不可修改定时任务",
+        },
+        headers=headers,
+    )
+    assert draft_response.status_code == 200
+    draft_id = draft_response.json()["data"]["id"]
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft_id}/confirm",
+        headers=headers,
+    )
+    assert confirm_response.status_code == 200
+
+    modification_response = client.post(
+        f"/api/assistant/action-drafts/{draft_id}/modification",
+        json={"modified_fields": ["name"], "user_modified": True},
+        headers=headers,
+    )
+
+    assert modification_response.status_code == 409
+    assert modification_response.json()["detail"]["code"] == "DRAFT_NOT_PENDING"
 
 
 def test_ai_assistant_run_once_draft_confirm_triggers_scheduled_job_run():

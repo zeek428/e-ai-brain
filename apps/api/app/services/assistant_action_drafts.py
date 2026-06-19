@@ -220,6 +220,16 @@ def confirm_assistant_action_draft_response(
     draft = refresh_assistant_action_draft_expiry(current_store, draft)
     if draft.get("status") == "expired":
         raise api_error(409, "DRAFT_EXPIRED", "Assistant action draft has expired")
+    existing_run = _assistant_existing_successful_run(current_store, draft)
+    if draft.get("status") == "confirmed" and existing_run is not None:
+        return {
+            "draft": public_assistant_action_draft(
+                draft,
+                current_store=current_store,
+                user=user,
+            ),
+            "run": public_assistant_action_run(existing_run),
+        }
     if draft.get("status") != "pending":
         raise api_error(409, "DRAFT_NOT_PENDING", "Assistant action draft is not pending")
     effective_draft = _draft_with_resolved_prerequisites(current_store, draft)
@@ -446,6 +456,7 @@ def mark_assistant_action_draft_modified_response(
     draft = get_assistant_action_draft(current_store, draft_id=draft_id)
     ensure_draft_access(draft, user=user)
     draft = refresh_assistant_action_draft_expiry(current_store, draft)
+    _ensure_pending_draft_for_edit(draft)
     now = now_iso()
     cleaned_fields = _clean_modified_fields(modified_fields)
     metadata_json = deepcopy(draft.get("metadata_json") or {})
@@ -469,6 +480,53 @@ def mark_assistant_action_draft_modified_response(
         payload={
             "modified_field_count": len(cleaned_fields),
             "modified_fields": cleaned_fields,
+        },
+    )
+    save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
+    return public_assistant_action_draft(draft, current_store=current_store, user=user)
+
+
+def patch_assistant_action_draft_response(
+    *,
+    current_store: Any,
+    draft_id: str,
+    modified_fields: list[str],
+    payload: dict[str, Any],
+    user: dict[str, Any],
+    user_modified: bool = True,
+) -> dict[str, Any]:
+    ensure_action_collections(current_store)
+    draft = get_assistant_action_draft(current_store, draft_id=draft_id)
+    ensure_draft_access(draft, user=user)
+    draft = refresh_assistant_action_draft_expiry(current_store, draft)
+    _ensure_pending_draft_for_edit(draft)
+    now = now_iso()
+    cleaned_fields = _clean_modified_fields(modified_fields)
+    metadata_json = deepcopy(draft.get("metadata_json") or {})
+    metadata_json["user_modified"] = bool(user_modified and cleaned_fields)
+    if cleaned_fields:
+        metadata_json["modified_fields"] = cleaned_fields
+    else:
+        metadata_json.pop("modified_fields", None)
+    metadata_json["modified_at"] = now
+    metadata_json["modified_by"] = user["id"]
+    draft.update(
+        {
+            "metadata_json": metadata_json,
+            "payload": deepcopy(payload or {}),
+            "updated_at": now,
+        }
+    )
+    current_store.assistant_action_drafts[draft["id"]] = draft
+    audit_event = current_store.audit(
+        event_type="assistant_action_draft.updated",
+        actor_id=user["id"],
+        subject_type="assistant_action_draft",
+        subject_id=draft["id"],
+        payload={
+            "modified_field_count": len(cleaned_fields),
+            "modified_fields": cleaned_fields,
+            "payload_keys": sorted(str(key) for key in (payload or {}).keys()),
         },
     )
     save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
@@ -1024,6 +1082,28 @@ def _clean_view_surface(surface: str | None) -> str:
     if not value:
         return "detail_modal"
     return value[:64]
+
+
+def _ensure_pending_draft_for_edit(draft: dict[str, Any]) -> None:
+    if draft.get("status") == "expired":
+        raise api_error(409, "DRAFT_EXPIRED", "Assistant action draft has expired")
+    if draft.get("status") != "pending":
+        raise api_error(409, "DRAFT_NOT_PENDING", "Assistant action draft is not pending")
+
+
+def _assistant_existing_successful_run(
+    current_store: Any,
+    draft: dict[str, Any],
+) -> dict[str, Any] | None:
+    run_id = str(draft.get("result_run_id") or "").strip()
+    if run_id:
+        run = _assistant_action_runs_by_id(current_store).get(run_id)
+        if run and run.get("status") == "succeeded":
+            return run
+    for run in _assistant_action_runs_by_id(current_store).values():
+        if run.get("draft_id") == draft.get("id") and run.get("status") == "succeeded":
+            return run
+    return None
 
 
 def _safe_int(value: Any) -> int:

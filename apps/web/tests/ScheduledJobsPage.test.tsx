@@ -23,7 +23,9 @@ function installScheduledJobsFetchMock(
   const jobDeleteIds: string[] = [];
   const jobDryRunBodies: unknown[] = [];
   const jobUpdateBodies: unknown[] = [];
+  const assistantDraftConfirmIds: string[] = [];
   const assistantDraftModificationBodies: unknown[] = [];
+  const assistantDraftPatchBodies: unknown[] = [];
   const connectionTestIds: string[] = [];
   const generatedTemplateRequests: string[] = [];
   const runJobBodies: unknown[] = [];
@@ -227,6 +229,62 @@ function installScheduledJobsFetchMock(
       const body = JSON.parse(String(init.body));
       jobCreateBodies.push(body);
       return jsonResponse({ data: { id: `scheduled_job_${jobCreateBodies.length}`, ...body, status: 'active' } });
+    }
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/assistant/action-drafts/')
+      && !input.endsWith('/confirm')
+      && !input.endsWith('/modification')
+      && init?.method === 'PATCH'
+    ) {
+      const body = JSON.parse(String(init.body));
+      assistantDraftPatchBodies.push(body);
+      return jsonResponse({
+        data: {
+          action: 'create_scheduled_job',
+          id: input.split('/').at(-1),
+          metadata_json: {
+            modified_fields: body.modified_fields ?? [],
+            user_modified: Boolean((body.modified_fields ?? []).length),
+          },
+          payload: body.payload,
+          risk_level: 'medium',
+          status: 'pending',
+          title: 'AI 助手草案',
+        },
+      });
+    }
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/assistant/action-drafts/')
+      && input.endsWith('/confirm')
+      && init?.method === 'POST'
+    ) {
+      const draftId = input.split('/').at(-2) ?? '';
+      assistantDraftConfirmIds.push(draftId);
+      return jsonResponse({
+        data: {
+          draft: {
+            action: 'create_scheduled_job',
+            id: draftId,
+            payload: {},
+            status: 'confirmed',
+            title: 'AI 助手草案',
+          },
+          run: {
+            action: 'create_scheduled_job',
+            draft_id: draftId,
+            id: `assistant_action_run_${assistantDraftConfirmIds.length}`,
+            result: {
+              id: `scheduled_job_from_draft_${assistantDraftConfirmIds.length}`,
+              name: '表单确认后的定时作业',
+            },
+            result_id: `scheduled_job_from_draft_${assistantDraftConfirmIds.length}`,
+            result_type: 'scheduled_job',
+            status: 'succeeded',
+          },
+        },
+      });
     }
     if (
       typeof input === 'string'
@@ -566,7 +624,9 @@ function installScheduledJobsFetchMock(
   window.localStorage.setItem('ai_brain_access_token', 'token-admin');
   vi.stubGlobal('fetch', fetchMock);
   return {
+    assistantDraftConfirmIds,
     assistantDraftModificationBodies,
+    assistantDraftPatchBodies,
     connectionTestIds,
     generatedTemplateRequests,
     jobCreateBodies,
@@ -963,8 +1023,8 @@ describe('ScheduledJobsPage', () => {
     expect(jobCreateBodies[2]).not.toHaveProperty('connection_environment');
   }, 15000);
 
-  it('opens the create dialog from an assistant scheduled job draft', async () => {
-    const { assistantDraftModificationBodies, jobCreateBodies } = installScheduledJobsFetchMock();
+  it('opens the create dialog from an assistant scheduled job draft and confirms through the server draft', async () => {
+    const { assistantDraftConfirmIds, assistantDraftPatchBodies, jobCreateBodies } = installScheduledJobsFetchMock();
     window.sessionStorage.setItem(
       ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
       JSON.stringify({
@@ -1009,45 +1069,44 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() =>
-      expect(jobCreateBodies[0]).toMatchObject({
-        agent_id: 'agent_insight',
-        config_json: {
-          assistant_draft: {
-            draft_id: 'assistant_draft_weekly_feedback_insight',
-            source: 'assistant.action_draft',
-            title: '每周用户反馈洞察抽取',
-          },
-        },
-        cron_expression: '0 9 * * MON',
-        execution_mode: 'ai_generated',
-        job_type: 'user_feedback_insight_extract',
-        knowledge_document_ids: ['knowledge_payment_runbook'],
-        model_gateway_config_id: 'model_gateway_scheduled_job',
-        name: '每周用户反馈洞察抽取 - 人工调整',
-        plugin_action_id: 'plugin_action_maxcompute',
-        plugin_connection_id: 'connection_maxcompute_prod',
-        plugin_input_mapping: {
-          week_end: '{{last_full_week.end}}',
-          week_start: '{{last_full_week.start}}',
-        },
-        product_id: 'product_ai_brain',
-        schedule_type: 'cron',
-        skill_ids: ['skill_feedback'],
-        source_system: 'aliyun-maxcompute',
-      }),
-    );
-    await waitFor(() =>
-      expect(assistantDraftModificationBodies).toEqual([
+      expect(assistantDraftPatchBodies).toEqual([
         {
           modified_fields: ['name'],
-          user_modified: true,
+          payload: expect.objectContaining({
+            agent_id: 'agent_insight',
+            config_json: expect.objectContaining({
+              assistant_draft: {
+                draft_id: 'assistant_draft_weekly_feedback_insight',
+                source: 'assistant.action_draft',
+                title: '每周用户反馈洞察抽取',
+              },
+            }),
+            cron_expression: '0 9 * * MON',
+            execution_mode: 'ai_generated',
+            job_type: 'user_feedback_insight_extract',
+            knowledge_document_ids: ['knowledge_payment_runbook'],
+            model_gateway_config_id: 'model_gateway_scheduled_job',
+            name: '每周用户反馈洞察抽取 - 人工调整',
+            plugin_action_id: 'plugin_action_maxcompute',
+            plugin_connection_id: 'connection_maxcompute_prod',
+            plugin_input_mapping: {
+              week_end: '{{last_full_week.end}}',
+              week_start: '{{last_full_week.start}}',
+            },
+            product_id: 'product_ai_brain',
+            schedule_type: 'cron',
+            skill_ids: ['skill_feedback'],
+            source_system: 'aliyun-maxcompute',
+          }),
         },
       ]),
     );
+    expect(assistantDraftConfirmIds).toEqual(['assistant_draft_weekly_feedback_insight']);
+    expect(jobCreateBodies).toEqual([]);
   });
 
   it('resolves assistant prerequisite drafts when opening a scheduled job draft', async () => {
-    const { jobCreateBodies } = installScheduledJobsFetchMock();
+    const { assistantDraftConfirmIds, assistantDraftPatchBodies, jobCreateBodies } = installScheduledJobsFetchMock();
     window.sessionStorage.setItem(
       ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
       JSON.stringify({
@@ -1108,15 +1167,19 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() =>
-      expect(jobCreateBodies[0]).toMatchObject({
-        job_type: 'code_repository_inspection',
-        name: '代码仓库质量安全规范巡检',
-        agent_id: 'agent_insight',
-        skill_ids: ['skill_feedback'],
-        plugin_action_id: 'plugin_action_github_scan',
-        plugin_connection_id: 'connection_github_prod',
+      expect(assistantDraftPatchBodies[0]).toMatchObject({
+        payload: expect.objectContaining({
+          agent_id: 'agent_insight',
+          job_type: 'code_repository_inspection',
+          name: '代码仓库质量安全规范巡检',
+          plugin_action_id: 'plugin_action_github_scan',
+          plugin_connection_id: 'connection_github_prod',
+          skill_ids: ['skill_feedback'],
+        }),
       }),
     );
+    expect(assistantDraftConfirmIds).toEqual(['assistant_draft_code_repository_inspection']);
+    expect(jobCreateBodies).toEqual([]);
   });
 
   it('requires AI assembly before saving AI scheduled job types', async () => {

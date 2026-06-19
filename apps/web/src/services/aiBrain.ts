@@ -296,6 +296,31 @@ export type AssistantRoleQuickTaskGroup = {
   tasks: AssistantRoleQuickTask[];
 };
 
+export type AssistantRoleQuickTaskConfig = {
+  analytics_key?: string | null;
+  created_at?: string;
+  created_by?: string | null;
+  enabled: boolean;
+  enterprise_id?: string | null;
+  group_enabled: boolean;
+  group_key: string;
+  group_label: string;
+  group_roles: string[];
+  group_sort_order: number;
+  id: string;
+  metadata_json: Record<string, unknown>;
+  permissions: string[];
+  prompt: string;
+  rollout_json: Record<string, unknown>;
+  sort_order: number;
+  target_draft_type?: string | null;
+  task_key: string;
+  template_version?: string | null;
+  title: string;
+  updated_at?: string;
+  updated_by?: string | null;
+};
+
 export type AssistantToolResultItem = {
   action?: string;
   client_draft_id?: string;
@@ -2505,6 +2530,55 @@ export async function fetchAssistantRoleQuickTasks(): Promise<AssistantRoleQuick
   return response.items;
 }
 
+export async function fetchAssistantRoleQuickTaskConfigs(): Promise<AssistantRoleQuickTaskConfig[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<AssistantRoleQuickTaskConfig>>(
+    '/api/assistant/role-quick-task-configs',
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return response.items;
+}
+
+export async function setAssistantRoleQuickTaskConfigStatus(
+  configId: string,
+  payload: {
+    enabled: boolean;
+    group_enabled?: boolean;
+  },
+): Promise<AssistantRoleQuickTaskConfig> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantRoleQuickTaskConfig>(
+    `/api/assistant/role-quick-task-configs/${configId}/status`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function updateAssistantRoleQuickTaskConfigRollout(
+  configId: string,
+  payload: {
+    enterprise_id?: string | null;
+    rollout_json: Record<string, unknown>;
+    template_version?: string | null;
+  },
+): Promise<AssistantRoleQuickTaskConfig> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantRoleQuickTaskConfig>(
+    `/api/assistant/role-quick-task-configs/${configId}/rollout`,
+    {
+      body: payload,
+      method: 'PUT',
+      token,
+    },
+  );
+}
+
 export async function getAssistantActionDraft(
   draftId: string,
 ): Promise<AssistantActionDraftRecord> {
@@ -2523,6 +2597,25 @@ export async function confirmAssistantActionDraft(
     `/api/assistant/action-drafts/${draftId}/confirm`,
     {
       method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function updateAssistantActionDraft(
+  draftId: string,
+  payload: Record<string, unknown>,
+  modifiedFields: string[] = [],
+): Promise<AssistantActionDraftRecord> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionDraftRecord>(
+    `/api/assistant/action-drafts/${draftId}`,
+    {
+      body: {
+        modified_fields: modifiedFields,
+        payload,
+      },
+      method: 'PATCH',
       token,
     },
   );

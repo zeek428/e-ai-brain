@@ -147,6 +147,8 @@ function installPluginsFetchMock(
   const actionDeleteIds: string[] = [];
   const actionTrialBodies: unknown[] = [];
   const actionUpdateBodies: unknown[] = [];
+  const assistantDraftConfirmIds: string[] = [];
+  const assistantDraftPatchBodies: unknown[] = [];
   const connectionBodies: unknown[] = [];
   const connectionDeleteIds: string[] = [];
   const connectionListCalls: string[] = [];
@@ -970,6 +972,63 @@ function installPluginsFetchMock(
     if (input === '/api/system/plugin-invocation-logs' && init?.method === 'GET') {
       return jsonResponse({ data: { items: [], total: 0 } });
     }
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/assistant/action-drafts/')
+      && !input.endsWith('/confirm')
+      && init?.method === 'PATCH'
+    ) {
+      const body = JSON.parse(String(init.body));
+      assistantDraftPatchBodies.push(body);
+      return jsonResponse({
+        data: {
+          action: String(body.payload?.plugin_id ?? '').includes('github')
+            ? 'create_plugin_action'
+            : 'create_plugin_connection',
+          id: input.split('/').at(-1),
+          metadata_json: {
+            modified_fields: body.modified_fields ?? [],
+            user_modified: Boolean((body.modified_fields ?? []).length),
+          },
+          payload: body.payload,
+          risk_level: 'medium',
+          status: 'pending',
+          title: 'AI 助手草案',
+        },
+      });
+    }
+    if (
+      typeof input === 'string'
+      && input.startsWith('/api/assistant/action-drafts/')
+      && input.endsWith('/confirm')
+      && init?.method === 'POST'
+    ) {
+      const draftId = input.split('/').at(-2) ?? '';
+      assistantDraftConfirmIds.push(draftId);
+      const isConnectionDraft = draftId.includes('connection');
+      return jsonResponse({
+        data: {
+          draft: {
+            action: isConnectionDraft ? 'create_plugin_connection' : 'create_plugin_action',
+            id: draftId,
+            payload: {},
+            status: 'confirmed',
+            title: 'AI 助手草案',
+          },
+          run: {
+            action: isConnectionDraft ? 'create_plugin_connection' : 'create_plugin_action',
+            draft_id: draftId,
+            id: `assistant_action_run_${assistantDraftConfirmIds.length}`,
+            result: {
+              id: isConnectionDraft ? 'connection_created' : 'action_maxcompute_weekly',
+            },
+            result_id: isConnectionDraft ? 'connection_created' : 'action_maxcompute_weekly',
+            result_type: isConnectionDraft ? 'plugin_connection' : 'plugin_action',
+            status: 'succeeded',
+          },
+        },
+      });
+    }
     if (input === '/api/system/plugin-actions' && init?.method === 'POST') {
       actionBodies.push(JSON.parse(String(init.body)));
       return jsonResponse({ data: { id: 'action_maxcompute_weekly', status: 'active' } });
@@ -1025,6 +1084,8 @@ function installPluginsFetchMock(
     actionDeleteIds,
     actionTrialBodies,
     actionUpdateBodies,
+    assistantDraftConfirmIds,
+    assistantDraftPatchBodies,
     connectionBodies,
     connectionDeleteIds,
     connectionListCalls,
@@ -1396,8 +1457,10 @@ describe('PluginsPage', () => {
     expect(actionBodies).toEqual([]);
   });
 
-  it('applies assistant plugin action drafts to the action form', async () => {
-    const { actionBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
+  it('applies assistant plugin action drafts to the action form and confirms through the server draft', async () => {
+    const { actionBodies, assistantDraftConfirmIds, assistantDraftPatchBodies } = installPluginsFetchMock({
+      includeOfficialPlugins: true,
+    });
     window.sessionStorage.setItem(
       ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
       JSON.stringify({
@@ -1439,28 +1502,35 @@ describe('PluginsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
 
     await waitFor(() =>
-      expect(actionBodies).toEqual([
-        expect.objectContaining({
-          action_type: 'http_request',
-          code: 'scan_github_code_inspection',
-          name: 'GitHub 代码巡检',
-          plugin_id: 'plugin_standard_github',
-          request_config: expect.objectContaining({
-            method: 'GET',
-            path: '/repos/{{owner}}/{{repo}}/code-scanning/alerts',
-            query: expect.objectContaining({ per_page: 100, state: 'open' }),
+      expect(assistantDraftPatchBodies).toEqual([
+        {
+          modified_fields: [],
+          payload: expect.objectContaining({
+            action_type: 'http_request',
+            code: 'scan_github_code_inspection',
+            name: 'GitHub 代码巡检',
+            plugin_id: 'plugin_standard_github',
+            request_config: expect.objectContaining({
+              method: 'GET',
+              path: '/repos/{{owner}}/{{repo}}/code-scanning/alerts',
+              query: expect.objectContaining({ per_page: 100, state: 'open' }),
+            }),
+            result_mapping: expect.objectContaining({
+              findings_path: '$.findings',
+              write_target: 'code_inspection_reports',
+            }),
           }),
-          result_mapping: expect.objectContaining({
-            findings_path: '$.findings',
-            write_target: 'code_inspection_reports',
-          }),
-        }),
+        },
       ]),
     );
+    expect(assistantDraftConfirmIds).toEqual(['assistant_draft_github_plugin_action']);
+    expect(actionBodies).toEqual([]);
   });
 
-  it('applies assistant plugin connection drafts to the connection form', async () => {
-    const { connectionBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
+  it('applies assistant plugin connection drafts to the connection form and confirms through the server draft', async () => {
+    const { assistantDraftConfirmIds, assistantDraftPatchBodies, connectionBodies } = installPluginsFetchMock({
+      includeOfficialPlugins: true,
+    });
     window.sessionStorage.setItem(
       ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
       JSON.stringify({
@@ -1506,31 +1576,38 @@ describe('PluginsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
 
     await waitFor(() =>
-      expect(connectionBodies).toEqual([
-        expect.objectContaining({
-          auth_config: { token_ref: 'vault/github/token' },
-          auth_type: 'bearer',
-          endpoint_url: 'https://api.github.com',
-          environment: 'prod',
-          max_retries: 1,
-          name: '生产 GitHub 连接',
-          plugin_id: 'plugin_standard_github',
-          request_config: {
-            headers: {
-              Accept: 'application/vnd.github+json',
-              'X-GitHub-Api-Version': '2022-11-28',
+      expect(assistantDraftPatchBodies).toEqual([
+        {
+          modified_fields: ['request_config'],
+          payload: expect.objectContaining({
+            auth_config: { token_ref: 'vault/github/token' },
+            auth_type: 'bearer',
+            endpoint_url: 'https://api.github.com',
+            environment: 'prod',
+            max_retries: 1,
+            name: '生产 GitHub 连接',
+            plugin_id: 'plugin_standard_github',
+            request_config: {
+              headers: {
+                Accept: 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
+              },
+              query: { owner: 'acme', repo: 'ai-brain' },
             },
-            query: { owner: 'acme', repo: 'ai-brain' },
-          },
-          status: 'active',
-          timeout_seconds: 30,
-        }),
+            status: 'active',
+            timeout_seconds: 30,
+          }),
+        },
       ]),
     );
+    expect(assistantDraftConfirmIds).toEqual(['assistant_draft_github_plugin_connection']);
+    expect(connectionBodies).toEqual([]);
   });
 
   it('remembers assistant connection drafts and resolves dependent action drafts', async () => {
-    const { actionBodies, connectionBodies } = installPluginsFetchMock({ includeOfficialPlugins: true });
+    const { actionBodies, assistantDraftConfirmIds, connectionBodies } = installPluginsFetchMock({
+      includeOfficialPlugins: true,
+    });
     window.sessionStorage.setItem(
       ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
       JSON.stringify({
@@ -1559,7 +1636,8 @@ describe('PluginsPage', () => {
     });
     fireEvent.click(within(connectionDialog).getByRole('button', { name: /OK|确\s*定/ }));
 
-    await waitFor(() => expect(connectionBodies).toHaveLength(1));
+    await waitFor(() => expect(assistantDraftConfirmIds).toEqual(['assistant_draft_github_plugin_connection']));
+    expect(connectionBodies).toEqual([]);
     expect(JSON.parse(window.sessionStorage.getItem('ai_brain_assistant_draft_resolution') ?? '{}')).toEqual({
       assistant_draft_github_plugin_connection: {
         resource_id: 'connection_created',
@@ -1600,14 +1678,12 @@ describe('PluginsPage', () => {
     fireEvent.click(within(actionDialog).getByRole('button', { name: /确\s*定/ }));
 
     await waitFor(() =>
-      expect(actionBodies).toEqual([
-        expect.objectContaining({
-          code: 'scan_github_code_inspection',
-          connection_id: 'connection_created',
-          plugin_id: 'plugin_standard_github',
-        }),
+      expect(assistantDraftConfirmIds).toEqual([
+        'assistant_draft_github_plugin_connection',
+        'assistant_draft_github_plugin_action',
       ]),
     );
+    expect(actionBodies).toEqual([]);
   });
 
   it('warns when deleting resources in use and can delete unused actions', async () => {

@@ -8,6 +8,10 @@
 ## [Unreleased]
 
 ### Fixed
+- AI 助手草案表单应用闭环：从助手草案进入定时作业、插件连接或插件动作表单后，保存时先 PATCH 服务端草案 payload 和修改字段，再调用 confirm，由草案生命周期统一落库和审计，不再绕过草案直接创建领域资源。
+- AI 助手草案确认幂等与并发边界：已成功确认的草案重复 confirm 返回既有动作运行，新增成功运行唯一索引兜底，避免重复创建定时作业、插件连接或插件动作。
+- AI 助手草案终态修改保护：已确认、已取消、已失败、已过期草案不再允许写入修改标记或 payload 更新，避免指标和审计被终态草案污染。
+- AI 助手运营类 `@` 候选作用域收紧：定时作业和运行记录候选在具备产品级 scope 的用户下按产品过滤，避免看到其它产品的运维对象。
 - AI 助手确定性意图注册表改为 match-all 后按 `conflict_policy` 解析，fallback 意图不再仅凭更高 priority 覆盖具体意图；同时移除未使用的旧结构化引用 override helper，避免后续误接回文本 `@` 覆盖结构化引用。
 - AI 助手草案查看指标拆分：深链加载只写 `deeplink_viewed_at`，详情弹窗只写 `detail_viewed_at`，效果漏斗可区分“查看草案”“查看详情”和“深链打开”。
 - AI 助手 `@... 执行一次` 上下文优先级收敛：后端优先使用请求中的结构化 `references[]`，文本 `@` 解析只作为兜底；结构化引用不可执行时返回明确错误或草案兜底，官方周反馈消歧仅在没有结构化作业引用时生效，避免自然语言误覆盖用户主动选择的引用。
@@ -20,6 +24,8 @@
 - AI 助手效果指标失败修复率口径收紧：只有成功 `manual_rerun` 且带 `source_run_id` 的复跑才会把来源失败运行计为已修复，普通调度成功不再误算。
 
 ### Added
+- AI 助手草案 payload 更新接口：新增 `PATCH /api/assistant/action-drafts/{draft_id}`，用于表单编辑后提交最终 payload、修改字段和审计元数据，再进入 confirm 闭环。
+- AI 助手角色快捷任务配置前端入口：新增系统管理页 `/system/assistant-role-quick-tasks`，支持查看角色快捷任务配置、启停任务/任务组、调整企业/模板版本/灰度并跳转审计日志。
 - AI 助手角色快捷任务运营配置 API：新增 `/api/assistant/role-quick-task-configs` 及 `/status`、`/rollout`，支持管理员新增、编辑、启停、企业/模板版本/灰度调整和删除角色快捷任务配置，并写入 `assistant_role_quick_task.*` 审计事件。
 - AI 助手定时作业运行归因解释：`/api/assistant/metrics` 新增 `scheduled_job_run_attribution`，按“助手触发、显式引用、复跑链”解释作业运行成功率分母来源，前端运行追踪面板展示该分布。
 - AI 助手草案详情查看埋点：新增 `POST /api/assistant/action-drafts/{draft_id}/view`，详情弹窗和草案深链都会写入服务端查看元数据与 `assistant_action_draft.viewed` 审计，效果漏斗“查看详情”不再依赖前端临时态。

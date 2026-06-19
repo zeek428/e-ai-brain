@@ -193,6 +193,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "061_assistant_metrics_and_role_quick_tasks.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "062_assistant_action_draft_idempotency.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

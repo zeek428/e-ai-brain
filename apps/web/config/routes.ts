@@ -181,6 +181,12 @@ const routes = [
         icon: 'ApiOutlined',
         component: './ModelGateway',
       },
+      {
+        path: '/system/assistant-role-quick-tasks',
+        name: 'AI助手快捷任务',
+        icon: 'RobotOutlined',
+        component: './AssistantRoleQuickTasks',
+      },
     ],
   },
   {

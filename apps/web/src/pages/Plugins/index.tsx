@@ -18,6 +18,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+  confirmAssistantActionDraft,
   createAiExecutorRunner,
   copyPlugin,
   createPlugin,
@@ -46,6 +47,7 @@ import {
   testAiExecutorRunner,
   testPluginConnection,
   trialPluginAction,
+  updateAssistantActionDraft,
   updateAiExecutorRunner,
   updatePlugin,
   updatePluginAction,
@@ -328,6 +330,62 @@ function pluginVersionStatusTag(record: {
 
 function stableJson(value: Record<string, unknown>): string {
   return JSON.stringify(value, null, 2);
+}
+
+function comparablePluginDraftValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(comparablePluginDraftValue);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, comparablePluginDraftValue(item)]),
+    );
+  }
+  return value;
+}
+
+function pluginDraftFieldChanged(
+  field: string,
+  initialPayload: Record<string, unknown>,
+  currentPayload: Record<string, unknown>,
+): boolean {
+  if (field === 'requires_human_review') {
+    return Boolean(initialPayload[field]) !== Boolean(currentPayload[field]);
+  }
+  if (
+    field === 'result_mapping'
+    && isPlainRecord(initialPayload[field])
+    && isPlainRecord(currentPayload[field])
+  ) {
+    return Object.keys(initialPayload[field]).some((key) => (
+      JSON.stringify(comparablePluginDraftValue(initialPayload[field][key]))
+      !== JSON.stringify(comparablePluginDraftValue(currentPayload[field][key]))
+    ));
+  }
+  return (
+    JSON.stringify(comparablePluginDraftValue(initialPayload[field]))
+    !== JSON.stringify(comparablePluginDraftValue(currentPayload[field]))
+  );
+}
+
+function pluginAssistantDraftModifiedFields(
+  initialPayload: Record<string, unknown>,
+  currentPayload: Record<string, unknown>,
+): string[] {
+  const ignoredFields = new Set(['assistant_prerequisite_draft_ids']);
+  if (Array.isArray(initialPayload.assistant_prerequisite_draft_ids) && !initialPayload.connection_id) {
+    ignoredFields.add('connection_id');
+  }
+  const fields = new Set([
+    ...Object.keys(initialPayload),
+    ...Object.keys(currentPayload),
+  ]);
+  return Array.from(fields)
+    .filter((field) => !ignoredFields.has(field))
+    .filter((field) => pluginDraftFieldChanged(field, initialPayload, currentPayload))
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function linesToArray(value?: string): string[] {
@@ -1930,10 +1988,10 @@ export default function PluginsPage() {
   const [runnerLogTask, setRunnerLogTask] = useState<AiExecutorTaskRecord | undefined>();
   const [runnerLogRows, setRunnerLogRows] = useState<AiExecutorTaskLogRecord[]>([]);
   const [assistantConnectionDraftSource, setAssistantConnectionDraftSource] = useState<
-    { draftId?: string; title?: string } | undefined
+    { draftId?: string; payload: Record<string, unknown>; title?: string } | undefined
   >();
   const [assistantActionDraftSource, setAssistantActionDraftSource] = useState<
-    { draftId?: string; title?: string } | undefined
+    { draftId?: string; payload: Record<string, unknown>; title?: string } | undefined
   >();
   const [trialModalOpen, setTrialModalOpen] = useState(false);
   const [trialAction, setTrialAction] = useState<PluginActionRecord | undefined>();
@@ -2671,23 +2729,61 @@ export default function PluginsPage() {
         };
         message.success('连接已更新');
       } else {
-        const createdConnection = await createPluginConnection(payload);
-        savedConnection = {
-          ...payload,
-          ...createdConnection,
-          id: createdConnection.id,
-          name: createdConnection.name ?? payload.name ?? values.name,
-          plugin_id: createdConnection.plugin_id ?? payload.plugin_id ?? values.plugin_id,
-          endpoint_url: createdConnection.endpoint_url ?? payload.endpoint_url ?? values.endpoint_url,
-          status: createdConnection.status ?? payload.status ?? values.status,
-        };
-        rememberAssistantDraftResolution({
-          draftId: assistantConnectionDraftSource?.draftId,
-          resourceId: createdConnection.id,
-          resourceType: 'plugin_connection',
-          title: assistantConnectionDraftSource?.title,
-        });
-        message.success('连接已创建');
+        const createdConnection = assistantConnectionDraftSource?.draftId
+          ? undefined
+          : await createPluginConnection(payload);
+        if (assistantConnectionDraftSource?.draftId) {
+          const confirmedPayload = payload as Record<string, unknown>;
+          await updateAssistantActionDraft(
+            assistantConnectionDraftSource.draftId,
+            confirmedPayload,
+            pluginAssistantDraftModifiedFields(
+              assistantConnectionDraftSource.payload,
+              confirmedPayload,
+            ),
+          );
+          const confirmed = await confirmAssistantActionDraft(assistantConnectionDraftSource.draftId);
+          const confirmedRecord = (
+            confirmed.run.result && typeof confirmed.run.result === 'object'
+              ? confirmed.run.result
+              : {}
+          ) as Partial<PluginConnectionRecord>;
+          savedConnection = {
+            ...payload,
+            ...confirmedRecord,
+            id: confirmed.run.result_id ?? confirmedRecord.id ?? '',
+            name: confirmedRecord.name ?? payload.name ?? values.name,
+            plugin_id: confirmedRecord.plugin_id ?? payload.plugin_id ?? values.plugin_id,
+            endpoint_url: confirmedRecord.endpoint_url ?? payload.endpoint_url ?? values.endpoint_url,
+            status: confirmedRecord.status ?? payload.status ?? values.status,
+          };
+          rememberAssistantDraftResolution({
+            draftId: assistantConnectionDraftSource.draftId,
+            resourceId: confirmed.run.result_id,
+            resourceType: 'plugin_connection',
+            title: assistantConnectionDraftSource.title,
+          });
+          message.success('助手草案已确认并创建连接');
+        } else if (createdConnection) {
+          savedConnection = {
+            ...payload,
+            ...createdConnection,
+            id: createdConnection.id,
+            name: createdConnection.name ?? payload.name ?? values.name,
+            plugin_id: createdConnection.plugin_id ?? payload.plugin_id ?? values.plugin_id,
+            endpoint_url: createdConnection.endpoint_url ?? payload.endpoint_url ?? values.endpoint_url,
+            status: createdConnection.status ?? payload.status ?? values.status,
+          };
+          rememberAssistantDraftResolution({
+            draftId: assistantConnectionDraftSource?.draftId,
+            resourceId: createdConnection.id,
+            resourceType: 'plugin_connection',
+            title: assistantConnectionDraftSource?.title,
+          });
+          message.success('连接已创建');
+        } else {
+          throw new Error('连接创建失败');
+        }
       }
       closeConnectionModal();
       await reload();
@@ -2724,6 +2820,24 @@ export default function PluginsPage() {
       if (editingAction) {
         await updatePluginAction(editingAction.id, payload);
         message.success('动作已更新');
+      } else if (assistantActionDraftSource?.draftId) {
+        const confirmedPayload = payload as Record<string, unknown>;
+        await updateAssistantActionDraft(
+          assistantActionDraftSource.draftId,
+          confirmedPayload,
+          pluginAssistantDraftModifiedFields(
+            assistantActionDraftSource.payload,
+            confirmedPayload,
+          ),
+        );
+        const confirmed = await confirmAssistantActionDraft(assistantActionDraftSource.draftId);
+        rememberAssistantDraftResolution({
+          draftId: assistantActionDraftSource.draftId,
+          resourceId: confirmed.run.result_id,
+          resourceType: 'plugin_action',
+          title: assistantActionDraftSource.title,
+        });
+        message.success('助手草案已确认并创建动作');
       } else {
         const createdAction = await createPluginAction(payload);
         rememberAssistantDraftResolution({
@@ -2793,7 +2907,11 @@ export default function PluginsPage() {
           return;
         }
         openCreateConnectionModal();
-        setAssistantConnectionDraftSource({ draftId: draft.draftId, title: draft.title });
+        setAssistantConnectionDraftSource({
+          draftId: draft.draftId,
+          payload: draft.payload,
+          title: draft.title,
+        });
         const pluginId = stringValue(draft.payload.plugin_id);
         const plugin = pluginId ? pluginById.get(pluginId) : undefined;
         const schema = plugin
@@ -2834,7 +2952,11 @@ export default function PluginsPage() {
           return;
         }
         openCreateActionModal();
-        setAssistantActionDraftSource({ draftId: draft.draftId, title: draft.title });
+        setAssistantActionDraftSource({
+          draftId: draft.draftId,
+          payload: draft.payload,
+          title: draft.title,
+        });
         actionForm.setFieldsValue(pluginActionDraftFormValues(draft.payload, resultWriteTargets));
         message.success(`已应用助手草案：${draft.title || '动作'}`);
       } catch (error) {

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.366 |
+| 功能版本 | v1.1.367 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.367 | 2026-06-19 | AI 助手草案支持表单编辑后 PATCH payload 再确认，确认接口补齐重复提交幂等返回；运营类 @ 候选按产品 scope 过滤，角色快捷任务配置补齐前端管理入口 | Codex |
 | v1.1.366 | 2026-06-19 | AI 助手角色快捷任务补齐运营配置 API、企业/模板/灰度过滤和审计；效果指标拆分草案详情/深链查看并输出定时作业运行归因分布 | Codex |
 | v1.1.365 | 2026-06-18 | AI 助手补齐草案详情查看埋点、定时作业运行助手归因、角色快捷任务 DB 配置和结构化引用严格优先契约 | Codex |
 | v1.1.364 | 2026-06-18 | AI 助手效果指标失败修复率契约收紧为仅统计成功 `manual_rerun`；草案处理率公式补回 expired | Codex |
@@ -610,14 +611,15 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | POST | `/api/assistant/role-quick-task-configs/{config_id}/status` | 管理员启用/停用任务项或任务组，写入 `assistant_role_quick_task.status_changed` 审计。 |
 | Assistant | PUT | `/api/assistant/role-quick-task-configs/{config_id}/rollout` | 管理员调整企业、模板版本和 `rollout_json` 灰度策略，写入 `assistant_role_quick_task.rollout_changed` 审计。 |
 | Assistant | GET | `/api/assistant/draft-templates` | 查询当前用户可见的 AI 助手草案模板市场目录；返回周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析模板的提示、角色、依赖、流程和接入状态。 |
-| Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；覆盖业务对象、可读知识空间/知识目录/知识文档/知识片段和管理员可见的定时作业/运行、插件动作、插件连接、AI角色、Skill；未指定 type 的默认候选按类型均衡合并。 |
+| Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；覆盖业务对象、可读知识空间/知识目录/知识文档/知识片段和管理员或专项权限可见的定时作业/运行、插件动作、插件连接、AI角色、Skill；运营类定时作业和运行记录必须再按当前用户产品 scope 过滤，未指定 type 的默认候选按类型均衡合并。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
 | Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持研发任务、AI Skill、AI角色、定时作业、插件连接、动作配置和分析草案。 |
 | Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情；`preview.validation.issues[]` 可返回 `repair_action={action,label,field,resource_type,resource_id}`，用于前端展示修正字段、生成前置草案或打开连接测试等操作。 |
+| Assistant | PATCH | `/api/assistant/action-drafts/{draft_id}` | 在 pending 草案确认前更新草案 payload，并写入 `modified_fields/user_modified/modified_at/modified_by` 元数据和 `assistant_action_draft.updated` 审计；表单页从助手草案进入后保存必须走该接口再调用 confirm，不得直接绕过服务端草案生命周期创建领域对象。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/view` | 记录当前用户查看草案详情或深链加载草案，`surface=detail_modal` 写入 `detail_viewed_at`，`surface=deeplink` 写入 `deeplink_viewed_at`，并统一写入 `viewed_at/last_viewed_at/view_count/viewed_by/last_view_surface` 和 `assistant_action_draft.viewed` 审计，用于区分“查看详情”和“深链打开”。 |
-| Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service。 |
+| Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service；已 confirmed 且存在成功 `assistant_action_run` 的重复提交必须幂等返回同一 run，不得重复创建作业、插件连接或动作。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/cancel` | 取消 pending 草案，不产生领域写入。 |
-| Assistant | POST | `/api/assistant/action-drafts/{draft_id}/modification` | 标记当前用户对草案应用后的字段修改，写入用户修改率指标元数据。 |
+| Assistant | POST | `/api/assistant/action-drafts/{draft_id}/modification` | 标记当前用户对草案应用后的字段修改，写入用户修改率指标元数据；仅 pending 草案可写，confirmed/cancelled/expired/failed 返回 `409 DRAFT_NOT_PENDING` 或 `DRAFT_EXPIRED`。 |
 | Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，包括草案采纳、运行成功、用户修改、显式引用使用情况和 `funnel.stages[]` 效果漏斗（触发意图、生成草案、查看详情、修改字段、确认草案、运行成功、继续追问/修复）。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
@@ -1424,7 +1426,7 @@ POST /api/assistant/chat
 
 当管理员询问“插件连接为什么失败/连接失败怎么修/插件连接诊断”且没有创建草案意图时，`/api/assistant/chat` 必须返回 `tool=assistant.plugin_connection_diagnostic` 的确定性工具结果，不调用模型网关。工具项按最近失败或最近测试的插件连接返回 `connection_config/latest_test/repair_suggestions` 三段诊断，字段可包含连接 ID、名称、插件名、环境、endpoint、最近测试状态、失败步骤、错误码、错误信息和结构化修复建议；不得返回 `auth_config`、完整认证 Header、完整请求体或密钥。前端必须展示“插件连接诊断”卡片，并可把 `plugin_connection` 引用加入“本次上下文”继续追问。
 
-显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。`knowledge_document` 候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。`knowledge_chunk` 候选和解析只返回当前用户可读、所属文档可检索的知识片段，聊天时只注入被显式选中的单个片段。`scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent` 和 `ai_skill` 属于受控运维配置引用，候选和解析必须要求管理员、`system.admin` 或对象类型对应的管理权限：定时作业和运行记录要求 `system.scheduled_jobs.manage`，插件连接和插件动作要求 `system.plugins.manage`，AI角色和 Skill 要求 `system.ai_capabilities.manage`；无对应权限时候选返回空集合，解析返回 `404 REFERENCE_NOT_FOUND`。前端引用类型标签必须把 `ai_task` 显示为“研发任务”，把 `ai_skill` 显示为“Skill”，并在候选分组、类型 Tag、已选引用 Chip 和本次上下文摘要中保持一致。未指定 `type` 的默认候选按引用类型均衡合并，后端在满足 `limit` 的前提下优先为知识文档/片段、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI角色和 Skill 等类型各返回至少一个可用候选，避免单一类型挤占整个面板；指定 `type` 且查询词为空时，应先按目标类型取足候选再截断，不得被全局默认类型顺序提前截断；`limit` 上限仍为 20，前端裸 `@` 应请求足够数量的默认候选。前端对 `@... 执行一次` 这类 run-once 命令，在候选仍加载或用户直接按 Enter/点击发送时，必须用当前 `@` 文本追加一次 `type=scheduled_job` 候选查询，把可用定时作业引用随 `/api/assistant/chat` 一起提交；查询失败时后端显式 @ 名称解析仍可兜底。未授权、不可读、不可检索或不存在的引用不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
+显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。`knowledge_document` 候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。`knowledge_chunk` 候选和解析只返回当前用户可读、所属文档可检索的知识片段，聊天时只注入被显式选中的单个片段。`scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent` 和 `ai_skill` 属于受控运维配置引用，候选和解析必须要求管理员、`system.admin` 或对象类型对应的管理/执行权限：定时作业和运行记录要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`，插件连接和插件动作要求 `system.plugins.manage`，AI角色和 Skill 要求 `system.ai_capabilities.manage`；定时作业和运行记录还必须按当前用户 `scope_summary` 中的产品 scope 过滤，拥有产品级 scope 的用户不得看到其他产品作业或运行。无对应权限或 scope 时候选返回空集合，解析返回 `404 REFERENCE_NOT_FOUND`。前端引用类型标签必须把 `ai_task` 显示为“研发任务”，把 `ai_skill` 显示为“Skill”，并在候选分组、类型 Tag、已选引用 Chip 和本次上下文摘要中保持一致。未指定 `type` 的默认候选按引用类型均衡合并，后端在满足 `limit` 的前提下优先为知识文档/片段、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI角色和 Skill 等类型各返回至少一个可用候选，避免单一类型挤占整个面板；指定 `type` 且查询词为空时，应先按目标类型取足候选再截断，不得被全局默认类型顺序提前截断；`limit` 上限仍为 20，前端裸 `@` 应请求足够数量的默认候选。前端对 `@... 执行一次` 这类 run-once 命令，在候选仍加载或用户直接按 Enter/点击发送时，必须用当前 `@` 文本追加一次 `type=scheduled_job` 候选查询，把可用定时作业引用随 `/api/assistant/chat` 一起提交；查询失败时后端显式 @ 名称解析仍可兜底。未授权、不可读、不可检索或不存在的引用不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
 
 `@` 引用候选：
 
@@ -1578,7 +1580,7 @@ POST /api/assistant/references/resolve
 }
 ```
 
-助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。工具项携带的 `wizard_steps[]` 必须写入草案元数据，并由 `GET /api/assistant/action-drafts/{draft_id}` 原样返回，供 `/assistant?draft_id=...` 深链和历史草案卡片恢复配置向导、步骤状态、摘要和依赖关系。支持的动作包括 `create_rd_task`、`create_ai_skill`、`create_ai_agent`、`create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；可由 `assistant_tools` 构造的草案必须在模型调用前确定性返回，模型网关未配置时也不应阻塞草案生成。草案预检和确认权限必须按动作拆分：`create_plugin_connection` 和 `create_plugin_action` 要求管理员、`system.admin` 或 `system.plugins.manage`，`create_ai_skill` 和 `create_ai_agent` 要求管理员、`system.admin` 或 `system.ai_capabilities.manage`，`create_scheduled_job` 要求管理员、`system.admin` 或 `system.scheduled_jobs.manage`。状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认或取消前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `ai_tasks`、`ai_skills`、`ai_agents`、`scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。前端点击“查看详情”或通过 `/assistant?draft_id=...` 深链加载草案时，必须调用 `POST /api/assistant/action-drafts/{draft_id}/view`，请求体可带 `{ "surface": "detail_modal" | "deeplink" }`；服务端在草案 `metadata_json` 写入 `viewed_at`、`detail_viewed_at`、`last_viewed_at`、`view_count`、`viewed_by` 和 `last_view_surface`，记录 `assistant_action_draft.viewed` 审计并返回刷新后的草案。前端随后在当前对话页展示草案状态、动作、风险等级、payload JSON、字段差异和校验问题。
+助理动作草案已通过服务端持久化表和确认接口落地。`assistant.action_draft` 工具结果仍随聊天响应返回，前端助手页渲染为待确认配置草案卡片；服务端会把可支持的 `items[]` 转存为 `assistant_action_drafts` 记录，并在对应工具项上追加 `server_draft_id`、`client_draft_id` 和 `status`。工具项携带的 `wizard_steps[]` 必须写入草案元数据，并由 `GET /api/assistant/action-drafts/{draft_id}` 原样返回，供 `/assistant?draft_id=...` 深链和历史草案卡片恢复配置向导、步骤状态、摘要和依赖关系。支持的动作包括 `create_rd_task`、`create_ai_skill`、`create_ai_agent`、`create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 和 `create_analysis_draft`；可由 `assistant_tools` 构造的草案必须在模型调用前确定性返回，模型网关未配置时也不应阻塞草案生成。草案预检和确认权限必须按动作拆分：`create_plugin_connection` 和 `create_plugin_action` 要求管理员、`system.admin` 或 `system.plugins.manage`，`create_ai_skill` 和 `create_ai_agent` 要求管理员、`system.admin` 或 `system.ai_capabilities.manage`，`create_scheduled_job` 要求管理员、`system.admin` 或 `system.scheduled_jobs.manage`。状态为 `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。创建草案可携带顶层 `expires_at`，也兼容 `metadata_json.expires_at`；服务端读取、确认、取消、修改或更新 payload 前会把已过期且仍为 `pending` 的草案转为 `expired` 并写入 `assistant_action_draft.expired` 审计。确认前不得写入 `ai_tasks`、`ai_skills`、`ai_agents`、`scheduled_jobs`、`plugin_connections`、`plugin_actions` 或触发外部调用；分析类草案确认前也不得生成最终分析结果。前端点击“应用到表单”后，用户在任务中心/插件管理表单内编辑并保存时，必须先调用 `PATCH /api/assistant/action-drafts/{draft_id}` 提交最终 payload 和 `modified_fields`，再调用 confirm；不得直接调用领域创建接口绕过草案生命周期。PATCH 和修改指标接口仅允许 pending 草案，终态草案返回 `DRAFT_NOT_PENDING`。confirm 对已 confirmed 且已有成功动作运行的重复提交必须幂等返回同一 run；数据库层应保证同一草案最多一条成功 run。前端点击“查看详情”或通过 `/assistant?draft_id=...` 深链加载草案时，必须调用 `POST /api/assistant/action-drafts/{draft_id}/view`，请求体可带 `{ "surface": "detail_modal" | "deeplink" }`；服务端在草案 `metadata_json` 写入 `viewed_at`、`detail_viewed_at`、`last_viewed_at`、`view_count`、`viewed_by` 和 `last_view_surface`，记录 `assistant_action_draft.viewed` 审计并返回刷新后的草案。前端随后在当前对话页展示草案状态、动作、风险等级、payload JSON、字段差异和校验问题。
 
 当聊天消息要求配置代码巡检定时作业且明确要求 AI/大模型分析扫描结果时，服务端必须生成 `intent=code_inspection_setup_draft` 的 `assistant.action_draft`。若系统缺少可用代码巡检 Skill 或 AI角色，`items[]` 应按 `create_ai_skill`、`create_ai_agent`、`create_scheduled_job` 顺序返回前置草案和最终作业草案；AI角色草案通过 `payload.assistant_prerequisite_draft_ids` 依赖 Skill 草案，定时作业草案通过同字段依赖 Skill/AI角色草案。最终 `create_scheduled_job` 草案项必须包含 `wizard_steps[]`，每项包含 `key/title/status/summary/depends_on`，用于显式展示数据来源、AI处理、结果动作、调度策略、确认执行的就绪状态和前置依赖；前端必须对 `status=needs_prerequisite/blocked` 的步骤展示“生成<步骤>前置草案”入口，点击后将草案标题、步骤名称和 `depends_on` 回填为新的助手输入，继续生成连接、动作、AI Skill 或 AI角色等前置草案。`create_ai_skill` payload 至少包含 `name/code/prompt_template/required_context/risk_level/status`；`create_ai_agent` payload 至少包含 `name/code/brain_app_id/model_gateway_config_id/default_skill_ids/system_prompt/status`。前端必须把这两类草案展示为 AI 能力配置草案，确认前不提供“应用到定时作业表单”，确认后返回 `ai_skill` 或 `ai_agent` 资源入口。
 
@@ -1597,6 +1599,7 @@ run-once 草案兜底与执行权限一致：管理员、`system.admin`、`syste
 ```http
 POST /api/assistant/action-drafts
 GET /api/assistant/action-drafts/{draft_id}
+PATCH /api/assistant/action-drafts/{draft_id}
 POST /api/assistant/action-drafts/{draft_id}/view
 POST /api/assistant/action-drafts/{draft_id}/confirm
 POST /api/assistant/action-drafts/{draft_id}/cancel
