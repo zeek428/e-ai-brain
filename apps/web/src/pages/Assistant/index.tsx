@@ -4284,16 +4284,6 @@ export default function AssistantPage() {
               onRefresh={() => void loadAssistantMetrics()}
             />
           ) : null}
-          <div className="assistant-context-panel">
-            <Text strong>上下文</Text>
-            <Space size={[6, 6]} wrap>
-              <Tag color="blue">AI Brain</Tag>
-              <Tag color="green">项目进展</Tag>
-              <Tag color="red">阻塞与待确认</Tag>
-              <Tag color="purple">模型网关</Tag>
-              <Tag color="geekblue">GitHub PR</Tag>
-            </Space>
-          </div>
         </aside>
         <section className="assistant-chat-panel">
           <div className="assistant-chat-header">

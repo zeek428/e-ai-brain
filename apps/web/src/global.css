@@ -723,14 +723,6 @@ body {
   font-size: 12px;
 }
 
-.assistant-context-panel {
-  display: grid;
-  gap: 8px;
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid #edf1f7;
-}
-
 .assistant-chat-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
