@@ -1590,6 +1590,79 @@ describe('AssistantPage', () => {
     ).toHaveLength(1);
   });
 
+  it('opens a + menu with @ action abilities and inserts the selected command prefix', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('');
+        expect(params.get('type')).toBe('assistant_action');
+        expect(params.get('limit')).toBe('8');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  action: 'create_requirement',
+                  id: 'create_requirement',
+                  permission_label: '可执行',
+                  prompt: '我要新建需求，请帮我梳理标题、背景、目标、优先级、产品和版本，并生成可提交的需求草案。',
+                  source_module: '动作',
+                  summary: '进入需求交付的新建需求流程，先整理需求草案字段。',
+                  title: '新建需求',
+                  type: 'assistant_action',
+                  url: '/delivery/requirements',
+                },
+                {
+                  action: 'create_scheduled_job',
+                  id: 'create_scheduled_job',
+                  permission_label: '可执行',
+                  prompt: '请帮我生成定时作业配置草案，并说明数据来源、AI处理、结果动作和调度策略。',
+                  source_module: '动作',
+                  summary: '生成可确认的定时作业草案。',
+                  title: '新建定时作业',
+                  type: 'assistant_action',
+                  url: '/tasks/scheduled-jobs',
+                },
+              ],
+              total: 2,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, {
+      target: { value: '需要后续变更' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '添加 @ 能力' }));
+
+    const addMenu = await screen.findByLabelText('快捷添加 @ 能力');
+    expect(within(addMenu).getByText('添加')).toBeInTheDocument();
+    expect(within(addMenu).getByText('常用 @ 能力')).toBeInTheDocument();
+    expect(await within(addMenu).findByText('新建需求')).toBeInTheDocument();
+    expect(within(addMenu).getByText('新建定时作业')).toBeInTheDocument();
+
+    fireEvent.click(within(addMenu).getByRole('button', { name: /新建需求/ }));
+
+    expect(assistantInput).toHaveValue('@新建需求 需要后续变更');
+    expect(screen.queryByLabelText('快捷添加 @ 能力')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('引用候选')).not.toBeInTheDocument();
+  });
+
   it('sends @ scheduled job run-once commands with the active candidate reference', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     const scrollIntoViewMock = vi.fn();

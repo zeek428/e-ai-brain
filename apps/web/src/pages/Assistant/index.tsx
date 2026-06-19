@@ -66,6 +66,7 @@ const { Text, Title } = Typography;
 const { TextArea } = Input;
 const ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS = 250;
 const ASSISTANT_REFERENCE_CANDIDATE_LIMIT = 12;
+const ASSISTANT_ADD_ACTION_LIMIT = 8;
 const ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT = 8;
 const assistantDraftActionLabels: Record<string, string> = {
   create_ai_agent: '创建AI角色',
@@ -3164,6 +3165,7 @@ export default function AssistantPage() {
   const [conversationId, setConversationId] = useState<string>();
   const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
   const [inputValue, setInputValue] = useState('');
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [draftMutationId, setDraftMutationId] = useState<string>();
   const [draftResolutionById, setDraftResolutionById] = useState<AssistantDraftResolutionMap>(
     () => readAssistantDraftResolutions(),
@@ -3172,6 +3174,7 @@ export default function AssistantPage() {
   const [assistantMetrics, setAssistantMetrics] = useState<AssistantMetrics>();
   const [draftTemplateMarketOpened, setDraftTemplateMarketOpened] = useState(false);
   const [draftTemplates, setDraftTemplates] = useState<AssistantDraftTemplate[]>([]);
+  const [isLoadingAddActions, setIsLoadingAddActions] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingDraftTemplates, setIsLoadingDraftTemplates] = useState(false);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
@@ -3181,6 +3184,7 @@ export default function AssistantPage() {
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
   const [activeReferenceIndex, setActiveReferenceIndex] = useState(-1);
+  const [addActionCandidates, setAddActionCandidates] = useState<AssistantReference[]>([]);
   const [committedActionCommand, setCommittedActionCommand] = useState<string>();
   const [dismissedReferencePickerValue, setDismissedReferencePickerValue] = useState<string>();
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
@@ -3234,7 +3238,8 @@ export default function AssistantPage() {
   const runOncePermissionHint = useMemo(() => (
     scheduledJobRunOnceRequested(inputValue) && !currentUserCanRunScheduledJobFromAssistant()
   ), [inputValue]);
-  const shouldShowReferenceCandidates = activeMention !== undefined
+  const shouldShowReferenceCandidates = !isAddMenuOpen
+    && activeMention !== undefined
     && dismissedReferencePickerValue !== inputValue;
   const orderedReferenceCandidates = useMemo(
     () => orderReferenceCandidatesByRecent(referenceCandidates, recentReferences),
@@ -3635,6 +3640,7 @@ export default function AssistantPage() {
     setLastResponse(undefined);
     setMessages(welcomeMessages);
     setActiveReferenceIndex(-1);
+    setIsAddMenuOpen(false);
     setReferenceCandidates([]);
     setReferenceDetail(undefined);
     setLinkedDraft(undefined);
@@ -3675,6 +3681,42 @@ export default function AssistantPage() {
     rememberReferences([reference]);
     setActiveReferenceIndex(-1);
     setReferenceCandidates([]);
+  };
+
+  const loadAddActionCandidates = useCallback(async () => {
+    setIsLoadingAddActions(true);
+    try {
+      const items = await fetchAssistantReferenceCandidates({
+        limit: ASSISTANT_ADD_ACTION_LIMIT,
+        query: '',
+        type: 'assistant_action',
+      });
+      setAddActionCandidates(items.filter(isAssistantActionReference));
+    } catch (error) {
+      toast.error(formatMutationError(error));
+      setAddActionCandidates([]);
+    } finally {
+      setIsLoadingAddActions(false);
+    }
+  }, []);
+
+  const toggleAddMenu = () => {
+    const nextOpen = !isAddMenuOpen;
+    setIsAddMenuOpen(nextOpen);
+    if (!nextOpen) {
+      return;
+    }
+    setDismissedReferencePickerValue(inputValue);
+    setReferenceCandidates([]);
+    setActiveReferenceIndex(-1);
+    if (!addActionCandidates.length && !isLoadingAddActions) {
+      void loadAddActionCandidates();
+    }
+  };
+
+  const useAddActionCandidate = (reference: AssistantReference) => {
+    addSelectedReference(reference);
+    setIsAddMenuOpen(false);
   };
 
   const removeSelectedReference = (reference: AssistantReference) => {
@@ -3745,6 +3787,11 @@ export default function AssistantPage() {
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.defaultPrevented) {
+      return;
+    }
+    if (event.key === 'Escape' && isAddMenuOpen) {
+      event.preventDefault();
+      setIsAddMenuOpen(false);
       return;
     }
     if (event.key === 'Enter' && submitComposerEnter(event)) {
@@ -3835,6 +3882,7 @@ export default function AssistantPage() {
     };
     setMessages((items) => [...items, userMessage]);
     setInputValue('');
+    setIsAddMenuOpen(false);
     setCommittedActionCommand(undefined);
     try {
       const response = await chatWithAssistant({
@@ -4349,6 +4397,56 @@ export default function AssistantPage() {
                 </Text>
               </div>
             ) : null}
+            {isAddMenuOpen ? (
+              <div
+                aria-label="快捷添加 @ 能力"
+                className="assistant-add-menu"
+                id="assistant-add-menu"
+              >
+                <div className="assistant-add-menu-header">
+                  <Text strong>添加</Text>
+                  <Button
+                    aria-label="关闭快捷添加"
+                    icon={<CloseCircleOutlined />}
+                    size="small"
+                    type="text"
+                    onClick={() => setIsAddMenuOpen(false)}
+                  />
+                </div>
+                <div className="assistant-add-menu-section-title">
+                  <Text type="secondary">常用 @ 能力</Text>
+                </div>
+                {isLoadingAddActions ? (
+                  <div className="assistant-add-menu-loading">
+                    <Spin size="small" />
+                    <Text type="secondary">正在加载</Text>
+                  </div>
+                ) : null}
+                {!isLoadingAddActions && !addActionCandidates.length ? (
+                  <div className="assistant-add-menu-empty">
+                    <Text type="secondary">暂无可用动作</Text>
+                  </div>
+                ) : null}
+                <div className="assistant-add-menu-list">
+                  {addActionCandidates.map((reference) => (
+                    <Button
+                      className="assistant-add-menu-item"
+                      icon={<PlusOutlined />}
+                      key={`${reference.type}:${reference.id}`}
+                      type="text"
+                      onClick={() => useAddActionCandidate(reference)}
+                    >
+                      <span className="assistant-add-menu-item-main">
+                        <span className="assistant-add-menu-item-title">{reference.title}</span>
+                        <span className="assistant-add-menu-item-summary">
+                          {referenceSummaryText(reference)}
+                        </span>
+                      </span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {shouldShowReferenceCandidates ? (
               <div
                 aria-label="引用候选"
@@ -4439,6 +4537,7 @@ export default function AssistantPage() {
             ) : null}
             <TextArea
               aria-label="发送给 AI 助手"
+              className="assistant-composer-input"
               onChange={(event) => {
                 setInputValue(event.target.value);
                 setDismissedReferencePickerValue(undefined);
@@ -4453,16 +4552,27 @@ export default function AssistantPage() {
               rows={3}
               value={inputValue}
             />
-            <Button
-              aria-label="发送"
-              disabled={!canSend}
-              icon={<SendOutlined />}
-              loading={isSending}
-              onClick={() => void sendMessage()}
-              type="primary"
-            >
-              发送
-            </Button>
+            <div className="assistant-composer-toolbar">
+              <Button
+                aria-controls={isAddMenuOpen ? 'assistant-add-menu' : undefined}
+                aria-expanded={isAddMenuOpen}
+                aria-label="添加 @ 能力"
+                className="assistant-composer-add-button"
+                icon={<PlusOutlined />}
+                onClick={toggleAddMenu}
+              />
+              <Button
+                aria-label="发送"
+                className="assistant-composer-send"
+                disabled={!canSend}
+                icon={<SendOutlined />}
+                loading={isSending}
+                onClick={() => void sendMessage()}
+                type="primary"
+              >
+                发送
+              </Button>
+            </div>
           </div>
         </section>
       </div>
