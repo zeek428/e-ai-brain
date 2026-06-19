@@ -4226,87 +4226,6 @@ export default function AssistantPage() {
               onClose={() => setReferenceDetail(undefined)}
             />
           </div>
-          {shouldShowReferenceCandidates ? (
-            <div
-              aria-label="引用候选"
-              className="assistant-reference-candidates"
-            >
-              <div className="assistant-reference-candidates-header">
-                <Text strong>引用候选</Text>
-                <Space size={8} wrap>
-                  {activeMention ? <Text type="secondary">{`搜索：${activeMention}`}</Text> : null}
-                  <Text type="secondary">↑↓ 选择，Enter 添加</Text>
-                </Space>
-              </div>
-              {isLoadingReferences ? <Spin size="small" /> : null}
-              {!isLoadingReferences && !referenceCandidates.length ? (
-                <div className="assistant-reference-candidates-empty">
-                  <Space orientation="vertical" size={8}>
-                    <Space size={[6, 6]} wrap>
-                      <Tag color="default">{referenceEmptyState.title}</Tag>
-                      <Text type="secondary">{referenceEmptyState.description}</Text>
-                    </Space>
-                    <Space className="assistant-reference-candidates-empty-actions" size={8} wrap>
-                      <Button href={referenceEmptyState.actionHref} size="small" type="link">
-                        {referenceEmptyState.actionLabel}
-                      </Button>
-                      <Button
-                        size="small"
-                        onClick={() => {
-                          setInputValue(referenceEmptyState.prompt);
-                          setReferenceCandidates([]);
-                          setActiveReferenceIndex(-1);
-                          setDismissedReferencePickerValue(undefined);
-                        }}
-                      >
-                        {referenceEmptyState.promptLabel}
-                      </Button>
-                    </Space>
-                  </Space>
-                </div>
-              ) : null}
-              {referenceCandidateGroups.map((group) => (
-                <div className="assistant-reference-candidate-group" key={group.type}>
-                  <div className="assistant-reference-candidate-group-title">
-                    <Text strong>{group.label}</Text>
-                    <Tag color="default">{group.items.length}</Tag>
-                  </div>
-                  {group.items.map(({ index: referenceIndex, reference }) => {
-                    const isActive = referenceIndex === activeReferenceIndex;
-                    return (
-                      <Button
-                        className={isActive ? 'assistant-reference-candidate-active' : undefined}
-                        icon={<LinkOutlined />}
-                        key={`${reference.type}:${reference.id}`}
-                        size="small"
-                        onClick={() => addSelectedReference(reference)}
-                        onMouseEnter={() => setActiveReferenceIndex(referenceIndex)}
-                      >
-                        <span className="assistant-reference-candidate-main">
-                          <span className="assistant-reference-candidate-title">{reference.title}</span>
-                          <span className="assistant-reference-candidate-chips">
-                            <Tag color="default">{referenceTypeLabel(reference.type)}</Tag>
-                            <Tag color={referencePermissionTagColor(reference)}>
-                              权限：{reference.permission_label ?? '可引用'}
-                            </Tag>
-                            <Tag color="blue">
-                              来源：{reference.source_module ?? referenceSourceModule(reference.type)}
-                            </Tag>
-                            <Tag color="default">
-                              更新：{referenceUpdatedDate(reference) ?? '暂无'}
-                            </Tag>
-                          </span>
-                          <span className="assistant-reference-candidate-summary">
-                            {referenceSummaryText(reference)}
-                          </span>
-                        </span>
-                      </Button>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          ) : null}
           <div className="assistant-composer">
             {runOncePermissionHint ? (
               <div aria-label="执行权限提示" className="assistant-composer-warning">
@@ -4315,6 +4234,94 @@ export default function AssistantPage() {
                   当前账号没有执行定时作业权限，本次不会直接执行；请使用管理员账号或授予
                   system.scheduled_jobs.run 后再发送。
                 </Text>
+              </div>
+            ) : null}
+            {shouldShowReferenceCandidates ? (
+              <div
+                aria-label="引用候选"
+                className="assistant-reference-candidates"
+              >
+                <div className="assistant-reference-candidates-header">
+                  <Text strong>引用候选</Text>
+                  <Space size={8} wrap>
+                    {activeMention ? <Text type="secondary">{`搜索：${activeMention}`}</Text> : null}
+                    <Text type="secondary">↑↓ 选择，Enter 添加</Text>
+                  </Space>
+                </div>
+                {isLoadingReferences ? (
+                  <div className="assistant-reference-candidates-loading">
+                    <Spin size="small" />
+                    <Text type="secondary">正在搜索引用</Text>
+                  </div>
+                ) : null}
+                {!isLoadingReferences && !referenceCandidates.length ? (
+                  <div className="assistant-reference-candidates-empty">
+                    <Space orientation="vertical" size={8}>
+                      <Space size={[6, 6]} wrap>
+                        <Tag color="default">{referenceEmptyState.title}</Tag>
+                        <Text type="secondary">{referenceEmptyState.description}</Text>
+                      </Space>
+                      <Space className="assistant-reference-candidates-empty-actions" size={8} wrap>
+                        <Button href={referenceEmptyState.actionHref} size="small" type="link">
+                          {referenceEmptyState.actionLabel}
+                        </Button>
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            setInputValue(referenceEmptyState.prompt);
+                            setReferenceCandidates([]);
+                            setActiveReferenceIndex(-1);
+                            setDismissedReferencePickerValue(undefined);
+                          }}
+                        >
+                          {referenceEmptyState.promptLabel}
+                        </Button>
+                      </Space>
+                    </Space>
+                  </div>
+                ) : null}
+                <div className="assistant-reference-candidates-scroll">
+                  {referenceCandidateGroups.map((group) => (
+                    <div className="assistant-reference-candidate-group" key={group.type}>
+                      <div className="assistant-reference-candidate-group-title">
+                        <Text strong>{group.label}</Text>
+                        <Tag color="default">{group.items.length}</Tag>
+                      </div>
+                      {group.items.map(({ index: referenceIndex, reference }) => {
+                        const isActive = referenceIndex === activeReferenceIndex;
+                        return (
+                          <Button
+                            className={isActive ? 'assistant-reference-candidate-active' : undefined}
+                            icon={<LinkOutlined />}
+                            key={`${reference.type}:${reference.id}`}
+                            size="small"
+                            onClick={() => addSelectedReference(reference)}
+                            onMouseEnter={() => setActiveReferenceIndex(referenceIndex)}
+                          >
+                            <span className="assistant-reference-candidate-main">
+                              <span className="assistant-reference-candidate-title">{reference.title}</span>
+                              <span className="assistant-reference-candidate-chips">
+                                <Tag color="default">{referenceTypeLabel(reference.type)}</Tag>
+                                <Tag color={referencePermissionTagColor(reference)}>
+                                  权限：{reference.permission_label ?? '可引用'}
+                                </Tag>
+                                <Tag color="blue">
+                                  来源：{reference.source_module ?? referenceSourceModule(reference.type)}
+                                </Tag>
+                                <Tag color="default">
+                                  更新：{referenceUpdatedDate(reference) ?? '暂无'}
+                                </Tag>
+                              </span>
+                              <span className="assistant-reference-candidate-summary">
+                                {referenceSummaryText(reference)}
+                              </span>
+                            </span>
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
             <TextArea
