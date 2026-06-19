@@ -876,7 +876,13 @@ function draftWizardManualAdjustUrl(step: AssistantDraftWizardStep) {
   return '/tasks/scheduled-jobs';
 }
 
-function activeMentionQuery(value: string) {
+type ActiveMentionRange = {
+  endIndex: number;
+  markerIndex: number;
+  query: string;
+};
+
+function activeMentionRange(value: string): ActiveMentionRange | undefined {
   const markerIndex = Math.max(value.lastIndexOf('@'), value.lastIndexOf('＠'));
   if (markerIndex < 0) {
     return undefined;
@@ -892,11 +898,21 @@ function activeMentionQuery(value: string) {
   if (tail.length > 0 && /^\s/.test(tail)) {
     return undefined;
   }
-  const query = tail.split(/\s+/)[0] ?? '';
+  const rawQuery = tail.split(/\s+/)[0] ?? '';
+  const query = rawQuery;
+  const endIndex = markerIndex + 1 + rawQuery.length;
   if (!scheduledJobRunOnceRequested(value)) {
-    return query;
+    return { endIndex, markerIndex, query };
   }
-  return trimRunOnceCommandFromMentionQuery(query);
+  return {
+    endIndex,
+    markerIndex,
+    query: trimRunOnceCommandFromMentionQuery(query),
+  };
+}
+
+function activeMentionQuery(value: string) {
+  return activeMentionRange(value)?.query;
 }
 
 function uniqueScheduledJobReferenceCandidate(references: AssistantReference[]) {
@@ -1340,7 +1356,7 @@ function referenceKnowledgeChunkCount(reference: AssistantReference) {
 
 function referenceInjectionText(reference: AssistantReference) {
   if (reference.type === 'assistant_action') {
-    return '动作提示将填入输入框';
+    return '动作指令将填入输入框';
   }
   if (reference.type === 'knowledge_chunk') {
     return '1 个知识 chunk 将注入模型';
@@ -1377,7 +1393,30 @@ function referenceSummaryText(reference: AssistantReference) {
 }
 
 function isAssistantActionReference(reference: AssistantReference) {
-  return reference.type === 'assistant_action' && Boolean(String(reference.prompt ?? '').trim());
+  return reference.type === 'assistant_action';
+}
+
+function assistantActionCommand(reference: AssistantReference) {
+  const title = String(reference.title || reference.id).replace(/\s+/g, '').trim();
+  return title ? `@${title}` : '@动作';
+}
+
+function inputStartsWithActionCommand(value: string, command?: string) {
+  if (!command || !value.startsWith(command)) {
+    return false;
+  }
+  const nextChar = value[command.length];
+  return nextChar === undefined || /\s/.test(nextChar);
+}
+
+function inputWithAssistantActionCommand(currentValue: string, reference: AssistantReference) {
+  const command = assistantActionCommand(reference);
+  const mention = activeMentionRange(currentValue);
+  const userText = mention
+    ? `${currentValue.slice(0, mention.markerIndex)}${currentValue.slice(mention.endIndex)}`
+    : currentValue;
+  const normalizedUserText = userText.replace(/[ \t]{2,}/g, ' ').trim();
+  return normalizedUserText ? `${command} ${normalizedUserText}` : `${command} `;
 }
 
 function AssistantReferenceDetailModal({
@@ -3140,6 +3179,7 @@ export default function AssistantPage() {
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
   const [activeReferenceIndex, setActiveReferenceIndex] = useState(-1);
+  const [committedActionCommand, setCommittedActionCommand] = useState<string>();
   const [dismissedReferencePickerValue, setDismissedReferencePickerValue] = useState<string>();
   const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
   const [recentReferences, setRecentReferences] = useState<AssistantReference[]>(() => readRecentReferences());
@@ -3171,7 +3211,19 @@ export default function AssistantPage() {
     () => new Set(selectedReferences.map(referenceKey)),
     [selectedReferences],
   );
-  const activeMention = useMemo(() => activeMentionQuery(inputValue), [inputValue]);
+  const activeMention = useMemo(() => {
+    const mention = activeMentionRange(inputValue);
+    if (!mention) {
+      return undefined;
+    }
+    if (
+      mention.markerIndex === 0
+      && inputStartsWithActionCommand(inputValue, committedActionCommand)
+    ) {
+      return undefined;
+    }
+    return mention.query;
+  }, [committedActionCommand, inputValue]);
   const runOncePermissionHint = useMemo(() => (
     scheduledJobRunOnceRequested(inputValue) && !currentUserCanRunScheduledJobFromAssistant()
   ), [inputValue]);
@@ -3214,6 +3266,15 @@ export default function AssistantPage() {
     }
     messageListEndRef.current.scrollIntoView({ block: 'end' });
   }, [isLoadingMessages, isSending, messages, scheduledJobRunById]);
+
+  useEffect(() => {
+    if (
+      committedActionCommand
+      && !inputStartsWithActionCommand(inputValue, committedActionCommand)
+    ) {
+      setCommittedActionCommand(undefined);
+    }
+  }, [committedActionCommand, inputValue]);
 
   useEffect(() => {
     if (!activeRunPollTargets.length) {
@@ -3394,7 +3455,9 @@ export default function AssistantPage() {
           title: reference.title,
         });
         if (isAssistantActionReference(reference)) {
-          setInputValue(String(reference.prompt ?? '').trim());
+          const command = assistantActionCommand(reference);
+          setCommittedActionCommand(command);
+          setInputValue(inputWithAssistantActionCommand(queryReference.prompt ?? '', reference));
           return;
         }
         setSelectedReferences((currentItems) => (
@@ -3422,7 +3485,7 @@ export default function AssistantPage() {
   }, [rememberReferences]);
 
   useEffect(() => {
-    const query = activeMentionQuery(inputValue);
+    const query = activeMention;
     if (query === undefined) {
       setReferenceCandidates([]);
       setIsLoadingReferences(false);
@@ -3463,7 +3526,7 @@ export default function AssistantPage() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [inputValue, selectedReferenceKeys]);
+  }, [activeMention, selectedReferenceKeys]);
 
   useEffect(() => {
     setActiveReferenceIndex((index) => {
@@ -3570,6 +3633,7 @@ export default function AssistantPage() {
     setLinkedDraft(undefined);
     setQueryDraftResolution(undefined);
     setQueryReferenceResolution(undefined);
+    setCommittedActionCommand(undefined);
     setDismissedReferencePickerValue(undefined);
     setSelectedReferences([]);
   };
@@ -3580,14 +3644,17 @@ export default function AssistantPage() {
   };
 
   const useDraftTemplate = (template: AssistantDraftTemplate) => {
+    setCommittedActionCommand(undefined);
     setInputValue(template.prompt);
   };
 
   const addSelectedReference = (reference: AssistantReference) => {
     if (isAssistantActionReference(reference)) {
-      const prompt = String(reference.prompt ?? '').trim();
-      setInputValue(prompt);
-      setDismissedReferencePickerValue(prompt);
+      const command = assistantActionCommand(reference);
+      const nextInputValue = inputWithAssistantActionCommand(inputValue, reference);
+      setCommittedActionCommand(command);
+      setInputValue(nextInputValue);
+      setDismissedReferencePickerValue(nextInputValue);
       setActiveReferenceIndex(-1);
       setReferenceCandidates([]);
       return;
@@ -3761,6 +3828,7 @@ export default function AssistantPage() {
     };
     setMessages((items) => [...items, userMessage]);
     setInputValue('');
+    setCommittedActionCommand(undefined);
     try {
       const response = await chatWithAssistant({
         context: { source: 'assistant-page' },

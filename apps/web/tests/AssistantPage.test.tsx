@@ -1427,7 +1427,7 @@ describe('AssistantPage', () => {
     expect(screen.getAllByText('定时作业').length).toBeGreaterThan(0);
   });
 
-  it('fills the composer instead of adding context when selecting @ action candidates', async () => {
+  it('keeps an @ command prefix instead of adding context when selecting action candidates', async () => {
     const actionPrompt = '请帮我生成定时作业配置草案，并说明数据来源、AI处理、结果动作和调度策略。';
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
@@ -1471,7 +1471,7 @@ describe('AssistantPage', () => {
 
     const assistantInput = screen.getByLabelText('发送给 AI 助手');
     fireEvent.change(assistantInput, {
-      target: { value: '@新建' },
+      target: { value: '@新建 需要每周一生成用户反馈洞察' },
     });
 
     const referenceCandidatePanel = await screen.findByLabelText('引用候选');
@@ -1480,10 +1480,20 @@ describe('AssistantPage', () => {
 
     fireEvent.click(within(referenceCandidatePanel).getByRole('button', { name: /新建定时作业/ }));
 
-    expect(assistantInput).toHaveValue(actionPrompt);
+    expect(assistantInput).toHaveValue('@新建定时作业 需要每周一生成用户反馈洞察');
+    expect(assistantInput).not.toHaveValue(actionPrompt);
     expect(screen.queryByLabelText('引用候选')).not.toBeInTheDocument();
     const selectedReferenceList = screen.getByLabelText('本次上下文');
     expect(within(selectedReferenceList).getAllByText('0 个显式引用').length).toBeGreaterThan(0);
+    fireEvent.change(assistantInput, {
+      target: { value: '@新建定时作业 需要每周一生成用户反馈洞察，优先周一 9 点执行' },
+    });
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 350);
+    });
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).startsWith('/api/assistant/reference-candidates?')),
+    ).toHaveLength(1);
   });
 
   it('sends @ scheduled job run-once commands with the active candidate reference', async () => {
