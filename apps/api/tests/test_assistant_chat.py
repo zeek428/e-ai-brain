@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 import app.api.routers.assistant as assistant_router
 import app.services.assistant_action_drafts as assistant_action_drafts_service
 import app.services.assistant_chat as assistant_chat_service
+import app.services.assistant_role_quick_tasks as assistant_role_quick_tasks_service
 from app.api.deps import api_error
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
@@ -85,6 +86,211 @@ def test_ai_assistant_role_quick_tasks_are_backend_configured():
         "sort_order": 30,
         "target_draft_type": "create_scheduled_job",
     }
+
+
+def test_ai_assistant_role_quick_tasks_can_be_loaded_from_repository_config():
+    app.state.store.reset()
+
+    class ConfiguredRoleQuickTaskRepository:
+        def list_assistant_role_quick_tasks(self):
+            return [
+                {
+                    "analytics_key": "ops.custom_health",
+                    "enabled": True,
+                    "group_enabled": True,
+                    "group_key": "configured_admin",
+                    "group_label": "运营配置快捷任务",
+                    "group_roles": ["admin"],
+                    "group_sort_order": 5,
+                    "id": "assistant_role_quick_task_configured",
+                    "permissions": [],
+                    "prompt": "请检查运营配置里的快捷任务",
+                    "sort_order": 7,
+                    "target_draft_type": None,
+                    "task_key": "custom_health",
+                    "template_version": "2026.06",
+                    "title": "运营配置项",
+                }
+            ]
+
+    had_repository = hasattr(app.state.store, "repository")
+    original_repository = getattr(app.state.store, "repository", None)
+    app.state.store.repository = ConfiguredRoleQuickTaskRepository()
+    try:
+        response = client.get("/api/assistant/role-quick-tasks", headers=auth_headers())
+    finally:
+        if had_repository:
+            app.state.store.repository = original_repository
+        else:
+            delattr(app.state.store, "repository")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload == {
+        "items": [
+            {
+                "enabled": True,
+                "key": "configured_admin",
+                "label": "运营配置快捷任务",
+                "roles": ["admin"],
+                "sort_order": 5,
+                "tasks": [
+                    {
+                        "analytics_key": "ops.custom_health",
+                        "enabled": True,
+                        "key": "custom_health",
+                        "label": "运营配置项",
+                        "permissions": [],
+                        "prompt": "请检查运营配置里的快捷任务",
+                        "sort_order": 7,
+                        "target_draft_type": None,
+                        "template_version": "2026.06",
+                    }
+                ],
+            }
+        ],
+        "total": 1,
+    }
+
+
+def test_ai_assistant_role_quick_task_configs_support_operations_rollout_and_audit():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    create_response = client.post(
+        "/api/assistant/role-quick-task-configs",
+        headers=headers,
+        json={
+            "analytics_key": "admin.enterprise_health",
+            "enabled": True,
+            "enterprise_id": "enterprise_a",
+            "group_enabled": True,
+            "group_key": "admin_ops",
+            "group_label": "运营快捷任务",
+            "group_roles": ["admin"],
+            "group_sort_order": 3,
+            "permissions": [],
+            "prompt": "请检查企业 A 的助手运营任务",
+            "rollout_json": {
+                "enterprise_ids": ["enterprise_a"],
+                "percentage": 100,
+                "template_versions": ["2026.06"],
+            },
+            "sort_order": 9,
+            "target_draft_type": "create_analysis_draft",
+            "task_key": "enterprise_health",
+            "template_version": "2026.06",
+            "title": "企业运营巡检",
+        },
+    )
+
+    assert create_response.status_code == 200, create_response.text
+    config = create_response.json()["data"]
+    config_id = config["id"]
+    assert config["enterprise_id"] == "enterprise_a"
+    assert config["rollout_json"]["template_versions"] == ["2026.06"]
+
+    patch_response = client.patch(
+        f"/api/assistant/role-quick-task-configs/{config_id}",
+        headers=headers,
+        json={"title": "企业运营巡检 V2", "sort_order": 5},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+    assert patch_response.json()["data"]["title"] == "企业运营巡检 V2"
+    assert patch_response.json()["data"]["sort_order"] == 5
+
+    disable_response = client.post(
+        f"/api/assistant/role-quick-task-configs/{config_id}/status",
+        headers=headers,
+        json={"enabled": False},
+    )
+    assert disable_response.status_code == 200, disable_response.text
+    assert disable_response.json()["data"]["enabled"] is False
+
+    rollout_response = client.put(
+        f"/api/assistant/role-quick-task-configs/{config_id}/rollout",
+        headers=headers,
+        json={
+            "enterprise_id": "enterprise_b",
+            "rollout_json": {
+                "enterprise_ids": ["enterprise_b"],
+                "percentage": 100,
+                "template_versions": ["2026.07"],
+            },
+            "template_version": "2026.07",
+        },
+    )
+    assert rollout_response.status_code == 200, rollout_response.text
+    assert rollout_response.json()["data"]["enterprise_id"] == "enterprise_b"
+    assert rollout_response.json()["data"]["template_version"] == "2026.07"
+
+    enable_response = client.post(
+        f"/api/assistant/role-quick-task-configs/{config_id}/status",
+        headers=headers,
+        json={"enabled": True},
+    )
+    assert enable_response.status_code == 200, enable_response.text
+
+    configs_response = client.get("/api/assistant/role-quick-task-configs", headers=headers)
+    assert configs_response.status_code == 200, configs_response.text
+    assert configs_response.json()["data"]["total"] == 1
+
+    visible_payload = assistant_role_quick_tasks_service.list_assistant_role_quick_tasks_response(
+        current_store=app.state.store,
+        user={
+            "assistant_template_version": "2026.07",
+            "enterprise_id": "enterprise_b",
+            "id": "user_enterprise_b",
+            "permissions": [],
+            "roles": ["admin"],
+        },
+    )
+    assert visible_payload["items"][0]["key"] == "admin_ops"
+    assert visible_payload["items"][0]["tasks"][0]["label"] == "企业运营巡检 V2"
+
+    filtered_payload = assistant_role_quick_tasks_service.list_assistant_role_quick_tasks_response(
+        current_store=app.state.store,
+        user={
+            "assistant_template_version": "2026.06",
+            "enterprise_id": "enterprise_a",
+            "id": "user_enterprise_a",
+            "permissions": [],
+            "roles": ["admin"],
+        },
+    )
+    assert filtered_payload == {"items": [], "total": 0}
+
+    audit_types = [event["event_type"] for event in app.state.store.audit_events]
+    assert "assistant_role_quick_task.created" in audit_types
+    assert "assistant_role_quick_task.updated" in audit_types
+    assert "assistant_role_quick_task.status_changed" in audit_types
+    assert "assistant_role_quick_task.rollout_changed" in audit_types
+
+
+def test_ai_assistant_role_quick_task_rollout_percentage_filters_candidates():
+    app.state.store.reset()
+    app.state.store.assistant_role_quick_tasks["assistant_role_quick_task_off"] = {
+        "enabled": True,
+        "group_enabled": True,
+        "group_key": "admin_gray",
+        "group_label": "灰度快捷任务",
+        "group_roles": ["admin"],
+        "group_sort_order": 1,
+        "id": "assistant_role_quick_task_off",
+        "permissions": [],
+        "prompt": "灰度关闭时不可见",
+        "rollout_json": {"percentage": 0},
+        "sort_order": 1,
+        "task_key": "gray_off",
+        "title": "灰度关闭",
+    }
+
+    payload = assistant_role_quick_tasks_service.list_assistant_role_quick_tasks_response(
+        current_store=app.state.store,
+        user={"id": "user_admin", "permissions": [], "roles": ["admin"]},
+    )
+
+    assert payload == {"items": [], "total": 0}
 
 
 def test_ai_assistant_allows_testing_delivery_roles_to_use_workbench_apis(monkeypatch):
@@ -191,6 +397,98 @@ def test_ai_assistant_chat_returns_registered_intent_metadata(monkeypatch):
     }
     assert message["tool_results"][0]["intent_code"] == "task_creation_guide"
     assert message["tool_results"][0]["intent_confidence"] == 0.95
+
+
+def test_ai_assistant_deterministic_intent_registry_dispatches_registered_handler(monkeypatch):
+    app.state.store.reset()
+    handled_messages = []
+
+    def synthetic_handler(current_store, *, intent, payload, user):
+        assert current_store is app.state.store
+        assert user["id"] == "user_admin"
+        handled_messages.append(payload.message)
+        return {
+            "answer": "synthetic intent handled",
+            "latency_ms": 0,
+            "model": "assistant-deterministic",
+            "references": [],
+            "selected_references": [],
+            "suggestions": ["synthetic next"],
+            "tool_results": [
+                {
+                    "items": [],
+                    "summary": {"status": "handled"},
+                    "tool": "assistant.synthetic",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        assistant_chat_service,
+        "_deterministic_intent_registry",
+        lambda: [
+            {
+                "confidence": 0.88,
+                "conflict_policy": "first_match",
+                "detector": lambda message: "synthetic" in message,
+                "handler": synthetic_handler,
+                "intent_code": "synthetic_intent",
+                "priority": 1,
+                "required_refs": [],
+                "summary": "将执行：synthetic",
+            }
+        ],
+    )
+
+    output = assistant_chat_service._deterministic_assistant_output(
+        app.state.store,
+        payload=assistant_chat_service.AssistantChatRequest(message="synthetic please"),
+        user={"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]},
+    )
+
+    assert handled_messages == ["synthetic please"]
+    assert output["answer"] == "synthetic intent handled"
+    assert output["intent"] == {
+        "confidence": 0.88,
+        "intent_code": "synthetic_intent",
+        "required_refs": [],
+        "summary": "将执行：synthetic",
+    }
+    assert output["tool_results"][0]["intent_code"] == "synthetic_intent"
+
+
+def test_ai_assistant_intent_registry_uses_conflict_policy_before_priority(monkeypatch):
+    monkeypatch.setattr(
+        assistant_chat_service,
+        "_deterministic_intent_registry",
+        lambda: [
+            {
+                "confidence": 0.1,
+                "conflict_policy": "fallback",
+                "detector": lambda _message: True,
+                "handler": lambda *_args, **_kwargs: None,
+                "intent_code": "fallback_intent",
+                "priority": 1000,
+                "required_refs": [],
+                "summary": "fallback",
+            },
+            {
+                "confidence": 0.9,
+                "conflict_policy": "first_match",
+                "detector": lambda _message: True,
+                "handler": lambda *_args, **_kwargs: None,
+                "intent_code": "specific_intent",
+                "priority": 1,
+                "required_refs": [],
+                "summary": "specific",
+            },
+        ],
+    )
+
+    intent = assistant_chat_service._match_deterministic_intent("任意消息")
+
+    assert intent is not None
+    assert intent["intent_code"] == "specific_intent"
 
 
 def test_ai_assistant_test_owner_can_run_explicit_mention_job_once(monkeypatch):
@@ -2686,7 +2984,12 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "created_at": now,
             "created_by": "user_admin",
             "id": "assistant_action_draft_confirmed",
-            "metadata_json": {"modified_fields": ["cron_expression"], "viewed_at": now},
+            "metadata_json": {
+                "deeplink_viewed_at": now,
+                "detail_viewed_at": now,
+                "modified_fields": ["cron_expression"],
+                "viewed_at": now,
+            },
             "payload": {"name": "已确认草案"},
             "result_run_id": "assistant_action_run_succeeded",
             "risk_level": "medium",
@@ -2779,6 +3082,8 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "updated_at": now,
         },
         "scheduled_job_run_repair_metrics": {
+            "assistant_action_draft_id": "assistant_action_draft_confirmed",
+            "assistant_action_run_id": "assistant_action_run_succeeded",
             "created_at": now,
             "error_code": None,
             "error_message": None,
@@ -2790,6 +3095,7 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "source_run_id": "scheduled_job_run_failed_metrics",
             "started_at": now,
             "status": "succeeded",
+            "triggered_by_assistant": True,
             "trigger_type": "manual_rerun",
             "updated_at": now,
         },
@@ -2904,11 +3210,14 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
         "draft_pending_count": 1,
         "draft_resolution_rate": 0.75,
         "draft_total": 4,
+        "draft_deeplink_viewed_count": 1,
+        "draft_detail_viewed_count": 1,
         "draft_user_modified_count": 1,
         "draft_user_modified_rate": 0.25,
-        "failed_run_repair_rate": 0.5,
+        "draft_viewed_count": 1,
+        "failed_run_repair_rate": 1.0,
         "failed_run_repaired_count": 1,
-        "failed_run_total": 2,
+        "failed_run_total": 1,
         "knowledge_reference_count": 5,
         "knowledge_reference_hit_count": 2,
         "knowledge_reference_hit_rate": 0.667,
@@ -2917,10 +3226,10 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
         "reference_total": 6,
         "reference_usage_rate": 0.5,
         "referenced_user_message_count": 1,
-        "scheduled_job_run_failed_count": 2,
-        "scheduled_job_run_succeeded_count": 2,
+        "scheduled_job_run_failed_count": 1,
+        "scheduled_job_run_succeeded_count": 1,
         "scheduled_job_run_success_rate": 0.5,
-        "scheduled_job_run_total": 4,
+        "scheduled_job_run_total": 2,
         "user_message_total": 2,
     }
     assert metrics["drafts_by_action"] == [
@@ -2943,6 +3252,14 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "total": 3,
         },
     ]
+    assert metrics["scheduled_job_run_attribution"] == {
+        "items": [
+            {"count": 1, "key": "assistant_triggered", "label": "助手触发"},
+            {"count": 0, "key": "explicit_reference", "label": "显式引用"},
+            {"count": 1, "key": "rerun_chain", "label": "复跑链"},
+        ],
+        "total": 2,
+    }
     assert metrics["funnel"] == {
         "stages": [
             {
@@ -2960,8 +3277,20 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             {
                 "count": 1,
                 "key": "draft_viewed",
-                "label": "查看详情",
+                "label": "查看草案",
                 "sort_order": 30,
+            },
+            {
+                "count": 1,
+                "key": "draft_detail_viewed",
+                "label": "查看详情",
+                "sort_order": 31,
+            },
+            {
+                "count": 1,
+                "key": "draft_deeplink_viewed",
+                "label": "深链打开",
+                "sort_order": 32,
             },
             {
                 "count": 1,
@@ -2976,7 +3305,7 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
                 "sort_order": 50,
             },
             {
-                "count": 2,
+                "count": 1,
                 "key": "run_succeeded",
                 "label": "运行成功",
                 "sort_order": 60,
@@ -2988,6 +3317,273 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
                 "sort_order": 70,
             },
         ]
+    }
+
+
+def test_ai_assistant_action_draft_view_updates_metrics_and_audit():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "查看详情统计草案",
+                "schedule_type": "manual",
+            },
+            "risk_level": "medium",
+            "title": "查看详情统计草案",
+        },
+        headers=headers,
+    )
+    assert draft_response.status_code == 200, draft_response.text
+    draft_id = draft_response.json()["data"]["id"]
+
+    view_response = client.post(
+        f"/api/assistant/action-drafts/{draft_id}/view",
+        json={"surface": "detail_modal"},
+        headers=headers,
+    )
+
+    assert view_response.status_code == 200, view_response.text
+    draft = view_response.json()["data"]
+    metadata = draft["metadata_json"]
+    assert metadata["viewed_by"] == "user_admin"
+    assert metadata["view_count"] == 1
+    assert metadata["viewed_at"]
+    assert metadata["detail_viewed_at"] == metadata["viewed_at"]
+    assert "deeplink_viewed_at" not in metadata
+    assert metadata["last_viewed_at"] == metadata["viewed_at"]
+    assert metadata["last_view_surface"] == "detail_modal"
+
+    metrics = client.get("/api/assistant/metrics", headers=headers).json()["data"]
+    assert metrics["summary"]["draft_detail_viewed_count"] == 1
+    assert metrics["summary"]["draft_deeplink_viewed_count"] == 0
+    stages = {stage["key"]: stage["count"] for stage in metrics["funnel"]["stages"]}
+    assert stages["draft_viewed"] == 1
+    assert stages["draft_detail_viewed"] == 1
+    assert stages["draft_deeplink_viewed"] == 0
+
+    audit_events = client.get(
+        "/api/audit/events?subject_type=assistant_action_draft",
+        headers=headers,
+    ).json()["data"]["items"]
+    viewed_event = next(
+        item
+        for item in audit_events
+        if item["event_type"] == "assistant_action_draft.viewed"
+    )
+    assert viewed_event["subject_id"] == draft_id
+    assert viewed_event["payload"] == {
+        "surface": "detail_modal",
+        "view_count": 1,
+    }
+
+
+def test_ai_assistant_action_draft_deeplink_view_is_tracked_separately():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    draft_response = client.post(
+        "/api/assistant/action-drafts",
+        json={
+            "action": "create_scheduled_job",
+            "payload": {
+                "execution_mode": "deterministic",
+                "job_type": "dashboard_snapshot_refresh",
+                "name": "深链统计草案",
+                "schedule_type": "manual",
+            },
+            "risk_level": "medium",
+            "title": "深链统计草案",
+        },
+        headers=headers,
+    )
+    assert draft_response.status_code == 200, draft_response.text
+    draft_id = draft_response.json()["data"]["id"]
+
+    view_response = client.post(
+        f"/api/assistant/action-drafts/{draft_id}/view",
+        json={"surface": "deeplink"},
+        headers=headers,
+    )
+
+    assert view_response.status_code == 200, view_response.text
+    metadata = view_response.json()["data"]["metadata_json"]
+    assert metadata["deeplink_viewed_at"] == metadata["viewed_at"]
+    assert "detail_viewed_at" not in metadata
+    assert metadata["last_view_surface"] == "deeplink"
+
+    metrics = client.get("/api/assistant/metrics", headers=headers).json()["data"]
+    assert metrics["summary"]["draft_viewed_count"] == 1
+    assert metrics["summary"]["draft_detail_viewed_count"] == 0
+    assert metrics["summary"]["draft_deeplink_viewed_count"] == 1
+
+
+def test_ai_assistant_metrics_only_count_runs_attributed_to_assistant_action():
+    now = "2026-06-16T10:00:00+00:00"
+
+    class RepositoryBackedMetricsStore:
+        def list_assistant_action_drafts(self, *, user_id: str):
+            assert user_id == "user_admin"
+            return [
+                {
+                    "action": "create_scheduled_job",
+                    "confirmed_at": now,
+                    "confirmed_by": "user_admin",
+                    "created_at": now,
+                    "created_by": "user_admin",
+                    "id": "assistant_action_draft_attributed",
+                    "metadata_json": {},
+                    "payload": {"name": "助手创建作业"},
+                    "result_run_id": "assistant_action_run_attributed",
+                    "risk_level": "medium",
+                    "status": "confirmed",
+                    "title": "助手创建作业",
+                    "updated_at": now,
+                }
+            ]
+
+        def load_assistant_chat(self):
+            return {
+                "assistant_action_runs": {
+                    "assistant_action_run_attributed": {
+                        "action": "create_scheduled_job",
+                        "created_at": now,
+                        "draft_id": "assistant_action_draft_attributed",
+                        "executed_by": "user_admin",
+                        "finished_at": now,
+                        "id": "assistant_action_run_attributed",
+                        "result": {"id": "scheduled_job_attributed"},
+                        "result_id": "scheduled_job_attributed",
+                        "result_type": "scheduled_job",
+                        "started_at": now,
+                        "status": "succeeded",
+                        "updated_at": now,
+                    }
+                },
+                "assistant_messages": {},
+            }
+
+        def list_scheduled_job_runs(
+            self,
+            *,
+            scheduled_job_id: str | None = None,
+            status: str | None = None,
+        ):
+            runs = [
+                {
+                    "assistant_action_run_id": "assistant_action_run_attributed",
+                    "created_at": now,
+                    "error_code": None,
+                    "error_message": None,
+                    "finished_at": now,
+                    "id": "scheduled_job_run_assistant",
+                    "records_imported": 5,
+                    "result_summary": {},
+                    "scheduled_job_id": "scheduled_job_attributed",
+                    "source_run_id": None,
+                    "started_at": now,
+                    "status": "succeeded",
+                    "trigger_type": "manual",
+                    "triggered_by_assistant": True,
+                    "updated_at": now,
+                },
+                {
+                    "assistant_action_run_id": None,
+                    "created_at": now,
+                    "error_code": "SCHEDULED_FAILURE",
+                    "error_message": "后续普通调度失败",
+                    "finished_at": now,
+                    "id": "scheduled_job_run_unattributed",
+                    "records_imported": 0,
+                    "result_summary": {},
+                    "scheduled_job_id": "scheduled_job_attributed",
+                    "source_run_id": None,
+                    "started_at": now,
+                    "status": "failed",
+                    "trigger_type": "scheduled",
+                    "triggered_by_assistant": False,
+                    "updated_at": now,
+                },
+            ]
+            if scheduled_job_id is not None:
+                runs = [run for run in runs if run["scheduled_job_id"] == scheduled_job_id]
+            if status is not None:
+                runs = [run for run in runs if run["status"] == status]
+            return runs
+
+    metrics = assistant_metrics_response(
+        SimpleNamespace(repository=RepositoryBackedMetricsStore(), scheduled_job_runs={}),
+        user={"id": "user_admin"},
+    )
+
+    assert metrics["summary"]["scheduled_job_run_total"] == 1
+    assert metrics["summary"]["scheduled_job_run_succeeded_count"] == 1
+    assert metrics["summary"]["scheduled_job_run_failed_count"] == 0
+    assert metrics["scheduled_job_run_attribution"] == {
+        "items": [
+            {"count": 1, "key": "assistant_triggered", "label": "助手触发"},
+            {"count": 0, "key": "explicit_reference", "label": "显式引用"},
+            {"count": 0, "key": "rerun_chain", "label": "复跑链"},
+        ],
+        "total": 1,
+    }
+    stages = {stage["key"]: stage["count"] for stage in metrics["funnel"]["stages"]}
+    assert stages["run_succeeded"] == 1
+
+
+def test_ai_assistant_metrics_explain_explicit_run_reference_attribution():
+    now = "2026-06-16T10:00:00+00:00"
+    app.state.store.reset()
+    app.state.store.assistant_messages = {
+        "assistant_message_user_run_ref": {
+            "content": "@失败运行 为什么失败？",
+            "conversation_id": "assistant_conversation_run_ref",
+            "created_at": now,
+            "id": "assistant_message_user_run_ref",
+            "metadata_json": {
+                "references": [
+                    {"id": "scheduled_job_run_explicit_ref", "type": "scheduled_job_run"}
+                ]
+            },
+            "role": "user",
+            "suggestions": [],
+            "updated_at": now,
+            "user_id": "user_admin",
+        }
+    }
+    app.state.store.scheduled_job_runs = {
+        "scheduled_job_run_explicit_ref": {
+            "created_at": now,
+            "error_code": "FAILED",
+            "error_message": "显式引用失败运行",
+            "finished_at": now,
+            "id": "scheduled_job_run_explicit_ref",
+            "records_imported": 0,
+            "result_summary": {},
+            "scheduled_job_id": "scheduled_job_ref",
+            "source_run_id": None,
+            "started_at": now,
+            "status": "failed",
+            "trigger_type": "manual",
+            "updated_at": now,
+        }
+    }
+
+    metrics = assistant_metrics_response(app.state.store, user={"id": "user_admin"})
+
+    assert metrics["summary"]["scheduled_job_run_total"] == 1
+    assert metrics["scheduled_job_run_attribution"] == {
+        "items": [
+            {"count": 0, "key": "assistant_triggered", "label": "助手触发"},
+            {"count": 1, "key": "explicit_reference", "label": "显式引用"},
+            {"count": 0, "key": "rerun_chain", "label": "复跑链"},
+        ],
+        "total": 1,
     }
 
 
@@ -3059,6 +3655,8 @@ def test_ai_assistant_metrics_reads_scheduled_job_runs_from_repository_read_mode
                     "updated_at": now,
                 },
                 {
+                    "assistant_action_draft_id": "assistant_action_draft_db",
+                    "assistant_action_run_id": "assistant_action_run_db",
                     "created_at": now,
                     "error_code": None,
                     "error_message": None,
@@ -3070,6 +3668,7 @@ def test_ai_assistant_metrics_reads_scheduled_job_runs_from_repository_read_mode
                     "source_run_id": "scheduled_job_run_db_failed",
                     "started_at": now,
                     "status": "succeeded",
+                    "triggered_by_assistant": True,
                     "trigger_type": "manual_rerun",
                     "updated_at": now,
                 },
@@ -3091,6 +3690,14 @@ def test_ai_assistant_metrics_reads_scheduled_job_runs_from_repository_read_mode
     assert metrics["summary"]["scheduled_job_run_success_rate"] == 0.5
     assert metrics["summary"]["failed_run_repaired_count"] == 1
     assert metrics["summary"]["failed_run_repair_rate"] == 1.0
+    assert metrics["scheduled_job_run_attribution"] == {
+        "items": [
+            {"count": 1, "key": "assistant_triggered", "label": "助手触发"},
+            {"count": 0, "key": "explicit_reference", "label": "显式引用"},
+            {"count": 1, "key": "rerun_chain", "label": "复跑链"},
+        ],
+        "total": 2,
+    }
 
 
 def test_ai_assistant_action_draft_modification_updates_metrics_and_audit():
@@ -5593,6 +6200,90 @@ def test_ai_assistant_chat_prioritizes_structured_reference_over_text_mention(
     assert message["intent"]["intent_code"] == "scheduled_job_run_once"
 
 
+def test_ai_assistant_chat_keeps_structured_reference_even_when_text_mentions_official_feedback(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    base_job = {
+        "agent_id": None,
+        "config_json": {},
+        "created_at": "2026-06-16T08:00:00+00:00",
+        "created_by": "user_admin",
+        "cron_expression": None,
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "interval_seconds": None,
+        "knowledge_document_ids": [],
+        "last_failure_at": None,
+        "last_run_at": None,
+        "last_success_at": None,
+        "lock_ttl_seconds": 900,
+        "max_retry_count": 0,
+        "model_gateway_config_id": None,
+        "next_run_at": None,
+        "plugin_action_id": None,
+        "plugin_action_ids": [],
+        "plugin_connection_id": None,
+        "plugin_connection_ids": [],
+        "plugin_input_mapping": {},
+        "plugin_output_mapping": {},
+        "product_id": None,
+        "result_actions": [],
+        "schedule_type": "manual",
+        "skill_ids": [],
+        "status": "active",
+        "timeout_seconds": 600,
+        "timezone": "Asia/Shanghai",
+        "updated_at": "2026-06-16T08:00:00+00:00",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_selected_daily"] = {
+        **base_job,
+        "id": "scheduled_job_selected_daily",
+        "job_type": "dashboard_snapshot_refresh",
+        "name": "用户明确选择的每日看板刷新",
+        "source_system": "ai-brain",
+    }
+    app.state.store.scheduled_jobs["scheduled_job_weekly_feedback_official"] = {
+        **base_job,
+        "code": "weekly_feedback_insight",
+        "config_json": {"assistant_template": {"code": "weekly_feedback_insight"}},
+        "id": "scheduled_job_weekly_feedback_official",
+        "job_type": "user_feedback_insight_extract",
+        "name": "提取每周用户反馈有价值信息",
+        "source_system": "aliyun-maxcompute",
+    }
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("structured run should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={
+            "message": "@提取每周用户反馈有价值信息 执行一次",
+            "references": [
+                {
+                    "id": "scheduled_job_selected_daily",
+                    "type": "scheduled_job",
+                }
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    run = next(iter(app.state.store.scheduled_job_runs.values()))
+    assert run["scheduled_job_id"] == "scheduled_job_selected_daily"
+    message = response.json()["data"]["message"]
+    assert "已执行「用户明确选择的每日看板刷新」一次" in message["content"]
+    assert message["tool_results"][0]["summary"]["scheduled_job_id"] == (
+        "scheduled_job_selected_daily"
+    )
+
+
 def test_ai_assistant_chat_prefers_enabled_job_when_run_once_alias_matches_history(
     monkeypatch,
 ):
@@ -5748,7 +6439,7 @@ def test_ai_assistant_chat_prefers_weekly_feedback_job_when_alias_matches_multip
     )
 
 
-def test_ai_assistant_chat_prefers_official_feedback_insight_over_generic_maxcompute_job(
+def test_ai_assistant_chat_prefers_structured_reference_over_official_feedback_text(
     monkeypatch,
 ):
     headers = auth_headers()
@@ -5824,15 +6515,15 @@ def test_ai_assistant_chat_prefers_official_feedback_insight_over_generic_maxcom
 
     assert response.status_code == 200
     message = response.json()["data"]["message"]
-    assert "已执行「每周用户反馈洞察抽取」一次" in message["content"]
+    assert "已执行「每周用户反馈原始数据同步」一次" in message["content"]
     run = next(iter(app.state.store.scheduled_job_runs.values()))
-    assert run["scheduled_job_id"] == "scheduled_job_feedback_insight"
+    assert run["scheduled_job_id"] == "scheduled_job_feedback_raw_sync"
     assert message["tool_results"][0]["summary"]["scheduled_job_id"] == (
-        "scheduled_job_feedback_insight"
+        "scheduled_job_feedback_raw_sync"
     )
 
 
-def test_ai_assistant_chat_prefers_enabled_official_feedback_insight_over_disabled_exact_match(
+def test_ai_assistant_chat_keeps_disabled_structured_reference_in_strict_mode(
     monkeypatch,
 ):
     headers = auth_headers()
@@ -5907,16 +6598,14 @@ def test_ai_assistant_chat_prefers_enabled_official_feedback_insight_over_disabl
 
     assert response.status_code == 200
     message = response.json()["data"]["message"]
-    assert "没有执行成功" not in message["content"]
-    assert "已执行「每周用户反馈洞察抽取」一次" in message["content"]
-    run = next(iter(app.state.store.scheduled_job_runs.values()))
-    assert run["scheduled_job_id"] == "scheduled_job_feedback_insight"
+    assert "没有执行成功：Scheduled job is disabled" in message["content"]
+    assert app.state.store.scheduled_job_runs == {}
     assert message["tool_results"][0]["summary"]["scheduled_job_id"] == (
-        "scheduled_job_feedback_insight"
+        "scheduled_job_feedback_raw_disabled"
     )
 
 
-def test_ai_assistant_chat_explicit_mention_overrides_wrong_command_reference(
+def test_ai_assistant_chat_does_not_override_wrong_structured_reference_with_text_mention(
     monkeypatch,
 ):
     headers = auth_headers()
@@ -5991,11 +6680,10 @@ def test_ai_assistant_chat_explicit_mention_overrides_wrong_command_reference(
 
     assert response.status_code == 200
     message = response.json()["data"]["message"]
-    assert "已执行「提取每周用户反馈有价值信息」一次" in message["content"]
-    run = next(iter(app.state.store.scheduled_job_runs.values()))
-    assert run["scheduled_job_id"] == "scheduled_job_feedback_exact"
+    assert "没有执行成功：Scheduled job is disabled" in message["content"]
+    assert app.state.store.scheduled_job_runs == {}
     assert message["tool_results"][0]["summary"]["scheduled_job_id"] == (
-        "scheduled_job_feedback_exact"
+        "scheduled_job_feedback_similar"
     )
 
 

@@ -22,7 +22,10 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
     user_draft_ids = {str(draft["id"]) for draft in drafts if draft.get("id") is not None}
     runs = [run for run in runs if str(run.get("draft_id")) in user_draft_ids]
     messages = [message for message in messages if str(message.get("user_id")) == user_id]
-    scheduled_job_runs = _filter_scheduled_job_runs_for_assistant_scope(
+    (
+        scheduled_job_runs,
+        scheduled_job_run_attribution,
+    ) = _filter_scheduled_job_runs_for_assistant_scope(
         scheduled_job_runs,
         action_runs=runs,
         messages=messages,
@@ -52,6 +55,8 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
     ]
     draft_user_modified_count = sum(1 for draft in drafts if _draft_was_user_modified(draft))
     draft_viewed_count = sum(1 for draft in drafts if _draft_was_viewed(draft))
+    draft_detail_viewed_count = sum(1 for draft in drafts if _draft_was_detail_viewed(draft))
+    draft_deeplink_viewed_count = sum(1 for draft in drafts if _draft_was_deeplink_viewed(draft))
     knowledge_request_count, knowledge_hit_count = _knowledge_reference_hit_stats(messages)
     continued_followup_or_repair_count = _continued_followup_or_repair_count(user_messages)
 
@@ -61,6 +66,8 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
             "stages": _assistant_effectiveness_funnel_stages(
                 draft_confirmed_count=draft_status_counts["confirmed"],
                 draft_generated_count=draft_total,
+                draft_deeplink_viewed_count=draft_deeplink_viewed_count,
+                draft_detail_viewed_count=draft_detail_viewed_count,
                 draft_modified_count=draft_user_modified_count,
                 draft_viewed_count=draft_viewed_count,
                 intent_triggered_count=len(user_messages),
@@ -87,8 +94,11 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
                 draft_total,
             ),
             "draft_total": draft_total,
+            "draft_deeplink_viewed_count": draft_deeplink_viewed_count,
+            "draft_detail_viewed_count": draft_detail_viewed_count,
             "draft_user_modified_count": draft_user_modified_count,
             "draft_user_modified_rate": _rate(draft_user_modified_count, draft_total),
+            "draft_viewed_count": draft_viewed_count,
             "failed_run_repair_rate": _rate(
                 repaired_failed_run_count,
                 scheduled_job_run_failed_count,
@@ -115,6 +125,26 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
             ),
             "scheduled_job_run_total": scheduled_job_run_total,
             "user_message_total": len(user_messages),
+        },
+        "scheduled_job_run_attribution": {
+            "items": [
+                {
+                    "count": int(scheduled_job_run_attribution.get("assistant_triggered", 0)),
+                    "key": "assistant_triggered",
+                    "label": "助手触发",
+                },
+                {
+                    "count": int(scheduled_job_run_attribution.get("explicit_reference", 0)),
+                    "key": "explicit_reference",
+                    "label": "显式引用",
+                },
+                {
+                    "count": int(scheduled_job_run_attribution.get("rerun_chain", 0)),
+                    "key": "rerun_chain",
+                    "label": "复跑链",
+                },
+            ],
+            "total": scheduled_job_run_total,
         },
     }
 
@@ -230,12 +260,21 @@ def _filter_scheduled_job_runs_for_assistant_scope(
     *,
     action_runs: list[dict[str, Any]],
     messages: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    scheduled_job_ids = {
-        str(run.get("result_id") or (run.get("result") or {}).get("id"))
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    action_run_ids = {
+        str(run.get("id"))
         for run in action_runs
-        if run.get("result_type") == "scheduled_job"
-        and (run.get("result_id") or (run.get("result") or {}).get("id"))
+        if run.get("id")
+    }
+    action_draft_ids = {
+        str(run.get("draft_id"))
+        for run in action_runs
+        if run.get("draft_id")
+    }
+    message_ids = {
+        str(message.get("id"))
+        for message in messages
+        if message.get("id")
     }
     referenced_run_ids: set[str] = set()
     for message in messages:
@@ -243,24 +282,83 @@ def _filter_scheduled_job_runs_for_assistant_scope(
             reference_id = str(reference.get("id") or "").strip()
             if not reference_id:
                 continue
-            if reference.get("type") == "scheduled_job":
-                scheduled_job_ids.add(reference_id)
-            elif reference.get("type") == "scheduled_job_run":
+            if reference.get("type") == "scheduled_job_run":
                 referenced_run_ids.add(reference_id)
-    if not scheduled_job_ids and not referenced_run_ids:
-        return []
-    scoped_runs = []
+    if not action_run_ids and not action_draft_ids and not message_ids and not referenced_run_ids:
+        return [], {}
+    runs_by_id = {
+        str(run.get("id") or ""): run
+        for run in scheduled_job_runs
+        if run.get("id")
+    }
+    scoped_run_ids: set[str] = set()
+    attribution_reasons: dict[str, set[str]] = defaultdict(set)
     for run in scheduled_job_runs:
         run_id = str(run.get("id") or "")
         source_run_id = str(run.get("source_run_id") or "")
-        scheduled_job_id = str(run.get("scheduled_job_id") or "")
+        assistant_action_run_id = str(run.get("assistant_action_run_id") or "")
+        assistant_action_draft_id = str(run.get("assistant_action_draft_id") or "")
+        assistant_source_message_id = str(run.get("assistant_source_message_id") or "")
+        if run_id in referenced_run_ids:
+            attribution_reasons[run_id].add("explicit_reference")
+        if source_run_id in referenced_run_ids:
+            attribution_reasons[run_id].add("rerun_chain")
         if (
-            scheduled_job_id in scheduled_job_ids
-            or run_id in referenced_run_ids
-            or source_run_id in referenced_run_ids
+            assistant_action_run_id in action_run_ids
+            or assistant_action_draft_id in action_draft_ids
+            or (
+                run.get("triggered_by_assistant") is True
+                and assistant_source_message_id in message_ids
+            )
         ):
-            scoped_runs.append(run)
-    return scoped_runs
+            attribution_reasons[run_id].add("assistant_triggered")
+        if attribution_reasons.get(run_id):
+            scoped_run_ids.add(run_id)
+            if source_run_id:
+                scoped_run_ids.add(source_run_id)
+                attribution_reasons[source_run_id].add("rerun_chain")
+    changed = True
+    while changed:
+        changed = False
+        for run in scheduled_job_runs:
+            run_id = str(run.get("id") or "")
+            source_run_id = str(run.get("source_run_id") or "")
+            if run_id in scoped_run_ids:
+                continue
+            if (
+                run.get("trigger_type") == "manual_rerun"
+                and source_run_id
+                and source_run_id in scoped_run_ids
+            ):
+                scoped_run_ids.add(run_id)
+                attribution_reasons[run_id].add("rerun_chain")
+                changed = True
+    scoped_runs = [
+        runs_by_id[run_id]
+        for run_id in scoped_run_ids
+        if run_id in runs_by_id
+    ]
+    return scoped_runs, _scheduled_job_run_attribution_counts(scoped_runs, attribution_reasons)
+
+
+def _scheduled_job_run_attribution_counts(
+    scheduled_job_runs: list[dict[str, Any]],
+    attribution_reasons: dict[str, set[str]],
+) -> dict[str, int]:
+    counts = {
+        "assistant_triggered": 0,
+        "explicit_reference": 0,
+        "rerun_chain": 0,
+    }
+    for run in scheduled_job_runs:
+        reasons = attribution_reasons.get(str(run.get("id") or ""), set())
+        if "assistant_triggered" in reasons:
+            counts["assistant_triggered"] += 1
+        elif "explicit_reference" in reasons:
+            counts["explicit_reference"] += 1
+        elif "rerun_chain" in reasons:
+            counts["rerun_chain"] += 1
+    return counts
 
 
 def _repaired_failed_run_count(scheduled_job_runs: list[dict[str, Any]]) -> int:
@@ -333,6 +431,16 @@ def _draft_was_viewed(draft: dict[str, Any]) -> bool:
     )
 
 
+def _draft_was_detail_viewed(draft: dict[str, Any]) -> bool:
+    metadata = draft.get("metadata_json") or {}
+    return bool(metadata.get("detail_viewed_at"))
+
+
+def _draft_was_deeplink_viewed(draft: dict[str, Any]) -> bool:
+    metadata = draft.get("metadata_json") or {}
+    return bool(metadata.get("deeplink_viewed_at"))
+
+
 def _continued_followup_or_repair_count(messages: list[dict[str, Any]]) -> int:
     count = 0
     for message in messages:
@@ -362,6 +470,8 @@ def _assistant_effectiveness_funnel_stages(
     intent_triggered_count: int,
     draft_generated_count: int,
     draft_viewed_count: int,
+    draft_detail_viewed_count: int,
+    draft_deeplink_viewed_count: int,
     draft_modified_count: int,
     draft_confirmed_count: int,
     run_succeeded_count: int,
@@ -383,8 +493,20 @@ def _assistant_effectiveness_funnel_stages(
         {
             "count": draft_viewed_count,
             "key": "draft_viewed",
-            "label": "查看详情",
+            "label": "查看草案",
             "sort_order": 30,
+        },
+        {
+            "count": draft_detail_viewed_count,
+            "key": "draft_detail_viewed",
+            "label": "查看详情",
+            "sort_order": 31,
+        },
+        {
+            "count": draft_deeplink_viewed_count,
+            "key": "draft_deeplink_viewed",
+            "label": "深链打开",
+            "sort_order": 32,
         },
         {
             "count": draft_modified_count,

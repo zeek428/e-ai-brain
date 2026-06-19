@@ -158,7 +158,9 @@ class ScheduledAiJobReadRepository:
                            resolved_agent_snapshot, resolved_skill_snapshots,
                            resolved_prompt_snapshot, tool_policy_snapshot, result_summary,
                            created_at, updated_at, resolved_plugin_snapshot,
-                           plugin_invocation_log_id
+                           plugin_invocation_log_id, assistant_action_run_id,
+                           assistant_action_draft_id, assistant_source_message_id,
+                           triggered_by_assistant
                     FROM scheduled_job_runs
                     {where}
                     ORDER BY started_at DESC NULLS LAST, id DESC
@@ -393,7 +395,9 @@ class ScheduledAiJobReadRepository:
                   error_code, error_message, config_snapshot, resolved_agent_snapshot,
                   resolved_skill_snapshots, resolved_prompt_snapshot, tool_policy_snapshot,
                   result_summary, created_at, updated_at, resolved_plugin_snapshot,
-                  plugin_invocation_log_id
+                  plugin_invocation_log_id, assistant_action_run_id,
+                  assistant_action_draft_id, assistant_source_message_id,
+                  triggered_by_assistant
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
@@ -401,7 +405,8 @@ class ScheduledAiJobReadRepository:
                   %s, %s, %s::jsonb, %s::jsonb,
                   %s::jsonb, %s::jsonb, %s::jsonb,
                   %s::jsonb, COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now()), %s::jsonb, %s
+                  COALESCE(%s::timestamptz, now()), %s::jsonb, %s,
+                  %s, %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   scheduled_job_id = EXCLUDED.scheduled_job_id,
@@ -423,6 +428,10 @@ class ScheduledAiJobReadRepository:
                   result_summary = EXCLUDED.result_summary,
                   resolved_plugin_snapshot = EXCLUDED.resolved_plugin_snapshot,
                   plugin_invocation_log_id = EXCLUDED.plugin_invocation_log_id,
+                  assistant_action_run_id = EXCLUDED.assistant_action_run_id,
+                  assistant_action_draft_id = EXCLUDED.assistant_action_draft_id,
+                  assistant_source_message_id = EXCLUDED.assistant_source_message_id,
+                  triggered_by_assistant = EXCLUDED.triggered_by_assistant,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -448,6 +457,10 @@ class ScheduledAiJobReadRepository:
                     run.get("updated_at") or run.get("created_at"),
                     _json(run.get("resolved_plugin_snapshot"), {}),
                     run.get("plugin_invocation_log_id"),
+                    run.get("assistant_action_run_id"),
+                    run.get("assistant_action_draft_id"),
+                    run.get("assistant_source_message_id"),
+                    bool(run.get("triggered_by_assistant")),
                 ),
             )
 
@@ -571,4 +584,8 @@ class ScheduledAiJobReadRepository:
             "updated_at": row[19].isoformat() if row[19] else None,
             "resolved_plugin_snapshot": row[20] or {},
             "plugin_invocation_log_id": row[21],
+            "assistant_action_run_id": row[22],
+            "assistant_action_draft_id": row[23],
+            "assistant_source_message_id": row[24],
+            "triggered_by_assistant": bool(row[25]),
         }

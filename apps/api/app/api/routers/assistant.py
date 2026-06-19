@@ -15,6 +15,7 @@ from app.services.assistant_action_drafts import (
     create_assistant_action_draft_response,
     get_assistant_action_draft_response,
     mark_assistant_action_draft_modified_response,
+    mark_assistant_action_draft_viewed_response,
 )
 from app.services.assistant_chat import (
     ASSISTANT_ACCESS_ROLES,
@@ -32,7 +33,15 @@ from app.services.assistant_references import (
     assistant_reference_candidates_response,
     resolve_assistant_references,
 )
-from app.services.assistant_role_quick_tasks import list_assistant_role_quick_tasks_response
+from app.services.assistant_role_quick_tasks import (
+    create_assistant_role_quick_task_config_response,
+    delete_assistant_role_quick_task_config_response,
+    list_assistant_role_quick_task_configs_response,
+    list_assistant_role_quick_tasks_response,
+    patch_assistant_role_quick_task_config_response,
+    set_assistant_role_quick_task_status_response,
+    update_assistant_role_quick_task_rollout_response,
+)
 
 settings = get_settings()
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
@@ -65,6 +74,62 @@ class AssistantActionDraftCancelRequest(BaseModel):
 class AssistantActionDraftModificationRequest(BaseModel):
     modified_fields: list[str] = Field(default_factory=list)
     user_modified: bool = True
+
+
+class AssistantActionDraftViewRequest(BaseModel):
+    surface: str | None = None
+
+
+class AssistantRoleQuickTaskConfigRequest(BaseModel):
+    analytics_key: str | None = None
+    enabled: bool = True
+    enterprise_id: str | None = None
+    group_enabled: bool = True
+    group_key: str
+    group_label: str
+    group_roles: list[str] = Field(default_factory=list)
+    group_sort_order: int = 0
+    id: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    permissions: list[str] = Field(default_factory=list)
+    prompt: str
+    rollout_json: dict[str, Any] = Field(default_factory=dict)
+    sort_order: int = 0
+    target_draft_type: str | None = None
+    task_key: str
+    template_version: str | None = None
+    title: str
+
+
+class AssistantRoleQuickTaskConfigPatchRequest(BaseModel):
+    analytics_key: str | None = None
+    enabled: bool | None = None
+    enterprise_id: str | None = None
+    group_enabled: bool | None = None
+    group_key: str | None = None
+    group_label: str | None = None
+    group_roles: list[str] | None = None
+    group_sort_order: int | None = None
+    metadata_json: dict[str, Any] | None = None
+    permissions: list[str] | None = None
+    prompt: str | None = None
+    rollout_json: dict[str, Any] | None = None
+    sort_order: int | None = None
+    target_draft_type: str | None = None
+    task_key: str | None = None
+    template_version: str | None = None
+    title: str | None = None
+
+
+class AssistantRoleQuickTaskStatusRequest(BaseModel):
+    enabled: bool
+    group_enabled: bool | None = None
+
+
+class AssistantRoleQuickTaskRolloutRequest(BaseModel):
+    enterprise_id: str | None = None
+    rollout_json: dict[str, Any] = Field(default_factory=dict)
+    template_version: str | None = None
 
 
 @router.get("/conversations")
@@ -157,6 +222,23 @@ def mark_assistant_action_draft_modified(
     return envelope(result, get_trace_id(request))
 
 
+@router.post("/action-drafts/{draft_id}/view")
+def mark_assistant_action_draft_viewed(
+    draft_id: str,
+    request: Request,
+    payload: AssistantActionDraftViewRequest | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    result = mark_assistant_action_draft_viewed_response(
+        current_store=store(request),
+        draft_id=draft_id,
+        surface=payload.surface if payload else None,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
 @router.get("/metrics")
 def assistant_metrics(
     request: Request,
@@ -186,8 +268,107 @@ def list_assistant_role_quick_tasks(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, ASSISTANT_ACCESS_ROLES)
-    payload = list_assistant_role_quick_tasks_response(user=user)
+    payload = list_assistant_role_quick_tasks_response(
+        current_store=store(request),
+        user=user,
+    )
     return envelope(payload, get_trace_id(request))
+
+
+@router.get("/role-quick-task-configs")
+def list_assistant_role_quick_task_configs(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    payload = list_assistant_role_quick_task_configs_response(
+        current_store=store(request),
+    )
+    return envelope(payload, get_trace_id(request))
+
+
+@router.post("/role-quick-task-configs")
+def create_assistant_role_quick_task_config(
+    request: Request,
+    payload: AssistantRoleQuickTaskConfigRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = create_assistant_role_quick_task_config_response(
+        current_store=store(request),
+        payload=payload.model_dump(exclude_none=True),
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.patch("/role-quick-task-configs/{config_id}")
+def patch_assistant_role_quick_task_config(
+    config_id: str,
+    request: Request,
+    payload: AssistantRoleQuickTaskConfigPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = patch_assistant_role_quick_task_config_response(
+        config_id=config_id,
+        current_store=store(request),
+        payload=payload.model_dump(exclude_unset=True),
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/role-quick-task-configs/{config_id}/status")
+def set_assistant_role_quick_task_status(
+    config_id: str,
+    request: Request,
+    payload: AssistantRoleQuickTaskStatusRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = set_assistant_role_quick_task_status_response(
+        config_id=config_id,
+        current_store=store(request),
+        enabled=payload.enabled,
+        group_enabled=payload.group_enabled,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.put("/role-quick-task-configs/{config_id}/rollout")
+def update_assistant_role_quick_task_rollout(
+    config_id: str,
+    request: Request,
+    payload: AssistantRoleQuickTaskRolloutRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = update_assistant_role_quick_task_rollout_response(
+        config_id=config_id,
+        current_store=store(request),
+        enterprise_id=payload.enterprise_id,
+        rollout_json=payload.rollout_json,
+        template_version=payload.template_version,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.delete("/role-quick-task-configs/{config_id}")
+def delete_assistant_role_quick_task_config(
+    config_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = delete_assistant_role_quick_task_config_response(
+        config_id=config_id,
+        current_store=store(request),
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
 
 
 @router.get("/reference-candidates")

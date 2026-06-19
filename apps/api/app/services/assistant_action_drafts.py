@@ -28,6 +28,7 @@ from app.services.scheduled_jobs import (
     create_scheduled_job_response,
     effective_scheduled_job_execution_mode,
     effective_scheduled_job_type,
+    persist_record,
     run_scheduled_job_response,
     sync_ai_agent_store,
     sync_ai_skill_store,
@@ -277,6 +278,12 @@ def confirm_assistant_action_draft_response(
         "updated_at": now,
     }
     current_store.assistant_action_runs[run["id"]] = run
+    _attach_assistant_run_attribution_to_scheduled_job_run(
+        current_store,
+        action_run=run,
+        draft=draft,
+        result=result,
+    )
     draft.update(
         {
             "confirmed_at": now,
@@ -462,6 +469,52 @@ def mark_assistant_action_draft_modified_response(
         payload={
             "modified_field_count": len(cleaned_fields),
             "modified_fields": cleaned_fields,
+        },
+    )
+    save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
+    return public_assistant_action_draft(draft, current_store=current_store, user=user)
+
+
+def mark_assistant_action_draft_viewed_response(
+    *,
+    current_store: Any,
+    draft_id: str,
+    surface: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    ensure_action_collections(current_store)
+    draft = get_assistant_action_draft(current_store, draft_id=draft_id)
+    ensure_draft_access(draft, user=user)
+    draft = refresh_assistant_action_draft_expiry(current_store, draft)
+    now = now_iso()
+    metadata_json = deepcopy(draft.get("metadata_json") or {})
+    view_count = _safe_int(metadata_json.get("view_count")) + 1
+    view_surface = _clean_view_surface(surface)
+    if not metadata_json.get("viewed_at"):
+        metadata_json["viewed_at"] = now
+    if view_surface == "detail_modal":
+        metadata_json["detail_viewed_at"] = now
+    elif view_surface == "deeplink":
+        metadata_json["deeplink_viewed_at"] = now
+    metadata_json["last_viewed_at"] = now
+    metadata_json["last_view_surface"] = view_surface
+    metadata_json["view_count"] = view_count
+    metadata_json["viewed_by"] = user["id"]
+    draft.update(
+        {
+            "metadata_json": metadata_json,
+            "updated_at": now,
+        }
+    )
+    current_store.assistant_action_drafts[draft["id"]] = draft
+    audit_event = current_store.audit(
+        event_type="assistant_action_draft.viewed",
+        actor_id=user["id"],
+        subject_type="assistant_action_draft",
+        subject_id=draft["id"],
+        payload={
+            "surface": metadata_json["last_view_surface"],
+            "view_count": view_count,
         },
     )
     save_assistant_action_records(current_store, draft=draft, audit_events=[audit_event])
@@ -852,6 +905,46 @@ def _assistant_action_confirm_audit_extras(result: dict[str, Any]) -> dict[str, 
     return {"scheduled_job_run_id": run_id}
 
 
+def _attach_assistant_run_attribution_to_scheduled_job_run(
+    current_store: Any,
+    *,
+    action_run: dict[str, Any],
+    draft: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    scheduled_job_run = result.get("scheduled_job_run")
+    if not isinstance(scheduled_job_run, dict):
+        return
+    scheduled_job_run_id = str(scheduled_job_run.get("id") or "").strip()
+    if not scheduled_job_run_id:
+        return
+    if not hasattr(current_store, "scheduled_job_runs"):
+        current_store.scheduled_job_runs = {}
+    run_record = getattr(current_store, "scheduled_job_runs", {}).get(scheduled_job_run_id)
+    if not isinstance(run_record, dict):
+        run_record = dict(scheduled_job_run)
+    now = now_iso()
+    attribution = {
+        "assistant_action_draft_id": draft["id"],
+        "assistant_action_run_id": action_run["id"],
+        "assistant_source_message_id": draft.get("source_message_id"),
+        "triggered_by_assistant": True,
+    }
+    run_record = {
+        **run_record,
+        **attribution,
+        "updated_at": now,
+    }
+    current_store.scheduled_job_runs[scheduled_job_run_id] = run_record
+    result["scheduled_job_run"] = {
+        **scheduled_job_run,
+        **attribution,
+        "updated_at": now,
+    }
+    action_run["result"] = deepcopy(result)
+    persist_record(current_store, "save_scheduled_job_run_record", run_record)
+
+
 def get_assistant_action_draft(
     current_store: Any,
     *,
@@ -924,6 +1017,20 @@ def _clean_modified_fields(modified_fields: list[str]) -> list[str]:
         seen.add(value)
         cleaned.append(value)
     return cleaned
+
+
+def _clean_view_surface(surface: str | None) -> str:
+    value = str(surface or "").strip()
+    if not value:
+        return "detail_modal"
+    return value[:64]
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def ensure_action_collections(current_store: Any) -> None:

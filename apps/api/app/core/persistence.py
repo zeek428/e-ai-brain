@@ -189,6 +189,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "060_scheduled_job_run_permission.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "061_assistant_metrics_and_role_quick_tasks.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1197,6 +1201,36 @@ class PostgresSnapshotRepository:
     def get_assistant_action_draft(self, *, draft_id: str) -> dict[str, Any] | None:
         return self._assistant_chat_read_repository.get_assistant_action_draft(
             draft_id=draft_id,
+        )
+
+    def list_assistant_role_quick_tasks(self) -> list[dict[str, Any]]:
+        return self._assistant_chat_read_repository.list_assistant_role_quick_tasks()
+
+    def get_assistant_role_quick_task(self, *, config_id: str) -> dict[str, Any] | None:
+        return self._assistant_chat_read_repository.get_assistant_role_quick_task(
+            config_id=config_id,
+        )
+
+    def save_assistant_role_quick_task_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._assistant_chat_read_repository.save_assistant_role_quick_task_record(
+            record,
+            audit_event=audit_event,
+        )
+
+    def delete_assistant_role_quick_task_record(
+        self,
+        config_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._assistant_chat_read_repository.delete_assistant_role_quick_task_record(
+            config_id,
+            audit_event=audit_event,
         )
 
     def save_assistant_action_records(

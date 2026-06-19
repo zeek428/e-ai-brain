@@ -8,7 +8,11 @@
 ## [Unreleased]
 
 ### Fixed
-- AI 助手 `@... 执行一次` 上下文优先级收敛：后端优先使用请求中的结构化 `references[]`，文本 `@` 解析只作为兜底；停用/不可运行引用和官方周反馈洞察作业仍按既有消歧规则纠偏，避免自然语言误覆盖用户主动选择的引用。
+- AI 助手确定性意图注册表改为 match-all 后按 `conflict_policy` 解析，fallback 意图不再仅凭更高 priority 覆盖具体意图；同时移除未使用的旧结构化引用 override helper，避免后续误接回文本 `@` 覆盖结构化引用。
+- AI 助手草案查看指标拆分：深链加载只写 `deeplink_viewed_at`，详情弹窗只写 `detail_viewed_at`，效果漏斗可区分“查看草案”“查看详情”和“深链打开”。
+- AI 助手 `@... 执行一次` 上下文优先级收敛：后端优先使用请求中的结构化 `references[]`，文本 `@` 解析只作为兜底；结构化引用不可执行时返回明确错误或草案兜底，官方周反馈消歧仅在没有结构化作业引用时生效，避免自然语言误覆盖用户主动选择的引用。
+- AI 助手效果指标作业成功率归因收紧：只统计带 `assistant_action_run_id`、`assistant_action_draft_id`、`assistant_source_message_id` 或显式运行引用的定时作业运行，不再把助手创建或引用过的作业后续全部运行计入助手指标。
+- AI 助手 @ 候选请求增加 debounce 和 AbortController，连续输入时取消旧请求，避免旧候选响应覆盖当前关键词。
 - AI 助手 run-once 权限预检：无定时作业执行权限的用户输入 `@... 执行一次` 时，发送前会提示当前账号不会直接执行并标明所需 `system.scheduled_jobs.run`，避免发送后才发现没有运行记录。
 - AI 助手 @ 执行一次等待执行器状态可见：当定时作业已触发但运行停在外部 AI 执行器队列时，助手回复和运行卡片展示“等待 AI 执行器接单”的 `progress_text`，避免误判为未执行。
 - AI 助手运行诊断数据连接日志追踪：数据连接阶段现在会读取 `execution_nodes.data_connection.plugin_invocation_log_id`，同一次运行的取数日志和结果动作写入日志不会互相覆盖。
@@ -16,6 +20,11 @@
 - AI 助手效果指标失败修复率口径收紧：只有成功 `manual_rerun` 且带 `source_run_id` 的复跑才会把来源失败运行计为已修复，普通调度成功不再误算。
 
 ### Added
+- AI 助手角色快捷任务运营配置 API：新增 `/api/assistant/role-quick-task-configs` 及 `/status`、`/rollout`，支持管理员新增、编辑、启停、企业/模板版本/灰度调整和删除角色快捷任务配置，并写入 `assistant_role_quick_task.*` 审计事件。
+- AI 助手定时作业运行归因解释：`/api/assistant/metrics` 新增 `scheduled_job_run_attribution`，按“助手触发、显式引用、复跑链”解释作业运行成功率分母来源，前端运行追踪面板展示该分布。
+- AI 助手草案详情查看埋点：新增 `POST /api/assistant/action-drafts/{draft_id}/view`，详情弹窗和草案深链都会写入服务端查看元数据与 `assistant_action_draft.viewed` 审计，效果漏斗“查看详情”不再依赖前端临时态。
+- AI 助手定时作业运行归因字段：`scheduled_job_runs` 新增 `assistant_action_run_id`、`assistant_action_draft_id`、`assistant_source_message_id` 和 `triggered_by_assistant`，支持 run-once 和草案确认后的指标追踪。
+- AI 助手角色快捷任务配置表：新增 `assistant_role_quick_tasks`，支持任务组、角色、权限、启停、排序、模板版本和灰度元数据，接口无配置时兼容内置默认目录。
 - AI 助手角色快捷任务后端配置化：新增 `/api/assistant/role-quick-tasks`，按角色、权限、启用状态和排序返回产品、研发、测试、知识、管理员快捷任务，前端不再硬编码角色入口。
 - AI 助手确定性意图元数据：聊天响应新增 `message.intent`，工具结果顶层可带 `intent_code/intent_confidence/required_refs`，前端在助手回复中展示“将执行…”提示。
 - AI 助手草案预检修复动作：`preview.validation.issues[]` 支持 `repair_action`，前端可展示“修正 Cron 表达式”“生成结果动作草案”“打开连接测试”等下一步操作。

@@ -17,6 +17,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   window.history.pushState({}, '', '/');
@@ -135,7 +136,9 @@ describe('AssistantPage', () => {
                 stages: [
                   { count: 4, key: 'intent_triggered', label: '触发意图', sort_order: 10 },
                   { count: 4, key: 'draft_generated', label: '生成草案', sort_order: 20 },
-                  { count: 2, key: 'draft_viewed', label: '查看详情', sort_order: 30 },
+                  { count: 3, key: 'draft_viewed', label: '查看草案', sort_order: 30 },
+                  { count: 2, key: 'draft_detail_viewed', label: '查看详情', sort_order: 31 },
+                  { count: 1, key: 'draft_deeplink_viewed', label: '深链打开', sort_order: 32 },
                   { count: 1, key: 'draft_modified', label: '修改字段', sort_order: 40 },
                   { count: 2, key: 'draft_confirmed', label: '确认草案', sort_order: 50 },
                   { count: 4, key: 'run_succeeded', label: '运行成功', sort_order: 60 },
@@ -155,8 +158,11 @@ describe('AssistantPage', () => {
                 draft_failed_count: 0,
                 draft_pending_count: 1,
                 draft_total: 4,
+                draft_deeplink_viewed_count: 1,
+                draft_detail_viewed_count: 2,
                 draft_user_modified_count: 1,
                 draft_user_modified_rate: 0.25,
+                draft_viewed_count: 3,
                 failed_run_repaired_count: 2,
                 failed_run_repair_rate: 1,
                 failed_run_total: 2,
@@ -171,6 +177,14 @@ describe('AssistantPage', () => {
                 scheduled_job_run_success_rate: 0.8,
                 scheduled_job_run_total: 5,
                 user_message_total: 4,
+              },
+              scheduled_job_run_attribution: {
+                items: [
+                  { count: 3, key: 'assistant_triggered', label: '助手触发' },
+                  { count: 1, key: 'explicit_reference', label: '显式引用' },
+                  { count: 1, key: 'rerun_chain', label: '复跑链' },
+                ],
+                total: 5,
               },
             },
           }),
@@ -215,6 +229,9 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('运行追踪 失败修复')).toHaveTextContent(
       '已修复 2 · 失败运行 2',
     );
+    expect(screen.getByLabelText('运行追踪 归因来源')).toHaveTextContent(
+      '助手触发 3 · 显式引用 1 · 复跑链 1',
+    );
     expect(screen.getByText('引用追踪')).toBeInTheDocument();
     expect(screen.getByLabelText('引用追踪 用户消息')).toHaveTextContent(
       '已引用 3 · 用户消息 4',
@@ -224,7 +241,9 @@ describe('AssistantPage', () => {
     );
     expect(screen.getByText('效果漏斗')).toBeInTheDocument();
     expect(screen.getByLabelText('效果漏斗 触发意图')).toHaveTextContent('4');
+    expect(screen.getByLabelText('效果漏斗 查看草案')).toHaveTextContent('3');
     expect(screen.getByLabelText('效果漏斗 查看详情')).toHaveTextContent('2');
+    expect(screen.getByLabelText('效果漏斗 深链打开')).toHaveTextContent('1');
     expect(screen.getByLabelText('效果漏斗 继续追问/修复')).toHaveTextContent('1');
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/assistant/conversations', 'GET'],
@@ -341,7 +360,7 @@ describe('AssistantPage', () => {
     });
 
     const candidatePanel = await screen.findByLabelText('引用候选');
-    expect(within(candidatePanel).getByText('没有找到可执行的定时作业引用')).toBeInTheDocument();
+    expect(await within(candidatePanel).findByText('没有找到可执行的定时作业引用')).toBeInTheDocument();
     expect(within(candidatePanel).getByText('请先新增或确认一个定时作业，再回到助手里 @ 它执行一次。')).toBeInTheDocument();
     expect(
       within(candidatePanel).getByRole('link', { name: '去任务中心新增定时作业' }),
@@ -526,7 +545,7 @@ describe('AssistantPage', () => {
       target: { value: '基于 @支付 分析提交无响应' },
     });
     const referenceCandidatePanel = await screen.findByLabelText('引用候选');
-    expect(within(referenceCandidatePanel).getByText('权限：可引用')).toBeInTheDocument();
+    expect(await within(referenceCandidatePanel).findByText('权限：可引用')).toBeInTheDocument();
     expect(within(referenceCandidatePanel).getByText('来源：知识库')).toBeInTheDocument();
     expect(within(referenceCandidatePanel).getByText('更新：2026-06-14')).toBeInTheDocument();
     expect(
@@ -939,9 +958,9 @@ describe('AssistantPage', () => {
     });
 
     const referenceCandidatePanel = await screen.findByLabelText('引用候选');
-    expect(within(referenceCandidatePanel).getByText('最近使用')).toBeInTheDocument();
+    expect(await within(referenceCandidatePanel).findByText('最近使用')).toBeInTheDocument();
     expect(within(referenceCandidatePanel).getAllByRole('button', { name: /支付页超时排障手册/ })).toHaveLength(1);
-    expect(within(referenceCandidatePanel).getAllByText('知识文档').length).toBeGreaterThan(0);
+    expect((await within(referenceCandidatePanel).findAllByText('知识文档')).length).toBeGreaterThan(0);
     expect(within(referenceCandidatePanel).getByRole('button', { name: /收银台提交排障手册/ })).toBeInTheDocument();
   });
 
@@ -1388,7 +1407,7 @@ describe('AssistantPage', () => {
     const referenceCandidatePanel = await screen.findByLabelText('引用候选');
     expect(within(referenceCandidatePanel).getByText('搜索：反馈')).toBeInTheDocument();
     expect(within(referenceCandidatePanel).getByText('↑↓ 选择，Enter 添加')).toBeInTheDocument();
-    expect(within(referenceCandidatePanel).getAllByText('知识文档').length).toBeGreaterThan(0);
+    expect((await within(referenceCandidatePanel).findAllByText('知识文档')).length).toBeGreaterThan(0);
     expect(within(referenceCandidatePanel).getAllByText('研发任务').length).toBeGreaterThan(0);
     expect(within(referenceCandidatePanel).getAllByText('定时作业').length).toBeGreaterThan(0);
     expect(within(referenceCandidatePanel).getAllByText('插件连接').length).toBeGreaterThan(0);
@@ -3154,7 +3173,7 @@ describe('AssistantPage', () => {
     });
 
     const referenceCandidatePanel = await screen.findByLabelText('引用候选');
-    expect(within(referenceCandidatePanel).getByText('最近使用')).toBeInTheDocument();
+    expect(await within(referenceCandidatePanel).findByText('最近使用')).toBeInTheDocument();
     expect(within(referenceCandidatePanel).getAllByRole('button', { name: /支付支持知识空间/ })).toHaveLength(1);
     expect(within(referenceCandidatePanel).getByRole('button', { name: /退款支持知识空间/ })).toBeInTheDocument();
   });
@@ -3741,6 +3760,187 @@ describe('AssistantPage', () => {
     );
   });
 
+  it('records assistant draft detail views before opening the detail dialog', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_view_draft',
+              latency_ms: 88,
+              message: {
+                content: '我生成了一个需要查看详情的草案。',
+                id: 'assistant_message_view_draft',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        payload: {
+                          execution_mode: 'deterministic',
+                          job_type: 'dashboard_snapshot_refresh',
+                          name: '详情查看追踪草案',
+                          schedule_type: 'manual',
+                        },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        server_draft_id: 'assistant_action_draft_viewed',
+                        status: 'pending',
+                        title: '创建详情查看追踪草案',
+                      },
+                    ],
+                    summary: { draft_count: 1, requires_confirmation: true },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+              model: 'assistant-deterministic',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_viewed/view') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toMatchObject({ surface: 'detail_modal' });
+        return new Response(
+          JSON.stringify({
+            data: {
+              action: 'create_scheduled_job',
+              created_at: '2026-06-18T08:00:00+00:00',
+              created_by: 'user_admin',
+              id: 'assistant_action_draft_viewed',
+              metadata: {
+                detail_viewed_at: '2026-06-18T08:05:00+00:00',
+                last_view_surface: 'detail_modal',
+                view_count: 1,
+                viewed_at: '2026-06-18T08:05:00+00:00',
+              },
+              payload: {
+                execution_mode: 'deterministic',
+                job_type: 'dashboard_snapshot_refresh',
+                name: '详情查看追踪草案',
+                schedule_type: 'manual',
+              },
+              risk_level: 'medium',
+              status: 'pending',
+              title: '创建详情查看追踪草案',
+              updated_at: '2026-06-18T08:05:00+00:00',
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '帮我生成一个需要查看详情的草案' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: '查看详情' }));
+
+    expect(await screen.findByRole('dialog', { name: /草案详情/ })).toHaveTextContent(
+      '详情查看追踪草案',
+    );
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+      ['/api/assistant/conversations', 'GET'],
+      ['/api/assistant/chat', 'POST'],
+      ['/api/assistant/conversations', 'GET'],
+      ['/api/assistant/action-drafts/assistant_action_draft_viewed/view', 'POST'],
+    ]);
+  });
+
+  it('debounces @ reference candidate lookups and aborts stale requests', async () => {
+    vi.useFakeTimers();
+    const referenceSignals: AbortSignal[] = [];
+    const referenceCalls: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return Promise.resolve(new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        }));
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        referenceCalls.push(String(input));
+        if (init?.signal) {
+          referenceSignals.push(init.signal);
+        }
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        if (params.get('query') === '旧') {
+          return new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              const error = new Error('aborted');
+              error.name = 'AbortError';
+              reject(error);
+            });
+          });
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: {
+                items: [
+                  {
+                    chunk_count: 1,
+                    id: 'knowledge_new_reference',
+                    permission_label: '可引用',
+                    source_module: '知识库',
+                    summary: '新的候选结果。',
+                    title: '新知识文档',
+                    type: 'knowledge_document',
+                    url: '/knowledge/documents?document_id=knowledge_new_reference',
+                  },
+                ],
+                total: 1,
+              },
+            }),
+            { headers: { 'Content-Type': 'application/json' }, status: 200 },
+          ),
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@旧' },
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(referenceCalls).toHaveLength(1);
+
+    fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
+      target: { value: '@新' },
+    });
+    expect(referenceSignals[0]?.aborted).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(referenceCalls).toEqual([
+      '/api/assistant/reference-candidates?query=%E6%97%A7&limit=12',
+      '/api/assistant/reference-candidates?query=%E6%96%B0&limit=12',
+    ]);
+  });
+
   it('loads a server-side draft from route query and renders its tracking card', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
@@ -3750,7 +3950,14 @@ describe('AssistantPage', () => {
           status: 200,
         });
       }
-      if (input === '/api/assistant/action-drafts/assistant_action_draft_deeplink') {
+      if (
+        input === '/api/assistant/action-drafts/assistant_action_draft_deeplink'
+        || input === '/api/assistant/action-drafts/assistant_action_draft_deeplink/view'
+      ) {
+        if (input === '/api/assistant/action-drafts/assistant_action_draft_deeplink/view') {
+          expect(init?.method).toBe('POST');
+          expect(JSON.parse(String(init?.body))).toMatchObject({ surface: 'deeplink' });
+        }
         return new Response(
           JSON.stringify({
             data: {
@@ -3840,6 +4047,7 @@ describe('AssistantPage', () => {
       expect.arrayContaining([
         ['/api/assistant/conversations', 'GET'],
         ['/api/assistant/action-drafts/assistant_action_draft_deeplink', 'GET'],
+        ['/api/assistant/action-drafts/assistant_action_draft_deeplink/view', 'POST'],
       ]),
     );
   });
@@ -3853,7 +4061,14 @@ describe('AssistantPage', () => {
           status: 200,
         });
       }
-      if (input === '/api/assistant/action-drafts/assistant_action_draft_applied') {
+      if (
+        input === '/api/assistant/action-drafts/assistant_action_draft_applied'
+        || input === '/api/assistant/action-drafts/assistant_action_draft_applied/view'
+      ) {
+        if (input === '/api/assistant/action-drafts/assistant_action_draft_applied/view') {
+          expect(init?.method).toBe('POST');
+          expect(JSON.parse(String(init?.body))).toMatchObject({ surface: 'deeplink' });
+        }
         return new Response(
           JSON.stringify({
             data: {
@@ -4681,6 +4896,31 @@ describe('AssistantPage', () => {
       }
       if (input === '/api/assistant/action-drafts/assistant_action_draft_precheck/confirm') {
         throw new Error('Blocked drafts should not be confirmed from the card');
+      }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_precheck/view') {
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toMatchObject({ surface: 'detail_modal' });
+        return new Response(
+          JSON.stringify({
+            data: {
+              action: 'create_scheduled_job',
+              created_at: '2026-06-18T08:00:00+00:00',
+              created_by: 'user_admin',
+              id: 'assistant_action_draft_precheck',
+              payload: {
+                execution_mode: 'deterministic',
+                job_type: 'user_feedback_insight_extract',
+                name: '缺少配置的反馈洞察作业',
+                schedule_type: 'cron',
+              },
+              risk_level: 'medium',
+              status: 'pending',
+              title: '创建反馈洞察定时任务',
+              updated_at: '2026-06-18T08:05:00+00:00',
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });

@@ -218,8 +218,11 @@ export type AssistantMetricsSummary = {
   draft_pending_count?: number;
   draft_resolution_rate?: number;
   draft_total?: number;
+  draft_deeplink_viewed_count?: number;
+  draft_detail_viewed_count?: number;
   draft_user_modified_count?: number;
   draft_user_modified_rate?: number;
+  draft_viewed_count?: number;
   failed_run_repair_rate?: number;
   failed_run_repaired_count?: number;
   failed_run_total?: number;
@@ -255,10 +258,20 @@ export type AssistantFunnelStage = {
   sort_order?: number;
 };
 
+export type AssistantRunAttributionMetric = {
+  count?: number;
+  key: string;
+  label: string;
+};
+
 export type AssistantMetrics = {
   drafts_by_action: AssistantDraftActionMetric[];
   funnel?: {
     stages?: AssistantFunnelStage[];
+  };
+  scheduled_job_run_attribution?: {
+    items?: AssistantRunAttributionMetric[];
+    total?: number;
   };
   summary: AssistantMetricsSummary;
 };
@@ -2369,6 +2382,7 @@ export async function apiRequest<T>(
     method?: string;
     token?: string;
     body?: unknown;
+    signal?: AbortSignal;
   } = {},
 ): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -2378,6 +2392,7 @@ export async function apiRequest<T>(
       ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
     },
     method: options.method ?? 'GET',
+    signal: options.signal,
   });
   if (!response.ok) {
     let payload: ApiErrorPayload | undefined;
@@ -2435,6 +2450,7 @@ export async function chatWithAssistant(
 export async function fetchAssistantReferenceCandidates(params: {
   limit?: number;
   query: string;
+  signal?: AbortSignal;
   type?: string;
 }): Promise<AssistantReference[]> {
   const token = requireAccessToken();
@@ -2450,6 +2466,7 @@ export async function fetchAssistantReferenceCandidates(params: {
     `/api/assistant/reference-candidates?${searchParams.toString()}`,
     {
       method: 'GET',
+      signal: params.signal,
       token,
     },
   );
@@ -2538,6 +2555,21 @@ export async function markAssistantActionDraftModified(
         modified_fields: modifiedFields,
         user_modified: true,
       },
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function markAssistantActionDraftViewed(
+  draftId: string,
+  surface?: string,
+): Promise<AssistantActionDraftRecord> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionDraftRecord>(
+    `/api/assistant/action-drafts/${draftId}/view`,
+    {
+      body: { surface },
       method: 'POST',
       token,
     },

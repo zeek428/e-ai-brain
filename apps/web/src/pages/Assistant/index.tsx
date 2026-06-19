@@ -36,6 +36,7 @@ import {
   fetchResultWriteTargets,
   getAssistantActionDraft,
   getStoredCurrentUser,
+  markAssistantActionDraftViewed,
   readAssistantDraftResolutions,
   rememberAssistantDraftResolution,
   type AssistantActionDraftRecord,
@@ -61,6 +62,7 @@ import { formatMutationError } from '../../utils/managementCrud';
 
 const { Text, Title } = Typography;
 const { TextArea } = Input;
+const ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS = 250;
 const ASSISTANT_REFERENCE_CANDIDATE_LIMIT = 12;
 const ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT = 8;
 const assistantDraftActionLabels: Record<string, string> = {
@@ -1831,6 +1833,7 @@ function AssistantActionDraftCards({
   onCancelDraft,
   onConfirmDraft,
   onRegenerateDraft,
+  onViewDraft,
   onUseDraftWizardStepPrompt,
   resultWriteTargetLabels,
 }: {
@@ -1841,6 +1844,7 @@ function AssistantActionDraftCards({
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
   onRegenerateDraft: (draft: AssistantToolResultItem) => void;
+  onViewDraft?: (draft: AssistantToolResultItem) => Promise<AssistantToolResultItem>;
   onUseDraftWizardStepPrompt: (prompt: string) => void;
   resultWriteTargetLabels: Map<string, string>;
 }) {
@@ -1855,6 +1859,14 @@ function AssistantActionDraftCards({
     return resolution
       ? 'applied'
       : (draftId ? draftStatusById[draftId] : undefined) ?? draft.status ?? 'pending';
+  };
+  const openDraftDetail = async (draft: AssistantToolResultItem) => {
+    if (!onViewDraft) {
+      setDetailDraft(draft);
+      return;
+    }
+    const viewedDraft = await onViewDraft(draft);
+    setDetailDraft(viewedDraft);
   };
   if (!drafts.length) {
     return null;
@@ -2200,7 +2212,7 @@ function AssistantActionDraftCards({
                   应用到定时作业表单
                 </Button>
               ) : null}
-              <Button size="small" onClick={() => setDetailDraft(draft)}>
+              <Button size="small" onClick={() => { void openDraftDetail(draft); }}>
                 查看详情
               </Button>
               {draftId ? (
@@ -2842,6 +2854,7 @@ function AssistantMetricsPanel({
     { label: '失败', value: metricCount(summary.draft_failed_count) },
   ];
   const draftActionItems = metrics?.drafts_by_action ?? [];
+  const runAttributionItems = metrics?.scheduled_job_run_attribution?.items ?? [];
   const funnelStages = [...(metrics?.funnel?.stages ?? [])].sort(
     (left, right) => Number(left.sort_order ?? 0) - Number(right.sort_order ?? 0),
   );
@@ -2858,6 +2871,16 @@ function AssistantMetricsPanel({
         summary.failed_run_total,
       )}`,
     },
+    ...(runAttributionItems.length
+      ? [
+          {
+            label: '归因来源',
+            value: runAttributionItems
+              .map((item) => `${item.label} ${metricCount(item.count)}`)
+              .join(' · '),
+          },
+        ]
+      : []),
   ];
   const referenceTrackingItems = [
     {
@@ -2992,6 +3015,7 @@ function AssistantBubble({
   onCancelDraft,
   onConfirmDraft,
   onRegenerateDraft,
+  onViewDraft,
   onUseConnectionFollowupPrompt,
   onUseRunCardFollowupPrompt,
   onUseRunFollowupPrompt,
@@ -3006,6 +3030,7 @@ function AssistantBubble({
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
   onRegenerateDraft: (draft: AssistantToolResultItem) => void;
+  onViewDraft: (draft: AssistantToolResultItem) => Promise<AssistantToolResultItem>;
   onUseConnectionFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
   onUseRunCardFollowupPrompt: (item: AssistantScheduledJobRunItem, prompt: string) => void;
   onUseRunFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
@@ -3055,6 +3080,7 @@ function AssistantBubble({
           onCancelDraft={onCancelDraft}
           onConfirmDraft={onConfirmDraft}
           onRegenerateDraft={onRegenerateDraft}
+          onViewDraft={onViewDraft}
           onUseDraftWizardStepPrompt={onUseTaskGuidePrompt}
           resultWriteTargetLabels={resultWriteTargetLabels}
         />
@@ -3254,16 +3280,25 @@ export default function AssistantPage() {
       status: 'loading',
     });
     getAssistantActionDraft(draftId)
-      .then((draft) => {
+      .then(async (draft) => {
         if (didCancel) {
           return;
         }
-        const toolItem = assistantActionDraftRecordToToolItem(draft);
+        let viewedDraft = draft;
+        try {
+          viewedDraft = await markAssistantActionDraftViewed(draft.id, 'deeplink');
+        } catch (error) {
+          toast.warning(formatMutationError(error));
+        }
+        if (didCancel) {
+          return;
+        }
+        const toolItem = assistantActionDraftRecordToToolItem(viewedDraft);
         setLinkedDraft(toolItem);
-        setDraftStatusById((items) => ({ ...items, [draft.id]: draft.status }));
-        const resultResolution = assistantDraftResultRunResolution(draft);
+        setDraftStatusById((items) => ({ ...items, [viewedDraft.id]: viewedDraft.status }));
+        const resultResolution = assistantDraftResultRunResolution(viewedDraft);
         if (resultResolution) {
-          const draftIds = assistantDraftResolutionIds(draft);
+          const draftIds = assistantDraftResolutionIds(viewedDraft);
           draftIds.forEach((itemDraftId) => {
             rememberAssistantDraftResolution({
               draftId: itemDraftId,
@@ -3284,7 +3319,7 @@ export default function AssistantPage() {
         setQueryDraftResolution({
           draftId,
           status: 'resolved',
-          title: draft.title,
+          title: viewedDraft.title,
         });
       })
       .catch((error) => {
@@ -3381,33 +3416,39 @@ export default function AssistantPage() {
       return;
     }
     let didCancel = false;
+    const controller = new AbortController();
     setIsLoadingReferences(true);
-    fetchAssistantReferenceCandidates({
-      limit: ASSISTANT_REFERENCE_CANDIDATE_LIMIT,
-      query,
-    })
-      .then((items) => {
-        if (!didCancel) {
-          const nextCandidates = items.filter(
-            (reference) => !selectedReferenceKeys.has(referenceKey(reference)),
-          );
-          setReferenceCandidates(nextCandidates);
-          setActiveReferenceIndex(nextCandidates.length ? 0 : -1);
-        }
+    const timer = window.setTimeout(() => {
+      fetchAssistantReferenceCandidates({
+        limit: ASSISTANT_REFERENCE_CANDIDATE_LIMIT,
+        query,
+        signal: controller.signal,
       })
-      .catch((error) => {
-        if (!didCancel) {
-          toast.error(formatMutationError(error));
-          setReferenceCandidates([]);
-        }
-      })
-      .finally(() => {
-        if (!didCancel) {
-          setIsLoadingReferences(false);
-        }
-      });
+        .then((items) => {
+          if (!didCancel) {
+            const nextCandidates = items.filter(
+              (reference) => !selectedReferenceKeys.has(referenceKey(reference)),
+            );
+            setReferenceCandidates(nextCandidates);
+            setActiveReferenceIndex(nextCandidates.length ? 0 : -1);
+          }
+        })
+        .catch((error) => {
+          if (!didCancel && (error as Error).name !== 'AbortError') {
+            toast.error(formatMutationError(error));
+            setReferenceCandidates([]);
+          }
+        })
+        .finally(() => {
+          if (!didCancel) {
+            setIsLoadingReferences(false);
+          }
+        });
+    }, ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS);
     return () => {
       didCancel = true;
+      window.clearTimeout(timer);
+      controller.abort();
     };
   }, [inputValue, selectedReferenceKeys]);
 
@@ -3827,6 +3868,32 @@ export default function AssistantPage() {
     setInputValue(pluginConnectionDiagnosticFollowupPrompt(item, prompt));
   };
 
+  const viewDraft = async (draft: AssistantToolResultItem) => {
+    const draftId = assistantDraftId(draft);
+    if (!draftId) {
+      return draft;
+    }
+    try {
+      const result = await markAssistantActionDraftViewed(draftId, 'detail_modal');
+      const viewedItem = assistantActionDraftRecordToToolItem(result);
+      const toolItem = {
+        ...draft,
+        ...viewedItem,
+        payload: viewedItem.payload ?? draft.payload,
+        preview: viewedItem.preview ?? draft.preview,
+        wizard_steps: viewedItem.wizard_steps ?? draft.wizard_steps,
+      };
+      setDraftStatusById((items) => ({ ...items, [draftId]: result.status }));
+      setLinkedDraft((currentDraft) => (
+        assistantDraftId(currentDraft) === draftId ? toolItem : currentDraft
+      ));
+      return toolItem;
+    } catch (error) {
+      toast.warning(formatMutationError(error));
+      return draft;
+    }
+  };
+
   const confirmDraft = async (draft: AssistantToolResultItem) => {
     const draftId = assistantDraftId(draft);
     if (!draftId) {
@@ -4016,6 +4083,7 @@ export default function AssistantPage() {
                   onCancelDraft={cancelDraft}
                   onConfirmDraft={confirmDraft}
                   onRegenerateDraft={regenerateDraft}
+                  onViewDraft={viewDraft}
                   onUseDraftWizardStepPrompt={setInputValue}
                   resultWriteTargetLabels={resultWriteTargetLabels}
                 />
@@ -4033,6 +4101,7 @@ export default function AssistantPage() {
                 onCancelDraft={cancelDraft}
                 onConfirmDraft={confirmDraft}
                 onRegenerateDraft={regenerateDraft}
+                onViewDraft={viewDraft}
                 onUseConnectionFollowupPrompt={usePluginConnectionFollowupPrompt}
                 onUseRunCardFollowupPrompt={useScheduledJobRunCardFollowupPrompt}
                 onUseRunFollowupPrompt={useScheduledJobRunFollowupPrompt}

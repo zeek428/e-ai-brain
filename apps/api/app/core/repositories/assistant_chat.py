@@ -121,6 +121,175 @@ class AssistantChatReadRepository:
             return None
         return self._assistant_action_draft_from_row(row)
 
+    def list_assistant_role_quick_tasks(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, enterprise_id, group_key, group_label, group_roles, group_enabled,
+                           group_sort_order, task_key, title, prompt, permissions,
+                           analytics_key, target_draft_type, enabled, sort_order,
+                           template_version, rollout_json, metadata_json, created_by,
+                           updated_by, created_at, updated_at
+                    FROM assistant_role_quick_tasks
+                    ORDER BY group_sort_order, group_key, sort_order, task_key
+                    """
+                )
+                return [
+                    {
+                        "analytics_key": row[11],
+                        "created_at": row[20].isoformat() if row[20] else None,
+                        "created_by": row[18],
+                        "enabled": row[13],
+                        "enterprise_id": row[1],
+                        "group_enabled": row[5],
+                        "group_key": row[2],
+                        "group_label": row[3],
+                        "group_roles": list(row[4] or []),
+                        "group_sort_order": row[6],
+                        "id": row[0],
+                        "metadata_json": dict(row[17] or {}),
+                        "permissions": list(row[10] or []),
+                        "prompt": row[9],
+                        "rollout_json": dict(row[16] or {}),
+                        "sort_order": row[14],
+                        "target_draft_type": row[12],
+                        "task_key": row[7],
+                        "template_version": row[15],
+                        "title": row[8],
+                        "updated_at": row[21].isoformat() if row[21] else None,
+                        "updated_by": row[19],
+                    }
+                    for row in cursor.fetchall()
+                ]
+
+    def get_assistant_role_quick_task(self, *, config_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, enterprise_id, group_key, group_label, group_roles, group_enabled,
+                           group_sort_order, task_key, title, prompt, permissions,
+                           analytics_key, target_draft_type, enabled, sort_order,
+                           template_version, rollout_json, metadata_json, created_by,
+                           updated_by, created_at, updated_at
+                    FROM assistant_role_quick_tasks
+                    WHERE id = %s
+                    """,
+                    (config_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "analytics_key": row[11],
+            "created_at": row[20].isoformat() if row[20] else None,
+            "created_by": row[18],
+            "enabled": row[13],
+            "enterprise_id": row[1],
+            "group_enabled": row[5],
+            "group_key": row[2],
+            "group_label": row[3],
+            "group_roles": list(row[4] or []),
+            "group_sort_order": row[6],
+            "id": row[0],
+            "metadata_json": dict(row[17] or {}),
+            "permissions": list(row[10] or []),
+            "prompt": row[9],
+            "rollout_json": dict(row[16] or {}),
+            "sort_order": row[14],
+            "target_draft_type": row[12],
+            "task_key": row[7],
+            "template_version": row[15],
+            "title": row[8],
+            "updated_at": row[21].isoformat() if row[21] else None,
+            "updated_by": row[19],
+        }
+
+    def save_assistant_role_quick_task_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO assistant_role_quick_tasks (
+                      id, enterprise_id, group_key, group_label, group_roles,
+                      group_enabled, group_sort_order, task_key, title, prompt,
+                      permissions, analytics_key, target_draft_type, enabled,
+                      sort_order, template_version, rollout_json, metadata_json,
+                      created_by, updated_by, created_at, updated_at
+                    )
+                    VALUES (
+                      %s, %s, %s, %s, %s::jsonb,
+                      %s, %s, %s, %s, %s,
+                      %s::jsonb, %s, %s, %s,
+                      %s, %s, %s::jsonb, %s::jsonb,
+                      %s, %s, COALESCE(%s::timestamptz, now()), now()
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                      enterprise_id = EXCLUDED.enterprise_id,
+                      group_key = EXCLUDED.group_key,
+                      group_label = EXCLUDED.group_label,
+                      group_roles = EXCLUDED.group_roles,
+                      group_enabled = EXCLUDED.group_enabled,
+                      group_sort_order = EXCLUDED.group_sort_order,
+                      task_key = EXCLUDED.task_key,
+                      title = EXCLUDED.title,
+                      prompt = EXCLUDED.prompt,
+                      permissions = EXCLUDED.permissions,
+                      analytics_key = EXCLUDED.analytics_key,
+                      target_draft_type = EXCLUDED.target_draft_type,
+                      enabled = EXCLUDED.enabled,
+                      sort_order = EXCLUDED.sort_order,
+                      template_version = EXCLUDED.template_version,
+                      rollout_json = EXCLUDED.rollout_json,
+                      metadata_json = EXCLUDED.metadata_json,
+                      updated_by = EXCLUDED.updated_by,
+                      updated_at = now()
+                    """,
+                    (
+                        record["id"],
+                        record.get("enterprise_id"),
+                        record["group_key"],
+                        record["group_label"],
+                        json.dumps(record.get("group_roles") or [], ensure_ascii=False),
+                        bool(record.get("group_enabled", True)),
+                        int(record.get("group_sort_order") or 0),
+                        record["task_key"],
+                        record["title"],
+                        record["prompt"],
+                        json.dumps(record.get("permissions") or [], ensure_ascii=False),
+                        record.get("analytics_key"),
+                        record.get("target_draft_type"),
+                        bool(record.get("enabled", True)),
+                        int(record.get("sort_order") or 0),
+                        record.get("template_version"),
+                        json.dumps(record.get("rollout_json") or {}, ensure_ascii=False),
+                        json.dumps(record.get("metadata_json") or {}, ensure_ascii=False),
+                        record.get("created_by"),
+                        record.get("updated_by"),
+                        record.get("created_at"),
+                    ),
+                )
+                if audit_event is not None and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def delete_assistant_role_quick_task_record(
+        self,
+        config_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM assistant_role_quick_tasks WHERE id = %s", (config_id,))
+                if audit_event is not None and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def save_assistant_chat(self, payload: dict[str, Any]) -> None:
         action_drafts = payload.get("assistant_action_drafts", {})
         action_runs = payload.get("assistant_action_runs", {})

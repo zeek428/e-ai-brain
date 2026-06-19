@@ -173,6 +173,7 @@ def test_assistant_chat_runs_explicitly_mentioned_scheduled_job_once_without_mod
     assert run["scheduled_job_id"] == "scheduled_job_feedback_insight"
     assert run["trigger_type"] == "manual"
     assert run["status"] == "succeeded"
+    assert run["triggered_by_assistant"] is True
     assert response["message"]["references"] == [
         {
             "id": "scheduled_job_feedback_insight",
@@ -190,6 +191,8 @@ def test_assistant_chat_runs_explicitly_mentioned_scheduled_job_once_without_mod
     assert response["message"]["tool_results"] == [
         {
             "intent": "scheduled_job_run_once",
+            "intent_code": "scheduled_job_run_once",
+            "intent_confidence": 0.95,
             "items": [
                 {
                     "id": run["id"],
@@ -210,6 +213,7 @@ def test_assistant_chat_runs_explicitly_mentioned_scheduled_job_once_without_mod
                     "url": f"/tasks/scheduled-jobs?run_id={run['id']}",
                 }
             ],
+            "required_refs": ["scheduled_job"],
             "summary": {
                 "error_code": None,
                 "error_message": None,

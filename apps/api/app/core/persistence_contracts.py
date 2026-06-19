@@ -740,6 +740,28 @@ class AssistantChatRepository(Protocol):
 
     def get_assistant_action_draft(self, *, draft_id: str) -> dict[str, Any] | None: ...
 
+    def list_assistant_role_quick_tasks(self) -> list[dict[str, Any]]: ...
+
+    def get_assistant_role_quick_task(
+        self,
+        *,
+        config_id: str,
+    ) -> dict[str, Any] | None: ...
+
+    def save_assistant_role_quick_task_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def delete_assistant_role_quick_task_record(
+        self,
+        config_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
     def save_assistant_chat(self, payload: dict[str, Any]) -> None: ...
 
     def save_assistant_chat_records(
