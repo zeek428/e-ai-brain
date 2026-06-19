@@ -1002,17 +1002,23 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
-    expect(screen.getByText('管理员快捷任务')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '插件连接' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'AI能力' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '定时作业' })).toBeInTheDocument();
+    const roleTaskPanel = await screen.findByLabelText('角色快捷任务');
+    expect(within(roleTaskPanel).getByText('角色快捷任务')).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByText('1 组 · 4 项')).toBeInTheDocument();
+    expect(within(roleTaskPanel).queryByText('管理员快捷任务')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'AI能力' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'AI能力' }));
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '展开角色快捷任务' }));
+    expect(within(roleTaskPanel).getByText('管理员快捷任务')).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '插件连接' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: 'AI能力' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '定时作业' })).toBeInTheDocument();
+
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: 'AI能力' }));
 
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('我要新增 AI能力配置');
 
-    fireEvent.click(screen.getByRole('button', { name: '运行失败' }));
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '运行失败' }));
 
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请诊断最近失败的定时作业运行，按数据连接、AI处理、结果动作给出原因和修复建议。',
@@ -1021,6 +1027,77 @@ describe('AssistantPage', () => {
       '/api/assistant/conversations',
       '/api/assistant/role-quick-tasks',
     ]);
+  });
+
+  it('keeps recent conversations visible before collapsed role quick tasks', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({
+          data: {
+            items: [
+              {
+                id: 'conversation_visible',
+                message_count: 2,
+                title: '可见的历史对话',
+                updated_at: '2026-06-19T08:00:00+00:00',
+              },
+            ],
+            total: 1,
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([
+          {
+            key: 'product',
+            label: '产品快捷任务',
+            roles: ['product_owner'],
+            tasks: [
+              { key: 'requirement_progress', label: '需求进展', prompt: '请按产品视角总结当前需求进展、阻塞和下一步推进建议。' },
+              { key: 'feedback_insights', label: '反馈洞察', prompt: '请帮我生成每周用户反馈洞察定时作业草案，并说明数据来源、AI处理、结果动作和调度策略。' },
+              { key: 'version_risk', label: '版本风险', prompt: '请生成发布风险分析草案，基于需求、缺陷、发布记录和用户反馈评估当前版本风险。' },
+            ],
+          },
+          {
+            key: 'admin',
+            label: '管理员快捷任务',
+            roles: ['admin'],
+            tasks: [
+              { key: 'plugin_connections', label: '插件连接', prompt: '请检查插件连接配置状态，指出失败连接和可生成的连接草案。' },
+              { key: 'ai_capabilities', label: 'AI能力', prompt: '我要新增 AI能力配置' },
+              { key: 'scheduled_jobs', label: '定时作业', prompt: '请汇总定时作业配置、运行健康和需要补齐的依赖。' },
+            ],
+          },
+        ]);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    saveCurrentUser({
+      display_name: 'AI Brain Admin',
+      id: 'user_admin',
+      roles: ['admin'],
+      username: 'admin@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const historyButton = await screen.findByRole('button', { name: /可见的历史对话/ });
+    const historyPanel = screen.getByText('最近对话').closest('.assistant-history-panel');
+    const roleTaskPanel = await screen.findByLabelText('角色快捷任务');
+
+    expect(historyButton).toBeInTheDocument();
+    expect(historyPanel).not.toBeNull();
+    const historyPosition = historyPanel?.compareDocumentPosition(roleTaskPanel) ?? 0;
+    expect(Boolean(historyPosition & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(within(roleTaskPanel).getByText('2 组 · 6 项')).toBeInTheDocument();
+    expect(within(roleTaskPanel).queryByText('产品快捷任务')).not.toBeInTheDocument();
+    expect(within(roleTaskPanel).queryByText('管理员快捷任务')).not.toBeInTheDocument();
   });
 
   it('shows product quick tasks and routes feedback and risk into draft-first prompts', async () => {
@@ -1059,19 +1136,23 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
-    expect(screen.getByText('产品快捷任务')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '需求进展' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '反馈洞察' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '版本风险' })).toBeInTheDocument();
+    const roleTaskPanel = await screen.findByLabelText('角色快捷任务');
+    expect(within(roleTaskPanel).getByText('1 组 · 3 项')).toBeInTheDocument();
+    expect(within(roleTaskPanel).queryByText('产品快捷任务')).not.toBeInTheDocument();
     expect(screen.queryByText('管理员快捷任务')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '反馈洞察' }));
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '展开角色快捷任务' }));
+    expect(within(roleTaskPanel).getByText('产品快捷任务')).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '需求进展' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '反馈洞察' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '版本风险' })).toBeInTheDocument();
+
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '反馈洞察' }));
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请帮我生成每周用户反馈洞察定时作业草案，并说明数据来源、AI处理、结果动作和调度策略。',
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '版本风险' }));
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '版本风险' }));
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请生成发布风险分析草案，基于需求、缺陷、发布记录和用户反馈评估当前版本风险。',
     );
@@ -1113,14 +1194,18 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
-    expect(screen.getByText('研发快捷任务')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '任务阻塞' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '代码巡检' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '缺陷修复' })).toBeInTheDocument();
+    const roleTaskPanel = await screen.findByLabelText('角色快捷任务');
+    expect(within(roleTaskPanel).getByText('1 组 · 3 项')).toBeInTheDocument();
+    expect(within(roleTaskPanel).queryByText('研发快捷任务')).not.toBeInTheDocument();
     expect(screen.queryByText('管理员快捷任务')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '代码巡检' }));
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '展开角色快捷任务' }));
+    expect(within(roleTaskPanel).getByText('研发快捷任务')).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '任务阻塞' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '代码巡检' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '缺陷修复' })).toBeInTheDocument();
+
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '代码巡检' }));
 
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请帮我生成或检查代码巡检任务草案，并说明数据连接、AI处理和结果动作依赖。',
@@ -1163,20 +1248,24 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
-    expect(screen.getByText('测试快捷任务')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '测试缺陷' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '自动化测试' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '发布风险' })).toBeInTheDocument();
+    const roleTaskPanel = await screen.findByLabelText('角色快捷任务');
+    expect(within(roleTaskPanel).getByText('1 组 · 3 项')).toBeInTheDocument();
+    expect(within(roleTaskPanel).queryByText('测试快捷任务')).not.toBeInTheDocument();
     expect(screen.queryByText('管理员快捷任务')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '自动化测试' }));
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '展开角色快捷任务' }));
+    expect(within(roleTaskPanel).getByText('测试快捷任务')).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '测试缺陷' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '自动化测试' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '发布风险' })).toBeInTheDocument();
+
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '自动化测试' }));
 
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请检查自动化测试相关任务、失败原因和可生成的测试草案。',
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '发布风险' }));
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '发布风险' }));
 
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请生成发布风险分析草案，基于测试结果、未关闭缺陷和发布记录评估当前发布风险。',
@@ -1219,14 +1308,18 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(await screen.findByText('角色快捷任务')).toBeInTheDocument();
-    expect(screen.getByText('知识快捷任务')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '知识库巡检' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '知识沉淀' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '知识权限' })).toBeInTheDocument();
+    const roleTaskPanel = await screen.findByLabelText('角色快捷任务');
+    expect(within(roleTaskPanel).getByText('1 组 · 3 项')).toBeInTheDocument();
+    expect(within(roleTaskPanel).queryByText('知识快捷任务')).not.toBeInTheDocument();
     expect(screen.queryByText('管理员快捷任务')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '知识库巡检' }));
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '展开角色快捷任务' }));
+    expect(within(roleTaskPanel).getByText('知识快捷任务')).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '知识库巡检' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '知识沉淀' })).toBeInTheDocument();
+    expect(within(roleTaskPanel).getByRole('button', { name: '知识权限' })).toBeInTheDocument();
+
+    fireEvent.click(within(roleTaskPanel).getByRole('button', { name: '知识库巡检' }));
 
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请生成知识库巡检草案，检查索引失败、权限异常、过期知识和待处理知识沉淀。',

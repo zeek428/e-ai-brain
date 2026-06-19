@@ -380,6 +380,10 @@ body {
   background: #ffffff;
 }
 
+.assistant-sidebar > * {
+  flex-shrink: 0;
+}
+
 .assistant-sidebar h3,
 .assistant-chat-header h3 {
   margin: 0;
@@ -395,7 +399,7 @@ body {
   height: 40px;
 }
 
-.assistant-role-task-panel,
+.assistant-role-task-groups,
 .assistant-role-task-group,
 .assistant-role-task-list {
   display: grid;
@@ -403,7 +407,26 @@ body {
 }
 
 .assistant-role-task-panel {
-  padding-top: 4px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e6ebf2;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.assistant-role-task-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.assistant-role-task-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.35;
 }
 
 .assistant-role-task-list .ant-btn {
@@ -518,7 +541,6 @@ body {
 
 .assistant-history-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
 }
@@ -533,6 +555,7 @@ body {
 .assistant-history-list {
   display: grid;
   gap: 8px;
+  max-height: 260px;
   min-height: 0;
   overflow: auto;
   padding-right: 4px;

@@ -5,6 +5,7 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   DatabaseOutlined,
+  DownOutlined,
   ExclamationCircleOutlined,
   FileTextOutlined,
   LinkOutlined,
@@ -14,6 +15,7 @@ import {
   ReloadOutlined,
   RobotOutlined,
   SendOutlined,
+  UpOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import { Button, Input, Modal, Space, Spin, Tag, Typography, message as toast } from 'antd';
@@ -3188,6 +3190,7 @@ export default function AssistantPage() {
   const [queryDraftResolution, setQueryDraftResolution] = useState<QueryDraftResolution>();
   const [queryReferenceResolution, setQueryReferenceResolution] = useState<QueryReferenceResolution>();
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
+  const [roleQuickTasksExpanded, setRoleQuickTasksExpanded] = useState(false);
   const [roleQuickTaskGroups, setRoleQuickTaskGroups] = useState<AssistantRoleQuickTaskGroup[]>([]);
   const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
   const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
@@ -3210,6 +3213,10 @@ export default function AssistantPage() {
   const selectedReferenceKeys = useMemo(
     () => new Set(selectedReferences.map(referenceKey)),
     [selectedReferences],
+  );
+  const roleQuickTaskCount = useMemo(
+    () => roleQuickTaskGroups.reduce((total, group) => total + group.tasks.length, 0),
+    [roleQuickTaskGroups],
   );
   const activeMention = useMemo(() => {
     const mention = activeMentionRange(inputValue);
@@ -4070,33 +4077,6 @@ export default function AssistantPage() {
               onUseTemplate={useDraftTemplate}
             />
           ) : null}
-          <AssistantMetricsPanel
-            isLoading={isLoadingMetrics}
-            metrics={assistantMetrics}
-            onRefresh={() => void loadAssistantMetrics()}
-          />
-          {roleQuickTaskGroups.length ? (
-            <div className="assistant-role-task-panel">
-              <Text strong>角色快捷任务</Text>
-              {roleQuickTaskGroups.map((group) => (
-                <div className="assistant-role-task-group" key={group.key}>
-                  <Text type="secondary">{group.label}</Text>
-                  <div className="assistant-role-task-list">
-                    {group.tasks.map((task) => (
-                      <Button
-                        block
-                        key={task.key}
-                        size="small"
-                        onClick={() => setInputValue(task.prompt)}
-                      >
-                        {task.label}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
           <div className="assistant-history-panel">
             <div className="assistant-history-title">
               <Text strong>最近对话</Text>
@@ -4123,6 +4103,53 @@ export default function AssistantPage() {
               )}
             </div>
           </div>
+          {roleQuickTaskGroups.length ? (
+            <div aria-label="角色快捷任务" className="assistant-role-task-panel">
+              <div className="assistant-role-task-header">
+                <span className="assistant-role-task-title">
+                  <Text strong>角色快捷任务</Text>
+                  <Text type="secondary">
+                    {`${roleQuickTaskGroups.length} 组 · ${roleQuickTaskCount} 项`}
+                  </Text>
+                </span>
+                <Button
+                  aria-label={roleQuickTasksExpanded ? '收起角色快捷任务' : '展开角色快捷任务'}
+                  icon={roleQuickTasksExpanded ? <UpOutlined /> : <DownOutlined />}
+                  size="small"
+                  type="text"
+                  onClick={() => setRoleQuickTasksExpanded((expanded) => !expanded)}
+                >
+                  {roleQuickTasksExpanded ? '收起' : '展开'}
+                </Button>
+              </div>
+              {roleQuickTasksExpanded ? (
+                <div className="assistant-role-task-groups">
+                  {roleQuickTaskGroups.map((group) => (
+                    <div className="assistant-role-task-group" key={group.key}>
+                      <Text type="secondary">{group.label}</Text>
+                      <div className="assistant-role-task-list">
+                        {group.tasks.map((task) => (
+                          <Button
+                            block
+                            key={task.key}
+                            size="small"
+                            onClick={() => setInputValue(task.prompt)}
+                          >
+                            {task.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <AssistantMetricsPanel
+            isLoading={isLoadingMetrics}
+            metrics={assistantMetrics}
+            onRefresh={() => void loadAssistantMetrics()}
+          />
           <div className="assistant-context-panel">
             <Text strong>上下文</Text>
             <Space size={[6, 6]} wrap>
