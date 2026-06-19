@@ -171,6 +171,7 @@ export type AssistantIntent = {
 };
 
 export type AssistantReference = {
+  action?: string;
   chunk_count?: number;
   chunk_index?: number;
   created_at?: string;
@@ -183,6 +184,7 @@ export type AssistantReference = {
   permission_label?: string;
   source_module?: string;
   summary?: string;
+  prompt?: string;
   title: string;
   type: string;
   updated_at?: string;

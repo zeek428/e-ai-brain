@@ -18,6 +18,108 @@ OPERATIONAL_REFERENCE_TYPES = {
     "scheduled_job",
     "scheduled_job_run",
 }
+ASSISTANT_ACTION_REFERENCE_TYPE = "assistant_action"
+ASSISTANT_ACTION_QUERY_TRIGGERS = ("新建", "新增", "创建", "我要建", "配置")
+ASSISTANT_ACTION_CANDIDATES = (
+    {
+        "action": "create_requirement",
+        "aliases": ("新建", "新增", "创建", "需求", "requirement"),
+        "id": "create_requirement",
+        "prompt": (
+            "我要新建需求，请帮我梳理标题、背景、目标、优先级、"
+            "产品和版本，并生成可提交的需求草案。"
+        ),
+        "roles": ("admin", "product_owner", "rd_owner"),
+        "summary": "进入需求交付的新建需求流程，先整理需求草案字段。",
+        "title": "新建需求",
+        "url": "/delivery/requirements",
+    },
+    {
+        "action": "create_bug",
+        "aliases": ("新建", "新增", "创建", "bug", "缺陷", "问题"),
+        "id": "create_bug",
+        "prompt": (
+            "我要新建 Bug，请帮我整理标题、复现步骤、严重级别、影响范围、"
+            "关联需求或任务，并生成 Bug 登记草案。"
+        ),
+        "roles": (
+            "admin",
+            "rd_owner",
+            "reviewer",
+            "test_owner",
+            "tester",
+            "release_owner",
+        ),
+        "summary": "进入 Bug 登记流程，先整理复现步骤、严重级别和证据。",
+        "title": "新建 Bug",
+        "url": "/delivery/bugs",
+    },
+    {
+        "action": "create_plugin_connection",
+        "aliases": ("新建", "新增", "创建", "插件", "插件连接", "连接", "plugin"),
+        "id": "create_plugin_connection",
+        "permissions": ("system.plugins.manage",),
+        "prompt": "请帮我生成插件连接草案，先确认插件类型、Endpoint、认证方式、环境和必填参数。",
+        "summary": "生成可确认的插件连接草案。",
+        "title": "新建插件连接",
+        "url": "/tasks/plugins",
+    },
+    {
+        "action": "create_plugin_action",
+        "aliases": ("新建", "新增", "创建", "插件", "插件动作", "动作", "plugin action"),
+        "id": "create_plugin_action",
+        "permissions": ("system.plugins.manage",),
+        "prompt": (
+            "请帮我生成插件动作草案，先确认插件连接、请求方法、路径、"
+            "参数映射和结果写入目标。"
+        ),
+        "summary": "生成可确认的插件动作草案。",
+        "title": "新建插件动作",
+        "url": "/tasks/plugins",
+    },
+    {
+        "action": "create_scheduled_job",
+        "aliases": (
+            "新建",
+            "新增",
+            "创建",
+            "定时作业",
+            "定时任务",
+            "任务",
+            "作业",
+            "scheduled job",
+        ),
+        "id": "create_scheduled_job",
+        "permissions": ("system.scheduled_jobs.manage",),
+        "prompt": "请帮我生成定时作业配置草案，并说明数据来源、AI处理、结果动作和调度策略。",
+        "summary": "生成可确认的定时作业草案。",
+        "title": "新建定时作业",
+        "url": "/tasks/scheduled-jobs",
+    },
+    {
+        "action": "create_knowledge_document",
+        "aliases": ("新建", "新增", "创建", "知识", "知识文档", "导入", "导入任务", "knowledge"),
+        "id": "create_knowledge_document",
+        "prompt": (
+            "我要新建知识文档或导入任务，请帮我确认知识空间、目录、"
+            "来源文件、权限和索引策略。"
+        ),
+        "roles": ("admin", "knowledge_owner"),
+        "summary": "进入知识文档或导入任务创建流程，先整理空间、目录、权限和索引策略。",
+        "title": "新建知识文档/导入任务",
+        "url": "/assets/knowledge",
+    },
+    {
+        "action": "create_ai_capability",
+        "aliases": ("新建", "新增", "创建", "ai能力", "ai 能力", "skill", "ai角色", "角色"),
+        "id": "create_ai_capability",
+        "permissions": ("system.ai_capabilities.manage",),
+        "prompt": "我要新增 AI能力配置，请帮我选择创建 Skill 或 AI角色，并生成可确认的配置草案。",
+        "summary": "进入 AI 能力配置向导，生成 Skill 或 AI角色草案。",
+        "title": "新建 AI 能力配置",
+        "url": "/tasks/ai-capabilities",
+    },
+)
 OPERATIONAL_REFERENCE_PERMISSIONS_BY_TYPE = {
     "ai_agent": ("system.ai_capabilities.manage",),
     "ai_skill": ("system.ai_capabilities.manage",),
@@ -33,6 +135,7 @@ OPERATIONAL_REFERENCE_PERMISSION_LABEL_BY_PERMISSION = {
     "system.scheduled_jobs.run": "定时作业执行权限可引用",
 }
 REFERENCE_SOURCE_MODULES = {
+    "assistant_action": "动作",
     "ai_agent": "AI能力配置",
     "ai_skill": "AI能力配置",
     "ai_task": "需求交付",
@@ -53,6 +156,7 @@ REFERENCE_SOURCE_MODULES = {
     "scheduled_job_run": "任务中心",
 }
 DEFAULT_REFERENCE_TYPE_ORDER = (
+    "assistant_action",
     "knowledge_space",
     "knowledge_folder",
     "knowledge_document",
@@ -73,6 +177,7 @@ DEFAULT_REFERENCE_TYPE_ORDER = (
     "product",
 )
 REFERENCE_TYPE_QUERY_ALIASES = {
+    "assistant_action": ("新建", "新增", "创建", "配置", "草案"),
     "ai_agent": ("ai角色", "ai 角色", "智能体", "agent", "角色"),
     "ai_skill": ("skill", "能力", "ai能力", "ai 能力"),
     "ai_task": ("研发任务", "ai任务", "任务", "task"),
@@ -295,6 +400,14 @@ def assistant_reference_candidates_response(
 ) -> dict[str, Any]:
     normalized_type = (reference_type or "").strip() or None
     normalized_limit = min(max(limit, 1), 20)
+    if normalized_type == ASSISTANT_ACTION_REFERENCE_TYPE:
+        items = _assistant_action_reference_candidates(
+            limit=normalized_limit,
+            query=message,
+            user=user,
+        )
+        enriched_items = _reference_candidates_with_metadata(current_store, items, user=user)
+        return {"items": enriched_items, "total": len(enriched_items)}
     if normalized_type in OPERATIONAL_REFERENCE_TYPES and not _user_can_reference_operational_type(
         user,
         normalized_type,
@@ -359,8 +472,18 @@ def assistant_reference_candidates_response(
             knowledge_references,
             limit=normalized_limit,
         )
+    action_references = (
+        _assistant_action_reference_candidates(
+            limit=normalized_limit,
+            query=message,
+            user=user,
+        )
+        if _assistant_action_query_requested(message)
+        else []
+    )
     candidate_limit = max(normalized_limit * 4, len(DEFAULT_REFERENCE_TYPE_ORDER) * 3)
     items = _merge_reference_lists_by_type(
+        action_references,
         knowledge_references,
         assistant_reference_candidates(
             current_store,
@@ -573,8 +696,10 @@ def _reference_candidates_with_metadata(
         )
         enriched_item = {
             **reference,
-            "permission_label": _reference_permission_label(user, reference_type),
-            "source_module": REFERENCE_SOURCE_MODULES.get(reference_type, "AI Brain"),
+            "permission_label": reference.get("permission_label")
+            or _reference_permission_label(user, reference_type),
+            "source_module": reference.get("source_module")
+            or REFERENCE_SOURCE_MODULES.get(reference_type, "AI Brain"),
         }
         if updated_at:
             enriched_item["updated_at"] = str(updated_at)
@@ -829,6 +954,83 @@ def _knowledge_chunk_reference_candidates(
         )
     )
     return references[:limit]
+
+
+def _assistant_action_reference_candidates(
+    *,
+    limit: int,
+    query: str,
+    user: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    normalized_query = query.strip().lower()
+    references: list[dict[str, Any]] = []
+    for candidate in ASSISTANT_ACTION_CANDIDATES:
+        if not _user_can_use_assistant_action(user, candidate):
+            continue
+        if not _assistant_action_matches_query(candidate, normalized_query):
+            continue
+        references.append(
+            {
+                "action": str(candidate["action"]),
+                "id": str(candidate["id"]),
+                "permission_label": "可执行",
+                "prompt": str(candidate["prompt"]),
+                "source_module": REFERENCE_SOURCE_MODULES[ASSISTANT_ACTION_REFERENCE_TYPE],
+                "summary": str(candidate["summary"]),
+                "title": str(candidate["title"]),
+                "type": ASSISTANT_ACTION_REFERENCE_TYPE,
+                "url": str(candidate["url"]),
+            }
+        )
+        if len(references) >= limit:
+            break
+    return references
+
+
+def _assistant_action_matches_query(
+    candidate: dict[str, Any],
+    normalized_query: str,
+) -> bool:
+    if not normalized_query:
+        return True
+    aliases = " ".join(str(alias or "") for alias in candidate.get("aliases", ()))
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            candidate.get("id"),
+            candidate.get("title"),
+            candidate.get("summary"),
+            candidate.get("prompt"),
+            aliases,
+        )
+    ).lower()
+    return normalized_query in haystack
+
+
+def _assistant_action_query_requested(query: str) -> bool:
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return False
+    return any(trigger in normalized_query for trigger in ASSISTANT_ACTION_QUERY_TRIGGERS)
+
+
+def _user_can_use_assistant_action(
+    user: dict[str, Any] | None,
+    candidate: dict[str, Any],
+) -> bool:
+    if not isinstance(user, dict):
+        return False
+    user_roles = set(user.get("roles") or ())
+    user_permissions = set(user.get("permissions") or ())
+    if "admin" in user_roles or "system.admin" in user_permissions:
+        return True
+    required_permissions = set(candidate.get("permissions") or ())
+    if required_permissions and not required_permissions.intersection(user_permissions):
+        return False
+    required_roles = set(candidate.get("roles") or ())
+    if required_roles and not required_roles.intersection(user_roles):
+        return False
+    return True
 
 
 def _knowledge_scope_documents(

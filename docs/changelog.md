@@ -24,6 +24,7 @@
 - AI 助手效果指标失败修复率口径收紧：只有成功 `manual_rerun` 且带 `source_run_id` 的复跑才会把来源失败运行计为已修复，普通调度成功不再误算。
 
 ### Added
+- AI 助手 `@` 动作候选：输入 `@新建` 可按权限搜索“新建需求、新建 Bug、新建插件连接、新建插件动作、新建定时作业、新建知识文档/导入任务、新建 AI 能力配置”，选择后回填可编辑指令而不加入本次上下文引用。
 - AI 助手草案 payload 更新接口：新增 `PATCH /api/assistant/action-drafts/{draft_id}`，用于表单编辑后提交最终 payload、修改字段和审计元数据，再进入 confirm 闭环。
 - AI 助手角色快捷任务配置前端入口：新增系统管理页 `/system/assistant-role-quick-tasks`，支持查看角色快捷任务配置、启停任务/任务组、调整企业/模板版本/灰度并跳转审计日志。
 - AI 助手角色快捷任务运营配置 API：新增 `/api/assistant/role-quick-task-configs` 及 `/status`、`/rollout`，支持管理员新增、编辑、启停、企业/模板版本/灰度调整和删除角色快捷任务配置，并写入 `assistant_role_quick_task.*` 审计事件。

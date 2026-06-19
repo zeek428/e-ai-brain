@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.367 |
+| 功能版本 | v1.1.368 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.368 | 2026-06-19 | AI 助手 @ 候选补齐 `assistant_action` 动作项，支持按关键词搜索新建需求/Bug/插件/定时作业/知识/AI 能力配置入口，前端选择后只回填指令不注入上下文 | Codex |
 | v1.1.367 | 2026-06-19 | AI 助手草案支持表单编辑后 PATCH payload 再确认，确认接口补齐重复提交幂等返回；运营类 @ 候选按产品 scope 过滤，角色快捷任务配置补齐前端管理入口 | Codex |
 | v1.1.366 | 2026-06-19 | AI 助手角色快捷任务补齐运营配置 API、企业/模板/灰度过滤和审计；效果指标拆分草案详情/深链查看并输出定时作业运行归因分布 | Codex |
 | v1.1.365 | 2026-06-18 | AI 助手补齐草案详情查看埋点、定时作业运行助手归因、角色快捷任务 DB 配置和结构化引用严格优先契约 | Codex |
@@ -611,7 +612,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | POST | `/api/assistant/role-quick-task-configs/{config_id}/status` | 管理员启用/停用任务项或任务组，写入 `assistant_role_quick_task.status_changed` 审计。 |
 | Assistant | PUT | `/api/assistant/role-quick-task-configs/{config_id}/rollout` | 管理员调整企业、模板版本和 `rollout_json` 灰度策略，写入 `assistant_role_quick_task.rollout_changed` 审计。 |
 | Assistant | GET | `/api/assistant/draft-templates` | 查询当前用户可见的 AI 助手草案模板市场目录；返回周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析模板的提示、角色、依赖、流程和接入状态。 |
-| Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 引用的对象；覆盖业务对象、可读知识空间/知识目录/知识文档/知识片段和管理员或专项权限可见的定时作业/运行、插件动作、插件连接、AI角色、Skill；运营类定时作业和运行记录必须再按当前用户产品 scope 过滤，未指定 type 的默认候选按类型均衡合并。 |
+| Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 使用的候选；覆盖引用类业务对象、可读知识空间/知识目录/知识文档/知识片段、管理员或专项权限可见的定时作业/运行/插件动作/插件连接/AI角色/Skill，以及 `assistant_action` 动作入口；运营类定时作业和运行记录必须再按当前用户产品 scope 过滤，未指定 type 的默认候选按类型均衡合并。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
 | Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持研发任务、AI Skill、AI角色、定时作业、插件连接、动作配置和分析草案。 |
 | Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情；`preview.validation.issues[]` 可返回 `repair_action={action,label,field,resource_type,resource_id}`，用于前端展示修正字段、生成前置草案或打开连接测试等操作。 |
@@ -1420,13 +1421,15 @@ POST /api/assistant/chat
 }
 ```
 
-助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，`reference_candidates` 可覆盖 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_space`、`knowledge_folder`、`knowledge_document`、`knowledge_chunk`，以及管理员、`system.admin` 或对应管理权限可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。引用候选 query 识别类型词时，`定时作业/定时任务` 优先匹配 `scheduled_job`，`运行记录/失败` 优先匹配 `scheduled_job_run`，`知识空间/知识目录` 分别匹配 `knowledge_space` / `knowledge_folder`，避免用户在执行一次、失败诊断或知识范围引用前选到错误上下文。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
+助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，`reference_candidates` 可覆盖命令面板型 `assistant_action`，以及引用类 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_space`、`knowledge_folder`、`knowledge_document`、`knowledge_chunk`，以及管理员、`system.admin` 或对应管理权限可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。引用候选 query 识别类型词时，`新建/新增/创建` 可匹配 `assistant_action`，`定时作业/定时任务` 优先匹配 `scheduled_job`，`运行记录/失败` 优先匹配 `scheduled_job_run`，`知识空间/知识目录` 分别匹配 `knowledge_space` / `knowledge_folder`，避免用户在创建配置、执行一次、失败诊断或知识范围引用前选到错误上下文。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
 
 当用户泛化发送“新增任务/创建任务/我要建任务”但没有说明任务类型时，`/api/assistant/chat` 必须返回 `tool=assistant.task_creation_guide` 的确定性工具结果，不调用模型网关。`tool_results[0].items[]` 和响应顶层 `suggestions` 必须同时覆盖五类入口：研发任务、定时作业、插件动作、代码巡检和反馈洞察；建议文案固定为 `新增研发任务`、`新增定时作业`、`新增插件动作`、`配置代码巡检定时作业`、`配置每周用户反馈洞察定时作业`，便于前端同时展示任务类型卡片和可点击建议按钮。
 
 当管理员询问“插件连接为什么失败/连接失败怎么修/插件连接诊断”且没有创建草案意图时，`/api/assistant/chat` 必须返回 `tool=assistant.plugin_connection_diagnostic` 的确定性工具结果，不调用模型网关。工具项按最近失败或最近测试的插件连接返回 `connection_config/latest_test/repair_suggestions` 三段诊断，字段可包含连接 ID、名称、插件名、环境、endpoint、最近测试状态、失败步骤、错误码、错误信息和结构化修复建议；不得返回 `auth_config`、完整认证 Header、完整请求体或密钥。前端必须展示“插件连接诊断”卡片，并可把 `plugin_connection` 引用加入“本次上下文”继续追问。
 
-显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。`knowledge_document` 候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。`knowledge_chunk` 候选和解析只返回当前用户可读、所属文档可检索的知识片段，聊天时只注入被显式选中的单个片段。`scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent` 和 `ai_skill` 属于受控运维配置引用，候选和解析必须要求管理员、`system.admin` 或对象类型对应的管理/执行权限：定时作业和运行记录要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`，插件连接和插件动作要求 `system.plugins.manage`，AI角色和 Skill 要求 `system.ai_capabilities.manage`；定时作业和运行记录还必须按当前用户 `scope_summary` 中的产品 scope 过滤，拥有产品级 scope 的用户不得看到其他产品作业或运行。无对应权限或 scope 时候选返回空集合，解析返回 `404 REFERENCE_NOT_FOUND`。前端引用类型标签必须把 `ai_task` 显示为“研发任务”，把 `ai_skill` 显示为“Skill”，并在候选分组、类型 Tag、已选引用 Chip 和本次上下文摘要中保持一致。未指定 `type` 的默认候选按引用类型均衡合并，后端在满足 `limit` 的前提下优先为知识文档/片段、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI角色和 Skill 等类型各返回至少一个可用候选，避免单一类型挤占整个面板；指定 `type` 且查询词为空时，应先按目标类型取足候选再截断，不得被全局默认类型顺序提前截断；`limit` 上限仍为 20，前端裸 `@` 应请求足够数量的默认候选。前端对 `@... 执行一次` 这类 run-once 命令，在候选仍加载或用户直接按 Enter/点击发送时，必须用当前 `@` 文本追加一次 `type=scheduled_job` 候选查询，把可用定时作业引用随 `/api/assistant/chat` 一起提交；查询失败时后端显式 @ 名称解析仍可兜底。未授权、不可读、不可检索或不存在的引用不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
+显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。`knowledge_document` 候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。`knowledge_chunk` 候选和解析只返回当前用户可读、所属文档可检索的知识片段，聊天时只注入被显式选中的单个片段。`scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent` 和 `ai_skill` 属于受控运维配置引用，候选和解析必须要求管理员、`system.admin` 或对象类型对应的管理/执行权限：定时作业和运行记录要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`，插件连接和插件动作要求 `system.plugins.manage`，AI角色和 Skill 要求 `system.ai_capabilities.manage`；定时作业和运行记录还必须按当前用户 `scope_summary` 中的产品 scope 过滤，拥有产品级 scope 的用户不得看到其他产品作业或运行。无对应权限或 scope 时候选返回空集合，解析返回 `404 REFERENCE_NOT_FOUND`。`assistant_action` 属于命令面板动作入口，不属于可解析上下文引用；候选按角色或专项权限返回 `新建需求`、`新建 Bug`、`新建插件连接`、`新建插件动作`、`新建定时作业`、`新建知识文档/导入任务` 和 `新建 AI 能力配置`，并携带 `action/prompt/summary/source_module=动作/permission_label=可执行`。前端选择 `assistant_action` 后必须把 `prompt` 回填到聊天输入框并关闭候选面板，不得加入本次上下文、不得写入最近引用、不得提交到 `references[]` 或 `/api/assistant/references/resolve`。前端引用类型标签必须把 `assistant_action` 显示为“动作”，把 `ai_task` 显示为“研发任务”，把 `ai_skill` 显示为“Skill”，并在候选分组、类型 Tag、已选引用 Chip 和本次上下文摘要中保持一致。未指定 `type` 的默认候选按引用类型均衡合并，后端在满足 `limit` 的前提下优先为动作入口、知识文档/片段、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI角色和 Skill 等类型各返回至少一个可用候选，避免单一类型挤占整个面板；指定 `type` 且查询词为空时，应先按目标类型取足候选再截断，不得被全局默认类型顺序提前截断；`limit` 上限仍为 20，前端裸 `@` 应请求足够数量的默认候选。前端对 `@... 执行一次` 这类 run-once 命令，在候选仍加载或用户直接按 Enter/点击发送时，必须用当前 `@` 文本追加一次 `type=scheduled_job` 候选查询，把可用定时作业引用随 `/api/assistant/chat` 一起提交；查询失败时后端显式 @ 名称解析仍可兜底。未授权、不可读、不可检索或不存在的引用不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
+
+补充约定：`assistant_action` 仅在 query 包含“新建/新增/创建/配置”等动作触发词，或客户端显式传入 `type=assistant_action` 时并入默认候选；裸 `@` 和仅包含“定时作业/运行记录/知识文档”等对象类型词的查询，应继续优先返回已有对象引用，避免“新建定时作业”抢占“引用已有定时作业”的路径。
 
 `@` 引用候选：
 
@@ -1469,13 +1472,24 @@ GET /api/assistant/reference-candidates?query=反馈&product_id=product_001&limi
       "type": "scheduled_job_run",
       "title": "每周反馈洞察定时作业 / failed",
       "url": "/tasks/scheduled-jobs?run_id=scheduled_job_run_001"
+    },
+    {
+      "id": "create_scheduled_job",
+      "type": "assistant_action",
+      "action": "create_scheduled_job",
+      "title": "新建定时作业",
+      "url": "/tasks/scheduled-jobs",
+      "source_module": "动作",
+      "permission_label": "可执行",
+      "prompt": "请帮我生成定时作业配置草案，并说明数据来源、AI处理、结果动作和调度策略。",
+      "summary": "生成可确认的定时作业草案。"
     }
   ],
-  "total": 3
+  "total": 4
 }
 ```
 
-`type` 仍可选传，用于限定候选类型；不传时按权限返回混合候选。管理员可得到配置/运行类候选，普通用户只能得到业务对象、可读知识文档和可读知识片段。候选可携带 `source_module`、`permission_label`、`updated_at` 和轻量 `summary`，供前端“本次上下文”展示来源、权限、更新时间、知识 chunk 注入状态和引用摘要；前端可提供“查看摘要”弹窗，但只能展示引用类型、来源、权限、更新时间、注入口径和摘要元数据，不得展示完整知识正文；模型日志不得保存完整知识正文。
+`type` 仍可选传，用于限定候选类型；不传时按权限返回混合候选。管理员可得到配置/运行类候选和动作入口，普通用户只能得到业务对象、可读知识文档、可读知识片段以及其角色允许的动作入口。候选可携带 `source_module`、`permission_label`、`updated_at` 和轻量 `summary`，供前端“本次上下文”展示来源、权限、更新时间、知识 chunk 注入状态和引用摘要；`assistant_action` 额外携带 `action` 和 `prompt`，供前端回填输入框，不进入“本次上下文”。前端可提供“查看摘要”弹窗，但只能展示引用类型、来源、权限、更新时间、注入口径和摘要元数据，不得展示完整知识正文；模型日志不得保存完整知识正文。
 
 当聊天消息显式引用 `scheduled_job_run` 且问题包含失败、原因、诊断或排查意图时，响应中的 `message.tool_results[]` 会包含；因为引用本身已经提供运行上下文，短追问“为什么这次失败？”也必须触发该工具，不要求文本再次出现“任务/作业/run”等词：
 

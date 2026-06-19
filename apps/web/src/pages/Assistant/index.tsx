@@ -1252,6 +1252,7 @@ function draftRegeneratePrompt(draft: AssistantToolResultItem) {
 
 function referenceTypeLabel(type: string) {
   const labels: Record<string, string> = {
+    assistant_action: '动作',
     ai_agent: 'AI角色',
     ai_skill: 'Skill',
     ai_task: '研发任务',
@@ -1276,6 +1277,7 @@ function referenceTypeLabel(type: string) {
 
 function referenceSourceModule(type: string) {
   const modules: Record<string, string> = {
+    assistant_action: '动作',
     ai_agent: 'AI能力配置',
     ai_skill: 'AI能力配置',
     ai_task: '需求交付',
@@ -1337,6 +1339,9 @@ function referenceKnowledgeChunkCount(reference: AssistantReference) {
 }
 
 function referenceInjectionText(reference: AssistantReference) {
+  if (reference.type === 'assistant_action') {
+    return '动作提示将填入输入框';
+  }
   if (reference.type === 'knowledge_chunk') {
     return '1 个知识 chunk 将注入模型';
   }
@@ -1369,6 +1374,10 @@ function selectedReferenceInjectionSummary(references: AssistantReference[]) {
 function referenceSummaryText(reference: AssistantReference) {
   const summary = String(reference.summary ?? '').trim();
   return summary || '暂无摘要，仅注入引用元数据。';
+}
+
+function isAssistantActionReference(reference: AssistantReference) {
+  return reference.type === 'assistant_action' && Boolean(String(reference.prompt ?? '').trim());
 }
 
 function AssistantReferenceDetailModal({
@@ -3384,6 +3393,10 @@ export default function AssistantPage() {
           status: 'resolved',
           title: reference.title,
         });
+        if (isAssistantActionReference(reference)) {
+          setInputValue(String(reference.prompt ?? '').trim());
+          return;
+        }
         setSelectedReferences((currentItems) => (
           currentItems.some((item) => item.id === reference.id && item.type === reference.type)
             ? currentItems
@@ -3571,6 +3584,14 @@ export default function AssistantPage() {
   };
 
   const addSelectedReference = (reference: AssistantReference) => {
+    if (isAssistantActionReference(reference)) {
+      const prompt = String(reference.prompt ?? '').trim();
+      setInputValue(prompt);
+      setDismissedReferencePickerValue(prompt);
+      setActiveReferenceIndex(-1);
+      setReferenceCandidates([]);
+      return;
+    }
     setDismissedReferencePickerValue(inputValue);
     setSelectedReferences((items) => (
       items.some((item) => item.id === reference.id && item.type === reference.type)
@@ -4292,7 +4313,7 @@ export default function AssistantPage() {
                         return (
                           <Button
                             className={isActive ? 'assistant-reference-candidate-active' : undefined}
-                            icon={<LinkOutlined />}
+                            icon={reference.type === 'assistant_action' ? <PlusOutlined /> : <LinkOutlined />}
                             key={`${reference.type}:${reference.id}`}
                             size="small"
                             onClick={() => addSelectedReference(reference)}

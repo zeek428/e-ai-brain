@@ -469,6 +469,43 @@ def test_ai_assistant_reference_candidates_filter_operational_items_by_product_s
     assert denied_product_runs == []
 
 
+def test_ai_assistant_reference_candidates_include_action_candidates_for_create_commands():
+    app.state.store.reset()
+
+    payload = assistant_reference_candidates_response(
+        app.state.store,
+        limit=20,
+        message="新建",
+        product_id=None,
+        reference_type=None,
+        user={
+            "id": "user_admin",
+            "permissions": [
+                "system.ai_capabilities.manage",
+                "system.plugins.manage",
+                "system.scheduled_jobs.manage",
+            ],
+            "roles": ["admin"],
+        },
+    )
+
+    actions = [item for item in payload["items"] if item["type"] == "assistant_action"]
+    assert [item["id"] for item in actions] == [
+        "create_requirement",
+        "create_bug",
+        "create_plugin_connection",
+        "create_plugin_action",
+        "create_scheduled_job",
+        "create_knowledge_document",
+        "create_ai_capability",
+    ]
+    assert actions[0]["source_module"] == "动作"
+    assert actions[0]["permission_label"] == "可执行"
+    assert actions[0]["action"] == "create_requirement"
+    assert actions[0]["prompt"].startswith("我要新建需求")
+    assert actions[0]["url"] == "/delivery/requirements"
+
+
 def test_ai_assistant_chat_returns_registered_intent_metadata(monkeypatch):
     headers = auth_headers()
     app.state.store.reset()

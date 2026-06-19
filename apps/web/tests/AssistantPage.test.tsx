@@ -1427,6 +1427,65 @@ describe('AssistantPage', () => {
     expect(screen.getAllByText('定时作业').length).toBeGreaterThan(0);
   });
 
+  it('fills the composer instead of adding context when selecting @ action candidates', async () => {
+    const actionPrompt = '请帮我生成定时作业配置草案，并说明数据来源、AI处理、结果动作和调度策略。';
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        const params = new URLSearchParams(String(input).split('?')[1]);
+        expect(params.get('query')).toBe('新建');
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  action: 'create_scheduled_job',
+                  id: 'create_scheduled_job',
+                  permission_label: '可执行',
+                  prompt: actionPrompt,
+                  source_module: '动作',
+                  summary: '生成可确认的定时作业草案。',
+                  title: '新建定时作业',
+                  type: 'assistant_action',
+                  url: '/tasks/scheduled-jobs',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, {
+      target: { value: '@新建' },
+    });
+
+    const referenceCandidatePanel = await screen.findByLabelText('引用候选');
+    expect(await within(referenceCandidatePanel).findByText('新建定时作业')).toBeInTheDocument();
+    expect(within(referenceCandidatePanel).getAllByText('动作').length).toBeGreaterThan(0);
+
+    fireEvent.click(within(referenceCandidatePanel).getByRole('button', { name: /新建定时作业/ }));
+
+    expect(assistantInput).toHaveValue(actionPrompt);
+    expect(screen.queryByLabelText('引用候选')).not.toBeInTheDocument();
+    const selectedReferenceList = screen.getByLabelText('本次上下文');
+    expect(within(selectedReferenceList).getAllByText('0 个显式引用').length).toBeGreaterThan(0);
+  });
+
   it('sends @ scheduled job run-once commands with the active candidate reference', async () => {
     let chatRequestBody: Record<string, unknown> | undefined;
     const scrollIntoViewMock = vi.fn();
