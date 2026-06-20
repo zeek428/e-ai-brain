@@ -623,7 +623,9 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/confirm` | 确认 pending 草案并调度到对应领域 service；已 confirmed 且存在成功 `assistant_action_run` 的重复提交必须幂等返回同一 run，不得重复创建作业、插件连接或动作。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/cancel` | 取消 pending 草案，不产生领域写入。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/modification` | 标记当前用户对草案应用后的字段修改，写入用户修改率指标元数据；仅 pending 草案可写，confirmed/cancelled/expired/failed 返回 `409 DRAFT_NOT_PENDING` 或 `DRAFT_EXPIRED`。 |
-| Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，包括草案采纳、运行成功、用户修改、显式引用使用情况和 `funnel.stages[]` 效果漏斗（触发意图、生成草案、查看详情、修改字段、确认草案、运行成功、继续追问/修复）。 |
+| Assistant | GET | `/api/assistant/chat-runs` | 查询当前登录用户的助手聊天运行记录，支持 `status=running,cancelled,failed,succeeded` 和 `limit`，用于刷新后恢复未完成生成、展示最近停止记录和继续打开所属会话。 |
+| Assistant | POST | `/api/assistant/chat-runs/{run_id}/cancel` | 取消当前登录用户的助手聊天运行；服务端写入运行与消息取消状态，并尽量中断仍在等待的模型网关请求，已终止或不存在运行返回幂等/明确错误语义。 |
+| Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，包括草案采纳、运行成功、用户修改、显式引用使用情况、助手聊天生成成功/取消/失败/平均耗时/模型失败率和 `funnel.stages[]` 效果漏斗（触发意图、生成草案、查看详情、修改字段、确认草案、运行成功、继续追问/修复）。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |

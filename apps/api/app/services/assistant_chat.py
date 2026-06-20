@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen as default_urlopen
 
+import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
@@ -148,6 +149,8 @@ TASK_CREATION_GUIDE_ITEMS = [
         "wizard_steps": TASK_CREATION_WIZARD_STEPS,
     },
 ]
+_ASSISTANT_CHAT_RUN_INTERRUPTERS: dict[str, Callable[[], None]] = {}
+_ASSISTANT_CHAT_RUN_INTERRUPTERS_LOCK = threading.Lock()
 
 __all__ = [
     "ASSISTANT_ACCESS_ROLES",
@@ -155,6 +158,7 @@ __all__ = [
     "AssistantServiceError",
     "cancel_assistant_chat_run_response",
     "assistant_chat_response",
+    "assistant_chat_runs_response",
     "assistant_conversation_messages_response",
     "assistant_conversations_response",
     "assistant_request_store",
@@ -175,6 +179,10 @@ class _AssistantGatewayRequestFailed(Exception):
     def __init__(self, log: dict[str, Any]):
         super().__init__("Assistant model gateway request failed")
         self.log = log
+
+
+class _AssistantGatewayRequestCancelled(Exception):
+    pass
 
 
 def assistant_request_store(current_store: MemoryStore, *, user_id: str) -> Any:
@@ -255,11 +263,17 @@ def assistant_chat_response(
             )
         assistant_output, model_log = _call_model_gateway_for_assistant_chat(
             current_store,
+            cancel_checker=lambda: _assistant_chat_run_is_cancelled(
+                current_store,
+                turn["chat_run"]["id"],
+                user=user,
+            ),
             model_gateway_api_key=model_gateway_api_key,
             model_gateway_base_url=model_gateway_base_url,
             model_gateway_default_chat_model=model_gateway_default_chat_model,
             model_gateway_status=model_gateway_status,
             payload=normalized_payload,
+            run_id=turn["chat_run"]["id"],
             urlopen_func=urlopen_func,
             user=user,
         )
@@ -275,6 +289,14 @@ def assistant_chat_response(
             user=user,
         )
         raise
+    except _AssistantGatewayRequestCancelled:
+        return _persist_assistant_chat_cancelled(
+            current_store,
+            audit_start_index=audit_start_index,
+            normalized_payload=normalized_payload,
+            turn=turn,
+            user=user,
+        )
     except _AssistantGatewayRequestFailed as exc:
         current_store.audit(
             event_type="model_gateway.called",
@@ -472,6 +494,57 @@ def _assistant_chat_run_public(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def assistant_chat_runs_response(
+    current_store: MemoryStore,
+    *,
+    limit: int = 20,
+    status: str | None = None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    statuses = _assistant_chat_run_status_filter(status)
+    repository = runtime_repository(current_store)
+    list_runs = getattr(repository, "list_assistant_chat_runs", None)
+    if callable(list_runs):
+        runs = [dict(run) for run in list_runs(user_id=user["id"])]
+    else:
+        runs = [
+            dict(run)
+            for run in getattr(current_store, "assistant_chat_runs", {}).values()
+            if isinstance(run, dict) and run.get("user_id") == user["id"]
+        ]
+    if statuses:
+        runs = [run for run in runs if str(run.get("status") or "") in statuses]
+    runs.sort(key=_assistant_chat_run_sort_key, reverse=True)
+    cleaned_limit = max(1, min(int(limit or 20), 50))
+    return {
+        "items": [_assistant_chat_run_public(run) for run in runs[:cleaned_limit]],
+        "total": len(runs),
+    }
+
+
+def _assistant_chat_run_status_filter(status: str | None) -> set[str]:
+    if status is None or not str(status).strip():
+        return set()
+    statuses = {
+        item.strip()
+        for item in str(status).split(",")
+        if item.strip()
+    }
+    allowed_statuses = {"running", "succeeded", "cancelled", "failed"}
+    invalid_statuses = sorted(statuses - allowed_statuses)
+    if invalid_statuses:
+        raise AssistantServiceError(
+            400,
+            "VALIDATION_ERROR",
+            f"Invalid assistant chat run status: {', '.join(invalid_statuses)}",
+        )
+    return statuses
+
+
+def _assistant_chat_run_sort_key(run: dict[str, Any]) -> str:
+    return str(run.get("updated_at") or run.get("finished_at") or run.get("started_at") or run.get("created_at") or "")
+
+
 def cancel_assistant_chat_run_response(
     current_store: MemoryStore,
     *,
@@ -518,6 +591,7 @@ def cancel_assistant_chat_run_response(
             messages=[],
             audit_events=[audit_event],
         )
+        _interrupt_assistant_chat_run(cleaned_run_id)
     return _assistant_chat_run_public(run)
 
 
@@ -1445,6 +1519,119 @@ def _assistant_chat_messages(
     )
 
 
+def _register_assistant_chat_run_interrupter(
+    run_id: str | None,
+    interrupter: Callable[[], None],
+) -> None:
+    if not run_id:
+        return
+    with _ASSISTANT_CHAT_RUN_INTERRUPTERS_LOCK:
+        _ASSISTANT_CHAT_RUN_INTERRUPTERS[run_id] = interrupter
+
+
+def _unregister_assistant_chat_run_interrupter(
+    run_id: str | None,
+    interrupter: Callable[[], None],
+) -> None:
+    if not run_id:
+        return
+    with _ASSISTANT_CHAT_RUN_INTERRUPTERS_LOCK:
+        if _ASSISTANT_CHAT_RUN_INTERRUPTERS.get(run_id) is interrupter:
+            _ASSISTANT_CHAT_RUN_INTERRUPTERS.pop(run_id, None)
+
+
+def _interrupt_assistant_chat_run(run_id: str | None) -> None:
+    if not run_id:
+        return
+    with _ASSISTANT_CHAT_RUN_INTERRUPTERS_LOCK:
+        interrupter = _ASSISTANT_CHAT_RUN_INTERRUPTERS.get(run_id)
+    if interrupter is None:
+        return
+    try:
+        interrupter()
+    except Exception:
+        return
+
+
+def _read_model_gateway_response_payload(
+    request: UrlRequest,
+    *,
+    cancel_checker: Callable[[], bool] | None,
+    run_id: str | None,
+    timeout_seconds: int,
+    urlopen_func: Callable[[Any, int], Any],
+) -> dict[str, Any]:
+    if cancel_checker is not None and cancel_checker():
+        raise _AssistantGatewayRequestCancelled()
+    result: dict[str, Any] = {}
+    done = threading.Event()
+
+    def request_worker() -> None:
+        try:
+            if urlopen_func is default_urlopen:
+                result["payload"] = _read_model_gateway_response_payload_with_httpx(
+                    request,
+                    run_id=run_id,
+                    timeout_seconds=timeout_seconds,
+                )
+            else:
+                with urlopen_func(request, timeout=timeout_seconds) as response:
+                    result["payload"] = json.loads(response.read().decode("utf-8"))
+        except BaseException as exc:
+            result["error"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(
+        target=request_worker,
+        name=f"assistant-chat-gateway-{run_id or 'request'}",
+        daemon=True,
+    )
+    thread.start()
+    while not done.wait(ASSISTANT_ASYNC_RUN_POLL_SECONDS):
+        if cancel_checker is not None and cancel_checker():
+            _interrupt_assistant_chat_run(run_id)
+            raise _AssistantGatewayRequestCancelled()
+    if cancel_checker is not None and cancel_checker():
+        raise _AssistantGatewayRequestCancelled()
+    error = result.get("error")
+    if error is not None:
+        raise error
+    payload = result.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError("Assistant response is missing payload")
+    return payload
+
+
+def _read_model_gateway_response_payload_with_httpx(
+    request: UrlRequest,
+    *,
+    run_id: str | None,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    client = httpx.Client(timeout=timeout_seconds)
+
+    def close_client() -> None:
+        client.close()
+
+    _register_assistant_chat_run_interrupter(run_id, close_client)
+    try:
+        response = client.request(
+            request.get_method(),
+            request.full_url,
+            content=request.data,
+            headers=dict(request.header_items()),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Assistant response is missing payload")
+        return payload
+    finally:
+        _unregister_assistant_chat_run_interrupter(run_id, close_client)
+        client.close()
+
+
 def _call_model_gateway_for_assistant_chat(
     current_store: MemoryStore,
     *,
@@ -1455,6 +1642,8 @@ def _call_model_gateway_for_assistant_chat(
     payload: AssistantChatRequest,
     urlopen_func: Callable[[Any, int], Any],
     user: dict[str, Any],
+    cancel_checker: Callable[[], bool] | None = None,
+    run_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     config = _assistant_model_gateway_config(
         current_store,
@@ -1504,8 +1693,13 @@ def _call_model_gateway_for_assistant_chat(
     )
     started = perf_counter()
     try:
-        with urlopen_func(request, timeout=int(config.get("timeout_seconds") or 60)) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
+        response_payload = _read_model_gateway_response_payload(
+            request,
+            cancel_checker=cancel_checker,
+            run_id=run_id,
+            timeout_seconds=int(config.get("timeout_seconds") or 60),
+            urlopen_func=urlopen_func,
+        )
         choices = response_payload.get("choices")
         if not isinstance(choices, list) or not choices:
             raise ValueError("Assistant response is missing choices")
@@ -1552,6 +1746,7 @@ def _call_model_gateway_for_assistant_chat(
     except (
         AttributeError,
         HTTPError,
+        httpx.HTTPError,
         URLError,
         OSError,
         json.JSONDecodeError,

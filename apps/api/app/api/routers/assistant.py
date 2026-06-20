@@ -23,6 +23,7 @@ from app.services.assistant_chat import (
     AssistantChatRequest,
     AssistantServiceError,
     assistant_chat_response,
+    assistant_chat_runs_response,
     assistant_conversation_messages_response,
     assistant_conversations_response,
     assistant_request_store,
@@ -481,6 +482,27 @@ def chat_with_assistant(
     except AssistantServiceError as exc:
         raise api_error(exc.status_code, exc.code, exc.message) from exc
     return envelope(response_payload, get_trace_id(request))
+
+
+@router.get("/chat-runs")
+def list_assistant_chat_runs(
+    request: Request,
+    status: str | None = None,
+    limit: int = Query(default=20, ge=1, le=50),
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    current_store = assistant_request_store(store(request), user_id=user["id"])
+    try:
+        result = assistant_chat_runs_response(
+            current_store,
+            limit=limit,
+            status=status,
+            user=user,
+        )
+    except AssistantServiceError as exc:
+        raise api_error(exc.status_code, exc.code, exc.message) from exc
+    return envelope(result, get_trace_id(request))
 
 
 @router.post("/chat-runs/{run_id}/cancel")

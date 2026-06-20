@@ -8,7 +8,7 @@ import {
   RobotOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Modal, Space, Spin, Tag, Typography, message as toast } from 'antd';
+import { Button, Modal, Space, Tag, Typography, message as toast } from 'antd';
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -41,7 +41,9 @@ import {
 } from '../../services/aiBrain';
 import { formatMutationError } from '../../utils/managementCrud';
 import { AssistantComposer } from './components/AssistantComposer';
+import { AssistantChatRunRecovery } from './components/AssistantChatRunRecovery';
 import { AssistantActionDraftCards } from './components/AssistantDraftCards';
+import { AssistantMessageList } from './components/AssistantMessageList';
 import {
   assistantDraftId,
   draftRegeneratePrompt,
@@ -62,6 +64,7 @@ import {
   useAssistantConversation,
   welcomeMessages,
 } from './hooks/useAssistantConversation';
+import { useAssistantChatRuns } from './hooks/useAssistantChatRuns';
 import { type QueryDraftResolution, useAssistantDrafts } from './hooks/useAssistantDrafts';
 import { useAssistantReferences } from './hooks/useAssistantReferences';
 
@@ -1542,6 +1545,16 @@ export default function AssistantPage() {
     setMessages,
   } = useAssistantConversation();
   const {
+    dismissRunRecovery,
+    isLoadingChatRuns,
+    isRecoveryDismissed,
+    recentlyCancelledChatRuns,
+    refreshChatRuns,
+    runningChatRuns,
+  } = useAssistantChatRuns({
+    enabled: !isLoadingConversations && conversations.length > 0,
+  });
+  const {
     draftMutationId,
     draftResolutionById,
     draftStatusById,
@@ -2753,7 +2766,22 @@ export default function AssistantPage() {
               ) : null}
             </div>
           ) : null}
-          <div className="assistant-message-list" aria-live="polite">
+          <AssistantChatRunRecovery
+            isLoading={isLoadingChatRuns}
+            isVisible={!isRecoveryDismissed}
+            recentlyCancelledRuns={recentlyCancelledChatRuns}
+            runningRuns={runningChatRuns}
+            onDismiss={dismissRunRecovery}
+            onOpenConversation={(targetConversationId) => {
+              void loadConversation(targetConversationId, { preserveComposer: true });
+            }}
+            onRefresh={() => void refreshChatRuns()}
+          />
+          <AssistantMessageList
+            endRef={messageListEndRef}
+            isLoadingMessages={isLoadingMessages}
+            isSending={isSending}
+          >
             {messages.map((item) => (
               <AssistantBubble
                 draftMutationId={draftMutationId}
@@ -2775,20 +2803,7 @@ export default function AssistantPage() {
                 scheduledJobRunById={scheduledJobRunById}
               />
             ))}
-            {isLoadingMessages ? (
-              <div className="assistant-thinking">
-                <Spin size="small" />
-                <Text type="secondary">加载中</Text>
-              </div>
-            ) : null}
-            {isSending ? (
-              <div className="assistant-thinking">
-                <Spin size="small" />
-                <Text type="secondary">生成中</Text>
-              </div>
-            ) : null}
-            <div ref={messageListEndRef} aria-hidden="true" />
-          </div>
+          </AssistantMessageList>
           {lastResponse?.suggestions.length ? (
             <div className="assistant-suggestions">
               {lastResponse.suggestions.map((suggestion) => (

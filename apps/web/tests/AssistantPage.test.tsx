@@ -107,6 +107,67 @@ describe('AssistantPage', () => {
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/assistant/conversations']);
   });
 
+  it('restores unfinished assistant chat runs when conversations exist', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'conversation_running',
+                  message_count: 1,
+                  title: '仍在生成的会话',
+                  updated_at: '2026-06-20T08:00:00+00:00',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat-runs?status=running&limit=5') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  conversation_id: 'conversation_running',
+                  id: 'assistant_chat_run_running',
+                  started_at: '2026-06-20T08:00:00+00:00',
+                  status: 'running',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat-runs?status=cancelled&limit=3') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    expect(await screen.findByLabelText('聊天运行恢复')).toHaveTextContent('运行中 1');
+    expect(screen.getByLabelText('聊天运行恢复')).toHaveTextContent('assistant_chat_run_running');
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
+      ['/api/assistant/conversations', 'GET'],
+      ['/api/assistant/chat-runs?status=running&limit=5', 'GET'],
+      ['/api/assistant/chat-runs?status=cancelled&limit=3', 'GET'],
+    ]);
+  });
+
   it('scopes assistant draft resolution cache by current user', () => {
     saveCurrentUser({
       display_name: 'User A',
@@ -184,6 +245,17 @@ describe('AssistantPage', () => {
                 ],
               },
               summary: {
+                chat_run_average_duration_ms: 1530,
+                chat_run_cancel_rate: 0.1,
+                chat_run_cancelled_count: 1,
+                chat_run_failed_count: 2,
+                chat_run_failure_rate: 0.2,
+                chat_run_model_failed_count: 1,
+                chat_run_model_failure_rate: 0.1,
+                chat_run_running_count: 1,
+                chat_run_succeeded_count: 6,
+                chat_run_success_rate: 0.6,
+                chat_run_total: 10,
                 draft_adoption_rate: 0.5,
                 draft_cancelled_count: 1,
                 draft_confirmed_count: 2,
@@ -237,6 +309,8 @@ describe('AssistantPage', () => {
     expect((await screen.findAllByText('助手效果指标')).length).toBeGreaterThan(0);
     expect(await screen.findByLabelText('指标 草案生成数')).toHaveTextContent('4');
     expect(screen.getByLabelText('指标 草案确认率')).toHaveTextContent('50%');
+    expect(screen.getByLabelText('指标 AI 生成成功率')).toHaveTextContent('60%');
+    expect(screen.getByLabelText('指标 AI 生成取消率')).toHaveTextContent('10%');
     expect(screen.getByLabelText('指标 用户修改率')).toHaveTextContent('25%');
     expect(screen.getByLabelText('指标 @ 引用使用率')).toHaveTextContent('75%');
     expect(screen.getByLabelText('指标 作业运行成功率')).toHaveTextContent('80%');
@@ -257,6 +331,12 @@ describe('AssistantPage', () => {
       '处理率 75%',
     );
     expect(screen.getByText('运行追踪')).toBeInTheDocument();
+    expect(screen.getByLabelText('运行追踪 AI 生成')).toHaveTextContent(
+      '成功 6 · 取消 1 · 失败 2 · 运行中 1 · 总数 10',
+    );
+    expect(screen.getByLabelText('运行追踪 生成质量')).toHaveTextContent(
+      '失败率 20% · 平均耗时 1.5 秒 · 模型失败 1 (10%)',
+    );
     expect(screen.getByLabelText('运行追踪 作业运行')).toHaveTextContent(
       '成功 4 · 失败 1 · 总数 5',
     );
@@ -3894,6 +3974,15 @@ describe('AssistantPage', () => {
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
         );
       }
+      if (
+        input === '/api/assistant/chat-runs?status=running&limit=5'
+        || input === '/api/assistant/chat-runs?status=cancelled&limit=3'
+      ) {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
       if (input === '/api/assistant/conversations/conversation_api/messages') {
         return new Response(
           JSON.stringify({
@@ -3941,10 +4030,16 @@ describe('AssistantPage', () => {
       '/delivery/requirements?requirement_id=conversation_requirement',
     );
     expect(screen.getAllByText('AI Brain 现在开发到哪里了？').length).toBeGreaterThan(0);
-    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
-      ['/api/assistant/conversations', 'GET'],
-      ['/api/assistant/conversations/conversation_api/messages', 'GET'],
-    ]);
+    const fetchCalls = fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET']);
+    expect(fetchCalls[0]).toEqual(['/api/assistant/conversations', 'GET']);
+    expect(fetchCalls).toHaveLength(4);
+    expect(fetchCalls).toEqual(
+      expect.arrayContaining([
+        ['/api/assistant/chat-runs?status=running&limit=5', 'GET'],
+        ['/api/assistant/chat-runs?status=cancelled&limit=3', 'GET'],
+        ['/api/assistant/conversations/conversation_api/messages', 'GET'],
+      ]),
+    );
   });
 
   it('keeps only the latest historical conversation load when users switch quickly', async () => {

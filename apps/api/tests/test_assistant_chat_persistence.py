@@ -778,6 +778,26 @@ def test_assistant_metrics_use_repository_when_runtime_store_is_stale():
                 "updated_at": now,
             },
         },
+        "assistant_chat_runs": {
+            "assistant_chat_run_repo_admin": {
+                "created_at": now,
+                "finished_at": "2026-06-16T10:00:03+00:00",
+                "id": "assistant_chat_run_repo_admin",
+                "started_at": now,
+                "status": "succeeded",
+                "updated_at": "2026-06-16T10:00:03+00:00",
+                "user_id": "user_admin",
+            },
+            "assistant_chat_run_repo_reviewer": {
+                "created_at": now,
+                "finished_at": "2026-06-16T10:00:04+00:00",
+                "id": "assistant_chat_run_repo_reviewer",
+                "started_at": now,
+                "status": "failed",
+                "updated_at": "2026-06-16T10:00:04+00:00",
+                "user_id": "user_reviewer",
+            },
+        },
         "assistant_conversations": {},
         "assistant_messages": {
             "assistant_message_repo_admin": {
@@ -828,6 +848,9 @@ def test_assistant_metrics_use_repository_when_runtime_store_is_stale():
         assert summary["draft_user_modified_count"] == 1
         assert summary["action_run_total"] == 1
         assert summary["action_run_succeeded_count"] == 1
+        assert summary["chat_run_total"] == 1
+        assert summary["chat_run_succeeded_count"] == 1
+        assert summary["chat_run_success_rate"] == 1.0
         assert summary["knowledge_reference_count"] == 2
         assert summary["reference_usage_rate"] == 1.0
     finally:

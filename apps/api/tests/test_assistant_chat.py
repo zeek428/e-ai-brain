@@ -3544,6 +3544,56 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             "user_id": "user_admin",
         },
     }
+    app.state.store.assistant_chat_runs = {
+        "assistant_chat_run_succeeded_metrics": {
+            "created_at": now,
+            "finished_at": "2026-06-16T10:00:02+00:00",
+            "id": "assistant_chat_run_succeeded_metrics",
+            "started_at": now,
+            "status": "succeeded",
+            "updated_at": "2026-06-16T10:00:02+00:00",
+            "user_id": "user_admin",
+        },
+        "assistant_chat_run_cancelled_metrics": {
+            "cancel_reason": "user_cancelled",
+            "cancelled_at": "2026-06-16T10:00:01+00:00",
+            "created_at": now,
+            "finished_at": "2026-06-16T10:00:01+00:00",
+            "id": "assistant_chat_run_cancelled_metrics",
+            "started_at": now,
+            "status": "cancelled",
+            "updated_at": "2026-06-16T10:00:01+00:00",
+            "user_id": "user_admin",
+        },
+        "assistant_chat_run_failed_metrics": {
+            "created_at": now,
+            "error_code": "ASSISTANT_CHAT_FAILED",
+            "error_message": "Assistant model gateway request failed",
+            "finished_at": "2026-06-16T10:00:04+00:00",
+            "id": "assistant_chat_run_failed_metrics",
+            "started_at": now,
+            "status": "failed",
+            "updated_at": "2026-06-16T10:00:04+00:00",
+            "user_id": "user_admin",
+        },
+        "assistant_chat_run_running_metrics": {
+            "created_at": now,
+            "id": "assistant_chat_run_running_metrics",
+            "started_at": now,
+            "status": "running",
+            "updated_at": now,
+            "user_id": "user_admin",
+        },
+        "assistant_chat_run_other_user_metrics": {
+            "created_at": now,
+            "finished_at": "2026-06-16T10:00:05+00:00",
+            "id": "assistant_chat_run_other_user_metrics",
+            "started_at": now,
+            "status": "failed",
+            "updated_at": "2026-06-16T10:00:05+00:00",
+            "user_id": "user_reviewer",
+        },
+    }
 
     response = client.get("/api/assistant/metrics", headers=headers)
 
@@ -3554,6 +3604,17 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
         "action_run_succeeded_count": 1,
         "action_run_success_rate": 1.0,
         "action_run_total": 1,
+        "chat_run_average_duration_ms": 2333,
+        "chat_run_cancel_rate": 0.25,
+        "chat_run_cancelled_count": 1,
+        "chat_run_failed_count": 1,
+        "chat_run_failure_rate": 0.25,
+        "chat_run_model_failed_count": 1,
+        "chat_run_model_failure_rate": 0.25,
+        "chat_run_running_count": 1,
+        "chat_run_succeeded_count": 1,
+        "chat_run_success_rate": 0.25,
+        "chat_run_total": 4,
         "draft_adoption_rate": 0.25,
         "draft_cancelled_count": 1,
         "draft_confirmed_count": 1,
@@ -7513,3 +7574,67 @@ def test_ai_assistant_chat_run_cancel_endpoint_marks_current_user_run_cancelled(
     assert app.state.store.assistant_chat_runs["assistant_chat_run_endpoint"]["status"] == (
         "cancelled"
     )
+
+
+def test_ai_assistant_chat_run_list_endpoint_filters_current_user_and_status():
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.assistant_chat_runs = {
+        "assistant_chat_run_running_new": {
+            "created_at": "2026-06-20T08:01:00+00:00",
+            "id": "assistant_chat_run_running_new",
+            "started_at": "2026-06-20T08:01:00+00:00",
+            "status": "running",
+            "updated_at": "2026-06-20T08:02:00+00:00",
+            "user_id": "user_admin",
+        },
+        "assistant_chat_run_running_old": {
+            "created_at": "2026-06-20T08:00:00+00:00",
+            "id": "assistant_chat_run_running_old",
+            "started_at": "2026-06-20T08:00:00+00:00",
+            "status": "running",
+            "updated_at": "2026-06-20T08:00:30+00:00",
+            "user_id": "user_admin",
+        },
+        "assistant_chat_run_cancelled": {
+            "created_at": "2026-06-20T07:55:00+00:00",
+            "finished_at": "2026-06-20T07:56:00+00:00",
+            "id": "assistant_chat_run_cancelled",
+            "started_at": "2026-06-20T07:55:00+00:00",
+            "status": "cancelled",
+            "updated_at": "2026-06-20T07:56:00+00:00",
+            "user_id": "user_admin",
+        },
+        "assistant_chat_run_other_user": {
+            "created_at": "2026-06-20T08:03:00+00:00",
+            "id": "assistant_chat_run_other_user",
+            "started_at": "2026-06-20T08:03:00+00:00",
+            "status": "running",
+            "updated_at": "2026-06-20T08:03:00+00:00",
+            "user_id": "user_reviewer",
+        },
+    }
+
+    response = client.get(
+        "/api/assistant/chat-runs?status=running&limit=1",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["total"] == 2
+    assert [item["id"] for item in data["items"]] == ["assistant_chat_run_running_new"]
+    assert data["items"][0]["status"] == "running"
+
+
+def test_ai_assistant_chat_run_list_endpoint_rejects_invalid_status():
+    headers = auth_headers()
+    app.state.store.reset()
+
+    response = client.get(
+        "/api/assistant/chat-runs?status=unknown",
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"

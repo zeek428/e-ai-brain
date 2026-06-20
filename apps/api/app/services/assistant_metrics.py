@@ -5,6 +5,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 ASSISTANT_DRAFT_STATUSES = ("pending", "confirmed", "cancelled", "expired", "failed")
+ASSISTANT_CHAT_RUN_STATUSES = ("running", "succeeded", "cancelled", "failed")
+ASSISTANT_CHAT_RUN_MODEL_FAILURE_ERROR_CODES = {
+    "ASSISTANT_CHAT_FAILED",
+    "MODEL_GATEWAY_CONFIG_INVALID",
+    "MODEL_GATEWAY_FAILED",
+}
 KNOWLEDGE_REFERENCE_TYPES = {
     "knowledge_chunk",
     "knowledge_document",
@@ -15,13 +21,14 @@ KNOWLEDGE_REFERENCE_TYPES = {
 
 def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> dict[str, Any]:
     user_id = str(user["id"])
-    drafts, runs, messages, scheduled_job_runs = _assistant_metric_rows(
+    drafts, runs, messages, scheduled_job_runs, chat_runs = _assistant_metric_rows(
         current_store,
         user_id=user_id,
     )
     user_draft_ids = {str(draft["id"]) for draft in drafts if draft.get("id") is not None}
     runs = [run for run in runs if str(run.get("draft_id")) in user_draft_ids]
     messages = [message for message in messages if str(message.get("user_id")) == user_id]
+    chat_runs = [run for run in chat_runs if str(run.get("user_id")) == user_id]
     (
         scheduled_job_runs,
         scheduled_job_run_attribution,
@@ -32,8 +39,11 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
     )
 
     draft_status_counts = _status_counts(drafts, ASSISTANT_DRAFT_STATUSES)
+    chat_run_status_counts = _field_status_counts(chat_runs, ASSISTANT_CHAT_RUN_STATUSES)
     run_succeeded_count = sum(1 for run in runs if run.get("status") == "succeeded")
     run_failed_count = sum(1 for run in runs if run.get("status") == "failed")
+    chat_run_total = len(chat_runs)
+    chat_run_model_failed_count = sum(1 for run in chat_runs if _chat_run_model_failed(run))
     scheduled_job_run_succeeded_count = sum(
         1 for run in scheduled_job_runs if run.get("status") == "succeeded"
     )
@@ -80,6 +90,17 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
             "action_run_succeeded_count": run_succeeded_count,
             "action_run_success_rate": _rate(run_succeeded_count, action_run_total),
             "action_run_total": action_run_total,
+            "chat_run_average_duration_ms": _chat_run_average_duration_ms(chat_runs),
+            "chat_run_cancel_rate": _rate(chat_run_status_counts["cancelled"], chat_run_total),
+            "chat_run_cancelled_count": chat_run_status_counts["cancelled"],
+            "chat_run_failed_count": chat_run_status_counts["failed"],
+            "chat_run_failure_rate": _rate(chat_run_status_counts["failed"], chat_run_total),
+            "chat_run_model_failed_count": chat_run_model_failed_count,
+            "chat_run_model_failure_rate": _rate(chat_run_model_failed_count, chat_run_total),
+            "chat_run_running_count": chat_run_status_counts["running"],
+            "chat_run_succeeded_count": chat_run_status_counts["succeeded"],
+            "chat_run_success_rate": _rate(chat_run_status_counts["succeeded"], chat_run_total),
+            "chat_run_total": chat_run_total,
             "draft_adoption_rate": _rate(draft_status_counts["confirmed"], draft_total),
             "draft_cancelled_count": draft_status_counts["cancelled"],
             "draft_confirmed_count": draft_status_counts["confirmed"],
@@ -158,19 +179,21 @@ def _assistant_metric_rows(
     list[dict[str, Any]],
     list[dict[str, Any]],
     list[dict[str, Any]],
+    list[dict[str, Any]],
 ]:
     repository = getattr(current_store, "repository", None)
     if repository is not None:
         drafts = _repository_user_drafts(repository, user_id=user_id)
         payload = _repository_assistant_chat(repository)
         runs = _dict_values(payload.get("assistant_action_runs", {}))
+        chat_runs = _dict_values(payload.get("assistant_chat_runs", {}))
         messages = _dict_values(payload.get("assistant_messages", {}))
         if not messages:
             messages = _dict_values(getattr(current_store, "assistant_messages", {}))
         scheduled_job_runs = _repository_scheduled_job_runs(repository)
         if not scheduled_job_runs:
             scheduled_job_runs = _dict_values(getattr(current_store, "scheduled_job_runs", {}))
-        return drafts, runs, messages, scheduled_job_runs
+        return drafts, runs, messages, scheduled_job_runs, chat_runs
     drafts = [
         dict(draft)
         for draft in _dict_values(getattr(current_store, "assistant_action_drafts", {}))
@@ -179,7 +202,8 @@ def _assistant_metric_rows(
     runs = _dict_values(getattr(current_store, "assistant_action_runs", {}))
     messages = _dict_values(getattr(current_store, "assistant_messages", {}))
     scheduled_job_runs = _dict_values(getattr(current_store, "scheduled_job_runs", {}))
-    return drafts, runs, messages, scheduled_job_runs
+    chat_runs = _dict_values(getattr(current_store, "assistant_chat_runs", {}))
+    return drafts, runs, messages, scheduled_job_runs, chat_runs
 
 
 def _repository_user_drafts(repository: Any, *, user_id: str) -> list[dict[str, Any]]:
@@ -228,6 +252,54 @@ def _status_counts(records: list[dict[str, Any]], statuses: tuple[str, ...]) -> 
         if status in counts:
             counts[status] += 1
     return counts
+
+
+def _field_status_counts(records: list[dict[str, Any]], statuses: tuple[str, ...]) -> dict[str, int]:
+    counts = {status: 0 for status in statuses}
+    for record in records:
+        status = str(record.get("status") or "")
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _chat_run_model_failed(run: dict[str, Any]) -> bool:
+    if run.get("status") != "failed":
+        return False
+    error_code = str(run.get("error_code") or "").strip()
+    error_message = str(run.get("error_message") or "").lower()
+    return (
+        error_code in ASSISTANT_CHAT_RUN_MODEL_FAILURE_ERROR_CODES
+        or error_code.startswith("MODEL_GATEWAY")
+        or "model gateway" in error_message
+    )
+
+
+def _chat_run_average_duration_ms(chat_runs: list[dict[str, Any]]) -> int | None:
+    durations: list[int] = []
+    for run in chat_runs:
+        started_at = _parse_datetime(run.get("started_at") or run.get("created_at"))
+        finished_at = _parse_datetime(run.get("finished_at") or run.get("cancelled_at"))
+        if started_at is None or finished_at is None:
+            continue
+        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+        if duration_ms >= 0:
+            durations.append(duration_ms)
+    if not durations:
+        return None
+    return round(sum(durations) / len(durations))
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _drafts_by_action(drafts: list[dict[str, Any]]) -> list[dict[str, Any]]:

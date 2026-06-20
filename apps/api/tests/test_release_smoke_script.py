@@ -26,3 +26,6 @@ def test_web_page_smoke_fails_on_network_4xx_or_5xx_responses():
     assert "Network.responseReceived" in content
     assert "collectRelevantNetworkFailures" in content
     assert "network errors:" in content
+    assert "--viewport WIDTHxHEIGHT" in content
+    assert "Emulation.setDeviceMetricsOverride" in content
+    assert "route viewport check" in content

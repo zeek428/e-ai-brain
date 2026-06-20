@@ -15,6 +15,7 @@ const DEFAULT_ROUTES = [
   '/governance/devops',
   '/system/roles',
 ];
+const DEFAULT_VIEWPORTS = [{ height: 1000, label: '1440x1000', width: 1440 }];
 
 const ACCESS_TOKEN_STORAGE_KEY = 'ai_brain_access_token';
 const CURRENT_USER_STORAGE_KEY = 'ai_brain_current_user';
@@ -38,6 +39,23 @@ function parseExpectedText(value) {
   };
 }
 
+function parseViewport(value) {
+  const match = /^(\d+)x(\d+)$/i.exec(String(value || '').trim());
+  if (!match) {
+    throw new Error('--viewport must use WIDTHxHEIGHT, for example 390x844');
+  }
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error('--viewport width and height must be positive numbers');
+  }
+  return {
+    height,
+    label: `${width}x${height}`,
+    width,
+  };
+}
+
 function parseArgs(argv) {
   const options = {
     apiBaseUrl: process.env.READINESS_API_BASE_URL || 'http://localhost:8000',
@@ -50,6 +68,7 @@ function parseArgs(argv) {
     routes: [],
     timeoutMs: Number(process.env.READINESS_WEB_SMOKE_TIMEOUT_MS || 20000),
     username: process.env.READINESS_USERNAME || '',
+    viewports: [],
     webBaseUrl: process.env.READINESS_WEB_BASE_URL || 'http://localhost:5173',
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -87,6 +106,8 @@ function parseArgs(argv) {
       options.timeoutMs = Number(next());
     } else if (arg === '--username') {
       options.username = next();
+    } else if (arg === '--viewport') {
+      options.viewports.push(parseViewport(next()));
     } else if (arg === '--web-base-url') {
       options.webBaseUrl = next();
     } else {
@@ -95,6 +116,9 @@ function parseArgs(argv) {
   }
   if (!options.routes.length) {
     options.routes = DEFAULT_ROUTES;
+  }
+  if (!options.viewports.length) {
+    options.viewports = DEFAULT_VIEWPORTS;
   }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new Error('--timeout-ms must be a positive number');
@@ -120,6 +144,7 @@ Options:
   --route PATH            Route to check. Can be provided multiple times.
   --expect-text ROUTE=TEXT
                           Require TEXT to appear after ROUTE renders. Can be provided multiple times.
+  --viewport WIDTHxHEIGHT Browser viewport to check. Can be provided multiple times. Defaults to 1440x1000.
   --timeout-ms MS         Per-route wait timeout. Defaults to 20000.
   --headed                Run Chrome with a visible window instead of headless mode.
 `);
@@ -321,6 +346,7 @@ async function launchChrome(options) {
   const port = await getFreePort();
   const userDataDir = mkdtempSync(path.join(tmpdir(), 'e-ai-brain-web-smoke-'));
   const chromePath = detectChromePath(options.chromePath);
+  const initialViewport = options.viewports[0] || DEFAULT_VIEWPORTS[0];
   const args = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${userDataDir}`,
@@ -328,7 +354,7 @@ async function launchChrome(options) {
     '--no-default-browser-check',
     '--disable-background-networking',
     '--disable-gpu',
-    '--window-size=1440,1000',
+    `--window-size=${initialViewport.width},${initialViewport.height}`,
     'about:blank',
   ];
   if (!options.headed) {
@@ -406,6 +432,19 @@ async function evaluate(client, sessionId, expression) {
   return result.result?.value;
 }
 
+async function setViewport(client, sessionId, viewport) {
+  await client.send(
+    'Emulation.setDeviceMetricsOverride',
+    {
+      deviceScaleFactor: 1,
+      height: viewport.height,
+      mobile: viewport.width <= 640,
+      width: viewport.width,
+    },
+    sessionId,
+  );
+}
+
 async function checkAssistantLayout(client, sessionId) {
   return evaluate(
     client,
@@ -415,9 +454,11 @@ async function checkAssistantLayout(client, sessionId) {
         addMenuLastItemVisible: false,
         bodyScrollWidth: document.body ? document.body.scrollWidth : 0,
         clientWidth: document.documentElement ? document.documentElement.clientWidth : window.innerWidth,
+        composerRect: null,
         composerVisible: false,
         docScrollWidth: document.documentElement ? document.documentElement.scrollWidth : 0,
         failures: [],
+        inputRect: null,
         inputVisible: false,
         itemCount: 0,
         lastItemRect: null,
@@ -447,10 +488,20 @@ async function checkAssistantLayout(client, sessionId) {
       document.querySelectorAll('.assistant-chat-panel, .assistant-message-list, .assistant-bubble-content, .assistant-composer, .assistant-suggestions, .assistant-reference-list').forEach(trackOverflow);
       if (composer) {
         const rect = composer.getBoundingClientRect();
+        result.composerRect = {
+          bottom: Math.round(rect.bottom),
+          height: Math.round(rect.height),
+          top: Math.round(rect.top)
+        };
         result.composerVisible = rect.bottom <= viewportHeight + 1 && rect.top >= -1;
       }
       if (input) {
         const rect = input.getBoundingClientRect();
+        result.inputRect = {
+          bottom: Math.round(rect.bottom),
+          height: Math.round(rect.height),
+          top: Math.round(rect.top)
+        };
         result.inputVisible = rect.bottom <= viewportHeight + 1 && rect.top >= -1 && rect.width > 0;
       }
       if (addButton && typeof addButton.click === 'function') {
@@ -514,9 +565,10 @@ async function checkAssistantLayout(client, sessionId) {
   );
 }
 
-async function checkRoute(client, sessionId, route, options, messages, networkResponses) {
+async function checkRoute(client, sessionId, route, options, messages, networkResponses, viewport) {
   messages.length = 0;
   networkResponses.length = 0;
+  await setViewport(client, sessionId, viewport);
   await client.send('Page.navigate', { url: routeUrl(options.webBaseUrl, route) }, sessionId);
   const expectedTexts = options.expectedTextByRoute[normalizeRoutePath(route)] || [];
   const state = await retryUntil(
@@ -603,6 +655,7 @@ async function checkRoute(client, sessionId, route, options, messages, networkRe
     route,
     sample: state.bodyTextSample.replace(/\s+/g, ' ').trim(),
     title: state.title,
+    viewport: viewport.label,
   };
 }
 
@@ -673,14 +726,24 @@ async function runSmoke(options) {
       sessionId,
     );
     const results = [];
-    for (const route of options.routes) {
-      results.push(await checkRoute(client, sessionId, route, options, messages, networkResponses));
+    for (const viewport of options.viewports) {
+      for (const route of options.routes) {
+        results.push(await checkRoute(
+          client,
+          sessionId,
+          route,
+          options,
+          messages,
+          networkResponses,
+          viewport,
+        ));
+      }
     }
     const failed = results.filter((result) => result.failures.length);
     for (const result of results) {
       const prefix = result.failures.length ? 'FAIL' : 'OK';
       console.log(
-        `[${prefix}] ${result.route} -> ${result.path} · ${result.title || '-'} · ${result.sample}`,
+        `[${prefix}] ${result.route} @ ${result.viewport} -> ${result.path} · ${result.title || '-'} · ${result.sample}`,
       );
       for (const failure of result.failures) {
         console.log(`  - ${failure}`);
@@ -692,7 +755,7 @@ async function runSmoke(options) {
     if (failed.length) {
       throw new Error(`${failed.length} route(s) failed web smoke.`);
     }
-    console.log(`Web page smoke passed for ${results.length} route(s).`);
+    console.log(`Web page smoke passed for ${results.length} route viewport check(s).`);
   } finally {
     if (client) {
       client.close();

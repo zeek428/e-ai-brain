@@ -787,6 +787,39 @@ body {
   padding: 6px 4px 20px;
 }
 
+.assistant-chat-run-recovery {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #dbe7ff;
+  border-radius: 8px;
+  background: #f7faff;
+}
+
+.assistant-chat-run-recovery-header,
+.assistant-chat-run-recovery-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.assistant-chat-run-recovery-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.assistant-chat-run-recovery-id {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
 .assistant-bubble {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
@@ -1572,9 +1605,10 @@ body {
 
 .assistant-add-menu-list {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 2px;
   min-height: 0;
-  padding-bottom: 8px;
+  padding: 0 8px 8px;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -1583,10 +1617,10 @@ body {
 .assistant-add-menu .assistant-add-menu-item {
   align-items: flex-start;
   justify-content: flex-start;
-  width: calc(100% - 16px);
+  width: 100%;
   height: auto;
   min-height: 54px;
-  margin: 0 8px;
+  margin: 0;
   padding: 8px 10px;
   border: 0;
   border-radius: 8px;
@@ -1727,24 +1761,26 @@ body {
   }
 
   .assistant-workspace {
+    grid-template-rows: minmax(112px, 220px) minmax(0, 1fr);
     grid-template-columns: 1fr;
-    height: auto;
-    overflow: visible;
+    height: calc(100dvh - 80px);
+    overflow: hidden;
   }
 
   .assistant-sidebar {
     border-right: 0;
     border-bottom: 1px solid #e6ebf2;
-    overflow: visible;
+    overflow: auto;
+    padding: 14px;
   }
 
-  .assistant-chat-panel,
-  .assistant-workspace {
-    min-height: auto;
+  .assistant-chat-panel {
+    min-height: 0;
+    padding: 14px;
   }
 
   .assistant-history-list {
-    max-height: 320px;
+    max-height: 148px;
   }
 
   .assistant-chat-header,
@@ -1759,6 +1795,19 @@ body {
 
   .assistant-reference-candidate-chips {
     gap: 3px;
+  }
+
+  .assistant-add-menu-list {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-add-menu .assistant-add-menu-item {
+    min-height: 40px;
+    padding-block: 6px;
+  }
+
+  .assistant-add-menu-item-summary {
+    display: none;
   }
 
   .assistant-chat-header {

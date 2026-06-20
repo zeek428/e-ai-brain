@@ -231,6 +231,17 @@ export type AssistantMetricsSummary = {
   action_run_succeeded_count?: number;
   action_run_success_rate?: number;
   action_run_total?: number;
+  chat_run_average_duration_ms?: number | null;
+  chat_run_cancel_rate?: number;
+  chat_run_cancelled_count?: number;
+  chat_run_failed_count?: number;
+  chat_run_failure_rate?: number;
+  chat_run_model_failed_count?: number;
+  chat_run_model_failure_rate?: number;
+  chat_run_running_count?: number;
+  chat_run_succeeded_count?: number;
+  chat_run_success_rate?: number;
+  chat_run_total?: number;
   draft_adoption_rate?: number;
   draft_cancelled_count?: number;
   draft_confirmed_count?: number;
@@ -2565,6 +2576,29 @@ export async function cancelAssistantChatRun(
     method: 'POST',
     token,
   });
+}
+
+export async function fetchAssistantChatRuns(params: {
+  limit?: number;
+  status?: string;
+} = {}): Promise<AssistantChatRun[]> {
+  const token = requireAccessToken();
+  const searchParams = new URLSearchParams();
+  if (params.status) {
+    searchParams.set('status', params.status);
+  }
+  if (params.limit) {
+    searchParams.set('limit', String(params.limit));
+  }
+  const query = searchParams.toString();
+  const response = await apiRequest<ListResponse<AssistantChatRun>>(
+    `/api/assistant/chat-runs${query ? `?${query}` : ''}`,
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return response.items;
 }
 
 export async function fetchAssistantReferenceCandidates(params: {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from time import perf_counter
 
 import pytest
 
@@ -239,6 +240,85 @@ def test_assistant_chat_cancel_run_marks_turn_cancelled_after_model_returns():
     assert [message["status"] for message in store.assistant_messages.values()] == [
         "cancelled",
         "cancelled",
+    ]
+
+
+def test_assistant_chat_cancel_run_returns_before_blocking_model_response_finishes():
+    store = MemoryStore()
+    user = {"id": "user_admin", "roles": ["admin"]}
+    request_started = threading.Event()
+    release_response = threading.Event()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "这条慢响应不应落库。",
+                                        "suggestions": ["不应显示"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 6, "prompt_tokens": 20, "total_tokens": 26},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout=None):
+        request_started.set()
+        release_response.wait(timeout=2)
+        return FakeResponse()
+
+    def cancel_after_request_starts():
+        assert request_started.wait(timeout=1)
+        assistant_chat_service.cancel_assistant_chat_run_response(
+            store,
+            reason="test_cancel_without_waiting",
+            run_id="assistant_chat_run_async_cancel",
+            user=user,
+        )
+
+    canceller = threading.Thread(target=cancel_after_request_starts)
+    canceller.start()
+
+    started = perf_counter()
+    response = assistant_chat_response(
+        store,
+        model_gateway_api_key="test-key",
+        model_gateway_base_url="https://model.example/v1",
+        model_gateway_default_chat_model="assistant-test",
+        model_gateway_status="configured",
+        payload=AssistantChatRequest(
+            client_request_id="client_request_async_cancel",
+            message="请生成非常长的分析",
+            run_id="assistant_chat_run_async_cancel",
+        ),
+        urlopen_func=fake_urlopen,
+        user=user,
+    )
+    elapsed_seconds = perf_counter() - started
+    release_response.set()
+    canceller.join(timeout=1)
+
+    assert elapsed_seconds < 1
+    assert response["model"] == "assistant-cancelled"
+    assert response["message"]["status"] == "cancelled"
+    assert store.assistant_chat_runs["assistant_chat_run_async_cancel"]["status"] == "cancelled"
+    assert "这条慢响应不应落库。" not in [
+        message["content"] for message in store.assistant_messages.values()
     ]
 
 

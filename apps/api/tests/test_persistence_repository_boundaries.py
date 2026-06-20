@@ -164,6 +164,16 @@ def test_assistant_action_draft_constraint_migrations_cover_supported_actions():
         assert missing_actions == []
 
 
+def test_assistant_message_status_migration_adds_check_constraint():
+    migrations_dir = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
+    sql = (migrations_dir / "063_assistant_chat_runs.sql").read_text(encoding="utf-8")
+
+    assert "ck_assistant_messages_status" in sql
+    assert "DO $$" not in sql
+    for status in ("pending", "completed", "cancelled", "failed"):
+        assert f"'{status}'" in sql
+
+
 def test_postgres_brain_app_read_models_delegate_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []

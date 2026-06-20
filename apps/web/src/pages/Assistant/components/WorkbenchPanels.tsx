@@ -45,6 +45,18 @@ function metricRatio(numerator?: number, denominator?: number) {
   return metricPercent(Number(numerator) / Number(denominator));
 }
 
+function metricDurationMs(value?: number | null) {
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+  const durationMs = Number(value);
+  if (durationMs >= 1000) {
+    const seconds = Math.round((durationMs / 1000) * 10) / 10;
+    return `${Number.isInteger(seconds) ? seconds.toFixed(0) : seconds.toFixed(1)} 秒`;
+  }
+  return `${metricCount(durationMs)} ms`;
+}
+
 export function AssistantDraftTemplateMarket({
   isLoading,
   onUseTemplate,
@@ -115,6 +127,8 @@ export function AssistantMetricsPanel({
   const metricItems = [
     { label: '草案生成数', value: metricCount(summary.draft_total) },
     { label: '草案确认率', value: metricPercent(summary.draft_adoption_rate) },
+    { label: 'AI 生成成功率', value: metricPercent(summary.chat_run_success_rate) },
+    { label: 'AI 生成取消率', value: metricPercent(summary.chat_run_cancel_rate) },
     { label: '用户修改率', value: metricPercent(summary.draft_user_modified_rate) },
     { label: '@ 引用使用率', value: metricPercent(summary.reference_usage_rate) },
     { label: '作业运行成功率', value: metricPercent(summary.scheduled_job_run_success_rate) },
@@ -134,6 +148,22 @@ export function AssistantMetricsPanel({
     (left, right) => Number(left.sort_order ?? 0) - Number(right.sort_order ?? 0),
   );
   const runTrackingItems = [
+    {
+      label: 'AI 生成',
+      value: `成功 ${metricCount(summary.chat_run_succeeded_count)} · 取消 ${metricCount(
+        summary.chat_run_cancelled_count,
+      )} · 失败 ${metricCount(summary.chat_run_failed_count)} · 运行中 ${metricCount(
+        summary.chat_run_running_count,
+      )} · 总数 ${metricCount(summary.chat_run_total)}`,
+    },
+    {
+      label: '生成质量',
+      value: `失败率 ${metricPercent(summary.chat_run_failure_rate)} · 平均耗时 ${metricDurationMs(
+        summary.chat_run_average_duration_ms,
+      )} · 模型失败 ${metricCount(summary.chat_run_model_failed_count)} (${metricPercent(
+        summary.chat_run_model_failure_rate,
+      )})`,
+    },
     {
       label: '作业运行',
       value: `成功 ${metricCount(summary.scheduled_job_run_succeeded_count)} · 失败 ${metricCount(

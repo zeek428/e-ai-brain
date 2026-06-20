@@ -44,6 +44,14 @@ ALTER TABLE IF EXISTS assistant_messages
   ADD COLUMN IF NOT EXISTS failed_at timestamptz,
   ADD COLUMN IF NOT EXISTS error_code text;
 
+ALTER TABLE IF EXISTS assistant_messages
+  DROP CONSTRAINT IF EXISTS ck_assistant_messages_status;
+
+ALTER TABLE IF EXISTS assistant_messages
+  ADD CONSTRAINT ck_assistant_messages_status CHECK (
+    status IN ('pending', 'completed', 'cancelled', 'failed')
+  );
+
 CREATE INDEX IF NOT EXISTS idx_assistant_chat_runs_user_status
   ON assistant_chat_runs(user_id, status, updated_at DESC);
 
