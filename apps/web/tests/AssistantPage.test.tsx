@@ -1460,6 +1460,101 @@ describe('AssistantPage', () => {
     expect(within(roleTaskPanel).queryByText('管理员快捷任务')).not.toBeInTheDocument();
   });
 
+  it('deduplicates repeated recent conversations by title in the sidebar', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({
+          data: {
+            items: [
+              {
+                id: 'conversation_latest_feedback',
+                message_count: 2,
+                title: '@提取每周用户反馈有价值信息 执行一次',
+                updated_at: '2026-06-20T08:00:00+00:00',
+              },
+              {
+                id: 'conversation_old_feedback',
+                message_count: 2,
+                title: '@提取每周用户反馈有价值信息 执行一次',
+                updated_at: '2026-06-19T08:00:00+00:00',
+              },
+              {
+                id: 'conversation_spaced_feedback',
+                message_count: 2,
+                title: '  @提取每周用户反馈有价值信息 执行一次  ',
+                updated_at: '2026-06-18T08:00:00+00:00',
+              },
+              {
+                id: 'conversation_unique',
+                message_count: 4,
+                title: '当前系统状态',
+                updated_at: '2026-06-17T08:00:00+00:00',
+              },
+            ],
+            total: 4,
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([]);
+      }
+      if (input === '/api/assistant/chat-runs?status=running&limit=5') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/chat-runs?status=cancelled&limit=3') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/conversations/conversation_latest_feedback/messages') {
+        return new Response(JSON.stringify({
+          data: {
+            items: [
+              {
+                content: '@提取每周用户反馈有价值信息 执行一次',
+                id: 'assistant_message_user_feedback',
+                role: 'user',
+              },
+            ],
+            total: 1,
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const repeatedButtons = await screen.findAllByRole('button', {
+      name: /@提取每周用户反馈有价值信息 执行一次/,
+    });
+    expect(repeatedButtons).toHaveLength(1);
+    expect(screen.getByText('2 条 · 合并 3 个重复')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /当前系统状态/ })).toBeInTheDocument();
+
+    fireEvent.click(repeatedButtons[0]);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/assistant/conversations/conversation_latest_feedback/messages',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+  });
+
   it('prompts before switching history conversations with unsent composer text', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });

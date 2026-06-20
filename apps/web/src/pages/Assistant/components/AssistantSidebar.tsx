@@ -7,6 +7,7 @@ import {
   UpOutlined,
 } from '@ant-design/icons';
 import { Button, Spin, Typography } from 'antd';
+import { useMemo } from 'react';
 
 import {
   type AssistantConversationSummary,
@@ -14,6 +15,41 @@ import {
 } from '../../../services/aiBrain';
 
 const { Text, Title } = Typography;
+
+type AssistantConversationDisplayItem = AssistantConversationSummary & {
+  duplicateCount: number;
+};
+
+function conversationDedupKey(item: AssistantConversationSummary) {
+  const normalizedTitle = (item.title || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+  return normalizedTitle || item.id;
+}
+
+function dedupeConversationsForSidebar(
+  conversations: AssistantConversationSummary[],
+  activeConversationId?: string,
+) {
+  const grouped = new Map<string, AssistantConversationDisplayItem>();
+  for (const conversation of conversations) {
+    const key = conversationDedupKey(conversation);
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        ...conversation,
+        duplicateCount: 1,
+      });
+      continue;
+    }
+    existing.duplicateCount += 1;
+    if (conversation.id === activeConversationId) {
+      grouped.set(key, {
+        ...conversation,
+        duplicateCount: existing.duplicateCount,
+      });
+    }
+  }
+  return [...grouped.values()];
+}
 
 export function AssistantSidebar({
   conversationId,
@@ -44,6 +80,11 @@ export function AssistantSidebar({
   roleQuickTaskGroups: AssistantRoleQuickTaskGroup[];
   roleQuickTasksExpanded: boolean;
 }) {
+  const visibleConversations = useMemo(
+    () => dedupeConversationsForSidebar(conversations, conversationId),
+    [conversationId, conversations],
+  );
+
   return (
     <aside className="assistant-sidebar">
       <Title level={3}>AI 助手</Title>
@@ -56,8 +97,8 @@ export function AssistantSidebar({
           {isLoadingConversations ? <Spin size="small" /> : null}
         </div>
         <div className="assistant-history-list">
-          {conversations.length ? (
-            conversations.map((item) => (
+          {visibleConversations.length ? (
+            visibleConversations.map((item) => (
               <Button
                 block
                 className={item.id === conversationId ? 'assistant-history-active' : undefined}
@@ -67,7 +108,10 @@ export function AssistantSidebar({
               >
                 <span className="assistant-history-button-text">
                   <span>{item.title}</span>
-                  <span>{item.messageCount} 条</span>
+                  <span>
+                    {item.messageCount} 条
+                    {item.duplicateCount > 1 ? ` · 合并 ${item.duplicateCount} 个重复` : ''}
+                  </span>
                 </span>
               </Button>
             ))
