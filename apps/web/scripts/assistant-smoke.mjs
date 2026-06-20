@@ -10,6 +10,11 @@ const password = process.env.AI_BRAIN_E2E_PASSWORD ?? 'admin123';
 const chromePath = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const port = Number(process.env.CHROME_REMOTE_DEBUGGING_PORT ?? 9400 + Math.floor(Math.random() * 400));
 const userDataDir = fs.mkdtempSync(`${os.tmpdir()}/e-ai-brain-assistant-smoke-`);
+const assistantViewports = [
+  { height: 900, label: 'desktop', mobile: false, width: 1440 },
+  { height: 900, label: 'tablet-narrow', mobile: false, width: 768 },
+  { height: 844, label: 'mobile', mobile: true, width: 390 },
+];
 
 const sleep = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
@@ -137,12 +142,13 @@ async function main() {
     await client.send('Page.enable');
     await client.send('Runtime.enable');
     await client.send('Network.enable');
-    await client.send('Emulation.setDeviceMetricsOverride', {
+    const setViewport = (viewport) => client.send('Emulation.setDeviceMetricsOverride', {
       deviceScaleFactor: 1,
-      height: 900,
-      mobile: false,
-      width: 1440,
+      height: viewport.height,
+      mobile: viewport.mobile,
+      width: viewport.width,
     });
+    await setViewport(assistantViewports[0]);
 
     const evaluate = async (expression) => {
       const result = await client.send('Runtime.evaluate', {
@@ -179,6 +185,83 @@ async function main() {
         return true;
       })()
     `);
+    const assertAssistantLayout = async (viewport) => {
+      await setViewport(viewport);
+      await client.send('Page.navigate', { url: `${webUrl}/assistant` });
+      await waitFor(`assistant page ${viewport.label}`, async () => (
+        (await hasText('研发助手')) && (await hasText('最近对话'))
+      ), 20000);
+      await waitFor(`assistant composer visible ${viewport.label}`, () => evaluate(`
+        (() => {
+          const input = document.querySelector('textarea');
+          if (!input) return false;
+          const rect = input.getBoundingClientRect();
+          return rect.width > 160
+            && rect.height > 40
+            && rect.top >= 0
+            && rect.left >= 0
+            && rect.bottom <= window.innerHeight
+            && rect.right <= window.innerWidth;
+        })()
+      `), 10000);
+      const layout = await evaluate(`
+        (() => {
+          const all = [...document.querySelectorAll('body *')];
+          const visibleTextElement = (text) => all
+            .filter((el) => {
+              if (!el.innerText || !el.innerText.includes(text)) return false;
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0
+                && rect.height > 0
+                && style.visibility !== 'hidden'
+                && style.display !== 'none';
+            })
+            .sort((left, right) => left.innerText.length - right.innerText.length)[0];
+          const recent = visibleTextElement('最近对话');
+          const recentRect = recent?.getBoundingClientRect();
+          return {
+            horizontalOverflow: Math.max(
+              document.body.scrollWidth,
+              document.documentElement.scrollWidth,
+            ) > window.innerWidth + 4,
+            recentVisible: Boolean(recentRect)
+              && recentRect.top >= 0
+              && recentRect.bottom <= window.innerHeight,
+          };
+        })()
+      `);
+      if (layout.horizontalOverflow || !layout.recentVisible) {
+        throw new Error(`Assistant layout failed on ${viewport.label}: ${JSON.stringify(layout)}`);
+      }
+      await clickButton('(el) => el.getAttribute("aria-label") === "添加 @ 能力"');
+      await waitFor(`+ action menu layout ${viewport.label}`, () => evaluate(`
+        (() => {
+          const all = [...document.querySelectorAll('body *')];
+          const visibleTextElement = (text) => all
+            .filter((el) => {
+              if (!el.innerText || !el.innerText.includes(text)) return false;
+              const rect = el.getBoundingClientRect();
+              const style = window.getComputedStyle(el);
+              return rect.width > 0
+                && rect.height > 0
+                && style.visibility !== 'hidden'
+                && style.display !== 'none';
+            })
+            .sort((left, right) => left.innerText.length - right.innerText.length)[0];
+          const first = visibleTextElement('新建需求');
+          const last = visibleTextElement('运行诊断');
+          const firstRect = first?.getBoundingClientRect();
+          const lastRect = last?.getBoundingClientRect();
+          return Boolean(firstRect && lastRect)
+            && firstRect.top >= 0
+            && lastRect.bottom <= window.innerHeight
+            && firstRect.left >= 0
+            && lastRect.right <= window.innerWidth;
+        })()
+      `), 10000);
+      await client.send('Input.dispatchKeyEvent', { key: 'Escape', type: 'keyDown' });
+    };
 
     await client.send('Page.navigate', { url: `${webUrl}/login` });
     await waitFor('login page', () => evaluate('document.readyState === "complete"'));
@@ -235,8 +318,12 @@ async function main() {
       (await hasText('AI助手 @ 能力配置')) && (await hasText('新增能力'))
     ), 20000);
     await waitFor('@ ability config rows', async () => (
-      (await hasText('新建需求')) || (await hasText('动作 Key'))
+      (await hasText('新建需求')) || (await hasText('能力'))
     ), 10000);
+
+    for (const viewport of assistantViewports) {
+      await assertAssistantLayout(viewport);
+    }
 
     if (consoleIssues.length || httpIssues.length) {
       throw new Error(JSON.stringify({ consoleIssues, httpIssues }, null, 2));
@@ -247,6 +334,7 @@ async function main() {
         actionMenu: true,
         atSearch: true,
         duplicateToggle: duplicateButtonVisible,
+        layoutViewports: assistantViewports.map((viewport) => viewport.label),
         metricsDrilldown: true,
         runtimeStatus: true,
         stopCommand: true,

@@ -41,6 +41,12 @@
 - AI 助手运行诊断数据连接日志追踪：数据连接阶段现在会读取 `execution_nodes.data_connection.plugin_invocation_log_id`，同一次运行的取数日志和结果动作写入日志不会互相覆盖。
 - AI 助手 @ 候选搜索态保留键盘操作提示：输入 `@关键词` 后仍显示“↑↓ 选择，Enter 添加”，避免用户误以为只能鼠标点击候选。
 - AI 助手效果指标失败修复率口径收紧：只有成功 `manual_rerun` 且带 `source_run_id` 的复跑才会把来源失败运行计为已修复，普通调度成功不再误算。
+- AI 助手 @ 能力配置权限闭环：`/api/assistant/action-reference-configs` 改为校验 `assistant.action_references.manage`，与菜单授权一致，支持非 admin 但被授权的运营用户访问。
+- AI 助手运行状态契约增强：`/api/assistant/runtime-status` 的 `checks[]` 增加 `required/severity` 并兼容 `key/label/detail/action_url`，`ready` 只按必需检查判断，GBrain 等增强能力未配置不再让核心助手不可用。
+- AI 助手效果指标查询优化：PostgreSQL repository 新增助手范围内定时作业运行查询，按助手动作、消息引用、执行归因和时间窗口拉取运行记录，避免指标页全量扫描 `scheduled_job_runs`。
+- AI 助手 @ 能力配置页运营化：配置页改用 Ant Design Table，补充关键词搜索、状态筛选、角色筛选、分页、批量启停和按钮级 loading，降低重复提交和长表格横向维护成本。
+- AI 助手真实页面 smoke 扩展：`npm run test:e2e:assistant` 新增桌面、窄屏和平板/手机视口布局断言，覆盖输入框可见、`+` 面板完整、最近对话可见和无横向溢出。
+- AI 助手历史会话折叠边界修复：空标题会话不再互相折叠，DB-backed runtime 下命令签名复用会优先通过 repository 查找最近会话。
 
 ### Added
 - AI 助手运行环境自检：`/api/assistant/runtime-status` 返回 `checks[]`、`ready` 和修复入口，页面展示规则能力模式、模型网关/Embedding/Redis/GBrain 状态和下一步配置入口。

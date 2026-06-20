@@ -38,33 +38,56 @@ function installFetchMock() {
               title: '新建需求',
               url: '/delivery/requirements',
             },
+            {
+              action_key: 'create_bug',
+              aliases: ['新建', 'Bug'],
+              enabled: false,
+              enterprise_id: null,
+              id: 'assistant_action_reference_config_create_bug',
+              metadata_json: { source: 'standard' },
+              permissions: ['bug.write'],
+              prompt: '我要新建 Bug',
+              roles: ['tester'],
+              rollout_json: {},
+              sort_order: 20,
+              summary: '进入 Bug 登记流程',
+              template_version: null,
+              title: '新建 Bug',
+              url: '/delivery/bugs',
+            },
           ],
-          total: 1,
+          total: 2,
         },
       });
     }
     if (
-      input === '/api/assistant/action-reference-configs/assistant_action_reference_config_create_requirement/status'
+      typeof input === 'string'
+      && input.startsWith('/api/assistant/action-reference-configs/')
+      && input.endsWith('/status')
       && init?.method === 'POST'
     ) {
-      bodies.push(JSON.parse(String(init.body)));
+      const requestBody = JSON.parse(String(init.body));
+      bodies.push(requestBody);
+      const isBug = input.includes('assistant_action_reference_config_create_bug');
       return jsonResponse({
         data: {
-          action_key: 'create_requirement',
-          aliases: ['新建', '需求'],
-          enabled: false,
+          action_key: isBug ? 'create_bug' : 'create_requirement',
+          aliases: isBug ? ['新建', 'Bug'] : ['新建', '需求'],
+          enabled: requestBody.enabled,
           enterprise_id: null,
-          id: 'assistant_action_reference_config_create_requirement',
+          id: isBug
+            ? 'assistant_action_reference_config_create_bug'
+            : 'assistant_action_reference_config_create_requirement',
           metadata_json: { source: 'standard' },
-          permissions: [],
-          prompt: '我要新建需求',
-          roles: ['admin', 'product_owner'],
+          permissions: isBug ? ['bug.write'] : [],
+          prompt: isBug ? '我要新建 Bug' : '我要新建需求',
+          roles: isBug ? ['tester'] : ['admin', 'product_owner'],
           rollout_json: {},
-          sort_order: 10,
-          summary: '进入需求流程',
+          sort_order: isBug ? 20 : 10,
+          summary: isBug ? '进入 Bug 登记流程' : '进入需求流程',
           template_version: null,
-          title: '新建需求',
-          url: '/delivery/requirements',
+          title: isBug ? '新建 Bug' : '新建需求',
+          url: isBug ? '/delivery/bugs' : '/delivery/requirements',
         },
       });
     }
@@ -124,7 +147,7 @@ describe('Assistant action references page', () => {
     await waitFor(() => {
       expect(bodies).toContainEqual({ enabled: false });
     });
-    expect(await screen.findByText('停用')).toBeInTheDocument();
+    expect((await screen.findAllByText('停用')).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByLabelText('配置灰度 新建需求'));
     fireEvent.change(screen.getByLabelText('企业 ID'), { target: { value: 'enterprise_a' } });
@@ -140,5 +163,36 @@ describe('Assistant action references page', () => {
       });
     });
     expect(fetchMock).toHaveBeenCalledWith('/api/assistant/action-reference-configs', expect.anything());
+  });
+
+  it('supports search filtering and batch status operations', async () => {
+    const { bodies } = installFetchMock();
+
+    render(<AssistantActionReferencesPage />);
+
+    await screen.findByText('新建需求');
+    expect(screen.getByText('新建 Bug')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('搜索标题、关键词、角色、权限或 URL'), {
+      target: { value: 'Bug' },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('新建需求')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('新建 Bug')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('搜索标题、关键词、角色、权限或 URL'), {
+      target: { value: '' },
+    });
+    await screen.findByText('新建需求');
+
+    const rowCheckboxes = screen.getAllByRole('checkbox');
+    fireEvent.click(rowCheckboxes[2]);
+    fireEvent.click(screen.getByText('批量启用'));
+
+    await waitFor(() => {
+      expect(bodies).toContainEqual({ enabled: true });
+    });
   });
 });

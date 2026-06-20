@@ -169,6 +169,126 @@ class ScheduledAiJobReadRepository:
                 )
                 return [self._run_from_row(row) for row in cursor.fetchall()]
 
+    def list_assistant_scoped_scheduled_job_runs(
+        self,
+        *,
+        action_draft_ids: list[str],
+        action_run_ids: list[str],
+        message_ids: list[str],
+        referenced_run_ids: list[str],
+        since: str | None = None,
+    ) -> list[dict[str, Any]]:
+        predicates: list[str] = []
+        params: list[Any] = []
+
+        def add_in_predicate(column: str, values: list[str]) -> None:
+            unique_values = sorted({str(value) for value in values if str(value).strip()})
+            if not unique_values:
+                return
+            placeholders = ", ".join(["%s"] * len(unique_values))
+            predicates.append(f"{column} IN ({placeholders})")
+            params.extend(unique_values)
+
+        add_in_predicate("id", referenced_run_ids)
+        add_in_predicate("source_run_id", referenced_run_ids)
+        add_in_predicate("assistant_action_run_id", action_run_ids)
+        add_in_predicate("assistant_action_draft_id", action_draft_ids)
+        if message_ids:
+            unique_message_ids = sorted({str(value) for value in message_ids if str(value).strip()})
+            if unique_message_ids:
+                placeholders = ", ".join(["%s"] * len(unique_message_ids))
+                predicates.append(
+                    "(triggered_by_assistant IS TRUE "
+                    f"AND assistant_source_message_id IN ({placeholders}))"
+                )
+                params.extend(unique_message_ids)
+
+        if not predicates:
+            return []
+
+        final_filter = ""
+        if since:
+            final_filter = """
+            WHERE GREATEST(
+                    COALESCE(started_at, '-infinity'::timestamptz),
+                    COALESCE(created_at, '-infinity'::timestamptz),
+                    COALESCE(updated_at, '-infinity'::timestamptz)
+                  ) >= %s::timestamptz
+            """
+            params.append(since)
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    WITH RECURSIVE scoped_runs AS (
+                      SELECT id, scheduled_job_id, collector_run_id, source_run_id,
+                             trigger_type, status,
+                             scheduled_for, started_at, finished_at, records_imported,
+                             error_code, error_message, config_snapshot,
+                             resolved_agent_snapshot, resolved_skill_snapshots,
+                             resolved_prompt_snapshot, tool_policy_snapshot, result_summary,
+                             created_at, updated_at, resolved_plugin_snapshot,
+                             plugin_invocation_log_id, assistant_action_run_id,
+                             assistant_action_draft_id, assistant_source_message_id,
+                             triggered_by_assistant
+                      FROM scheduled_job_runs
+                      WHERE {" OR ".join(predicates)}
+                      UNION
+                      SELECT child.id, child.scheduled_job_id, child.collector_run_id,
+                             child.source_run_id,
+                             child.trigger_type, child.status,
+                             child.scheduled_for, child.started_at, child.finished_at,
+                             child.records_imported,
+                             child.error_code, child.error_message, child.config_snapshot,
+                             child.resolved_agent_snapshot, child.resolved_skill_snapshots,
+                             child.resolved_prompt_snapshot, child.tool_policy_snapshot,
+                             child.result_summary,
+                             child.created_at, child.updated_at, child.resolved_plugin_snapshot,
+                             child.plugin_invocation_log_id, child.assistant_action_run_id,
+                             child.assistant_action_draft_id, child.assistant_source_message_id,
+                             child.triggered_by_assistant
+                      FROM scheduled_job_runs child
+                      JOIN scoped_runs parent
+                        ON child.trigger_type = 'manual_rerun'
+                       AND child.source_run_id = parent.id
+                      UNION
+                      SELECT source.id, source.scheduled_job_id, source.collector_run_id,
+                             source.source_run_id,
+                             source.trigger_type, source.status,
+                             source.scheduled_for, source.started_at, source.finished_at,
+                             source.records_imported,
+                             source.error_code, source.error_message, source.config_snapshot,
+                             source.resolved_agent_snapshot, source.resolved_skill_snapshots,
+                             source.resolved_prompt_snapshot, source.tool_policy_snapshot,
+                             source.result_summary,
+                             source.created_at, source.updated_at, source.resolved_plugin_snapshot,
+                             source.plugin_invocation_log_id, source.assistant_action_run_id,
+                             source.assistant_action_draft_id, source.assistant_source_message_id,
+                             source.triggered_by_assistant
+                      FROM scheduled_job_runs source
+                      JOIN scoped_runs child
+                        ON child.source_run_id = source.id
+                    )
+                    SELECT DISTINCT ON (id)
+                           id, scheduled_job_id, collector_run_id, source_run_id,
+                           trigger_type, status,
+                           scheduled_for, started_at, finished_at, records_imported,
+                           error_code, error_message, config_snapshot,
+                           resolved_agent_snapshot, resolved_skill_snapshots,
+                           resolved_prompt_snapshot, tool_policy_snapshot, result_summary,
+                           created_at, updated_at, resolved_plugin_snapshot,
+                           plugin_invocation_log_id, assistant_action_run_id,
+                           assistant_action_draft_id, assistant_source_message_id,
+                           triggered_by_assistant
+                    FROM scoped_runs
+                    {final_filter}
+                    ORDER BY id, started_at DESC NULLS LAST, updated_at DESC
+                    """,
+                    tuple(params),
+                )
+                return [self._run_from_row(row) for row in cursor.fetchall()]
+
     def save_scheduled_job_run_record(
         self,
         run: dict[str, Any],

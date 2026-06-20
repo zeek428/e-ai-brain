@@ -1079,6 +1079,23 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def list_assistant_scoped_scheduled_job_runs(
+        self,
+        *,
+        action_draft_ids: list[str],
+        action_run_ids: list[str],
+        message_ids: list[str],
+        referenced_run_ids: list[str],
+        since: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._scheduled_ai_job_read_repository.list_assistant_scoped_scheduled_job_runs(
+            action_draft_ids=action_draft_ids,
+            action_run_ids=action_run_ids,
+            message_ids=message_ids,
+            referenced_run_ids=referenced_run_ids,
+            since=since,
+        )
+
     def save_code_inspection_records(
         self,
         *,
@@ -1197,6 +1214,19 @@ class PostgresSnapshotRepository:
 
     def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]:
         return self._assistant_chat_read_repository.list_assistant_conversations(user_id=user_id)
+
+    def find_reusable_assistant_conversation(
+        self,
+        *,
+        command_signature: str,
+        context_scope: str,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        return self._assistant_chat_read_repository.find_reusable_assistant_conversation(
+            command_signature=command_signature,
+            context_scope=context_scope,
+            user_id=user_id,
+        )
 
     def list_assistant_chat_runs(self, *, user_id: str) -> list[dict[str, Any]]:
         return self._assistant_chat_read_repository.list_assistant_chat_runs(user_id=user_id)

@@ -733,6 +733,14 @@ class AssistantChatRepository(Protocol):
 
     def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]: ...
 
+    def find_reusable_assistant_conversation(
+        self,
+        *,
+        command_signature: str,
+        context_scope: str,
+        user_id: str,
+    ) -> dict[str, Any] | None: ...
+
     def list_assistant_conversation_messages(
         self,
         *,

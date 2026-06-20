@@ -269,13 +269,22 @@ def _assistant_scoped_metric_rows(
         drafts = _filter_records_since(drafts, cutoff, ("created_at", "updated_at"))
         runs = _filter_records_since(runs, cutoff, ("started_at", "created_at", "updated_at"))
         messages = _filter_records_since(messages, cutoff, ("created_at", "updated_at"))
-        scheduled_job_runs = _filter_records_since(
-            scheduled_job_runs,
+        chat_runs = _filter_records_since(
+            chat_runs,
             cutoff,
             ("started_at", "created_at", "updated_at"),
         )
-        chat_runs = _filter_records_since(
-            chat_runs,
+    repository_scoped_runs = _repository_assistant_scoped_scheduled_job_runs(
+        getattr(current_store, "repository", None),
+        action_runs=runs,
+        cutoff=cutoff,
+        messages=messages,
+    )
+    if repository_scoped_runs is not None:
+        scheduled_job_runs = repository_scoped_runs
+    elif cutoff is not None:
+        scheduled_job_runs = _filter_records_since(
+            scheduled_job_runs,
             cutoff,
             ("started_at", "created_at", "updated_at"),
         )
@@ -596,9 +605,11 @@ def _assistant_metric_rows(
         messages = _dict_values(payload.get("assistant_messages", {}))
         if not messages:
             messages = _dict_values(getattr(current_store, "assistant_messages", {}))
-        scheduled_job_runs = _repository_scheduled_job_runs(repository)
-        if not scheduled_job_runs:
-            scheduled_job_runs = _dict_values(getattr(current_store, "scheduled_job_runs", {}))
+        scheduled_job_runs: list[dict[str, Any]] = []
+        if not callable(getattr(repository, "list_assistant_scoped_scheduled_job_runs", None)):
+            scheduled_job_runs = _repository_scheduled_job_runs(repository)
+            if not scheduled_job_runs:
+                scheduled_job_runs = _dict_values(getattr(current_store, "scheduled_job_runs", {}))
         return drafts, runs, messages, scheduled_job_runs, chat_runs
     drafts = [
         dict(draft)
@@ -636,6 +647,50 @@ def _repository_scheduled_job_runs(repository: Any) -> list[dict[str, Any]]:
     if not callable(list_runs):
         return []
     return [dict(run) for run in list_runs() if isinstance(run, dict)]
+
+
+def _repository_assistant_scoped_scheduled_job_runs(
+    repository: Any,
+    *,
+    action_runs: list[dict[str, Any]],
+    cutoff: datetime | None,
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]] | None:
+    list_runs = getattr(repository, "list_assistant_scoped_scheduled_job_runs", None)
+    if not callable(list_runs):
+        return None
+    action_run_ids = [
+        str(run.get("id"))
+        for run in action_runs
+        if run.get("id")
+    ]
+    action_draft_ids = [
+        str(run.get("draft_id"))
+        for run in action_runs
+        if run.get("draft_id")
+    ]
+    message_ids = [
+        str(message.get("id"))
+        for message in messages
+        if message.get("id")
+    ]
+    referenced_run_ids = [
+        str(reference.get("id"))
+        for message in messages
+        for reference in _message_references(message)
+        if reference.get("type") == "scheduled_job_run" and reference.get("id")
+    ]
+    return [
+        dict(run)
+        for run in list_runs(
+            action_draft_ids=action_draft_ids,
+            action_run_ids=action_run_ids,
+            message_ids=message_ids,
+            referenced_run_ids=referenced_run_ids,
+            since=cutoff.isoformat() if cutoff is not None else None,
+        )
+        if isinstance(run, dict)
+    ]
 
 
 def _dict_values(value: Any) -> list[dict[str, Any]]:

@@ -93,6 +93,34 @@ class AssistantChatReadRepository:
                     conversations.append(self._assistant_conversation_from_row(row))
                 return conversations
 
+    def find_reusable_assistant_conversation(
+        self,
+        *,
+        command_signature: str,
+        context_scope: str,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, user_id, product_id, title, message_count, last_message_at,
+                           created_at, updated_at, command_signature,
+                           source_message_hash, context_scope
+                    FROM assistant_conversations
+                    WHERE user_id = %s
+                      AND command_signature = %s
+                      AND COALESCE(context_scope, 'global') = %s
+                    ORDER BY COALESCE(last_message_at, updated_at, created_at) DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_id, command_signature, context_scope),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return self._assistant_conversation_from_row(row)
+
     def list_assistant_conversation_messages(
         self,
         *,

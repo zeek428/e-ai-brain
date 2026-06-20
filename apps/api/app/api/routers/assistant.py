@@ -6,7 +6,7 @@ from urllib.request import urlopen
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import CurrentUser, api_error, require_roles, store
+from app.api.deps import CurrentUser, api_error, require_permissions, require_roles, store
 from app.core.config import get_settings
 from app.core.trace import envelope, get_trace_id
 from app.services.assistant_action_drafts import (
@@ -58,6 +58,7 @@ from app.services.platform_status import health_payload
 
 settings = get_settings()
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
+ASSISTANT_ACTION_REFERENCES_MANAGE_PERMISSION = "assistant.action_references.manage"
 
 
 class AssistantReferenceItem(BaseModel):
@@ -214,6 +215,11 @@ def assistant_runtime_status(
     )
     model_gateway_configured = health["chat_gateway"] == "configured"
     checks = _assistant_runtime_checks(health)
+    required_checks_ready = all(
+        check["status"] in {"ok", "configured", "disabled"}
+        for check in checks
+        if check.get("required")
+    )
     payload = {
         "chat_gateway": health["chat_gateway"],
         "embedding_gateway": health["embedding_gateway"],
@@ -221,7 +227,7 @@ def assistant_runtime_status(
         "model_gateway": health["model_gateway"],
         "mode": "model_gateway" if model_gateway_configured else "deterministic_only",
         "checks": checks,
-        "ready": all(check["status"] in {"ok", "configured", "disabled"} for check in checks),
+        "ready": required_checks_ready,
         "warnings": [] if model_gateway_configured else [
             {
                 "code": "MODEL_GATEWAY_NOT_CONFIGURED",
@@ -233,26 +239,35 @@ def assistant_runtime_status(
 
 
 def _assistant_runtime_checks(health: dict[str, str]) -> list[dict[str, Any]]:
-    return [
+    raw_checks = [
         {
             "action_label": "检查 PostgreSQL",
             "code": "postgres",
             "description": "助手会话、草案、指标和审计依赖 PostgreSQL 持久化。",
+            "label": "PostgreSQL",
             "remediation": "确认 DATABASE_URL 指向的 PostgreSQL 可连接，并已执行数据库迁移。",
+            "required": True,
+            "severity": "critical",
             "status": health["postgres"],
         },
         {
             "action_label": "检查 Redis",
             "code": "redis",
             "description": "Redis 用于运行缓存、队列协作和部分异步任务协调。",
+            "label": "Redis",
             "remediation": "启动 Redis，或修正 REDIS_URL 后重启 API。",
+            "required": True,
+            "severity": "critical",
             "status": health["redis"],
         },
         {
             "action_label": "配置模型网关",
             "code": "model_gateway",
             "description": "开放式问答需要可用的 OpenAI-compatible chat gateway。",
+            "label": "模型网关",
             "remediation": "在模型网关页面配置默认 chat 模型、base_url 和 api_key。",
+            "required": False,
+            "severity": "warning",
             "status": health["model_gateway"],
             "url": "/system/model-gateway",
         },
@@ -260,7 +275,10 @@ def _assistant_runtime_checks(health: dict[str, str]) -> list[dict[str, Any]]:
             "action_label": "配置 Embedding",
             "code": "embedding_gateway",
             "description": "知识 chunk 检索和语义召回需要 embedding gateway。",
+            "label": "Embedding 网关",
             "remediation": "在默认模型网关中配置 embedding 模型，或明确选择禁用 embedding。",
+            "required": False,
+            "severity": "warning",
             "status": health["embedding_gateway"],
             "url": "/system/model-gateway",
         },
@@ -268,9 +286,21 @@ def _assistant_runtime_checks(health: dict[str, str]) -> list[dict[str, Any]]:
             "action_label": "配置长期记忆",
             "code": "long_memory",
             "description": "GBrain 长期记忆是增强能力；未配置时回退到系统上下文和知识库。",
+            "label": "GBrain 长期记忆",
             "remediation": "配置 GBRAIN_BASE_URL 和 GBRAIN_API_KEY，或保持未配置并使用知识库回退。",
+            "required": False,
+            "severity": "info",
             "status": health["long_memory"],
         },
+    ]
+    return [
+        {
+            **check,
+            "action_url": check.get("url"),
+            "detail": check.get("description"),
+            "key": check["code"],
+        }
+        for check in raw_checks
     ]
 
 
@@ -563,7 +593,7 @@ def list_assistant_action_reference_configs(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {ASSISTANT_ACTION_REFERENCES_MANAGE_PERMISSION})
     payload = list_assistant_action_reference_configs_response(
         current_store=store(request),
     )
@@ -576,7 +606,7 @@ def create_assistant_action_reference_config(
     payload: AssistantActionReferenceConfigRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {ASSISTANT_ACTION_REFERENCES_MANAGE_PERMISSION})
     result = create_assistant_action_reference_config_response(
         current_store=store(request),
         payload=payload.model_dump(exclude_none=True),
@@ -592,7 +622,7 @@ def patch_assistant_action_reference_config(
     payload: AssistantActionReferenceConfigPatchRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {ASSISTANT_ACTION_REFERENCES_MANAGE_PERMISSION})
     result = patch_assistant_action_reference_config_response(
         config_id=config_id,
         current_store=store(request),
@@ -609,7 +639,7 @@ def set_assistant_action_reference_config_status(
     payload: AssistantActionReferenceConfigStatusRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {ASSISTANT_ACTION_REFERENCES_MANAGE_PERMISSION})
     result = set_assistant_action_reference_config_status_response(
         config_id=config_id,
         current_store=store(request),
@@ -626,7 +656,7 @@ def update_assistant_action_reference_config_rollout(
     payload: AssistantActionReferenceConfigRolloutRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {ASSISTANT_ACTION_REFERENCES_MANAGE_PERMISSION})
     result = update_assistant_action_reference_config_rollout_response(
         config_id=config_id,
         current_store=store(request),
@@ -644,7 +674,7 @@ def delete_assistant_action_reference_config(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    require_roles(user, {"admin"})
+    require_permissions(user, {ASSISTANT_ACTION_REFERENCES_MANAGE_PERMISSION})
     result = delete_assistant_action_reference_config_response(
         config_id=config_id,
         current_store=store(request),

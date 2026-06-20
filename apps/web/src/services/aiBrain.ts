@@ -185,9 +185,15 @@ export type AssistantChatRun = {
 export type AssistantRuntimeStatus = {
   checks?: Array<{
     action_label?: string;
+    action_url?: string;
     code: string;
     description?: string;
+    detail?: string;
+    key?: string;
+    label?: string;
     remediation?: string;
+    required?: boolean;
+    severity?: 'critical' | 'info' | 'warning' | string;
     status: string;
     url?: string;
   }>;

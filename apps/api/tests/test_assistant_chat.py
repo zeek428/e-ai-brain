@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ import app.services.assistant_action_drafts as assistant_action_drafts_service
 import app.services.assistant_chat as assistant_chat_service
 import app.services.assistant_role_quick_tasks as assistant_role_quick_tasks_service
 from app.api.deps import api_error
+from app.core.repositories.authorization import CompatibilityAuthorizationRepository
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
 from app.main import app
@@ -97,9 +99,15 @@ def test_ai_assistant_runtime_status_returns_self_check_guidance():
     assert response.status_code == 200, response.text
     payload = response.json()["data"]
     checks_by_code = {item["code"]: item for item in payload["checks"]}
+    checks_by_key = {item["key"]: item for item in payload["checks"]}
     assert {"postgres", "redis", "model_gateway", "embedding_gateway", "long_memory"}.issubset(
         checks_by_code
     )
+    assert checks_by_key["long_memory"]["required"] is False
+    assert checks_by_key["long_memory"]["severity"] == "info"
+    assert checks_by_key["model_gateway"]["action_url"] == "/system/model-gateway"
+    assert checks_by_key["redis"]["label"] == "Redis"
+    assert checks_by_key["redis"]["detail"]
     assert checks_by_code["model_gateway"]["url"] == "/system/model-gateway"
     assert checks_by_code["redis"]["remediation"]
     assert isinstance(payload["ready"], bool)
@@ -701,6 +709,36 @@ def test_ai_assistant_action_reference_config_apis_support_operations_rollout_an
     assert "assistant_action_reference_config.updated" in audit_types
     assert "assistant_action_reference_config.status_changed" in audit_types
     assert "assistant_action_reference_config.rollout_changed" in audit_types
+
+
+def test_ai_assistant_action_reference_config_apis_allow_permission_granted_non_admin():
+    app.state.store.reset()
+    original_authorization_repository = app.state.authorization_repository
+    original_user_repository = app.state.user_repository
+    authorization_repository = CompatibilityAuthorizationRepository()
+    authorization_repository.set_role_permissions(
+        "reviewer",
+        ["assistant.action_references.manage"],
+        actor_id="user_admin",
+        trace_id="test-trace",
+    )
+    authorization_repository.set_role_menus(
+        "reviewer",
+        ["system.assistant_action_references"],
+        actor_id="user_admin",
+        trace_id="test-trace",
+    )
+    app.state.authorization_repository = authorization_repository
+    app.state.user_repository = MemoryUserRepository.seeded()
+    try:
+        headers = auth_headers("reviewer@example.com", "reviewer123")
+        response = client.get("/api/assistant/action-reference-configs", headers=headers)
+    finally:
+        app.state.authorization_repository = original_authorization_repository
+        app.state.user_repository = original_user_repository
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["items"] == []
 
 
 def test_ai_assistant_chat_returns_registered_intent_metadata(monkeypatch):
@@ -4345,6 +4383,150 @@ def test_ai_assistant_metrics_reads_scheduled_job_runs_from_repository_read_mode
     assert details["items"][0]["url"] == (
         "/tasks/scheduled-jobs?job_id=scheduled_job_db&run_id=scheduled_job_run_db_failed"
     )
+
+
+def test_ai_assistant_metrics_uses_repository_scoped_scheduled_job_runs_query():
+    now = datetime.now(UTC).isoformat()
+
+    class RepositoryBackedMetricsStore:
+        def __init__(self):
+            self.scoped_calls: list[dict[str, object]] = []
+
+        def list_assistant_action_drafts(self, *, user_id: str):
+            assert user_id == "user_admin"
+            return [
+                {
+                    "action": "create_scheduled_job",
+                    "confirmed_at": now,
+                    "confirmed_by": "user_admin",
+                    "created_at": now,
+                    "created_by": "user_admin",
+                    "id": "assistant_action_draft_scoped",
+                    "metadata_json": {},
+                    "payload": {"name": "Scoped 作业草案"},
+                    "result_run_id": "assistant_action_run_scoped",
+                    "risk_level": "medium",
+                    "status": "confirmed",
+                    "title": "Scoped 作业草案",
+                    "updated_at": now,
+                }
+            ]
+
+        def load_assistant_chat(self):
+            return {
+                "assistant_action_runs": {
+                    "assistant_action_run_scoped": {
+                        "action": "create_scheduled_job",
+                        "created_at": now,
+                        "draft_id": "assistant_action_draft_scoped",
+                        "executed_by": "user_admin",
+                        "finished_at": now,
+                        "id": "assistant_action_run_scoped",
+                        "result": {"id": "scheduled_job_scoped"},
+                        "result_id": "scheduled_job_scoped",
+                        "result_type": "scheduled_job",
+                        "started_at": now,
+                        "status": "succeeded",
+                        "updated_at": now,
+                    }
+                },
+                "assistant_messages": {
+                    "assistant_message_run_ref": {
+                        "conversation_id": "assistant_conversation_scoped",
+                        "created_at": now,
+                        "id": "assistant_message_run_ref",
+                        "metadata_json": {
+                            "references": [
+                                {
+                                    "id": "scheduled_job_run_scoped_failed",
+                                    "type": "scheduled_job_run",
+                                }
+                            ]
+                        },
+                        "role": "user",
+                        "updated_at": now,
+                        "user_id": "user_admin",
+                    }
+                },
+            }
+
+        def list_scheduled_job_runs(self, **_kwargs):
+            raise AssertionError("assistant metrics should use scoped repository query")
+
+        def list_assistant_scoped_scheduled_job_runs(
+            self,
+            *,
+            action_draft_ids: list[str],
+            action_run_ids: list[str],
+            message_ids: list[str],
+            referenced_run_ids: list[str],
+            since: str | None = None,
+        ):
+            self.scoped_calls.append(
+                {
+                    "action_draft_ids": action_draft_ids,
+                    "action_run_ids": action_run_ids,
+                    "message_ids": message_ids,
+                    "referenced_run_ids": referenced_run_ids,
+                    "since": since,
+                }
+            )
+            return [
+                {
+                    "assistant_action_draft_id": None,
+                    "assistant_action_run_id": None,
+                    "created_at": now,
+                    "error_code": "FAILED",
+                    "error_message": "首跑失败",
+                    "finished_at": now,
+                    "id": "scheduled_job_run_scoped_failed",
+                    "records_imported": 0,
+                    "result_summary": {},
+                    "scheduled_job_id": "scheduled_job_scoped",
+                    "source_run_id": None,
+                    "started_at": now,
+                    "status": "failed",
+                    "triggered_by_assistant": False,
+                    "trigger_type": "manual",
+                    "updated_at": now,
+                },
+                {
+                    "assistant_action_draft_id": "assistant_action_draft_scoped",
+                    "assistant_action_run_id": "assistant_action_run_scoped",
+                    "created_at": now,
+                    "error_code": None,
+                    "error_message": None,
+                    "finished_at": now,
+                    "id": "scheduled_job_run_scoped_repaired",
+                    "records_imported": 8,
+                    "result_summary": {},
+                    "scheduled_job_id": "scheduled_job_scoped",
+                    "source_run_id": "scheduled_job_run_scoped_failed",
+                    "started_at": now,
+                    "status": "succeeded",
+                    "triggered_by_assistant": True,
+                    "trigger_type": "manual_rerun",
+                    "updated_at": now,
+                },
+            ]
+
+    repository = RepositoryBackedMetricsStore()
+    metrics = assistant_metrics_response(
+        SimpleNamespace(repository=repository, scheduled_job_runs={}),
+        user={"id": "user_admin"},
+        window_days=30,
+    )
+
+    assert len(repository.scoped_calls) == 1
+    call = repository.scoped_calls[0]
+    assert call["action_draft_ids"] == ["assistant_action_draft_scoped"]
+    assert call["action_run_ids"] == ["assistant_action_run_scoped"]
+    assert call["message_ids"] == ["assistant_message_run_ref"]
+    assert call["referenced_run_ids"] == ["scheduled_job_run_scoped_failed"]
+    assert call["since"]
+    assert metrics["summary"]["scheduled_job_run_total"] == 2
+    assert metrics["summary"]["failed_run_repaired_count"] == 1
+    assert metrics["scheduled_job_run_attribution"]["total"] == 2
 
 
 def test_ai_assistant_action_draft_modification_updates_metrics_and_audit():

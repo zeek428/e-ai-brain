@@ -42,14 +42,17 @@ export function AssistantRuntimeStatus({
       {attentionChecks.length ? (
         <div className="assistant-runtime-checks" aria-label="助手运行自检">
           {attentionChecks.map((item) => (
-            <div className="assistant-runtime-check" key={item.code}>
+            <div className="assistant-runtime-check" key={item.key ?? item.code}>
               <Space size={6} wrap>
                 <Tag color={item.status === 'error' || item.status === 'failed' ? 'red' : 'gold'}>
-                  {item.code}
+                  {item.label ?? item.key ?? item.code}
                 </Tag>
-                <Text type="secondary">{item.remediation ?? item.description}</Text>
-                {item.url ? (
-                  <Button href={item.url} icon={<LinkOutlined />} size="small" type="link">
+                <Tag color={item.required ? 'red' : 'blue'}>
+                  {item.required ? '必需' : '增强'}
+                </Tag>
+                <Text type="secondary">{item.remediation ?? item.detail ?? item.description}</Text>
+                {item.action_url ?? item.url ? (
+                  <Button href={item.action_url ?? item.url} icon={<LinkOutlined />} size="small" type="link">
                     {item.action_label ?? '去配置'}
                   </Button>
                 ) : null}

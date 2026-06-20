@@ -609,19 +609,19 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题；确定性意图返回 `message.intent={intent_code,confidence,summary,required_refs}`，工具结果顶层可带 `intent_code/intent_confidence/required_refs`，`summary` 保持业务摘要；请求中的结构化 `references[]` 优先进入上下文，文本 `@...执行一次` 仅在没有结构化作业引用时兜底解析，官方周反馈洞察消歧不得覆盖用户已选择的结构化引用。 |
-| Assistant | GET | `/api/assistant/runtime-status` | 查询当前助手运行环境自检状态；响应返回 `ready`、`mode`、模型/Embedding/Redis/GBrain 状态和 `checks[]`，每个检查项包含 `key/status/label/detail/remediation/action_label/action_url`，用于页面展示规则能力模式、缺失配置和下一步修复入口。 |
+| Assistant | GET | `/api/assistant/runtime-status` | 查询当前助手运行环境自检状态；响应返回 `ready`、`mode`、模型/Embedding/Redis/GBrain 状态和 `checks[]`，每个检查项包含 `key/status/label/detail/remediation/action_label/action_url/required/severity`，用于页面展示规则能力模式、必需/增强能力、缺失配置和下一步修复入口。 |
 | Assistant | GET | `/api/assistant/role-quick-tasks` | 查询当前用户可见的 AI 助手角色快捷任务组，后端优先读取 `assistant_role_quick_tasks` 配置表并按角色、权限、启用状态、企业、模板版本和 `rollout_json` 灰度策略过滤；仅当没有任何配置记录时才回退内置默认目录，前端不得再硬编码角色入口。 |
 | Assistant | GET | `/api/assistant/role-quick-task-configs` | 管理员查询全部 AI 助手角色快捷任务配置记录，包含企业、任务组、角色、权限、启停、模板版本、灰度策略和审计元数据。 |
 | Assistant | POST | `/api/assistant/role-quick-task-configs` | 管理员新增角色快捷任务配置，写入 `assistant_role_quick_task.created` 审计。 |
 | Assistant | PATCH | `/api/assistant/role-quick-task-configs/{config_id}` | 管理员编辑角色快捷任务配置，写入 `assistant_role_quick_task.updated` 审计。 |
 | Assistant | POST | `/api/assistant/role-quick-task-configs/{config_id}/status` | 管理员启用/停用任务项或任务组，写入 `assistant_role_quick_task.status_changed` 审计。 |
 | Assistant | PUT | `/api/assistant/role-quick-task-configs/{config_id}/rollout` | 管理员调整企业、模板版本和 `rollout_json` 灰度策略，写入 `assistant_role_quick_task.rollout_changed` 审计。 |
-| Assistant | GET | `/api/assistant/action-reference-configs` | 管理员查询 `@` 动作候选配置，包含动作 key、标题、别名、角色、权限、启停、排序、企业、模板版本、灰度策略和审计元数据。 |
-| Assistant | POST | `/api/assistant/action-reference-configs` | 管理员新增 `assistant_action` 候选配置，写入 `assistant_action_reference_config.created` 审计。 |
-| Assistant | PATCH | `/api/assistant/action-reference-configs/{config_id}` | 管理员编辑 `assistant_action` 候选配置，写入 `assistant_action_reference_config.updated` 审计。 |
-| Assistant | POST | `/api/assistant/action-reference-configs/{config_id}/status` | 管理员启用或停用 `assistant_action` 候选配置，写入 `assistant_action_reference_config.status_changed` 审计。 |
-| Assistant | PUT | `/api/assistant/action-reference-configs/{config_id}/rollout` | 管理员调整企业、模板版本和 `rollout_json` 灰度策略，写入 `assistant_action_reference_config.rollout_changed` 审计。 |
-| Assistant | DELETE | `/api/assistant/action-reference-configs/{config_id}` | 管理员删除 `assistant_action` 候选配置，写入 `assistant_action_reference_config.deleted` 审计。 |
+| Assistant | GET | `/api/assistant/action-reference-configs` | 具备 `assistant.action_references.manage` 权限的用户查询 `@` 动作候选配置，包含动作 key、标题、别名、角色、权限、启停、排序、企业、模板版本、灰度策略和审计元数据。 |
+| Assistant | POST | `/api/assistant/action-reference-configs` | 具备 `assistant.action_references.manage` 权限的用户新增 `assistant_action` 候选配置，写入 `assistant_action_reference_config.created` 审计。 |
+| Assistant | PATCH | `/api/assistant/action-reference-configs/{config_id}` | 具备 `assistant.action_references.manage` 权限的用户编辑 `assistant_action` 候选配置，写入 `assistant_action_reference_config.updated` 审计。 |
+| Assistant | POST | `/api/assistant/action-reference-configs/{config_id}/status` | 具备 `assistant.action_references.manage` 权限的用户启用或停用 `assistant_action` 候选配置，写入 `assistant_action_reference_config.status_changed` 审计。 |
+| Assistant | PUT | `/api/assistant/action-reference-configs/{config_id}/rollout` | 具备 `assistant.action_references.manage` 权限的用户调整企业、模板版本和 `rollout_json` 灰度策略，写入 `assistant_action_reference_config.rollout_changed` 审计。 |
+| Assistant | DELETE | `/api/assistant/action-reference-configs/{config_id}` | 具备 `assistant.action_references.manage` 权限的用户删除 `assistant_action` 候选配置，写入 `assistant_action_reference_config.deleted` 审计。 |
 | Assistant | GET | `/api/assistant/draft-templates` | 查询当前用户可见的 AI 助手草案模板市场目录；返回周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析模板的提示、角色、依赖、流程和接入状态。 |
 | Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 使用的候选；覆盖引用类业务对象、可读知识空间/知识目录/知识文档/知识片段、管理员或专项权限可见的定时作业/运行/插件动作/插件连接/AI角色/Skill，以及 `assistant_action` 动作入口；运营类定时作业和运行记录必须再按当前用户产品 scope 过滤，未指定 type 的默认候选按类型均衡合并。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |

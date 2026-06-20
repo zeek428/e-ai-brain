@@ -15,13 +15,16 @@ import {
   InputNumber,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Switch,
+  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ColumnsType } from 'antd/es/table';
 
 import {
   createAssistantActionReferenceConfig,
@@ -110,11 +113,20 @@ function formValuesFromRecord(record: AssistantActionReferenceConfig): ActionRef
 }
 
 export default function AssistantActionReferencesPage() {
+  const [batchAction, setBatchAction] = useState<'disable' | 'enable'>();
   const [configs, setConfigs] = useState<AssistantActionReferenceConfig[]>([]);
+  const [configSubmitting, setConfigSubmitting] = useState(false);
+  const [deletingConfigId, setDeletingConfigId] = useState<string>();
   const [editingConfig, setEditingConfig] = useState<AssistantActionReferenceConfig>();
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [mutatingConfigIds, setMutatingConfigIds] = useState<Set<string>>(() => new Set());
   const [rolloutTarget, setRolloutTarget] = useState<AssistantActionReferenceConfig>();
+  const [rolloutSubmitting, setRolloutSubmitting] = useState(false);
+  const [roleFilter, setRoleFilter] = useState<string>();
+  const [searchText, setSearchText] = useState('');
+  const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<'disabled' | 'enabled'>();
   const [configForm] = Form.useForm<ActionReferenceFormValues>();
   const [rolloutForm] = Form.useForm<RolloutFormValues>();
 
@@ -139,6 +151,58 @@ export default function AssistantActionReferencesPage() {
     () => configs.filter((item) => item.enabled).length,
     [configs],
   );
+  const roleOptions = useMemo(
+    () => Array.from(new Set(configs.flatMap((item) => item.roles))).sort(),
+    [configs],
+  );
+  const filteredConfigs = useMemo(() => {
+    const normalizedSearch = searchText.trim().toLowerCase();
+    return configs.filter((record) => {
+      if (statusFilter === 'enabled' && !record.enabled) {
+        return false;
+      }
+      if (statusFilter === 'disabled' && record.enabled) {
+        return false;
+      }
+      if (roleFilter && !record.roles.includes(roleFilter)) {
+        return false;
+      }
+      if (!normalizedSearch) {
+        return true;
+      }
+      const searchableText = [
+        record.action_key,
+        ...record.aliases,
+        record.enterprise_id ?? '',
+        ...record.permissions,
+        record.prompt,
+        ...record.roles,
+        record.summary,
+        record.template_version ?? '',
+        record.title,
+        record.url,
+      ].join(' ').toLowerCase();
+      return searchableText.includes(normalizedSearch);
+    });
+  }, [configs, roleFilter, searchText, statusFilter]);
+  const selectedConfigs = useMemo(
+    () => configs.filter((item) => selectedRowKeys.includes(item.id)),
+    [configs, selectedRowKeys],
+  );
+
+  const markMutating = (ids: string[], mutating: boolean) => {
+    setMutatingConfigIds((current) => {
+      const next = new Set(current);
+      ids.forEach((id) => {
+        if (mutating) {
+          next.add(id);
+        } else {
+          next.delete(id);
+        }
+      });
+      return next;
+    });
+  };
 
   const closeConfigModal = () => {
     setIsConfigModalOpen(false);
@@ -164,6 +228,7 @@ export default function AssistantActionReferencesPage() {
   };
 
   const submitConfig = async (values: ActionReferenceFormValues) => {
+    setConfigSubmitting(true);
     try {
       const payload = {
         action_key: values.action_key.trim(),
@@ -195,16 +260,46 @@ export default function AssistantActionReferencesPage() {
       message.success(editingConfig ? '@ 能力已更新' : '@ 能力已创建');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '@ 能力保存失败');
+    } finally {
+      setConfigSubmitting(false);
     }
   };
 
   const toggleStatus = async (record: AssistantActionReferenceConfig) => {
+    markMutating([record.id], true);
     try {
       const updated = await setAssistantActionReferenceConfigStatus(record.id, !record.enabled);
       setConfigs((items) => items.map((item) => (item.id === updated.id ? updated : item)));
       message.success(updated.enabled ? '@ 能力已启用' : '@ 能力已停用');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '@ 能力状态更新失败');
+    } finally {
+      markMutating([record.id], false);
+    }
+  };
+
+  const batchSetStatus = async (enabled: boolean) => {
+    const targets = selectedConfigs.filter((record) => record.enabled !== enabled);
+    if (!targets.length) {
+      message.info(enabled ? '所选能力已全部启用' : '所选能力已全部停用');
+      return;
+    }
+    const targetIds = targets.map((record) => record.id);
+    setBatchAction(enabled ? 'enable' : 'disable');
+    markMutating(targetIds, true);
+    try {
+      const updatedRecords = await Promise.all(
+        targets.map((record) => setAssistantActionReferenceConfigStatus(record.id, enabled)),
+      );
+      const updatedById = new Map(updatedRecords.map((record) => [record.id, record]));
+      setConfigs((items) => items.map((item) => updatedById.get(item.id) ?? item));
+      setSelectedRowKeys([]);
+      message.success(enabled ? '所选 @ 能力已启用' : '所选 @ 能力已停用');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '批量更新失败');
+    } finally {
+      markMutating(targetIds, false);
+      setBatchAction(undefined);
     }
   };
 
@@ -221,6 +316,7 @@ export default function AssistantActionReferencesPage() {
     if (!rolloutTarget) {
       return;
     }
+    setRolloutSubmitting(true);
     try {
       const updated = await updateAssistantActionReferenceConfigRollout(rolloutTarget.id, {
         enterprise_id: values.enterprise_id?.trim() || null,
@@ -236,18 +332,147 @@ export default function AssistantActionReferencesPage() {
       message.success('@ 能力灰度已更新');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '@ 能力灰度更新失败');
+    } finally {
+      setRolloutSubmitting(false);
     }
   };
 
   const removeConfig = async (record: AssistantActionReferenceConfig) => {
+    setDeletingConfigId(record.id);
+    markMutating([record.id], true);
     try {
       await deleteAssistantActionReferenceConfig(record.id);
       setConfigs((items) => items.filter((item) => item.id !== record.id));
+      setSelectedRowKeys((keys) => keys.filter((key) => key !== record.id));
       message.success('@ 能力已删除');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '@ 能力删除失败');
+    } finally {
+      markMutating([record.id], false);
+      setDeletingConfigId(undefined);
     }
   };
+
+  const columns: ColumnsType<AssistantActionReferenceConfig> = [
+    {
+      dataIndex: 'title',
+      fixed: 'left',
+      render: (_value, record) => (
+        <Space orientation="vertical" size={2}>
+          <Text strong>{record.title}</Text>
+          <Text type="secondary">{record.action_key}</Text>
+          <Text type="secondary">{record.summary}</Text>
+        </Space>
+      ),
+      title: '能力',
+      width: 260,
+    },
+    {
+      dataIndex: 'enabled',
+      render: (enabled: boolean) => (
+        <Tag color={enabled ? 'green' : 'default'}>{enabled ? '启用' : '停用'}</Tag>
+      ),
+      title: '状态',
+      width: 90,
+    },
+    {
+      dataIndex: 'sort_order',
+      sorter: (left, right) => left.sort_order - right.sort_order,
+      title: '排序',
+      width: 90,
+    },
+    {
+      dataIndex: 'permissions',
+      render: (permissions: string[]) => tagList(permissions),
+      title: '权限预览',
+      width: 180,
+    },
+    {
+      dataIndex: 'roles',
+      render: (roles: string[]) => tagList(roles),
+      title: '角色',
+      width: 180,
+    },
+    {
+      dataIndex: 'aliases',
+      render: (aliases: string[]) => tagList(aliases.slice(0, 8)),
+      title: '关键词',
+      width: 180,
+    },
+    {
+      dataIndex: 'enterprise_id',
+      render: (enterpriseId?: string | null) => enterpriseId || <Text type="secondary">全局</Text>,
+      title: '企业',
+      width: 120,
+    },
+    {
+      dataIndex: 'template_version',
+      render: (version?: string | null) => version || <Text type="secondary">默认</Text>,
+      title: '模板版本',
+      width: 120,
+    },
+    {
+      key: 'rollout',
+      render: (_value, record) => {
+        const percentage = rolloutPercentage(record);
+        return percentage === undefined ? '-' : `${percentage}%`;
+      },
+      title: '灰度',
+      width: 90,
+    },
+    {
+      fixed: 'right',
+      key: 'actions',
+      render: (_value, record) => {
+        const mutating = mutatingConfigIds.has(record.id);
+        return (
+          <Space size={8} wrap>
+            <Button
+              aria-label={`编辑 ${record.title}`}
+              disabled={mutating}
+              icon={<EditOutlined />}
+              onClick={() => openEditConfig(record)}
+              size="small"
+            >
+              编辑
+            </Button>
+            <Button
+              aria-label={`${record.enabled ? '停用' : '启用'} ${record.title}`}
+              icon={record.enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+              loading={mutating}
+              onClick={() => void toggleStatus(record)}
+              size="small"
+            >
+              {record.enabled ? '停用' : '启用'}
+            </Button>
+            <Button
+              aria-label={`配置灰度 ${record.title}`}
+              disabled={mutating}
+              icon={<DeploymentUnitOutlined />}
+              onClick={() => openRollout(record)}
+              size="small"
+            >
+              灰度
+            </Button>
+            <Button href={auditUrl(record)} icon={<AuditOutlined />} size="small">
+              审计
+            </Button>
+            <Popconfirm
+              okButtonProps={{ loading: deletingConfigId === record.id }}
+              onConfirm={() => void removeConfig(record)}
+              title={`删除 ${record.title}`}
+            >
+              <Button danger disabled={mutating} icon={<DeleteOutlined />} size="small">
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        );
+      },
+      title: '操作',
+      width: 360,
+    },
+  ];
 
   return (
     <PageContainer
@@ -260,106 +485,73 @@ export default function AssistantActionReferencesPage() {
         </Button>,
       ]}
     >
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', minWidth: 1480, width: '100%' }}>
-          <thead>
-            <tr>
-              {['能力', '状态', '排序', '权限预览', '角色', '关键词', '企业', '模板版本', '灰度', '操作'].map((title) => (
-                <th
-                  key={title}
-                  style={{ borderBottom: '1px solid #f0f0f0', padding: '12px 8px', textAlign: 'left' }}
-                >
-                  {title}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody aria-busy={loading}>
-            {configs.map((record) => {
-              const percentage = rolloutPercentage(record);
-              return (
-                <tr key={record.id}>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    <Space orientation="vertical" size={2}>
-                      <Text strong>{record.title}</Text>
-                      <Text type="secondary">{record.action_key}</Text>
-                      <Text type="secondary">{record.summary}</Text>
-                    </Space>
-                  </td>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    <Tag color={record.enabled ? 'green' : 'default'}>
-                      {record.enabled ? '启用' : '停用'}
-                    </Tag>
-                  </td>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    {record.sort_order}
-                  </td>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    {tagList(record.permissions)}
-                  </td>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    {tagList(record.roles)}
-                  </td>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    {tagList(record.aliases.slice(0, 8))}
-                  </td>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    {record.enterprise_id || <Text type="secondary">全局</Text>}
-                  </td>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    {record.template_version || <Text type="secondary">默认</Text>}
-                  </td>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    {percentage === undefined ? '-' : `${percentage}%`}
-                  </td>
-                  <td style={{ borderBottom: '1px solid #f0f0f0', padding: 8 }}>
-                    <Space size={8} wrap>
-                      <Button
-                        aria-label={`编辑 ${record.title}`}
-                        icon={<EditOutlined />}
-                        onClick={() => openEditConfig(record)}
-                        size="small"
-                      >
-                        编辑
-                      </Button>
-                      <Button
-                        aria-label={`${record.enabled ? '停用' : '启用'} ${record.title}`}
-                        icon={record.enabled ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-                        onClick={() => void toggleStatus(record)}
-                        size="small"
-                      >
-                        {record.enabled ? '停用' : '启用'}
-                      </Button>
-                      <Button
-                        aria-label={`配置灰度 ${record.title}`}
-                        icon={<DeploymentUnitOutlined />}
-                        onClick={() => openRollout(record)}
-                        size="small"
-                      >
-                        灰度
-                      </Button>
-                      <Button href={auditUrl(record)} icon={<AuditOutlined />} size="small">
-                        审计
-                      </Button>
-                      <Popconfirm
-                        onConfirm={() => void removeConfig(record)}
-                        title={`删除 ${record.title}`}
-                      >
-                        <Button danger icon={<DeleteOutlined />} size="small">
-                          删除
-                        </Button>
-                      </Popconfirm>
-                    </Space>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <Space style={{ marginBottom: 16, width: '100%' }} wrap>
+        <Input.Search
+          allowClear
+          onChange={(event) => setSearchText(event.target.value)}
+          placeholder="搜索标题、关键词、角色、权限或 URL"
+          style={{ width: 320 }}
+          value={searchText}
+        />
+        <Select
+          allowClear
+          onChange={setStatusFilter}
+          options={[
+            { label: '启用', value: 'enabled' },
+            { label: '停用', value: 'disabled' },
+          ]}
+          placeholder="状态"
+          style={{ width: 120 }}
+          value={statusFilter}
+        />
+        <Select
+          allowClear
+          onChange={setRoleFilter}
+          options={roleOptions.map((role) => ({ label: role, value: role }))}
+          placeholder="角色"
+          style={{ minWidth: 160 }}
+          value={roleFilter}
+        />
+        <Button
+          disabled={!selectedConfigs.length}
+          loading={batchAction === 'enable'}
+          onClick={() => void batchSetStatus(true)}
+        >
+          批量启用
+        </Button>
+        <Button
+          disabled={!selectedConfigs.length}
+          loading={batchAction === 'disable'}
+          onClick={() => void batchSetStatus(false)}
+        >
+          批量停用
+        </Button>
+        <Text type="secondary">
+          已筛选 {filteredConfigs.length} 项 · 已选择 {selectedConfigs.length} 项
+        </Text>
+      </Space>
+
+      <Table<AssistantActionReferenceConfig>
+        columns={columns}
+        dataSource={filteredConfigs}
+        loading={loading}
+        pagination={{
+          defaultPageSize: 8,
+          pageSizeOptions: [8, 16, 32],
+          showSizeChanger: true,
+          showTotal: (total) => `共 ${total} 项`,
+        }}
+        rowKey="id"
+        rowSelection={{
+          onChange: (keys) => setSelectedRowKeys(keys.map(String)),
+          selectedRowKeys,
+        }}
+        scroll={{ x: 1480 }}
+      />
 
       <Modal
         destroyOnHidden
+        confirmLoading={configSubmitting}
         onCancel={closeConfigModal}
         onOk={() => configForm.submit()}
         open={isConfigModalOpen}
@@ -432,6 +624,7 @@ export default function AssistantActionReferencesPage() {
 
       <Modal
         destroyOnHidden
+        confirmLoading={rolloutSubmitting}
         onCancel={() => {
           setRolloutTarget(undefined);
           rolloutForm.resetFields();

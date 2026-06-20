@@ -58,10 +58,15 @@ def assistant_conversations_response(
 def _conversation_collapse_key(conversation: dict[str, Any]) -> tuple[str, str]:
     command_signature = str(conversation.get("command_signature") or "").strip()
     if command_signature:
+        context_scope = conversation.get("context_scope") or _conversation_context_scope(
+            conversation.get("product_id")
+        )
         return f"command:{command_signature}", str(
-            conversation.get("context_scope") or _conversation_context_scope(conversation.get("product_id"))
+            context_scope
         )
     title = " ".join(str(conversation.get("title") or "").strip().split()).casefold()
+    if not title:
+        return "", _conversation_context_scope(conversation.get("product_id"))
     return f"title:{title}", _conversation_context_scope(conversation.get("product_id"))
 
 
@@ -240,8 +245,24 @@ def _find_reusable_command_conversation(
     target_title = assistant_conversation_title(message)
     command_signature = _command_signature_for_message(message)
     context_scope = _conversation_context_scope(product_id)
+    if command_signature:
+        repository = assistant_query_repository(current_store)
+        find_reusable = (
+            getattr(repository, "find_reusable_assistant_conversation", None)
+            if repository is not None
+            else None
+        )
+        if callable(find_reusable):
+            conversation = find_reusable(
+                command_signature=command_signature,
+                context_scope=context_scope,
+                user_id=user_id,
+            )
+            if conversation is not None:
+                return conversation
+    normalized_title = " ".join(target_title.strip().split()).casefold()
     target_key = (
-        f"command:{command_signature}" if command_signature else f"title:{' '.join(target_title.strip().split()).casefold()}",
+        f"command:{command_signature}" if command_signature else f"title:{normalized_title}",
         context_scope,
     )
     candidates = [
@@ -254,7 +275,12 @@ def _find_reusable_command_conversation(
         return None
     return sorted(
         candidates,
-        key=lambda item: item.get("last_message_at") or item.get("updated_at") or item.get("created_at") or "",
+        key=lambda item: (
+            item.get("last_message_at")
+            or item.get("updated_at")
+            or item.get("created_at")
+            or ""
+        ),
         reverse=True,
     )[0]
 

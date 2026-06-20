@@ -221,6 +221,40 @@ def test_assistant_history_prefers_command_signature_when_collapsing():
     ]
 
 
+def test_assistant_history_does_not_collapse_blank_titles():
+    store = MemoryStore()
+    store.assistant_conversations = {
+        "conversation_blank_first": {
+            "created_at": "2026-06-20T08:00:00+00:00",
+            "id": "conversation_blank_first",
+            "last_message_at": "2026-06-20T08:02:00+00:00",
+            "message_count": 1,
+            "product_id": None,
+            "title": "",
+            "updated_at": "2026-06-20T08:02:00+00:00",
+            "user_id": "user_admin",
+        },
+        "conversation_blank_second": {
+            "created_at": "2026-06-20T07:00:00+00:00",
+            "id": "conversation_blank_second",
+            "last_message_at": "2026-06-20T07:02:00+00:00",
+            "message_count": 1,
+            "product_id": None,
+            "title": "   ",
+            "updated_at": "2026-06-20T07:02:00+00:00",
+            "user_id": "user_admin",
+        },
+    }
+
+    collapsed = assistant_conversations_response(store, user_id="user_admin")
+
+    assert collapsed["total"] == 2
+    assert [item["id"] for item in collapsed["items"]] == [
+        "conversation_blank_first",
+        "conversation_blank_second",
+    ]
+
+
 def test_ensure_assistant_conversation_reuses_existing_command_conversation():
     store = MemoryStore()
     user_id = "user_admin"
@@ -264,6 +298,65 @@ def test_ensure_assistant_conversation_reuses_existing_command_conversation():
     assert first["context_scope"] == "product:product_119"
     assert first["source_message_hash"]
     assert natural_second["id"] != natural_first["id"]
+
+
+def test_ensure_assistant_conversation_reuses_repository_command_conversation():
+    store = MemoryStore()
+    message = "@提取每周用户反馈有价值信息 执行一次"
+    existing = ensure_assistant_conversation(
+        MemoryStore(),
+        conversation_id=None,
+        message=message,
+        now="2026-06-20T08:00:00+00:00",
+        product_id="product_119",
+        user={"id": "user_admin"},
+    )
+    existing["id"] = "conversation_repository_reused"
+
+    class Repository:
+        def __init__(self):
+            self.request: dict[str, str] | None = None
+
+        def list_assistant_conversations(self, *, user_id: str):
+            del user_id
+            return []
+
+        def list_assistant_conversation_messages(self, *, conversation_id: str, user_id: str):
+            del conversation_id, user_id
+            return []
+
+        def find_reusable_assistant_conversation(
+            self,
+            *,
+            command_signature: str,
+            context_scope: str,
+            user_id: str,
+        ):
+            self.request = {
+                "command_signature": command_signature,
+                "context_scope": context_scope,
+                "user_id": user_id,
+            }
+            return dict(existing)
+
+    repository = Repository()
+    store.repository = repository
+
+    reused = ensure_assistant_conversation(
+        store,
+        conversation_id=None,
+        message=message,
+        now="2026-06-20T08:01:00+00:00",
+        product_id="product_119",
+        user={"id": "user_admin"},
+    )
+
+    assert reused["id"] == "conversation_repository_reused"
+    assert repository.request == {
+        "command_signature": existing["command_signature"],
+        "context_scope": "product:product_119",
+        "user_id": "user_admin",
+    }
 
 
 def test_assistant_chat_persists_run_and_message_lifecycle_for_model_success():
