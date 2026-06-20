@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 ASSISTANT_DRAFT_STATUSES = ("pending", "confirmed", "cancelled", "expired", "failed")
@@ -17,26 +17,60 @@ KNOWLEDGE_REFERENCE_TYPES = {
     "knowledge_folder",
     "knowledge_space",
 }
+ASSISTANT_METRIC_DETAIL_LABELS = {
+    "action_run_failed_count": "动作执行失败",
+    "action_run_succeeded_count": "动作执行成功",
+    "action_run_total": "动作执行",
+    "chat_run_cancelled_count": "AI 生成已取消",
+    "chat_run_failed_count": "AI 生成失败",
+    "chat_run_model_failed_count": "模型网关失败",
+    "chat_run_running_count": "AI 生成中",
+    "chat_run_succeeded_count": "AI 生成成功",
+    "chat_run_total": "AI 生成",
+    "draft_cancelled_count": "已取消草案",
+    "draft_confirmed_count": "已应用草案",
+    "draft_deeplink_viewed_count": "深链打开草案",
+    "draft_detail_viewed_count": "查看详情草案",
+    "draft_expired_count": "已过期草案",
+    "draft_failed_count": "失败草案",
+    "draft_inferred_viewed_count": "历史推断查看草案",
+    "draft_pending_count": "待确认草案",
+    "draft_total": "草案生成",
+    "draft_tracked_viewed_count": "埋点查看草案",
+    "draft_user_modified_count": "用户修改草案",
+    "draft_viewed_count": "查看草案",
+    "failed_run_repaired_count": "已修复失败运行",
+    "failed_run_total": "失败运行",
+    "knowledge_reference_count": "知识引用",
+    "knowledge_reference_hit_count": "知识引用命中",
+    "knowledge_reference_request_count": "知识引用请求",
+    "message_total": "助手消息",
+    "reference_total": "显式引用",
+    "referenced_user_message_count": "带引用用户消息",
+    "scheduled_job_run_failed_count": "定时作业运行失败",
+    "scheduled_job_run_succeeded_count": "定时作业运行成功",
+    "scheduled_job_run_total": "定时作业运行",
+    "user_message_total": "用户消息",
+}
 
 
-def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> dict[str, Any]:
-    user_id = str(user["id"])
-    drafts, runs, messages, scheduled_job_runs, chat_runs = _assistant_metric_rows(
+def assistant_metrics_response(
+    current_store: Any,
+    *,
+    user: dict[str, Any],
+    window_days: int | None = None,
+) -> dict[str, Any]:
+    scoped_rows = _assistant_scoped_metric_rows(
         current_store,
-        user_id=user_id,
+        user=user,
+        window_days=window_days,
     )
-    user_draft_ids = {str(draft["id"]) for draft in drafts if draft.get("id") is not None}
-    runs = [run for run in runs if str(run.get("draft_id")) in user_draft_ids]
-    messages = [message for message in messages if str(message.get("user_id")) == user_id]
-    chat_runs = [run for run in chat_runs if str(run.get("user_id")) == user_id]
-    (
-        scheduled_job_runs,
-        scheduled_job_run_attribution,
-    ) = _filter_scheduled_job_runs_for_assistant_scope(
-        scheduled_job_runs,
-        action_runs=runs,
-        messages=messages,
-    )
+    drafts = scoped_rows["drafts"]
+    runs = scoped_rows["runs"]
+    messages = scoped_rows["messages"]
+    scheduled_job_runs = scoped_rows["scheduled_job_runs"]
+    chat_runs = scoped_rows["chat_runs"]
+    scheduled_job_run_attribution = scoped_rows["scheduled_job_run_attribution"]
 
     draft_status_counts = _status_counts(drafts, ASSISTANT_DRAFT_STATUSES)
     chat_run_status_counts = _field_status_counts(chat_runs, ASSISTANT_CHAT_RUN_STATUSES)
@@ -64,7 +98,9 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
         for reference in _message_references(message)
     ]
     draft_user_modified_count = sum(1 for draft in drafts if _draft_was_user_modified(draft))
-    draft_viewed_count = sum(1 for draft in drafts if _draft_was_viewed(draft))
+    draft_tracked_viewed_count = sum(1 for draft in drafts if _draft_was_viewed_by_tracking(draft))
+    draft_viewed_count = sum(1 for draft in drafts if _draft_was_effectively_viewed(draft))
+    draft_inferred_viewed_count = max(draft_viewed_count - draft_tracked_viewed_count, 0)
     draft_detail_viewed_count = sum(1 for draft in drafts if _draft_was_detail_viewed(draft))
     draft_deeplink_viewed_count = sum(1 for draft in drafts if _draft_was_deeplink_viewed(draft))
     knowledge_request_count, knowledge_hit_count = _knowledge_reference_hit_stats(messages)
@@ -106,6 +142,7 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
             "draft_confirmed_count": draft_status_counts["confirmed"],
             "draft_expired_count": draft_status_counts["expired"],
             "draft_failed_count": draft_status_counts["failed"],
+            "draft_inferred_viewed_count": draft_inferred_viewed_count,
             "draft_pending_count": draft_status_counts["pending"],
             "draft_resolution_rate": _rate(
                 draft_status_counts["confirmed"]
@@ -119,6 +156,7 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
             "draft_detail_viewed_count": draft_detail_viewed_count,
             "draft_user_modified_count": draft_user_modified_count,
             "draft_user_modified_rate": _rate(draft_user_modified_count, draft_total),
+            "draft_tracked_viewed_count": draft_tracked_viewed_count,
             "draft_viewed_count": draft_viewed_count,
             "failed_run_repair_rate": _rate(
                 repaired_failed_run_count,
@@ -147,6 +185,14 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
             "scheduled_job_run_total": scheduled_job_run_total,
             "user_message_total": len(user_messages),
         },
+        "window": {
+            "days": window_days,
+            "label": f"最近 {window_days} 天" if window_days else "全部时间",
+        },
+        "instrumentation": _assistant_metrics_instrumentation(
+            draft_inferred_viewed_count=draft_inferred_viewed_count,
+            draft_tracked_viewed_count=draft_tracked_viewed_count,
+        ),
         "scheduled_job_run_attribution": {
             "items": [
                 {
@@ -168,6 +214,366 @@ def assistant_metrics_response(current_store: Any, *, user: dict[str, Any]) -> d
             "total": scheduled_job_run_total,
         },
     }
+
+
+def assistant_metric_details_response(
+    current_store: Any,
+    *,
+    limit: int = 50,
+    metric: str,
+    user: dict[str, Any],
+    window_days: int | None = None,
+) -> dict[str, Any]:
+    normalized_metric = str(metric or "").strip()
+    if not normalized_metric:
+        normalized_metric = "draft_total"
+    scoped_rows = _assistant_scoped_metric_rows(
+        current_store,
+        user=user,
+        window_days=window_days,
+    )
+    items = _assistant_metric_detail_records(scoped_rows, metric=normalized_metric)
+    normalized_limit = min(max(int(limit or 50), 1), 100)
+    return {
+        "items": [
+            _assistant_metric_detail_item(item)
+            for item in items[:normalized_limit]
+        ],
+        "metric": normalized_metric,
+        "title": ASSISTANT_METRIC_DETAIL_LABELS.get(normalized_metric, normalized_metric),
+        "total": len(items),
+        "window": {
+            "days": window_days,
+            "label": f"最近 {window_days} 天" if window_days else "全部时间",
+        },
+    }
+
+
+def _assistant_scoped_metric_rows(
+    current_store: Any,
+    *,
+    user: dict[str, Any],
+    window_days: int | None,
+) -> dict[str, Any]:
+    user_id = str(user["id"])
+    drafts, runs, messages, scheduled_job_runs, chat_runs = _assistant_metric_rows(
+        current_store,
+        user_id=user_id,
+    )
+    cutoff = _metrics_cutoff(window_days)
+    user_draft_ids = {str(draft["id"]) for draft in drafts if draft.get("id") is not None}
+    runs = [run for run in runs if str(run.get("draft_id")) in user_draft_ids]
+    messages = [message for message in messages if str(message.get("user_id")) == user_id]
+    chat_runs = [run for run in chat_runs if str(run.get("user_id")) == user_id]
+    if cutoff is not None:
+        drafts = _filter_records_since(drafts, cutoff, ("created_at", "updated_at"))
+        runs = _filter_records_since(runs, cutoff, ("started_at", "created_at", "updated_at"))
+        messages = _filter_records_since(messages, cutoff, ("created_at", "updated_at"))
+        scheduled_job_runs = _filter_records_since(
+            scheduled_job_runs,
+            cutoff,
+            ("started_at", "created_at", "updated_at"),
+        )
+        chat_runs = _filter_records_since(
+            chat_runs,
+            cutoff,
+            ("started_at", "created_at", "updated_at"),
+        )
+    (
+        scheduled_job_runs,
+        scheduled_job_run_attribution,
+    ) = _filter_scheduled_job_runs_for_assistant_scope(
+        scheduled_job_runs,
+        action_runs=runs,
+        messages=messages,
+    )
+    return {
+        "chat_runs": _sort_metric_records(chat_runs),
+        "drafts": _sort_metric_records(drafts),
+        "messages": _sort_metric_records(messages),
+        "runs": _sort_metric_records(runs),
+        "scheduled_job_run_attribution": scheduled_job_run_attribution,
+        "scheduled_job_runs": _sort_metric_records(scheduled_job_runs),
+    }
+
+
+def _assistant_metric_detail_records(
+    scoped_rows: dict[str, Any],
+    *,
+    metric: str,
+) -> list[dict[str, Any]]:
+    drafts = list(scoped_rows["drafts"])
+    runs = list(scoped_rows["runs"])
+    messages = list(scoped_rows["messages"])
+    scheduled_job_runs = list(scoped_rows["scheduled_job_runs"])
+    chat_runs = list(scoped_rows["chat_runs"])
+    if metric in {"draft_total", "draft_adoption_rate", "draft_resolution_rate"}:
+        return [_with_metric_kind(draft, "draft") for draft in drafts]
+    if metric.startswith("draft_") and metric.endswith("_count"):
+        if metric == "draft_user_modified_count":
+            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_user_modified(draft)]
+        if metric == "draft_viewed_count":
+            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_effectively_viewed(draft)]
+        if metric == "draft_tracked_viewed_count":
+            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_viewed_by_tracking(draft)]
+        if metric == "draft_inferred_viewed_count":
+            return [
+                _with_metric_kind(draft, "draft")
+                for draft in drafts
+                if _draft_was_effectively_viewed(draft) and not _draft_was_viewed_by_tracking(draft)
+            ]
+        if metric == "draft_detail_viewed_count":
+            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_detail_viewed(draft)]
+        if metric == "draft_deeplink_viewed_count":
+            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_deeplink_viewed(draft)]
+        status = metric.removeprefix("draft_").removesuffix("_count")
+        return [
+            _with_metric_kind(draft, "draft")
+            for draft in drafts
+            if _effective_draft_status(draft) == status
+        ]
+    if metric in {"action_run_total", "action_run_success_rate"}:
+        return [_with_metric_kind(run, "action_run") for run in runs]
+    if metric == "action_run_succeeded_count":
+        return [_with_metric_kind(run, "action_run") for run in runs if run.get("status") == "succeeded"]
+    if metric == "action_run_failed_count":
+        return [_with_metric_kind(run, "action_run") for run in runs if run.get("status") == "failed"]
+    if metric in {
+        "chat_run_total",
+        "chat_run_success_rate",
+        "chat_run_failure_rate",
+        "chat_run_cancel_rate",
+        "chat_run_model_failure_rate",
+    }:
+        return [_with_metric_kind(run, "chat_run") for run in chat_runs]
+    if metric == "chat_run_model_failed_count":
+        return [_with_metric_kind(run, "chat_run") for run in chat_runs if _chat_run_model_failed(run)]
+    if metric.startswith("chat_run_") and metric.endswith("_count"):
+        status = metric.removeprefix("chat_run_").removesuffix("_count")
+        return [
+            _with_metric_kind(run, "chat_run")
+            for run in chat_runs
+            if str(run.get("status") or "") == status
+        ]
+    if metric in {
+        "scheduled_job_run_total",
+        "scheduled_job_run_success_rate",
+        "failed_run_repair_rate",
+    }:
+        return [_with_metric_kind(run, "scheduled_job_run") for run in scheduled_job_runs]
+    if metric == "scheduled_job_run_succeeded_count":
+        return [
+            _with_metric_kind(run, "scheduled_job_run")
+            for run in scheduled_job_runs
+            if run.get("status") == "succeeded"
+        ]
+    if metric in {"scheduled_job_run_failed_count", "failed_run_total"}:
+        return [
+            _with_metric_kind(run, "scheduled_job_run")
+            for run in scheduled_job_runs
+            if run.get("status") == "failed"
+        ]
+    if metric == "failed_run_repaired_count":
+        repaired_ids = _repaired_failed_run_ids(scheduled_job_runs)
+        return [
+            _with_metric_kind(run, "scheduled_job_run")
+            for run in scheduled_job_runs
+            if str(run.get("id")) in repaired_ids
+        ]
+    if metric in {"message_total", "user_message_total"}:
+        return [
+            _with_metric_kind(message, "message")
+            for message in messages
+            if metric == "message_total" or message.get("role") == "user"
+        ]
+    if metric in {"reference_total", "reference_usage_rate", "referenced_user_message_count"}:
+        return [
+            _with_metric_kind(message, "message")
+            for message in messages
+            if message.get("role") == "user" and _message_references(message)
+        ]
+    if metric in {
+        "knowledge_reference_count",
+        "knowledge_reference_hit_count",
+        "knowledge_reference_hit_rate",
+        "knowledge_reference_request_count",
+    }:
+        return _knowledge_reference_detail_records(messages, metric=metric)
+    return []
+
+
+def _knowledge_reference_detail_records(
+    messages: list[dict[str, Any]],
+    *,
+    metric: str,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    answered_by_conversation: dict[str, set[str]] = defaultdict(set)
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        conversation_id = str(message.get("conversation_id") or "")
+        answered_by_conversation[conversation_id].update(
+            _reference_key(reference)
+            for reference in _message_references(message)
+            if reference.get("type") in KNOWLEDGE_REFERENCE_TYPES
+        )
+    for message in messages:
+        conversation_id = str(message.get("conversation_id") or "")
+        for reference in _message_references(message):
+            if reference.get("type") not in KNOWLEDGE_REFERENCE_TYPES:
+                continue
+            if (
+                metric in {
+                    "knowledge_reference_hit_count",
+                    "knowledge_reference_hit_rate",
+                    "knowledge_reference_request_count",
+                }
+                and message.get("role") != "user"
+            ):
+                continue
+            reference_key = _reference_key(reference)
+            is_hit = reference_key in answered_by_conversation.get(conversation_id, set())
+            if metric in {"knowledge_reference_hit_count", "knowledge_reference_hit_rate"} and not is_hit:
+                continue
+            records.append(
+                _with_metric_kind(
+                    {
+                        **message,
+                        "id": f"{message.get('id') or 'message'}:{reference_key}",
+                        "reference": dict(reference),
+                        "status": "hit" if is_hit else "requested",
+                    },
+                    "knowledge_reference",
+                )
+            )
+    return _sort_metric_records(records)
+
+
+def _assistant_metric_detail_item(record: dict[str, Any]) -> dict[str, Any]:
+    kind = str(record.get("_metric_kind") or "record")
+    record_id = str(record.get("id") or "")
+    status = str(record.get("status") or _effective_draft_status(record) or "")
+    title = _metric_record_title(record, kind=kind)
+    item = {
+        "action": record.get("action"),
+        "created_at": record.get("created_at") or record.get("started_at"),
+        "description": _metric_record_description(record, kind=kind),
+        "id": record_id,
+        "status": status,
+        "title": title,
+        "type": kind,
+        "updated_at": record.get("updated_at") or record.get("finished_at"),
+        "url": _metric_record_url(record, kind=kind),
+    }
+    return {key: value for key, value in item.items() if value not in (None, "")}
+
+
+def _metric_record_title(record: dict[str, Any], *, kind: str) -> str:
+    if kind == "draft":
+        return str(record.get("title") or record.get("action") or record.get("id") or "草案")
+    if kind == "action_run":
+        return str(record.get("result_type") or record.get("action") or record.get("id") or "动作运行")
+    if kind == "chat_run":
+        return str(record.get("client_request_id") or record.get("id") or "AI 生成运行")
+    if kind == "scheduled_job_run":
+        return str(record.get("name") or record.get("scheduled_job_id") or record.get("id") or "定时作业运行")
+    if kind == "knowledge_reference":
+        reference = record.get("reference") or {}
+        if isinstance(reference, dict):
+            return str(reference.get("title") or reference.get("id") or "知识引用")
+        return "知识引用"
+    if kind == "message":
+        content = str(record.get("content") or "")
+        return content[:48] if content else str(record.get("id") or "消息")
+    return str(record.get("title") or record.get("id") or "记录")
+
+
+def _metric_record_description(record: dict[str, Any], *, kind: str) -> str:
+    if kind == "draft":
+        return f"{record.get('action') or 'draft'} · {_effective_draft_status(record)}"
+    if kind == "action_run":
+        return f"{record.get('action') or 'action'} · {record.get('status') or '-'}"
+    if kind == "chat_run":
+        error = str(record.get("error_code") or record.get("error_message") or "").strip()
+        return f"{record.get('status') or '-'}{f' · {error}' if error else ''}"
+    if kind == "scheduled_job_run":
+        error = str(record.get("error_message") or "").strip()
+        return f"{record.get('status') or '-'}{f' · {error}' if error else ''}"
+    if kind == "knowledge_reference":
+        reference = record.get("reference") or {}
+        reference_type = reference.get("type") if isinstance(reference, dict) else None
+        return f"{reference_type or 'knowledge'} · {record.get('status') or '-'}"
+    if kind == "message":
+        return f"{record.get('role') or 'message'} · {len(_message_references(record))} 个引用"
+    return str(record.get("status") or "")
+
+
+def _metric_record_url(record: dict[str, Any], *, kind: str) -> str | None:
+    if kind == "draft" and record.get("id"):
+        return f"/assistant?draft_id={record['id']}"
+    if kind == "chat_run" and record.get("conversation_id"):
+        return f"/assistant?conversation_id={record['conversation_id']}"
+    if kind == "action_run" and record.get("draft_id"):
+        return f"/assistant?draft_id={record['draft_id']}"
+    if kind == "scheduled_job_run" and record.get("id"):
+        job_id = str(record.get("scheduled_job_id") or "")
+        if job_id:
+            return f"/tasks/scheduled-jobs?job_id={job_id}&run_id={record['id']}"
+        return f"/tasks/scheduled-jobs?run_id={record['id']}"
+    if kind in {"knowledge_reference", "message"} and record.get("conversation_id"):
+        return f"/assistant?conversation_id={record['conversation_id']}"
+    return None
+
+
+def _with_metric_kind(record: dict[str, Any], kind: str) -> dict[str, Any]:
+    return {**record, "_metric_kind": kind}
+
+
+def _sort_metric_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        records,
+        key=lambda item: (
+            _parse_datetime(
+                item.get("updated_at")
+                or item.get("finished_at")
+                or item.get("started_at")
+                or item.get("created_at")
+            )
+            or datetime.min.replace(tzinfo=UTC),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+
+
+def _metrics_cutoff(window_days: int | None) -> datetime | None:
+    if window_days is None:
+        return None
+    try:
+        days = int(window_days)
+    except (TypeError, ValueError):
+        return None
+    if days <= 0:
+        return None
+    return datetime.now(UTC) - timedelta(days=days)
+
+
+def _filter_records_since(
+    records: list[dict[str, Any]],
+    cutoff: datetime,
+    time_fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        record_times = [
+            parsed
+            for parsed in (_parse_datetime(record.get(field)) for field in time_fields)
+            if parsed is not None
+        ]
+        if record_times and max(record_times) >= cutoff:
+            filtered.append(record)
+    return filtered
 
 
 def _assistant_metric_rows(
@@ -434,6 +840,15 @@ def _scheduled_job_run_attribution_counts(
 
 
 def _repaired_failed_run_count(scheduled_job_runs: list[dict[str, Any]]) -> int:
+    successful_rerun_source_ids = _repaired_failed_run_ids(scheduled_job_runs)
+    return sum(
+        1
+        for run in scheduled_job_runs
+        if run.get("status") == "failed" and str(run.get("id")) in successful_rerun_source_ids
+    )
+
+
+def _repaired_failed_run_ids(scheduled_job_runs: list[dict[str, Any]]) -> set[str]:
     successful_rerun_source_ids = {
         str(run.get("source_run_id"))
         for run in scheduled_job_runs
@@ -441,11 +856,11 @@ def _repaired_failed_run_count(scheduled_job_runs: list[dict[str, Any]]) -> int:
         and run.get("trigger_type") == "manual_rerun"
         and run.get("source_run_id")
     }
-    return sum(
-        1
+    return {
+        str(run.get("id"))
         for run in scheduled_job_runs
         if run.get("status") == "failed" and str(run.get("id")) in successful_rerun_source_ids
-    )
+    }
 
 
 def _knowledge_reference_hit_stats(messages: list[dict[str, Any]]) -> tuple[int, int]:
@@ -494,13 +909,22 @@ def _draft_was_user_modified(draft: dict[str, Any]) -> bool:
     return metadata.get("user_modified") is True or bool(metadata.get("modified_fields"))
 
 
-def _draft_was_viewed(draft: dict[str, Any]) -> bool:
+def _draft_was_viewed_by_tracking(draft: dict[str, Any]) -> bool:
     metadata = draft.get("metadata_json") or {}
     return bool(
         metadata.get("viewed_at")
         or metadata.get("detail_viewed_at")
         or metadata.get("last_viewed_at")
     )
+
+
+def _draft_was_effectively_viewed(draft: dict[str, Any]) -> bool:
+    if _draft_was_viewed_by_tracking(draft):
+        return True
+    status = _effective_draft_status(draft)
+    if status in {"confirmed", "cancelled", "failed"}:
+        return True
+    return _draft_was_user_modified(draft) or bool(draft.get("result_run_id"))
 
 
 def _draft_was_detail_viewed(draft: dict[str, Any]) -> bool:
@@ -535,6 +959,30 @@ def _continued_followup_or_repair_count(messages: list[dict[str, Any]]) -> int:
         if has_run_reference or asks_repair:
             count += 1
     return count
+
+
+def _assistant_metrics_instrumentation(
+    *,
+    draft_inferred_viewed_count: int,
+    draft_tracked_viewed_count: int,
+) -> dict[str, Any]:
+    return {
+        "notes": [
+            {
+                "code": "DRAFT_VIEW_TRACKING_ROLLOUT",
+                "level": "info" if draft_tracked_viewed_count else "warning",
+                "message": (
+                    "草案查看埋点只统计上线后的显式查看；历史已确认、已取消、失败、已修改或已产生执行结果的草案"
+                    "会计入有效查看，并在历史推断查看中单独列示。"
+                ),
+            }
+        ],
+        "view_metrics": {
+            "effective_viewed_count": draft_tracked_viewed_count + draft_inferred_viewed_count,
+            "inferred_legacy_count": draft_inferred_viewed_count,
+            "tracked_count": draft_tracked_viewed_count,
+        },
+    }
 
 
 def _assistant_effectiveness_funnel_stages(

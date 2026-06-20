@@ -80,7 +80,8 @@ class AssistantChatReadRepository:
                 cursor.execute(
                     """
                     SELECT id, user_id, product_id, title, message_count, last_message_at,
-                           created_at, updated_at
+                           created_at, updated_at, command_signature,
+                           source_message_hash, context_scope
                     FROM assistant_conversations
                     WHERE user_id = %s
                     ORDER BY COALESCE(last_message_at, updated_at) DESC, id
@@ -247,6 +248,126 @@ class AssistantChatReadRepository:
             "updated_at": row[21].isoformat() if row[21] else None,
             "updated_by": row[19],
         }
+
+    def list_assistant_action_reference_configs(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, enterprise_id, action_key, title, summary, prompt, url,
+                           aliases, roles, permissions, enabled, sort_order,
+                           template_version, rollout_json, metadata_json, created_by,
+                           updated_by, created_at, updated_at
+                    FROM assistant_action_reference_configs
+                    ORDER BY sort_order, action_key, COALESCE(template_version, ''), id
+                    """
+                )
+                return [
+                    self._assistant_action_reference_config_from_row(row)
+                    for row in cursor.fetchall()
+                ]
+
+    def get_assistant_action_reference_config(
+        self,
+        *,
+        config_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, enterprise_id, action_key, title, summary, prompt, url,
+                           aliases, roles, permissions, enabled, sort_order,
+                           template_version, rollout_json, metadata_json, created_by,
+                           updated_by, created_at, updated_at
+                    FROM assistant_action_reference_configs
+                    WHERE id = %s
+                    """,
+                    (config_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return self._assistant_action_reference_config_from_row(row)
+
+    def save_assistant_action_reference_config_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO assistant_action_reference_configs (
+                      id, enterprise_id, action_key, title, summary, prompt, url,
+                      aliases, roles, permissions, enabled, sort_order,
+                      template_version, rollout_json, metadata_json, created_by,
+                      updated_by, created_at, updated_at
+                    )
+                    VALUES (
+                      %s, %s, %s, %s, %s, %s, %s,
+                      %s::jsonb, %s::jsonb, %s::jsonb, %s, %s,
+                      %s, %s::jsonb, %s::jsonb, %s,
+                      %s, COALESCE(%s::timestamptz, now()), now()
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                      enterprise_id = EXCLUDED.enterprise_id,
+                      action_key = EXCLUDED.action_key,
+                      title = EXCLUDED.title,
+                      summary = EXCLUDED.summary,
+                      prompt = EXCLUDED.prompt,
+                      url = EXCLUDED.url,
+                      aliases = EXCLUDED.aliases,
+                      roles = EXCLUDED.roles,
+                      permissions = EXCLUDED.permissions,
+                      enabled = EXCLUDED.enabled,
+                      sort_order = EXCLUDED.sort_order,
+                      template_version = EXCLUDED.template_version,
+                      rollout_json = EXCLUDED.rollout_json,
+                      metadata_json = EXCLUDED.metadata_json,
+                      updated_by = EXCLUDED.updated_by,
+                      updated_at = now()
+                    """,
+                    (
+                        record["id"],
+                        record.get("enterprise_id"),
+                        record["action_key"],
+                        record["title"],
+                        record["summary"],
+                        record["prompt"],
+                        record["url"],
+                        json.dumps(record.get("aliases") or [], ensure_ascii=False),
+                        json.dumps(record.get("roles") or [], ensure_ascii=False),
+                        json.dumps(record.get("permissions") or [], ensure_ascii=False),
+                        bool(record.get("enabled", True)),
+                        int(record.get("sort_order") or 0),
+                        record.get("template_version"),
+                        json.dumps(record.get("rollout_json") or {}, ensure_ascii=False),
+                        json.dumps(record.get("metadata_json") or {}, ensure_ascii=False),
+                        record.get("created_by"),
+                        record.get("updated_by"),
+                        record.get("created_at"),
+                    ),
+                )
+                if audit_event is not None and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def delete_assistant_action_reference_config_record(
+        self,
+        config_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM assistant_action_reference_configs WHERE id = %s",
+                    (config_id,),
+                )
+                if audit_event is not None and self._upsert_audit_events is not None:
+                    self._upsert_audit_events(cursor, [audit_event])
 
     def save_assistant_role_quick_task_record(
         self,
@@ -447,7 +568,8 @@ class AssistantChatReadRepository:
         cursor.execute(
             """
             SELECT id, user_id, product_id, title, message_count, last_message_at,
-                   created_at, updated_at
+                   created_at, updated_at, command_signature,
+                   source_message_hash, context_scope
             FROM assistant_conversations
             ORDER BY updated_at, id
             """
@@ -498,11 +620,13 @@ class AssistantChatReadRepository:
                 """
                 INSERT INTO assistant_conversations (
                   id, user_id, product_id, title, message_count, last_message_at,
-                  created_at, updated_at
+                  created_at, updated_at, command_signature, source_message_hash,
+                  context_scope
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s::timestamptz,
-                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
+                  %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   user_id = EXCLUDED.user_id,
@@ -510,7 +634,10 @@ class AssistantChatReadRepository:
                   title = EXCLUDED.title,
                   message_count = EXCLUDED.message_count,
                   last_message_at = EXCLUDED.last_message_at,
-                  updated_at = EXCLUDED.updated_at
+                  updated_at = EXCLUDED.updated_at,
+                  command_signature = EXCLUDED.command_signature,
+                  source_message_hash = EXCLUDED.source_message_hash,
+                  context_scope = EXCLUDED.context_scope
                 """,
                 (
                     conversation["id"],
@@ -521,6 +648,9 @@ class AssistantChatReadRepository:
                     conversation.get("last_message_at"),
                     created_at,
                     updated_at,
+                    conversation.get("command_signature"),
+                    conversation.get("source_message_hash"),
+                    conversation.get("context_scope"),
                 ),
             )
 
@@ -840,6 +970,40 @@ class AssistantChatReadRepository:
                 run.pop(optional_key)
         return run
 
+    def _assistant_action_reference_config_from_row(self, row) -> dict[str, Any]:
+        config = {
+            "action_key": row[2],
+            "aliases": list(row[7] or []),
+            "created_at": row[17].isoformat() if row[17] else None,
+            "created_by": row[15],
+            "enabled": row[10],
+            "enterprise_id": row[1],
+            "id": row[0],
+            "metadata_json": dict(row[14] or {}),
+            "permissions": list(row[9] or []),
+            "prompt": row[5],
+            "roles": list(row[8] or []),
+            "rollout_json": dict(row[13] or {}),
+            "sort_order": row[11],
+            "summary": row[4],
+            "template_version": row[12],
+            "title": row[3],
+            "updated_at": row[18].isoformat() if row[18] else None,
+            "updated_by": row[16],
+            "url": row[6],
+        }
+        for optional_key in (
+            "created_at",
+            "created_by",
+            "enterprise_id",
+            "template_version",
+            "updated_at",
+            "updated_by",
+        ):
+            if config[optional_key] is None:
+                config.pop(optional_key)
+        return config
+
     def _assistant_chat_run_from_row(self, row) -> dict[str, Any]:
         run = {
             "assistant_message_id": row[4],
@@ -882,18 +1046,24 @@ class AssistantChatReadRepository:
     def _assistant_conversation_from_row(self, row) -> dict[str, Any]:
         conversation = {
             "created_at": row[6].isoformat() if row[6] else None,
+            "command_signature": row[8],
+            "context_scope": row[10],
             "id": row[0],
             "last_message_at": row[5].isoformat() if row[5] else None,
             "message_count": row[4],
             "product_id": row[2],
+            "source_message_hash": row[9],
             "title": row[3],
             "updated_at": row[7].isoformat() if row[7] else None,
             "user_id": row[1],
         }
         for optional_key in (
             "created_at",
+            "command_signature",
+            "context_scope",
             "last_message_at",
             "product_id",
+            "source_message_hash",
             "updated_at",
         ):
             if conversation[optional_key] is None:

@@ -135,7 +135,9 @@ export default function MenusPage() {
   }, []);
 
   useEffect(() => {
-    void reload();
+    queueMicrotask(() => {
+      void reload();
+    });
   }, [reload]);
 
   const menuNameByCode = useMemo(() => new Map(menus.map((menu) => [menu.code, menu.name])), [menus]);
@@ -204,6 +206,7 @@ export default function MenusPage() {
       const payload = buildMenuPayload(values);
       if (editingMenu) {
         const { code, ...updates } = payload;
+        void code;
         await updateSystemMenu(editingMenu.code, updates);
         message.success('菜单已更新');
       } else {
@@ -220,7 +223,7 @@ export default function MenusPage() {
     }
   };
 
-  const toggleStatus = async (row: MenuManagementRow) => {
+  const toggleStatus = useCallback(async (row: MenuManagementRow) => {
     setSubmitting(true);
     try {
       const nextStatus = row.status === 'inactive' ? 'active' : 'inactive';
@@ -232,9 +235,9 @@ export default function MenusPage() {
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [reload]);
 
-  const removeMenu = async (row: MenuManagementRow) => {
+  const removeMenu = useCallback(async (row: MenuManagementRow) => {
     setSubmitting(true);
     try {
       await deleteSystemMenu(row.code);
@@ -245,7 +248,7 @@ export default function MenusPage() {
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [reload]);
 
   const columns = useMemo<ProColumns<MenuManagementRow>[]>(
     () => [
@@ -327,7 +330,7 @@ export default function MenusPage() {
         ),
       },
     ],
-    [openEdit, submitting],
+    [openEdit, removeMenu, submitting, toggleStatus],
   );
 
   return (

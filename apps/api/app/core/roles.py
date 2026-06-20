@@ -29,6 +29,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "system.scheduled_jobs.manage",
             "system.scheduled_jobs.run",
             "system.plugins.manage",
+            "assistant.action_references.manage",
             "code_inspection.read",
             "audit.read",
             "workspace.read",

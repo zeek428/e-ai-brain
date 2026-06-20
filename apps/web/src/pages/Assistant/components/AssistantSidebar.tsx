@@ -16,46 +16,12 @@ import {
 
 const { Text, Title } = Typography;
 
-type AssistantConversationDisplayItem = AssistantConversationSummary & {
-  duplicateCount: number;
-};
-
-function conversationDedupKey(item: AssistantConversationSummary) {
-  const normalizedTitle = (item.title || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
-  return normalizedTitle || item.id;
-}
-
-function dedupeConversationsForSidebar(
-  conversations: AssistantConversationSummary[],
-  activeConversationId?: string,
-) {
-  const grouped = new Map<string, AssistantConversationDisplayItem>();
-  for (const conversation of conversations) {
-    const key = conversationDedupKey(conversation);
-    const existing = grouped.get(key);
-    if (!existing) {
-      grouped.set(key, {
-        ...conversation,
-        duplicateCount: 1,
-      });
-      continue;
-    }
-    existing.duplicateCount += 1;
-    if (conversation.id === activeConversationId) {
-      grouped.set(key, {
-        ...conversation,
-        duplicateCount: existing.duplicateCount,
-      });
-    }
-  }
-  return [...grouped.values()];
-}
-
 export function AssistantSidebar({
   conversationId,
   conversations,
   isLoadingConversations,
   isLoadingMetrics,
+  onToggleDuplicateConversations,
   onOpenConversation,
   onOpenDraftTemplateMarket,
   onOpenMetricsPanel,
@@ -65,11 +31,13 @@ export function AssistantSidebar({
   roleQuickTaskCount,
   roleQuickTaskGroups,
   roleQuickTasksExpanded,
+  showDuplicateConversations,
 }: {
   conversationId?: string;
   conversations: AssistantConversationSummary[];
   isLoadingConversations: boolean;
   isLoadingMetrics: boolean;
+  onToggleDuplicateConversations: () => void;
   onOpenConversation: (conversationId: string) => void;
   onOpenDraftTemplateMarket: () => void;
   onOpenMetricsPanel: () => void;
@@ -79,10 +47,11 @@ export function AssistantSidebar({
   roleQuickTaskCount: number;
   roleQuickTaskGroups: AssistantRoleQuickTaskGroup[];
   roleQuickTasksExpanded: boolean;
+  showDuplicateConversations: boolean;
 }) {
-  const visibleConversations = useMemo(
-    () => dedupeConversationsForSidebar(conversations, conversationId),
-    [conversationId, conversations],
+  const collapsedDuplicateCount = useMemo(
+    () => conversations.reduce((total, item) => total + Math.max(Number(item.duplicateCount ?? 1) - 1, 0), 0),
+    [conversations],
   );
 
   return (
@@ -93,12 +62,26 @@ export function AssistantSidebar({
       </Button>
       <div className="assistant-history-panel">
         <div className="assistant-history-title">
-          <Text strong>最近对话</Text>
+          <span className="assistant-history-heading">
+            <Text strong>最近对话</Text>
+            {!showDuplicateConversations && collapsedDuplicateCount ? (
+              <Text type="secondary">{`已收起 ${collapsedDuplicateCount} 条重复`}</Text>
+            ) : null}
+          </span>
+          {collapsedDuplicateCount || showDuplicateConversations ? (
+            <Button
+              size="small"
+              type="text"
+              onClick={onToggleDuplicateConversations}
+            >
+              {showDuplicateConversations ? '收起重复' : '展开重复'}
+            </Button>
+          ) : null}
           {isLoadingConversations ? <Spin size="small" /> : null}
         </div>
         <div className="assistant-history-list">
-          {visibleConversations.length ? (
-            visibleConversations.map((item) => (
+          {conversations.length ? (
+            conversations.map((item) => (
               <Button
                 block
                 className={item.id === conversationId ? 'assistant-history-active' : undefined}
@@ -109,8 +92,8 @@ export function AssistantSidebar({
                 <span className="assistant-history-button-text">
                   <span>{item.title}</span>
                   <span>
-                    {item.messageCount} 条
-                    {item.duplicateCount > 1 ? ` · 合并 ${item.duplicateCount} 个重复` : ''}
+                    {item.collapsedMessageCount ?? item.messageCount} 条
+                    {Number(item.duplicateCount ?? 1) > 1 ? ` · 合并 ${item.duplicateCount} 个重复` : ''}
                   </span>
                 </span>
               </Button>

@@ -30,11 +30,20 @@ from app.services.assistant_chat import (
     cancel_assistant_chat_run_response,
 )
 from app.services.assistant_draft_templates import list_assistant_draft_templates_response
-from app.services.assistant_metrics import assistant_metrics_response
+from app.services.assistant_metrics import (
+    assistant_metric_details_response,
+    assistant_metrics_response,
+)
 from app.services.assistant_references import (
     AssistantReferenceError,
     assistant_reference_candidates_response,
+    create_assistant_action_reference_config_response,
+    delete_assistant_action_reference_config_response,
+    list_assistant_action_reference_configs_response,
+    patch_assistant_action_reference_config_response,
     resolve_assistant_references,
+    set_assistant_action_reference_config_status_response,
+    update_assistant_action_reference_config_rollout_response,
 )
 from app.services.assistant_role_quick_tasks import (
     create_assistant_role_quick_task_config_response,
@@ -45,6 +54,7 @@ from app.services.assistant_role_quick_tasks import (
     set_assistant_role_quick_task_status_response,
     update_assistant_role_quick_task_rollout_response,
 )
+from app.services.platform_status import health_payload
 
 settings = get_settings()
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
@@ -145,13 +155,137 @@ class AssistantRoleQuickTaskRolloutRequest(BaseModel):
     template_version: str | None = None
 
 
-@router.get("/conversations")
-def list_assistant_conversations(
+class AssistantActionReferenceConfigRequest(BaseModel):
+    action_key: str
+    aliases: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    enterprise_id: str | None = None
+    id: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    permissions: list[str] = Field(default_factory=list)
+    prompt: str
+    roles: list[str] = Field(default_factory=list)
+    rollout_json: dict[str, Any] = Field(default_factory=dict)
+    sort_order: int = 0
+    summary: str
+    template_version: str | None = None
+    title: str
+    url: str
+
+
+class AssistantActionReferenceConfigPatchRequest(BaseModel):
+    action_key: str | None = None
+    aliases: list[str] | None = None
+    enabled: bool | None = None
+    enterprise_id: str | None = None
+    metadata_json: dict[str, Any] | None = None
+    permissions: list[str] | None = None
+    prompt: str | None = None
+    roles: list[str] | None = None
+    rollout_json: dict[str, Any] | None = None
+    sort_order: int | None = None
+    summary: str | None = None
+    template_version: str | None = None
+    title: str | None = None
+    url: str | None = None
+
+
+class AssistantActionReferenceConfigStatusRequest(BaseModel):
+    enabled: bool
+
+
+class AssistantActionReferenceConfigRolloutRequest(BaseModel):
+    enterprise_id: str | None = None
+    rollout_json: dict[str, Any] = Field(default_factory=dict)
+    template_version: str | None = None
+
+
+@router.get("/runtime-status")
+def assistant_runtime_status(
     request: Request,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, ASSISTANT_ACCESS_ROLES)
-    payload = assistant_conversations_response(store(request), user_id=user["id"])
+    trace_id = get_trace_id(request)
+    health = health_payload(
+        current_store=store(request),
+        settings=settings,
+        trace_id=trace_id,
+    )
+    model_gateway_configured = health["chat_gateway"] == "configured"
+    checks = _assistant_runtime_checks(health)
+    payload = {
+        "chat_gateway": health["chat_gateway"],
+        "embedding_gateway": health["embedding_gateway"],
+        "long_memory": health["long_memory"],
+        "model_gateway": health["model_gateway"],
+        "mode": "model_gateway" if model_gateway_configured else "deterministic_only",
+        "checks": checks,
+        "ready": all(check["status"] in {"ok", "configured", "disabled"} for check in checks),
+        "warnings": [] if model_gateway_configured else [
+            {
+                "code": "MODEL_GATEWAY_NOT_CONFIGURED",
+                "message": "模型网关未配置，AI 助手当前仅可稳定执行规则能力和已注册动作。",
+            }
+        ],
+    }
+    return envelope(payload, trace_id)
+
+
+def _assistant_runtime_checks(health: dict[str, str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "action_label": "检查 PostgreSQL",
+            "code": "postgres",
+            "description": "助手会话、草案、指标和审计依赖 PostgreSQL 持久化。",
+            "remediation": "确认 DATABASE_URL 指向的 PostgreSQL 可连接，并已执行数据库迁移。",
+            "status": health["postgres"],
+        },
+        {
+            "action_label": "检查 Redis",
+            "code": "redis",
+            "description": "Redis 用于运行缓存、队列协作和部分异步任务协调。",
+            "remediation": "启动 Redis，或修正 REDIS_URL 后重启 API。",
+            "status": health["redis"],
+        },
+        {
+            "action_label": "配置模型网关",
+            "code": "model_gateway",
+            "description": "开放式问答需要可用的 OpenAI-compatible chat gateway。",
+            "remediation": "在模型网关页面配置默认 chat 模型、base_url 和 api_key。",
+            "status": health["model_gateway"],
+            "url": "/system/model-gateway",
+        },
+        {
+            "action_label": "配置 Embedding",
+            "code": "embedding_gateway",
+            "description": "知识 chunk 检索和语义召回需要 embedding gateway。",
+            "remediation": "在默认模型网关中配置 embedding 模型，或明确选择禁用 embedding。",
+            "status": health["embedding_gateway"],
+            "url": "/system/model-gateway",
+        },
+        {
+            "action_label": "配置长期记忆",
+            "code": "long_memory",
+            "description": "GBrain 长期记忆是增强能力；未配置时回退到系统上下文和知识库。",
+            "remediation": "配置 GBRAIN_BASE_URL 和 GBRAIN_API_KEY，或保持未配置并使用知识库回退。",
+            "status": health["long_memory"],
+        },
+    ]
+
+
+@router.get("/conversations")
+def list_assistant_conversations(
+    request: Request,
+    collapse: bool = True,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    payload = assistant_conversations_response(
+        store(request),
+        collapse_duplicates=collapse,
+        user_id=user["id"],
+    )
     return envelope(payload, get_trace_id(request))
 
 
@@ -274,12 +408,33 @@ def mark_assistant_action_draft_viewed(
 @router.get("/metrics")
 def assistant_metrics(
     request: Request,
+    window_days: int | None = Query(default=None, ge=1, le=365),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, ASSISTANT_ACCESS_ROLES)
     payload = assistant_metrics_response(
         assistant_request_store(store(request), user_id=user["id"]),
         user=user,
+        window_days=window_days,
+    )
+    return envelope(payload, get_trace_id(request))
+
+
+@router.get("/metrics/details")
+def assistant_metric_details(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+    metric: str = Query(default="draft_total"),
+    window_days: int | None = Query(default=None, ge=1, le=365),
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    payload = assistant_metric_details_response(
+        assistant_request_store(store(request), user_id=user["id"]),
+        limit=limit,
+        metric=metric,
+        user=user,
+        window_days=window_days,
     )
     return envelope(payload, get_trace_id(request))
 
@@ -396,6 +551,101 @@ def delete_assistant_role_quick_task_config(
 ) -> dict[str, Any]:
     require_roles(user, {"admin"})
     result = delete_assistant_role_quick_task_config_response(
+        config_id=config_id,
+        current_store=store(request),
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.get("/action-reference-configs")
+def list_assistant_action_reference_configs(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    payload = list_assistant_action_reference_configs_response(
+        current_store=store(request),
+    )
+    return envelope(payload, get_trace_id(request))
+
+
+@router.post("/action-reference-configs")
+def create_assistant_action_reference_config(
+    request: Request,
+    payload: AssistantActionReferenceConfigRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = create_assistant_action_reference_config_response(
+        current_store=store(request),
+        payload=payload.model_dump(exclude_none=True),
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.patch("/action-reference-configs/{config_id}")
+def patch_assistant_action_reference_config(
+    config_id: str,
+    request: Request,
+    payload: AssistantActionReferenceConfigPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = patch_assistant_action_reference_config_response(
+        config_id=config_id,
+        current_store=store(request),
+        payload=payload.model_dump(exclude_unset=True),
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/action-reference-configs/{config_id}/status")
+def set_assistant_action_reference_config_status(
+    config_id: str,
+    request: Request,
+    payload: AssistantActionReferenceConfigStatusRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = set_assistant_action_reference_config_status_response(
+        config_id=config_id,
+        current_store=store(request),
+        enabled=payload.enabled,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.put("/action-reference-configs/{config_id}/rollout")
+def update_assistant_action_reference_config_rollout(
+    config_id: str,
+    request: Request,
+    payload: AssistantActionReferenceConfigRolloutRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = update_assistant_action_reference_config_rollout_response(
+        config_id=config_id,
+        current_store=store(request),
+        enterprise_id=payload.enterprise_id,
+        rollout_json=payload.rollout_json,
+        template_version=payload.template_version,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.delete("/action-reference-configs/{config_id}")
+def delete_assistant_action_reference_config(
+    config_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, {"admin"})
+    result = delete_assistant_action_reference_config_response(
         config_id=config_id,
         current_store=store(request),
         user=user,

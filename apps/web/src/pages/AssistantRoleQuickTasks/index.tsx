@@ -75,7 +75,9 @@ export default function AssistantRoleQuickTasksPage() {
   }, []);
 
   useEffect(() => {
-    void loadConfigs();
+    queueMicrotask(() => {
+      void loadConfigs();
+    });
   }, [loadConfigs]);
 
   const groupedCount = useMemo(

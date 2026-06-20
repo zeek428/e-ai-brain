@@ -436,7 +436,7 @@ def assistant_conversation_messages(
 
 
 def public_assistant_conversation(conversation: dict[str, Any]) -> dict[str, Any]:
-    return {
+    public_conversation = {
         "created_at": conversation["created_at"],
         "id": conversation["id"],
         "last_message_at": conversation.get("last_message_at") or conversation["updated_at"],
@@ -445,6 +445,11 @@ def public_assistant_conversation(conversation: dict[str, Any]) -> dict[str, Any
         "title": conversation["title"],
         "updated_at": conversation["updated_at"],
     }
+    if conversation.get("command_signature"):
+        public_conversation["command_signature"] = conversation["command_signature"]
+        if conversation.get("context_scope"):
+            public_conversation["context_scope"] = conversation["context_scope"]
+    return public_conversation
 
 
 def public_assistant_message(

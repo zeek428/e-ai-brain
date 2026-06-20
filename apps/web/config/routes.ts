@@ -187,6 +187,12 @@ const routes = [
         icon: 'RobotOutlined',
         component: './AssistantRoleQuickTasks',
       },
+      {
+        path: '/system/assistant-action-references',
+        name: 'AI助手 @ 能力',
+        icon: 'RobotOutlined',
+        component: './AssistantActionReferences',
+      },
     ],
   },
   {

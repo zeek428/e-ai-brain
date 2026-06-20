@@ -182,6 +182,27 @@ export type AssistantChatRun = {
   user_message_id?: string;
 };
 
+export type AssistantRuntimeStatus = {
+  checks?: Array<{
+    action_label?: string;
+    code: string;
+    description?: string;
+    remediation?: string;
+    status: string;
+    url?: string;
+  }>;
+  chat_gateway: string;
+  embedding_gateway: string;
+  long_memory: string;
+  mode: 'deterministic_only' | 'model_gateway' | string;
+  model_gateway: string;
+  ready?: boolean;
+  warnings?: Array<{
+    code?: string;
+    message?: string;
+  }>;
+};
+
 export type AssistantIntent = {
   confidence?: number;
   intent_code?: string;
@@ -247,11 +268,13 @@ export type AssistantMetricsSummary = {
   draft_confirmed_count?: number;
   draft_expired_count?: number;
   draft_failed_count?: number;
+  draft_inferred_viewed_count?: number;
   draft_pending_count?: number;
   draft_resolution_rate?: number;
   draft_total?: number;
   draft_deeplink_viewed_count?: number;
   draft_detail_viewed_count?: number;
+  draft_tracked_viewed_count?: number;
   draft_user_modified_count?: number;
   draft_user_modified_rate?: number;
   draft_viewed_count?: number;
@@ -301,11 +324,72 @@ export type AssistantMetrics = {
   funnel?: {
     stages?: AssistantFunnelStage[];
   };
+  instrumentation?: {
+    notes?: Array<{
+      code?: string;
+      level?: string;
+      message?: string;
+    }>;
+    view_metrics?: {
+      effective_viewed_count?: number;
+      inferred_legacy_count?: number;
+      tracked_count?: number;
+    };
+  };
   scheduled_job_run_attribution?: {
     items?: AssistantRunAttributionMetric[];
     total?: number;
   };
   summary: AssistantMetricsSummary;
+  window?: {
+    days?: number | null;
+    label?: string;
+  };
+};
+
+export type AssistantMetricDetailItem = {
+  action?: string;
+  created_at?: string;
+  description?: string;
+  id: string;
+  status?: string;
+  title: string;
+  type: string;
+  updated_at?: string;
+  url?: string;
+};
+
+export type AssistantMetricDetails = {
+  items: AssistantMetricDetailItem[];
+  metric: string;
+  title: string;
+  total: number;
+  window?: {
+    days?: number | null;
+    label?: string;
+  };
+};
+
+export type AssistantActionReferenceConfig = {
+  action_key: string;
+  aliases: string[];
+  created_at?: string;
+  created_by?: string | null;
+  enabled: boolean;
+  enterprise_id?: string | null;
+  id: string;
+  metadata_json: Record<string, unknown>;
+  permissions: string[];
+  prompt: string;
+  roles: string[];
+  rollout_json: Record<string, unknown>;
+  sort_order: number;
+  summary: string;
+  template_version?: string | null;
+  title: string;
+  updated_at?: string;
+  updated_by?: string | null;
+  url: string;
 };
 
 export type AssistantRoleQuickTask = {
@@ -501,11 +585,18 @@ export function resolveAssistantDraftResourceId(
 }
 
 export type AssistantConversationSummary = {
+  collapsedConversationIds?: string[];
+  collapsedMessageCount?: number;
+  commandSignature?: string;
+  contextScope?: string;
   createdAt?: string;
+  duplicateConversationIds?: string[];
+  duplicateCount?: number;
   id: string;
   lastMessageAt?: string;
   messageCount: number;
   productId?: string;
+  sourceMessageHash?: string;
   title: string;
   updatedAt?: string;
 };
@@ -557,11 +648,18 @@ type AssistantChatApiResponse = {
 };
 
 type AssistantConversationApiRecord = {
+  collapsed_conversation_ids?: string[];
+  collapsed_message_count?: number;
+  command_signature?: string;
+  context_scope?: string;
   created_at?: string;
+  duplicate_conversation_ids?: string[];
+  duplicate_count?: number;
   id: string;
   last_message_at?: string;
   message_count?: number;
   product_id?: string;
+  source_message_hash?: string;
   title?: string;
   updated_at?: string;
 };
@@ -2601,6 +2699,14 @@ export async function fetchAssistantChatRuns(params: {
   return response.items;
 }
 
+export async function fetchAssistantRuntimeStatus(): Promise<AssistantRuntimeStatus> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantRuntimeStatus>('/api/assistant/runtime-status', {
+    method: 'GET',
+    token,
+  });
+}
+
 export async function fetchAssistantReferenceCandidates(params: {
   limit?: number;
   query: string;
@@ -2639,12 +2745,125 @@ export async function fetchAssistantDraftTemplates(): Promise<AssistantDraftTemp
   return response.items;
 }
 
-export async function fetchAssistantMetrics(): Promise<AssistantMetrics> {
+export async function fetchAssistantMetrics(params: {
+  windowDays?: number;
+} = {}): Promise<AssistantMetrics> {
   const token = requireAccessToken();
-  return apiRequest<AssistantMetrics>('/api/assistant/metrics', {
+  const searchParams = new URLSearchParams();
+  if (params.windowDays) {
+    searchParams.set('window_days', String(params.windowDays));
+  }
+  const query = searchParams.toString();
+  return apiRequest<AssistantMetrics>(`/api/assistant/metrics${query ? `?${query}` : ''}`, {
     method: 'GET',
     token,
   });
+}
+
+export async function fetchAssistantMetricDetails(params: {
+  limit?: number;
+  metric: string;
+  windowDays?: number;
+}): Promise<AssistantMetricDetails> {
+  const token = requireAccessToken();
+  const searchParams = new URLSearchParams();
+  searchParams.set('metric', params.metric);
+  if (params.windowDays) {
+    searchParams.set('window_days', String(params.windowDays));
+  }
+  if (params.limit) {
+    searchParams.set('limit', String(params.limit));
+  }
+  return apiRequest<AssistantMetricDetails>(
+    `/api/assistant/metrics/details?${searchParams.toString()}`,
+    {
+      method: 'GET',
+      token,
+    },
+  );
+}
+
+export async function fetchAssistantActionReferenceConfigs(): Promise<AssistantActionReferenceConfig[]> {
+  const token = requireAccessToken();
+  const response = await apiRequest<ListResponse<AssistantActionReferenceConfig>>(
+    '/api/assistant/action-reference-configs',
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return response.items;
+}
+
+export async function createAssistantActionReferenceConfig(
+  payload: Omit<AssistantActionReferenceConfig, 'created_at' | 'created_by' | 'id' | 'updated_at' | 'updated_by'> & {
+    id?: string;
+  },
+): Promise<AssistantActionReferenceConfig> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionReferenceConfig>('/api/assistant/action-reference-configs', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function patchAssistantActionReferenceConfig(
+  configId: string,
+  payload: Partial<Omit<AssistantActionReferenceConfig, 'created_at' | 'created_by' | 'id' | 'updated_at' | 'updated_by'>>,
+): Promise<AssistantActionReferenceConfig> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionReferenceConfig>(
+    `/api/assistant/action-reference-configs/${configId}`,
+    {
+      body: payload,
+      method: 'PATCH',
+      token,
+    },
+  );
+}
+
+export async function setAssistantActionReferenceConfigStatus(
+  configId: string,
+  enabled: boolean,
+): Promise<AssistantActionReferenceConfig> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionReferenceConfig>(
+    `/api/assistant/action-reference-configs/${configId}/status`,
+    {
+      body: { enabled },
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function updateAssistantActionReferenceConfigRollout(
+  configId: string,
+  payload: Pick<AssistantActionReferenceConfig, 'enterprise_id' | 'rollout_json' | 'template_version'>,
+): Promise<AssistantActionReferenceConfig> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionReferenceConfig>(
+    `/api/assistant/action-reference-configs/${configId}/rollout`,
+    {
+      body: payload,
+      method: 'PUT',
+      token,
+    },
+  );
+}
+
+export async function deleteAssistantActionReferenceConfig(
+  configId: string,
+): Promise<AssistantActionReferenceConfig> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantActionReferenceConfig>(
+    `/api/assistant/action-reference-configs/${configId}`,
+    {
+      method: 'DELETE',
+      token,
+    },
+  );
 }
 
 export async function fetchAssistantRoleQuickTasks(): Promise<AssistantRoleQuickTaskGroup[]> {
@@ -2798,21 +3017,35 @@ export async function markAssistantActionDraftViewed(
   );
 }
 
-export async function fetchAssistantConversations(): Promise<AssistantConversationSummary[]> {
+export async function fetchAssistantConversations(params: {
+  collapse?: boolean;
+} = {}): Promise<AssistantConversationSummary[]> {
   const token = requireAccessToken();
+  const searchParams = new URLSearchParams();
+  if (params.collapse === false) {
+    searchParams.set('collapse', 'false');
+  }
+  const query = searchParams.toString();
   const response = await apiRequest<ListResponse<AssistantConversationApiRecord>>(
-    '/api/assistant/conversations',
+    `/api/assistant/conversations${query ? `?${query}` : ''}`,
     {
       method: 'GET',
       token,
     },
   );
   return response.items.map((item) => ({
+    collapsedConversationIds: item.collapsed_conversation_ids,
+    collapsedMessageCount: item.collapsed_message_count,
+    commandSignature: item.command_signature,
+    contextScope: item.context_scope,
     createdAt: item.created_at,
+    duplicateConversationIds: item.duplicate_conversation_ids,
+    duplicateCount: item.duplicate_count,
     id: item.id,
     lastMessageAt: item.last_message_at,
     messageCount: Number(item.message_count ?? 0),
     productId: item.product_id,
+    sourceMessageHash: item.source_message_hash,
     title: item.title ?? '新对话',
     updatedAt: item.updated_at,
   }));

@@ -7,6 +7,8 @@ import {
 } from '../../../services/aiBrain';
 import { formatMutationError } from '../../../utils/managementCrud';
 
+const ASSISTANT_CHAT_RUN_RECOVERY_POLL_INTERVAL_MS = 5000;
+
 export function useAssistantChatRuns({ enabled }: { enabled: boolean }) {
   const [isLoadingChatRuns, setIsLoadingChatRuns] = useState(false);
   const [isRecoveryDismissed, setIsRecoveryDismissed] = useState(false);
@@ -42,6 +44,16 @@ export function useAssistantChatRuns({ enabled }: { enabled: boolean }) {
     }, 0);
     return () => window.clearTimeout(refreshTimer);
   }, [enabled, refreshChatRuns]);
+
+  useEffect(() => {
+    if (!enabled || !runningChatRuns.length) {
+      return;
+    }
+    const pollTimer = window.setInterval(() => {
+      void refreshChatRuns();
+    }, ASSISTANT_CHAT_RUN_RECOVERY_POLL_INTERVAL_MS);
+    return () => window.clearInterval(pollTimer);
+  }, [enabled, refreshChatRuns, runningChatRuns.length]);
 
   return {
     dismissRunRecovery: () => setIsRecoveryDismissed(true),

@@ -201,6 +201,14 @@ class PostgresSnapshotRepository:
                     cursor,
                     "063_assistant_chat_runs.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "064_assistant_action_reference_configs.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "065_assistant_operability_improvements.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1243,6 +1251,36 @@ class PostgresSnapshotRepository:
         audit_event: dict[str, Any] | None = None,
     ) -> None:
         self._assistant_chat_read_repository.delete_assistant_role_quick_task_record(
+            config_id,
+            audit_event=audit_event,
+        )
+
+    def list_assistant_action_reference_configs(self) -> list[dict[str, Any]]:
+        return self._assistant_chat_read_repository.list_assistant_action_reference_configs()
+
+    def get_assistant_action_reference_config(self, *, config_id: str) -> dict[str, Any] | None:
+        return self._assistant_chat_read_repository.get_assistant_action_reference_config(
+            config_id=config_id,
+        )
+
+    def save_assistant_action_reference_config_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._assistant_chat_read_repository.save_assistant_action_reference_config_record(
+            record,
+            audit_event=audit_event,
+        )
+
+    def delete_assistant_action_reference_config_record(
+        self,
+        config_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._assistant_chat_read_repository.delete_assistant_action_reference_config_record(
             config_id,
             audit_event=audit_event,
         )

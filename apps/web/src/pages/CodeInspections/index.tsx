@@ -545,7 +545,9 @@ export default function CodeInspectionsPage() {
   }, [listQuery]);
 
   useEffect(() => {
-    void reload();
+    queueMicrotask(() => {
+      void reload();
+    });
   }, [reload]);
 
   const openDetail = useCallback(async (report: CodeInspectionReportRecord) => {

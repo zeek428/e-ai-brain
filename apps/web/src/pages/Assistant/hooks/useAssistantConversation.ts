@@ -87,22 +87,41 @@ export function useAssistantConversation() {
   const loadConversationRequestSeqRef = useRef(0);
   const [conversationId, setConversationId] = useState<string>();
   const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
+  const [showDuplicateConversations, setShowDuplicateConversations] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
 
+  const fetchConversationList = useCallback(async (showDuplicates: boolean) => {
+    return fetchAssistantConversations({ collapse: !showDuplicates });
+  }, []);
+
   const loadConversations = useCallback(async () => {
     setIsLoadingConversations(true);
     try {
-      setConversations(await fetchAssistantConversations());
+      setConversations(await fetchConversationList(showDuplicateConversations));
     } catch (error) {
       toast.error(formatMutationError(error));
     } finally {
       setIsLoadingConversations(false);
     }
-  }, []);
+  }, [fetchConversationList, showDuplicateConversations]);
+
+  const toggleDuplicateConversations = useCallback(() => {
+    const nextShowDuplicates = !showDuplicateConversations;
+    setShowDuplicateConversations(nextShowDuplicates);
+    setIsLoadingConversations(true);
+    fetchConversationList(nextShowDuplicates)
+      .then(setConversations)
+      .catch((error) => {
+        toast.error(formatMutationError(error));
+      })
+      .finally(() => {
+        setIsLoadingConversations(false);
+      });
+  }, [fetchConversationList, showDuplicateConversations]);
 
   const loadConversationMessages = useCallback(async (targetConversationId: string) => {
     loadConversationAbortRef.current?.abort();
@@ -137,7 +156,7 @@ export function useAssistantConversation() {
 
   useEffect(() => {
     let didCancel = false;
-    fetchAssistantConversations()
+    fetchConversationList(false)
       .then((items) => {
         if (!didCancel) {
           setConversations(items);
@@ -156,7 +175,7 @@ export function useAssistantConversation() {
     return () => {
       didCancel = true;
     };
-  }, []);
+  }, [fetchConversationList]);
 
   useEffect(() => () => {
     loadConversationAbortRef.current?.abort();
@@ -176,5 +195,7 @@ export function useAssistantConversation() {
     setIsSending,
     setLastResponse,
     setMessages,
+    showDuplicateConversations,
+    toggleDuplicateConversations,
   };
 }

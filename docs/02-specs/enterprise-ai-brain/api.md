@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.370 |
+| 功能版本 | v1.1.372 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,8 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.372 | 2026-06-20 | AI 助手运行状态接口补齐 self-check `checks[]` 与 `ready`，效果指标返回查看埋点口径说明；会话列表可按命令签名折叠重复命令，并新增系统管理侧 `@` 能力配置页与真实页面 smoke 覆盖 | Codex |
+| v1.1.371 | 2026-06-20 | AI 助手 @ 动作候选新增运营配置 API 和 `assistant_action_reference_configs` 表；效果指标新增时间窗口参数与 `/metrics/details` 明细钻取接口 | Codex |
 | v1.1.370 | 2026-06-20 | AI 助手聊天新增 `assistant_chat_runs` 运行生命周期、消息状态字段和服务端取消接口，停止生成可审计追踪 | Codex |
 | v1.1.369 | 2026-06-19 | AI 助手动作候选选择后改为保留 `@动作名` 命令前缀并承接用户正文，不再用候选 prompt 覆盖输入 | Codex |
 | v1.1.368 | 2026-06-19 | AI 助手 @ 候选补齐 `assistant_action` 动作项，支持按关键词搜索新建需求/Bug/插件/定时作业/知识/AI 能力配置入口，前端选择后只回填指令不注入上下文 | Codex |
@@ -607,12 +609,19 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题；确定性意图返回 `message.intent={intent_code,confidence,summary,required_refs}`，工具结果顶层可带 `intent_code/intent_confidence/required_refs`，`summary` 保持业务摘要；请求中的结构化 `references[]` 优先进入上下文，文本 `@...执行一次` 仅在没有结构化作业引用时兜底解析，官方周反馈洞察消歧不得覆盖用户已选择的结构化引用。 |
+| Assistant | GET | `/api/assistant/runtime-status` | 查询当前助手运行环境自检状态；响应返回 `ready`、`mode`、模型/Embedding/Redis/GBrain 状态和 `checks[]`，每个检查项包含 `key/status/label/detail/remediation/action_label/action_url`，用于页面展示规则能力模式、缺失配置和下一步修复入口。 |
 | Assistant | GET | `/api/assistant/role-quick-tasks` | 查询当前用户可见的 AI 助手角色快捷任务组，后端优先读取 `assistant_role_quick_tasks` 配置表并按角色、权限、启用状态、企业、模板版本和 `rollout_json` 灰度策略过滤；仅当没有任何配置记录时才回退内置默认目录，前端不得再硬编码角色入口。 |
 | Assistant | GET | `/api/assistant/role-quick-task-configs` | 管理员查询全部 AI 助手角色快捷任务配置记录，包含企业、任务组、角色、权限、启停、模板版本、灰度策略和审计元数据。 |
 | Assistant | POST | `/api/assistant/role-quick-task-configs` | 管理员新增角色快捷任务配置，写入 `assistant_role_quick_task.created` 审计。 |
 | Assistant | PATCH | `/api/assistant/role-quick-task-configs/{config_id}` | 管理员编辑角色快捷任务配置，写入 `assistant_role_quick_task.updated` 审计。 |
 | Assistant | POST | `/api/assistant/role-quick-task-configs/{config_id}/status` | 管理员启用/停用任务项或任务组，写入 `assistant_role_quick_task.status_changed` 审计。 |
 | Assistant | PUT | `/api/assistant/role-quick-task-configs/{config_id}/rollout` | 管理员调整企业、模板版本和 `rollout_json` 灰度策略，写入 `assistant_role_quick_task.rollout_changed` 审计。 |
+| Assistant | GET | `/api/assistant/action-reference-configs` | 管理员查询 `@` 动作候选配置，包含动作 key、标题、别名、角色、权限、启停、排序、企业、模板版本、灰度策略和审计元数据。 |
+| Assistant | POST | `/api/assistant/action-reference-configs` | 管理员新增 `assistant_action` 候选配置，写入 `assistant_action_reference_config.created` 审计。 |
+| Assistant | PATCH | `/api/assistant/action-reference-configs/{config_id}` | 管理员编辑 `assistant_action` 候选配置，写入 `assistant_action_reference_config.updated` 审计。 |
+| Assistant | POST | `/api/assistant/action-reference-configs/{config_id}/status` | 管理员启用或停用 `assistant_action` 候选配置，写入 `assistant_action_reference_config.status_changed` 审计。 |
+| Assistant | PUT | `/api/assistant/action-reference-configs/{config_id}/rollout` | 管理员调整企业、模板版本和 `rollout_json` 灰度策略，写入 `assistant_action_reference_config.rollout_changed` 审计。 |
+| Assistant | DELETE | `/api/assistant/action-reference-configs/{config_id}` | 管理员删除 `assistant_action` 候选配置，写入 `assistant_action_reference_config.deleted` 审计。 |
 | Assistant | GET | `/api/assistant/draft-templates` | 查询当前用户可见的 AI 助手草案模板市场目录；返回周反馈洞察、代码巡检、邮件摘要、发布风险分析、知识库巡检和线上日志异常分析模板的提示、角色、依赖、流程和接入状态。 |
 | Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 使用的候选；覆盖引用类业务对象、可读知识空间/知识目录/知识文档/知识片段、管理员或专项权限可见的定时作业/运行/插件动作/插件连接/AI角色/Skill，以及 `assistant_action` 动作入口；运营类定时作业和运行记录必须再按当前用户产品 scope 过滤，未指定 type 的默认候选按类型均衡合并。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
@@ -625,7 +634,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/modification` | 标记当前用户对草案应用后的字段修改，写入用户修改率指标元数据；仅 pending 草案可写，confirmed/cancelled/expired/failed 返回 `409 DRAFT_NOT_PENDING` 或 `DRAFT_EXPIRED`。 |
 | Assistant | GET | `/api/assistant/chat-runs` | 查询当前登录用户的助手聊天运行记录，支持 `status=running,cancelled,failed,succeeded` 和 `limit`，用于刷新后恢复未完成生成、展示最近停止记录和继续打开所属会话。 |
 | Assistant | POST | `/api/assistant/chat-runs/{run_id}/cancel` | 取消当前登录用户的助手聊天运行；服务端写入运行与消息取消状态，并尽量中断仍在等待的模型网关请求，已终止或不存在运行返回幂等/明确错误语义。 |
-| Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，包括草案采纳、运行成功、用户修改、显式引用使用情况、助手聊天生成成功/取消/失败/平均耗时/模型失败率和 `funnel.stages[]` 效果漏斗（触发意图、生成草案、查看详情、修改字段、确认草案、运行成功、继续追问/修复）。 |
+| Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，包括草案采纳、运行成功、用户修改、显式引用使用情况、助手聊天生成成功/取消/失败/平均耗时/模型失败率和 `funnel.stages[]` 效果漏斗（触发意图、生成草案、查看详情、修改字段、确认草案、运行成功、继续追问/修复）；响应同时返回 `instrumentation`，说明草案查看数中真实埋点和历史推断口径。 |
+| Assistant | GET | `/api/assistant/metrics/details` | 按 `metric`、`window_days` 和 `limit` 返回当前用户指标明细列表，支持从草案生成、草案状态、动作运行、聊天运行、定时作业运行、失败修复、引用使用和知识命中钻取到脱敏来源记录。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |
@@ -1472,7 +1482,7 @@ POST /api/assistant/chat-runs/{run_id}/cancel
 
 当管理员询问“插件连接为什么失败/连接失败怎么修/插件连接诊断”且没有创建草案意图时，`/api/assistant/chat` 必须返回 `tool=assistant.plugin_connection_diagnostic` 的确定性工具结果，不调用模型网关。工具项按最近失败或最近测试的插件连接返回 `connection_config/latest_test/repair_suggestions` 三段诊断，字段可包含连接 ID、名称、插件名、环境、endpoint、最近测试状态、失败步骤、错误码、错误信息和结构化修复建议；不得返回 `auth_config`、完整认证 Header、完整请求体或密钥。前端必须展示“插件连接诊断”卡片，并可把 `plugin_connection` 引用加入“本次上下文”继续追问。
 
-显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。`knowledge_document` 候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。`knowledge_chunk` 候选和解析只返回当前用户可读、所属文档可检索的知识片段，聊天时只注入被显式选中的单个片段。`scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent` 和 `ai_skill` 属于受控运维配置引用，候选和解析必须要求管理员、`system.admin` 或对象类型对应的管理/执行权限：定时作业和运行记录要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`，插件连接和插件动作要求 `system.plugins.manage`，AI角色和 Skill 要求 `system.ai_capabilities.manage`；定时作业和运行记录还必须按当前用户 `scope_summary` 中的产品 scope 过滤，拥有产品级 scope 的用户不得看到其他产品作业或运行。无对应权限或 scope 时候选返回空集合，解析返回 `404 REFERENCE_NOT_FOUND`。`assistant_action` 属于命令面板动作入口，不属于可解析上下文引用；候选按角色或专项权限返回 `新建需求`、`新建 Bug`、`新建插件连接`、`新建插件动作`、`新建定时作业`、`新建知识文档/导入任务` 和 `新建 AI 能力配置`，并携带 `action/prompt/summary/source_module=动作/permission_label=可执行`。前端选择 `assistant_action` 后必须用候选标题生成输入框头部命令前缀（例如 `@新建需求 `、`@新建定时作业 `），并把用户已在当前 `@` 片段之后输入的正文承接在前缀之后；候选 `prompt` 只作为动作说明和草案提示来源，不得直接覆盖用户输入。选择动作后必须关闭候选面板，不得加入本次上下文、不得写入最近引用、不得提交到 `references[]` 或 `/api/assistant/references/resolve`。前端引用类型标签必须把 `assistant_action` 显示为“动作”，把 `ai_task` 显示为“研发任务”，把 `ai_skill` 显示为“Skill”，并在候选分组、类型 Tag、已选引用 Chip 和本次上下文摘要中保持一致。未指定 `type` 的默认候选按引用类型均衡合并，后端在满足 `limit` 的前提下优先为动作入口、知识文档/片段、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI角色和 Skill 等类型各返回至少一个可用候选，避免单一类型挤占整个面板；指定 `type` 且查询词为空时，应先按目标类型取足候选再截断，不得被全局默认类型顺序提前截断；`limit` 上限仍为 20，前端裸 `@` 应请求足够数量的默认候选。前端对 `@... 执行一次` 这类 run-once 命令，在候选仍加载或用户直接按 Enter/点击发送时，必须用当前 `@` 文本追加一次 `type=scheduled_job` 候选查询，把可用定时作业引用随 `/api/assistant/chat` 一起提交；查询失败时后端显式 @ 名称解析仍可兜底。未授权、不可读、不可检索或不存在的引用不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
+显式引用由前端 `@` 选择器提交到聊天请求的可选 `references` 字段，后端不从自然语言中猜测 ID。服务端必须先解析引用、校验当前用户权限和可读状态，再构造脱敏上下文。`knowledge_document` 候选和解析只返回当前用户可读、索引状态可检索的知识文档；聊天时按权限读取有限数量的知识 chunk，注入 `system_context.selected_references` 和 `system_context.knowledge_context`。`knowledge_chunk` 候选和解析只返回当前用户可读、所属文档可检索的知识片段，聊天时只注入被显式选中的单个片段。`scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent` 和 `ai_skill` 属于受控运维配置引用，候选和解析必须要求管理员、`system.admin` 或对象类型对应的管理/执行权限：定时作业和运行记录要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`，插件连接和插件动作要求 `system.plugins.manage`，AI角色和 Skill 要求 `system.ai_capabilities.manage`；定时作业和运行记录还必须按当前用户 `scope_summary` 中的产品 scope 过滤，拥有产品级 scope 的用户不得看到其他产品作业或运行。无对应权限或 scope 时候选返回空集合，解析返回 `404 REFERENCE_NOT_FOUND`。`assistant_action` 属于命令面板动作入口，不属于可解析上下文引用；候选优先读取 `assistant_action_reference_configs`，按 `enabled`、角色、权限、企业、模板版本和 `rollout_json` 灰度策略过滤；同 `action_key` 的配置可覆盖或禁用默认动作，新增 `action_key` 可扩展自定义动作，没有任何配置记录时回退内置默认目录。默认动作覆盖 `新建需求`、`新建 Bug`、`新建插件连接`、`新建插件动作`、`新建定时作业`、`新建知识文档/导入任务` 和 `新建 AI 能力配置`，并携带 `action/prompt/summary/source_module=动作/permission_label=可执行`。前端选择 `assistant_action` 后必须用候选标题生成输入框头部命令前缀（例如 `@新建需求 `、`@新建定时作业 `），并把用户已在当前 `@` 片段之后输入的正文承接在前缀之后；候选 `prompt` 只作为动作说明和草案提示来源，不得直接覆盖用户输入。选择动作后必须关闭候选面板，不得加入本次上下文、不得写入最近引用、不得提交到 `references[]` 或 `/api/assistant/references/resolve`。前端引用类型标签必须把 `assistant_action` 显示为“动作”，把 `ai_task` 显示为“研发任务”，把 `ai_skill` 显示为“Skill”，并在候选分组、类型 Tag、已选引用 Chip 和本次上下文摘要中保持一致。未指定 `type` 的默认候选按引用类型均衡合并，后端在满足 `limit` 的前提下优先为动作入口、知识文档/片段、需求、研发任务、定时作业、运行记录、插件动作、插件连接、AI角色和 Skill 等类型各返回至少一个可用候选，避免单一类型挤占整个面板；指定 `type` 且查询词为空时，应先按目标类型取足候选再截断，不得被全局默认类型顺序提前截断；`limit` 上限仍为 20，前端裸 `@` 应请求足够数量的默认候选。前端对 `@... 执行一次` 这类 run-once 命令，在候选仍加载或用户直接按 Enter/点击发送时，必须用当前 `@` 文本追加一次 `type=scheduled_job` 候选查询，把可用定时作业引用随 `/api/assistant/chat` 一起提交；查询失败时后端显式 @ 名称解析仍可兜底。未授权、不可读、不可检索或不存在的引用不得进入模型上下文。模型日志继续只保存调用元数据，不保存完整知识正文、完整 prompt、插件密钥或外部系统 token。
 
 补充约定：`assistant_action` 仅在 query 包含“新建/新增/创建/配置”等动作触发词，或客户端显式传入 `type=assistant_action` 时并入默认候选；裸 `@` 和仅包含“定时作业/运行记录/知识文档”等对象类型词的查询，应继续优先返回已有对象引用，避免“新建定时作业”抢占“引用已有定时作业”的路径。
 
@@ -1779,7 +1789,7 @@ GET /api/assistant/draft-templates
 AI 助手效果指标：
 
 ```http
-GET /api/assistant/metrics
+GET /api/assistant/metrics?window_days=30
 ```
 
 响应：
@@ -1808,11 +1818,14 @@ GET /api/assistant/metrics
       "draft_confirmed_count": 3,
       "draft_expired_count": 0,
       "draft_failed_count": 0,
+      "draft_inferred_viewed_count": 1,
       "draft_pending_count": 1,
       "draft_resolution_rate": 0.8,
+      "draft_tracked_viewed_count": 2,
       "draft_total": 5,
       "draft_user_modified_count": 2,
       "draft_user_modified_rate": 0.4,
+      "draft_viewed_count": 3,
       "failed_run_repair_rate": 0.5,
       "failed_run_repaired_count": 1,
       "failed_run_total": 2,
@@ -1829,13 +1842,65 @@ GET /api/assistant/metrics
       "scheduled_job_run_success_rate": 0.75,
       "scheduled_job_run_total": 8,
       "user_message_total": 8
+    },
+    "instrumentation": {
+      "notes": [
+        {
+          "code": "DRAFT_VIEW_TRACKING_ROLLOUT",
+          "message": "草案查看指标同时展示上线后埋点和历史推断口径。",
+          "severity": "info"
+        }
+      ],
+      "view_metrics": {
+        "draft_inferred_viewed_count": 1,
+        "draft_tracked_viewed_count": 2,
+        "draft_viewed_count": 3
+      }
     }
   },
   "trace_id": "trace_..."
 }
 ```
 
-该接口只返回当前登录用户范围内的助手效果数据。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + expired + failed) / draft_total`，动作运行成功率为 `succeeded / action_run_total`，定时作业运行成功率为 `scheduled_job_run_succeeded_count / scheduled_job_run_total`，失败修复率为“失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用”的比例，非 `manual_rerun` 的成功运行即使携带 `source_run_id` 也不得计入修复；显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。定时作业运行指标不得按“助手创建或引用过的作业 ID”把该作业后续所有调度运行都归入助手，只能统计 `scheduled_job_runs.triggered_by_assistant=true` 且携带 `assistant_action_run_id`、`assistant_action_draft_id` 或 `assistant_source_message_id` 的运行、用户消息显式引用的具体 `scheduled_job_run`，以及这些运行通过 `source_run_id` 形成的复跑链；响应必须同时返回 `scheduled_job_run_attribution.items[]`，按“助手触发、显式引用、复跑链”解释成功率分母来源。知识引用命中率为“用户在同一会话显式引用的知识对象，后续助手回复也引用该知识对象”的比例；用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，前端从助手草案带入定时作业表单并保存时，若最终 payload 与草案初始 payload 在受跟踪字段上有差异，必须先调用 `POST /api/assistant/action-drafts/{draft_id}/modification` 写入该元数据；草案查看漏斗只依据 `POST /api/assistant/action-drafts/{draft_id}/view` 写入的查看元数据统计，其中 `draft_viewed_count` 表示任意草案查看，`draft_detail_viewed_count` 只统计 `detail_viewed_at`，`draft_deeplink_viewed_count` 只统计 `deeplink_viewed_at`。AI 助手工作台侧栏可按需调用该接口展示草案生成数、草案确认率、用户修改率、`@` 引用使用率、作业运行成功率、失败修复率和知识引用命中率，并展示草案状态、草案类型、作业运行成功/失败/总数、失败运行已修复/失败总数、运行归因来源、已引用用户消息/用户消息总数、知识命中/知识请求/知识引用数等分子分母计数，便于解释关键比率和定位闭环卡点。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
+该接口只返回当前登录用户范围内的助手效果数据，`window_days` 可选，范围为 1 到 365；未传时统计全部时间。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + expired + failed) / draft_total`，动作运行成功率为 `succeeded / action_run_total`，定时作业运行成功率为 `scheduled_job_run_succeeded_count / scheduled_job_run_total`，失败修复率为“失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用”的比例，非 `manual_rerun` 的成功运行即使携带 `source_run_id` 也不得计入修复；显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。定时作业运行指标不得按“助手创建或引用过的作业 ID”把该作业后续所有调度运行都归入助手，只能统计 `scheduled_job_runs.triggered_by_assistant=true` 且携带 `assistant_action_run_id`、`assistant_action_draft_id` 或 `assistant_source_message_id` 的运行、用户消息显式引用的具体 `scheduled_job_run`，以及这些运行通过 `source_run_id` 形成的复跑链；响应必须同时返回 `scheduled_job_run_attribution.items[]`，按“助手触发、显式引用、复跑链”解释成功率分母来源。知识引用命中率为“用户在同一会话显式引用的知识对象，后续助手回复也引用该知识对象”的比例；用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，前端从助手草案带入定时作业表单并保存时，若最终 payload 与草案初始 payload 在受跟踪字段上有差异，必须先调用 `POST /api/assistant/action-drafts/{draft_id}/modification` 写入该元数据；草案查看漏斗优先依据 `POST /api/assistant/action-drafts/{draft_id}/view` 写入的查看元数据统计，其中 `draft_detail_viewed_count` 只统计 `detail_viewed_at`，`draft_deeplink_viewed_count` 只统计 `deeplink_viewed_at`，`draft_tracked_viewed_count` 表示有真实查看埋点的草案数。为避免历史草案在埋点上线前全部显示为 0，`draft_viewed_count` 采用有效查看口径：真实查看埋点、已确认/取消/失败、存在用户修改或已产生动作运行的草案都计为被有效查看；`draft_inferred_viewed_count` 单独展示其中仅由历史行为推断的数量，`instrumentation.notes[]` 必须说明该口径。AI 助手工作台侧栏可按需调用该接口展示草案生成数、草案确认率、用户修改率、`@` 引用使用率、作业运行成功率、失败修复率和知识引用命中率，并展示草案状态、草案类型、作业运行成功/失败/总数、失败运行已修复/失败总数、运行归因来源、已引用用户消息/用户消息总数、知识命中/知识请求/知识引用数等分子分母计数，便于解释关键比率和定位闭环卡点。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
+
+指标明细钻取：
+
+```http
+GET /api/assistant/metrics/details?metric=draft_total&window_days=30&limit=50
+```
+
+响应：
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "assistant_action_draft_001",
+        "type": "draft",
+        "title": "周反馈洞察草案",
+        "status": "pending",
+        "action": "create_scheduled_job",
+        "description": "create_scheduled_job · pending",
+        "url": "/assistant?draft_id=assistant_action_draft_001",
+        "created_at": "2026-06-20T08:00:00+00:00",
+        "updated_at": "2026-06-20T08:00:00+00:00"
+      }
+    ],
+    "metric": "draft_total",
+    "title": "草案生成",
+    "total": 1,
+    "window": {
+      "days": 30,
+      "label": "最近 30 天"
+    }
+  },
+  "trace_id": "trace_..."
+}
+```
+
+`metric` 只允许按服务端白名单映射到草案、动作运行、聊天运行、定时作业运行、失败修复、消息引用或知识引用明细；明细和 `/api/assistant/metrics` 使用同一套当前用户过滤、`window_days` 过滤和定时作业助手归因规则。响应仅返回脱敏来源元数据和站内入口，不返回完整 prompt、助手完整回复、知识正文、密钥、Header 或外部调用明文。
 
 `conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
 
@@ -1853,6 +1918,8 @@ GET /api/assistant/conversations
     {
       "id": "conversation_001",
       "title": "AI Brain 项目现在开发到哪里了？",
+      "command_signature": "assistant-command:7d7e...",
+      "context_scope": "product:product_001",
       "product_id": "product_001",
       "message_count": 2,
       "last_message_at": "2026-06-03T09:00:00+00:00",
@@ -1863,6 +1930,8 @@ GET /api/assistant/conversations
   "total": 1
 }
 ```
+
+会话列表用于左侧最近对话展示。服务端保存命令式输入时可在内部记录 `source_message_hash`，但公开响应只返回可用于分组解释的 `command_signature` 与 `context_scope`；前端应按返回列表展示，不自行删除历史。对于 `@...执行一次`、`@新建需求 ...` 等重复命令，会话折叠优先使用 `command_signature + context_scope`，避免只按标题合并导致不同产品、不同上下文的同名命令被误折叠。
 
 当前用户会话消息：
 

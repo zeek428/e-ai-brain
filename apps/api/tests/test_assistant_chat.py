@@ -11,7 +11,10 @@ from app.api.deps import api_error
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
 from app.main import app
-from app.services.assistant_metrics import assistant_metrics_response
+from app.services.assistant_metrics import (
+    assistant_metric_details_response,
+    assistant_metrics_response,
+)
 from app.services.assistant_references import assistant_reference_candidates_response
 
 client = TestClient(app)
@@ -86,6 +89,20 @@ def test_ai_assistant_role_quick_tasks_are_backend_configured():
         "sort_order": 30,
         "target_draft_type": "create_scheduled_job",
     }
+
+
+def test_ai_assistant_runtime_status_returns_self_check_guidance():
+    response = client.get("/api/assistant/runtime-status", headers=auth_headers())
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    checks_by_code = {item["code"]: item for item in payload["checks"]}
+    assert {"postgres", "redis", "model_gateway", "embedding_gateway", "long_memory"}.issubset(
+        checks_by_code
+    )
+    assert checks_by_code["model_gateway"]["url"] == "/system/model-gateway"
+    assert checks_by_code["redis"]["remediation"]
+    assert isinstance(payload["ready"], bool)
 
 
 def test_ai_assistant_role_quick_tasks_can_be_loaded_from_repository_config():
@@ -526,6 +543,164 @@ def test_ai_assistant_reference_candidates_include_action_candidates_for_create_
     )
     metrics_actions = [item["action"] for item in metrics_payload["items"]]
     assert "explain_assistant_metrics" in metrics_actions
+
+
+def test_ai_assistant_action_reference_configs_override_default_candidates():
+    app.state.store.reset()
+    app.state.store.assistant_action_reference_configs["assistant_action_reference_config_requirement_off"] = {
+        "action_key": "create_requirement",
+        "aliases": ["新建", "需求"],
+        "enabled": False,
+        "id": "assistant_action_reference_config_requirement_off",
+        "metadata_json": {},
+        "permissions": [],
+        "prompt": "禁用默认新建需求入口",
+        "roles": [],
+        "rollout_json": {},
+        "sort_order": 10,
+        "summary": "禁用默认新建需求入口",
+        "title": "新建需求",
+        "url": "/delivery/requirements",
+    }
+    app.state.store.assistant_action_reference_configs["assistant_action_reference_config_custom"] = {
+        "action_key": "create_security_review",
+        "aliases": ["新建", "安全评审"],
+        "enabled": True,
+        "enterprise_id": "enterprise_a",
+        "id": "assistant_action_reference_config_custom",
+        "metadata_json": {"source": "ops"},
+        "permissions": [],
+        "prompt": "请生成安全评审草案。",
+        "roles": ["admin"],
+        "rollout_json": {
+            "enterprise_ids": ["enterprise_a"],
+            "percentage": 100,
+            "template_versions": ["2026.06"],
+        },
+        "sort_order": 5,
+        "summary": "运营配置的安全评审动作。",
+        "template_version": "2026.06",
+        "title": "新建安全评审",
+        "url": "/security/reviews",
+    }
+
+    visible_payload = assistant_reference_candidates_response(
+        app.state.store,
+        limit=20,
+        message="新建",
+        product_id=None,
+        reference_type="assistant_action",
+        user={
+            "assistant_template_version": "2026.06",
+            "enterprise_id": "enterprise_a",
+            "id": "user_admin",
+            "permissions": ["system.admin"],
+            "roles": ["admin"],
+        },
+    )
+    visible_actions = [item["action"] for item in visible_payload["items"]]
+
+    assert visible_actions[0] == "create_security_review"
+    assert "create_requirement" not in visible_actions
+    assert visible_payload["items"][0]["id"] == "create_security_review"
+    assert visible_payload["items"][0]["config_id"] == "assistant_action_reference_config_custom"
+    assert visible_payload["items"][0]["prompt"] == "请生成安全评审草案。"
+
+    filtered_payload = assistant_reference_candidates_response(
+        app.state.store,
+        limit=20,
+        message="安全评审",
+        product_id=None,
+        reference_type="assistant_action",
+        user={
+            "assistant_template_version": "2026.07",
+            "enterprise_id": "enterprise_b",
+            "id": "user_admin_b",
+            "permissions": ["system.admin"],
+            "roles": ["admin"],
+        },
+    )
+
+    assert filtered_payload["items"] == []
+
+
+def test_ai_assistant_action_reference_config_apis_support_operations_rollout_and_audit():
+    app.state.store.reset()
+    headers = auth_headers()
+
+    create_response = client.post(
+        "/api/assistant/action-reference-configs",
+        headers=headers,
+        json={
+            "action_key": "create_incident_review",
+            "aliases": ["新建", "事故复盘"],
+            "enabled": True,
+            "enterprise_id": "enterprise_a",
+            "permissions": [],
+            "prompt": "请生成事故复盘草案。",
+            "roles": ["admin"],
+            "rollout_json": {
+                "enterprise_ids": ["enterprise_a"],
+                "percentage": 100,
+                "template_versions": ["2026.06"],
+            },
+            "sort_order": 12,
+            "summary": "运营配置的事故复盘动作。",
+            "template_version": "2026.06",
+            "title": "新建事故复盘",
+            "url": "/ops/incidents",
+        },
+    )
+
+    assert create_response.status_code == 200, create_response.text
+    config = create_response.json()["data"]
+    config_id = config["id"]
+    assert config["action_key"] == "create_incident_review"
+    assert config["rollout_json"]["template_versions"] == ["2026.06"]
+
+    patch_response = client.patch(
+        f"/api/assistant/action-reference-configs/{config_id}",
+        headers=headers,
+        json={"title": "新建事故复盘 V2", "sort_order": 8},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+    assert patch_response.json()["data"]["title"] == "新建事故复盘 V2"
+    assert patch_response.json()["data"]["sort_order"] == 8
+
+    disable_response = client.post(
+        f"/api/assistant/action-reference-configs/{config_id}/status",
+        headers=headers,
+        json={"enabled": False},
+    )
+    assert disable_response.status_code == 200, disable_response.text
+    assert disable_response.json()["data"]["enabled"] is False
+
+    rollout_response = client.put(
+        f"/api/assistant/action-reference-configs/{config_id}/rollout",
+        headers=headers,
+        json={
+            "enterprise_id": "enterprise_b",
+            "rollout_json": {
+                "enterprise_ids": ["enterprise_b"],
+                "percentage": 100,
+                "template_versions": ["2026.07"],
+            },
+            "template_version": "2026.07",
+        },
+    )
+    assert rollout_response.status_code == 200, rollout_response.text
+    assert rollout_response.json()["data"]["enterprise_id"] == "enterprise_b"
+    assert rollout_response.json()["data"]["template_version"] == "2026.07"
+
+    configs_response = client.get("/api/assistant/action-reference-configs", headers=headers)
+    assert configs_response.status_code == 200, configs_response.text
+    assert configs_response.json()["data"]["total"] == 1
+
+    audit_types = [event["event_type"] for event in app.state.store.audit_events]
+    assert "assistant_action_reference_config.created" in audit_types
+    assert "assistant_action_reference_config.updated" in audit_types
+    assert "assistant_action_reference_config.status_changed" in audit_types
+    assert "assistant_action_reference_config.rollout_changed" in audit_types
 
 
 def test_ai_assistant_chat_returns_registered_intent_metadata(monkeypatch):
@@ -3599,6 +3774,7 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
 
     assert response.status_code == 200
     metrics = response.json()["data"]
+    assert metrics["window"] == {"days": None, "label": "全部时间"}
     assert metrics["summary"] == {
         "action_run_failed_count": 0,
         "action_run_succeeded_count": 1,
@@ -3620,14 +3796,16 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
         "draft_confirmed_count": 1,
         "draft_expired_count": 1,
         "draft_failed_count": 0,
+        "draft_inferred_viewed_count": 1,
         "draft_pending_count": 1,
         "draft_resolution_rate": 0.75,
         "draft_total": 4,
         "draft_deeplink_viewed_count": 1,
         "draft_detail_viewed_count": 1,
+        "draft_tracked_viewed_count": 1,
         "draft_user_modified_count": 1,
         "draft_user_modified_rate": 0.25,
-        "draft_viewed_count": 1,
+        "draft_viewed_count": 2,
         "failed_run_repair_rate": 1.0,
         "failed_run_repaired_count": 1,
         "failed_run_total": 1,
@@ -3688,7 +3866,7 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
                 "sort_order": 20,
             },
             {
-                "count": 1,
+                "count": 2,
                 "key": "draft_viewed",
                 "label": "查看草案",
                 "sort_order": 30,
@@ -3731,6 +3909,52 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
             },
         ]
     }
+    assert metrics["instrumentation"]["view_metrics"] == {
+        "effective_viewed_count": 2,
+        "inferred_legacy_count": 1,
+        "tracked_count": 1,
+    }
+    assert metrics["instrumentation"]["notes"][0]["code"] == "DRAFT_VIEW_TRACKING_ROLLOUT"
+
+    windowed_response = client.get("/api/assistant/metrics?window_days=1", headers=headers)
+
+    assert windowed_response.status_code == 200
+    windowed_metrics = windowed_response.json()["data"]
+    assert windowed_metrics["window"] == {"days": 1, "label": "最近 1 天"}
+    assert windowed_metrics["summary"]["draft_total"] == 0
+    assert windowed_metrics["summary"]["chat_run_total"] == 0
+
+    draft_details_response = client.get(
+        "/api/assistant/metrics/details?metric=draft_total&limit=2",
+        headers=headers,
+    )
+    assert draft_details_response.status_code == 200, draft_details_response.text
+    draft_details = draft_details_response.json()["data"]
+    assert draft_details["metric"] == "draft_total"
+    assert draft_details["title"] == "草案生成"
+    assert draft_details["total"] == 4
+    assert len(draft_details["items"]) == 2
+    assert draft_details["items"][0]["type"] == "draft"
+    assert draft_details["items"][0]["url"].startswith("/assistant?draft_id=")
+
+    failed_run_details_response = client.get(
+        "/api/assistant/metrics/details?metric=failed_run_repaired_count",
+        headers=headers,
+    )
+    assert failed_run_details_response.status_code == 200, failed_run_details_response.text
+    failed_run_details = failed_run_details_response.json()["data"]
+    assert failed_run_details["total"] == 1
+    assert failed_run_details["items"][0]["id"] == "scheduled_job_run_failed_metrics"
+    assert failed_run_details["items"][0]["type"] == "scheduled_job_run"
+
+    windowed_details_response = client.get(
+        "/api/assistant/metrics/details?metric=draft_total&window_days=1",
+        headers=headers,
+    )
+    assert windowed_details_response.status_code == 200, windowed_details_response.text
+    windowed_details = windowed_details_response.json()["data"]
+    assert windowed_details["window"] == {"days": 1, "label": "最近 1 天"}
+    assert windowed_details["total"] == 0
 
 
 def test_ai_assistant_action_draft_view_updates_metrics_and_audit():
@@ -4111,6 +4335,16 @@ def test_ai_assistant_metrics_reads_scheduled_job_runs_from_repository_read_mode
         ],
         "total": 2,
     }
+    details = assistant_metric_details_response(
+        SimpleNamespace(repository=RepositoryBackedMetricsStore(), scheduled_job_runs={}),
+        metric="scheduled_job_run_failed_count",
+        user={"id": "user_admin"},
+    )
+    assert details["total"] == 1
+    assert details["items"][0]["id"] == "scheduled_job_run_db_failed"
+    assert details["items"][0]["url"] == (
+        "/tasks/scheduled-jobs?job_id=scheduled_job_db&run_id=scheduled_job_run_db_failed"
+    )
 
 
 def test_ai_assistant_action_draft_modification_updates_metrics_and_audit():

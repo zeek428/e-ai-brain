@@ -1,8 +1,9 @@
 import { BarChartOutlined } from '@ant-design/icons';
-import { Button, Space, Spin, Tag, Typography } from 'antd';
+import { Button, Segmented, Space, Spin, Tag, Typography } from 'antd';
 
 import {
   type AssistantDraftTemplate,
+  type AssistantMetricDetails,
   type AssistantMetrics,
 } from '../../../services/aiBrain';
 
@@ -115,25 +116,35 @@ export function AssistantDraftTemplateMarket({
 }
 
 export function AssistantMetricsPanel({
+  isDetailLoading,
   isLoading,
+  metricDetails,
   metrics,
+  onChangeWindow,
+  onOpenDetail,
   onRefresh,
+  windowDays,
 }: {
+  isDetailLoading?: boolean;
   isLoading: boolean;
+  metricDetails?: AssistantMetricDetails;
   metrics?: AssistantMetrics;
+  onChangeWindow: (windowDays?: number) => void;
+  onOpenDetail: (metric: string) => void;
   onRefresh: () => void;
+  windowDays?: number;
 }) {
   const summary = metrics?.summary ?? {};
   const metricItems = [
-    { label: '草案生成数', value: metricCount(summary.draft_total) },
-    { label: '草案确认率', value: metricPercent(summary.draft_adoption_rate) },
-    { label: 'AI 生成成功率', value: metricPercent(summary.chat_run_success_rate) },
-    { label: 'AI 生成取消率', value: metricPercent(summary.chat_run_cancel_rate) },
-    { label: '用户修改率', value: metricPercent(summary.draft_user_modified_rate) },
-    { label: '@ 引用使用率', value: metricPercent(summary.reference_usage_rate) },
-    { label: '作业运行成功率', value: metricPercent(summary.scheduled_job_run_success_rate) },
-    { label: '失败修复率', value: metricPercent(summary.failed_run_repair_rate) },
-    { label: '知识引用命中率', value: metricPercent(summary.knowledge_reference_hit_rate) },
+    { key: 'draft_total', label: '草案生成数', value: metricCount(summary.draft_total) },
+    { key: 'draft_adoption_rate', label: '草案确认率', value: metricPercent(summary.draft_adoption_rate) },
+    { key: 'chat_run_success_rate', label: 'AI 生成成功率', value: metricPercent(summary.chat_run_success_rate) },
+    { key: 'chat_run_cancel_rate', label: 'AI 生成取消率', value: metricPercent(summary.chat_run_cancel_rate) },
+    { key: 'draft_user_modified_count', label: '用户修改率', value: metricPercent(summary.draft_user_modified_rate) },
+    { key: 'reference_usage_rate', label: '@ 引用使用率', value: metricPercent(summary.reference_usage_rate) },
+    { key: 'scheduled_job_run_success_rate', label: '作业运行成功率', value: metricPercent(summary.scheduled_job_run_success_rate) },
+    { key: 'failed_run_repaired_count', label: '失败修复率', value: metricPercent(summary.failed_run_repair_rate) },
+    { key: 'knowledge_reference_hit_count', label: '知识引用命中率', value: metricPercent(summary.knowledge_reference_hit_rate) },
   ];
   const draftStatusItems = [
     { label: '待确认', value: metricCount(summary.draft_pending_count) },
@@ -209,23 +220,99 @@ export function AssistantMetricsPanel({
           <BarChartOutlined />
           <Text strong>助手效果指标</Text>
         </Space>
-        <Button loading={isLoading} size="small" onClick={onRefresh}>
-          {metrics ? '刷新指标' : '查看指标'}
-        </Button>
+        <Space size={8} wrap>
+          <Segmented
+            aria-label="指标时间范围"
+            disabled={isLoading}
+            options={[
+              { label: '全部', value: 'all' },
+              { label: '7天', value: '7' },
+              { label: '30天', value: '30' },
+              { label: '90天', value: '90' },
+            ]}
+            size="small"
+            value={windowDays ? String(windowDays) : 'all'}
+            onChange={(value) => {
+              const nextValue = value === 'all' ? undefined : Number(value);
+              onChangeWindow(nextValue);
+            }}
+          />
+          <Button loading={isLoading} size="small" onClick={onRefresh}>
+            {metrics ? '刷新指标' : '查看指标'}
+          </Button>
+        </Space>
       </div>
       {metrics ? (
         <>
           <div className="assistant-metrics-grid">
             {metricItems.map((item) => (
-              <div
+              <button
                 aria-label={`指标 ${item.label}`}
-                className="assistant-metric-item"
-                key={item.label}
+                className={`assistant-metric-item assistant-metric-button${
+                  metricDetails?.metric === item.key ? ' assistant-metric-button-active' : ''
+                }`}
+                key={item.key}
+                type="button"
+                onClick={() => onOpenDetail(item.key)}
               >
                 <Text type="secondary">{item.label}</Text>
                 <Text strong>{item.value}</Text>
-              </div>
+              </button>
             ))}
+          </div>
+          {metrics.instrumentation?.notes?.length ? (
+            <div className="assistant-metrics-instrumentation" aria-label="指标口径说明">
+              {metrics.instrumentation.notes.map((note) => (
+                <Text key={note.code ?? note.message} type="secondary">
+                  {note.message}
+                </Text>
+              ))}
+              {metrics.instrumentation.view_metrics ? (
+                <Space size={[4, 4]} wrap>
+                  <Tag>{`埋点查看 ${metricCount(metrics.instrumentation.view_metrics.tracked_count)}`}</Tag>
+                  <Tag>{`历史推断 ${metricCount(metrics.instrumentation.view_metrics.inferred_legacy_count)}`}</Tag>
+                </Space>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="assistant-metrics-breakdown" aria-label="指标明细">
+            <div className="assistant-metrics-detail-header">
+              <Text strong>{metricDetails?.title ?? '指标明细'}</Text>
+              {isDetailLoading ? <Spin size="small" /> : <Tag>{metricDetails?.total ?? 0} 条</Tag>}
+            </div>
+            {metricDetails?.items?.length ? (
+              <div className="assistant-metrics-detail-list">
+                {metricDetails.items.map((item) => (
+                  <div
+                    aria-label={`指标明细 ${item.title}`}
+                    className="assistant-metrics-detail-item"
+                    key={`${item.type}:${item.id}`}
+                  >
+                    <div className="assistant-metrics-detail-title">
+                      <Text strong>{item.title}</Text>
+                      {item.status ? <Tag>{item.status}</Tag> : null}
+                    </div>
+                    {item.description ? (
+                      <Text type="secondary">{item.description}</Text>
+                    ) : null}
+                    <Space size={[4, 4]} wrap>
+                      <Tag>{item.type}</Tag>
+                      {item.action ? <Tag>{item.action}</Tag> : null}
+                      {item.updated_at ?? item.created_at ? (
+                        <Tag>{item.updated_at ?? item.created_at}</Tag>
+                      ) : null}
+                      {item.url ? (
+                        <a href={item.url}>查看来源</a>
+                      ) : null}
+                    </Space>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Text type="secondary">
+                {isDetailLoading ? '正在加载明细...' : '点击上方指标查看对应草案、运行或引用明细。'}
+              </Text>
+            )}
           </div>
           {funnelStages.length ? (
             <div className="assistant-metrics-breakdown">

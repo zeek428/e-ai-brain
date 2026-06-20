@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any
 
+from app.api.deps import api_error
 from app.services.knowledge_documents import (
     knowledge_document_chunks,
     knowledge_query_repository,
@@ -153,6 +156,7 @@ ASSISTANT_ACTION_CANDIDATES = (
         "url": "/assistant",
     },
 )
+ASSISTANT_ACTION_STANDARD_SORT_STEP = 10
 OPERATIONAL_REFERENCE_PERMISSIONS_BY_TYPE = {
     "ai_agent": ("system.ai_capabilities.manage",),
     "ai_skill": ("system.ai_capabilities.manage",),
@@ -265,6 +269,175 @@ class AssistantReferenceError(Exception):
         self.status_code = status_code
         self.code = code
         self.message = message
+
+
+def list_assistant_action_reference_configs_response(
+    *,
+    current_store: Any | None = None,
+) -> dict[str, Any]:
+    items = [
+        _public_assistant_action_config(row)
+        for row in _assistant_action_config_rows(current_store)
+    ]
+    return {"items": items, "total": len(items)}
+
+
+def create_assistant_action_reference_config_response(
+    *,
+    current_store: Any,
+    payload: dict[str, Any],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    now = _now_iso()
+    config_id = str(payload.get("id") or current_store.new_id("assistant_action_reference_config"))
+    if _get_assistant_action_config(current_store, config_id=config_id) is not None:
+        raise api_error(
+            409,
+            "ASSISTANT_ACTION_REFERENCE_CONFIG_EXISTS",
+            "Assistant action reference config exists",
+        )
+    record = _normalized_assistant_action_config(
+        {
+            **payload,
+            "created_at": now,
+            "created_by": user["id"],
+            "id": config_id,
+            "updated_at": now,
+            "updated_by": user["id"],
+        }
+    )
+    _ensure_assistant_action_config_scope_unique(current_store, record)
+    audit_event = current_store.audit(
+        event_type="assistant_action_reference_config.created",
+        actor_id=user["id"],
+        subject_type="assistant_action_reference_config",
+        subject_id=config_id,
+        payload=_assistant_action_config_audit_payload(
+            record,
+            changed_fields=sorted(record.keys()),
+        ),
+    )
+    _save_assistant_action_config(current_store, record, audit_event=audit_event)
+    return _public_assistant_action_config(record)
+
+
+def patch_assistant_action_reference_config_response(
+    *,
+    config_id: str,
+    current_store: Any,
+    payload: dict[str, Any],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    existing = _require_assistant_action_config(current_store, config_id=config_id)
+    now = _now_iso()
+    patch = dict(payload)
+    patch.pop("id", None)
+    changed_fields = sorted(patch.keys())
+    record = _normalized_assistant_action_config(
+        {
+            **existing,
+            **patch,
+            "created_at": existing.get("created_at") or now,
+            "created_by": existing.get("created_by"),
+            "id": existing["id"],
+            "updated_at": now,
+            "updated_by": user["id"],
+        }
+    )
+    _ensure_assistant_action_config_scope_unique(current_store, record)
+    audit_event = current_store.audit(
+        event_type="assistant_action_reference_config.updated",
+        actor_id=user["id"],
+        subject_type="assistant_action_reference_config",
+        subject_id=config_id,
+        payload=_assistant_action_config_audit_payload(
+            record,
+            changed_fields=changed_fields,
+        ),
+    )
+    _save_assistant_action_config(current_store, record, audit_event=audit_event)
+    return _public_assistant_action_config(record)
+
+
+def set_assistant_action_reference_config_status_response(
+    *,
+    config_id: str,
+    current_store: Any,
+    enabled: bool,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    record = patch_assistant_action_reference_config_response(
+        config_id=config_id,
+        current_store=current_store,
+        payload={"enabled": enabled},
+        user=user,
+    )
+    audit_event = current_store.audit(
+        event_type="assistant_action_reference_config.status_changed",
+        actor_id=user["id"],
+        subject_type="assistant_action_reference_config",
+        subject_id=config_id,
+        payload={"enabled": enabled},
+    )
+    _persist_audit_event(current_store, audit_event)
+    return record
+
+
+def update_assistant_action_reference_config_rollout_response(
+    *,
+    config_id: str,
+    current_store: Any,
+    enterprise_id: str | None,
+    rollout_json: dict[str, Any],
+    template_version: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    record = patch_assistant_action_reference_config_response(
+        config_id=config_id,
+        current_store=current_store,
+        payload={
+            "enterprise_id": enterprise_id,
+            "rollout_json": rollout_json,
+            "template_version": template_version,
+        },
+        user=user,
+    )
+    audit_event = current_store.audit(
+        event_type="assistant_action_reference_config.rollout_changed",
+        actor_id=user["id"],
+        subject_type="assistant_action_reference_config",
+        subject_id=config_id,
+        payload={
+            "enterprise_id": enterprise_id,
+            "rollout_json": rollout_json,
+            "template_version": template_version,
+        },
+    )
+    _persist_audit_event(current_store, audit_event)
+    return record
+
+
+def delete_assistant_action_reference_config_response(
+    *,
+    config_id: str,
+    current_store: Any,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    existing = _require_assistant_action_config(current_store, config_id=config_id)
+    audit_event = current_store.audit(
+        event_type="assistant_action_reference_config.deleted",
+        actor_id=user["id"],
+        subject_type="assistant_action_reference_config",
+        subject_id=config_id,
+        payload=_assistant_action_config_audit_payload(existing, changed_fields=[]),
+    )
+    repository = getattr(current_store, "repository", None)
+    delete_record = getattr(repository, "delete_assistant_action_reference_config_record", None)
+    if callable(delete_record):
+        delete_record(config_id, audit_event=audit_event)
+    else:
+        getattr(current_store, "assistant_action_reference_configs", {}).pop(config_id, None)
+    return _public_assistant_action_config(existing)
 
 
 def assistant_reference_candidates(
@@ -435,6 +608,7 @@ def assistant_reference_candidates_response(
     normalized_limit = min(max(limit, 1), 20)
     if normalized_type == ASSISTANT_ACTION_REFERENCE_TYPE:
         items = _assistant_action_reference_candidates(
+            current_store,
             limit=normalized_limit,
             query=message,
             user=user,
@@ -507,6 +681,7 @@ def assistant_reference_candidates_response(
         )
     action_references = (
         _assistant_action_reference_candidates(
+            current_store,
             limit=normalized_limit,
             query=message,
             user=user,
@@ -990,6 +1165,7 @@ def _knowledge_chunk_reference_candidates(
 
 
 def _assistant_action_reference_candidates(
+    current_store: Any,
     *,
     limit: int,
     query: str,
@@ -997,15 +1173,16 @@ def _assistant_action_reference_candidates(
 ) -> list[dict[str, Any]]:
     normalized_query = query.strip().lower()
     references: list[dict[str, Any]] = []
-    for candidate in ASSISTANT_ACTION_CANDIDATES:
+    for candidate in _assistant_action_candidates_for_user(current_store, user=user):
         if not _user_can_use_assistant_action(user, candidate):
             continue
         if not _assistant_action_matches_query(candidate, normalized_query):
             continue
         references.append(
             {
-                "action": str(candidate["action"]),
-                "id": str(candidate["id"]),
+                "action": str(candidate["action_key"]),
+                "config_id": str(candidate["id"]),
+                "id": str(candidate["action_key"]),
                 "permission_label": "可执行",
                 "prompt": str(candidate["prompt"]),
                 "source_module": REFERENCE_SOURCE_MODULES[ASSISTANT_ACTION_REFERENCE_TYPE],
@@ -1020,17 +1197,213 @@ def _assistant_action_reference_candidates(
     return references
 
 
+def _assistant_action_candidates_for_user(
+    current_store: Any,
+    *,
+    user: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    standard_rows = _standard_assistant_action_config_rows()
+    rows_by_key = {str(row["action_key"]): row for row in standard_rows}
+    configured_rows = [
+        _normalized_assistant_action_config(row)
+        for row in _assistant_action_config_rows(current_store)
+        if _assistant_action_rollout_matches_user(row, user=user or {})
+    ]
+    for row in sorted(
+        configured_rows,
+        key=lambda item: (
+            int(item.get("sort_order") or 0),
+            str(item.get("template_version") or ""),
+            str(item.get("id") or ""),
+        ),
+    ):
+        rows_by_key[str(row["action_key"])] = row
+    return sorted(
+        rows_by_key.values(),
+        key=lambda item: (
+            int(item.get("sort_order") or 0),
+            str(item.get("title") or ""),
+            str(item.get("action_key") or ""),
+        ),
+    )
+
+
+def _standard_assistant_action_config_rows() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, candidate in enumerate(ASSISTANT_ACTION_CANDIDATES, start=1):
+        action_key = str(candidate.get("action") or candidate.get("id") or "").strip()
+        rows.append(
+            _normalized_assistant_action_config(
+                {
+                    "action_key": action_key,
+                    "aliases": list(candidate.get("aliases") or []),
+                    "enabled": True,
+                    "id": f"assistant_action_reference_config_{action_key}",
+                    "metadata_json": {"source": "standard"},
+                    "permissions": list(candidate.get("permissions") or []),
+                    "prompt": candidate.get("prompt"),
+                    "roles": list(candidate.get("roles") or []),
+                    "rollout_json": {},
+                    "sort_order": int(candidate.get("sort_order") or index * ASSISTANT_ACTION_STANDARD_SORT_STEP),
+                    "summary": candidate.get("summary"),
+                    "title": candidate.get("title"),
+                    "url": candidate.get("url"),
+                }
+            )
+        )
+    return rows
+
+
+def _assistant_action_config_rows(current_store: Any | None) -> list[dict[str, Any]]:
+    repository = getattr(current_store, "repository", None) if current_store is not None else None
+    list_configs = getattr(repository, "list_assistant_action_reference_configs", None)
+    if callable(list_configs):
+        rows = [dict(row) for row in list_configs() if isinstance(row, dict)]
+        if rows:
+            return rows
+    configured = (
+        getattr(current_store, "assistant_action_reference_configs", {})
+        if current_store is not None
+        else {}
+    )
+    if isinstance(configured, dict):
+        return [dict(row) for row in configured.values() if isinstance(row, dict)]
+    if isinstance(configured, list):
+        return [dict(row) for row in configured if isinstance(row, dict)]
+    return []
+
+
+def _normalized_assistant_action_config(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action_key": _required_text(payload.get("action_key") or payload.get("action"), "action_key"),
+        "aliases": _clean_string_list(payload.get("aliases")),
+        "created_at": payload.get("created_at"),
+        "created_by": _optional_text(payload.get("created_by")),
+        "enabled": bool(payload.get("enabled", True)),
+        "enterprise_id": _optional_text(payload.get("enterprise_id")),
+        "id": _required_text(payload.get("id"), "id"),
+        "metadata_json": _clean_object(payload.get("metadata_json")),
+        "permissions": _clean_string_list(payload.get("permissions")),
+        "prompt": _required_text(payload.get("prompt"), "prompt"),
+        "roles": _clean_string_list(payload.get("roles")),
+        "rollout_json": _clean_object(payload.get("rollout_json")),
+        "sort_order": int(payload.get("sort_order") or 0),
+        "summary": _required_text(payload.get("summary"), "summary"),
+        "template_version": _optional_text(payload.get("template_version")),
+        "title": _required_text(payload.get("title"), "title"),
+        "updated_at": payload.get("updated_at"),
+        "updated_by": _optional_text(payload.get("updated_by")),
+        "url": _required_text(payload.get("url"), "url"),
+    }
+
+
+def _public_assistant_action_config(row: dict[str, Any]) -> dict[str, Any]:
+    config = _normalized_assistant_action_config(row)
+    return {
+        key: value
+        for key, value in config.items()
+        if value is not None
+        or key in {"enterprise_id", "template_version"}
+    }
+
+
+def _get_assistant_action_config(
+    current_store: Any,
+    *,
+    config_id: str,
+) -> dict[str, Any] | None:
+    repository = getattr(current_store, "repository", None)
+    get_config = getattr(repository, "get_assistant_action_reference_config", None)
+    if callable(get_config):
+        config = get_config(config_id=config_id)
+        return dict(config) if isinstance(config, dict) else None
+    config = getattr(current_store, "assistant_action_reference_configs", {}).get(config_id)
+    return dict(config) if isinstance(config, dict) else None
+
+
+def _require_assistant_action_config(current_store: Any, *, config_id: str) -> dict[str, Any]:
+    config = _get_assistant_action_config(current_store, config_id=config_id)
+    if config is None:
+        raise api_error(
+            404,
+            "ASSISTANT_ACTION_REFERENCE_CONFIG_NOT_FOUND",
+            "Assistant action reference config not found",
+        )
+    return config
+
+
+def _ensure_assistant_action_config_scope_unique(
+    current_store: Any,
+    record: dict[str, Any],
+) -> None:
+    scope_key = _assistant_action_config_scope_key(record)
+    for existing in _assistant_action_config_rows(current_store):
+        if str(existing.get("id") or "") == str(record.get("id") or ""):
+            continue
+        if _assistant_action_config_scope_key(existing) == scope_key:
+            raise api_error(
+                409,
+                "ASSISTANT_ACTION_REFERENCE_CONFIG_SCOPE_EXISTS",
+                "Assistant action reference config scope exists",
+            )
+
+
+def _assistant_action_config_scope_key(record: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        _optional_text(record.get("enterprise_id")) or "",
+        _optional_text(record.get("action_key") or record.get("action")) or "",
+        _optional_text(record.get("template_version")) or "",
+    )
+
+
+def _save_assistant_action_config(
+    current_store: Any,
+    record: dict[str, Any],
+    *,
+    audit_event: dict[str, Any],
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_record = getattr(repository, "save_assistant_action_reference_config_record", None)
+    if callable(save_record):
+        save_record(record, audit_event=audit_event)
+        return
+    current_store.assistant_action_reference_configs[record["id"]] = record
+
+
+def _persist_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_events = getattr(repository, "save_audit_events", None)
+    if callable(save_events):
+        save_events({"audit_events": [audit_event]})
+
+
+def _assistant_action_config_audit_payload(
+    record: dict[str, Any],
+    *,
+    changed_fields: list[str],
+) -> dict[str, Any]:
+    return {
+        "action_key": record.get("action_key"),
+        "changed_fields": changed_fields,
+        "enabled": record.get("enabled"),
+        "enterprise_id": record.get("enterprise_id"),
+        "template_version": record.get("template_version"),
+    }
+
+
 def _assistant_action_matches_query(
     candidate: dict[str, Any],
     normalized_query: str,
 ) -> bool:
+    if not candidate.get("enabled", True):
+        return False
     if not normalized_query:
         return True
     aliases = " ".join(str(alias or "") for alias in candidate.get("aliases", ()))
     haystack = " ".join(
         str(value or "")
         for value in (
-            candidate.get("id"),
+            candidate.get("action_key"),
             candidate.get("title"),
             candidate.get("summary"),
             candidate.get("prompt"),
@@ -1064,6 +1437,165 @@ def _user_can_use_assistant_action(
     if required_roles and not required_roles.intersection(user_roles):
         return False
     return True
+
+
+def _assistant_action_rollout_matches_user(
+    row: dict[str, Any],
+    *,
+    user: dict[str, Any],
+) -> bool:
+    rollout = _clean_object(row.get("rollout_json"))
+    if rollout.get("enabled") is False:
+        return False
+    user_id = str(user.get("id") or "")
+    user_roles = {str(role) for role in user.get("roles") or []}
+    user_enterprise_id = _user_enterprise_id(user)
+    enterprise_id = _optional_text(row.get("enterprise_id"))
+    if enterprise_id and enterprise_id != user_enterprise_id:
+        return False
+    rollout_enterprise_ids = set(_clean_string_list(rollout.get("enterprise_ids")))
+    if rollout_enterprise_ids and user_enterprise_id not in rollout_enterprise_ids:
+        return False
+    allowed_user_ids = set(
+        _clean_string_list(rollout.get("user_ids") or rollout.get("allow_user_ids"))
+    )
+    if allowed_user_ids and user_id not in allowed_user_ids:
+        return False
+    denied_user_ids = set(
+        _clean_string_list(rollout.get("deny_user_ids") or rollout.get("excluded_user_ids"))
+    )
+    if user_id in denied_user_ids:
+        return False
+    allowed_roles = set(_clean_string_list(rollout.get("roles") or rollout.get("role_allowlist")))
+    if allowed_roles and not user_roles.intersection(allowed_roles):
+        return False
+    denied_roles = set(
+        _clean_string_list(rollout.get("excluded_roles") or rollout.get("role_denylist"))
+    )
+    if denied_roles and user_roles.intersection(denied_roles):
+        return False
+    allowed_versions = set(
+        _clean_string_list(
+            rollout.get("template_versions")
+            or rollout.get("allowed_template_versions")
+            or rollout.get("active_template_versions")
+        )
+    )
+    row_template_version = _optional_text(row.get("template_version"))
+    user_template_version = _user_template_version(user)
+    if allowed_versions:
+        candidate_version = user_template_version or row_template_version
+        if candidate_version not in allowed_versions:
+            return False
+    denied_versions = set(
+        _clean_string_list(
+            rollout.get("disabled_template_versions")
+            or rollout.get("excluded_template_versions")
+        )
+    )
+    if row_template_version and row_template_version in denied_versions:
+        return False
+    if not _rollout_time_window_matches(rollout):
+        return False
+    percentage = rollout.get("percentage", rollout.get("rollout_percentage"))
+    if percentage is not None and not _rollout_percentage_matches(
+        percentage,
+        seed=f"{user_id}:{row.get('id') or row.get('action_key')}",
+    ):
+        return False
+    return True
+
+
+def _user_enterprise_id(user: dict[str, Any]) -> str | None:
+    for key in ("enterprise_id", "tenant_id", "company_id", "organization_id"):
+        value = _optional_text(user.get(key))
+        if value:
+            return value
+    scope_summary = user.get("scope_summary")
+    if isinstance(scope_summary, dict):
+        for key in ("enterprise_id", "tenant_id", "company_id", "organization_id"):
+            value = _optional_text(scope_summary.get(key))
+            if value:
+                return value
+    return None
+
+
+def _user_template_version(user: dict[str, Any]) -> str | None:
+    for key in ("assistant_template_version", "template_version"):
+        value = _optional_text(user.get(key))
+        if value:
+            return value
+    return None
+
+
+def _rollout_time_window_matches(rollout: dict[str, Any]) -> bool:
+    now = datetime.now(UTC)
+    starts_at = _parse_datetime(rollout.get("starts_at") or rollout.get("effective_from"))
+    ends_at = _parse_datetime(rollout.get("ends_at") or rollout.get("effective_to"))
+    if starts_at is not None and now < starts_at:
+        return False
+    if ends_at is not None and now > ends_at:
+        return False
+    return True
+
+
+def _rollout_percentage_matches(value: Any, *, seed: str) -> bool:
+    try:
+        percentage = float(value)
+    except (TypeError, ValueError):
+        return True
+    if percentage <= 0:
+        return False
+    if percentage >= 100:
+        return True
+    bucket = int(sha256(seed.encode("utf-8")).hexdigest()[:8], 16) % 100
+    return bucket < percentage
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    text = _optional_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _clean_object(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _clean_string_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    items: list[str] = []
+    for item in value:
+        text = _optional_text(item)
+        if text and text not in items:
+            items.append(text)
+    return items
+
+
+def _required_text(value: Any, field_name: str) -> str:
+    text = _optional_text(value)
+    if not text:
+        raise api_error(400, "VALIDATION_ERROR", f"{field_name} is required")
+    return text
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def _knowledge_scope_documents(

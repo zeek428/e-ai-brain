@@ -766,6 +766,28 @@ class AssistantChatRepository(Protocol):
         audit_event: dict[str, Any] | None = None,
     ) -> None: ...
 
+    def list_assistant_action_reference_configs(self) -> list[dict[str, Any]]: ...
+
+    def get_assistant_action_reference_config(
+        self,
+        *,
+        config_id: str,
+    ) -> dict[str, Any] | None: ...
+
+    def save_assistant_action_reference_config_record(
+        self,
+        record: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def delete_assistant_action_reference_config_record(
+        self,
+        config_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
     def save_assistant_chat(self, payload: dict[str, Any]) -> None: ...
 
     def save_assistant_chat_records(

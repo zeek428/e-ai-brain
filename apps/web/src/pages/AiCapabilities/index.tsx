@@ -191,7 +191,9 @@ export default function AiCapabilitiesPage() {
   }, []);
 
   useEffect(() => {
-    void reload();
+    queueMicrotask(() => {
+      void reload();
+    });
   }, [reload]);
 
   const openCreateSkill = () => {
@@ -208,7 +210,7 @@ export default function AiCapabilitiesPage() {
     setSkillModalOpen(true);
   };
 
-  const openEditSkill = (record: AiSkillRecord) => {
+  const openEditSkill = useCallback((record: AiSkillRecord) => {
     setEditingSkill(record);
     skillForm.setFieldsValue({
       code: record.code,
@@ -222,7 +224,7 @@ export default function AiCapabilitiesPage() {
       version: record.version ?? '1.0.0',
     });
     setSkillModalOpen(true);
-  };
+  }, [skillForm]);
 
   const closeSkillModal = () => {
     setSkillModalOpen(false);
@@ -237,7 +239,7 @@ export default function AiCapabilitiesPage() {
     setAgentModalOpen(true);
   };
 
-  const openEditAgent = (record: AiAgentRecord) => {
+  const openEditAgent = useCallback((record: AiAgentRecord) => {
     setEditingAgent(record);
     agentForm.setFieldsValue({
       code: record.code,
@@ -248,7 +250,7 @@ export default function AiCapabilitiesPage() {
       system_prompt: record.system_prompt ?? '',
     });
     setAgentModalOpen(true);
-  };
+  }, [agentForm]);
 
   const closeAgentModal = () => {
     setAgentModalOpen(false);
@@ -331,24 +333,24 @@ export default function AiCapabilitiesPage() {
     await reload();
   };
 
-  const disableSkill = async (record: AiSkillRecord) => {
+  const disableSkill = useCallback(async (record: AiSkillRecord) => {
     await updateAiSkill(record.id, { status: 'disabled' });
     message.success('Skill 已删除');
     await reload();
-  };
+  }, [reload]);
 
-  const disableAgent = async (record: AiAgentRecord) => {
+  const disableAgent = useCallback(async (record: AiAgentRecord) => {
     await updateAiAgent(record.id, { status: 'disabled' });
     message.success('AI角色已删除');
     await reload();
-  };
+  }, [reload]);
 
   const renderStatusTag = (value: unknown) => {
     const status = String(value ?? '');
     return <StatusTag color={STATUS_COLORS[status] ?? 'default'} label={STATUS_LABELS[status] ?? status} />;
   };
 
-  const modelGatewayConfigName = (agent: AiAgentRecord) => {
+  const modelGatewayConfigName = useCallback((agent: AiAgentRecord) => {
     const candidates = modelGatewayReferenceCandidates(agent);
     for (const candidate of candidates) {
       const configId = modelGatewayIdFromReference(candidate);
@@ -368,7 +370,7 @@ export default function AiCapabilitiesPage() {
       return '-';
     }
     return configId;
-  };
+  }, [modelGatewayConfigs]);
 
   const modelGatewayOptions = [
     { label: '不指定', value: '' },
@@ -429,7 +431,7 @@ export default function AiCapabilitiesPage() {
         ),
       },
     ],
-    [modelGatewayConfigs],
+    [disableAgent, modelGatewayConfigName, openEditAgent],
   );
 
   const skillColumns = useMemo<ProColumns<AiSkillRecord>[]>(
@@ -481,7 +483,7 @@ export default function AiCapabilitiesPage() {
         ),
       },
     ],
-    [],
+    [disableSkill, openEditSkill],
   );
 
   return (

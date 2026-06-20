@@ -17,7 +17,6 @@ import {
   chatWithAssistant,
   confirmAssistantActionDraft,
   fetchAssistantDraftTemplates,
-  fetchAssistantMetrics,
   fetchAssistantReferenceCandidates,
   fetchAssistantRoleQuickTasks,
   fetchScheduledJobRuns,
@@ -28,7 +27,6 @@ import {
   rememberAssistantDraftResolution,
   type AssistantActionDraftRecord,
   type AssistantDraftTemplate,
-  type AssistantMetrics,
   type AssistantReference,
   type AssistantDraftResolutionMap,
   type AssistantDraftResolutionRecord,
@@ -50,6 +48,7 @@ import {
   draftStatusLabel,
 } from './components/draftPresentation';
 import { AssistantReferenceContext } from './components/AssistantReferenceContext';
+import { AssistantRuntimeStatus } from './components/AssistantRuntimeStatus';
 import {
   AssistantReferencePicker,
   type AssistantReferenceEmptyState,
@@ -66,7 +65,9 @@ import {
 } from './hooks/useAssistantConversation';
 import { useAssistantChatRuns } from './hooks/useAssistantChatRuns';
 import { type QueryDraftResolution, useAssistantDrafts } from './hooks/useAssistantDrafts';
+import { useAssistantMetricsPanel } from './hooks/useAssistantMetricsPanel';
 import { useAssistantReferences } from './hooks/useAssistantReferences';
+import { useAssistantRuntimeStatus } from './hooks/useAssistantRuntimeStatus';
 
 const { Text, Title } = Typography;
 const ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS = 250;
@@ -215,6 +216,24 @@ function unknownRecord(value: unknown) {
 
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === 'AbortError';
+}
+
+function assistantChatErrorMessage(error: unknown) {
+  const detail = error as Error & { code?: string; traceId?: string };
+  if (detail?.code === 'MODEL_GATEWAY_CONFIG_INVALID') {
+    return [
+      '模型网关未配置，当前仅支持 @ 动作、草案、运行诊断等规则能力。',
+      '如需开放式问答，请到「系统管理 / 模型网关」配置默认模型后重试。',
+      detail.traceId ? `trace_id=${detail.traceId}` : undefined,
+    ].filter(Boolean).join(' ');
+  }
+  if (detail?.code === 'ASSISTANT_CHAT_FAILED') {
+    return [
+      'AI 助手调用模型失败，请检查模型网关连通性或稍后重试。',
+      detail.traceId ? `trace_id=${detail.traceId}` : undefined,
+    ].filter(Boolean).join(' ');
+  }
+  return formatMutationError(error);
 }
 
 function diagnosticStageItems(item: AssistantToolResultItem) {
@@ -1543,6 +1562,8 @@ export default function AssistantPage() {
     setIsSending,
     setLastResponse,
     setMessages,
+    showDuplicateConversations,
+    toggleDuplicateConversations,
   } = useAssistantConversation();
   const {
     dismissRunRecovery,
@@ -1594,13 +1615,11 @@ export default function AssistantPage() {
   const [addActionQuery, setAddActionQuery] = useState('');
   const [inputValue, setInputValue] = useState('');
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  const [assistantMetrics, setAssistantMetrics] = useState<AssistantMetrics>();
   const [draftTemplateMarketOpened, setDraftTemplateMarketOpened] = useState(false);
   const [draftTemplates, setDraftTemplates] = useState<AssistantDraftTemplate[]>([]);
   const [isLoadingDraftTemplates, setIsLoadingDraftTemplates] = useState(false);
-  const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
   const [isContextExpanded, setIsContextExpanded] = useState(false);
-  const [metricsPanelOpened, setMetricsPanelOpened] = useState(false);
+  const runtimeStatus = useAssistantRuntimeStatus();
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [roleQuickTasksExpanded, setRoleQuickTasksExpanded] = useState(false);
   const [roleQuickTaskGroups, setRoleQuickTaskGroups] = useState<AssistantRoleQuickTaskGroup[]>([]);
@@ -1620,6 +1639,19 @@ export default function AssistantPage() {
     references: AssistantReference[];
     runId: string;
   } | null>(null);
+  const {
+    assistantMetricDetails,
+    assistantMetrics,
+    assistantMetricsWindowDays,
+    changeAssistantMetricsWindow,
+    isLoadingMetricDetails,
+    isLoadingMetrics,
+    loadAssistantMetrics,
+    metricsPanelOpened,
+    openAssistantMetricDetails,
+    openMetricsPanel,
+    setMetricsPanelOpened,
+  } = useAssistantMetricsPanel();
 
   const canSend = useMemo(() => inputValue.trim().length > 0, [inputValue]);
   const hasPluginActionDraft = useMemo(
@@ -2088,17 +2120,6 @@ export default function AssistantPage() {
     };
   }, [hasPluginActionDraft]);
 
-  const loadAssistantMetrics = useCallback(async () => {
-    setIsLoadingMetrics(true);
-    try {
-      setAssistantMetrics(await fetchAssistantMetrics());
-    } catch (error) {
-      toast.error(formatMutationError(error));
-    } finally {
-      setIsLoadingMetrics(false);
-    }
-  }, []);
-
   const resetComposerState = (options: { clearInput?: boolean; keepDraftLink?: boolean } = {}) => {
     if (options.clearInput) {
       setInputValue('');
@@ -2129,13 +2150,6 @@ export default function AssistantPage() {
   const openDraftTemplateMarket = () => {
     setDraftTemplateMarketOpened(true);
     void loadDraftTemplates();
-  };
-
-  const openMetricsPanel = () => {
-    setMetricsPanelOpened(true);
-    if (!assistantMetrics) {
-      void loadAssistantMetrics();
-    }
   };
 
   const applyDraftTemplate = (template: AssistantDraftTemplate) => {
@@ -2456,11 +2470,11 @@ export default function AssistantPage() {
       if (isAbortError(error)) {
         return;
       }
-      toast.error(formatMutationError(error));
+      toast.error(assistantChatErrorMessage(error));
       setMessages((items) => [
         ...items,
         {
-          content: formatMutationError(error),
+          content: assistantChatErrorMessage(error),
           clientRequestId,
           failedRequest: {
             content,
@@ -2714,9 +2728,11 @@ export default function AssistantPage() {
           conversations={conversations}
           isLoadingConversations={isLoadingConversations}
           isLoadingMetrics={isLoadingMetrics}
+          showDuplicateConversations={showDuplicateConversations}
           roleQuickTaskCount={roleQuickTaskCount}
           roleQuickTaskGroups={roleQuickTaskGroups}
           roleQuickTasksExpanded={roleQuickTasksExpanded}
+          onToggleDuplicateConversations={toggleDuplicateConversations}
           onOpenConversation={openConversation}
           onOpenDraftTemplateMarket={openDraftTemplateMarket}
           onOpenMetricsPanel={openMetricsPanel}
@@ -2737,6 +2753,7 @@ export default function AssistantPage() {
               </Space>
             ) : null}
           </div>
+          <AssistantRuntimeStatus runtimeStatus={runtimeStatus} />
           {queryDraftResolution ? (
             <div
               aria-label="草案链接状态"
@@ -2899,9 +2916,14 @@ export default function AssistantPage() {
         onCancel={() => setMetricsPanelOpened(false)}
       >
         <AssistantMetricsPanel
+          isDetailLoading={isLoadingMetricDetails}
           isLoading={isLoadingMetrics}
+          metricDetails={assistantMetricDetails}
           metrics={assistantMetrics}
+          onChangeWindow={changeAssistantMetricsWindow}
+          onOpenDetail={openAssistantMetricDetails}
           onRefresh={() => void loadAssistantMetrics()}
+          windowDays={assistantMetricsWindowDays}
         />
       </Modal>
     </PageContainer>

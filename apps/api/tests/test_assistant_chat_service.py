@@ -15,6 +15,7 @@ from app.services.assistant_chat import (
     assistant_conversation_messages_response,
     assistant_conversations_response,
 )
+from app.services.assistant_history import ensure_assistant_conversation
 
 
 def test_assistant_chat_service_owns_validation_and_gateway_errors():
@@ -115,6 +116,154 @@ def test_assistant_history_service_is_user_scoped():
         )
     assert not_found.value.status_code == 404
     assert not_found.value.code == "NOT_FOUND"
+
+
+def test_assistant_history_service_collapses_duplicate_command_conversations():
+    store = MemoryStore()
+    command_title = "@提取每周用户反馈有价值信息 执行一次"
+    store.assistant_conversations = {
+        "conversation_latest_feedback": {
+            "created_at": "2026-06-20T08:00:00+00:00",
+            "id": "conversation_latest_feedback",
+            "last_message_at": "2026-06-20T08:03:00+00:00",
+            "message_count": 2,
+            "product_id": "product_119",
+            "title": command_title,
+            "updated_at": "2026-06-20T08:03:00+00:00",
+            "user_id": "user_admin",
+        },
+        "conversation_old_feedback": {
+            "created_at": "2026-06-19T08:00:00+00:00",
+            "id": "conversation_old_feedback",
+            "last_message_at": "2026-06-19T08:03:00+00:00",
+            "message_count": 2,
+            "product_id": "product_119",
+            "title": f"  {command_title}  ",
+            "updated_at": "2026-06-19T08:03:00+00:00",
+            "user_id": "user_admin",
+        },
+        "conversation_unique": {
+            "created_at": "2026-06-18T08:00:00+00:00",
+            "id": "conversation_unique",
+            "last_message_at": "2026-06-18T08:01:00+00:00",
+            "message_count": 1,
+            "product_id": "product_119",
+            "title": "当前系统状态",
+            "updated_at": "2026-06-18T08:01:00+00:00",
+            "user_id": "user_admin",
+        },
+    }
+
+    collapsed = assistant_conversations_response(store, user_id="user_admin")
+
+    assert collapsed["total"] == 2
+    feedback_item = collapsed["items"][0]
+    assert feedback_item["id"] == "conversation_latest_feedback"
+    assert feedback_item["duplicate_count"] == 2
+    assert feedback_item["duplicate_conversation_ids"] == ["conversation_old_feedback"]
+    assert feedback_item["collapsed_message_count"] == 4
+    assert feedback_item["collapsed_conversation_ids"] == [
+        "conversation_latest_feedback",
+        "conversation_old_feedback",
+    ]
+    assert "duplicate_count" not in collapsed["items"][1]
+
+    expanded = assistant_conversations_response(
+        store,
+        collapse_duplicates=False,
+        user_id="user_admin",
+    )
+    assert expanded["total"] == 3
+    assert [item["id"] for item in expanded["items"]] == [
+        "conversation_latest_feedback",
+        "conversation_old_feedback",
+        "conversation_unique",
+    ]
+
+
+def test_assistant_history_prefers_command_signature_when_collapsing():
+    store = MemoryStore()
+    store.assistant_conversations = {
+        "conversation_create_requirement": {
+            "command_signature": "signature_requirement",
+            "context_scope": "product:product_119",
+            "created_at": "2026-06-20T08:00:00+00:00",
+            "id": "conversation_create_requirement",
+            "last_message_at": "2026-06-20T08:03:00+00:00",
+            "message_count": 2,
+            "product_id": "product_119",
+            "source_message_hash": "hash_requirement",
+            "title": "新建需求",
+            "updated_at": "2026-06-20T08:03:00+00:00",
+            "user_id": "user_admin",
+        },
+        "conversation_create_bug": {
+            "command_signature": "signature_bug",
+            "context_scope": "product:product_119",
+            "created_at": "2026-06-20T07:00:00+00:00",
+            "id": "conversation_create_bug",
+            "last_message_at": "2026-06-20T07:03:00+00:00",
+            "message_count": 2,
+            "product_id": "product_119",
+            "source_message_hash": "hash_bug",
+            "title": "新建需求",
+            "updated_at": "2026-06-20T07:03:00+00:00",
+            "user_id": "user_admin",
+        },
+    }
+
+    collapsed = assistant_conversations_response(store, user_id="user_admin")
+
+    assert collapsed["total"] == 2
+    assert [item["command_signature"] for item in collapsed["items"]] == [
+        "signature_requirement",
+        "signature_bug",
+    ]
+
+
+def test_ensure_assistant_conversation_reuses_existing_command_conversation():
+    store = MemoryStore()
+    user_id = "user_admin"
+    message = "@提取每周用户反馈有价值信息 执行一次"
+
+    first = ensure_assistant_conversation(
+        store,
+        conversation_id=None,
+        message=message,
+        now="2026-06-20T08:00:00+00:00",
+        product_id="product_119",
+        user={"id": user_id},
+    )
+    second = ensure_assistant_conversation(
+        store,
+        conversation_id=None,
+        message=message,
+        now="2026-06-20T08:01:00+00:00",
+        product_id="product_119",
+        user={"id": user_id},
+    )
+    natural_first = ensure_assistant_conversation(
+        store,
+        conversation_id=None,
+        message="查询当前系统状态",
+        now="2026-06-20T08:02:00+00:00",
+        product_id="product_119",
+        user={"id": user_id},
+    )
+    natural_second = ensure_assistant_conversation(
+        store,
+        conversation_id=None,
+        message="查询当前系统状态",
+        now="2026-06-20T08:03:00+00:00",
+        product_id="product_119",
+        user={"id": user_id},
+    )
+
+    assert second["id"] == first["id"]
+    assert first["command_signature"]
+    assert first["context_scope"] == "product:product_119"
+    assert first["source_message_hash"]
+    assert natural_second["id"] != natural_first["id"]
 
 
 def test_assistant_chat_persists_run_and_message_lifecycle_for_model_success():

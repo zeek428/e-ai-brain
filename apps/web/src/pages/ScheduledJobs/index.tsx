@@ -761,12 +761,14 @@ function RunResultWriteRecords({
   const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
 
   useEffect(() => {
-    if (!focusedRecordId) {
-      setExpandedRowKeys([]);
-      return;
-    }
-    const hasFocusedRecord = records.some((record) => record.id === focusedRecordId);
-    setExpandedRowKeys(hasFocusedRecord ? [focusedRecordId] : []);
+    queueMicrotask(() => {
+      if (!focusedRecordId) {
+        setExpandedRowKeys([]);
+        return;
+      }
+      const hasFocusedRecord = records.some((record) => record.id === focusedRecordId);
+      setExpandedRowKeys(hasFocusedRecord ? [focusedRecordId] : []);
+    });
   }, [focusedRecordId, records]);
 
   return (
@@ -1859,17 +1861,23 @@ export default function ScheduledJobsPage() {
   ]);
 
   useEffect(() => {
-    setConnectionTestResult(undefined);
+    queueMicrotask(() => {
+      setConnectionTestResult(undefined);
+    });
   }, [selectedPrimaryPluginConnectionId]);
 
   useEffect(() => {
     if (!modalOpen || selectedJobType !== 'code_repository_inspection' || !selectedProductId) {
-      setProductRepositories([]);
-      setProductRepositoriesLoading(false);
+      queueMicrotask(() => {
+        setProductRepositories([]);
+        setProductRepositoriesLoading(false);
+      });
       return;
     }
     let ignore = false;
-    setProductRepositoriesLoading(true);
+    queueMicrotask(() => {
+      setProductRepositoriesLoading(true);
+    });
     fetchProductGitRepositories(selectedProductId)
       .then((repositories) => {
         if (ignore) {
@@ -2291,13 +2299,18 @@ export default function ScheduledJobsPage() {
   }, []);
 
   useEffect(() => {
-    void reload();
+    queueMicrotask(() => {
+      void reload();
+    });
   }, [reload]);
 
   useEffect(() => {
     const routeParams = scheduledJobRouteParams();
-    if (routeParams.tab) {
-      setActiveTab(routeParams.tab);
+    const routeTab = routeParams.tab;
+    if (routeTab) {
+      queueMicrotask(() => {
+        setActiveTab(routeTab);
+      });
     }
     const routeRunKey = routeParams.runId
       ? `${routeParams.runId}:${routeParams.resultWriteRecordId ?? ''}`
@@ -2309,20 +2322,26 @@ export default function ScheduledJobsPage() {
     if (!routeRun) {
       return;
     }
-    setActiveTab('runs');
-    setLinkedResultWriteRecordId(routeParams.resultWriteRecordId);
-    setSelectedRun(routeRun);
-    setHandledRouteRunKey(routeRunKey);
+    queueMicrotask(() => {
+      setActiveTab('runs');
+      setLinkedResultWriteRecordId(routeParams.resultWriteRecordId);
+      setSelectedRun(routeRun);
+      setHandledRouteRunKey(routeRunKey);
+    });
   }, [handledRouteRunKey, runs]);
 
   useEffect(() => {
     if (!selectedRun?.id) {
-      setSelectedRunResultWriteRecords([]);
-      setSelectedRunResultWriteRecordsLoading(false);
+      queueMicrotask(() => {
+        setSelectedRunResultWriteRecords([]);
+        setSelectedRunResultWriteRecordsLoading(false);
+      });
       return;
     }
     let ignore = false;
-    setSelectedRunResultWriteRecordsLoading(true);
+    queueMicrotask(() => {
+      setSelectedRunResultWriteRecordsLoading(true);
+    });
     fetchResultWriteRecords({ scheduledJobRunId: selectedRun.id })
       .then((records) => {
         if (!ignore) {
@@ -2361,20 +2380,24 @@ export default function ScheduledJobsPage() {
         throw new Error('Invalid scheduled job draft payload');
       }
       const draftValues = scheduledJobValuesFromAssistantDraft(draft);
-      setEditingJob(undefined);
-      setAssistantDraftPayload(draft.payload);
-      setAssistantDraftInitialValues(draftValues);
-      setAssistantDraftSource({ draftId: draft.draftId, title: draft.title });
-      setConnectionTestResult(undefined);
-      form.resetFields();
-      form.setFieldsValue(draftValues);
-      setModalOpen(true);
-      message.success('已载入 AI 助手生成的定时作业草案，请确认后保存');
+      queueMicrotask(() => {
+        setEditingJob(undefined);
+        setAssistantDraftPayload(draft.payload);
+        setAssistantDraftInitialValues(draftValues);
+        setAssistantDraftSource({ draftId: draft.draftId, title: draft.title });
+        setConnectionTestResult(undefined);
+        form.resetFields();
+        form.setFieldsValue(draftValues);
+        setModalOpen(true);
+        message.success('已载入 AI 助手生成的定时作业草案，请确认后保存');
+      });
     } catch {
-      setAssistantDraftPayload(undefined);
-      setAssistantDraftInitialValues(undefined);
-      setAssistantDraftSource(undefined);
-      message.error('AI 助手定时作业草案格式无效');
+      queueMicrotask(() => {
+        setAssistantDraftPayload(undefined);
+        setAssistantDraftInitialValues(undefined);
+        setAssistantDraftSource(undefined);
+        message.error('AI 助手定时作业草案格式无效');
+      });
     }
   }, [editingJob, form, modalOpen]);
 

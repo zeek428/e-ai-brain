@@ -567,6 +567,19 @@ body {
   background: #ffffff;
 }
 
+.assistant-metric-button {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistant-metric-button:hover,
+.assistant-metric-button-active {
+  border-color: #7aa7ff;
+  background: #f4f8ff;
+}
+
 .assistant-metric-item .ant-typography {
   margin: 0;
   overflow-wrap: anywhere;
@@ -578,6 +591,20 @@ body {
   min-width: 0;
 }
 
+.assistant-metrics-instrumentation {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #edf1f7;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.assistant-metrics-instrumentation .ant-typography {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .assistant-metrics-action-list {
   display: grid;
   gap: 4px;
@@ -586,6 +613,39 @@ body {
 
 .assistant-metrics-action-list .ant-typography {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.assistant-metrics-detail-header,
+.assistant-metrics-detail-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.assistant-metrics-detail-list {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  min-width: 0;
+  overflow: auto;
+}
+
+.assistant-metrics-detail-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #edf1f7;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.assistant-metrics-detail-item .ant-typography,
+.assistant-metrics-detail-item a {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
@@ -601,6 +661,17 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.assistant-history-heading {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.assistant-history-title .ant-btn {
+  flex-shrink: 0;
 }
 
 .assistant-history-list {
@@ -775,6 +846,37 @@ body {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.assistant-runtime-status {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid #dbe7ff;
+  border-radius: 8px;
+  background: #f7faff;
+}
+
+.assistant-runtime-status-limited {
+  border-color: #f3dfb3;
+  background: #fff9ed;
+}
+
+.assistant-runtime-status .ant-typography {
+  margin: 0;
+}
+
+.assistant-runtime-checks {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.assistant-runtime-check {
+  min-width: 0;
+}
+
+.assistant-runtime-check .ant-typography {
+  overflow-wrap: anywhere;
 }
 
 .assistant-message-list {

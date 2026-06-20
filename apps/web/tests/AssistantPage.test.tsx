@@ -95,6 +95,26 @@ describe('AssistantPage', () => {
           },
         ]);
       }
+      if (input === '/api/assistant/runtime-status') {
+        return new Response(JSON.stringify({
+          data: {
+            chat_gateway: 'not_configured',
+            embedding_gateway: 'not_configured',
+            long_memory: 'disabled',
+            mode: 'deterministic_only',
+            model_gateway: 'not_configured',
+            warnings: [
+              {
+                code: 'MODEL_GATEWAY_NOT_CONFIGURED',
+                message: '模型网关未配置，AI 助手当前仅可稳定执行规则能力和已注册动作。',
+              },
+            ],
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -296,6 +316,32 @@ describe('AssistantPage', () => {
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
         );
       }
+      if (input === '/api/assistant/metrics/details?metric=draft_total&limit=50') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  action: 'create_scheduled_job',
+                  created_at: '2026-06-20T08:00:00+00:00',
+                  description: 'create_scheduled_job · pending',
+                  id: 'assistant_action_draft_metrics',
+                  status: 'pending',
+                  title: '周反馈洞察草案',
+                  type: 'draft',
+                  updated_at: '2026-06-20T08:00:00+00:00',
+                  url: '/assistant?draft_id=assistant_action_draft_metrics',
+                },
+              ],
+              metric: 'draft_total',
+              title: '草案生成',
+              total: 1,
+              window: { days: null, label: '全部时间' },
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -359,9 +405,16 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('效果漏斗 查看详情')).toHaveTextContent('2');
     expect(screen.getByLabelText('效果漏斗 深链打开')).toHaveTextContent('1');
     expect(screen.getByLabelText('效果漏斗 继续追问/修复')).toHaveTextContent('1');
+    fireEvent.click(screen.getByLabelText('指标 草案生成数'));
+    expect(await screen.findByText('草案生成')).toBeInTheDocument();
+    expect(await screen.findByLabelText('指标明细 周反馈洞察草案')).toHaveTextContent(
+      'create_scheduled_job · pending',
+    );
+    expect(screen.getByLabelText('指标明细 周反馈洞察草案')).toHaveTextContent('查看来源');
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/assistant/conversations', 'GET'],
       ['/api/assistant/metrics', 'GET'],
+      ['/api/assistant/metrics/details?metric=draft_total&limit=50', 'GET'],
     ]);
   });
 
@@ -1349,6 +1402,26 @@ describe('AssistantPage', () => {
           },
         ]);
       }
+      if (input === '/api/assistant/runtime-status') {
+        return new Response(JSON.stringify({
+          data: {
+            chat_gateway: 'not_configured',
+            embedding_gateway: 'not_configured',
+            long_memory: 'disabled',
+            mode: 'deterministic_only',
+            model_gateway: 'not_configured',
+            warnings: [
+              {
+                code: 'MODEL_GATEWAY_NOT_CONFIGURED',
+                message: '模型网关未配置，AI 助手当前仅可稳定执行规则能力和已注册动作。',
+              },
+            ],
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -1363,6 +1436,7 @@ describe('AssistantPage', () => {
     render(<AssistantPage />);
 
     const roleTaskPanel = await screen.findByLabelText('角色快捷任务');
+    expect(await screen.findByLabelText('助手运行状态')).toHaveTextContent('规则能力模式');
     expect(within(roleTaskPanel).getByText('角色快捷任务')).toBeInTheDocument();
     expect(within(roleTaskPanel).getByText('1 组 · 4 项')).toBeInTheDocument();
     expect(within(roleTaskPanel).queryByText('管理员快捷任务')).not.toBeInTheDocument();
@@ -1385,6 +1459,7 @@ describe('AssistantPage', () => {
     );
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
       '/api/assistant/conversations',
+      '/api/assistant/runtime-status',
       '/api/assistant/role-quick-tasks',
     ]);
   });
@@ -1460,10 +1535,45 @@ describe('AssistantPage', () => {
     expect(within(roleTaskPanel).queryByText('管理员快捷任务')).not.toBeInTheDocument();
   });
 
-  it('deduplicates repeated recent conversations by title in the sidebar', async () => {
+  it('renders backend-collapsed repeated conversations and can expand duplicates', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({
+          data: {
+            items: [
+              {
+                collapsed_conversation_ids: [
+                  'conversation_latest_feedback',
+                  'conversation_old_feedback',
+                  'conversation_spaced_feedback',
+                ],
+                collapsed_message_count: 6,
+                duplicate_conversation_ids: [
+                  'conversation_old_feedback',
+                  'conversation_spaced_feedback',
+                ],
+                duplicate_count: 3,
+                id: 'conversation_latest_feedback',
+                message_count: 2,
+                title: '@提取每周用户反馈有价值信息 执行一次',
+                updated_at: '2026-06-20T08:00:00+00:00',
+              },
+              {
+                id: 'conversation_unique',
+                message_count: 4,
+                title: '当前系统状态',
+                updated_at: '2026-06-17T08:00:00+00:00',
+              },
+            ],
+            total: 2,
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/conversations?collapse=false') {
         return new Response(JSON.stringify({
           data: {
             items: [
@@ -1542,10 +1652,25 @@ describe('AssistantPage', () => {
       name: /@提取每周用户反馈有价值信息 执行一次/,
     });
     expect(repeatedButtons).toHaveLength(1);
-    expect(screen.getByText('2 条 · 合并 3 个重复')).toBeInTheDocument();
+    expect(screen.getByText('已收起 2 条重复')).toBeInTheDocument();
+    expect(screen.getByText('6 条 · 合并 3 个重复')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /当前系统状态/ })).toBeInTheDocument();
 
-    fireEvent.click(repeatedButtons[0]);
+    fireEvent.click(screen.getByRole('button', { name: '展开重复' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/assistant/conversations?collapse=false',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+    expect(await screen.findAllByRole('button', {
+      name: /@提取每周用户反馈有价值信息 执行一次/,
+    })).toHaveLength(3);
+
+    fireEvent.click(screen.getAllByRole('button', {
+      name: /@提取每周用户反馈有价值信息 执行一次/,
+    })[0]);
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
