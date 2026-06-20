@@ -1436,7 +1436,10 @@ describe('AssistantPage', () => {
     render(<AssistantPage />);
 
     const roleTaskPanel = await screen.findByLabelText('角色快捷任务');
-    expect(await screen.findByLabelText('助手运行状态')).toHaveTextContent('规则能力模式');
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/assistant/runtime-status');
+    });
+    expect(screen.queryByLabelText('助手运行状态')).not.toBeInTheDocument();
     expect(within(roleTaskPanel).getByText('角色快捷任务')).toBeInTheDocument();
     expect(within(roleTaskPanel).getByText('1 组 · 4 项')).toBeInTheDocument();
     expect(within(roleTaskPanel).queryByText('管理员快捷任务')).not.toBeInTheDocument();
@@ -1462,6 +1465,87 @@ describe('AssistantPage', () => {
       '/api/assistant/runtime-status',
       '/api/assistant/role-quick-tasks',
     ]);
+  });
+
+  it('shows assistant runtime status only when required dependencies fail', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([]);
+      }
+      if (input === '/api/assistant/runtime-status') {
+        return new Response(JSON.stringify({
+          data: {
+            chat_gateway: 'not_configured',
+            checks: [
+              {
+                code: 'postgres',
+                detail: '助手会话、草案、指标和审计依赖 PostgreSQL 持久化。',
+                key: 'postgres',
+                label: 'PostgreSQL',
+                remediation: '确认 DATABASE_URL 指向的 PostgreSQL 可连接，并已执行数据库迁移。',
+                required: true,
+                severity: 'critical',
+                status: 'ok',
+              },
+              {
+                code: 'redis',
+                detail: 'Redis 用于运行缓存、队列协作和部分异步任务协调。',
+                key: 'redis',
+                label: 'Redis',
+                remediation: '启动 Redis，或修正 REDIS_URL 后重启 API。',
+                required: true,
+                severity: 'critical',
+                status: 'failed',
+              },
+              {
+                action_url: '/system/model-gateway',
+                code: 'model_gateway',
+                detail: '开放式问答需要可用的 OpenAI-compatible chat gateway。',
+                key: 'model_gateway',
+                label: '模型网关',
+                remediation: '在模型网关页面配置默认 chat 模型、base_url 和 api_key。',
+                required: false,
+                severity: 'warning',
+                status: 'not_configured',
+              },
+            ],
+            embedding_gateway: 'not_configured',
+            long_memory: 'disabled',
+            mode: 'deterministic_only',
+            model_gateway: 'not_configured',
+            ready: false,
+            warnings: [],
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    saveCurrentUser({
+      display_name: 'AI Brain Admin',
+      id: 'user_admin',
+      roles: ['admin'],
+      username: 'admin@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const runtimeStatus = await screen.findByLabelText('助手运行状态');
+    expect(runtimeStatus).toHaveTextContent('助手运行依赖异常');
+    expect(runtimeStatus).toHaveTextContent('Redis');
+    expect(runtimeStatus).toHaveTextContent('启动 Redis，或修正 REDIS_URL 后重启 API。');
+    expect(runtimeStatus).not.toHaveTextContent('模型网关');
   });
 
   it('keeps recent conversations visible before collapsed role quick tasks', async () => {

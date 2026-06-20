@@ -609,7 +609,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/conversations` | 查询当前登录用户的 AI 助手会话列表。 |
 | Assistant | GET | `/api/assistant/conversations/{conversation_id}/messages` | 查询当前登录用户某个 AI 助手会话的消息记录。 |
 | Assistant | POST | `/api/assistant/chat` | AI 助手问答，基于当前 AI Brain 系统上下文和模型网关 Chat 能力回答产品、任务、项目进展和配置问题；确定性意图返回 `message.intent={intent_code,confidence,summary,required_refs}`，工具结果顶层可带 `intent_code/intent_confidence/required_refs`，`summary` 保持业务摘要；请求中的结构化 `references[]` 优先进入上下文，文本 `@...执行一次` 仅在没有结构化作业引用时兜底解析，官方周反馈洞察消歧不得覆盖用户已选择的结构化引用。 |
-| Assistant | GET | `/api/assistant/runtime-status` | 查询当前助手运行环境自检状态；响应返回 `ready`、`mode`、模型/Embedding/Redis/GBrain 状态和 `checks[]`，每个检查项包含 `key/status/label/detail/remediation/action_label/action_url/required/severity`，用于页面展示规则能力模式、必需/增强能力、缺失配置和下一步修复入口。 |
+| Assistant | GET | `/api/assistant/runtime-status` | 查询当前助手运行环境自检状态；响应返回 `ready`、`mode`、模型/Embedding/Redis/GBrain 状态和 `checks[]`，每个检查项包含 `key/status/label/detail/remediation/action_label/action_url/required/severity`。前端默认仅在必需依赖异常时展示轻量提醒和修复入口，增强能力未配置不在对话页展开诊断。 |
 | Assistant | GET | `/api/assistant/role-quick-tasks` | 查询当前用户可见的 AI 助手角色快捷任务组，后端优先读取 `assistant_role_quick_tasks` 配置表并按角色、权限、启用状态、企业、模板版本和 `rollout_json` 灰度策略过滤；仅当没有任何配置记录时才回退内置默认目录，前端不得再硬编码角色入口。 |
 | Assistant | GET | `/api/assistant/role-quick-task-configs` | 管理员查询全部 AI 助手角色快捷任务配置记录，包含企业、任务组、角色、权限、启停、模板版本、灰度策略和审计元数据。 |
 | Assistant | POST | `/api/assistant/role-quick-task-configs` | 管理员新增角色快捷任务配置，写入 `assistant_role_quick_task.created` 审计。 |

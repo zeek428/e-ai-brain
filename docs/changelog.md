@@ -36,6 +36,7 @@
 - AI 助手 `@... 执行一次` 上下文优先级收敛：后端优先使用请求中的结构化 `references[]`，文本 `@` 解析只作为兜底；结构化引用不可执行时返回明确错误或草案兜底，官方周反馈消歧仅在没有结构化作业引用时生效，避免自然语言误覆盖用户主动选择的引用。
 - AI 助手效果指标作业成功率归因收紧：只统计带 `assistant_action_run_id`、`assistant_action_draft_id`、`assistant_source_message_id` 或显式运行引用的定时作业运行，不再把助手创建或引用过的作业后续全部运行计入助手指标。
 - AI 助手 @ 候选请求增加 debounce 和 AbortController，连续输入时取消旧请求，避免旧候选响应覆盖当前关键词。
+- AI 助手对话页运行状态降噪：模型网关、Embedding、GBrain 等增强能力未配置时不再在聊天主界面展开诊断明细，仅在 PostgreSQL/Redis 等必需依赖异常时显示轻量提醒。
 - AI 助手 run-once 权限预检：无定时作业执行权限的用户输入 `@... 执行一次` 时，发送前会提示当前账号不会直接执行并标明所需 `system.scheduled_jobs.run`，避免发送后才发现没有运行记录。
 - AI 助手 @ 执行一次等待执行器状态可见：当定时作业已触发但运行停在外部 AI 执行器队列时，助手回复和运行卡片展示“等待 AI 执行器接单”的 `progress_text`，避免误判为未执行。
 - AI 助手运行诊断数据连接日志追踪：数据连接阶段现在会读取 `execution_nodes.data_connection.plugin_invocation_log_id`，同一次运行的取数日志和结果动作写入日志不会互相覆盖。

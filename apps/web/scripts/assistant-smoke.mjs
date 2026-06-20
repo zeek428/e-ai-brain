@@ -278,7 +278,12 @@ async function main() {
     `);
     await client.send('Page.navigate', { url: `${webUrl}/assistant` });
     await waitFor('assistant page', async () => (await hasText('研发助手')) && (await hasText('AI 助手')), 20000);
-    await waitFor('runtime status', () => hasText('规则能力模式'), 10000);
+    await waitFor('runtime status diagnostics hidden', () => evaluate(`
+      !document.body.innerText.includes('规则能力模式')
+        && !document.body.innerText.includes('model_gateway')
+        && !document.body.innerText.includes('embedding_gateway')
+        && !document.body.innerText.includes('long_memory')
+    `), 10000);
 
     await focusComposer();
     await client.send('Input.insertText', { text: '@' });
