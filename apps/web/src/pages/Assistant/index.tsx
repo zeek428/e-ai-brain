@@ -883,6 +883,15 @@ function assistantActionCommand(reference: AssistantReference) {
   return title ? `@${title}` : '@动作';
 }
 
+function isScheduledJobCommandReference(reference: AssistantReference) {
+  return reference.type === 'scheduled_job';
+}
+
+function scheduledJobCommand(reference: AssistantReference) {
+  const title = String(reference.title || reference.id).replace(/\s+/g, ' ').trim();
+  return title ? `@${title}` : '@定时作业';
+}
+
 function inputStartsWithActionCommand(value: string, command?: string) {
   if (!command || !value.startsWith(command)) {
     return false;
@@ -891,14 +900,21 @@ function inputStartsWithActionCommand(value: string, command?: string) {
   return nextChar === undefined || /\s/.test(nextChar);
 }
 
-function inputWithAssistantActionCommand(currentValue: string, reference: AssistantReference) {
-  const command = assistantActionCommand(reference);
+function inputWithMentionCommand(currentValue: string, command: string) {
   const mention = activeMentionRange(currentValue);
   const userText = mention
     ? `${currentValue.slice(0, mention.markerIndex)}${currentValue.slice(mention.endIndex)}`
     : currentValue;
   const normalizedUserText = userText.replace(/[ \t]{2,}/g, ' ').trim();
   return normalizedUserText ? `${command} ${normalizedUserText}` : `${command} `;
+}
+
+function inputWithAssistantActionCommand(currentValue: string, reference: AssistantReference) {
+  return inputWithMentionCommand(currentValue, assistantActionCommand(reference));
+}
+
+function inputWithScheduledJobCommand(currentValue: string, reference: AssistantReference) {
+  return inputWithMentionCommand(currentValue, scheduledJobCommand(reference));
 }
 
 function AssistantTaskCreationGuideCards({
@@ -2164,6 +2180,22 @@ export default function AssistantPage() {
       setCommittedActionCommand(command);
       setInputValue(nextInputValue);
       setDismissedReferencePickerValue(nextInputValue);
+      setActiveReferenceIndex(-1);
+      setReferenceCandidates([]);
+      return;
+    }
+    if (isScheduledJobCommandReference(reference)) {
+      const command = scheduledJobCommand(reference);
+      const nextInputValue = inputWithScheduledJobCommand(inputValue, reference);
+      setCommittedActionCommand(command);
+      setInputValue(nextInputValue);
+      setDismissedReferencePickerValue(nextInputValue);
+      setSelectedReferences((items) => (
+        items.some((item) => item.id === reference.id && item.type === reference.type)
+          ? items
+          : [...items, reference]
+      ));
+      rememberReferences([reference]);
       setActiveReferenceIndex(-1);
       setReferenceCandidates([]);
       return;

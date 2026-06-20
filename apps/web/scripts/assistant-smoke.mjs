@@ -286,8 +286,30 @@ async function main() {
     `), 10000);
 
     await focusComposer();
-    await client.send('Input.insertText', { text: '@' });
-    await waitFor('@ candidate search', async () => (await hasText('引用候选')) || (await hasText('新建需求')), 10000);
+    await client.send('Input.insertText', { text: '@反馈' });
+    await waitFor('@ scheduled job candidate search', () => evaluate(`
+      Boolean([...document.querySelectorAll('[aria-label="引用候选"] button')].find((el) => (
+        el.querySelector('.assistant-reference-candidate-chips')?.textContent.includes('定时作业')
+      )))
+    `), 10000);
+    const scheduledJobCandidateTitle = await evaluate(`
+      (() => {
+        const button = [...document.querySelectorAll('[aria-label="引用候选"] button')].find((el) => (
+          el.querySelector('.assistant-reference-candidate-chips')?.textContent.includes('定时作业')
+        ));
+        const title = button?.querySelector('.assistant-reference-candidate-title')?.textContent.trim() || '';
+        button?.click();
+        return title;
+      })()
+    `);
+    await waitFor('@ scheduled job command inserted', () => evaluate(`
+      (() => {
+        const textarea = document.querySelector('textarea[aria-label="发送给 AI 助手"]');
+        return Boolean(textarea)
+          && textarea.value.startsWith('@')
+          && textarea.value.includes(${JSON.stringify(scheduledJobCandidateTitle)});
+      })()
+    `), 10000);
     await client.send('Input.dispatchKeyEvent', { key: 'Escape', type: 'keyDown' });
     await clearComposer();
 

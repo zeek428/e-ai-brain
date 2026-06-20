@@ -2248,6 +2248,7 @@ describe('AssistantPage', () => {
     fireEvent.keyDown(assistantInput, { key: 'ArrowDown' });
     fireEvent.keyDown(assistantInput, { key: 'Enter' });
 
+    expect(assistantInput).toHaveValue('@提取每周用户反馈有价值信息 ');
     const selectedReferenceList = screen.getByText('本次上下文')
       .closest('.assistant-selected-reference-list');
     expect(selectedReferenceList).not.toBeNull();
