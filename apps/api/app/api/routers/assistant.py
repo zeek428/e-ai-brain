@@ -26,6 +26,7 @@ from app.services.assistant_chat import (
     assistant_conversation_messages_response,
     assistant_conversations_response,
     assistant_request_store,
+    cancel_assistant_chat_run_response,
 )
 from app.services.assistant_draft_templates import list_assistant_draft_templates_response
 from app.services.assistant_metrics import assistant_metrics_response
@@ -69,6 +70,10 @@ class AssistantActionDraftRequest(BaseModel):
 
 
 class AssistantActionDraftCancelRequest(BaseModel):
+    reason: str | None = None
+
+
+class AssistantChatRunCancelRequest(BaseModel):
     reason: str | None = None
 
 
@@ -476,3 +481,24 @@ def chat_with_assistant(
     except AssistantServiceError as exc:
         raise api_error(exc.status_code, exc.code, exc.message) from exc
     return envelope(response_payload, get_trace_id(request))
+
+
+@router.post("/chat-runs/{run_id}/cancel")
+def cancel_assistant_chat_run(
+    run_id: str,
+    request: Request,
+    payload: AssistantChatRunCancelRequest | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    current_store = assistant_request_store(store(request), user_id=user["id"])
+    try:
+        result = cancel_assistant_chat_run_response(
+            current_store,
+            reason=payload.reason if payload else None,
+            run_id=run_id,
+            user=user,
+        )
+    except AssistantServiceError as exc:
+        raise api_error(exc.status_code, exc.code, exc.message) from exc
+    return envelope(result, get_trace_id(request))

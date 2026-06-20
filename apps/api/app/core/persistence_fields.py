@@ -73,6 +73,7 @@ MODEL_GATEWAY_FIELDS = [
 ASSISTANT_CHAT_FIELDS = [
     "assistant_action_drafts",
     "assistant_action_runs",
+    "assistant_chat_runs",
     "assistant_conversations",
     "assistant_messages",
 ]

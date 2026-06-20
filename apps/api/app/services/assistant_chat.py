@@ -22,6 +22,7 @@ from app.services.assistant_context import (
     assistant_chat_messages as assistant_context_chat_messages,
 )
 from app.services.assistant_context import (
+    assistant_conversation_history_context,
     assistant_reference_candidates,
     assistant_response_content,
     build_assistant_system_context,
@@ -34,6 +35,7 @@ from app.services.assistant_history import (
     assistant_conversations_response,
     ensure_assistant_conversation,
 )
+from app.services.assistant_metrics import assistant_metrics_response
 from app.services.assistant_references import (
     AssistantReferenceError,
     assistant_reference_matches_query,
@@ -43,6 +45,7 @@ from app.services.assistant_request_context import (
     assistant_request_store as assistant_context_request_store,
 )
 from app.services.assistant_request_context import (
+    runtime_repository,
     save_assistant_chat_records,
 )
 from app.services.assistant_tools import assistant_tool_results
@@ -150,6 +153,7 @@ __all__ = [
     "ASSISTANT_ACCESS_ROLES",
     "AssistantChatRequest",
     "AssistantServiceError",
+    "cancel_assistant_chat_run_response",
     "assistant_chat_response",
     "assistant_conversation_messages_response",
     "assistant_conversations_response",
@@ -159,10 +163,12 @@ __all__ = [
 
 class AssistantChatRequest(BaseModel):
     message: str
+    client_request_id: str | None = None
     conversation_id: str | None = None
     product_id: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
     references: list[dict[str, Any]] = Field(default_factory=list)
+    run_id: str | None = None
 
 
 class _AssistantGatewayRequestFailed(Exception):
@@ -188,11 +194,13 @@ def assistant_chat_response(
 ) -> dict[str, Any]:
     message = _ensure_non_blank(payload.message, "message")
     normalized_payload = AssistantChatRequest(
+        client_request_id=payload.client_request_id,
         context=payload.context,
         conversation_id=payload.conversation_id,
         message=message,
         product_id=payload.product_id,
         references=payload.references,
+        run_id=payload.run_id,
     )
     if (
         normalized_payload.product_id
@@ -207,22 +215,44 @@ def assistant_chat_response(
             raise AssistantServiceError(404, "NOT_FOUND", "Assistant conversation not found")
 
     audit_start_index = len(current_store.audit_events)
-    deterministic_output = _deterministic_assistant_output(
+    turn = _start_assistant_chat_run(
         current_store,
-        payload=normalized_payload,
+        message=message,
+        normalized_payload=normalized_payload,
         user=user,
     )
-    if deterministic_output is not None:
-        return _persist_assistant_chat_output(
+    try:
+        if _assistant_chat_run_is_cancelled(current_store, turn["chat_run"]["id"], user=user):
+            return _persist_assistant_chat_cancelled(
+                current_store,
+                audit_start_index=audit_start_index,
+                normalized_payload=normalized_payload,
+                turn=turn,
+                user=user,
+            )
+        deterministic_output = _deterministic_assistant_output(
             current_store,
-            audit_start_index=len(current_store.audit_events),
-            message=message,
-            model_log=None,
-            normalized_payload=normalized_payload,
-            assistant_output=deterministic_output,
+            payload=normalized_payload,
             user=user,
         )
-    try:
+        if deterministic_output is not None:
+            if _assistant_chat_run_is_cancelled(current_store, turn["chat_run"]["id"], user=user):
+                return _persist_assistant_chat_cancelled(
+                    current_store,
+                    audit_start_index=audit_start_index,
+                    normalized_payload=normalized_payload,
+                    turn=turn,
+                    user=user,
+                )
+            return _persist_assistant_chat_output(
+                current_store,
+                audit_start_index=audit_start_index,
+                model_log=None,
+                normalized_payload=normalized_payload,
+                assistant_output=deterministic_output,
+                turn=turn,
+                user=user,
+            )
         assistant_output, model_log = _call_model_gateway_for_assistant_chat(
             current_store,
             model_gateway_api_key=model_gateway_api_key,
@@ -233,7 +263,17 @@ def assistant_chat_response(
             urlopen_func=urlopen_func,
             user=user,
         )
-    except AssistantServiceError:
+    except AssistantServiceError as exc:
+        _persist_assistant_chat_failed(
+            current_store,
+            audit_start_index=audit_start_index,
+            error_code=exc.code,
+            error_message=exc.message,
+            model_log=None,
+            normalized_payload=normalized_payload,
+            turn=turn,
+            user=user,
+        )
         raise
     except _AssistantGatewayRequestFailed as exc:
         current_store.audit(
@@ -249,12 +289,15 @@ def assistant_chat_response(
                 "status": exc.log["status"],
             },
         )
-        save_assistant_chat_records(
+        _persist_assistant_chat_failed(
             current_store,
-            conversation=None,
-            messages=[],
+            audit_start_index=audit_start_index,
+            error_code="ASSISTANT_CHAT_FAILED",
+            error_message="Assistant model gateway request failed",
             model_log=exc.log,
-            audit_events=current_store.audit_events[audit_start_index:],
+            normalized_payload=normalized_payload,
+            turn=turn,
+            user=user,
         )
         raise AssistantServiceError(
             502,
@@ -275,28 +318,66 @@ def assistant_chat_response(
             "status": model_log["status"],
         },
     )
+    if _assistant_chat_run_is_cancelled(current_store, turn["chat_run"]["id"], user=user):
+        return _persist_assistant_chat_cancelled(
+            current_store,
+            audit_start_index=audit_start_index,
+            model_log=model_log,
+            normalized_payload=normalized_payload,
+            turn=turn,
+            user=user,
+        )
     return _persist_assistant_chat_output(
         current_store,
         audit_start_index=audit_start_index,
-        message=message,
         model_log=model_log,
         normalized_payload=normalized_payload,
         assistant_output=assistant_output,
+        turn=turn,
         user=user,
     )
 
 
-def _persist_assistant_chat_output(
+def _assistant_chat_run_id(current_store: MemoryStore, payload: AssistantChatRequest) -> str:
+    run_id = str(payload.run_id or "").strip()
+    return run_id or current_store.new_id("assistant_chat_run")
+
+
+def _assistant_chat_client_request_id(
+    payload: AssistantChatRequest,
+    *,
+    run_id: str,
+) -> str:
+    client_request_id = str(payload.client_request_id or "").strip()
+    return client_request_id or run_id
+
+
+def _assistant_chat_run_record(
+    current_store: MemoryStore,
+    run_id: str,
+) -> dict[str, Any] | None:
+    repository = runtime_repository(current_store)
+    get_run = getattr(repository, "get_assistant_chat_run", None)
+    if callable(get_run):
+        run = get_run(run_id=run_id)
+        return dict(run) if run is not None else None
+    run = getattr(current_store, "assistant_chat_runs", {}).get(run_id)
+    return dict(run) if run is not None else None
+
+
+def _start_assistant_chat_run(
     current_store: MemoryStore,
     *,
-    assistant_output: dict[str, Any],
-    audit_start_index: int,
     message: str,
-    model_log: dict[str, Any] | None,
     normalized_payload: AssistantChatRequest,
     user: dict[str, Any],
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
+    run_id = _assistant_chat_run_id(current_store, normalized_payload)
+    client_request_id = _assistant_chat_client_request_id(normalized_payload, run_id=run_id)
+    existing_run = _assistant_chat_run_record(current_store, run_id)
+    if existing_run is not None and existing_run.get("user_id") != user["id"]:
+        raise AssistantServiceError(404, "NOT_FOUND", "Assistant chat run not found")
     conversation = ensure_assistant_conversation(
         current_store,
         conversation_id=normalized_payload.conversation_id,
@@ -307,13 +388,164 @@ def _persist_assistant_chat_output(
     )
     user_message = append_assistant_message(
         current_store,
+        client_request_id=client_request_id,
         content=message,
         conversation=conversation,
         now=now,
-        references=assistant_output.get("selected_references") or [],
+        references=[],
         role="user",
+        run_id=run_id,
+        status="pending",
         user_id=user["id"],
     )
+    metadata_json = {
+        **dict((existing_run or {}).get("metadata_json") or {}),
+        "context_source": normalized_payload.context.get("source"),
+        "message_excerpt": message[:160],
+        "product_id": normalized_payload.product_id,
+        "reference_count": len(normalized_payload.references),
+    }
+    chat_run = {
+        **(existing_run or {}),
+        "client_request_id": client_request_id,
+        "conversation_id": conversation["id"],
+        "created_at": (existing_run or {}).get("created_at") or now,
+        "id": run_id,
+        "metadata_json": metadata_json,
+        "started_at": (existing_run or {}).get("started_at") or now,
+        "status": (existing_run or {}).get("status") or "running",
+        "updated_at": now,
+        "user_id": user["id"],
+        "user_message_id": user_message["id"],
+    }
+    if chat_run["status"] not in {"cancelled", "failed", "succeeded"}:
+        chat_run["status"] = "running"
+    current_store.assistant_chat_runs[run_id] = chat_run
+    save_assistant_chat_records(
+        current_store,
+        chat_run=chat_run,
+        conversation=conversation,
+        messages=[user_message],
+        audit_events=[],
+    )
+    return {
+        "chat_run": chat_run,
+        "client_request_id": client_request_id,
+        "conversation": conversation,
+        "user_message": user_message,
+    }
+
+
+def _assistant_chat_run_is_cancelled(
+    current_store: MemoryStore,
+    run_id: str,
+    *,
+    user: dict[str, Any],
+) -> bool:
+    run = _assistant_chat_run_record(current_store, run_id)
+    if run is None:
+        return False
+    if run.get("user_id") != user["id"]:
+        raise AssistantServiceError(404, "NOT_FOUND", "Assistant chat run not found")
+    return run.get("status") == "cancelled"
+
+
+def _assistant_chat_run_public(run: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in {
+            "assistant_message_id": run.get("assistant_message_id"),
+            "cancel_reason": run.get("cancel_reason"),
+            "cancelled_at": run.get("cancelled_at"),
+            "cancelled_by": run.get("cancelled_by"),
+            "client_request_id": run.get("client_request_id"),
+            "conversation_id": run.get("conversation_id"),
+            "error_code": run.get("error_code"),
+            "error_message": run.get("error_message"),
+            "finished_at": run.get("finished_at"),
+            "id": run.get("id"),
+            "started_at": run.get("started_at"),
+            "status": run.get("status"),
+            "user_message_id": run.get("user_message_id"),
+        }.items()
+        if value is not None
+    }
+
+
+def cancel_assistant_chat_run_response(
+    current_store: MemoryStore,
+    *,
+    reason: str | None,
+    run_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    cleaned_run_id = _ensure_non_blank(run_id, "run_id")
+    now = datetime.now(UTC).isoformat()
+    run = _assistant_chat_run_record(current_store, cleaned_run_id)
+    if run is not None and run.get("user_id") != user["id"]:
+        raise AssistantServiceError(404, "NOT_FOUND", "Assistant chat run not found")
+    if run is None:
+        run = {
+            "created_at": now,
+            "id": cleaned_run_id,
+            "metadata_json": {"cancel_requested_before_start": True},
+            "started_at": now,
+            "user_id": user["id"],
+        }
+    if run.get("status") not in {"succeeded", "failed", "cancelled"}:
+        run.update(
+            {
+                "cancel_reason": reason or "user_cancelled",
+                "cancelled_at": now,
+                "cancelled_by": user["id"],
+                "finished_at": now,
+                "status": "cancelled",
+                "updated_at": now,
+            }
+        )
+        current_store.assistant_chat_runs[cleaned_run_id] = run
+        audit_event = current_store.audit(
+            event_type="assistant.chat_run_cancelled",
+            actor_id=user["id"],
+            subject_type="assistant_chat_run",
+            subject_id=cleaned_run_id,
+            payload={"reason": run.get("cancel_reason")},
+        )
+        save_assistant_chat_records(
+            current_store,
+            chat_run=run,
+            conversation=None,
+            messages=[],
+            audit_events=[audit_event],
+        )
+    return _assistant_chat_run_public(run)
+
+
+def _persist_assistant_chat_output(
+    current_store: MemoryStore,
+    *,
+    assistant_output: dict[str, Any],
+    audit_start_index: int,
+    model_log: dict[str, Any] | None,
+    normalized_payload: AssistantChatRequest,
+    turn: dict[str, Any],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    conversation = turn["conversation"]
+    user_message = turn["user_message"]
+    chat_run = turn["chat_run"]
+    run_id = chat_run["id"]
+    client_request_id = turn["client_request_id"]
+    user_message.update(
+        {
+            "completed_at": now,
+            "references": assistant_output.get("selected_references") or [],
+            "status": "completed",
+            "updated_at": now,
+        }
+    )
+    user_message.setdefault("metadata_json", {})["references"] = user_message["references"]
     _attach_assistant_message_attribution_to_scheduled_job_runs(
         current_store,
         assistant_output=assistant_output,
@@ -321,6 +553,8 @@ def _persist_assistant_chat_output(
     )
     assistant_message = append_assistant_message(
         current_store,
+        client_request_id=client_request_id,
+        completed_at=now,
         content=assistant_output["answer"],
         conversation=conversation,
         intent=assistant_output.get("intent"),
@@ -328,6 +562,8 @@ def _persist_assistant_chat_output(
         now=now,
         references=assistant_output["references"],
         role="assistant",
+        run_id=run_id,
+        status="completed",
         suggestions=assistant_output["suggestions"],
         tool_results=assistant_output["tool_results"],
         user_id=user["id"],
@@ -340,7 +576,18 @@ def _persist_assistant_chat_output(
             user=user,
         )
         assistant_message["metadata_json"]["tool_results"] = assistant_output["tool_results"]
+    chat_run.update(
+        {
+            "assistant_message_id": assistant_message["id"],
+            "finished_at": now,
+            "status": "succeeded",
+            "updated_at": now,
+        }
+    )
+    current_store.assistant_chat_runs[run_id] = chat_run
     audit_payload = {
+        "chat_run_id": run_id,
+        "client_request_id": client_request_id,
         "latency_ms": assistant_output["latency_ms"],
         "model": assistant_output["model"],
         "product_id": normalized_payload.product_id,
@@ -361,6 +608,7 @@ def _persist_assistant_chat_output(
     )
     save_assistant_chat_records(
         current_store,
+        chat_run=chat_run,
         conversation=conversation,
         messages=[user_message, assistant_message],
         model_log=model_log,
@@ -371,8 +619,161 @@ def _persist_assistant_chat_output(
         "latency_ms": assistant_output["latency_ms"],
         "message": public_assistant_message(assistant_message),
         "model": assistant_output["model"],
+        "run": _assistant_chat_run_public(chat_run),
+        "run_id": run_id,
         "suggestions": assistant_output["suggestions"],
     }
+
+
+def _persist_assistant_chat_cancelled(
+    current_store: MemoryStore,
+    *,
+    audit_start_index: int,
+    normalized_payload: AssistantChatRequest,
+    turn: dict[str, Any],
+    user: dict[str, Any],
+    model_log: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    conversation = turn["conversation"]
+    user_message = turn["user_message"]
+    latest_run = _assistant_chat_run_record(current_store, turn["chat_run"]["id"]) or {}
+    chat_run = {**turn["chat_run"], **latest_run}
+    run_id = chat_run["id"]
+    client_request_id = turn["client_request_id"]
+    cancelled_at = chat_run.get("cancelled_at") or now
+    user_message.update(
+        {
+            "cancelled_at": cancelled_at,
+            "status": "cancelled",
+            "updated_at": now,
+        }
+    )
+    assistant_message = append_assistant_message(
+        current_store,
+        cancelled_at=cancelled_at,
+        client_request_id=client_request_id,
+        content="已停止生成。",
+        conversation=conversation,
+        now=now,
+        references=[],
+        role="assistant",
+        run_id=run_id,
+        status="cancelled",
+        suggestions=[],
+        user_id=user["id"],
+    )
+    chat_run.update(
+        {
+            "assistant_message_id": assistant_message["id"],
+            "cancelled_at": cancelled_at,
+            "cancelled_by": chat_run.get("cancelled_by") or user["id"],
+            "finished_at": chat_run.get("finished_at") or now,
+            "status": "cancelled",
+            "updated_at": now,
+        }
+    )
+    current_store.assistant_chat_runs[run_id] = chat_run
+    current_store.audit(
+        event_type="assistant.chat_cancelled",
+        actor_id=user["id"],
+        subject_type="assistant_chat_run",
+        subject_id=run_id,
+        payload={
+            "client_request_id": client_request_id,
+            "model_log_id": model_log.get("id") if model_log else None,
+            "product_id": normalized_payload.product_id,
+        },
+    )
+    save_assistant_chat_records(
+        current_store,
+        chat_run=chat_run,
+        conversation=conversation,
+        messages=[user_message, assistant_message],
+        model_log=model_log,
+        audit_events=current_store.audit_events[audit_start_index:],
+    )
+    return {
+        "conversation_id": conversation["id"],
+        "latency_ms": 0,
+        "message": public_assistant_message(assistant_message),
+        "model": "assistant-cancelled",
+        "run": _assistant_chat_run_public(chat_run),
+        "run_id": run_id,
+        "suggestions": [],
+    }
+
+
+def _persist_assistant_chat_failed(
+    current_store: MemoryStore,
+    *,
+    audit_start_index: int,
+    error_code: str,
+    error_message: str,
+    model_log: dict[str, Any] | None,
+    normalized_payload: AssistantChatRequest,
+    turn: dict[str, Any],
+    user: dict[str, Any],
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    conversation = turn["conversation"]
+    user_message = turn["user_message"]
+    chat_run = turn["chat_run"]
+    run_id = chat_run["id"]
+    client_request_id = turn["client_request_id"]
+    user_message.update(
+        {
+            "completed_at": now,
+            "status": "completed",
+            "updated_at": now,
+        }
+    )
+    assistant_message = append_assistant_message(
+        current_store,
+        client_request_id=client_request_id,
+        content=error_message,
+        conversation=conversation,
+        error_code=error_code,
+        failed_at=now,
+        now=now,
+        references=[],
+        role="assistant",
+        run_id=run_id,
+        status="failed",
+        suggestions=[],
+        user_id=user["id"],
+    )
+    chat_run.update(
+        {
+            "assistant_message_id": assistant_message["id"],
+            "error_code": error_code,
+            "error_message": error_message,
+            "finished_at": now,
+            "status": "failed",
+            "updated_at": now,
+        }
+    )
+    current_store.assistant_chat_runs[run_id] = chat_run
+    current_store.audit(
+        event_type="assistant.chat_failed",
+        actor_id=user["id"],
+        subject_type="assistant_chat_run",
+        subject_id=run_id,
+        payload={
+            "client_request_id": client_request_id,
+            "error_code": error_code,
+            "model_log_id": model_log.get("id") if model_log else None,
+            "product_id": normalized_payload.product_id,
+        },
+    )
+    save_assistant_chat_records(
+        current_store,
+        chat_run=chat_run,
+        conversation=conversation,
+        messages=[user_message, assistant_message],
+        model_log=model_log,
+        audit_events=current_store.audit_events[audit_start_index:],
+    )
 
 
 def _mark_scheduled_job_run_triggered_by_assistant(
@@ -518,6 +919,39 @@ def _handle_scheduled_job_run_once_intent(
         payload=payload,
         user=user,
     )
+
+
+def _handle_scheduled_job_diagnostic_intent(
+    current_store: MemoryStore,
+    *,
+    payload: AssistantChatRequest,
+    user: dict[str, Any],
+    intent: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        resolved_references = resolve_assistant_references(
+            current_store,
+            references=payload.references,
+            user=user,
+        )
+    except AssistantReferenceError as exc:
+        raise AssistantServiceError(exc.status_code, exc.code, exc.message) from exc
+    return _scheduled_job_diagnostic_output(
+        current_store,
+        payload=payload,
+        selected_references=resolved_references["items"],
+    )
+
+
+def _handle_assistant_metrics_explanation_intent(
+    current_store: MemoryStore,
+    *,
+    payload: AssistantChatRequest,
+    user: dict[str, Any],
+    intent: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    del payload, intent
+    return _assistant_metrics_explanation_output(current_store, user=user)
 
 
 def _handle_action_draft_intent(
@@ -732,6 +1166,7 @@ def _deterministic_scheduled_job_run_once_output(
 def _deterministic_intent_registry() -> list[dict[str, Any]]:
     return [
         {
+            "action": "guide_task_creation",
             "conflict_policy": "first_match",
             "confidence": 0.95,
             "detector": _task_creation_guide_requested,
@@ -742,6 +1177,7 @@ def _deterministic_intent_registry() -> list[dict[str, Any]]:
             "summary": "将执行：任务类型向导",
         },
         {
+            "action": "diagnose_plugin_connection",
             "conflict_policy": "first_match",
             "confidence": 0.9,
             "detector": _plugin_connection_diagnostic_requested,
@@ -750,8 +1186,22 @@ def _deterministic_intent_registry() -> list[dict[str, Any]]:
             "priority": 90,
             "required_refs": ["plugin_connection"],
             "summary": "将执行：插件连接诊断",
+            "tool": "assistant.plugin_connection_diagnostic",
         },
         {
+            "action": "diagnose_scheduled_job_run",
+            "conflict_policy": "first_match",
+            "confidence": 0.9,
+            "detector": _scheduled_job_diagnostic_requested,
+            "handler": _handle_scheduled_job_diagnostic_intent,
+            "intent_code": "scheduled_job_diagnostic",
+            "priority": 85,
+            "required_refs": ["scheduled_job", "scheduled_job_run"],
+            "summary": "将执行：定时作业运行诊断",
+            "tool": "assistant.scheduled_job_diagnostic",
+        },
+        {
+            "action": "run_scheduled_job_once",
             "conflict_policy": "first_match",
             "confidence": 0.95,
             "detector": _scheduled_job_run_once_requested,
@@ -760,8 +1210,22 @@ def _deterministic_intent_registry() -> list[dict[str, Any]]:
             "priority": 80,
             "required_refs": ["scheduled_job"],
             "summary": "将执行：运行定时作业一次",
+            "tool": "assistant.scheduled_job_run",
         },
         {
+            "action": "explain_assistant_metrics",
+            "conflict_policy": "first_match",
+            "confidence": 0.88,
+            "detector": _assistant_metrics_explanation_requested,
+            "handler": _handle_assistant_metrics_explanation_intent,
+            "intent_code": "assistant_metrics_explanation",
+            "priority": 70,
+            "required_refs": [],
+            "summary": "将执行：解释助手效果指标",
+            "tool": "assistant.metrics_summary",
+        },
+        {
+            "action": "create_action_draft",
             "conflict_policy": "fallback",
             "confidence": 0.7,
             "detector": lambda _message: True,
@@ -802,12 +1266,19 @@ def _resolve_deterministic_intent_conflict(
 
 
 def _intent_metadata(intent: dict[str, Any]) -> dict[str, Any]:
-    return {
+    metadata = {
         "confidence": intent["confidence"],
+        "conflict_policy": intent.get("conflict_policy"),
         "intent_code": intent["intent_code"],
+        "priority": intent.get("priority"),
         "required_refs": list(intent.get("required_refs") or []),
         "summary": intent["summary"],
     }
+    if intent.get("action"):
+        metadata["action"] = intent["action"]
+    if intent.get("tool"):
+        metadata["tool"] = intent["tool"]
+    return {key: value for key, value in metadata.items() if value is not None}
 
 
 def _with_intent_metadata(
@@ -962,6 +1433,10 @@ def _assistant_chat_messages(
         system_context["reference_candidates"],
     )
     return assistant_context_chat_messages(
+        conversation_history=assistant_conversation_history_context(
+            current_store,
+            conversation_id=payload.conversation_id,
+        ),
         context=payload.context,
         conversation_id=payload.conversation_id,
         message=payload.message,
@@ -1112,6 +1587,36 @@ def _scheduled_job_run_once_requested(message: str) -> bool:
     if any(keyword in normalized for keyword in SCHEDULED_JOB_RUN_NEGATION_KEYWORDS):
         return False
     return any(keyword in normalized for keyword in SCHEDULED_JOB_RUN_ONCE_KEYWORDS)
+
+
+def _scheduled_job_diagnostic_requested(message: str) -> bool:
+    normalized = message.lower()
+    has_diagnostic_intent = any(
+        keyword in normalized
+        for keyword in ("为什么", "原因", "失败", "诊断", "排查", "failed", "failure", "diagnose")
+    )
+    has_scheduled_job_context = any(
+        keyword in normalized
+        for keyword in ("定时任务", "定时作业", "作业", "运行", "scheduled job", "run")
+    )
+    has_create_intent = any(
+        keyword in normalized
+        for keyword in ("创建", "新增", "配置", "生成", "新建", "create", "draft")
+    )
+    return has_diagnostic_intent and has_scheduled_job_context and not has_create_intent
+
+
+def _assistant_metrics_explanation_requested(message: str) -> bool:
+    normalized = message.lower()
+    has_metrics_intent = any(
+        keyword in normalized
+        for keyword in ("指标", "效果", "漏斗", "采纳率", "修复率", "成功率", "metrics", "funnel")
+    )
+    has_assistant_context = any(
+        keyword in normalized
+        for keyword in ("助手", "ai assistant", "草案", "引用", "运行", "失败修复")
+    )
+    return has_metrics_intent and has_assistant_context
 
 
 def _task_creation_guide_requested(message: str) -> bool:
@@ -1271,6 +1776,107 @@ def _plugin_connection_diagnostic_output(
         "suggestions": ["生成插件连接修复草案", "打开插件管理"],
         "tool_results": tool_results,
     }
+
+
+def _scheduled_job_diagnostic_output(
+    current_store: MemoryStore,
+    *,
+    payload: AssistantChatRequest,
+    selected_references: list[dict[str, str]],
+) -> dict[str, Any]:
+    started = perf_counter()
+    tool_results = [
+        result
+        for result in assistant_tool_results(
+            current_store,
+            message=payload.message,
+            product_id=payload.product_id,
+            references=selected_references,
+        )
+        if result.get("tool") == "assistant.scheduled_job_diagnostic"
+    ]
+    diagnosed_count = sum(len(result.get("items") or []) for result in tool_results)
+    failed_count = sum(
+        int((result.get("summary") or {}).get("failed_count") or 0)
+        for result in tool_results
+    )
+    if diagnosed_count:
+        answer = (
+            f"我已读取最近定时作业运行记录，找到 {failed_count} 个失败运行，"
+            "并按数据连接、AI 处理、结果动作三段整理诊断。"
+        )
+    else:
+        answer = (
+            "我没有找到可诊断的失败运行。"
+            "可以先 @具体定时作业或 @运行记录，或手动执行一次后再继续排查。"
+        )
+    diagnostic_references = [
+        reference
+        for result in tool_results
+        for reference in result.get("references", [])
+        if isinstance(reference, dict)
+    ]
+    return {
+        "answer": answer,
+        "latency_ms": int((perf_counter() - started) * 1000),
+        "model": "assistant-deterministic",
+        "references": _merge_assistant_references(
+            selected_references,
+            diagnostic_references,
+        ),
+        "selected_references": selected_references,
+        "suggestions": [
+            "围绕某次运行继续追问",
+            "生成失败修复草案",
+            "查看定时作业运行记录",
+        ],
+        "tool_results": tool_results,
+    }
+
+
+def _assistant_metrics_explanation_output(
+    current_store: MemoryStore,
+    *,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    started = perf_counter()
+    metrics = assistant_metrics_response(current_store, user=user)
+    summary = metrics.get("summary") or {}
+    answer = (
+        "当前 AI 助手效果指标："
+        f"草案生成 {int(summary.get('draft_total') or 0)} 个，"
+        f"草案确认率 {_format_ratio(summary.get('draft_adoption_rate'))}，"
+        f"@ 引用使用率 {_format_ratio(summary.get('reference_usage_rate'))}，"
+        f"作业运行成功率 {_format_ratio(summary.get('scheduled_job_run_success_rate'))}，"
+        f"失败修复率 {_format_ratio(summary.get('failed_run_repair_rate'))}。"
+    )
+    return {
+        "answer": answer,
+        "latency_ms": int((perf_counter() - started) * 1000),
+        "model": "assistant-deterministic",
+        "references": [],
+        "selected_references": [],
+        "suggestions": [
+            "查看草案采纳漏斗",
+            "解释作业运行成功率",
+            "分析失败修复率",
+        ],
+        "tool_results": [
+            {
+                "intent": "assistant_metrics_explanation",
+                "items": metrics.get("funnel", {}).get("stages", []),
+                "summary": summary,
+                "tool": "assistant.metrics_summary",
+            }
+        ],
+    }
+
+
+def _format_ratio(value: Any) -> str:
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "0.0%"
 
 
 def _task_creation_guide_output(

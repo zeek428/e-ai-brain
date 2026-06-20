@@ -19,7 +19,18 @@ OPERATIONAL_REFERENCE_TYPES = {
     "scheduled_job_run",
 }
 ASSISTANT_ACTION_REFERENCE_TYPE = "assistant_action"
-ASSISTANT_ACTION_QUERY_TRIGGERS = ("新建", "新增", "创建", "我要建", "配置")
+ASSISTANT_ACTION_QUERY_TRIGGERS = (
+    "新建",
+    "新增",
+    "创建",
+    "我要建",
+    "配置",
+    "诊断",
+    "排查",
+    "指标",
+    "效果",
+    "失败",
+)
 ASSISTANT_ACTION_CANDIDATES = (
     {
         "action": "create_requirement",
@@ -118,6 +129,28 @@ ASSISTANT_ACTION_CANDIDATES = (
         "summary": "进入 AI 能力配置向导，生成 Skill 或 AI角色草案。",
         "title": "新建 AI 能力配置",
         "url": "/tasks/ai-capabilities",
+    },
+    {
+        "action": "diagnose_scheduled_job_run",
+        "aliases": ("诊断", "排查", "失败", "运行失败", "定时作业", "定时任务", "run diagnostic"),
+        "id": "diagnose_scheduled_job_run",
+        "permissions": ("system.scheduled_jobs.manage", "system.scheduled_jobs.run"),
+        "prompt": "请诊断最近失败的定时作业运行，并按数据连接、AI处理、结果动作说明原因。",
+        "summary": "读取定时作业运行、插件调用、模型日志和结果写入记录，解释失败原因。",
+        "title": "运行诊断",
+        "url": "/tasks/scheduled-jobs?tab=runs",
+    },
+    {
+        "action": "explain_assistant_metrics",
+        "aliases": ("指标", "效果", "漏斗", "采纳率", "修复率", "metrics"),
+        "id": "explain_assistant_metrics",
+        "prompt": (
+            "请解释当前 AI 助手效果指标，包括草案采纳、引用使用、"
+            "作业运行成功率和失败修复率。"
+        ),
+        "summary": "汇总 AI 助手草案、引用、运行和失败修复指标。",
+        "title": "指标解释",
+        "url": "/assistant",
     },
 )
 OPERATIONAL_REFERENCE_PERMISSIONS_BY_TYPE = {

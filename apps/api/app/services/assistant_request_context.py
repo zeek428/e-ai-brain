@@ -27,6 +27,7 @@ class AssistantRepositoryRequestContext:
         self.collector_runs: dict[str, dict[str, Any]] = {}
         self.scheduled_jobs: dict[str, dict[str, Any]] = {}
         self.scheduled_job_runs: dict[str, dict[str, Any]] = {}
+        self.assistant_chat_runs: dict[str, dict[str, Any]] = {}
         self.assistant_conversations: dict[str, dict[str, Any]] = {}
         self.assistant_messages: dict[str, dict[str, Any]] = {}
         self.assistant_action_drafts: dict[str, dict[str, Any]] = {}
@@ -97,6 +98,13 @@ def assistant_source_store(repository: Any, *, user_id: str) -> Any:
     )
     _hydrate_assistant_operational_store(source_store, repository)
     conversations = repository.list_assistant_conversations(user_id=user_id)
+    list_chat_runs = getattr(repository, "list_assistant_chat_runs", None)
+    if callable(list_chat_runs):
+        source_store.assistant_chat_runs = {
+            str(run["id"]): dict(run)
+            for run in list_chat_runs(user_id=user_id)
+            if run.get("id") is not None
+        }
     source_store.assistant_conversations = {
         str(conversation["id"]): dict(conversation)
         for conversation in conversations
@@ -226,6 +234,7 @@ def assistant_task_source_store(rows: dict[str, Any], *, repository: Any) -> Any
 def save_assistant_chat_records(
     current_store: MemoryStore,
     *,
+    chat_run: dict[str, Any] | None = None,
     conversation: dict[str, Any] | None,
     messages: list[dict[str, Any]],
     audit_events: list[dict[str, Any]],
@@ -235,6 +244,7 @@ def save_assistant_chat_records(
     save_records = getattr(repository, "save_assistant_chat_records", None)
     if save_records is not None:
         save_records(
+            chat_run=chat_run,
             conversation=conversation,
             messages=messages,
             model_log=model_log,

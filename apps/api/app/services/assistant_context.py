@@ -10,6 +10,7 @@ from app.services.assistant_references import (
 
 __all__ = [
     "assistant_chat_messages",
+    "assistant_conversation_history_context",
     "assistant_conversation_messages",
     "assistant_conversation_title",
     "assistant_reference_candidates",
@@ -18,6 +19,11 @@ __all__ = [
     "public_assistant_conversation",
     "public_assistant_message",
 ]
+
+ASSISTANT_HISTORY_LIMIT = 10
+ASSISTANT_HISTORY_CONTENT_LIMIT = 520
+ASSISTANT_HISTORY_TOOL_RESULT_LIMIT = 4
+ASSISTANT_HISTORY_TOOL_ITEM_LIMIT = 4
 
 
 def build_assistant_system_context(
@@ -217,6 +223,7 @@ def build_assistant_system_context(
 
 def assistant_chat_messages(
     *,
+    conversation_history: list[dict[str, Any]] | None = None,
     context: dict[str, Any] | None,
     conversation_id: str | None,
     message: str,
@@ -226,6 +233,7 @@ def assistant_chat_messages(
     user_payload = {
         "context": context,
         "conversation_id": conversation_id,
+        "conversation_history": conversation_history or [],
         "message": message,
         "product_id": product_id,
         "system_context": system_context,
@@ -239,6 +247,8 @@ def assistant_chat_messages(
                 "development progress, requirements, tasks, repositories, "
                 "iteration progress, pending reviews, code review conclusions, "
                 "bug distribution, knowledge deposits, and model gateway status. "
+                "Use conversation_history as bounded prior-turn context for follow-up "
+                "phrases like 上一次, 刚才, 继续, this run, or previous draft. "
                 "Prefer precise facts from system_context.tool_results; treat them as "
                 "backend read-model tool outputs and cite their references. "
                 "Return one compact JSON object with string field answer and optional "
@@ -252,6 +262,135 @@ def assistant_chat_messages(
             "content": json.dumps(user_payload, ensure_ascii=False, sort_keys=True),
         },
     ]
+
+
+def assistant_conversation_history_context(
+    current_store: Any,
+    *,
+    conversation_id: str | None,
+    limit: int = ASSISTANT_HISTORY_LIMIT,
+) -> list[dict[str, Any]]:
+    if not conversation_id:
+        return []
+    messages = assistant_conversation_messages(
+        current_store,
+        conversation_id=conversation_id,
+    )
+    messages = [
+        message
+        for message in messages
+        if (message.get("status") or "completed") != "pending"
+    ]
+    bounded_limit = max(1, min(limit, ASSISTANT_HISTORY_LIMIT))
+    return [_assistant_history_message(message) for message in messages[-bounded_limit:]]
+
+
+def _assistant_history_message(message: dict[str, Any]) -> dict[str, Any]:
+    metadata = message.get("metadata_json") or {}
+    history_message: dict[str, Any] = {
+        "content": _history_text_excerpt(message.get("content")),
+        "created_at": message.get("created_at"),
+        "id": message.get("id"),
+        "role": message.get("role"),
+        "status": message.get("status") or "completed",
+    }
+    references = message.get("references") or metadata.get("references")
+    normalized_references = normalize_assistant_references(references)
+    if normalized_references:
+        history_message["references"] = normalized_references[:ASSISTANT_HISTORY_TOOL_ITEM_LIMIT]
+    intent = metadata.get("intent")
+    if isinstance(intent, dict) and intent:
+        history_message["intent"] = {
+            key: intent.get(key)
+            for key in ("intent_code", "summary", "confidence")
+            if intent.get(key) is not None
+        }
+    tool_results = metadata.get("tool_results")
+    if isinstance(tool_results, list) and tool_results:
+        history_message["tool_results"] = [
+            _assistant_history_tool_result(tool_result)
+            for tool_result in tool_results[:ASSISTANT_HISTORY_TOOL_RESULT_LIMIT]
+            if isinstance(tool_result, dict)
+        ]
+    return {key: value for key, value in history_message.items() if value not in (None, [], {})}
+
+
+def _assistant_history_tool_result(tool_result: dict[str, Any]) -> dict[str, Any]:
+    summary = tool_result.get("summary")
+    items = tool_result.get("items")
+    references = normalize_assistant_references(tool_result.get("references"))
+    history_result: dict[str, Any] = {
+        "intent": tool_result.get("intent"),
+        "tool": tool_result.get("tool"),
+    }
+    if isinstance(summary, dict):
+        history_result["summary"] = _safe_history_json(summary)
+    elif summary is not None:
+        history_result["summary"] = _history_text_excerpt(summary)
+    if isinstance(items, list):
+        history_items = [
+            _assistant_history_tool_item(item)
+            for item in items[:ASSISTANT_HISTORY_TOOL_ITEM_LIMIT]
+            if isinstance(item, dict)
+        ]
+        if history_items:
+            history_result["items"] = history_items
+    if references:
+        history_result["references"] = references[:ASSISTANT_HISTORY_TOOL_ITEM_LIMIT]
+    return {key: value for key, value in history_result.items() if value not in (None, [], {})}
+
+
+def _assistant_history_tool_item(item: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = (
+        "id",
+        "title",
+        "type",
+        "status",
+        "action",
+        "draft_id",
+        "server_draft_id",
+        "scheduled_job_id",
+        "scheduled_job_run_id",
+        "run_id",
+        "url",
+    )
+    return {
+        key: _history_text_excerpt(item.get(key), limit=180)
+        for key in allowed_keys
+        if item.get(key) is not None
+    }
+
+
+def _safe_history_json(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 3:
+        return _history_text_excerpt(value, limit=180)
+    if isinstance(value, dict):
+        return {
+            str(key): _safe_history_json(child, depth=depth + 1)
+            for key, child in value.items()
+            if str(key).lower() not in {"content", "text", "body", "chunk_text", "raw", "prompt"}
+        }
+    if isinstance(value, list):
+        return [_safe_history_json(item, depth=depth + 1) for item in value[:8]]
+    if isinstance(value, str):
+        return _history_text_excerpt(value)
+    if isinstance(value, int | float | bool) or value is None:
+        return value
+    return _history_text_excerpt(value)
+
+
+def _history_text_excerpt(value: Any, *, limit: int = ASSISTANT_HISTORY_CONTENT_LIMIT) -> str:
+    if isinstance(value, str):
+        text = " ".join(value.strip().split())
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            text = str(value)
+        text = " ".join(text.strip().split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 3]}..."
 
 
 def assistant_response_content(content: Any) -> dict[str, Any]:
@@ -308,14 +447,29 @@ def public_assistant_conversation(conversation: dict[str, Any]) -> dict[str, Any
     }
 
 
-def public_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
+def public_assistant_message(
+    message: dict[str, Any],
+    *,
+    include_tool_details: bool = True,
+) -> dict[str, Any]:
     public_message = {
         "content": message["content"],
         "conversation_id": message["conversation_id"],
         "created_at": message["created_at"],
         "id": message["id"],
         "role": message["role"],
+        "status": message.get("status") or "completed",
     }
+    for key in (
+        "cancelled_at",
+        "client_request_id",
+        "completed_at",
+        "error_code",
+        "failed_at",
+        "run_id",
+    ):
+        if message.get(key):
+            public_message[key] = message[key]
     if message.get("model"):
         public_message["model"] = message["model"]
     if message.get("suggestions"):
@@ -328,8 +482,92 @@ def public_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
         public_message["intent"] = intent
     tool_results = (message.get("metadata_json") or {}).get("tool_results")
     if isinstance(tool_results, list) and tool_results:
-        public_message["tool_results"] = tool_results
+        public_message["tool_results"] = (
+            tool_results if include_tool_details else _public_light_tool_results(tool_results)
+        )
     return public_message
+
+
+def _public_light_tool_results(tool_results: list[Any]) -> list[dict[str, Any]]:
+    return [
+        result
+        for result in (
+            _public_light_tool_result(tool_result)
+            for tool_result in tool_results
+            if isinstance(tool_result, dict)
+        )
+        if result
+    ]
+
+
+def _public_light_tool_result(tool_result: dict[str, Any]) -> dict[str, Any]:
+    tool_name = str(tool_result.get("tool") or "")
+    result: dict[str, Any] = {
+        "intent": tool_result.get("intent"),
+        "tool": tool_name,
+    }
+    summary = tool_result.get("summary")
+    if isinstance(summary, dict):
+        result["summary"] = _safe_history_json(summary)
+    elif summary is not None:
+        result["summary"] = _history_text_excerpt(summary)
+    items = tool_result.get("items")
+    if isinstance(items, list):
+        light_items = [
+            _public_light_tool_item(tool_name, item)
+            for item in items[:ASSISTANT_HISTORY_TOOL_ITEM_LIMIT]
+            if isinstance(item, dict)
+        ]
+        light_items = [item for item in light_items if item]
+        if light_items:
+            result["items"] = light_items
+    references = normalize_assistant_references(tool_result.get("references"))
+    if references:
+        result["references"] = references[:ASSISTANT_HISTORY_TOOL_ITEM_LIMIT]
+    return {key: value for key, value in result.items() if value not in (None, [], {})}
+
+
+def _public_light_tool_item(tool_name: str, item: dict[str, Any]) -> dict[str, Any]:
+    if tool_name == "assistant.action_draft":
+        allowed_keys = (
+            "action",
+            "client_draft_id",
+            "draft_id",
+            "requires_confirmation",
+            "risk_level",
+            "run_once_requested",
+            "server_draft_id",
+            "status",
+            "title",
+            "url",
+        )
+    elif tool_name == "assistant.scheduled_job_run":
+        allowed_keys = (
+            "error_message",
+            "id",
+            "progress_text",
+            "records_imported",
+            "run_id",
+            "scheduled_job_id",
+            "status",
+            "title",
+            "trigger_type",
+            "url",
+        )
+    else:
+        allowed_keys = (
+            "id",
+            "title",
+            "type",
+            "status",
+            "action",
+            "url",
+        )
+    return {
+        key: _safe_history_json(item.get(key))
+        for key in allowed_keys
+        if item.get(key) is not None
+    }
 
 
 def _iteration_progress(

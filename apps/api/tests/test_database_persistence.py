@@ -905,6 +905,21 @@ class FakeSnapshotRepository:
         )
         return conversations
 
+    def list_assistant_chat_runs(self, *, user_id: str) -> list[dict]:
+        payload = self.assistant_chat_payload or {}
+        runs = [
+            dict(run)
+            for run in payload.get("assistant_chat_runs", {}).values()
+            if run.get("user_id") == user_id
+        ]
+        runs.sort(key=lambda item: (item.get("updated_at", ""), item["id"]), reverse=True)
+        return runs
+
+    def get_assistant_chat_run(self, *, run_id: str) -> dict | None:
+        payload = self.assistant_chat_payload or {}
+        run = payload.get("assistant_chat_runs", {}).get(run_id)
+        return dict(run) if run is not None else None
+
     def list_assistant_conversation_messages(
         self,
         *,
@@ -945,15 +960,19 @@ class FakeSnapshotRepository:
     def save_assistant_chat_records(
         self,
         *,
+        chat_run: dict | None = None,
         conversation: dict | None,
         messages: list[dict],
         audit_events: list[dict],
         model_log: dict | None = None,
     ) -> None:
         payload = self.assistant_chat_payload or {
+            "assistant_chat_runs": {},
             "assistant_conversations": {},
             "assistant_messages": {},
         }
+        if chat_run is not None:
+            payload.setdefault("assistant_chat_runs", {})[chat_run["id"]] = dict(chat_run)
         if conversation is not None:
             payload.setdefault("assistant_conversations", {})[conversation["id"]] = dict(
                 conversation
@@ -975,6 +994,7 @@ class FakeSnapshotRepository:
         payload = self.assistant_chat_payload or {
             "assistant_action_drafts": {},
             "assistant_action_runs": {},
+            "assistant_chat_runs": {},
             "assistant_conversations": {},
             "assistant_messages": {},
         }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 
 import pytest
@@ -113,6 +114,132 @@ def test_assistant_history_service_is_user_scoped():
         )
     assert not_found.value.status_code == 404
     assert not_found.value.code == "NOT_FOUND"
+
+
+def test_assistant_chat_persists_run_and_message_lifecycle_for_model_success():
+    store = MemoryStore()
+    user = {"id": "user_admin", "roles": ["admin"]}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "当前进展正常。",
+                                        "suggestions": ["查看需求进展"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 6, "prompt_tokens": 20, "total_tokens": 26},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    response = assistant_chat_response(
+        store,
+        model_gateway_api_key="test-key",
+        model_gateway_base_url="https://model.example/v1",
+        model_gateway_default_chat_model="assistant-test",
+        model_gateway_status="configured",
+        payload=AssistantChatRequest(
+            client_request_id="client_request_success",
+            message="查询 AI Brain 进展",
+            run_id="assistant_chat_run_success",
+        ),
+        urlopen_func=lambda _request, timeout=None: FakeResponse(),
+        user=user,
+    )
+
+    assert response["run_id"] == "assistant_chat_run_success"
+    assert response["run"]["status"] == "succeeded"
+    run = store.assistant_chat_runs["assistant_chat_run_success"]
+    assert run["status"] == "succeeded"
+    messages = list(store.assistant_messages.values())
+    assert [message["status"] for message in messages] == ["completed", "completed"]
+    assert all(message["run_id"] == "assistant_chat_run_success" for message in messages)
+    assert messages[0]["client_request_id"] == "client_request_success"
+
+
+def test_assistant_chat_cancel_run_marks_turn_cancelled_after_model_returns():
+    store = MemoryStore()
+    user = {"id": "user_admin", "roles": ["admin"]}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": "这条回答不应进入历史。",
+                                        "suggestions": ["不应显示"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 6, "prompt_tokens": 20, "total_tokens": 26},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(_request, timeout=None):
+        assistant_chat_service.cancel_assistant_chat_run_response(
+            store,
+            reason="test_cancel",
+            run_id="assistant_chat_run_cancel",
+            user=user,
+        )
+        return FakeResponse()
+
+    response = assistant_chat_response(
+        store,
+        model_gateway_api_key="test-key",
+        model_gateway_base_url="https://model.example/v1",
+        model_gateway_default_chat_model="assistant-test",
+        model_gateway_status="configured",
+        payload=AssistantChatRequest(
+            client_request_id="client_request_cancel",
+            message="请生成长分析",
+            run_id="assistant_chat_run_cancel",
+        ),
+        urlopen_func=fake_urlopen,
+        user=user,
+    )
+
+    assert response["model"] == "assistant-cancelled"
+    assert response["message"]["status"] == "cancelled"
+    run = store.assistant_chat_runs["assistant_chat_run_cancel"]
+    assert run["status"] == "cancelled"
+    assert run["cancel_reason"] == "test_cancel"
+    contents = [message["content"] for message in store.assistant_messages.values()]
+    assert "这条回答不应进入历史。" not in contents
+    assert [message["status"] for message in store.assistant_messages.values()] == [
+        "cancelled",
+        "cancelled",
+    ]
 
 
 def test_assistant_chat_runs_explicitly_mentioned_scheduled_job_once_without_model_gateway():

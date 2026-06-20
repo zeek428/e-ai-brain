@@ -197,6 +197,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "062_assistant_action_draft_idempotency.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "063_assistant_chat_runs.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1186,6 +1190,12 @@ class PostgresSnapshotRepository:
     def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]:
         return self._assistant_chat_read_repository.list_assistant_conversations(user_id=user_id)
 
+    def list_assistant_chat_runs(self, *, user_id: str) -> list[dict[str, Any]]:
+        return self._assistant_chat_read_repository.list_assistant_chat_runs(user_id=user_id)
+
+    def get_assistant_chat_run(self, *, run_id: str) -> dict[str, Any] | None:
+        return self._assistant_chat_read_repository.get_assistant_chat_run(run_id=run_id)
+
     def list_assistant_conversation_messages(
         self,
         *,
@@ -1819,12 +1829,14 @@ class PostgresSnapshotRepository:
     def save_assistant_chat_records(
         self,
         *,
+        chat_run: dict[str, Any] | None = None,
         conversation: dict[str, Any] | None,
         messages: list[dict[str, Any]],
         audit_events: list[dict[str, Any]],
         model_log: dict[str, Any] | None = None,
     ) -> None:
         self._assistant_chat_read_repository.save_assistant_chat_records(
+            chat_run=chat_run,
             conversation=conversation,
             messages=messages,
             audit_events=audit_events,

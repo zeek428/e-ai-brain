@@ -159,8 +159,27 @@ export type AssistantChatResponse = {
   messageId: string;
   model: string;
   references: AssistantReference[];
+  run?: AssistantChatRun;
+  runId?: string;
+  status?: string;
   suggestions: string[];
   toolResults: AssistantToolResult[];
+};
+
+export type AssistantChatRun = {
+  assistant_message_id?: string;
+  cancel_reason?: string;
+  cancelled_at?: string;
+  cancelled_by?: string;
+  client_request_id?: string;
+  conversation_id?: string;
+  error_code?: string;
+  error_message?: string;
+  finished_at?: string;
+  id: string;
+  started_at?: string;
+  status: string;
+  user_message_id?: string;
 };
 
 export type AssistantIntent = {
@@ -353,6 +372,34 @@ export const ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY =
   'ai_brain_assistant_plugin_connection_draft';
 export const ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY =
   'ai_brain_assistant_draft_resolution';
+export const ASSISTANT_RECENT_REFERENCES_STORAGE_KEY =
+  'ai_brain_assistant_recent_references';
+
+const ASSISTANT_SCOPED_STORAGE_KEYS = [
+  ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+  ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
+  ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+  ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
+  ASSISTANT_RECENT_REFERENCES_STORAGE_KEY,
+];
+
+export function assistantScopedStorageKey(baseKey: string) {
+  const userId = getStoredCurrentUser()?.id;
+  return userId ? `${baseKey}:${userId}` : `${baseKey}:anonymous`;
+}
+
+function clearAssistantLocalCachesForCurrentUser() {
+  if (typeof globalThis.localStorage === 'undefined' || typeof globalThis.sessionStorage === 'undefined') {
+    return;
+  }
+  ASSISTANT_SCOPED_STORAGE_KEYS.forEach((baseKey) => {
+    const scopedKey = assistantScopedStorageKey(baseKey);
+    globalThis.localStorage.removeItem(scopedKey);
+    globalThis.sessionStorage.removeItem(scopedKey);
+    globalThis.localStorage.removeItem(baseKey);
+    globalThis.sessionStorage.removeItem(baseKey);
+  });
+}
 
 export type AssistantDraftResourceType =
   | 'ai_agent'
@@ -386,7 +433,9 @@ export function readAssistantDraftResolutions(): AssistantDraftResolutionMap {
     return {};
   }
   try {
-    const parsed = JSON.parse(window.sessionStorage.getItem(ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY) ?? '{}') as unknown;
+    const parsed = JSON.parse(
+      window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY)) ?? '{}',
+    ) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as AssistantDraftResolutionMap;
     }
@@ -418,7 +467,7 @@ export function rememberAssistantDraftResolution(params: {
     nextRecord.scheduled_job_run_id = params.scheduledJobRunId;
   }
   window.sessionStorage.setItem(
-    ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
+    assistantScopedStorageKey(ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY),
     JSON.stringify({ ...resolutions, [params.draftId]: nextRecord }),
   );
 }
@@ -451,13 +500,20 @@ export type AssistantConversationSummary = {
 };
 
 export type AssistantConversationMessage = {
+  cancelledAt?: string;
+  clientRequestId?: string;
+  completedAt?: string;
   content: string;
   createdAt?: string;
+  errorCode?: string;
+  failedAt?: string;
   id: string;
   intent?: AssistantIntent;
   model?: string;
   productId?: string;
   role: 'assistant' | 'user';
+  runId?: string;
+  status?: string;
   references: AssistantReference[];
   suggestions: string[];
   toolResults: AssistantToolResult[];
@@ -467,15 +523,24 @@ type AssistantChatApiResponse = {
   conversation_id: string;
   latency_ms?: number;
   message: {
+    cancelled_at?: string;
+    client_request_id?: string;
+    completed_at?: string;
     content?: string;
+    error_code?: string;
+    failed_at?: string;
     id?: string;
     intent?: AssistantIntent;
     references?: AssistantReference[];
     role?: string;
+    run_id?: string;
+    status?: string;
     tool_results?: AssistantToolResult[];
   };
   model?: string;
   references?: AssistantReference[];
+  run?: AssistantChatRun;
+  run_id?: string;
   suggestions?: string[];
   tool_results?: AssistantToolResult[];
 };
@@ -491,24 +556,34 @@ type AssistantConversationApiRecord = {
 };
 
 type AssistantMessageApiRecord = {
+  cancelled_at?: string;
+  client_request_id?: string;
+  completed_at?: string;
   content?: string;
   created_at?: string;
+  error_code?: string;
+  failed_at?: string;
   id?: string;
   intent?: AssistantIntent;
   model?: string;
   product_id?: string;
   role?: string;
+  run_id?: string;
+  status?: string;
   references?: AssistantReference[];
   suggestions?: string[];
   tool_results?: AssistantToolResult[];
 };
 
 export type AssistantChatPayload = {
+  clientRequestId?: string;
   context?: Record<string, unknown>;
   conversationId?: string;
   message: string;
   productId?: string;
   references?: AssistantReference[];
+  runId?: string;
+  signal?: AbortSignal;
 };
 
 export type AssistantActionDraftRecord = {
@@ -2449,6 +2524,7 @@ export async function chatWithAssistant(
   const token = requireAccessToken();
   const response = await apiRequest<AssistantChatApiResponse>('/api/assistant/chat', {
     body: {
+      client_request_id: payload.clientRequestId,
       context: payload.context,
       conversation_id: payload.conversationId,
       message: payload.message,
@@ -2457,8 +2533,10 @@ export async function chatWithAssistant(
         id: reference.id,
         type: reference.type,
       })) ?? [],
+      run_id: payload.runId,
     },
     method: 'POST',
+    signal: payload.signal,
     token,
   });
   return {
@@ -2469,9 +2547,24 @@ export async function chatWithAssistant(
     messageId: response.message.id ?? response.conversation_id,
     model: response.model ?? '',
     references: response.message.references ?? response.references ?? [],
+    run: response.run,
+    runId: response.run_id ?? response.message.run_id ?? response.run?.id,
+    status: response.message.status,
     suggestions: response.suggestions ?? [],
     toolResults: response.message.tool_results ?? response.tool_results ?? [],
   };
+}
+
+export async function cancelAssistantChatRun(
+  runId: string,
+  reason = 'user_cancelled',
+): Promise<AssistantChatRun> {
+  const token = requireAccessToken();
+  return apiRequest<AssistantChatRun>(`/api/assistant/chat-runs/${runId}/cancel`, {
+    body: { reason },
+    method: 'POST',
+    token,
+  });
 }
 
 export async function fetchAssistantReferenceCandidates(params: {
@@ -2693,24 +2786,33 @@ export async function fetchAssistantConversations(): Promise<AssistantConversati
 
 export async function fetchAssistantConversationMessages(
   conversationId: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<AssistantConversationMessage[]> {
   const token = requireAccessToken();
   const response = await apiRequest<ListResponse<AssistantMessageApiRecord>>(
     `/api/assistant/conversations/${conversationId}/messages`,
     {
       method: 'GET',
+      signal: options.signal,
       token,
     },
   );
   return response.items.map((item) => ({
+    cancelledAt: item.cancelled_at,
+    clientRequestId: item.client_request_id,
+    completedAt: item.completed_at,
     content: item.content ?? '',
     createdAt: item.created_at,
+    errorCode: item.error_code,
+    failedAt: item.failed_at,
     id: item.id ?? conversationId,
     intent: item.intent,
     model: item.model,
     productId: item.product_id,
     references: item.references ?? [],
     role: item.role === 'user' ? 'user' : 'assistant',
+    runId: item.run_id,
+    status: item.status,
     suggestions: item.suggestions ?? [],
     toolResults: item.tool_results ?? [],
   }));
@@ -2771,6 +2873,7 @@ export function clearAccessToken() {
   if (typeof globalThis.localStorage === 'undefined') {
     return;
   }
+  clearAssistantLocalCachesForCurrentUser();
   globalThis.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
   globalThis.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
   emitAuthStateChanged();

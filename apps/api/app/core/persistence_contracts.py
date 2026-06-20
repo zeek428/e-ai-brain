@@ -727,6 +727,10 @@ class ModelGatewayRepository(Protocol):
 class AssistantChatRepository(Protocol):
     def load_assistant_chat(self) -> dict[str, Any] | None: ...
 
+    def list_assistant_chat_runs(self, *, user_id: str) -> list[dict[str, Any]]: ...
+
+    def get_assistant_chat_run(self, *, run_id: str) -> dict[str, Any] | None: ...
+
     def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]: ...
 
     def list_assistant_conversation_messages(
@@ -767,6 +771,7 @@ class AssistantChatRepository(Protocol):
     def save_assistant_chat_records(
         self,
         *,
+        chat_run: dict[str, Any] | None = None,
         conversation: dict[str, Any] | None,
         messages: list[dict[str, Any]],
         audit_events: list[dict[str, Any]],

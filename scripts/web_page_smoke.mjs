@@ -42,6 +42,7 @@ function parseArgs(argv) {
   const options = {
     apiBaseUrl: process.env.READINESS_API_BASE_URL || 'http://localhost:8000',
     bearerToken: process.env.READINESS_BEARER_TOKEN || '',
+    checkAssistantLayout: false,
     chromePath: process.env.READINESS_CHROME_PATH || '',
     headed: false,
     expectedTextByRoute: {},
@@ -64,6 +65,8 @@ function parseArgs(argv) {
       options.apiBaseUrl = next();
     } else if (arg === '--bearer-token') {
       options.bearerToken = next();
+    } else if (arg === '--check-assistant-layout') {
+      options.checkAssistantLayout = true;
     } else if (arg === '--chrome-path') {
       options.chromePath = next();
     } else if (arg === '--headed') {
@@ -111,6 +114,8 @@ Options:
   --username USER         Login username. Defaults to READINESS_USERNAME.
   --password PASSWORD     Login password. Defaults to READINESS_PASSWORD.
   --bearer-token TOKEN    Existing bearer token. Defaults to READINESS_BEARER_TOKEN.
+  --check-assistant-layout
+                          For /assistant, check overflow, composer visibility, and + menu visibility.
   --chrome-path PATH      Chrome/Chromium executable path. Defaults to READINESS_CHROME_PATH or auto-detect.
   --route PATH            Route to check. Can be provided multiple times.
   --expect-text ROUTE=TEXT
@@ -401,6 +406,114 @@ async function evaluate(client, sessionId, expression) {
   return result.result?.value;
 }
 
+async function checkAssistantLayout(client, sessionId) {
+  return evaluate(
+    client,
+    sessionId,
+    `(() => new Promise((resolve) => {
+      const result = {
+        addMenuLastItemVisible: false,
+        bodyScrollWidth: document.body ? document.body.scrollWidth : 0,
+        clientWidth: document.documentElement ? document.documentElement.clientWidth : window.innerWidth,
+        composerVisible: false,
+        docScrollWidth: document.documentElement ? document.documentElement.scrollWidth : 0,
+        failures: [],
+        inputVisible: false,
+        itemCount: 0,
+        lastItemRect: null,
+        listRect: null,
+        menuRect: null,
+        menuVisible: false,
+        overflowOffenders: []
+      };
+      const viewportWidth = window.innerWidth || result.clientWidth;
+      const viewportHeight = window.innerHeight || 0;
+      const composer = document.querySelector('.assistant-composer');
+      const input = document.querySelector('.assistant-composer-input textarea, textarea.assistant-composer-input');
+      const addButton = document.querySelector('[aria-label="添加 @ 能力"]');
+      const trackOverflow = (element) => {
+        if (!element || typeof element.getBoundingClientRect !== 'function') {
+          return;
+        }
+        const rect = element.getBoundingClientRect();
+        if (rect.width > 0 && rect.right > viewportWidth + 1) {
+          result.overflowOffenders.push({
+            className: element.className || element.tagName,
+            right: Math.round(rect.right),
+            width: Math.round(rect.width)
+          });
+        }
+      };
+      document.querySelectorAll('.assistant-chat-panel, .assistant-message-list, .assistant-bubble-content, .assistant-composer, .assistant-suggestions, .assistant-reference-list').forEach(trackOverflow);
+      if (composer) {
+        const rect = composer.getBoundingClientRect();
+        result.composerVisible = rect.bottom <= viewportHeight + 1 && rect.top >= -1;
+      }
+      if (input) {
+        const rect = input.getBoundingClientRect();
+        result.inputVisible = rect.bottom <= viewportHeight + 1 && rect.top >= -1 && rect.width > 0;
+      }
+      if (addButton && typeof addButton.click === 'function') {
+        addButton.click();
+      }
+      const inspectMenu = () => {
+        const menu = document.querySelector('.assistant-add-menu');
+        const list = document.querySelector('.assistant-add-menu-list');
+        const items = Array.from(document.querySelectorAll('.assistant-add-menu-item'));
+        result.menuVisible = Boolean(menu);
+        result.itemCount = items.length;
+        if (menu) {
+          const menuRect = menu.getBoundingClientRect();
+          result.menuRect = {
+            bottom: Math.round(menuRect.bottom),
+            height: Math.round(menuRect.height),
+            top: Math.round(menuRect.top)
+          };
+        }
+        if (menu && list && items.length) {
+          const listRect = list.getBoundingClientRect();
+          const lastRect = items[items.length - 1].getBoundingClientRect();
+          result.listRect = {
+            bottom: Math.round(listRect.bottom),
+            height: Math.round(listRect.height),
+            top: Math.round(listRect.top)
+          };
+          result.lastItemRect = {
+            bottom: Math.round(lastRect.bottom),
+            height: Math.round(lastRect.height),
+            top: Math.round(lastRect.top)
+          };
+          result.addMenuLastItemVisible = lastRect.bottom <= listRect.bottom + 1 && lastRect.top >= listRect.top - 1;
+        }
+        if (result.docScrollWidth > result.clientWidth + 1 || result.bodyScrollWidth > result.clientWidth + 1) {
+          result.failures.push('assistant page has horizontal overflow');
+        }
+        if (!result.composerVisible || !result.inputVisible) {
+          result.failures.push('assistant composer or input is not fully visible');
+        }
+        if (!result.menuVisible || !result.addMenuLastItemVisible) {
+          result.failures.push('assistant + menu is not fully visible');
+        }
+        if (result.overflowOffenders.length) {
+          result.failures.push('assistant elements overflow viewport: ' + JSON.stringify(result.overflowOffenders.slice(0, 5)));
+        }
+        resolve(result);
+      };
+      const startedAt = Date.now();
+      const waitForMenuItems = () => {
+        const items = document.querySelectorAll('.assistant-add-menu-item');
+        const empty = document.querySelector('.assistant-add-menu-empty');
+        if (items.length || empty || Date.now() - startedAt > 1800) {
+          inspectMenu();
+          return;
+        }
+        window.setTimeout(waitForMenuItems, 100);
+      };
+      waitForMenuItems();
+    }))()`,
+  );
+}
+
 async function checkRoute(client, sessionId, route, options, messages, networkResponses) {
   messages.length = 0;
   networkResponses.length = 0;
@@ -478,7 +591,13 @@ async function checkRoute(client, sessionId, route, options, messages, networkRe
         .join(' | ')}`,
     );
   }
+  let assistantLayout;
+  if (options.checkAssistantLayout && normalizeRoutePath(route) === '/assistant') {
+    assistantLayout = await checkAssistantLayout(client, sessionId);
+    failures.push(...(assistantLayout.failures || []));
+  }
   return {
+    assistantLayout,
     failures,
     path: state.locationPath,
     route,
@@ -565,6 +684,9 @@ async function runSmoke(options) {
       );
       for (const failure of result.failures) {
         console.log(`  - ${failure}`);
+      }
+      if (result.failures.length && result.assistantLayout) {
+        console.log(`  assistant_layout=${JSON.stringify(result.assistantLayout)}`);
       }
     }
     if (failed.length) {

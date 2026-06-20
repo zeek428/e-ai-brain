@@ -72,7 +72,10 @@ def assistant_conversation_messages_response(
             current_store,
             conversation_id=conversation_id,
         )
-    items = [public_assistant_message(message) for message in messages]
+    items = [
+        public_assistant_message(message, include_tool_details=False)
+        for message in messages
+    ]
     return {"items": items, "total": len(items)}
 
 
@@ -141,11 +144,18 @@ def ensure_assistant_conversation(
 def append_assistant_message(
     current_store: MemoryStore,
     *,
+    client_request_id: str | None = None,
     content: str,
     conversation: dict[str, Any],
+    cancelled_at: str | None = None,
+    completed_at: str | None = None,
+    error_code: str | None = None,
+    failed_at: str | None = None,
     intent: dict[str, Any] | None = None,
     now: str,
     role: str,
+    run_id: str | None = None,
+    status: str = "completed",
     user_id: str,
     model: str | None = None,
     references: list[dict[str, str]] | None = None,
@@ -160,16 +170,33 @@ def append_assistant_message(
     message = {
         "content": content,
         "conversation_id": conversation["id"],
+        "client_request_id": client_request_id,
+        "cancelled_at": cancelled_at,
+        "completed_at": completed_at,
         "created_at": now,
+        "error_code": error_code,
+        "failed_at": failed_at,
         "id": current_store.new_id("assistant_message"),
         "metadata_json": metadata_json,
         "model": model,
         "product_id": conversation.get("product_id"),
         "references": references or [],
         "role": role,
+        "run_id": run_id,
+        "status": status,
         "suggestions": suggestions or [],
         "user_id": user_id,
     }
+    for optional_key in (
+        "client_request_id",
+        "cancelled_at",
+        "completed_at",
+        "error_code",
+        "failed_at",
+        "run_id",
+    ):
+        if message[optional_key] is None:
+            message.pop(optional_key)
     if not assistant_uses_repository_context(current_store):
         current_store.assistant_messages[message["id"]] = message
     conversation["last_message_at"] = now

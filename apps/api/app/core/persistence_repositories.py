@@ -191,6 +191,7 @@ def install_callback_aliases(repository: Any) -> None:
     repository._upsert_model_gateway_logs = callbacks.upsert_model_gateway_logs
     repository._upsert_assistant_conversations = callbacks.upsert_assistant_conversations
     repository._upsert_assistant_messages = callbacks.upsert_assistant_messages
+    repository._upsert_assistant_chat_runs = callbacks.upsert_assistant_chat_runs
     repository._upsert_assistant_action_drafts = callbacks.upsert_assistant_action_drafts
     repository._upsert_assistant_action_runs = callbacks.upsert_assistant_action_runs
     repository._mock_issue_rows = callbacks.mock_issue_rows

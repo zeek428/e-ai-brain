@@ -25,14 +25,54 @@ class AssistantChatReadRepository:
             with connection.cursor() as cursor:
                 action_drafts = self._load_assistant_action_drafts(cursor)
                 action_runs = self._load_assistant_action_runs(cursor)
+                chat_runs = self._load_assistant_chat_runs(cursor)
                 conversations = self._load_assistant_conversations(cursor)
                 messages = self._load_assistant_messages(cursor)
         return {
             "assistant_action_drafts": action_drafts,
             "assistant_action_runs": action_runs,
+            "assistant_chat_runs": chat_runs,
             "assistant_conversations": conversations,
             "assistant_messages": messages,
         }
+
+    def list_assistant_chat_runs(self, *, user_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, user_id, conversation_id, user_message_id,
+                           assistant_message_id, client_request_id, status,
+                           cancel_reason, cancelled_by, cancelled_at, error_code,
+                           error_message, metadata_json, started_at, finished_at,
+                           created_at, updated_at
+                    FROM assistant_chat_runs
+                    WHERE user_id = %s
+                    ORDER BY updated_at DESC, id
+                    """,
+                    (user_id,),
+                )
+                return [self._assistant_chat_run_from_row(row) for row in cursor.fetchall()]
+
+    def get_assistant_chat_run(self, *, run_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, user_id, conversation_id, user_message_id,
+                           assistant_message_id, client_request_id, status,
+                           cancel_reason, cancelled_by, cancelled_at, error_code,
+                           error_message, metadata_json, started_at, finished_at,
+                           created_at, updated_at
+                    FROM assistant_chat_runs
+                    WHERE id = %s
+                    """,
+                    (run_id,),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return self._assistant_chat_run_from_row(row)
 
     def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]:
         with self._connect() as connection:
@@ -73,7 +113,9 @@ class AssistantChatReadRepository:
                 cursor.execute(
                     """
                     SELECT id, conversation_id, user_id, role, content, product_id, model,
-                           suggestions, metadata_json, created_at, updated_at
+                           suggestions, metadata_json, status, client_request_id, run_id,
+                           cancelled_at, completed_at, failed_at, error_code,
+                           created_at, updated_at
                     FROM assistant_messages
                     WHERE conversation_id = %s AND user_id = %s
                     ORDER BY created_at, id
@@ -293,6 +335,7 @@ class AssistantChatReadRepository:
     def save_assistant_chat(self, payload: dict[str, Any]) -> None:
         action_drafts = payload.get("assistant_action_drafts", {})
         action_runs = payload.get("assistant_action_runs", {})
+        chat_runs = payload.get("assistant_chat_runs", {})
         conversations = payload.get("assistant_conversations", {})
         messages = payload.get("assistant_messages", {})
         with self._connect() as connection:
@@ -301,17 +344,20 @@ class AssistantChatReadRepository:
                     cursor,
                     action_drafts=action_drafts,
                     action_runs=action_runs,
+                    chat_runs=chat_runs,
                     conversations=conversations,
                     messages=messages,
                 )
                 self.upsert_assistant_action_drafts(cursor, action_drafts)
                 self.upsert_assistant_action_runs(cursor, action_runs)
+                self.upsert_assistant_chat_runs(cursor, chat_runs)
                 self.upsert_assistant_conversations(cursor, conversations)
                 self.upsert_assistant_messages(cursor, messages)
 
     def save_assistant_chat_records(
         self,
         *,
+        chat_run: dict[str, Any] | None = None,
         conversation: dict[str, Any] | None,
         messages: list[dict[str, Any]],
         audit_events: list[dict[str, Any]],
@@ -319,6 +365,8 @@ class AssistantChatReadRepository:
     ) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                if chat_run is not None:
+                    self.upsert_assistant_chat_runs(cursor, {chat_run["id"]: chat_run})
                 if conversation is not None:
                     self.upsert_assistant_conversations(
                         cursor,
@@ -381,6 +429,20 @@ class AssistantChatReadRepository:
         )
         return {row[0]: self._assistant_action_run_from_row(row) for row in cursor.fetchall()}
 
+    def _load_assistant_chat_runs(self, cursor) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT id, user_id, conversation_id, user_message_id,
+                   assistant_message_id, client_request_id, status,
+                   cancel_reason, cancelled_by, cancelled_at, error_code,
+                   error_message, metadata_json, started_at, finished_at,
+                   created_at, updated_at
+            FROM assistant_chat_runs
+            ORDER BY created_at, id
+            """
+        )
+        return {row[0]: self._assistant_chat_run_from_row(row) for row in cursor.fetchall()}
+
     def _load_assistant_conversations(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
@@ -396,7 +458,9 @@ class AssistantChatReadRepository:
         cursor.execute(
             """
             SELECT id, conversation_id, user_id, role, content, product_id, model,
-                   suggestions, metadata_json, created_at, updated_at
+                   suggestions, metadata_json, status, client_request_id, run_id,
+                   cancelled_at, completed_at, failed_at, error_code,
+                   created_at, updated_at
             FROM assistant_messages
             ORDER BY created_at, id
             """
@@ -409,6 +473,7 @@ class AssistantChatReadRepository:
         *,
         action_drafts: dict[str, dict[str, Any]],
         action_runs: dict[str, dict[str, Any]],
+        chat_runs: dict[str, dict[str, Any]],
         conversations: dict[str, dict[str, Any]],
         messages: dict[str, dict[str, Any]],
     ) -> None:
@@ -416,6 +481,7 @@ class AssistantChatReadRepository:
             raise RuntimeError("Assistant chat delete callback is not configured")
         self._delete_missing(cursor, "assistant_messages", messages)
         self._delete_missing(cursor, "assistant_conversations", conversations)
+        self._delete_missing(cursor, "assistant_chat_runs", chat_runs)
         self._delete_missing(cursor, "assistant_action_runs", action_runs)
         self._delete_missing(cursor, "assistant_action_drafts", action_drafts)
 
@@ -470,11 +536,15 @@ class AssistantChatReadRepository:
                 """
                 INSERT INTO assistant_messages (
                   id, conversation_id, user_id, role, content, product_id, model,
-                  suggestions, metadata_json, created_at, updated_at
+                  suggestions, metadata_json, status, client_request_id, run_id,
+                  cancelled_at, completed_at, failed_at, error_code, created_at,
+                  updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
-                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  %s, %s, %s, %s::timestamptz, %s::timestamptz,
+                  %s::timestamptz, %s, COALESCE(%s::timestamptz, now()),
+                  COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   conversation_id = EXCLUDED.conversation_id,
@@ -485,6 +555,13 @@ class AssistantChatReadRepository:
                   model = EXCLUDED.model,
                   suggestions = EXCLUDED.suggestions,
                   metadata_json = EXCLUDED.metadata_json,
+                  status = EXCLUDED.status,
+                  client_request_id = EXCLUDED.client_request_id,
+                  run_id = EXCLUDED.run_id,
+                  cancelled_at = EXCLUDED.cancelled_at,
+                  completed_at = EXCLUDED.completed_at,
+                  failed_at = EXCLUDED.failed_at,
+                  error_code = EXCLUDED.error_code,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -501,6 +578,75 @@ class AssistantChatReadRepository:
                         or {"references": message.get("references", [])},
                         ensure_ascii=False,
                     ),
+                    message.get("status", "completed"),
+                    message.get("client_request_id"),
+                    message.get("run_id"),
+                    message.get("cancelled_at"),
+                    message.get("completed_at"),
+                    message.get("failed_at"),
+                    message.get("error_code"),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    def upsert_assistant_chat_runs(
+        self,
+        cursor,
+        runs: dict[str, dict[str, Any]],
+    ) -> None:
+        for run in runs.values():
+            created_at = run.get("created_at")
+            updated_at = run.get("updated_at") or run.get("finished_at") or created_at
+            cursor.execute(
+                """
+                INSERT INTO assistant_chat_runs (
+                  id, user_id, conversation_id, user_message_id,
+                  assistant_message_id, client_request_id, status,
+                  cancel_reason, cancelled_by, cancelled_at, error_code,
+                  error_message, metadata_json, started_at, finished_at,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s,
+                  %s, %s, %s,
+                  %s, %s, %s::timestamptz, %s,
+                  %s, %s::jsonb, %s::timestamptz, %s::timestamptz,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  user_id = EXCLUDED.user_id,
+                  conversation_id = EXCLUDED.conversation_id,
+                  user_message_id = EXCLUDED.user_message_id,
+                  assistant_message_id = EXCLUDED.assistant_message_id,
+                  client_request_id = EXCLUDED.client_request_id,
+                  status = EXCLUDED.status,
+                  cancel_reason = EXCLUDED.cancel_reason,
+                  cancelled_by = EXCLUDED.cancelled_by,
+                  cancelled_at = EXCLUDED.cancelled_at,
+                  error_code = EXCLUDED.error_code,
+                  error_message = EXCLUDED.error_message,
+                  metadata_json = EXCLUDED.metadata_json,
+                  started_at = EXCLUDED.started_at,
+                  finished_at = EXCLUDED.finished_at,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    run["id"],
+                    run["user_id"],
+                    run.get("conversation_id"),
+                    run.get("user_message_id"),
+                    run.get("assistant_message_id"),
+                    run.get("client_request_id"),
+                    run.get("status", "running"),
+                    run.get("cancel_reason"),
+                    run.get("cancelled_by"),
+                    run.get("cancelled_at"),
+                    run.get("error_code"),
+                    run.get("error_message"),
+                    json.dumps(run.get("metadata_json") or {}, ensure_ascii=False),
+                    run.get("started_at"),
+                    run.get("finished_at"),
                     created_at,
                     updated_at,
                 ),
@@ -694,6 +840,45 @@ class AssistantChatReadRepository:
                 run.pop(optional_key)
         return run
 
+    def _assistant_chat_run_from_row(self, row) -> dict[str, Any]:
+        run = {
+            "assistant_message_id": row[4],
+            "cancel_reason": row[7],
+            "cancelled_at": row[9].isoformat() if row[9] else None,
+            "cancelled_by": row[8],
+            "client_request_id": row[5],
+            "conversation_id": row[2],
+            "created_at": row[15].isoformat() if row[15] else None,
+            "error_code": row[10],
+            "error_message": row[11],
+            "finished_at": row[14].isoformat() if row[14] else None,
+            "id": row[0],
+            "metadata_json": dict(row[12] or {}),
+            "started_at": row[13].isoformat() if row[13] else None,
+            "status": row[6],
+            "updated_at": row[16].isoformat() if row[16] else None,
+            "user_id": row[1],
+            "user_message_id": row[3],
+        }
+        for optional_key in (
+            "assistant_message_id",
+            "cancel_reason",
+            "cancelled_at",
+            "cancelled_by",
+            "client_request_id",
+            "conversation_id",
+            "created_at",
+            "error_code",
+            "error_message",
+            "finished_at",
+            "started_at",
+            "updated_at",
+            "user_message_id",
+        ):
+            if run[optional_key] is None:
+                run.pop(optional_key)
+        return run
+
     def _assistant_conversation_from_row(self, row) -> dict[str, Any]:
         conversation = {
             "created_at": row[6].isoformat() if row[6] else None,
@@ -719,18 +904,36 @@ class AssistantChatReadRepository:
         message = {
             "content": row[4],
             "conversation_id": row[1],
-            "created_at": row[9].isoformat() if row[9] else None,
+            "cancelled_at": row[12].isoformat() if row[12] else None,
+            "client_request_id": row[10],
+            "completed_at": row[13].isoformat() if row[13] else None,
+            "created_at": row[16].isoformat() if row[16] else None,
+            "error_code": row[15],
+            "failed_at": row[14].isoformat() if row[14] else None,
             "id": row[0],
             "metadata_json": dict(row[8] or {}),
             "model": row[6],
             "product_id": row[5],
             "references": list((row[8] or {}).get("references") or []),
             "role": row[3],
+            "run_id": row[11],
+            "status": row[9] or "completed",
             "suggestions": list(row[7] or []),
-            "updated_at": row[10].isoformat() if row[10] else None,
+            "updated_at": row[17].isoformat() if row[17] else None,
             "user_id": row[2],
         }
-        for optional_key in ("created_at", "model", "product_id", "updated_at"):
+        for optional_key in (
+            "cancelled_at",
+            "client_request_id",
+            "completed_at",
+            "created_at",
+            "error_code",
+            "failed_at",
+            "model",
+            "product_id",
+            "run_id",
+            "updated_at",
+        ):
             if message[optional_key] is None:
                 message.pop(optional_key)
         return message

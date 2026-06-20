@@ -1,35 +1,21 @@
 import {
-  AppstoreOutlined,
-  BarChartOutlined,
-  CheckCircleOutlined,
   ClockCircleOutlined,
-  CloseCircleOutlined,
-  DatabaseOutlined,
-  DownOutlined,
   ExclamationCircleOutlined,
   FileTextOutlined,
   LinkOutlined,
-  MessageOutlined,
-  PlusOutlined,
   ProjectOutlined,
   ReloadOutlined,
   RobotOutlined,
-  SendOutlined,
-  UpOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Input, Modal, Space, Spin, Tag, Typography, message as toast } from 'antd';
+import { Button, Modal, Space, Spin, Tag, Typography, message as toast } from 'antd';
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
-  ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
-  ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   cancelAssistantActionDraft,
+  cancelAssistantChatRun,
   chatWithAssistant,
   confirmAssistantActionDraft,
-  fetchAssistantConversationMessages,
-  fetchAssistantConversations,
   fetchAssistantDraftTemplates,
   fetchAssistantMetrics,
   fetchAssistantReferenceCandidates,
@@ -39,21 +25,14 @@ import {
   getAssistantActionDraft,
   getStoredCurrentUser,
   markAssistantActionDraftViewed,
-  readAssistantDraftResolutions,
   rememberAssistantDraftResolution,
   type AssistantActionDraftRecord,
-  type AssistantActionDraftPreview,
-  type AssistantChatResponse,
-  type AssistantConversationMessage,
   type AssistantDraftTemplate,
   type AssistantMetrics,
   type AssistantReference,
-  type AssistantConversationSummary,
   type AssistantDraftResolutionMap,
   type AssistantDraftResolutionRecord,
   type AssistantDraftResourceType,
-  type AssistantIntent,
-  type AssistantRepairAction,
   type AssistantRoleQuickTaskGroup,
   type AssistantToolResult,
   type AssistantToolResultItem,
@@ -61,84 +40,36 @@ import {
   type ScheduledJobRunRecord,
 } from '../../services/aiBrain';
 import { formatMutationError } from '../../utils/managementCrud';
+import { AssistantComposer } from './components/AssistantComposer';
+import { AssistantActionDraftCards } from './components/AssistantDraftCards';
+import {
+  assistantDraftId,
+  draftRegeneratePrompt,
+  draftStatusLabel,
+} from './components/draftPresentation';
+import { AssistantReferenceContext } from './components/AssistantReferenceContext';
+import {
+  AssistantReferencePicker,
+  type AssistantReferenceEmptyState,
+} from './components/AssistantReferencePicker';
+import { AssistantSidebar } from './components/AssistantSidebar';
+import {
+  AssistantDraftTemplateMarket,
+  AssistantMetricsPanel,
+} from './components/WorkbenchPanels';
+import {
+  type ChatMessage,
+  useAssistantConversation,
+  welcomeMessages,
+} from './hooks/useAssistantConversation';
+import { type QueryDraftResolution, useAssistantDrafts } from './hooks/useAssistantDrafts';
+import { useAssistantReferences } from './hooks/useAssistantReferences';
 
 const { Text, Title } = Typography;
-const { TextArea } = Input;
 const ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS = 250;
 const ASSISTANT_REFERENCE_CANDIDATE_LIMIT = 12;
-const ASSISTANT_ADD_ACTION_LIMIT = 8;
-const ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT = 8;
-const assistantDraftActionLabels: Record<string, string> = {
-  create_ai_agent: '创建AI角色',
-  create_ai_skill: '创建AI Skill',
-  create_analysis_draft: '创建分析草案',
-  create_plugin_action: '创建插件动作',
-  create_plugin_connection: '创建插件连接',
-  create_rd_task: '创建研发任务',
-  create_scheduled_job: '创建定时作业',
-};
-
-type ChatMessage = {
-  content: string;
-  id: string;
-  intent?: AssistantIntent;
-  references?: AssistantReference[];
-  role: 'assistant' | 'user';
-  toolResults?: AssistantToolResult[];
-};
-
-type QueryReferenceResolution = {
-  message?: string;
-  referenceId: string;
-  referenceType: string;
-  status: 'failed' | 'loading' | 'resolved';
-  title?: string;
-};
-
-type QueryDraftResolution = {
-  draftId: string;
-  message?: string;
-  status: 'failed' | 'loading' | 'resolved';
-  title?: string;
-};
-
-const welcomeMessages: ChatMessage[] = [
-  {
-    content: '我在，直接问我当前进展。',
-    id: 'assistant-welcome',
-    role: 'assistant',
-  },
-];
-
-const starterPrompts = [
-  {
-    icon: <ProjectOutlined />,
-    label: '项目进展',
-    prompt: 'AI Brain 项目现在开发到哪里了？',
-  },
-  {
-    icon: <DatabaseOutlined />,
-    label: '系统数据',
-    prompt: '当前产品、需求、任务和知识沉淀情况如何？',
-  },
-  {
-    icon: <ExclamationCircleOutlined />,
-    label: '阻塞与待确认',
-    prompt: '当前迭代有哪些阻塞需求、待确认 Review、代码评审结论和高风险 Bug？',
-  },
-  {
-    icon: <ClockCircleOutlined />,
-    label: '模型网关',
-    prompt: '模型网关和 GitHub PR Review 链路现在是否可用？',
-  },
-];
-const primaryStarterPromptLabels = new Set(['项目进展', '阻塞与待确认']);
-const primaryStarterPrompts = starterPrompts.filter((item) =>
-  primaryStarterPromptLabels.has(item.label),
-);
-const secondaryStarterPrompts = starterPrompts.filter((item) =>
-  !primaryStarterPromptLabels.has(item.label),
-);
+const ASSISTANT_ADD_ACTION_LIMIT = 20;
+const assistantStopCommands = ['终止', '停止', '取消', 'stop', 'cancel'];
 
 const scheduledJobRunOnceKeywords = [
   '执行一次',
@@ -168,8 +99,6 @@ const queryReferenceTypes = new Set([
   'scheduled_job',
   'scheduled_job_run',
 ]);
-const ASSISTANT_RECENT_REFERENCES_STORAGE_KEY = 'ai_brain_assistant_recent_references';
-const MAX_RECENT_REFERENCES = 8;
 const SCHEDULED_JOB_RUN_POLL_INTERVAL_MS = 5000;
 
 type AssistantScheduledJobRunItem = {
@@ -192,14 +121,6 @@ type AssistantScheduledJobRunNoticeItem = {
   scheduledJobId?: string;
   status: string;
   title: string;
-};
-
-type AssistantDraftWizardStep = {
-  depends_on?: string[];
-  key?: string;
-  status?: string;
-  summary?: string;
-  title?: string;
 };
 
 function actionDraftItems(toolResults?: AssistantToolResult[]) {
@@ -226,13 +147,6 @@ function actionDraftItems(toolResults?: AssistantToolResult[]) {
         )
         && assistantDraftId(item),
     );
-}
-
-function assistantDraftActionLabel(action?: string) {
-  if (!action) {
-    return '未知草案';
-  }
-  return assistantDraftActionLabels[action] ?? action;
 }
 
 function taskCreationGuideItems(toolResults?: AssistantToolResult[]) {
@@ -283,26 +197,6 @@ function itemText(item: AssistantToolResultItem, field: string) {
   return value === undefined || value === null || value === '' ? '-' : String(value);
 }
 
-function metricCount(value?: number) {
-  return Number.isFinite(value) ? new Intl.NumberFormat('zh-CN').format(Number(value)) : '-';
-}
-
-function metricPercent(value?: number) {
-  if (!Number.isFinite(value)) {
-    return '-';
-  }
-  const percentage = Number(value) * 100;
-  const rounded = Math.round(percentage * 10) / 10;
-  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
-}
-
-function metricRatio(numerator?: number, denominator?: number) {
-  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || Number(denominator) <= 0) {
-    return '-';
-  }
-  return metricPercent(Number(numerator) / Number(denominator));
-}
-
 function itemRecord(item: AssistantToolResultItem, field: string) {
   const value = item[field];
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -316,14 +210,8 @@ function unknownRecord(value: unknown) {
     : undefined;
 }
 
-function assistantDraftRunOnceRequested(draft: AssistantToolResultItem) {
-  if (draft.run_once_requested === true) {
-    return true;
-  }
-  const payload = itemRecord(draft, 'payload');
-  const configJson = itemRecord(payload, 'config_json');
-  const runOnceRequest = itemRecord(configJson, 'assistant_run_once_request');
-  return runOnceRequest.requested === true || runOnceRequest.requested === 'true';
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function diagnosticStageItems(item: AssistantToolResultItem) {
@@ -728,164 +616,6 @@ function comparisonDifferenceItems(item: AssistantToolResultItem) {
     : [];
 }
 
-function draftPayloadValue(payload: Record<string, unknown> | undefined, field: string) {
-  return field.split('.').reduce<unknown>((current, key) => {
-    if (!current || typeof current !== 'object' || Array.isArray(current)) {
-      return undefined;
-    }
-    return (current as Record<string, unknown>)[key];
-  }, payload);
-}
-
-function draftPayloadText(payload: Record<string, unknown> | undefined, field: string) {
-  const value = draftPayloadValue(payload, field);
-  if (Array.isArray(value)) {
-    return value.length ? value.join('、') : '-';
-  }
-  if (value && typeof value === 'object') {
-    return JSON.stringify(value);
-  }
-  return value === undefined || value === null || value === '' ? '-' : String(value);
-}
-
-function draftPrerequisiteText(
-  payload: Record<string, unknown> | undefined,
-  dependencyLabels: Map<string, string>,
-) {
-  const value = draftPayloadValue(payload, 'assistant_prerequisite_draft_ids');
-  if (!Array.isArray(value) || !value.length) {
-    return '-';
-  }
-  return value
-    .map((item) => {
-      const dependencyId = String(item ?? '').trim();
-      return dependencyLabels.get(dependencyId) ?? dependencyId;
-    })
-    .join('、');
-}
-
-function draftPayloadLabel(
-  payload: Record<string, unknown> | undefined,
-  field: string,
-  resultWriteTargetLabels: Map<string, string>,
-) {
-  const value = draftPayloadText(payload, field);
-  if (field === 'result_mapping.write_target') {
-    return resultWriteTargetLabels.get(value) ?? value;
-  }
-  return value;
-}
-
-function assistantDraftDependencyIds(
-  draft: Pick<AssistantToolResultItem, 'client_draft_id' | 'draft_id' | 'server_draft_id'>,
-) {
-  return [draft.draft_id, draft.server_draft_id, draft.client_draft_id]
-    .map((value) => String(value ?? '').trim())
-    .filter(Boolean);
-}
-
-function assistantDraftDependencyLabelMap(drafts: AssistantToolResultItem[]) {
-  const items = new Map<string, string>();
-  drafts.forEach((draft) => {
-    const title = String(draft.title ?? '').trim();
-    assistantDraftDependencyIds(draft).forEach((draftId) => {
-      items.set(draftId, title || draftId);
-    });
-  });
-  return items;
-}
-
-function draftWizardSteps(
-  draft: AssistantToolResultItem,
-  dependencyLabels: Map<string, string> = new Map(),
-): AssistantDraftWizardStep[] {
-  const value = draft.wizard_steps;
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .filter((item): item is Record<string, unknown> => (
-      Boolean(item) && typeof item === 'object' && !Array.isArray(item)
-    ))
-    .map((item) => ({
-      depends_on: Array.isArray(item.depends_on)
-        ? item.depends_on.map((dependency) => {
-          const dependencyId = String(dependency);
-          return dependencyLabels.get(dependencyId) ?? dependencyId;
-        })
-        : [],
-      key: item.key ? String(item.key) : undefined,
-      status: item.status ? String(item.status) : undefined,
-      summary: item.summary ? String(item.summary) : undefined,
-      title: item.title ? String(item.title) : undefined,
-    }));
-}
-
-function draftWizardStatusLabel(status?: string) {
-  if (status === 'ready') {
-    return { color: 'green', text: '已就绪' };
-  }
-  if (status === 'needs_prerequisite') {
-    return { color: 'orange', text: '需先确认前置草案' };
-  }
-  if (status === 'pending') {
-    return { color: 'blue', text: '待确认' };
-  }
-  if (status === 'skipped') {
-    return { color: 'default', text: '已跳过' };
-  }
-  if (status === 'blocked') {
-    return { color: 'red', text: '已阻塞' };
-  }
-  return { color: 'default', text: status || '未设置' };
-}
-
-function draftWizardPrerequisitePrompt(draftTitle: string | undefined, step: AssistantDraftWizardStep) {
-  const stepTitle = step.title || step.key || '当前步骤';
-  const dependencies = step.depends_on ?? [];
-  const dependencyText = dependencies.length ? `。依赖：${dependencies.join('、')}` : '';
-  return `为「${draftTitle || '配置草案'}」补齐「${stepTitle}」前置配置草案${dependencyText}`;
-}
-
-function draftWizardStepDraftPrompt(draftTitle: string | undefined, step: AssistantDraftWizardStep) {
-  const stepTitle = step.title || step.key || '当前步骤';
-  const dependencies = step.depends_on ?? [];
-  const dependencyText = dependencies.length ? `。依赖：${dependencies.join('、')}` : '';
-  const statusText = draftWizardStatusLabel(step.status).text;
-  return `为「${draftTitle || '配置草案'}」生成或调整「${stepTitle}」步骤草案。当前状态：${statusText}${dependencyText}。请给出建议配置、字段校验和下一步确认动作`;
-}
-
-function canGenerateWizardPrerequisite(step: AssistantDraftWizardStep) {
-  return step.status === 'needs_prerequisite' || step.status === 'blocked';
-}
-
-function draftWizardManualAdjustUrl(step: AssistantDraftWizardStep) {
-  const key = String(step.key ?? '').toLowerCase();
-  const title = String(step.title ?? '').toLowerCase();
-  if (
-    key.includes('data')
-    || key.includes('source')
-    || key.includes('connection')
-    || key.includes('result')
-    || key.includes('action')
-    || title.includes('数据来源')
-    || title.includes('结果动作')
-  ) {
-    return '/tasks/plugins';
-  }
-  if (
-    key.includes('ai')
-    || key.includes('agent')
-    || key.includes('skill')
-    || title.includes('ai')
-    || title.includes('角色')
-    || title.includes('skill')
-  ) {
-    return '/settings/ai-capabilities';
-  }
-  return '/tasks/scheduled-jobs';
-}
-
 type ActiveMentionRange = {
   endIndex: number;
   markerIndex: number;
@@ -933,6 +663,18 @@ function uniqueScheduledJobReferenceCandidate(references: AssistantReference[]) 
 function scheduledJobRunOnceRequested(value: string) {
   const normalized = value.toLowerCase();
   return scheduledJobRunOnceKeywords.some((keyword) => normalized.includes(keyword));
+}
+
+function assistantStopCommandRequested(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return assistantStopCommands.some((command) => normalized === command);
+}
+
+function createAssistantChatRunId() {
+  const randomId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `assistant_chat_run_${randomId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 }
 
 function assistantReferenceEmptyState(value: string) {
@@ -1081,16 +823,6 @@ function assistantDraftResolutionIds(
     .filter(Boolean) as string[];
 }
 
-function queryReferenceResolutionLabel(status: QueryReferenceResolution['status']) {
-  if (status === 'loading') {
-    return { color: 'processing', text: '解析中' };
-  }
-  if (status === 'resolved') {
-    return { color: 'green', text: '已带入' };
-  }
-  return { color: 'red', text: '未带入' };
-}
-
 function queryDraftResolutionLabel(status: QueryDraftResolution['status']) {
   if (status === 'loading') {
     return { color: 'processing', text: '加载中' };
@@ -1111,149 +843,6 @@ function queryDraftResolutionText(resolution: QueryDraftResolution) {
   return `草案加载失败：${resolution.draftId} ${resolution.message || '不存在或无权限'}`;
 }
 
-function queryReferenceResolutionText(resolution: QueryReferenceResolution) {
-  const label = referenceTypeLabel(resolution.referenceType);
-  if (resolution.status === 'loading') {
-    return `正在解析${label}引用：${resolution.referenceId}`;
-  }
-  if (resolution.status === 'resolved') {
-    return `已从链接带入${label}：${resolution.title || resolution.referenceId}`;
-  }
-  return `引用解析失败：${label} ${resolution.referenceId} ${resolution.message || '不存在或无权限'}`;
-}
-
-function draftStatusLabel(status?: string) {
-  if (status === 'confirmed' || status === 'applied') {
-    return { color: 'green', text: '已应用' };
-  }
-  if (status === 'cancelled') {
-    return { color: 'default', text: '已取消' };
-  }
-  if (status === 'expired') {
-    return { color: 'orange', text: '已过期' };
-  }
-  if (status === 'failed') {
-    return { color: 'red', text: '失败' };
-  }
-  return { color: 'blue', text: '待确认' };
-}
-
-function draftPreviewStatusLabel(status?: string) {
-  if (status === 'blocked') {
-    return { color: 'red', text: '阻塞' };
-  }
-  if (status === 'warning') {
-    return { color: 'orange', text: '需确认' };
-  }
-  return { color: 'green', text: '通过' };
-}
-
-function draftPreviewValueText(value: unknown): string {
-  if (value === null || value === undefined || value === '') {
-    return '-';
-  }
-  if (Array.isArray(value)) {
-    return value.length ? value.map(String).join('、') : '-';
-  }
-  if (typeof value === 'object') {
-    return JSON.stringify(value);
-  }
-  return String(value);
-}
-
-function assistantRepairActionUrl(action?: AssistantRepairAction) {
-  if (!action || action.action !== 'open_plugin_connection_test' || !action.resource_id) {
-    return undefined;
-  }
-  return `/tasks/plugins?connection_id=${encodeURIComponent(action.resource_id)}&open_test=1`;
-}
-
-function assistantRepairActionPrompt(
-  draftTitle: string | undefined,
-  action: AssistantRepairAction,
-) {
-  const targetTitle = draftTitle ? `「${draftTitle}」` : '当前草案';
-  if (action.action === 'generate_plugin_action_draft') {
-    return `请为${targetTitle}补齐结果动作草案`;
-  }
-  if (action.action === 'generate_connection_draft') {
-    return `请为${targetTitle}补齐数据连接草案`;
-  }
-  if (action.action === 'generate_ai_agent_draft') {
-    return `请为${targetTitle}补齐 AI角色草案`;
-  }
-  if (action.action === 'generate_ai_skill_draft') {
-    return `请为${targetTitle}补齐 AI Skill 草案`;
-  }
-  if (action.action === 'select_model_gateway') {
-    return `请为${targetTitle}选择可用模型网关配置`;
-  }
-  if (action.action === 'edit_field') {
-    return `请修正${targetTitle}的 ${action.field ?? '阻塞字段'}`;
-  }
-  return `请修复${targetTitle}的校验问题：${action.label ?? action.action}`;
-}
-
-function draftResourceLink(resolution?: AssistantDraftResolutionRecord) {
-  if (!resolution) {
-    return undefined;
-  }
-  if (resolution.resource_type === 'scheduled_job') {
-    return {
-      label: '打开定时作业',
-      url: `/tasks/scheduled-jobs?job_id=${resolution.resource_id}`,
-    };
-  }
-  if (resolution.resource_type === 'ai_skill') {
-    return {
-      label: '打开 Skill',
-      url: `/tasks/ai-capabilities?skill_id=${resolution.resource_id}`,
-    };
-  }
-  if (resolution.resource_type === 'ai_agent') {
-    return {
-      label: '打开 AI角色',
-      url: `/tasks/ai-capabilities?agent_id=${resolution.resource_id}`,
-    };
-  }
-  if (resolution.resource_type === 'plugin_action') {
-    return {
-      label: '打开插件动作',
-      url: `/tasks/plugins?action_id=${resolution.resource_id}`,
-    };
-  }
-  if (resolution.resource_type === 'assistant_analysis') {
-    return {
-      label: '打开分析结果',
-      url: `/assistant?draft_id=${resolution.resource_id}`,
-    };
-  }
-  if (resolution.resource_type === 'ai_task') {
-    return {
-      label: '打开研发任务',
-      url: `/delivery/rd-tasks?task_id=${resolution.resource_id}`,
-    };
-  }
-  return {
-    label: '打开插件连接',
-    url: `/tasks/plugins?connection_id=${resolution.resource_id}`,
-  };
-}
-
-function draftRunResourceLink(resolution?: AssistantDraftResolutionRecord) {
-  if (
-    !resolution
-    || resolution.resource_type !== 'scheduled_job'
-    || !resolution.scheduled_job_run_id
-  ) {
-    return undefined;
-  }
-  return {
-    label: '打开本次运行',
-    url: `/tasks/scheduled-jobs?job_id=${resolution.resource_id}&run_id=${resolution.scheduled_job_run_id}`,
-  };
-}
-
 function scheduledJobRunIdFromActionResult(result?: Record<string, unknown>) {
   const scheduledJobRun = result?.scheduled_job_run;
   if (!scheduledJobRun || typeof scheduledJobRun !== 'object' || Array.isArray(scheduledJobRun)) {
@@ -1261,145 +850,6 @@ function scheduledJobRunIdFromActionResult(result?: Record<string, unknown>) {
   }
   const runId = String((scheduledJobRun as Record<string, unknown>).id ?? '').trim();
   return runId || undefined;
-}
-
-function assistantDraftId(draft?: Pick<AssistantToolResultItem, 'client_draft_id' | 'draft_id' | 'server_draft_id'>) {
-  if (!draft) {
-    return undefined;
-  }
-  return [draft.draft_id, draft.server_draft_id, draft.client_draft_id]
-    .map((value) => String(value ?? '').trim())
-    .find(Boolean);
-}
-
-function draftRegeneratePrompt(draft: AssistantToolResultItem) {
-  return `重新生成「${draft.title ?? '配置草案'}」草案`;
-}
-
-function referenceTypeLabel(type: string) {
-  const labels: Record<string, string> = {
-    assistant_action: '动作',
-    ai_agent: 'AI角色',
-    ai_skill: 'Skill',
-    ai_task: '研发任务',
-    bug: '缺陷',
-    code_review_report: '代码评审',
-    human_review: '确认',
-    iteration_version: '迭代',
-    knowledge_deposit: '知识沉淀',
-    knowledge_chunk: '知识片段',
-    knowledge_document: '知识文档',
-    knowledge_folder: '知识目录',
-    knowledge_space: '知识空间',
-    plugin_action: '插件动作',
-    plugin_connection: '插件连接',
-    product: '产品',
-    requirement: '需求',
-    scheduled_job: '定时作业',
-    scheduled_job_run: '运行记录',
-  };
-  return labels[type] ?? type;
-}
-
-function referenceSourceModule(type: string) {
-  const modules: Record<string, string> = {
-    assistant_action: '动作',
-    ai_agent: 'AI能力配置',
-    ai_skill: 'AI能力配置',
-    ai_task: '需求交付',
-    bug: '需求交付',
-    code_review_report: '需求交付',
-    human_review: '需求交付',
-    iteration_version: '需求交付',
-    knowledge_deposit: '知识库',
-    knowledge_chunk: '知识库',
-    knowledge_document: '知识库',
-    knowledge_folder: '知识库',
-    knowledge_space: '知识库',
-    plugin_action: '插件管理',
-    plugin_connection: '插件管理',
-    product: '产品资产',
-    requirement: '需求交付',
-    scheduled_job: '任务中心',
-    scheduled_job_run: '任务中心',
-  };
-  return modules[type] ?? 'AI Brain';
-}
-
-function referenceUpdatedDate(reference: AssistantReference) {
-  const value = reference.updated_at ?? reference.created_at;
-  if (!value) {
-    return undefined;
-  }
-  const normalized = String(value);
-  return /^\d{4}-\d{2}-\d{2}/.test(normalized) ? normalized.slice(0, 10) : normalized;
-}
-
-function referencePermissionTagColor(reference: AssistantReference) {
-  const label = String(reference.permission_label ?? '').toLowerCase();
-  if (label.includes('无权限') || label.includes('denied') || label.includes('forbidden')) {
-    return 'red';
-  }
-  if (label.includes('受限') || label.includes('limited')) {
-    return 'orange';
-  }
-  return 'green';
-}
-
-function referenceMetaText(reference: AssistantReference) {
-  return [
-    reference.source_module ?? referenceSourceModule(reference.type),
-    reference.permission_label ?? '可引用',
-    referenceUpdatedDate(reference),
-  ].filter(Boolean).join(' · ');
-}
-
-function referenceKnowledgeChunkCount(reference: AssistantReference) {
-  if (reference.type === 'knowledge_chunk') {
-    return 1;
-  }
-  if (!['knowledge_document', 'knowledge_folder', 'knowledge_space'].includes(reference.type)) {
-    return 0;
-  }
-  return Number(reference.chunk_count ?? 0);
-}
-
-function referenceInjectionText(reference: AssistantReference) {
-  if (reference.type === 'assistant_action') {
-    return '动作指令将填入输入框';
-  }
-  if (reference.type === 'knowledge_chunk') {
-    return '1 个知识 chunk 将注入模型';
-  }
-  if (['knowledge_document', 'knowledge_folder', 'knowledge_space'].includes(reference.type)) {
-    const chunkCount = referenceKnowledgeChunkCount(reference);
-    if (chunkCount > ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT) {
-      return `最多 ${ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT} 个知识 chunk 将按权限注入模型`;
-    }
-    return chunkCount > 0
-      ? `${chunkCount} 个知识 chunk 将注入模型`
-      : '知识元数据将注入模型';
-  }
-  return '引用元数据将注入模型';
-}
-
-function selectedReferenceInjectionSummary(references: AssistantReference[]) {
-  const knowledgeChunkCount = references.reduce(
-    (total, reference) => total + referenceKnowledgeChunkCount(reference),
-    0,
-  );
-  if (!knowledgeChunkCount) {
-    return '元数据将注入模型';
-  }
-  if (knowledgeChunkCount > ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT) {
-    return `最多 ${ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT} 个知识 chunk 将按权限注入模型`;
-  }
-  return `${knowledgeChunkCount} 个知识 chunk 将注入模型`;
-}
-
-function referenceSummaryText(reference: AssistantReference) {
-  const summary = String(reference.summary ?? '').trim();
-  return summary || '暂无摘要，仅注入引用元数据。';
 }
 
 function isAssistantActionReference(reference: AssistantReference) {
@@ -1427,876 +877,6 @@ function inputWithAssistantActionCommand(currentValue: string, reference: Assist
     : currentValue;
   const normalizedUserText = userText.replace(/[ \t]{2,}/g, ' ').trim();
   return normalizedUserText ? `${command} ${normalizedUserText}` : `${command} `;
-}
-
-function AssistantReferenceDetailModal({
-  reference,
-  onClose,
-}: {
-  reference?: AssistantReference;
-  onClose: () => void;
-}) {
-  return (
-    <Modal
-      footer={null}
-      open={Boolean(reference)}
-      title={`引用摘要 - ${reference?.title ?? '引用'}`}
-      width={640}
-      onCancel={onClose}
-    >
-      {reference ? (
-        <div className="assistant-reference-detail">
-          <div className="assistant-reference-detail-grid">
-            <span>
-              <Text type="secondary">引用类型</Text>
-              <Text>{referenceTypeLabel(reference.type)}</Text>
-            </span>
-            <span>
-              <Text type="secondary">来源模块</Text>
-              <Text>{reference.source_module ?? referenceSourceModule(reference.type)}</Text>
-            </span>
-            <span>
-              <Text type="secondary">权限状态</Text>
-              <Text>{reference.permission_label ?? '可引用'}</Text>
-            </span>
-            <span>
-              <Text type="secondary">更新时间</Text>
-              <Text>{referenceUpdatedDate(reference) ?? '-'}</Text>
-            </span>
-            <span>
-              <Text type="secondary">注入口径</Text>
-              <Text>{referenceInjectionText(reference)}</Text>
-            </span>
-          </div>
-          <div className="assistant-reference-detail-section">
-            <Text strong>摘要</Text>
-            <Text>{referenceSummaryText(reference)}</Text>
-          </div>
-          <Button href={reference.url} size="small" type="link">
-            查看来源
-          </Button>
-        </div>
-      ) : null}
-    </Modal>
-  );
-}
-
-function normalizeRecentReferences(value: unknown): AssistantReference[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const references: AssistantReference[] = [];
-  const seen = new Set<string>();
-  value.forEach((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      return;
-    }
-    const record = item as Partial<AssistantReference>;
-    const id = String(record.id ?? '').trim();
-    const title = String(record.title ?? '').trim();
-    const type = String(record.type ?? '').trim();
-    const url = String(record.url ?? '').trim();
-    if (!id || !title || !type || !url) {
-      return;
-    }
-    const reference: AssistantReference = {
-      ...record,
-      id,
-      title,
-      type,
-      url,
-    };
-    const key = referenceKey(reference);
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    references.push(reference);
-  });
-  return references.slice(0, MAX_RECENT_REFERENCES);
-}
-
-function readRecentReferences() {
-  if (typeof window === 'undefined') {
-    return [];
-  }
-  try {
-    return normalizeRecentReferences(
-      JSON.parse(window.localStorage.getItem(ASSISTANT_RECENT_REFERENCES_STORAGE_KEY) ?? '[]'),
-    );
-  } catch {
-    return [];
-  }
-}
-
-function writeRecentReferences(references: AssistantReference[]) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage.setItem(
-      ASSISTANT_RECENT_REFERENCES_STORAGE_KEY,
-      JSON.stringify(references.slice(0, MAX_RECENT_REFERENCES)),
-    );
-  } catch {
-    // Recent references are an input convenience; failing to persist them should not block chat.
-  }
-}
-
-function nextRecentReferences(
-  currentReferences: AssistantReference[],
-  referencesToRemember: AssistantReference[],
-) {
-  const nextReferences = [...currentReferences];
-  referencesToRemember.forEach((reference) => {
-    const key = referenceKey(reference);
-    const existingIndex = nextReferences.findIndex((item) => referenceKey(item) === key);
-    if (existingIndex >= 0) {
-      nextReferences.splice(existingIndex, 1);
-    }
-    nextReferences.unshift(reference);
-  });
-  return normalizeRecentReferences(nextReferences);
-}
-
-function orderReferenceCandidatesByRecent(
-  references: AssistantReference[],
-  recentReferences: AssistantReference[],
-) {
-  const recentOrderByKey = new Map(
-    recentReferences.map((reference, index) => [referenceKey(reference), index]),
-  );
-  return references
-    .map((reference, index) => ({
-      index,
-      recentIndex: recentOrderByKey.get(referenceKey(reference)),
-      reference,
-    }))
-    .sort((left, right) => {
-      const leftRecent = left.recentIndex ?? Number.MAX_SAFE_INTEGER;
-      const rightRecent = right.recentIndex ?? Number.MAX_SAFE_INTEGER;
-      if (leftRecent !== rightRecent) {
-        return leftRecent - rightRecent;
-      }
-      return left.index - right.index;
-    })
-    .map((item) => item.reference);
-}
-
-function groupedReferenceCandidates(
-  references: AssistantReference[],
-  recentReferences: AssistantReference[],
-) {
-  const groups: Array<{
-    items: Array<{
-      index: number;
-      reference: AssistantReference;
-    }>;
-    label: string;
-    type: string;
-  }> = [];
-  const recentReferenceKeys = new Set(recentReferences.map(referenceKey));
-  const recentItems = references
-    .map((reference, index) => ({ index, reference }))
-    .filter(({ reference }) => recentReferenceKeys.has(referenceKey(reference)));
-  if (recentItems.length) {
-    groups.push({
-      items: recentItems,
-      label: '最近使用',
-      type: '__recent__',
-    });
-  }
-  const groupByType = new Map<string, typeof groups[number]>();
-  references.forEach((reference, index) => {
-    if (recentReferenceKeys.has(referenceKey(reference))) {
-      return;
-    }
-    let group = groupByType.get(reference.type);
-    if (!group) {
-      group = {
-        items: [],
-        label: referenceTypeLabel(reference.type),
-        type: reference.type,
-      };
-      groupByType.set(reference.type, group);
-      groups.push(group);
-    }
-    group.items.push({ index, reference });
-  });
-  return groups;
-}
-
-function storeScheduledJobDraft(draft: AssistantToolResultItem) {
-  if (!draft.payload || typeof window === 'undefined') {
-    return;
-  }
-  window.sessionStorage.setItem(
-    ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
-    JSON.stringify({
-      draftId: assistantDraftId(draft),
-      payload: draft.payload,
-      title: draft.title,
-    }),
-  );
-}
-
-function storePluginActionDraft(draft: AssistantToolResultItem) {
-  if (!draft.payload || typeof window === 'undefined') {
-    return;
-  }
-  window.sessionStorage.setItem(
-    ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
-    JSON.stringify({
-      draftId: assistantDraftId(draft),
-      payload: draft.payload,
-      title: draft.title,
-    }),
-  );
-}
-
-function storePluginConnectionDraft(draft: AssistantToolResultItem) {
-  if (!draft.payload || typeof window === 'undefined') {
-    return;
-  }
-  window.sessionStorage.setItem(
-    ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
-    JSON.stringify({
-      draftId: assistantDraftId(draft),
-      payload: draft.payload,
-      title: draft.title,
-    }),
-  );
-}
-
-function AssistantDraftPreviewBlock({
-  draftTitle,
-  onUseRepairAction,
-  preview,
-}: {
-  draftTitle?: string;
-  onUseRepairAction?: (prompt: string) => void;
-  preview?: AssistantActionDraftPreview;
-}) {
-  if (!preview) {
-    return null;
-  }
-  const diffs = (preview.diffs ?? []).slice(0, 4);
-  const issues = preview.validation?.issues ?? [];
-  const statusLabel = draftPreviewStatusLabel(preview.validation?.status);
-  return (
-    <div className="assistant-action-draft-precheck">
-      <Space size={8} wrap>
-        <Text strong>应用前预检</Text>
-        <Tag color={statusLabel.color}>{statusLabel.text}</Tag>
-      </Space>
-      {diffs.length ? (
-        <div className="assistant-action-draft-precheck-diffs">
-          {diffs.map((diff) => (
-            <span key={diff.field}>
-              <Text type="secondary">{diff.label ?? diff.field}</Text>
-              <Text>
-                {draftPreviewValueText(diff.current)} -&gt; {draftPreviewValueText(diff.proposed)}
-              </Text>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {issues.length ? (
-        <div className="assistant-action-draft-precheck-issues">
-          {issues.map((issue) => {
-            const repairAction = issue.repair_action;
-            const repairUrl = assistantRepairActionUrl(repairAction);
-            return (
-              <span key={`${issue.field}:${issue.message}`}>
-                <Text type={issue.severity === 'error' ? 'danger' : 'warning'}>
-                  {issue.message}
-                </Text>
-                {repairAction?.label ? (
-                  <Button
-                    href={repairUrl}
-                    size="small"
-                    onClick={repairUrl ? undefined : () => onUseRepairAction?.(
-                      assistantRepairActionPrompt(draftTitle, repairAction),
-                    )}
-                  >
-                    {repairAction.label}
-                  </Button>
-                ) : null}
-              </span>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function AssistantDraftWizardBlock({
-  draftTitle,
-  onUsePrerequisitePrompt,
-  steps,
-}: {
-  draftTitle?: string;
-  onUsePrerequisitePrompt?: (prompt: string) => void;
-  steps: AssistantDraftWizardStep[];
-}) {
-  if (!steps.length) {
-    return null;
-  }
-  return (
-    <div className="assistant-draft-wizard">
-      <div className="assistant-draft-wizard-header">
-        <Space size={8} wrap>
-          <ProjectOutlined />
-          <Text strong>配置向导</Text>
-        </Space>
-      </div>
-      <div className="assistant-draft-wizard-steps">
-        {steps.map((step, index) => {
-          const label = draftWizardStatusLabel(step.status);
-          const title = step.title || step.key || `步骤 ${index + 1}`;
-          const dependsOn = step.depends_on ?? [];
-          const canGeneratePrerequisite = Boolean(onUsePrerequisitePrompt)
-            && canGenerateWizardPrerequisite(step);
-          const canGenerateStepDraft = Boolean(onUsePrerequisitePrompt);
-          const manualAdjustUrl = draftWizardManualAdjustUrl(step);
-          return (
-            <div className="assistant-draft-wizard-step" key={step.key || title}>
-              <Space size={6} wrap>
-                <Text strong>{`${title}：${label.text}`}</Text>
-                <Tag color={label.color}>{label.text}</Tag>
-              </Space>
-              {step.summary ? <Text type="secondary">{step.summary}</Text> : null}
-              {dependsOn.length ? (
-                <Text type="secondary">依赖：{dependsOn.join('、')}</Text>
-              ) : null}
-              {canGenerateStepDraft || canGeneratePrerequisite || manualAdjustUrl ? (
-                <Space size={6} wrap>
-                  {canGenerateStepDraft ? (
-                    <Button
-                      size="small"
-                      onClick={() => onUsePrerequisitePrompt?.(
-                        draftWizardStepDraftPrompt(draftTitle, step),
-                      )}
-                    >
-                      AI生成{title}草案
-                    </Button>
-                  ) : null}
-                  {canGeneratePrerequisite ? (
-                    <Button
-                      size="small"
-                      onClick={() => onUsePrerequisitePrompt?.(
-                        draftWizardPrerequisitePrompt(draftTitle, step),
-                      )}
-                    >
-                      生成{title}前置草案
-                    </Button>
-                  ) : null}
-                  <Button href={manualAdjustUrl} size="small">
-                    手动调整{title}
-                  </Button>
-                </Space>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function AssistantDraftDetailModal({
-  draft,
-  onClose,
-  status,
-}: {
-  draft?: AssistantToolResultItem;
-  onClose: () => void;
-  status?: string;
-}) {
-  const statusLabel = draftStatusLabel(status ?? draft?.status);
-  const diffs = draft?.preview?.diffs ?? [];
-  const issues = draft?.preview?.validation?.issues ?? [];
-  const sourceResource = draft?.preview?.target?.source_resource;
-  const sourceResourceTitle = optionalText(
-    sourceResource?.title ?? sourceResource?.resource_id,
-  );
-  return (
-    <Modal
-      footer={null}
-      open={Boolean(draft)}
-      title={`草案详情 - ${draft?.title ?? '配置草案'}`}
-      width={760}
-      onCancel={onClose}
-    >
-      {draft ? (
-        <div className="assistant-draft-detail">
-          <Space size={8} wrap>
-            <Text strong>草案状态</Text>
-            <Tag color={statusLabel.color}>{statusLabel.text}</Tag>
-            <Tag color="default">{draft.action ?? 'unknown_action'}</Tag>
-            {draft.risk_level ? <Tag color="orange">风险：{draft.risk_level}</Tag> : null}
-          </Space>
-          {sourceResourceTitle ? (
-            <div className="assistant-draft-detail-section">
-              <Text strong>对比来源</Text>
-              <Text>{sourceResourceTitle}</Text>
-            </div>
-          ) : null}
-          <div className="assistant-draft-detail-section">
-            <Text strong>Payload</Text>
-            <pre>{JSON.stringify(draft.payload ?? {}, null, 2)}</pre>
-          </div>
-          {diffs.length ? (
-            <div className="assistant-draft-detail-section">
-              <Text strong>字段差异</Text>
-              <div className="assistant-action-draft-precheck-diffs">
-                {diffs.map((diff) => (
-                  <span key={diff.field}>
-                    <Text type="secondary">{diff.label ?? diff.field}</Text>
-                    <Text>
-                      {draftPreviewValueText(diff.current)} -&gt; {draftPreviewValueText(diff.proposed)}
-                    </Text>
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {issues.length ? (
-            <div className="assistant-draft-detail-section">
-              <Text strong>校验问题</Text>
-              <div className="assistant-action-draft-precheck-issues">
-                {issues.map((issue) => (
-                  <Text
-                    key={`${issue.field}:${issue.message}`}
-                    type={issue.severity === 'error' ? 'danger' : 'warning'}
-                  >
-                    {issue.message}
-                  </Text>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </Modal>
-  );
-}
-
-function AssistantActionDraftCards({
-  drafts,
-  draftMutationId,
-  draftResolutionById,
-  draftStatusById,
-  onCancelDraft,
-  onConfirmDraft,
-  onRegenerateDraft,
-  onViewDraft,
-  onUseDraftWizardStepPrompt,
-  resultWriteTargetLabels,
-}: {
-  draftMutationId?: string;
-  draftResolutionById: AssistantDraftResolutionMap;
-  drafts: AssistantToolResultItem[];
-  draftStatusById: Record<string, string>;
-  onCancelDraft: (draft: AssistantToolResultItem) => void;
-  onConfirmDraft: (draft: AssistantToolResultItem) => void;
-  onRegenerateDraft: (draft: AssistantToolResultItem) => void;
-  onViewDraft?: (draft: AssistantToolResultItem) => Promise<AssistantToolResultItem>;
-  onUseDraftWizardStepPrompt: (prompt: string) => void;
-  resultWriteTargetLabels: Map<string, string>;
-}) {
-  const [detailDraft, setDetailDraft] = useState<AssistantToolResultItem>();
-  const draftDependencyLabels = useMemo(
-    () => assistantDraftDependencyLabelMap(drafts),
-    [drafts],
-  );
-  const currentDraftStatus = (draft: AssistantToolResultItem) => {
-    const draftId = assistantDraftId(draft);
-    const resolution = draftId ? draftResolutionById[draftId] : undefined;
-    return resolution
-      ? 'applied'
-      : (draftId ? draftStatusById[draftId] : undefined) ?? draft.status ?? 'pending';
-  };
-  const openDraftDetail = async (draft: AssistantToolResultItem) => {
-    if (!onViewDraft) {
-      setDetailDraft(draft);
-      return;
-    }
-    const viewedDraft = await onViewDraft(draft);
-    setDetailDraft(viewedDraft);
-  };
-  if (!drafts.length) {
-    return null;
-  }
-  return (
-    <div className="assistant-action-draft-list">
-      {drafts.map((draft) => {
-        const payload = draft.payload;
-        const isAiAgentDraft = draft.action === 'create_ai_agent';
-        const isAiSkillDraft = draft.action === 'create_ai_skill';
-        const isAiCapabilityDraft = isAiAgentDraft || isAiSkillDraft;
-        const isAnalysisDraft = draft.action === 'create_analysis_draft';
-        const isPluginActionDraft = draft.action === 'create_plugin_action';
-        const isPluginConnectionDraft = draft.action === 'create_plugin_connection';
-        const isRdTaskDraft = draft.action === 'create_rd_task';
-        const draftId = assistantDraftId(draft);
-        const resolution = draftId ? draftResolutionById[draftId] : undefined;
-        const resourceLink = draftResourceLink(resolution);
-        const runResourceLink = draftRunResourceLink(resolution);
-        const isRunOnceDraft = assistantDraftRunOnceRequested(draft);
-        const currentStatus = currentDraftStatus(draft);
-        const statusLabel = draftStatusLabel(currentStatus);
-        const isPending = currentStatus === 'pending';
-        const canApplyDraftToForm = isPending;
-        const previewStatus = draft.preview?.validation?.status;
-        const isPreviewBlocked = previewStatus === 'blocked';
-        const wizardSteps = draftWizardSteps(draft, draftDependencyLabels);
-        const writeNotice = isPluginConnectionDraft
-          ? '确认前不会写入插件连接'
-          : isPluginActionDraft
-            ? '确认前不会写入插件动作'
-            : isAiCapabilityDraft
-              ? '确认前不会写入 AI 能力配置'
-              : isRdTaskDraft
-                ? '确认前不会创建研发任务'
-              : isAnalysisDraft
-                ? '确认前不会写入分析结果'
-                : '确认前不会写入作业定义';
-        return (
-          <div className="assistant-action-draft-card" key={draftId}>
-            <div className="assistant-action-draft-header">
-              <Space size={8} wrap>
-                <FileTextOutlined />
-                <Text strong>{draft.title ?? '配置草案'}</Text>
-                {draft.risk_level ? <Tag color="orange">风险：{draft.risk_level}</Tag> : null}
-                {draft.requires_confirmation ? <Tag color={statusLabel.color}>{statusLabel.text}</Tag> : null}
-                {isRunOnceDraft ? <Tag color="geekblue">确认后执行一次</Tag> : null}
-                {isRunOnceDraft && isPending ? <Tag color="gold">尚未执行</Tag> : null}
-              </Space>
-              <Text type="secondary">
-                {isRunOnceDraft ? `${writeNotice}；确认后会立即执行一次` : writeNotice}
-              </Text>
-            </div>
-            <div className="assistant-action-draft-grid">
-              {isPluginConnectionDraft ? (
-                <>
-                  <span>
-                    <Text type="secondary">插件</Text>
-                    <Text>{draftPayloadText(payload, 'plugin_id')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">Endpoint</Text>
-                    <Text>{draftPayloadText(payload, 'endpoint_url')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">环境</Text>
-                    <Text>{draftPayloadText(payload, 'environment')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">认证</Text>
-                    <Text>{draftPayloadText(payload, 'auth_type')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">Params</Text>
-                    <Text>{draftPayloadText(payload, 'request_config.query')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">Headers</Text>
-                    <Text>{draftPayloadText(payload, 'request_config.headers')}</Text>
-                  </span>
-                </>
-              ) : isPluginActionDraft ? (
-                <>
-                  <span>
-                    <Text type="secondary">动作类型</Text>
-                    <Text>{draftPayloadText(payload, 'action_type')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">编码</Text>
-                    <Text>{draftPayloadText(payload, 'code')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">插件</Text>
-                    <Text>{draftPayloadText(payload, 'plugin_id')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">连接</Text>
-                    <Text>{draftPayloadText(payload, 'connection_id')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">请求方法</Text>
-                    <Text>{draftPayloadText(payload, 'request_config.method')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">请求路径</Text>
-                    <Text>{draftPayloadText(payload, 'request_config.path')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">写入目标</Text>
-                    <Text>{draftPayloadLabel(payload, 'result_mapping.write_target', resultWriteTargetLabels)}</Text>
-                  </span>
-                </>
-              ) : isRdTaskDraft ? (
-                <>
-                  <span>
-                    <Text type="secondary">需求</Text>
-                    <Text>{draftPayloadText(payload, 'requirement_id')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">任务类型</Text>
-                    <Text>{draftPayloadText(payload, 'task_type')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">负责人角色</Text>
-                    <Text>{draftPayloadText(payload, 'input.owner_role')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">验收标准</Text>
-                    <Text>{draftPayloadText(payload, 'input.acceptance_criteria')}</Text>
-                  </span>
-                </>
-              ) : isAiSkillDraft ? (
-                <>
-                  <span>
-                    <Text type="secondary">名称</Text>
-                    <Text>{draftPayloadText(payload, 'name')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">编码</Text>
-                    <Text>{draftPayloadText(payload, 'code')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">Prompt 模板</Text>
-                    <Text>{draftPayloadText(payload, 'prompt_template')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">上下文</Text>
-                    <Text>{draftPayloadText(payload, 'required_context')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">风险等级</Text>
-                    <Text>{draftPayloadText(payload, 'risk_level')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">状态</Text>
-                    <Text>{draftPayloadText(payload, 'status')}</Text>
-                  </span>
-                </>
-              ) : isAiAgentDraft ? (
-                <>
-                  <span>
-                    <Text type="secondary">名称</Text>
-                    <Text>{draftPayloadText(payload, 'name')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">编码</Text>
-                    <Text>{draftPayloadText(payload, 'code')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">业务大脑</Text>
-                    <Text>{draftPayloadText(payload, 'brain_app_id')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">AI 模型</Text>
-                    <Text>{draftPayloadText(payload, 'model_gateway_config_id')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">默认 Skills</Text>
-                    <Text>{draftPayloadText(payload, 'default_skill_ids')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">系统 Prompt</Text>
-                    <Text>{draftPayloadText(payload, 'system_prompt')}</Text>
-                  </span>
-                  {draftPayloadText(payload, 'assistant_prerequisite_draft_ids') !== '-' ? (
-                    <span>
-                      <Text type="secondary">前置草案</Text>
-                      <Text>{draftPrerequisiteText(payload, draftDependencyLabels)}</Text>
-                    </span>
-                  ) : null}
-                </>
-              ) : isAnalysisDraft ? (
-                <>
-                  <span>
-                    <Text type="secondary">分析类型</Text>
-                    <Text>{draftPayloadText(payload, 'analysis_type')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">来源模块</Text>
-                    <Text>{draftPayloadText(payload, 'source_module')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">摘要指标</Text>
-                    <Text>{draftPayloadText(payload, 'summary')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">风险/治理项</Text>
-                    <Text>{draftPayloadText(payload, 'findings')}</Text>
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span>
-                    <Text type="secondary">作业类型</Text>
-                    <Text>{draftPayloadText(payload, 'job_type')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">调度</Text>
-                    <Text>{draftPayloadText(payload, 'cron_expression')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">执行模式</Text>
-                    <Text>{draftPayloadText(payload, 'execution_mode')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">AI 模型</Text>
-                    <Text>{draftPayloadText(payload, 'model_gateway_config_id')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">AI角色</Text>
-                    <Text>{draftPayloadText(payload, 'agent_id')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">Skills</Text>
-                    <Text>{draftPayloadText(payload, 'skill_ids')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">数据连接</Text>
-                    <Text>{draftPayloadText(payload, 'plugin_connection_id')}</Text>
-                  </span>
-                  <span>
-                    <Text type="secondary">结果动作</Text>
-                    <Text>{draftPayloadText(payload, 'plugin_action_id')}</Text>
-                  </span>
-                  {draftPayloadText(payload, 'assistant_prerequisite_draft_ids') !== '-' ? (
-                    <span>
-                      <Text type="secondary">前置草案</Text>
-                      <Text>{draftPrerequisiteText(payload, draftDependencyLabels)}</Text>
-                    </span>
-                  ) : null}
-                </>
-              )}
-            </div>
-            <AssistantDraftWizardBlock
-              draftTitle={draft.title}
-              steps={wizardSteps}
-              onUsePrerequisitePrompt={onUseDraftWizardStepPrompt}
-            />
-            <AssistantDraftPreviewBlock
-              draftTitle={draft.title}
-              preview={draft.preview}
-              onUseRepairAction={onUseDraftWizardStepPrompt}
-            />
-            <Space size={8} wrap>
-              {draftId && isPending ? (
-                <>
-                  <Button
-                    disabled={isPreviewBlocked}
-                    icon={<CheckCircleOutlined />}
-                    loading={draftMutationId === draftId}
-                    size="small"
-                    type="primary"
-                    onClick={() => onConfirmDraft(draft)}
-                  >
-                    {isRunOnceDraft ? '确认并执行一次' : '确认创建'}
-                  </Button>
-                  <Button
-                    icon={<CloseCircleOutlined />}
-                    loading={draftMutationId === draftId}
-                    size="small"
-                    onClick={() => onCancelDraft(draft)}
-                  >
-                    取消
-                  </Button>
-                </>
-              ) : null}
-              {resourceLink ? (
-                <Button
-                  aria-label={resourceLink.label}
-                  href={resourceLink.url}
-                  icon={<LinkOutlined />}
-                  size="small"
-                >
-                  {resourceLink.label}
-                </Button>
-              ) : null}
-              {runResourceLink ? (
-                <Button
-                  aria-label={runResourceLink.label}
-                  href={runResourceLink.url}
-                  icon={<LinkOutlined />}
-                  size="small"
-                >
-                  {runResourceLink.label}
-                </Button>
-              ) : null}
-              {canApplyDraftToForm && !resourceLink && isPluginConnectionDraft ? (
-                <Button
-                  href="/tasks/plugins"
-                  size="small"
-                  type="primary"
-                  onMouseDown={() => storePluginConnectionDraft(draft)}
-                  onClick={() => storePluginConnectionDraft(draft)}
-                >
-                  应用到插件连接表单
-                </Button>
-              ) : null}
-              {canApplyDraftToForm && !resourceLink && isPluginActionDraft ? (
-                <Button
-                  href="/tasks/plugins"
-                  size="small"
-                  type="primary"
-                  onMouseDown={() => storePluginActionDraft(draft)}
-                  onClick={() => storePluginActionDraft(draft)}
-                >
-                  应用到插件动作表单
-                </Button>
-              ) : null}
-              {canApplyDraftToForm
-              && !resourceLink
-              && !isAiCapabilityDraft
-              && !isPluginConnectionDraft
-              && !isPluginActionDraft
-              && !isRdTaskDraft
-              && !isAnalysisDraft ? (
-                <Button
-                  href="/tasks/scheduled-jobs"
-                  size="small"
-                  type="primary"
-                  onMouseDown={() => storeScheduledJobDraft(draft)}
-                  onClick={() => storeScheduledJobDraft(draft)}
-                >
-                  应用到定时作业表单
-                </Button>
-              ) : null}
-              <Button size="small" onClick={() => { void openDraftDetail(draft); }}>
-                查看详情
-              </Button>
-              {draftId ? (
-                <Button href={`/assistant?draft_id=${draftId}`} size="small">
-                  查看草案
-                </Button>
-              ) : null}
-              <Button
-                aria-label="重新生成"
-                icon={<ReloadOutlined />}
-                size="small"
-                onClick={() => onRegenerateDraft(draft)}
-              >
-                重新生成
-              </Button>
-            </Space>
-          </div>
-        );
-      })}
-      <AssistantDraftDetailModal
-        draft={detailDraft}
-        status={detailDraft ? currentDraftStatus(detailDraft) : undefined}
-        onClose={() => setDetailDraft(undefined)}
-      />
-    </div>
-  );
 }
 
 function AssistantTaskCreationGuideCards({
@@ -2828,243 +1408,6 @@ function AssistantScheduledJobComparisonCards({
   );
 }
 
-function AssistantDraftTemplateMarket({
-  isLoading,
-  onUseTemplate,
-  templates,
-}: {
-  isLoading: boolean;
-  onUseTemplate: (template: AssistantDraftTemplate) => void;
-  templates: AssistantDraftTemplate[];
-}) {
-  return (
-    <div className="assistant-template-market-panel">
-      <div className="assistant-template-market-header">
-        <Text strong>模板市场</Text>
-        {isLoading ? <Spin size="small" /> : <Tag color="blue">{templates.length}</Tag>}
-      </div>
-      <div className="assistant-template-market-list">
-        {templates.map((template) => (
-          <div className="assistant-template-card" key={template.code}>
-            <div className="assistant-template-card-title">
-              <Text strong>{template.name}</Text>
-              <Tag color="green">可生成草案</Tag>
-            </div>
-            <Text className="assistant-template-description" type="secondary">
-              {template.description}
-            </Text>
-            <Space size={[4, 4]} wrap>
-              {template.source_module ? <Tag color="blue">{template.source_module}</Tag> : null}
-              {template.draft_action ? <Tag color="default">{template.draft_action}</Tag> : null}
-              {template.template_version ? <Tag color="default">{template.template_version}</Tag> : null}
-            </Space>
-            {template.dependencies?.length ? (
-              <Text className="assistant-template-meta" type="secondary">
-                依赖：{template.dependencies.join('、')}
-              </Text>
-            ) : null}
-            {template.wizard_steps?.length ? (
-              <Text className="assistant-template-meta" type="secondary">
-                流程：{template.wizard_steps.join(' -> ')}
-              </Text>
-            ) : null}
-            <Button
-              aria-label={`使用模板 ${template.name}`}
-              size="small"
-              onClick={() => onUseTemplate(template)}
-            >
-              使用模板
-            </Button>
-          </div>
-        ))}
-        {!isLoading && !templates.length ? (
-          <Text type="secondary">暂无可用模板</Text>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function AssistantMetricsPanel({
-  isLoading,
-  metrics,
-  onRefresh,
-}: {
-  isLoading: boolean;
-  metrics?: AssistantMetrics;
-  onRefresh: () => void;
-}) {
-  const summary = metrics?.summary ?? {};
-  const metricItems = [
-    { label: '草案生成数', value: metricCount(summary.draft_total) },
-    { label: '草案确认率', value: metricPercent(summary.draft_adoption_rate) },
-    { label: '用户修改率', value: metricPercent(summary.draft_user_modified_rate) },
-    { label: '@ 引用使用率', value: metricPercent(summary.reference_usage_rate) },
-    { label: '作业运行成功率', value: metricPercent(summary.scheduled_job_run_success_rate) },
-    { label: '失败修复率', value: metricPercent(summary.failed_run_repair_rate) },
-    { label: '知识引用命中率', value: metricPercent(summary.knowledge_reference_hit_rate) },
-  ];
-  const draftStatusItems = [
-    { label: '待确认', value: metricCount(summary.draft_pending_count) },
-    { label: '已应用', value: metricCount(summary.draft_confirmed_count) },
-    { label: '已取消', value: metricCount(summary.draft_cancelled_count) },
-    { label: '已过期', value: metricCount(summary.draft_expired_count) },
-    { label: '失败', value: metricCount(summary.draft_failed_count) },
-  ];
-  const draftActionItems = metrics?.drafts_by_action ?? [];
-  const runAttributionItems = metrics?.scheduled_job_run_attribution?.items ?? [];
-  const funnelStages = [...(metrics?.funnel?.stages ?? [])].sort(
-    (left, right) => Number(left.sort_order ?? 0) - Number(right.sort_order ?? 0),
-  );
-  const runTrackingItems = [
-    {
-      label: '作业运行',
-      value: `成功 ${metricCount(summary.scheduled_job_run_succeeded_count)} · 失败 ${metricCount(
-        summary.scheduled_job_run_failed_count,
-      )} · 总数 ${metricCount(summary.scheduled_job_run_total)}`,
-    },
-    {
-      label: '失败修复',
-      value: `已修复 ${metricCount(summary.failed_run_repaired_count)} · 失败运行 ${metricCount(
-        summary.failed_run_total,
-      )}`,
-    },
-    ...(runAttributionItems.length
-      ? [
-          {
-            label: '归因来源',
-            value: runAttributionItems
-              .map((item) => `${item.label} ${metricCount(item.count)}`)
-              .join(' · '),
-          },
-        ]
-      : []),
-  ];
-  const referenceTrackingItems = [
-    {
-      label: '用户消息',
-      value: `已引用 ${metricCount(summary.referenced_user_message_count)} · 用户消息 ${metricCount(
-        summary.user_message_total,
-      )}`,
-    },
-    {
-      label: '知识命中',
-      value: `命中 ${metricCount(summary.knowledge_reference_hit_count)} · 请求 ${metricCount(
-        summary.knowledge_reference_request_count,
-      )} · 知识引用 ${metricCount(summary.knowledge_reference_count)}`,
-    },
-  ];
-
-  return (
-    <div className="assistant-metrics-panel">
-      <div className="assistant-metrics-header">
-        <Space size={6}>
-          <BarChartOutlined />
-          <Text strong>助手效果指标</Text>
-        </Space>
-        <Button loading={isLoading} size="small" onClick={onRefresh}>
-          {metrics ? '刷新指标' : '查看指标'}
-        </Button>
-      </div>
-      {metrics ? (
-        <>
-          <div className="assistant-metrics-grid">
-            {metricItems.map((item) => (
-              <div
-                aria-label={`指标 ${item.label}`}
-                className="assistant-metric-item"
-                key={item.label}
-              >
-                <Text type="secondary">{item.label}</Text>
-                <Text strong>{item.value}</Text>
-              </div>
-            ))}
-          </div>
-          {funnelStages.length ? (
-            <div className="assistant-metrics-breakdown">
-              <Text strong>效果漏斗</Text>
-              <div className="assistant-metrics-action-list">
-                {funnelStages.map((stage) => (
-                  <Text
-                    aria-label={`效果漏斗 ${stage.label}`}
-                    key={stage.key}
-                    type="secondary"
-                  >
-                    {stage.label}：{metricCount(stage.count)}
-                  </Text>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          <div className="assistant-metrics-breakdown">
-            <Text strong>草案状态</Text>
-            <Space size={[4, 4]} wrap>
-              {draftStatusItems.map((item) => (
-                <Tag aria-label={`草案状态 ${item.label}`} key={item.label}>
-                  {item.label} {item.value}
-                </Tag>
-              ))}
-            </Space>
-          </div>
-          {draftActionItems.length ? (
-            <div className="assistant-metrics-breakdown">
-              <Text strong>草案类型</Text>
-              <div className="assistant-metrics-action-list">
-                {draftActionItems.map((item) => (
-                  <Text
-                    aria-label={`草案类型 ${item.action}`}
-                    key={item.action}
-                    type="secondary"
-                  >
-                    {assistantDraftActionLabel(item.action)}：总数 {metricCount(item.total)}
-                    {' · '}待确认 {metricCount(item.pending_count)}
-                    {' · '}已应用 {metricCount(item.confirmed_count)}
-                    {' · '}已取消 {metricCount(item.cancelled_count)}
-                    {' · '}处理率 {metricRatio(
-                      Number(item.total ?? 0) - Number(item.pending_count ?? 0),
-                      Number(item.total ?? 0),
-                    )}
-                  </Text>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          <div className="assistant-metrics-breakdown">
-            <Text strong>运行追踪</Text>
-            <div className="assistant-metrics-action-list">
-              {runTrackingItems.map((item) => (
-                <Text
-                  aria-label={`运行追踪 ${item.label}`}
-                  key={item.label}
-                  type="secondary"
-                >
-                  {item.label}：{item.value}
-                </Text>
-              ))}
-            </div>
-          </div>
-          <div className="assistant-metrics-breakdown">
-            <Text strong>引用追踪</Text>
-            <div className="assistant-metrics-action-list">
-              {referenceTrackingItems.map((item) => (
-                <Text
-                  aria-label={`引用追踪 ${item.label}`}
-                  key={item.label}
-                  type="secondary"
-                >
-                  {item.label}：{item.value}
-                </Text>
-              ))}
-            </div>
-          </div>
-        </>
-      ) : (
-        <Text type="secondary">跟踪草案、引用、运行和失败修复效果。</Text>
-      )}
-    </div>
-  );
-}
-
 function AssistantBubble({
   draftMutationId,
   draftResolutionById,
@@ -3073,6 +1416,8 @@ function AssistantBubble({
   onCancelDraft,
   onConfirmDraft,
   onRegenerateDraft,
+  onRestoreFailedRequest,
+  onRetryFailedRequest,
   onViewDraft,
   onUseConnectionFollowupPrompt,
   onUseRunCardFollowupPrompt,
@@ -3088,6 +1433,8 @@ function AssistantBubble({
   onCancelDraft: (draft: AssistantToolResultItem) => void;
   onConfirmDraft: (draft: AssistantToolResultItem) => void;
   onRegenerateDraft: (draft: AssistantToolResultItem) => void;
+  onRestoreFailedRequest: (request: NonNullable<ChatMessage['failedRequest']>) => void;
+  onRetryFailedRequest: (request: NonNullable<ChatMessage['failedRequest']>) => void;
   onViewDraft: (draft: AssistantToolResultItem) => Promise<AssistantToolResultItem>;
   onUseConnectionFollowupPrompt: (item: AssistantToolResultItem, prompt: string) => void;
   onUseRunCardFollowupPrompt: (item: AssistantScheduledJobRunItem, prompt: string) => void;
@@ -3115,6 +1462,16 @@ function AssistantBubble({
           </div>
         ) : null}
         <Text>{message.content}</Text>
+        {message.failedRequest ? (
+          <Space className="assistant-failed-request-actions" size={8} wrap>
+            <Button size="small" type="primary" onClick={() => onRetryFailedRequest(message.failedRequest!)}>
+              重试
+            </Button>
+            <Button size="small" onClick={() => onRestoreFailedRequest(message.failedRequest!)}>
+              恢复到输入框
+            </Button>
+          </Space>
+        ) : null}
         {message.references?.length ? (
           <div className="assistant-reference-list">
             {message.references.map((reference) => (
@@ -3169,44 +1526,72 @@ function AssistantBubble({
 }
 
 export default function AssistantPage() {
-  const [conversationId, setConversationId] = useState<string>();
-  const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
+  const {
+    conversationId,
+    conversations,
+    isLoadingConversations,
+    isLoadingMessages,
+    isSending,
+    lastResponse,
+    loadConversationMessages,
+    loadConversations,
+    messages,
+    setConversationId,
+    setIsSending,
+    setLastResponse,
+    setMessages,
+  } = useAssistantConversation();
+  const {
+    draftMutationId,
+    draftResolutionById,
+    draftStatusById,
+    linkedDraft,
+    queryDraftResolution,
+    setDraftMutationId,
+    setDraftResolutionById,
+    setDraftStatusById,
+    setLinkedDraft,
+    setQueryDraftResolution,
+  } = useAssistantDrafts();
+  const {
+    activeReferenceIndex,
+    addActionCandidates,
+    committedActionCommand,
+    dismissedReferencePickerValue,
+    isLoadingAddActions,
+    isLoadingReferences,
+    orderedReferenceCandidates,
+    queryReferenceResolution,
+    referenceCandidateGroups,
+    referenceCandidates,
+    rememberReferences,
+    selectedReferenceKeys,
+    selectedReferences,
+    setActiveReferenceIndex,
+    setAddActionCandidates,
+    setCommittedActionCommand,
+    setDismissedReferencePickerValue,
+    setIsLoadingAddActions,
+    setIsLoadingReferences,
+    setQueryReferenceResolution,
+    setReferenceCandidates,
+    setSelectedReferences,
+  } = useAssistantReferences();
+  const [activeAddActionIndex, setActiveAddActionIndex] = useState(-1);
+  const [addActionQuery, setAddActionQuery] = useState('');
   const [inputValue, setInputValue] = useState('');
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  const [draftMutationId, setDraftMutationId] = useState<string>();
-  const [draftResolutionById, setDraftResolutionById] = useState<AssistantDraftResolutionMap>(
-    () => readAssistantDraftResolutions(),
-  );
-  const [draftStatusById, setDraftStatusById] = useState<Record<string, string>>({});
   const [assistantMetrics, setAssistantMetrics] = useState<AssistantMetrics>();
   const [draftTemplateMarketOpened, setDraftTemplateMarketOpened] = useState(false);
   const [draftTemplates, setDraftTemplates] = useState<AssistantDraftTemplate[]>([]);
-  const [isLoadingAddActions, setIsLoadingAddActions] = useState(false);
-  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingDraftTemplates, setIsLoadingDraftTemplates] = useState(false);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const [isLoadingReferences, setIsLoadingReferences] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
+  const [isContextExpanded, setIsContextExpanded] = useState(false);
   const [metricsPanelOpened, setMetricsPanelOpened] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
-  const [activeReferenceIndex, setActiveReferenceIndex] = useState(-1);
-  const [addActionCandidates, setAddActionCandidates] = useState<AssistantReference[]>([]);
-  const [committedActionCommand, setCommittedActionCommand] = useState<string>();
-  const [dismissedReferencePickerValue, setDismissedReferencePickerValue] = useState<string>();
-  const [referenceCandidates, setReferenceCandidates] = useState<AssistantReference[]>([]);
-  const [recentReferences, setRecentReferences] = useState<AssistantReference[]>(() => readRecentReferences());
-  const [linkedDraft, setLinkedDraft] = useState<AssistantToolResultItem>();
-  const [referenceDetail, setReferenceDetail] = useState<AssistantReference>();
-  const [queryDraftResolution, setQueryDraftResolution] = useState<QueryDraftResolution>();
-  const [queryReferenceResolution, setQueryReferenceResolution] = useState<QueryReferenceResolution>();
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [roleQuickTasksExpanded, setRoleQuickTasksExpanded] = useState(false);
   const [roleQuickTaskGroups, setRoleQuickTaskGroups] = useState<AssistantRoleQuickTaskGroup[]>([]);
   const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
-  const [selectedReferences, setSelectedReferences] = useState<AssistantReference[]>([]);
-  const [starterPromptsExpanded, setStarterPromptsExpanded] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const addMenuTriggerRef = useRef<HTMLElement | null>(null);
   const messageListEndRef = useRef<HTMLDivElement | null>(null);
@@ -3215,8 +1600,15 @@ export default function AssistantPage() {
   const draftTemplatesLoadRequestedRef = useRef(false);
   const resultWriteTargetsLoadRequestedRef = useRef(false);
   const roleQuickTasksLoadRequestedRef = useRef(false);
+  const chatAbortControllerRef = useRef<AbortController | null>(null);
+  const activeChatRequestRef = useRef<{
+    clientRequestId: string;
+    content: string;
+    references: AssistantReference[];
+    runId: string;
+  } | null>(null);
 
-  const canSend = useMemo(() => inputValue.trim().length > 0 && !isSending, [inputValue, isSending]);
+  const canSend = useMemo(() => inputValue.trim().length > 0, [inputValue]);
   const hasPluginActionDraft = useMemo(
     () => messages.some((item) => actionDraftItems(item.toolResults).some((draft) => draft.action === 'create_plugin_action')),
     [messages],
@@ -3225,14 +1617,15 @@ export default function AssistantPage() {
     () => new Map(resultWriteTargets.map((target) => [target.code, target.form_label || target.label])),
     [resultWriteTargets],
   );
-  const selectedReferenceKeys = useMemo(
-    () => new Set(selectedReferences.map(referenceKey)),
-    [selectedReferences],
-  );
   const roleQuickTaskCount = useMemo(
     () => roleQuickTaskGroups.reduce((total, group) => total + group.tasks.length, 0),
     [roleQuickTaskGroups],
   );
+
+  useEffect(() => () => {
+    chatAbortControllerRef.current?.abort();
+  }, []);
+
   const activeMention = useMemo(() => {
     const mention = activeMentionRange(inputValue);
     if (!mention) {
@@ -3252,37 +1645,14 @@ export default function AssistantPage() {
   const shouldShowReferenceCandidates = !isAddMenuOpen
     && activeMention !== undefined
     && dismissedReferencePickerValue !== inputValue;
-  const orderedReferenceCandidates = useMemo(
-    () => orderReferenceCandidatesByRecent(referenceCandidates, recentReferences),
-    [recentReferences, referenceCandidates],
-  );
-  const referenceCandidateGroups = useMemo(
-    () => groupedReferenceCandidates(orderedReferenceCandidates, recentReferences),
-    [orderedReferenceCandidates, recentReferences],
-  );
-  const referenceEmptyState = useMemo(
+  const referenceEmptyState: AssistantReferenceEmptyState = useMemo(
     () => assistantReferenceEmptyState(inputValue),
     [inputValue],
-  );
-  const selectedReferenceInjectionText = useMemo(
-    () => selectedReferenceInjectionSummary(selectedReferences),
-    [selectedReferences],
   );
   const activeRunPollTargets = useMemo(
     () => scheduledJobRunPollTargets(messages, scheduledJobRunById),
     [messages, scheduledJobRunById],
   );
-  const rememberReferences = useCallback((references: AssistantReference[]) => {
-    if (!references.length) {
-      return;
-    }
-    setRecentReferences((items) => {
-      const nextItems = nextRecentReferences(items, references);
-      writeRecentReferences(nextItems);
-      return nextItems;
-    });
-  }, []);
-
   useEffect(() => {
     if (typeof messageListEndRef.current?.scrollIntoView !== 'function') {
       return;
@@ -3297,7 +1667,7 @@ export default function AssistantPage() {
     ) {
       setCommittedActionCommand(undefined);
     }
-  }, [committedActionCommand, inputValue]);
+  }, [committedActionCommand, inputValue, setCommittedActionCommand]);
 
   useEffect(() => {
     if (!isAddMenuOpen) {
@@ -3323,6 +1693,55 @@ export default function AssistantPage() {
       document.removeEventListener('touchstart', closeOnOutsideClick);
     };
   }, [isAddMenuOpen]);
+
+  useEffect(() => {
+    if (!isAddMenuOpen) {
+      setAddActionCandidates([]);
+      setActiveAddActionIndex(-1);
+      setIsLoadingAddActions(false);
+      return undefined;
+    }
+    let didCancel = false;
+    const controller = new AbortController();
+    setIsLoadingAddActions(true);
+    const timer = window.setTimeout(() => {
+      fetchAssistantReferenceCandidates({
+        limit: ASSISTANT_ADD_ACTION_LIMIT,
+        query: addActionQuery,
+        signal: controller.signal,
+        type: 'assistant_action',
+      })
+        .then((items) => {
+          if (!didCancel) {
+            const actionItems = items.filter(isAssistantActionReference);
+            setAddActionCandidates(actionItems);
+            setActiveAddActionIndex(actionItems.length ? 0 : -1);
+          }
+        })
+        .catch((error) => {
+          if (!didCancel && (error as Error).name !== 'AbortError') {
+            toast.error(formatMutationError(error));
+            setAddActionCandidates([]);
+            setActiveAddActionIndex(-1);
+          }
+        })
+        .finally(() => {
+          if (!didCancel) {
+            setIsLoadingAddActions(false);
+          }
+        });
+    }, ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS);
+    return () => {
+      didCancel = true;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    addActionQuery,
+    isAddMenuOpen,
+    setAddActionCandidates,
+    setIsLoadingAddActions,
+  ]);
 
   useEffect(() => {
     if (!activeRunPollTargets.length) {
@@ -3454,7 +1873,7 @@ export default function AssistantPage() {
     return () => {
       didCancel = true;
     };
-  }, []);
+  }, [setDraftResolutionById, setDraftStatusById, setLinkedDraft, setQueryDraftResolution]);
 
   useEffect(() => {
     if (queryReferenceHydratedRef.current) {
@@ -3530,7 +1949,12 @@ export default function AssistantPage() {
     return () => {
       didCancel = true;
     };
-  }, [rememberReferences]);
+  }, [
+    rememberReferences,
+    setCommittedActionCommand,
+    setQueryReferenceResolution,
+    setSelectedReferences,
+  ]);
 
   useEffect(() => {
     const query = activeMention;
@@ -3574,7 +1998,13 @@ export default function AssistantPage() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [activeMention, selectedReferenceKeys]);
+  }, [
+    activeMention,
+    selectedReferenceKeys,
+    setActiveReferenceIndex,
+    setIsLoadingReferences,
+    setReferenceCandidates,
+  ]);
 
   useEffect(() => {
     setActiveReferenceIndex((index) => {
@@ -3583,22 +2013,7 @@ export default function AssistantPage() {
       }
       return Math.min(Math.max(index, 0), orderedReferenceCandidates.length - 1);
     });
-  }, [orderedReferenceCandidates.length]);
-
-  const loadConversations = useCallback(async () => {
-    setIsLoadingConversations(true);
-    try {
-      setConversations(await fetchAssistantConversations());
-    } catch (error) {
-      toast.error(formatMutationError(error));
-    } finally {
-      setIsLoadingConversations(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadConversations();
-  }, [loadConversations]);
+  }, [orderedReferenceCandidates.length, setActiveReferenceIndex]);
 
   useEffect(() => {
     if (!getStoredCurrentUser() || roleQuickTasksLoadRequestedRef.current) {
@@ -3671,36 +2086,46 @@ export default function AssistantPage() {
     }
   }, []);
 
+  const resetComposerState = (options: { clearInput?: boolean; keepDraftLink?: boolean } = {}) => {
+    if (options.clearInput) {
+      setInputValue('');
+    }
+    setActiveReferenceIndex(-1);
+    setActiveAddActionIndex(-1);
+    setAddActionQuery('');
+    setIsAddMenuOpen(false);
+    setReferenceCandidates([]);
+    setCommittedActionCommand(undefined);
+    setDismissedReferencePickerValue(undefined);
+    setSelectedReferences([]);
+    setQueryReferenceResolution(undefined);
+    setIsContextExpanded(false);
+    if (!options.keepDraftLink) {
+      setLinkedDraft(undefined);
+      setQueryDraftResolution(undefined);
+    }
+  };
+
   const startNewConversation = () => {
     setConversationId(undefined);
     setLastResponse(undefined);
     setMessages(welcomeMessages);
-    setActiveReferenceIndex(-1);
-    setIsAddMenuOpen(false);
-    setReferenceCandidates([]);
-    setReferenceDetail(undefined);
-    setLinkedDraft(undefined);
-    setQueryDraftResolution(undefined);
-    setQueryReferenceResolution(undefined);
-    setCommittedActionCommand(undefined);
-    setDismissedReferencePickerValue(undefined);
-    setSelectedReferences([]);
+    resetComposerState({ clearInput: true });
   };
 
   const openDraftTemplateMarket = () => {
-    setDraftTemplateMarketOpened((opened) => !opened);
+    setDraftTemplateMarketOpened(true);
     void loadDraftTemplates();
   };
 
-  const toggleMetricsPanel = () => {
-    const shouldOpen = !metricsPanelOpened;
-    setMetricsPanelOpened(shouldOpen);
-    if (shouldOpen && !assistantMetrics) {
+  const openMetricsPanel = () => {
+    setMetricsPanelOpened(true);
+    if (!assistantMetrics) {
       void loadAssistantMetrics();
     }
   };
 
-  const useDraftTemplate = (template: AssistantDraftTemplate) => {
+  const applyDraftTemplate = (template: AssistantDraftTemplate) => {
     setCommittedActionCommand(undefined);
     setInputValue(template.prompt);
   };
@@ -3727,35 +2152,25 @@ export default function AssistantPage() {
     setReferenceCandidates([]);
   };
 
-  const loadAddActionCandidates = useCallback(async () => {
-    setIsLoadingAddActions(true);
-    try {
-      const items = await fetchAssistantReferenceCandidates({
-        limit: ASSISTANT_ADD_ACTION_LIMIT,
-        query: '',
-        type: 'assistant_action',
-      });
-      setAddActionCandidates(items.filter(isAssistantActionReference));
-    } catch (error) {
-      toast.error(formatMutationError(error));
-      setAddActionCandidates([]);
-    } finally {
-      setIsLoadingAddActions(false);
-    }
-  }, []);
-
   const toggleAddMenu = () => {
     const nextOpen = !isAddMenuOpen;
     setIsAddMenuOpen(nextOpen);
     if (!nextOpen) {
+      setAddActionCandidates([]);
       return;
     }
+    setAddActionQuery('');
+    setAddActionCandidates([]);
+    setActiveAddActionIndex(-1);
     setDismissedReferencePickerValue(inputValue);
     setReferenceCandidates([]);
     setActiveReferenceIndex(-1);
-    if (!addActionCandidates.length && !isLoadingAddActions) {
-      void loadAddActionCandidates();
-    }
+  };
+
+  const changeAddActionQuery = (query: string) => {
+    setAddActionQuery(query);
+    setAddActionCandidates([]);
+    setActiveAddActionIndex(-1);
   };
 
   const selectAddActionCandidate = (reference: AssistantReference) => {
@@ -3763,12 +2178,37 @@ export default function AssistantPage() {
     setIsAddMenuOpen(false);
   };
 
+  const handleAddActionMenuKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setIsAddMenuOpen(false);
+      return;
+    }
+    if (!addActionCandidates.length) {
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActiveAddActionIndex((index) => (index + 1) % addActionCandidates.length);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveAddActionIndex((index) => (
+        index <= 0 ? addActionCandidates.length - 1 : index - 1
+      ));
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const reference = addActionCandidates[Math.max(activeAddActionIndex, 0)];
+      if (reference) {
+        selectAddActionCandidate(reference);
+      }
+    }
+  };
+
   const removeSelectedReference = (reference: AssistantReference) => {
-    setReferenceDetail((currentReference) => (
-      currentReference?.id === reference.id && currentReference.type === reference.type
-        ? undefined
-        : currentReference
-    ));
     if (
       queryReferenceResolution?.referenceId === reference.id
       && queryReferenceResolution.referenceType === reference.type
@@ -3815,6 +2255,10 @@ export default function AssistantPage() {
       return false;
     }
     event.preventDefault();
+    if (isSending && assistantStopCommandRequested(inputValue)) {
+      stopGenerating();
+      return true;
+    }
     if (scheduledJobRunOnceRequested(inputValue)) {
       const commandReferences = commandReferenceCandidates(inputValue);
       void sendMessage(inputValue, commandReferences.length ? commandReferences : undefined);
@@ -3863,66 +2307,102 @@ export default function AssistantPage() {
     }
   };
 
-  const openConversation = async (targetConversationId: string) => {
-    setConversationId(targetConversationId);
-    setIsLoadingMessages(true);
-    try {
-      const history = await fetchAssistantConversationMessages(targetConversationId);
-      setMessages(
-        history.length
-          ? history.map((item: AssistantConversationMessage) => ({
-              content: item.content,
-              id: item.id,
-              intent: item.intent,
-              references: item.references,
-              role: item.role,
-              toolResults: item.toolResults,
-            }))
-          : welcomeMessages,
-      );
-      const latestAssistantMessage = [...history].reverse().find((item) => item.role === 'assistant');
-      setLastResponse(
-        latestAssistantMessage
-          ? {
-              content: latestAssistantMessage.content,
-              conversationId: targetConversationId,
-              intent: latestAssistantMessage.intent,
-              latencyMs: 0,
-              messageId: latestAssistantMessage.id,
-              model: latestAssistantMessage.model ?? '',
-              references: latestAssistantMessage.references,
-              suggestions: latestAssistantMessage.suggestions,
-              toolResults: latestAssistantMessage.toolResults,
-            }
-          : undefined,
-      );
-    } catch (error) {
-      toast.error(formatMutationError(error));
-    } finally {
-      setIsLoadingMessages(false);
+  const loadConversation = async (
+    targetConversationId: string,
+    options: { preserveComposer?: boolean } = {},
+  ) => {
+    if (options.preserveComposer) {
+      setIsAddMenuOpen(false);
+      setReferenceCandidates([]);
+      setActiveReferenceIndex(-1);
+      setDismissedReferencePickerValue(inputValue);
+    } else {
+      resetComposerState({ clearInput: true });
     }
+    setConversationId(targetConversationId);
+    await loadConversationMessages(targetConversationId);
+  };
+
+  const hasUnsentComposerState = () => (
+    inputValue.trim().length > 0
+    || selectedReferences.length > 0
+    || Boolean(committedActionCommand)
+    || Boolean(queryReferenceResolution)
+  );
+
+  const openConversation = (targetConversationId: string) => {
+    if (targetConversationId === conversationId) {
+      return;
+    }
+    if (!hasUnsentComposerState()) {
+      void loadConversation(targetConversationId, { preserveComposer: false });
+      return;
+    }
+    Modal.confirm({
+      cancelText: '丢弃并切换',
+      content: '当前输入框或引用上下文尚未发送，可以保留到目标会话，也可以丢弃后切换。',
+      okText: '保留并切换',
+      title: '切换历史会话',
+      onCancel: () => {
+        void loadConversation(targetConversationId, { preserveComposer: false });
+      },
+      onOk: () => {
+        void loadConversation(targetConversationId, { preserveComposer: true });
+      },
+    });
   };
 
   const sendMessage = async (
     messageText = inputValue,
     referenceOverrides?: AssistantReference[],
+    options: { replaceReferences?: boolean } = {},
   ) => {
     const content = messageText.trim();
-    if (!content || isSending) {
+    if (!content) {
       return;
     }
+    if (isSending) {
+      if (assistantStopCommandRequested(content)) {
+        stopGenerating();
+      }
+      return;
+    }
+    const controller = new AbortController();
+    const runId = createAssistantChatRunId();
+    const clientRequestId = runId;
+    chatAbortControllerRef.current?.abort();
+    chatAbortControllerRef.current = controller;
+    activeChatRequestRef.current = {
+      clientRequestId,
+      content,
+      references: selectedReferences,
+      runId,
+    };
     setIsSending(true);
     const commandReferences = referenceOverrides ?? await resolveCommandReferenceCandidates(content);
+    if (controller.signal.aborted) {
+      return;
+    }
+    const baseReferences = options.replaceReferences ? [] : selectedReferences;
     const referencesForRequest = mergeReferences(
-      selectedReferences,
+      baseReferences,
       commandReferences,
     );
+    activeChatRequestRef.current = {
+      clientRequestId,
+      content,
+      references: referencesForRequest,
+      runId,
+    };
     rememberReferences(referencesForRequest);
     const userMessage: ChatMessage = {
+      clientRequestId,
       content,
       id: `user-${Date.now()}`,
       references: referencesForRequest,
       role: 'user',
+      runId,
+      status: 'pending',
     };
     setMessages((items) => [...items, userMessage]);
     setInputValue('');
@@ -3930,42 +2410,108 @@ export default function AssistantPage() {
     setCommittedActionCommand(undefined);
     try {
       const response = await chatWithAssistant({
+        clientRequestId,
         context: { source: 'assistant-page' },
         conversationId,
         message: content,
         references: referencesForRequest,
+        runId,
+        signal: controller.signal,
       });
       setConversationId(response.conversationId);
       setLastResponse(response);
       setActiveReferenceIndex(-1);
-      setReferenceDetail(undefined);
       setSelectedReferences([]);
       setReferenceCandidates([]);
       setMessages((items) => [
-        ...items,
+        ...items.map((item) => (
+          item.runId === runId ? { ...item, status: 'completed' } : item
+        )),
         {
           content: response.content,
           id: response.messageId,
           intent: response.intent,
           references: response.references,
           role: 'assistant',
+          runId: response.runId ?? runId,
+          status: response.status,
           toolResults: response.toolResults,
         },
       ]);
       await loadConversations();
     } catch (error) {
+      if (isAbortError(error)) {
+        return;
+      }
       toast.error(formatMutationError(error));
       setMessages((items) => [
         ...items,
         {
           content: formatMutationError(error),
+          clientRequestId,
+          failedRequest: {
+            content,
+            references: referencesForRequest,
+          },
           id: `assistant-error-${Date.now()}`,
           role: 'assistant',
+          runId,
+          status: 'failed',
         },
       ]);
     } finally {
-      setIsSending(false);
+      if (chatAbortControllerRef.current === controller) {
+        chatAbortControllerRef.current = null;
+        activeChatRequestRef.current = null;
+        setIsSending(false);
+      }
     }
+  };
+
+  const stopGenerating = () => {
+    const activeRequest = activeChatRequestRef.current;
+    if (activeRequest?.runId) {
+      void cancelAssistantChatRun(activeRequest.runId).catch(() => {
+        // The browser-side abort is still useful even if the server run already finished.
+      });
+    }
+    chatAbortControllerRef.current?.abort();
+    chatAbortControllerRef.current = null;
+    activeChatRequestRef.current = null;
+    setIsSending(false);
+    setInputValue((current) => (current.trim() ? current : activeRequest?.content ?? current));
+    if (activeRequest?.references.length) {
+      setSelectedReferences((current) => (current.length ? current : activeRequest.references));
+    }
+    setReferenceCandidates([]);
+    setActiveReferenceIndex(-1);
+    setMessages((items) => [
+      ...items.map((item) => (
+        activeRequest?.runId && item.runId === activeRequest.runId
+          ? { ...item, status: 'cancelled' }
+          : item
+      )),
+      {
+        clientRequestId: activeRequest?.clientRequestId,
+        content: '已停止生成，可继续输入终止或新的指令。',
+        id: `assistant-stopped-${Date.now()}`,
+        role: 'assistant',
+        runId: activeRequest?.runId,
+        status: 'cancelled',
+      },
+    ]);
+  };
+
+  const retryFailedRequest = (request: NonNullable<ChatMessage['failedRequest']>) => {
+    void sendMessage(request.content, request.references, { replaceReferences: true });
+  };
+
+  const restoreFailedRequest = (request: NonNullable<ChatMessage['failedRequest']>) => {
+    setInputValue(request.content);
+    setSelectedReferences(request.references);
+    setReferenceCandidates([]);
+    setActiveReferenceIndex(-1);
+    setDismissedReferencePickerValue(undefined);
   };
 
   const rememberDraftResolution = (
@@ -4105,8 +2651,21 @@ export default function AssistantPage() {
       );
       toast.success('草案已应用');
     } catch (error) {
-      setDraftStatusById((items) => ({ ...items, [draftId]: 'failed' }));
-      toast.error(formatMutationError(error));
+      const errorMessage = formatMutationError(error);
+      try {
+        const latestDraft = await getAssistantActionDraft(draftId);
+        const latestToolItem = assistantActionDraftRecordToToolItem(latestDraft);
+        setDraftStatusById((items) => ({ ...items, [draftId]: latestDraft.status }));
+        setLinkedDraft((currentDraft) => (
+          assistantDraftId(currentDraft) === draftId
+            ? latestToolItem
+            : currentDraft
+        ));
+        toast.error(`${errorMessage}；已同步服务端草案状态：${draftStatusLabel(latestDraft.status).text}`);
+      } catch {
+        setDraftStatusById((items) => ({ ...items, [draftId]: 'unknown' }));
+        toast.error(`${errorMessage}；确认状态未知，可重试。`);
+      }
     } finally {
       setDraftMutationId(undefined);
     }
@@ -4137,154 +2696,21 @@ export default function AssistantPage() {
   return (
     <PageContainer title={false}>
       <div className="assistant-workspace">
-        <aside className="assistant-sidebar">
-          <Title level={3}>AI 助手</Title>
-          <Button block icon={<PlusOutlined />} onClick={startNewConversation}>
-            新对话
-          </Button>
-          <div aria-label="常用入口" className="assistant-sidebar-section">
-            <div className="assistant-sidebar-section-header">
-              <Text strong>常用入口</Text>
-              <Button
-                aria-label={starterPromptsExpanded ? '收起更多常用入口' : '展开更多常用入口'}
-                icon={starterPromptsExpanded ? <UpOutlined /> : <DownOutlined />}
-                size="small"
-                type="text"
-                onClick={() => setStarterPromptsExpanded((expanded) => !expanded)}
-              >
-                {starterPromptsExpanded ? '收起' : `更多 ${secondaryStarterPrompts.length}`}
-              </Button>
-            </div>
-            <div className="assistant-prompt-list assistant-prompt-list-compact">
-              {primaryStarterPrompts.map((item) => (
-                <Button
-                  block
-                  icon={item.icon}
-                  key={item.label}
-                  onClick={() => void sendMessage(item.prompt)}
-                >
-                  {item.label}
-                </Button>
-              ))}
-              {starterPromptsExpanded
-                ? secondaryStarterPrompts.map((item) => (
-                    <Button
-                      block
-                      icon={item.icon}
-                      key={item.label}
-                      onClick={() => void sendMessage(item.prompt)}
-                    >
-                      {item.label}
-                    </Button>
-                  ))
-                : null}
-            </div>
-          </div>
-          <div className="assistant-history-panel">
-            <div className="assistant-history-title">
-              <Text strong>最近对话</Text>
-              {isLoadingConversations ? <Spin size="small" /> : null}
-            </div>
-            <div className="assistant-history-list">
-              {conversations.length ? (
-                conversations.map((item) => (
-                  <Button
-                    block
-                    className={item.id === conversationId ? 'assistant-history-active' : undefined}
-                    icon={<MessageOutlined />}
-                    key={item.id}
-                    onClick={() => void openConversation(item.id)}
-                  >
-                    <span className="assistant-history-button-text">
-                      <span>{item.title}</span>
-                      <span>{item.messageCount} 条</span>
-                    </span>
-                  </Button>
-                ))
-              ) : (
-                <Text type="secondary">暂无历史对话</Text>
-              )}
-            </div>
-          </div>
-          {roleQuickTaskGroups.length ? (
-            <div aria-label="角色快捷任务" className="assistant-role-task-panel">
-              <div className="assistant-role-task-header">
-                <span className="assistant-role-task-title">
-                  <Text strong>角色快捷任务</Text>
-                  <Text type="secondary">
-                    {`${roleQuickTaskGroups.length} 组 · ${roleQuickTaskCount} 项`}
-                  </Text>
-                </span>
-                <Button
-                  aria-label={roleQuickTasksExpanded ? '收起角色快捷任务' : '展开角色快捷任务'}
-                  icon={roleQuickTasksExpanded ? <UpOutlined /> : <DownOutlined />}
-                  size="small"
-                  type="text"
-                  onClick={() => setRoleQuickTasksExpanded((expanded) => !expanded)}
-                >
-                  {roleQuickTasksExpanded ? '收起' : '展开'}
-                </Button>
-              </div>
-              {roleQuickTasksExpanded ? (
-                <div className="assistant-role-task-groups">
-                  {roleQuickTaskGroups.map((group) => (
-                    <div className="assistant-role-task-group" key={group.key}>
-                      <Text type="secondary">{group.label}</Text>
-                      <div className="assistant-role-task-list">
-                        {group.tasks.map((task) => (
-                          <Button
-                            block
-                            key={task.key}
-                            size="small"
-                            onClick={() => setInputValue(task.prompt)}
-                          >
-                            {task.label}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="assistant-sidebar-more-panel">
-            <div className="assistant-sidebar-section-header">
-              <Text strong>更多能力</Text>
-            </div>
-            <div className="assistant-sidebar-tool-grid">
-              <Button
-                aria-label="草案模板市场"
-                icon={<AppstoreOutlined />}
-                onClick={openDraftTemplateMarket}
-              >
-                草案模板
-              </Button>
-              <Button
-                aria-label={metricsPanelOpened ? '隐藏助手效果指标' : '查看助手效果指标'}
-                icon={<BarChartOutlined />}
-                loading={isLoadingMetrics}
-                onClick={toggleMetricsPanel}
-              >
-                {metricsPanelOpened ? '隐藏指标' : '效果指标'}
-              </Button>
-            </div>
-          </div>
-          {draftTemplateMarketOpened ? (
-            <AssistantDraftTemplateMarket
-              isLoading={isLoadingDraftTemplates}
-              templates={draftTemplates}
-              onUseTemplate={useDraftTemplate}
-            />
-          ) : null}
-          {metricsPanelOpened ? (
-            <AssistantMetricsPanel
-              isLoading={isLoadingMetrics}
-              metrics={assistantMetrics}
-              onRefresh={() => void loadAssistantMetrics()}
-            />
-          ) : null}
-        </aside>
+        <AssistantSidebar
+          conversationId={conversationId}
+          conversations={conversations}
+          isLoadingConversations={isLoadingConversations}
+          isLoadingMetrics={isLoadingMetrics}
+          roleQuickTaskCount={roleQuickTaskCount}
+          roleQuickTaskGroups={roleQuickTaskGroups}
+          roleQuickTasksExpanded={roleQuickTasksExpanded}
+          onOpenConversation={openConversation}
+          onOpenDraftTemplateMarket={openDraftTemplateMarket}
+          onOpenMetricsPanel={openMetricsPanel}
+          onStartNewConversation={startNewConversation}
+          onToggleRoleQuickTasks={() => setRoleQuickTasksExpanded((expanded) => !expanded)}
+          onUseRoleTask={setInputValue}
+        />
         <section className="assistant-chat-panel">
           <div className="assistant-chat-header">
             <div>
@@ -4338,6 +2764,8 @@ export default function AssistantPage() {
                 onCancelDraft={cancelDraft}
                 onConfirmDraft={confirmDraft}
                 onRegenerateDraft={regenerateDraft}
+                onRestoreFailedRequest={restoreFailedRequest}
+                onRetryFailedRequest={retryFailedRequest}
                 onViewDraft={viewDraft}
                 onUseConnectionFollowupPrompt={usePluginConnectionFollowupPrompt}
                 onUseRunCardFollowupPrompt={useScheduledJobRunCardFollowupPrompt}
@@ -4370,292 +2798,97 @@ export default function AssistantPage() {
               ))}
             </div>
           ) : null}
-          <div aria-label="本次上下文" className="assistant-selected-reference-list">
-            <div className="assistant-selected-reference-header">
-              <Text strong>本次上下文</Text>
-              <Text type="secondary">
-                {selectedReferences.length
-                  ? `${selectedReferences.length} 个引用 · ${selectedReferenceInjectionText}`
-                  : '0 个显式引用 · 0 个知识 chunk 注入模型'}
-              </Text>
-            </div>
-            {queryReferenceResolution ? (
-              <div
-                aria-label="链接引用状态"
-                className={`assistant-query-reference-status assistant-query-reference-status-${queryReferenceResolution.status}`}
-              >
-                <Space size={6} wrap>
-                  <Tag color={queryReferenceResolutionLabel(queryReferenceResolution.status).color}>
-                    {queryReferenceResolutionLabel(queryReferenceResolution.status).text}
-                  </Tag>
-                  <Text type={queryReferenceResolution.status === 'failed' ? 'danger' : 'secondary'}>
-                    {queryReferenceResolutionText(queryReferenceResolution)}
-                  </Text>
-                </Space>
-              </div>
-            ) : null}
-            {selectedReferences.length ? (
-              <div className="assistant-selected-reference-tags">
-                {selectedReferences.map((reference) => (
-                  <div
-                    className="assistant-selected-reference-card"
-                    key={`${reference.type}:${reference.id}`}
-                  >
-                    <div className="assistant-selected-reference-card-header">
-                      <Space size={6} wrap>
-                        <Tag color="blue">{referenceTypeLabel(reference.type)}</Tag>
-                        <Text strong>{reference.title}</Text>
-                      </Space>
-                      <Button
-                        aria-label={`移除 ${reference.title}`}
-                        size="small"
-                        type="text"
-                        onClick={() => removeSelectedReference(reference)}
-                      >
-                        移除
-                      </Button>
-                    </div>
-                    <Text className="assistant-selected-reference-meta" type="secondary">
-                      {referenceMetaText(reference)}
-                    </Text>
-                    <Text className="assistant-selected-reference-summary">
-                      {referenceSummaryText(reference)}
-                    </Text>
-                    <Space size={6} wrap>
-                      <Tag
-                        color={
-                          reference.type === 'knowledge_document'
-                          || reference.type === 'knowledge_chunk'
-                          || reference.type === 'knowledge_folder'
-                          || reference.type === 'knowledge_space'
-                            ? 'green'
-                            : 'default'
-                        }
-                      >
-                        {referenceInjectionText(reference)}
-                      </Tag>
-                      <Button
-                        aria-label={`查看摘要 ${reference.title}`}
-                        size="small"
-                        onClick={() => setReferenceDetail(reference)}
-                      >
-                        查看摘要
-                      </Button>
-                      <Button href={reference.url} size="small" type="link">
-                        查看来源
-                      </Button>
-                    </Space>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="assistant-selected-reference-empty">
-                <Space size={6} wrap>
-                  <Tag color="default">0 个显式引用</Tag>
-                  <Tag color="default">0 个知识 chunk 注入模型</Tag>
-                  <Tag color="default">未注入知识正文</Tag>
-                </Space>
-                <Text type="secondary">仅使用系统上下文和当前会话</Text>
-              </div>
-            )}
-            <AssistantReferenceDetailModal
-              reference={referenceDetail}
-              onClose={() => setReferenceDetail(undefined)}
-            />
-          </div>
-          <div className="assistant-composer">
-            {runOncePermissionHint ? (
-              <div aria-label="执行权限提示" className="assistant-composer-warning">
-                <ExclamationCircleOutlined />
-                <Text type="warning">
-                  当前账号没有执行定时作业权限，本次不会直接执行；请使用管理员账号或授予
-                  system.scheduled_jobs.run 后再发送。
-                </Text>
-              </div>
-            ) : null}
-            {isAddMenuOpen ? (
-              <div
-                aria-label="快捷添加 @ 能力"
-                className="assistant-add-menu"
-                id="assistant-add-menu"
-                ref={addMenuRef}
-              >
-                <div className="assistant-add-menu-header">
-                  <Text strong>添加</Text>
-                  <Button
-                    aria-label="关闭快捷添加"
-                    icon={<CloseCircleOutlined />}
-                    size="small"
-                    type="text"
-                    onClick={() => setIsAddMenuOpen(false)}
-                  />
-                </div>
-                <div className="assistant-add-menu-section-title">
-                  <Text type="secondary">常用 @ 能力</Text>
-                </div>
-                {isLoadingAddActions ? (
-                  <div className="assistant-add-menu-loading">
-                    <Spin size="small" />
-                    <Text type="secondary">正在加载</Text>
-                  </div>
-                ) : null}
-                {!isLoadingAddActions && !addActionCandidates.length ? (
-                  <div className="assistant-add-menu-empty">
-                    <Text type="secondary">暂无可用动作</Text>
-                  </div>
-                ) : null}
-                <div className="assistant-add-menu-list">
-                  {addActionCandidates.map((reference) => (
-                    <Button
-                      className="assistant-add-menu-item"
-                      icon={<PlusOutlined />}
-                      key={`${reference.type}:${reference.id}`}
-                      type="text"
-                      onClick={() => selectAddActionCandidate(reference)}
-                    >
-                      <span className="assistant-add-menu-item-main">
-                        <span className="assistant-add-menu-item-title">{reference.title}</span>
-                        <span className="assistant-add-menu-item-summary">
-                          {referenceSummaryText(reference)}
-                        </span>
-                      </span>
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            {shouldShowReferenceCandidates ? (
-              <div
-                aria-label="引用候选"
-                className="assistant-reference-candidates"
-              >
-                <div className="assistant-reference-candidates-header">
-                  <Text strong>引用候选</Text>
-                  <Space size={8} wrap>
-                    {activeMention ? <Text type="secondary">{`搜索：${activeMention}`}</Text> : null}
-                    <Text type="secondary">↑↓ 选择，Enter 添加</Text>
-                  </Space>
-                </div>
-                {isLoadingReferences ? (
-                  <div className="assistant-reference-candidates-loading">
-                    <Spin size="small" />
-                    <Text type="secondary">正在搜索引用</Text>
-                  </div>
-                ) : null}
-                {!isLoadingReferences && !referenceCandidates.length ? (
-                  <div className="assistant-reference-candidates-empty">
-                    <Space orientation="vertical" size={8}>
-                      <Space size={[6, 6]} wrap>
-                        <Tag color="default">{referenceEmptyState.title}</Tag>
-                        <Text type="secondary">{referenceEmptyState.description}</Text>
-                      </Space>
-                      <Space className="assistant-reference-candidates-empty-actions" size={8} wrap>
-                        <Button href={referenceEmptyState.actionHref} size="small" type="link">
-                          {referenceEmptyState.actionLabel}
-                        </Button>
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            setInputValue(referenceEmptyState.prompt);
-                            setReferenceCandidates([]);
-                            setActiveReferenceIndex(-1);
-                            setDismissedReferencePickerValue(undefined);
-                          }}
-                        >
-                          {referenceEmptyState.promptLabel}
-                        </Button>
-                      </Space>
-                    </Space>
-                  </div>
-                ) : null}
-                <div className="assistant-reference-candidates-scroll">
-                  {referenceCandidateGroups.map((group) => (
-                    <div className="assistant-reference-candidate-group" key={group.type}>
-                      <div className="assistant-reference-candidate-group-title">
-                        <Text strong>{group.label}</Text>
-                        <Tag color="default">{group.items.length}</Tag>
-                      </div>
-                      {group.items.map(({ index: referenceIndex, reference }) => {
-                        const isActive = referenceIndex === activeReferenceIndex;
-                        return (
-                          <Button
-                            className={isActive ? 'assistant-reference-candidate-active' : undefined}
-                            icon={reference.type === 'assistant_action' ? <PlusOutlined /> : <LinkOutlined />}
-                            key={`${reference.type}:${reference.id}`}
-                            size="small"
-                            onClick={() => addSelectedReference(reference)}
-                            onMouseEnter={() => setActiveReferenceIndex(referenceIndex)}
-                          >
-                            <span className="assistant-reference-candidate-main">
-                              <span className="assistant-reference-candidate-title">{reference.title}</span>
-                              <span className="assistant-reference-candidate-chips">
-                                <Tag color="default">{referenceTypeLabel(reference.type)}</Tag>
-                                <Tag color={referencePermissionTagColor(reference)}>
-                                  权限：{reference.permission_label ?? '可引用'}
-                                </Tag>
-                                <Tag color="blue">
-                                  来源：{reference.source_module ?? referenceSourceModule(reference.type)}
-                                </Tag>
-                                <Tag color="default">
-                                  更新：{referenceUpdatedDate(reference) ?? '暂无'}
-                                </Tag>
-                              </span>
-                              <span className="assistant-reference-candidate-summary">
-                                {referenceSummaryText(reference)}
-                              </span>
-                            </span>
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            <TextArea
-              aria-label="发送给 AI 助手"
-              className="assistant-composer-input"
-              onChange={(event) => {
-                setInputValue(event.target.value);
-                setDismissedReferencePickerValue(undefined);
-              }}
-              onKeyDown={handleComposerKeyDown}
-              onPressEnter={(event) => {
-                if (event.defaultPrevented || submitComposerEnter(event)) {
-                  return;
-                }
-              }}
-              placeholder="输入问题"
-              rows={3}
-              value={inputValue}
-            />
-            <div className="assistant-composer-toolbar">
-              <Button
-                aria-controls={isAddMenuOpen ? 'assistant-add-menu' : undefined}
-                aria-expanded={isAddMenuOpen}
-                aria-label="添加 @ 能力"
-                className="assistant-composer-add-button"
-                icon={<PlusOutlined />}
-                ref={(node) => {
-                  addMenuTriggerRef.current = node;
+          <AssistantReferenceContext
+            isExpanded={isContextExpanded}
+            queryReferenceResolution={queryReferenceResolution}
+            selectedReferences={selectedReferences}
+            onRemoveReference={removeSelectedReference}
+            onToggleExpanded={() => setIsContextExpanded((expanded) => !expanded)}
+          />
+          <AssistantComposer
+            addActionCandidates={addActionCandidates}
+            activeAddActionIndex={activeAddActionIndex}
+            addMenuRef={addMenuRef}
+            addActionQuery={addActionQuery}
+            canSend={canSend}
+            inputValue={inputValue}
+            isAddMenuOpen={isAddMenuOpen}
+            isLoadingAddActions={isLoadingAddActions}
+            isSending={isSending}
+            referencePicker={shouldShowReferenceCandidates ? (
+              <AssistantReferencePicker
+                activeMention={activeMention}
+                activeReferenceIndex={activeReferenceIndex}
+                candidateGroups={referenceCandidateGroups}
+                emptyState={referenceEmptyState}
+                isLoading={isLoadingReferences}
+                referenceCount={referenceCandidates.length}
+                onAddReference={addSelectedReference}
+                onHoverReference={setActiveReferenceIndex}
+                onUseEmptyPrompt={() => {
+                  setInputValue(referenceEmptyState.prompt);
+                  setReferenceCandidates([]);
+                  setActiveReferenceIndex(-1);
+                  setDismissedReferencePickerValue(undefined);
                 }}
-                onClick={toggleAddMenu}
               />
-              <Button
-                aria-label="发送"
-                className="assistant-composer-send"
-                disabled={!canSend}
-                icon={<SendOutlined />}
-                loading={isSending}
-                onClick={() => void sendMessage()}
-                type="primary"
-              >
-                发送
-              </Button>
-            </div>
-          </div>
+            ) : undefined}
+            runOncePermissionHint={runOncePermissionHint}
+            onChangeInput={(value) => {
+              setInputValue(value);
+              setDismissedReferencePickerValue(undefined);
+            }}
+            onChangeAddActionQuery={changeAddActionQuery}
+            onCloseAddMenu={() => setIsAddMenuOpen(false)}
+            onHoverAddAction={setActiveAddActionIndex}
+            onAddActionMenuKeyDown={handleAddActionMenuKeyDown}
+            onKeyDown={handleComposerKeyDown}
+            onPressEnter={(event) => {
+              if (event.defaultPrevented || submitComposerEnter(event)) {
+                return;
+              }
+            }}
+            onSelectAddActionCandidate={selectAddActionCandidate}
+            onSend={() => void sendMessage()}
+            onSetAddMenuTrigger={(node) => {
+              addMenuTriggerRef.current = node;
+            }}
+            onStopSending={stopGenerating}
+            onToggleAddMenu={toggleAddMenu}
+          />
         </section>
       </div>
+      <Modal
+        className="assistant-workbench-modal"
+        footer={null}
+        open={draftTemplateMarketOpened}
+        title="草案模板市场"
+        width={720}
+        onCancel={() => setDraftTemplateMarketOpened(false)}
+      >
+        <AssistantDraftTemplateMarket
+          isLoading={isLoadingDraftTemplates}
+          templates={draftTemplates}
+          onUseTemplate={(template) => {
+            applyDraftTemplate(template);
+            setDraftTemplateMarketOpened(false);
+          }}
+        />
+      </Modal>
+      <Modal
+        className="assistant-workbench-modal"
+        footer={null}
+        open={metricsPanelOpened}
+        title="助手效果指标"
+        width={760}
+        onCancel={() => setMetricsPanelOpened(false)}
+      >
+        <AssistantMetricsPanel
+          isLoading={isLoadingMetrics}
+          metrics={assistantMetrics}
+          onRefresh={() => void loadAssistantMetrics()}
+        />
+      </Modal>
     </PageContainer>
   );
 }

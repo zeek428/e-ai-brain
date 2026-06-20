@@ -18,6 +18,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+  assistantScopedStorageKey,
   confirmAssistantActionDraft,
   createAiExecutorRunner,
   copyPlugin,
@@ -351,22 +352,24 @@ function pluginDraftFieldChanged(
   initialPayload: Record<string, unknown>,
   currentPayload: Record<string, unknown>,
 ): boolean {
+  const initialValue = initialPayload[field];
+  const currentValue = currentPayload[field];
   if (field === 'requires_human_review') {
-    return Boolean(initialPayload[field]) !== Boolean(currentPayload[field]);
+    return Boolean(initialValue) !== Boolean(currentValue);
   }
   if (
     field === 'result_mapping'
-    && isPlainRecord(initialPayload[field])
-    && isPlainRecord(currentPayload[field])
+    && isPlainRecord(initialValue)
+    && isPlainRecord(currentValue)
   ) {
-    return Object.keys(initialPayload[field]).some((key) => (
-      JSON.stringify(comparablePluginDraftValue(initialPayload[field][key]))
-      !== JSON.stringify(comparablePluginDraftValue(currentPayload[field][key]))
+    return Object.keys(initialValue).some((key) => (
+      JSON.stringify(comparablePluginDraftValue(initialValue[key]))
+      !== JSON.stringify(comparablePluginDraftValue(currentValue[key]))
     ));
   }
   return (
-    JSON.stringify(comparablePluginDraftValue(initialPayload[field]))
-    !== JSON.stringify(comparablePluginDraftValue(currentPayload[field]))
+    JSON.stringify(comparablePluginDraftValue(initialValue))
+    !== JSON.stringify(comparablePluginDraftValue(currentValue))
   );
 }
 
@@ -2896,11 +2899,12 @@ export default function PluginsPage() {
       return;
     }
     const timeoutId = window.setTimeout(() => {
-      const rawDraft = window.sessionStorage.getItem(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY);
+      const storageKey = assistantScopedStorageKey(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY);
+      const rawDraft = window.sessionStorage.getItem(storageKey);
       if (!rawDraft) {
         return;
       }
-      window.sessionStorage.removeItem(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY);
+      window.sessionStorage.removeItem(storageKey);
       try {
         const draft = JSON.parse(rawDraft) as AssistantPluginConnectionDraft;
         if (!isPlainRecord(draft.payload)) {
@@ -2937,15 +2941,16 @@ export default function PluginsPage() {
     if (typeof window === 'undefined') {
       return;
     }
-    if (!window.sessionStorage.getItem(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY) || resultWriteTargets.length === 0) {
+    const storageKey = assistantScopedStorageKey(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY);
+    if (!window.sessionStorage.getItem(storageKey) || resultWriteTargets.length === 0) {
       return;
     }
     const timeoutId = window.setTimeout(() => {
-      const rawDraft = window.sessionStorage.getItem(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY);
+      const rawDraft = window.sessionStorage.getItem(storageKey);
       if (!rawDraft) {
         return;
       }
-      window.sessionStorage.removeItem(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY);
+      window.sessionStorage.removeItem(storageKey);
       try {
         const draft = JSON.parse(rawDraft) as AssistantPluginActionDraft;
         if (!isPlainRecord(draft.payload)) {

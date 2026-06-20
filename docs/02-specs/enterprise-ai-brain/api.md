@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.369 |
+| 功能版本 | v1.1.370 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.370 | 2026-06-20 | AI 助手聊天新增 `assistant_chat_runs` 运行生命周期、消息状态字段和服务端取消接口，停止生成可审计追踪 | Codex |
 | v1.1.369 | 2026-06-19 | AI 助手动作候选选择后改为保留 `@动作名` 命令前缀并承接用户正文，不再用候选 prompt 覆盖输入 | Codex |
 | v1.1.368 | 2026-06-19 | AI 助手 @ 候选补齐 `assistant_action` 动作项，支持按关键词搜索新建需求/Bug/插件/定时作业/知识/AI 能力配置入口，前端选择后只回填指令不注入上下文 | Codex |
 | v1.1.367 | 2026-06-19 | AI 助手草案支持表单编辑后 PATCH payload 再确认，确认接口补齐重复提交幂等返回；运营类 @ 候选按产品 scope 过滤，角色快捷任务配置补齐前端管理入口 | Codex |
@@ -1361,8 +1362,10 @@ POST /api/assistant/chat
 ```json
 {
   "conversation_id": "conversation_001",
+  "client_request_id": "assistant_chat_run_202606200001",
   "message": "AI Brain 项目现在开发到哪里了？",
   "product_id": "product_001",
+  "run_id": "assistant_chat_run_202606200001",
   "references": [
     {"type": "knowledge_document", "id": "knowledge_doc_001"}
   ],
@@ -1380,6 +1383,8 @@ POST /api/assistant/chat
   "message": {
     "id": "assistant_message_001",
     "role": "assistant",
+    "run_id": "assistant_chat_run_202606200001",
+    "status": "completed",
     "content": "当前已完成 GitHub PR Review 支持，正在推进 AI 助手聊天界面。",
     "references": [
       {
@@ -1416,13 +1421,50 @@ POST /api/assistant/chat
       }
     ]
   },
+  "run": {
+    "id": "assistant_chat_run_202606200001",
+    "conversation_id": "conversation_001",
+    "status": "succeeded",
+    "started_at": "2026-06-20T09:00:00+00:00",
+    "finished_at": "2026-06-20T09:00:02+00:00"
+  },
+  "run_id": "assistant_chat_run_202606200001",
+  "status": "succeeded",
   "model": "codex-auto-review",
   "latency_ms": 358,
   "suggestions": ["查看任务中心", "检查 GitHub PR"]
 }
 ```
 
-助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，`reference_candidates` 可覆盖命令面板型 `assistant_action`，以及引用类 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_space`、`knowledge_folder`、`knowledge_document`、`knowledge_chunk`，以及管理员、`system.admin` 或对应管理权限可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。引用候选 query 识别类型词时，`新建/新增/创建` 可匹配 `assistant_action`，`定时作业/定时任务` 优先匹配 `scheduled_job`，`运行记录/失败` 优先匹配 `scheduled_job_run`，`知识空间/知识目录` 分别匹配 `knowledge_space` / `knowledge_folder`，避免用户在创建配置、执行一次、失败诊断或知识范围引用前选到错误上下文。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据，审计事件为 `assistant.chat_completed`。
+助手请求会向模型网关注入服务端生成的 `system_context`，包含当前产品、需求数量、任务数量、最新需求/任务、Git 仓库和默认模型网关配置状态。服务端还会基于用户问题和 read context 生成 `tool_results` 与 `reference_candidates`：`tool_results` 可覆盖 `assistant.delivery_progress`、`assistant.pending_reviews`、`assistant.code_review`、`assistant.iteration`、`assistant.bugs`、`assistant.model_gateway`、`assistant.action_draft`、`assistant.task_creation_guide`、`assistant.scheduled_job_diagnostic` 和 `assistant.plugin_connection_diagnostic`，`reference_candidates` 可覆盖命令面板型 `assistant_action`，以及引用类 `product`、`iteration_version`、`requirement`、`ai_task`、`human_review`、`bug`、`code_review_report`、`knowledge_deposit`、`knowledge_space`、`knowledge_folder`、`knowledge_document`、`knowledge_chunk`，以及管理员、`system.admin` 或对应管理权限可见的 `scheduled_job`、`scheduled_job_run`、`plugin_action`、`plugin_connection`、`ai_agent`、`ai_skill`。引用候选 query 识别类型词时，`新建/新增/创建` 可匹配 `assistant_action`，`定时作业/定时任务` 优先匹配 `scheduled_job`，`运行记录/失败` 优先匹配 `scheduled_job_run`，`知识空间/知识目录` 分别匹配 `knowledge_space` / `knowledge_folder`，避免用户在创建配置、执行一次、失败诊断或知识范围引用前选到错误上下文。若模型未返回有效引用，则优先使用工具结果中的引用兜底，再使用服务端候选引用兜底。`system_context` 只进入模型请求，不写入模型日志；`tool_results` 会随助手消息 metadata 持久化并在聊天响应/历史消息中返回；模型日志以 `purpose=assistant_chat` 记录 provider、model、tokens、latency、status 和 error 等元数据。每次聊天请求都会创建或复用 `assistant_chat_runs` 运行记录，状态为 `running/succeeded/cancelled/failed`；用户消息先按同一 `run_id` 写入 `pending`，成功后用户消息和助手消息置为 `completed`，取消时置为 `cancelled`，失败时写入 `failed/error_code`。`client_request_id` 用于客户端重试、停止生成和审计关联，未传时默认等同 `run_id`。成功审计事件为 `assistant.chat_completed`，取消审计事件为 `assistant.chat_cancelled`，失败审计事件为 `assistant.chat_failed`。
+
+停止生成：
+
+```http
+POST /api/assistant/chat-runs/{run_id}/cancel
+```
+
+请求体：
+
+```json
+{
+  "reason": "user_cancelled"
+}
+```
+
+响应：
+
+```json
+{
+  "id": "assistant_chat_run_202606200001",
+  "conversation_id": "conversation_001",
+  "status": "cancelled",
+  "cancel_reason": "user_cancelled",
+  "cancelled_at": "2026-06-20T09:00:01+00:00"
+}
+```
+
+取消接口只允许当前用户取消自己的聊天运行；若运行已成功或失败，接口返回当前终态，不反向修改已完成消息。服务端在进入模型调用前和模型返回后都会检查 `assistant_chat_runs.status`，若已取消则不把模型结果写入历史，而是持久化一条 `cancelled` 状态的助手消息，便于刷新历史后仍能看到“已停止生成”的真实状态。
 
 当用户泛化发送“新增任务/创建任务/我要建任务”但没有说明任务类型时，`/api/assistant/chat` 必须返回 `tool=assistant.task_creation_guide` 的确定性工具结果，不调用模型网关。`tool_results[0].items[]` 和响应顶层 `suggestions` 必须同时覆盖五类入口：研发任务、定时作业、插件动作、代码巡检和反馈洞察；建议文案固定为 `新增研发任务`、`新增定时作业`、`新增插件动作`、`配置代码巡检定时作业`、`配置每周用户反馈洞察定时作业`，便于前端同时展示任务类型卡片和可点击建议按钮。
 
@@ -1834,12 +1876,17 @@ GET /api/assistant/conversations/{conversation_id}/messages
     {
       "id": "assistant_message_001",
       "role": "user",
-      "content": "AI Brain 项目现在开发到哪里了？"
+      "content": "AI Brain 项目现在开发到哪里了？",
+      "run_id": "assistant_chat_run_202606200001",
+      "client_request_id": "assistant_chat_run_202606200001",
+      "status": "completed"
     },
     {
       "id": "assistant_message_002",
       "role": "assistant",
       "content": "当前已支持按用户保存聊天历史。",
+      "run_id": "assistant_chat_run_202606200001",
+      "status": "completed",
       "model": "codex-auto-review",
       "references": [
         {

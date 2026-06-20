@@ -990,6 +990,7 @@ def test_assistant_message_helpers_normalize_payloads_and_public_projection():
             }
         ],
         "role": "assistant",
+        "status": "completed",
         "suggestions": ["查看需求"],
         "tool_results": [
             {
@@ -1000,3 +1001,70 @@ def test_assistant_message_helpers_normalize_payloads_and_public_projection():
             }
         ],
     }
+
+
+def test_public_assistant_message_can_strip_heavy_tool_result_details_for_history():
+    public_message = public_assistant_message(
+        {
+            "content": "已生成草案",
+            "conversation_id": "conversation_001",
+            "created_at": "2026-06-05T09:00:00+00:00",
+            "id": "assistant_message_001",
+            "model": "gpt-test",
+            "metadata_json": {
+                "tool_results": [
+                    {
+                        "intent": "scheduled_job_draft",
+                        "items": [
+                            {
+                                "action": "create_scheduled_job",
+                                "client_draft_id": "client_draft_001",
+                                "draft_id": "draft_001",
+                                "payload": {
+                                    "config_json": {
+                                        "prompt": "很长的内部提示不应进入历史列表",
+                                    },
+                                    "name": "每周反馈洞察",
+                                },
+                                "preview": {"markdown": "完整预览不应进入历史列表"},
+                                "requires_confirmation": True,
+                                "risk_level": "medium",
+                                "server_draft_id": "server_draft_001",
+                                "status": "pending",
+                                "title": "创建定时作业：每周反馈洞察",
+                                "url": "/tasks/scheduled-jobs",
+                                "wizard_steps": [{"key": "connection"}],
+                            }
+                        ],
+                        "summary": {
+                            "content": "内部摘要正文不应进入历史列表",
+                            "status": "pending",
+                        },
+                        "tool": "assistant.action_draft",
+                    }
+                ],
+            },
+            "role": "assistant",
+            "suggestions": [],
+        },
+        include_tool_details=False,
+    )
+
+    tool_result = public_message["tool_results"][0]
+    assert tool_result["summary"] == {"status": "pending"}
+    assert tool_result["items"] == [
+        {
+            "action": "create_scheduled_job",
+            "client_draft_id": "client_draft_001",
+            "draft_id": "draft_001",
+            "requires_confirmation": True,
+            "risk_level": "medium",
+            "server_draft_id": "server_draft_001",
+            "status": "pending",
+            "title": "创建定时作业：每周反馈洞察",
+            "url": "/tasks/scheduled-jobs",
+        }
+    ]
+    assert "payload" not in tool_result["items"][0]
+    assert "preview" not in tool_result["items"][0]
+    assert "wizard_steps" not in tool_result["items"][0]

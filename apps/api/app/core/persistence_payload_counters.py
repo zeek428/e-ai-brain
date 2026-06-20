@@ -245,6 +245,13 @@ def _sync_assistant_chat_counters(payload: dict[str, Any]) -> None:
             "assistant_action_run",
         ),
     )
+    counters["assistant_chat_run"] = max(
+        counters.get("assistant_chat_run", 0),
+        _max_numeric_suffix(
+            payload.get("assistant_chat_runs", {}),
+            "assistant_chat_run",
+        ),
+    )
     counters["conversation"] = max(
         counters.get("conversation", 0),
         _max_numeric_suffix(payload.get("assistant_conversations", {}), "conversation"),

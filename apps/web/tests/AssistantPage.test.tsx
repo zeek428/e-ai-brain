@@ -9,9 +9,12 @@ import {
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+  assistantScopedStorageKey,
   chatWithAssistant,
   fetchAssistantConversationMessages,
   fetchAssistantConversations,
+  readAssistantDraftResolutions,
+  rememberAssistantDraftResolution,
   saveCurrentUser,
 } from '../src/services/aiBrain';
 
@@ -68,7 +71,7 @@ function roleQuickTasksResponse(groups: Array<Record<string, unknown>>) {
 }
 
 describe('AssistantPage', () => {
-  it('shows a transparent current-context summary even before references are selected', async () => {
+  it('hides the current-context strip until references or deeplink state exist', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (input === '/api/assistant/conversations') {
@@ -99,13 +102,43 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    const currentContext = await screen.findByLabelText('本次上下文');
-    expect(within(currentContext).getByText('本次上下文')).toBeInTheDocument();
-    expect(within(currentContext).getByText('0 个显式引用')).toBeInTheDocument();
-    expect(within(currentContext).getByText('0 个知识 chunk 注入模型')).toBeInTheDocument();
-    expect(within(currentContext).getByText('未注入知识正文')).toBeInTheDocument();
-    expect(within(currentContext).getByText('仅使用系统上下文和当前会话')).toBeInTheDocument();
+    await screen.findByText('我在，直接问我当前进展。');
+    expect(screen.queryByLabelText('本次上下文')).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/assistant/conversations']);
+  });
+
+  it('scopes assistant draft resolution cache by current user', () => {
+    saveCurrentUser({
+      display_name: 'User A',
+      id: 'user_a',
+      permissions: [],
+      roles: ['admin'],
+      username: 'user-a@example.com',
+    });
+    rememberAssistantDraftResolution({
+      draftId: 'draft_user_a',
+      resourceId: 'scheduled_job_user_a',
+      resourceType: 'scheduled_job',
+      title: 'User A 作业',
+    });
+    expect(readAssistantDraftResolutions()).toEqual({
+      draft_user_a: {
+        resource_id: 'scheduled_job_user_a',
+        resource_type: 'scheduled_job',
+        title: 'User A 作业',
+      },
+    });
+
+    saveCurrentUser({
+      display_name: 'User B',
+      id: 'user_b',
+      permissions: [],
+      roles: ['admin'],
+      username: 'user-b@example.com',
+    });
+    expect(readAssistantDraftResolutions()).toEqual({});
+    expect(window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY)))
+      .toBeNull();
   });
 
   it('loads assistant effectiveness metrics from the workbench sidebar', async () => {
@@ -201,7 +234,7 @@ describe('AssistantPage', () => {
     expect(screen.queryByText('助手效果指标')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看助手效果指标' }));
 
-    expect(await screen.findByText('助手效果指标')).toBeInTheDocument();
+    expect((await screen.findAllByText('助手效果指标')).length).toBeGreaterThan(0);
     expect(await screen.findByLabelText('指标 草案生成数')).toHaveTextContent('4');
     expect(screen.getByLabelText('指标 草案确认率')).toHaveTextContent('50%');
     expect(screen.getByLabelText('指标 用户修改率')).toHaveTextContent('25%');
@@ -321,6 +354,7 @@ describe('AssistantPage', () => {
       '请帮我生成每周用户反馈洞察定时作业草案，并在确认后执行一次。',
     );
 
+    fireEvent.click(screen.getByRole('button', { name: '草案模板市场' }));
     fireEvent.click(screen.getByRole('button', { name: '使用模板 线上日志异常分析' }));
 
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
@@ -436,12 +470,7 @@ describe('AssistantPage', () => {
 
     expect(screen.queryByLabelText('面包屑')).not.toBeInTheDocument();
     expect(screen.getAllByText('AI 助手').length).toBeGreaterThan(0);
-    const quickEntryPanel = screen.getByLabelText('常用入口');
-    expect(within(quickEntryPanel).getByRole('button', { name: /项目进展/ })).toBeInTheDocument();
-    expect(within(quickEntryPanel).getByRole('button', { name: /阻塞与待确认/ })).toBeInTheDocument();
-    expect(within(quickEntryPanel).queryByRole('button', { name: /模型网关/ })).not.toBeInTheDocument();
-    fireEvent.click(within(quickEntryPanel).getByRole('button', { name: '展开更多常用入口' }));
-    expect(within(quickEntryPanel).getByRole('button', { name: /模型网关/ })).toBeInTheDocument();
+    expect(screen.queryByLabelText('常用入口')).not.toBeInTheDocument();
     const assistantInput = screen.getByLabelText('发送给 AI 助手');
     expect(assistantInput).toHaveAttribute('rows', '3');
     fireEvent.change(assistantInput, {
@@ -565,6 +594,9 @@ describe('AssistantPage', () => {
     expect(selectedReferenceList).not.toBeNull();
     expect(within(selectedReferenceList as HTMLElement).getAllByText(/2 个知识 chunk 将注入模型/).length)
       .toBeGreaterThan(0);
+    fireEvent.click(
+      within(selectedReferenceList as HTMLElement).getByRole('button', { name: '展开本次上下文' }),
+    );
     expect(within(selectedReferenceList as HTMLElement).getByText('知识库 · 可引用 · 2026-06-14')).toBeInTheDocument();
     expect(
       within(selectedReferenceList as HTMLElement).getByText(
@@ -598,6 +630,243 @@ describe('AssistantPage', () => {
     expect(chatRequestBody).toMatchObject({
       message: '基于 @支付 分析提交无响应',
       references: [{ id: 'knowledge_payment_runbook', type: 'knowledge_document' }],
+    });
+  });
+
+  it('offers retry and restore actions when sending with references fails', async () => {
+    const chatRequestBodies: Record<string, unknown>[] = [];
+    let chatCallCount = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (String(input).startsWith('/api/assistant/reference-candidates?')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  chunk_count: 1,
+                  id: 'knowledge_retry_runbook',
+                  permission_label: '可引用',
+                  source_module: '知识库',
+                  summary: '失败重试需要保留原始上下文。',
+                  title: '失败重试手册',
+                  type: 'knowledge_document',
+                  url: '/knowledge/documents?document_id=knowledge_retry_runbook',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/chat') {
+        chatCallCount += 1;
+        chatRequestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        if (chatCallCount === 1) {
+          return new Response(
+            JSON.stringify({
+              detail: {
+                code: 'NETWORK_ERROR',
+                message: '网络暂时不可用',
+              },
+            }),
+            { headers: { 'Content-Type': 'application/json' }, status: 500 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_retry',
+              latency_ms: 99,
+              message: {
+                content: '已基于失败重试手册恢复回答。',
+                id: 'assistant_message_retry',
+                references: [],
+                role: 'assistant',
+              },
+              model: 'codex-auto-review',
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, { target: { value: '基于 @失败 分析' } });
+    const referenceCandidatePanel = await screen.findByLabelText('引用候选');
+    fireEvent.click(
+      await within(referenceCandidatePanel).findByRole('button', { name: /失败重试手册/ }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText(/网络暂时不可用/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /重\s*试/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '恢复到输入框' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '恢复到输入框' }));
+    expect(assistantInput).toHaveValue('基于 @失败 分析');
+    expect(screen.getByLabelText('本次上下文')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /重\s*试/ }));
+    expect(await screen.findByText('已基于失败重试手册恢复回答。')).toBeInTheDocument();
+    expect(chatRequestBodies).toHaveLength(2);
+    expect(chatRequestBodies[1]).toMatchObject({
+      message: '基于 @失败 分析',
+      references: [{ id: 'knowledge_retry_runbook', type: 'knowledge_document' }],
+    });
+  });
+
+  it('allows stopping an in-flight assistant response and then sending a stop command', async () => {
+    const chatRequestBodies: Record<string, unknown>[] = [];
+    const cancelRequests: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return Promise.resolve(new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        }));
+      }
+      if (String(input).startsWith('/api/assistant/chat-runs/')) {
+        cancelRequests.push(String(input));
+        const pathParts = String(input).split('/');
+        return Promise.resolve(new Response(
+          JSON.stringify({
+            data: {
+              id: pathParts[pathParts.length - 2],
+              status: 'cancelled',
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        ));
+      }
+      if (input === '/api/assistant/chat') {
+        chatRequestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        if (chatRequestBodies.length === 1) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              const error = new Error('aborted');
+              error.name = 'AbortError';
+              reject(error);
+            });
+          });
+        }
+        return Promise.resolve(new Response(
+          JSON.stringify({
+            data: {
+              conversation_id: 'conversation_stop',
+              latency_ms: 40,
+              message: {
+                content: '已收到终止命令。',
+                id: 'assistant_message_stop',
+                references: [],
+                role: 'assistant',
+                status: 'completed',
+              },
+              model: 'codex-auto-review',
+              run_id: chatRequestBodies[1]?.run_id,
+              suggestions: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        ));
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, { target: { value: '请生成一份较长分析' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('生成中')).toBeInTheDocument();
+    fireEvent.change(assistantInput, { target: { value: '终止' } });
+    fireEvent.click(screen.getByRole('button', { name: /停\s*止生成/ }));
+
+    expect(await screen.findByText('已停止生成，可继续输入终止或新的指令。')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(cancelRequests).toHaveLength(1);
+    });
+    expect(assistantInput).toHaveValue('终止');
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('已收到终止命令。')).toBeInTheDocument();
+    expect(chatRequestBodies).toEqual([
+      expect.objectContaining({
+        client_request_id: expect.stringMatching(/^assistant_chat_run_/),
+        message: '请生成一份较长分析',
+        run_id: expect.stringMatching(/^assistant_chat_run_/),
+      }),
+      expect.objectContaining({
+        client_request_id: expect.stringMatching(/^assistant_chat_run_/),
+        message: '终止',
+        run_id: expect.stringMatching(/^assistant_chat_run_/),
+      }),
+    ]);
+    expect(cancelRequests[0]).toContain(String(chatRequestBodies[0].run_id));
+  });
+
+  it('stops an in-flight assistant response when pressing Enter on a stop command', async () => {
+    const cancelRequests: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return Promise.resolve(new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        }));
+      }
+      if (String(input).startsWith('/api/assistant/chat-runs/')) {
+        cancelRequests.push(String(input));
+        const pathParts = String(input).split('/');
+        return Promise.resolve(new Response(
+          JSON.stringify({ data: { id: pathParts[pathParts.length - 2], status: 'cancelled' } }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        ));
+      }
+      if (input === '/api/assistant/chat') {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, { target: { value: '请生成一份较长分析' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('生成中')).toBeInTheDocument();
+    fireEvent.change(assistantInput, { target: { value: '终止' } });
+    fireEvent.keyDown(assistantInput, { key: 'Enter' });
+
+    expect(await screen.findByText('已停止生成，可继续输入终止或新的指令。')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(cancelRequests).toHaveLength(1);
     });
   });
 
@@ -781,6 +1050,9 @@ describe('AssistantPage', () => {
     const selectedReferenceList = screen.getByText('本次上下文')
       .closest('.assistant-selected-reference-list');
     expect(selectedReferenceList).not.toBeNull();
+    fireEvent.click(
+      within(selectedReferenceList as HTMLElement).getByRole('button', { name: '展开本次上下文' }),
+    );
     expect(within(selectedReferenceList as HTMLElement).getByText('知识空间')).toBeInTheDocument();
     expect(
       within(selectedReferenceList as HTMLElement).getAllByText(/最多 8 个知识 chunk 将按权限注入模型/).length,
@@ -883,6 +1155,9 @@ describe('AssistantPage', () => {
     expect(selectedReferenceList).not.toBeNull();
     expect(within(selectedReferenceList as HTMLElement).getAllByText(/1 个知识 chunk 将注入模型/).length)
       .toBeGreaterThan(0);
+    fireEvent.click(
+      within(selectedReferenceList as HTMLElement).getByRole('button', { name: '展开本次上下文' }),
+    );
     expect(within(selectedReferenceList as HTMLElement).getByText('知识片段')).toBeInTheDocument();
     expect(
       within(selectedReferenceList as HTMLElement).getByText(
@@ -957,6 +1232,7 @@ describe('AssistantPage', () => {
       target: { value: '@支付' },
     });
     fireEvent.click(await screen.findByRole('button', { name: /支付页超时排障手册/ }));
+    fireEvent.click(screen.getByRole('button', { name: '展开本次上下文' }));
     fireEvent.click(screen.getByRole('button', { name: '移除 支付页超时排障手册' }));
     fireEvent.change(assistantInput, {
       target: { value: '@' },
@@ -1102,6 +1378,73 @@ describe('AssistantPage', () => {
     expect(within(roleTaskPanel).getByText('2 组 · 6 项')).toBeInTheDocument();
     expect(within(roleTaskPanel).queryByText('产品快捷任务')).not.toBeInTheDocument();
     expect(within(roleTaskPanel).queryByText('管理员快捷任务')).not.toBeInTheDocument();
+  });
+
+  it('prompts before switching history conversations with unsent composer text', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({
+          data: {
+            items: [
+              {
+                id: 'conversation_history_target',
+                message_count: 2,
+                title: '历史草案会话',
+                updated_at: '2026-06-19T08:00:00+00:00',
+              },
+            ],
+            total: 1,
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/conversations/conversation_history_target/messages') {
+        return new Response(JSON.stringify({
+          data: {
+            items: [
+              {
+                content: '上一轮用户问题',
+                conversation_id: 'conversation_history_target',
+                created_at: '2026-06-19T08:00:00+00:00',
+                id: 'assistant_message_user_history',
+                role: 'user',
+              },
+              {
+                content: '上一轮助手回答',
+                conversation_id: 'conversation_history_target',
+                created_at: '2026-06-19T08:00:01+00:00',
+                id: 'assistant_message_assistant_history',
+                role: 'assistant',
+              },
+            ],
+            total: 2,
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    const assistantInput = screen.getByLabelText('发送给 AI 助手');
+    fireEvent.change(assistantInput, {
+      target: { value: '这是一条未发送内容' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /历史草案会话/ }));
+
+    expect((await screen.findAllByText('切换历史会话')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: '丢弃并切换' }));
+
+    expect(await screen.findByText('上一轮助手回答')).toBeInTheDocument();
+    expect(assistantInput).toHaveValue('');
   });
 
   it('shows product quick tasks and routes feedback and risk into draft-first prompts', async () => {
@@ -1521,8 +1864,15 @@ describe('AssistantPage', () => {
     fireEvent.keyDown(assistantInput, { key: 'ArrowDown' });
     fireEvent.keyDown(assistantInput, { key: 'Enter' });
 
-    expect(screen.getByText('提取每周用户反馈有价值信息')).toBeInTheDocument();
-    expect(screen.getAllByText('定时作业').length).toBeGreaterThan(0);
+    const selectedReferenceList = screen.getByText('本次上下文')
+      .closest('.assistant-selected-reference-list');
+    expect(selectedReferenceList).not.toBeNull();
+    fireEvent.click(
+      within(selectedReferenceList as HTMLElement).getByRole('button', { name: '展开本次上下文' }),
+    );
+    expect(within(selectedReferenceList as HTMLElement).getByText('提取每周用户反馈有价值信息'))
+      .toBeInTheDocument();
+    expect(within(selectedReferenceList as HTMLElement).getByText('定时作业')).toBeInTheDocument();
   });
 
   it('keeps an @ command prefix instead of adding context when selecting action candidates', async () => {
@@ -1581,8 +1931,7 @@ describe('AssistantPage', () => {
     expect(assistantInput).toHaveValue('@新建定时作业 需要每周一生成用户反馈洞察');
     expect(assistantInput).not.toHaveValue(actionPrompt);
     expect(screen.queryByLabelText('引用候选')).not.toBeInTheDocument();
-    const selectedReferenceList = screen.getByLabelText('本次上下文');
-    expect(within(selectedReferenceList).getAllByText('0 个显式引用').length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText('本次上下文')).not.toBeInTheDocument();
     fireEvent.change(assistantInput, {
       target: { value: '@新建定时作业 需要每周一生成用户反馈洞察，优先周一 9 点执行' },
     });
@@ -1605,37 +1954,52 @@ describe('AssistantPage', () => {
       }
       if (String(input).startsWith('/api/assistant/reference-candidates?')) {
         const params = new URLSearchParams(String(input).split('?')[1]);
-        expect(params.get('query')).toBe('');
         expect(params.get('type')).toBe('assistant_action');
-        expect(params.get('limit')).toBe('8');
+        expect(params.get('limit')).toBe('20');
+        const query = params.get('query') ?? '';
+        const items = query.includes('定时')
+          ? [
+              {
+                action: 'create_scheduled_job',
+                id: 'create_scheduled_job',
+                permission_label: '可执行',
+                prompt: '请帮我生成定时作业配置草案，并说明数据来源、AI处理、结果动作和调度策略。',
+                source_module: '动作',
+                summary: '生成可确认的定时作业草案。',
+                title: '新建定时作业',
+                type: 'assistant_action',
+                url: '/tasks/scheduled-jobs',
+              },
+            ]
+          : [
+              {
+                action: 'create_requirement',
+                id: 'create_requirement',
+                permission_label: '可执行',
+                prompt: '我要新建需求，请帮我梳理标题、背景、目标、优先级、产品和版本，并生成可提交的需求草案。',
+                source_module: '动作',
+                summary: '进入需求交付的新建需求流程，先整理需求草案字段。',
+                title: '新建需求',
+                type: 'assistant_action',
+                url: '/delivery/requirements',
+              },
+              {
+                action: 'create_scheduled_job',
+                id: 'create_scheduled_job',
+                permission_label: '可执行',
+                prompt: '请帮我生成定时作业配置草案，并说明数据来源、AI处理、结果动作和调度策略。',
+                source_module: '动作',
+                summary: '生成可确认的定时作业草案。',
+                title: '新建定时作业',
+                type: 'assistant_action',
+                url: '/tasks/scheduled-jobs',
+              },
+            ];
         return new Response(
           JSON.stringify({
             data: {
-              items: [
-                {
-                  action: 'create_requirement',
-                  id: 'create_requirement',
-                  permission_label: '可执行',
-                  prompt: '我要新建需求，请帮我梳理标题、背景、目标、优先级、产品和版本，并生成可提交的需求草案。',
-                  source_module: '动作',
-                  summary: '进入需求交付的新建需求流程，先整理需求草案字段。',
-                  title: '新建需求',
-                  type: 'assistant_action',
-                  url: '/delivery/requirements',
-                },
-                {
-                  action: 'create_scheduled_job',
-                  id: 'create_scheduled_job',
-                  permission_label: '可执行',
-                  prompt: '请帮我生成定时作业配置草案，并说明数据来源、AI处理、结果动作和调度策略。',
-                  source_module: '动作',
-                  summary: '生成可确认的定时作业草案。',
-                  title: '新建定时作业',
-                  type: 'assistant_action',
-                  url: '/tasks/scheduled-jobs',
-                },
-              ],
-              total: 2,
+              items,
+              total: items.length,
             },
           }),
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
@@ -1659,8 +2023,20 @@ describe('AssistantPage', () => {
     expect(within(addMenu).getByText('常用 @ 能力')).toBeInTheDocument();
     expect(await within(addMenu).findByText('新建需求')).toBeInTheDocument();
     expect(within(addMenu).getByText('新建定时作业')).toBeInTheDocument();
+    const addSearch = within(addMenu).getByLabelText('搜索快捷添加能力');
+    fireEvent.change(addSearch, { target: { value: '定时' } });
+    expect(await within(addMenu).findByText('新建定时作业')).toBeInTheDocument();
+    fireEvent.keyDown(addSearch, { key: 'Enter' });
+    expect(assistantInput).toHaveValue('@新建定时作业 需要后续变更');
+    expect(screen.queryByLabelText('快捷添加 @ 能力')).not.toBeInTheDocument();
 
-    fireEvent.mouseDown(addMenu);
+    fireEvent.change(assistantInput, {
+      target: { value: '需要后续变更' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '添加 @ 能力' }));
+    const addMenuForOutsideClick = await screen.findByLabelText('快捷添加 @ 能力');
+
+    fireEvent.mouseDown(addMenuForOutsideClick);
     expect(screen.getByLabelText('快捷添加 @ 能力')).toBeInTheDocument();
 
     fireEvent.mouseDown(document.body);
@@ -1819,6 +2195,7 @@ describe('AssistantPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '问这次运行' }));
     expect(assistantInput).toHaveValue('@提取每周用户反馈有价值信息 / succeeded 帮我分析这次运行结果');
     const currentContext = screen.getByLabelText('本次上下文');
+    fireEvent.click(within(currentContext).getByRole('button', { name: '展开本次上下文' }));
     expect(within(currentContext).getByText('运行记录')).toBeInTheDocument();
     expect(within(currentContext).getByText('任务中心 · 可引用')).toBeInTheDocument();
 
@@ -2733,6 +3110,9 @@ describe('AssistantPage', () => {
     const selectedReferenceList = (await screen.findByText('本次上下文'))
       .closest('.assistant-selected-reference-list');
     expect(selectedReferenceList).not.toBeNull();
+    fireEvent.click(
+      within(selectedReferenceList as HTMLElement).getByRole('button', { name: '展开本次上下文' }),
+    );
     const selectedReferenceTags = selectedReferenceList?.querySelector('.assistant-selected-reference-tags');
     expect(selectedReferenceTags).not.toBeNull();
     expect(within(selectedReferenceTags as HTMLElement).getByText('每周反馈趋势复盘')).toBeInTheDocument();
@@ -2854,6 +3234,7 @@ describe('AssistantPage', () => {
       target: { value: '为什么 @反馈 这次失败？' },
     });
     fireEvent.click(await screen.findByRole('button', { name: /每周反馈洞察定时作业/ }));
+    fireEvent.click(screen.getByRole('button', { name: '展开本次上下文' }));
     expect(screen.getByText('运行记录')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
@@ -2884,6 +3265,11 @@ describe('AssistantPage', () => {
     const selectedReferenceList = screen.getByText('本次上下文')
       .closest('.assistant-selected-reference-list');
     expect(selectedReferenceList).not.toBeNull();
+    const expandContextButton = within(selectedReferenceList as HTMLElement)
+      .queryByRole('button', { name: '展开本次上下文' });
+    if (expandContextButton) {
+      fireEvent.click(expandContextButton);
+    }
     expect(within(selectedReferenceList as HTMLElement).getByText('每周反馈洞察定时作业 / failed'))
       .toBeInTheDocument();
     expect(chatRequestBody).toMatchObject({
@@ -3018,6 +3404,9 @@ describe('AssistantPage', () => {
     const selectedReferenceList = screen.getByText('本次上下文')
       .closest('.assistant-selected-reference-list');
     expect(selectedReferenceList).not.toBeNull();
+    fireEvent.click(
+      within(selectedReferenceList as HTMLElement).getByRole('button', { name: '展开本次上下文' }),
+    );
     expect(within(selectedReferenceList as HTMLElement).getByText('插件连接')).toBeInTheDocument();
     expect(within(selectedReferenceList as HTMLElement).getByText('MaxCompute 用户反馈连接'))
       .toBeInTheDocument();
@@ -3229,9 +3618,10 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
-    expect(await screen.findByText('每周反馈洞察定时作业 / failed')).toBeInTheDocument();
+    expect(await screen.findByText('已从链接带入运行记录：每周反馈洞察定时作业 / failed'))
+      .toBeInTheDocument();
     expect(screen.getByText('本次上下文')).toBeInTheDocument();
-    expect(screen.getByText('已从链接带入运行记录：每周反馈洞察定时作业 / failed')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '展开本次上下文' }));
     expect(screen.getByText('运行记录')).toBeInTheDocument();
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('为什么这次任务失败？');
 
@@ -3325,6 +3715,7 @@ describe('AssistantPage', () => {
 
     const currentContext = await screen.findByLabelText('本次上下文');
     expect(within(currentContext).getByText('已从链接带入知识空间：支付支持知识空间')).toBeInTheDocument();
+    fireEvent.click(within(currentContext).getByRole('button', { name: '展开本次上下文' }));
     expect(within(currentContext).getByText('知识空间')).toBeInTheDocument();
     expect(
       within(currentContext).getAllByText(/最多 8 个知识 chunk 将按权限注入模型/).length,
@@ -3419,6 +3810,7 @@ describe('AssistantPage', () => {
     const currentContext = await screen.findByLabelText('本次上下文');
     expect(within(currentContext).getByText('已从链接带入知识空间：支付支持知识空间')).toBeInTheDocument();
 
+    fireEvent.click(within(currentContext).getByRole('button', { name: '展开本次上下文' }));
     fireEvent.click(screen.getByRole('button', { name: '移除 支付支持知识空间' }));
     fireEvent.change(screen.getByLabelText('发送给 AI 助手'), {
       target: { value: '@' },
@@ -3553,6 +3945,95 @@ describe('AssistantPage', () => {
       ['/api/assistant/conversations', 'GET'],
       ['/api/assistant/conversations/conversation_api/messages', 'GET'],
     ]);
+  });
+
+  it('keeps only the latest historical conversation load when users switch quickly', async () => {
+    let resolveSlowConversation: (() => void) | undefined;
+    const slowConversationResponse = new Response(
+      JSON.stringify({
+        data: {
+          items: [
+            {
+              content: '慢会话消息不应覆盖',
+              id: 'assistant_message_slow',
+              role: 'assistant',
+            },
+          ],
+          total: 1,
+        },
+      }),
+      { headers: { 'Content-Type': 'application/json' }, status: 200 },
+    );
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return Promise.resolve(new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  id: 'conversation_slow',
+                  last_message_at: '2026-06-03T09:00:00+00:00',
+                  message_count: 1,
+                  title: '较慢历史会话',
+                  updated_at: '2026-06-03T09:00:00+00:00',
+                },
+                {
+                  id: 'conversation_fast',
+                  last_message_at: '2026-06-03T10:00:00+00:00',
+                  message_count: 1,
+                  title: '较快历史会话',
+                  updated_at: '2026-06-03T10:00:00+00:00',
+                },
+              ],
+              total: 2,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        ));
+      }
+      if (input === '/api/assistant/conversations/conversation_slow/messages') {
+        return new Promise<Response>((resolve, reject) => {
+          resolveSlowConversation = () => resolve(slowConversationResponse);
+          init?.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        });
+      }
+      if (input === '/api/assistant/conversations/conversation_fast/messages') {
+        return Promise.resolve(new Response(
+          JSON.stringify({
+            data: {
+              items: [
+                {
+                  content: '较快会话消息应保留',
+                  id: 'assistant_message_fast',
+                  role: 'assistant',
+                },
+              ],
+              total: 1,
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        ));
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /较慢历史会话/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /较快历史会话/ }));
+
+    expect(await screen.findByText('较快会话消息应保留')).toBeInTheDocument();
+    resolveSlowConversation?.();
+    await waitFor(() => {
+      expect(screen.queryByText('慢会话消息不应覆盖')).not.toBeInTheDocument();
+    });
   });
 
   it('renders assistant action drafts as configuration cards', async () => {
@@ -3697,7 +4178,9 @@ describe('AssistantPage', () => {
       '/tasks/scheduled-jobs',
     );
     fireEvent.mouseDown(applyDraftLink);
-    expect(JSON.parse(window.sessionStorage.getItem(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY) ?? '{}')).toEqual({
+    expect(JSON.parse(
+      window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY)) ?? '{}',
+    )).toEqual({
       draftId: 'assistant_draft_code_repository_inspection',
       payload: {
         agent_id: 'agent_code_inspection',
@@ -4495,7 +4978,7 @@ describe('AssistantPage', () => {
     ]);
   });
 
-  it('marks assistant action drafts as failed when confirmation fails', async () => {
+  it('refreshes assistant action draft state when confirmation fails', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (input === '/api/assistant/conversations') {
@@ -4558,6 +5041,29 @@ describe('AssistantPage', () => {
           { headers: { 'Content-Type': 'application/json' }, status: 409 },
         );
       }
+      if (input === '/api/assistant/action-drafts/assistant_action_draft_failed_confirm') {
+        expect(init?.method).toBe('GET');
+        return new Response(
+          JSON.stringify({
+            data: {
+              action: 'create_scheduled_job',
+              client_draft_id: 'assistant_action_draft_failed_confirm',
+              id: 'assistant_action_draft_failed_confirm',
+              payload: {
+                execution_mode: 'deterministic',
+                job_type: 'dashboard_snapshot_refresh',
+                name: '会确认失败的定时任务',
+                schedule_type: 'manual',
+              },
+              risk_level: 'medium',
+              status: 'pending',
+              title: '创建会失败的定时任务',
+              wizard_steps: [],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -4572,11 +5078,15 @@ describe('AssistantPage', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /确认创建/ }));
 
-    expect(await screen.findByText('失败')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /确认创建/ })).not.toBeInTheDocument();
+    expect(await screen.findByText('待确认')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /确认创建/ })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('重新生成「创建会失败的定时任务」草案');
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+      '/api/assistant/action-drafts/assistant_action_draft_failed_confirm',
+      'GET',
+    ]);
   });
 
   it('makes run-once draft confirmation explicit when an @ command needs a new scheduled job', async () => {
@@ -5311,7 +5821,9 @@ describe('AssistantPage', () => {
     const applyDraftLink = screen.getByRole('link', { name: '应用到插件动作表单' });
     expect(applyDraftLink).toHaveAttribute('href', '/tasks/plugins');
     fireEvent.mouseDown(applyDraftLink);
-    expect(JSON.parse(window.sessionStorage.getItem(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY) ?? '{}')).toEqual({
+    expect(JSON.parse(
+      window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY)) ?? '{}',
+    )).toEqual({
       draftId: 'assistant_draft_github_plugin_action',
       payload: {
         action_type: 'http_request',
@@ -5425,7 +5937,9 @@ describe('AssistantPage', () => {
     expect(screen.getByText('/messages/send')).toBeInTheDocument();
     const applyDraftLink = screen.getByRole('link', { name: '应用到插件动作表单' });
     fireEvent.mouseDown(applyDraftLink);
-    expect(JSON.parse(window.sessionStorage.getItem(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY) ?? '{}')).toMatchObject({
+    expect(JSON.parse(
+      window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY)) ?? '{}',
+    )).toMatchObject({
       draftId: 'assistant_draft_email_plugin_action',
       payload: {
         result_mapping: {
@@ -5529,7 +6043,9 @@ describe('AssistantPage', () => {
     const applyDraftLink = screen.getByRole('link', { name: '应用到插件连接表单' });
     expect(applyDraftLink).toHaveAttribute('href', '/tasks/plugins');
     fireEvent.mouseDown(applyDraftLink);
-    expect(JSON.parse(window.sessionStorage.getItem(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY) ?? '{}')).toEqual({
+    expect(JSON.parse(
+      window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY)) ?? '{}',
+    )).toEqual({
       draftId: 'assistant_draft_github_plugin_connection',
       payload: {
         auth_config: { token_ref: 'vault/github/token' },

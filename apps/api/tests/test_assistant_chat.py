@@ -505,6 +505,28 @@ def test_ai_assistant_reference_candidates_include_action_candidates_for_create_
     assert actions[0]["prompt"].startswith("我要新建需求")
     assert actions[0]["url"] == "/delivery/requirements"
 
+    diagnostic_payload = assistant_reference_candidates_response(
+        app.state.store,
+        limit=5,
+        message="诊断",
+        product_id=None,
+        reference_type="assistant_action",
+        user={"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]},
+    )
+    diagnostic_actions = [item["action"] for item in diagnostic_payload["items"]]
+    assert "diagnose_scheduled_job_run" in diagnostic_actions
+
+    metrics_payload = assistant_reference_candidates_response(
+        app.state.store,
+        limit=5,
+        message="指标",
+        product_id=None,
+        reference_type="assistant_action",
+        user={"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]},
+    )
+    metrics_actions = [item["action"] for item in metrics_payload["items"]]
+    assert "explain_assistant_metrics" in metrics_actions
+
 
 def test_ai_assistant_chat_returns_registered_intent_metadata(monkeypatch):
     headers = auth_headers()
@@ -525,8 +547,11 @@ def test_ai_assistant_chat_returns_registered_intent_metadata(monkeypatch):
     assert response.status_code == 200, response.text
     message = response.json()["data"]["message"]
     assert message["intent"] == {
+        "action": "guide_task_creation",
         "confidence": 0.95,
+        "conflict_policy": "first_match",
         "intent_code": "task_creation_guide",
+        "priority": 100,
         "required_refs": [],
         "summary": "将执行：任务类型向导",
     }
@@ -585,11 +610,63 @@ def test_ai_assistant_deterministic_intent_registry_dispatches_registered_handle
     assert output["answer"] == "synthetic intent handled"
     assert output["intent"] == {
         "confidence": 0.88,
+        "conflict_policy": "first_match",
         "intent_code": "synthetic_intent",
+        "priority": 1,
         "required_refs": [],
         "summary": "将执行：synthetic",
     }
     assert output["tool_results"][0]["intent_code"] == "synthetic_intent"
+
+
+def test_ai_assistant_deterministic_registry_handles_run_diagnostic():
+    app.state.store.reset()
+    app.state.store.scheduled_jobs["scheduled_job_failed"] = {
+        "created_at": "2026-06-05T08:00:00+00:00",
+        "enabled": True,
+        "id": "scheduled_job_failed",
+        "job_type": "user_feedback_insight_extract",
+        "name": "每周反馈洞察",
+        "status": "active",
+        "updated_at": "2026-06-05T08:00:00+00:00",
+    }
+    app.state.store.scheduled_job_runs["scheduled_job_run_failed"] = {
+        "completed_at": "2026-06-05T08:05:00+00:00",
+        "error_message": "结果动作写入失败",
+        "id": "scheduled_job_run_failed",
+        "scheduled_job_id": "scheduled_job_failed",
+        "started_at": "2026-06-05T08:00:00+00:00",
+        "status": "failed",
+    }
+
+    output = assistant_chat_service._deterministic_assistant_output(
+        app.state.store,
+        payload=assistant_chat_service.AssistantChatRequest(message="为什么定时作业运行失败？"),
+        user={"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]},
+    )
+
+    assert output is not None
+    assert output["intent"]["action"] == "diagnose_scheduled_job_run"
+    assert output["intent"]["tool"] == "assistant.scheduled_job_diagnostic"
+    assert output["tool_results"][0]["tool"] == "assistant.scheduled_job_diagnostic"
+    assert output["tool_results"][0]["items"][0]["id"] == "scheduled_job_run_failed"
+    assert "三段整理诊断" in output["answer"]
+
+
+def test_ai_assistant_deterministic_registry_handles_metrics_explanation():
+    app.state.store.reset()
+
+    output = assistant_chat_service._deterministic_assistant_output(
+        app.state.store,
+        payload=assistant_chat_service.AssistantChatRequest(message="解释一下 AI 助手效果指标"),
+        user={"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]},
+    )
+
+    assert output is not None
+    assert output["intent"]["action"] == "explain_assistant_metrics"
+    assert output["intent"]["tool"] == "assistant.metrics_summary"
+    assert output["tool_results"][0]["tool"] == "assistant.metrics_summary"
+    assert "草案确认率" in output["answer"]
 
 
 def test_ai_assistant_intent_registry_uses_conflict_policy_before_priority(monkeypatch):
@@ -7214,6 +7291,119 @@ def test_ai_assistant_chat_includes_ai_brain_system_progress_context(monkeypatch
     assert "AI 助手上下文增强知识沉淀" in user_message
 
 
+def test_ai_assistant_chat_includes_bounded_conversation_history(monkeypatch):
+    headers = auth_headers()
+    app.state.store.reset()
+    captured_bodies: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            turn = len(captured_bodies)
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "answer": f"第 {turn} 轮回答",
+                                        "suggestions": ["继续追问"],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"completion_tokens": 8, "prompt_tokens": 16, "total_tokens": 24},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        del timeout
+        captured_bodies.append(json.loads(request.data.decode("utf-8")))
+        return FakeResponse()
+
+    monkeypatch.setattr(assistant_router, "urlopen", fake_urlopen)
+
+    first_response = client.post(
+        "/api/assistant/chat",
+        json={"message": "请帮我分析当前 AI 助手草案能力。"},
+        headers=headers,
+    )
+
+    assert first_response.status_code == 200
+    conversation_id = first_response.json()["data"]["conversation_id"]
+    first_payload = json.loads(captured_bodies[0]["messages"][1]["content"])
+    assert first_payload["conversation_history"] == []
+
+    assistant_message = next(
+        message
+        for message in app.state.store.assistant_messages.values()
+        if message["conversation_id"] == conversation_id and message["role"] == "assistant"
+    )
+    assistant_message["metadata_json"]["tool_results"] = [
+        {
+            "intent": "knowledge_search",
+            "items": [
+                {
+                    "content": "secret-full-knowledge-body",
+                    "id": "knowledge_chunk_secret",
+                    "status": "available",
+                    "title": "隐私知识正文",
+                    "type": "knowledge_chunk",
+                    "url": "/assets/knowledge?chunk_id=knowledge_chunk_secret",
+                }
+            ],
+            "references": [
+                {
+                    "id": "knowledge_chunk_secret",
+                    "title": "隐私知识正文",
+                    "type": "knowledge_chunk",
+                    "url": "/assets/knowledge?chunk_id=knowledge_chunk_secret",
+                }
+            ],
+            "summary": {"hit_count": 1},
+            "tool": "assistant.knowledge_search",
+        }
+    ]
+
+    second_response = client.post(
+        "/api/assistant/chat",
+        json={
+            "conversation_id": conversation_id,
+            "message": "继续刚才那个草案，下一步怎么做？",
+        },
+        headers=headers,
+    )
+
+    assert second_response.status_code == 200
+    second_user_content = captured_bodies[1]["messages"][1]["content"]
+    second_payload = json.loads(second_user_content)
+    conversation_history = second_payload["conversation_history"]
+    assert [item["role"] for item in conversation_history] == ["user", "assistant"]
+    assert conversation_history[0]["content"] == "请帮我分析当前 AI 助手草案能力。"
+    assert conversation_history[1]["content"] == "第 1 轮回答"
+    history_tool_result = conversation_history[1]["tool_results"][0]
+    assert history_tool_result["summary"] == {"hit_count": 1}
+    assert history_tool_result["items"] == [
+        {
+            "id": "knowledge_chunk_secret",
+            "status": "available",
+            "title": "隐私知识正文",
+            "type": "knowledge_chunk",
+            "url": "/assets/knowledge?chunk_id=knowledge_chunk_secret",
+        }
+    ]
+    assert "secret-full-knowledge-body" not in second_user_content
+
+
 def test_ai_assistant_chat_persists_user_scoped_conversation_history(monkeypatch):
     headers = auth_headers()
     reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
@@ -7295,3 +7485,31 @@ def test_ai_assistant_chat_persists_user_scoped_conversation_history(monkeypatch
         headers=reviewer_headers,
     )
     assert forbidden_messages.status_code == 404
+
+
+def test_ai_assistant_chat_run_cancel_endpoint_marks_current_user_run_cancelled():
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.assistant_chat_runs["assistant_chat_run_endpoint"] = {
+        "created_at": "2026-06-20T08:00:00+00:00",
+        "id": "assistant_chat_run_endpoint",
+        "started_at": "2026-06-20T08:00:00+00:00",
+        "status": "running",
+        "updated_at": "2026-06-20T08:00:00+00:00",
+        "user_id": "user_admin",
+    }
+
+    response = client.post(
+        "/api/assistant/chat-runs/assistant_chat_run_endpoint/cancel",
+        headers=headers,
+        json={"reason": "用户终止"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["id"] == "assistant_chat_run_endpoint"
+    assert data["status"] == "cancelled"
+    assert data["cancel_reason"] == "用户终止"
+    assert app.state.store.assistant_chat_runs["assistant_chat_run_endpoint"]["status"] == (
+        "cancelled"
+    )

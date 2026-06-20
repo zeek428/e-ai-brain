@@ -35,6 +35,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+  assistantScopedStorageKey,
   confirmAssistantActionDraft,
   createScheduledJob,
   deleteScheduledJob,
@@ -2348,11 +2349,12 @@ export default function ScheduledJobsPage() {
     if (typeof window === 'undefined' || modalOpen || editingJob) {
       return;
     }
-    const rawDraft = window.sessionStorage.getItem(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY);
+    const storageKey = assistantScopedStorageKey(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY);
+    const rawDraft = window.sessionStorage.getItem(storageKey);
     if (!rawDraft) {
       return;
     }
-    window.sessionStorage.removeItem(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY);
+    window.sessionStorage.removeItem(storageKey);
     try {
       const draft = JSON.parse(rawDraft) as AssistantScheduledJobDraft;
       if (!draft.payload || typeof draft.payload !== 'object' || Array.isArray(draft.payload)) {

@@ -263,6 +263,7 @@ def test_assistant_chat_history_is_persisted_through_fine_grained_repository_pay
     assert repository.assistant_chat_payload == {
         "assistant_action_drafts": {},
         "assistant_action_runs": {},
+        "assistant_chat_runs": {},
         "assistant_conversations": current_store.assistant_conversations,
         "assistant_messages": current_store.assistant_messages,
     }
