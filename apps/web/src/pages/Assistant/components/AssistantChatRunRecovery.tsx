@@ -7,11 +7,12 @@ import {
 import { Button, Space, Tag, Typography } from 'antd';
 
 import { type AssistantChatRun } from '../../../services/aiBrain';
+import { formatDisplayDateTime } from '../../../utils/dateTime';
 
 const { Text } = Typography;
 
 function runStartedText(run: AssistantChatRun) {
-  return run.started_at || run.cancelled_at || run.finished_at || '-';
+  return formatDisplayDateTime(run.started_at ?? run.cancelled_at ?? run.finished_at);
 }
 
 function RunRecoveryItem({

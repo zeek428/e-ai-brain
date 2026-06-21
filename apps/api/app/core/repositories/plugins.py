@@ -235,12 +235,14 @@ class PluginReadRepository:
     def list_ai_executor_tasks(
         self,
         *,
+        ai_task_id: str | None = None,
         runner_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         where, params = self._where(
             {
+                "ai_task_id": ai_task_id,
                 "runner_id": runner_id,
                 "scheduled_job_run_id": scheduled_job_run_id,
                 "status": status,
@@ -254,7 +256,7 @@ class PluginReadRepository:
                            scheduled_job_run_id, executor_type, instruction, workspace_root,
                            timeout_seconds, input_payload, request_config, result_json, logs,
                            status, error_code, error_message, claimed_at, finished_at,
-                           created_by, created_at, updated_at
+                           created_by, created_at, updated_at, ai_task_id
                     FROM ai_executor_tasks
                     {where}
                     ORDER BY created_at ASC, id ASC
@@ -544,20 +546,21 @@ class PluginReadRepository:
                   scheduled_job_run_id, executor_type, instruction, workspace_root,
                   timeout_seconds, input_payload, request_config, result_json, logs,
                   status, error_code, error_message, claimed_at, finished_at,
-                  created_by, created_at, updated_at
+                  created_by, created_at, updated_at, ai_task_id
                 )
                 VALUES (
                   %s, %s, %s, %s,
                   %s, %s, %s, %s,
                   %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
                   %s, %s, %s, %s::timestamptz, %s::timestamptz,
-                  %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                  %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()), %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   runner_id = EXCLUDED.runner_id,
                   plugin_invocation_log_id = EXCLUDED.plugin_invocation_log_id,
                   scheduled_job_id = EXCLUDED.scheduled_job_id,
                   scheduled_job_run_id = EXCLUDED.scheduled_job_run_id,
+                  ai_task_id = EXCLUDED.ai_task_id,
                   executor_type = EXCLUDED.executor_type,
                   instruction = EXCLUDED.instruction,
                   workspace_root = EXCLUDED.workspace_root,
@@ -595,6 +598,7 @@ class PluginReadRepository:
                     task.get("created_by"),
                     task.get("created_at"),
                     task.get("updated_at") or task.get("created_at"),
+                    task.get("ai_task_id"),
                 ),
             )
 
@@ -733,4 +737,5 @@ class PluginReadRepository:
             "created_by": row[18],
             "created_at": row[19].isoformat() if row[19] else None,
             "updated_at": row[20].isoformat() if row[20] else None,
+            "ai_task_id": row[21] if len(row) > 21 else None,
         }

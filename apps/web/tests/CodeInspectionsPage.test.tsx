@@ -264,6 +264,7 @@ describe('CodeInspectionsPage', () => {
     render(<CodeInspectionsPage />);
 
     await screen.findByText('code_inspection_report_001');
+    expect(screen.getAllByText('2026-06-12 17:00').length).toBeGreaterThan(0);
     expect(screen.getByText('规则维度统计')).toBeInTheDocument();
     expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
     expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
@@ -299,6 +300,8 @@ describe('CodeInspectionsPage', () => {
     expect(within(dialog).getByText('workdir://checkouts/scheduled_job_run_001__repo_ai_brain__main__abc1234')).toBeInTheDocument();
     expect(within(dialog).getByText('builtin-2026.06.16')).toBeInTheDocument();
     expect(within(dialog).getByText('未保留')).toBeInTheDocument();
+    expect(within(dialog).getByText('2026-06-12 17:00')).toBeInTheDocument();
+    expect(within(dialog).getByText('2026-06-12 17:01')).toBeInTheDocument();
     expect(within(dialog).getByText('扫描摘要')).toBeInTheDocument();
     expect(within(dialog).getByText('质量门禁')).toBeInTheDocument();
     expect(within(dialog).getByText('failed')).toBeInTheDocument();

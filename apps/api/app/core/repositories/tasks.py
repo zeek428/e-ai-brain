@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Any
@@ -54,8 +55,151 @@ class TaskReadRepository:
                     self._require_callback(self._upsert_audit_events, "audit upsert")
                     self._upsert_audit_events(cursor, [audit_event])
 
+    def list_rd_task_executor_policies(
+        self,
+        *,
+        product_id: str | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if product_id is not None:
+            clauses.append("product_id = %s")
+            params.append(product_id)
+        if status is not None:
+            clauses.append("status = %s")
+            params.append(status)
+        if task_type is not None:
+            clauses.append("task_type = %s")
+            params.append(task_type)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, name, brain_app_id, product_id, task_type, executor_type,
+                           runner_id, repository_id, workspace_root, branch,
+                           instruction_template, output_contract, timeout_seconds,
+                           priority, status, created_by, created_at, updated_at
+                    FROM rd_task_executor_policies
+                    {where}
+                    ORDER BY priority ASC, task_type ASC, product_id NULLS FIRST, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._rd_task_executor_policy_from_row(row) for row in cursor.fetchall()]
+
+    def save_rd_task_executor_policy_record(
+        self,
+        policy: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self.upsert_rd_task_executor_policies(cursor, {policy["id"]: policy})
+                if audit_event is not None:
+                    self._require_callback(self._upsert_audit_events, "audit upsert")
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def delete_rd_task_executor_policy_record(
+        self,
+        policy_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM rd_task_executor_policies WHERE id = %s", (policy_id,))
+                if audit_event is not None:
+                    self._require_callback(self._upsert_audit_events, "audit upsert")
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def upsert_rd_task_executor_policies(
+        self,
+        cursor,
+        policies: dict[str, dict[str, Any]],
+    ) -> None:
+        for policy in policies.values():
+            cursor.execute(
+                """
+                INSERT INTO rd_task_executor_policies (
+                  id, name, brain_app_id, product_id, task_type, executor_type,
+                  runner_id, repository_id, workspace_root, branch, instruction_template,
+                  output_contract, timeout_seconds, priority, status, created_by,
+                  created_at, updated_at
+                )
+                VALUES (
+                  %s, %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s,
+                  %s::jsonb, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  name = EXCLUDED.name,
+                  brain_app_id = EXCLUDED.brain_app_id,
+                  product_id = EXCLUDED.product_id,
+                  task_type = EXCLUDED.task_type,
+                  executor_type = EXCLUDED.executor_type,
+                  runner_id = EXCLUDED.runner_id,
+                  repository_id = EXCLUDED.repository_id,
+                  workspace_root = EXCLUDED.workspace_root,
+                  branch = EXCLUDED.branch,
+                  instruction_template = EXCLUDED.instruction_template,
+                  output_contract = EXCLUDED.output_contract,
+                  timeout_seconds = EXCLUDED.timeout_seconds,
+                  priority = EXCLUDED.priority,
+                  status = EXCLUDED.status,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    policy["id"],
+                    policy["name"],
+                    policy.get("brain_app_id") or DEFAULT_BRAIN_APP_ID,
+                    policy.get("product_id"),
+                    policy["task_type"],
+                    policy["executor_type"],
+                    policy.get("runner_id"),
+                    policy.get("repository_id"),
+                    policy.get("workspace_root") or "",
+                    policy.get("branch"),
+                    policy["instruction_template"],
+                    json.dumps(policy.get("output_contract") or {}, ensure_ascii=False),
+                    int(policy.get("timeout_seconds") or 1800),
+                    int(policy.get("priority") or 100),
+                    policy.get("status") or "active",
+                    policy.get("created_by"),
+                    policy.get("created_at"),
+                    policy.get("updated_at"),
+                ),
+            )
+
     def upsert_ai_tasks(self, cursor, ai_tasks: dict[str, dict[str, Any]]) -> None:
         self._write_repository.upsert_ai_tasks(cursor, ai_tasks)
+
+    @staticmethod
+    def _rd_task_executor_policy_from_row(row) -> dict[str, Any]:
+        return {
+            "brain_app_id": row[2] or DEFAULT_BRAIN_APP_ID,
+            "branch": row[9],
+            "created_at": row[16].isoformat() if row[16] else None,
+            "created_by": row[15],
+            "executor_type": row[5],
+            "id": row[0],
+            "instruction_template": row[10],
+            "name": row[1],
+            "output_contract": dict(row[11] or {}),
+            "priority": row[13],
+            "product_id": row[3],
+            "repository_id": row[7],
+            "runner_id": row[6],
+            "status": row[14],
+            "task_type": row[4],
+            "timeout_seconds": row[12],
+            "updated_at": row[17].isoformat() if row[17] else None,
+            "workspace_root": row[8] or "",
+        }
 
     def load_workflow_runtime(self) -> dict[str, Any]:
         with self._connect() as connection:

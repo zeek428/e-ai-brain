@@ -10,6 +10,10 @@ from app.services.model_gateway import (
     ModelGatewayConfigError,
     call_model_gateway_for_task,
 )
+from app.services.rd_task_executor_policies import (
+    queue_rd_task_executor_task,
+    resolve_rd_task_executor_policy,
+)
 from app.services.task_access import task_allowed_roles
 from app.services.task_code_review_execution import (
     call_configured_code_review_executor,
@@ -24,7 +28,11 @@ from app.services.task_persistence_helpers import (
 )
 from app.services.task_workflow_context import task_workflow_write_store
 
-RETRYABLE_TASK_FAILURE_STEPS = {"code_review_executor_failed", "model_gateway_failed"}
+RETRYABLE_TASK_FAILURE_STEPS = {
+    "code_review_executor_failed",
+    "executor_failed",
+    "model_gateway_failed",
+}
 
 
 def start_ai_task_response(
@@ -56,6 +64,60 @@ def start_ai_task_response(
             subject_id=task_id,
             payload={"previous_step": task.get("current_step")},
         )
+
+    executor_policy = resolve_rd_task_executor_policy(write_store, task)
+    if executor_policy is not None:
+        executor_task = queue_rd_task_executor_task(
+            current_store=write_store,
+            policy=executor_policy,
+            task=task,
+            user=user,
+        )
+        now = datetime.now(UTC).isoformat()
+        executor_snapshot = {
+            "executor_policy_id": executor_policy["id"],
+            "executor_type": executor_task["executor_type"],
+            "runner_id": executor_task["runner_id"],
+            "runner_task_id": executor_task["id"],
+            "status": executor_task["status"],
+            "workspace_root": executor_task["workspace_root"],
+        }
+        task["current_step"] = "waiting_ai_executor"
+        task["input_json"] = {
+            **dict(task.get("input_json") or {}),
+            "executor": executor_snapshot,
+        }
+        task["status"] = "running"
+        task["updated_at"] = now
+        write_store.audit(
+            event_type="ai_task.started",
+            actor_id=user["id"],
+            ai_task_id=task_id,
+            subject_type="ai_task",
+            subject_id=task_id,
+            payload={"execution_route": "ai_executor"},
+        )
+        write_store.audit(
+            event_type="ai_task.executor_queued",
+            actor_id="system",
+            ai_task_id=task_id,
+            subject_type="ai_executor_task",
+            subject_id=executor_task["id"],
+            payload=executor_snapshot,
+        )
+        save_task_state_records(
+            write_store,
+            task=task,
+            audit_events=write_store.audit_events[audit_start_index:],
+        )
+        return {
+            "current_step": task["current_step"],
+            "executor_policy_id": executor_policy["id"],
+            "executor_task_id": executor_task["id"],
+            "id": task_id,
+            "runner_id": executor_task["runner_id"],
+            "status": task["status"],
+        }
 
     if task["task_type"] == "code_review":
         try:

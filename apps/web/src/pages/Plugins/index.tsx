@@ -74,6 +74,7 @@ import {
   type ResultWriteTargetRecord,
   type ScheduledJobRecord,
 } from '../../services/aiBrain';
+import { formatDisplayDateTime } from '../../utils/dateTime';
 
 type PluginFormValues = {
   category: string;
@@ -4042,7 +4043,7 @@ export default function PluginsPage() {
                     title: '最后心跳',
                     ellipsis: true,
                     width: 220,
-                    render: (value) => value || '-',
+                    render: (_, row) => formatDisplayDateTime(row.last_heartbeat_at),
                   },
                   {
                     dataIndex: 'token_configured',
@@ -4059,7 +4060,7 @@ export default function PluginsPage() {
                             <Typography.Text>Token v{row.token_version ?? 1}</Typography.Text>
                           </Space>
                           <Typography.Text type="secondary">
-                            {row.token_rotated_at ?? '未轮换'}
+                            {row.token_rotated_at ? formatDisplayDateTime(row.token_rotated_at) : '未轮换'}
                           </Typography.Text>
                           {row.latest_task_id ? (
                             <Typography.Text type="secondary">
@@ -4372,7 +4373,7 @@ export default function PluginsPage() {
                 title: '时间',
                 width: 220,
                 render: (_, row) =>
-                  row.created_at ?? String((row as unknown as Record<string, unknown>).timestamp ?? '-'),
+                  formatDisplayDateTime(row.created_at ?? String((row as unknown as Record<string, unknown>).timestamp ?? '-')),
               },
             ]}
             dataSource={runnerLogRows}

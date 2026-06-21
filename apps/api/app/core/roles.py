@@ -29,6 +29,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "system.scheduled_jobs.manage",
             "system.scheduled_jobs.run",
             "system.plugins.manage",
+            "delivery.rd_executor_policies.manage",
             "assistant.action_references.manage",
             "code_inspection.read",
             "audit.read",
@@ -94,6 +95,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
         "permissions": [
             "task.create",
             "task.execute",
+            "delivery.rd_executor_policies.manage",
             "review.decide",
             "gitlab.read",
             "code_inspection.read",

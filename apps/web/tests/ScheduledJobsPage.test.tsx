@@ -8,6 +8,7 @@ import ScheduledJobsPage from '../src/pages/ScheduledJobs';
 import {
   ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+  assistantScopedStorageKey,
 } from '../src/services/aiBrain';
 
 function installScheduledJobsFetchMock(
@@ -1026,7 +1027,7 @@ describe('ScheduledJobsPage', () => {
   it('opens the create dialog from an assistant scheduled job draft and confirms through the server draft', async () => {
     const { assistantDraftConfirmIds, assistantDraftPatchBodies, jobCreateBodies } = installScheduledJobsFetchMock();
     window.sessionStorage.setItem(
-      ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+      assistantScopedStorageKey(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY),
       JSON.stringify({
         draftId: 'assistant_draft_weekly_feedback_insight',
         payload: {
@@ -1108,7 +1109,7 @@ describe('ScheduledJobsPage', () => {
   it('resolves assistant prerequisite drafts when opening a scheduled job draft', async () => {
     const { assistantDraftConfirmIds, assistantDraftPatchBodies, jobCreateBodies } = installScheduledJobsFetchMock();
     window.sessionStorage.setItem(
-      ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
+      assistantScopedStorageKey(ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY),
       JSON.stringify({
         assistant_draft_code_inspection_ai_agent: {
           resource_id: 'agent_insight',
@@ -1133,7 +1134,7 @@ describe('ScheduledJobsPage', () => {
       }),
     );
     window.sessionStorage.setItem(
-      ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
+      assistantScopedStorageKey(ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY),
       JSON.stringify({
         draftId: 'assistant_draft_code_repository_inspection',
         payload: {
@@ -1882,6 +1883,7 @@ describe('ScheduledJobsPage', () => {
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
     expect(within(dialog).getByText('运行链路')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('2026-06-11 18:00').length).toBeGreaterThanOrEqual(2);
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('succeeded');
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('prod');
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('GET');
@@ -2195,6 +2197,7 @@ describe('ScheduledJobsPage', () => {
     expect(resultActionNode).toHaveTextContent('owner@example.com');
     expect(within(dialog).getByText('结果写入记录')).toBeInTheDocument();
     expect(await within(dialog).findByText('plugin_invocation_log_email_notification')).toBeInTheDocument();
+    expect(within(dialog).getByText('2026-06-13 18:00')).toBeInTheDocument();
     expect(within(dialog).getAllByText('邮件通知记录').length).toBeGreaterThan(0);
     await waitFor(() =>
       expect(resultWriteRecordCalls).toContain(

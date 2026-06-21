@@ -78,6 +78,7 @@ import {
 } from '../../services/aiBrain';
 import type { ModelGatewayConfigRecord } from '../../data/management';
 import type { KnowledgeRecord } from '../../data/management';
+import { formatDisplayDateTime } from '../../utils/dateTime';
 
 type ScheduledJobFormValues = {
   agent_id?: string;
@@ -817,7 +818,7 @@ function RunResultWriteRecords({
             title: '时间',
             ellipsis: true,
             width: 210,
-            render: (value) => value || '-',
+            render: (value) => formatDisplayDateTime(value),
           },
         ]}
         dataSource={records}
@@ -1129,7 +1130,7 @@ function RunExecutionNodeCard({
     { label: '执行器实例', value: nodeFieldText(node.runner_id) },
     { label: '任务 ID', value: nodeFieldText(node.runner_task_id) },
     { label: '工作区', value: nodeFieldText(node.workspace_root) },
-    { label: '完成时间', value: nodeFieldText(node.finished_at) },
+    { label: '完成时间', value: nodeFieldText(node.finished_at) ? formatDisplayDateTime(node.finished_at as string) : undefined },
     { label: '日志条数', value: nodeNestedArrayCountText(node, 'logs') },
     { label: '执行结果', value: nodeNestedFieldText(node, 'result_json.summary') ?? nodeNestedFieldText(node, 'result_json.result') },
     { label: '源数据量', value: nodeFieldText(node.source_row_count) ?? nodeFieldText(node.row_count) },
@@ -3727,8 +3728,8 @@ export default function ScheduledJobsPage() {
                 { key: 'collector_run_id', label: '采集运行', children: selectedRun.collector_run_id || '-' },
                 { key: 'plugin_invocation_log_id', label: '插件调用', children: selectedRun.plugin_invocation_log_id || '-' },
                 { key: 'scheduled_job_id', label: '作业 ID', children: selectedRun.scheduled_job_id || '-' },
-                { key: 'started_at', label: '开始时间', children: selectedRun.started_at || '-' },
-                { key: 'finished_at', label: '结束时间', children: selectedRun.finished_at || '-' },
+                { key: 'started_at', label: '开始时间', children: formatDisplayDateTime(selectedRun.started_at) },
+                { key: 'finished_at', label: '结束时间', children: formatDisplayDateTime(selectedRun.finished_at) },
                 { key: 'error_code', label: '错误码', children: selectedRun.error_code || '-' },
                 {
                   key: 'error_message',

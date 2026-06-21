@@ -14,6 +14,7 @@ import {
   type CodeInspectionNotificationRecord,
   type CodeInspectionReportRecord,
 } from '../../services/aiBrain';
+import { formatDisplayDateTime } from '../../utils/dateTime';
 import { formatMutationError } from '../../utils/managementCrud';
 
 const riskColorByValue = new Map([
@@ -394,8 +395,8 @@ function scanSnapshotItems(report: CodeInspectionReportRecord) {
       label: 'Checkout 保留',
       children: report.checkout_path_retained ? '已保留' : '未保留',
     },
-    { key: 'scan_started_at', label: '开始时间', children: compactText(report.scan_started_at) },
-    { key: 'scan_finished_at', label: '结束时间', children: compactText(report.scan_finished_at) },
+    { key: 'scan_started_at', label: '开始时间', children: compactText(formatDisplayDateTime(report.scan_started_at)) },
+    { key: 'scan_finished_at', label: '结束时间', children: compactText(formatDisplayDateTime(report.scan_finished_at)) },
   ];
 }
 
@@ -635,7 +636,7 @@ export default function CodeInspectionsPage() {
         sorter: true,
         title: '创建时间',
         width: 180,
-        render: (_, row) => compactText(row.created_at),
+        render: (_, row) => compactText(formatDisplayDateTime(row.created_at)),
       },
       {
         fixed: 'right',

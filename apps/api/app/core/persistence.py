@@ -209,6 +209,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "065_assistant_operability_improvements.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "066_rd_task_executor_policies.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1044,6 +1048,41 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def list_rd_task_executor_policies(
+        self,
+        *,
+        product_id: str | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._task_read_repository.list_rd_task_executor_policies(
+            product_id=product_id,
+            status=status,
+            task_type=task_type,
+        )
+
+    def save_rd_task_executor_policy_record(
+        self,
+        policy: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._task_read_repository.save_rd_task_executor_policy_record(
+            policy,
+            audit_event=audit_event,
+        )
+
+    def delete_rd_task_executor_policy_record(
+        self,
+        policy_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._task_read_repository.delete_rd_task_executor_policy_record(
+            policy_id,
+            audit_event=audit_event,
+        )
+
     def list_ai_agents(
         self,
         *,
@@ -1186,11 +1225,13 @@ class PostgresSnapshotRepository:
     def list_ai_executor_tasks(
         self,
         *,
+        ai_task_id: str | None = None,
         runner_id: str | None = None,
         scheduled_job_run_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         return self._plugin_read_repository.list_ai_executor_tasks(
+            ai_task_id=ai_task_id,
             runner_id=runner_id,
             scheduled_job_run_id=scheduled_job_run_id,
             status=status,

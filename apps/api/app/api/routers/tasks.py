@@ -4,10 +4,16 @@ from time import perf_counter
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
+from app.services.rd_task_executor_policies import (
+    create_rd_task_executor_policy_response,
+    delete_rd_task_executor_policy_response,
+    list_rd_task_executor_policies_response,
+    patch_rd_task_executor_policy_response,
+)
 from app.services.task_batch_operations import (
     batch_cancel_ai_tasks_response,
     batch_retry_ai_tasks_response,
@@ -42,6 +48,42 @@ class AiTaskRequest(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
 
 
+class RdTaskExecutorPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    branch: str | None = None
+    executor_type: str
+    instruction_template: str
+    name: str
+    output_contract: dict[str, Any] = Field(default_factory=dict)
+    priority: int = 100
+    product_id: str | None = None
+    repository_id: str | None = None
+    runner_id: str | None = None
+    status: str = "active"
+    task_type: str
+    timeout_seconds: int = 1800
+    workspace_root: str = ""
+
+
+class RdTaskExecutorPolicyPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    branch: str | None = None
+    executor_type: str | None = None
+    instruction_template: str | None = None
+    name: str | None = None
+    output_contract: dict[str, Any] | None = None
+    priority: int | None = None
+    product_id: str | None = None
+    repository_id: str | None = None
+    runner_id: str | None = None
+    status: str | None = None
+    task_type: str | None = None
+    timeout_seconds: int | None = None
+    workspace_root: str | None = None
+
+
 class MoreInfoRequest(BaseModel):
     answers: list[dict[str, str]] = Field(default_factory=list)
 
@@ -61,6 +103,68 @@ class ReviewDecisionRequest(BaseModel):
     edited_content: dict[str, Any] | None = None
     decision_reason: str | None = None
     questions: list[str] = Field(default_factory=list)
+
+
+@router.get("/api/delivery/rd-task-executor-policies")
+def list_rd_task_executor_policies(
+    request: Request,
+    product_id: str | None = None,
+    status: str | None = None,
+    task_type: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    payload = list_rd_task_executor_policies_response(
+        current_store=store(request),
+        product_id=product_id,
+        status=status,
+        task_type=task_type,
+        user=user,
+    )
+    return envelope(payload, get_trace_id(request))
+
+
+@router.post("/api/delivery/rd-task-executor-policies")
+def create_rd_task_executor_policy(
+    request: Request,
+    payload: RdTaskExecutorPolicyRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = create_rd_task_executor_policy_response(
+        current_store=store(request),
+        payload=payload,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.patch("/api/delivery/rd-task-executor-policies/{policy_id}")
+def patch_rd_task_executor_policy(
+    policy_id: str,
+    request: Request,
+    payload: RdTaskExecutorPolicyPatchRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = patch_rd_task_executor_policy_response(
+        current_store=store(request),
+        payload=payload,
+        policy_id=policy_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
+
+
+@router.delete("/api/delivery/rd-task-executor-policies/{policy_id}")
+def delete_rd_task_executor_policy(
+    policy_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    result = delete_rd_task_executor_policy_response(
+        current_store=store(request),
+        policy_id=policy_id,
+        user=user,
+    )
+    return envelope(result, get_trace_id(request))
 
 
 @router.get("/api/ai-tasks")

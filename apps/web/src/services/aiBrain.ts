@@ -15,6 +15,7 @@ import type {
   UserRecord,
 } from '../data/management';
 import { formatUserRoles, type UserRoleDefinition } from '../data/roles';
+import { formatDisplayDateTime } from '../utils/dateTime';
 import { navigateTo } from '../utils/navigation';
 
 const configuredApiBaseUrl = process.env.UMI_APP_API_BASE_URL ?? '';
@@ -3199,10 +3200,7 @@ export async function logout(): Promise<void> {
 }
 
 function formatListDate(value?: string) {
-  if (!value) {
-    return '-';
-  }
-  return value.replace('T', ' ').replace(/\.\d+/, '').replace('+00:00', '').slice(0, 16);
+  return formatDisplayDateTime(value);
 }
 
 function normalizeProductStatus(status?: string): ProductRecord['status'] {
@@ -5087,6 +5085,7 @@ export type AiExecutorRunnerRecord = {
 
 export type AiExecutorTaskRecord = {
   action_id?: string | null;
+  ai_task_id?: string | null;
   assigned_at?: string | null;
   cancelled_at?: string | null;
   completed_at?: string | null;
@@ -5102,6 +5101,46 @@ export type AiExecutorTaskRecord = {
   timed_out_at?: string | null;
   updated_at?: string | null;
   workspace_root?: string | null;
+};
+
+export type RdTaskExecutorPolicyRecord = {
+  branch?: string | null;
+  created_at?: string | null;
+  created_by?: string | null;
+  executor_type: string;
+  id: string;
+  instruction_template: string;
+  name: string;
+  output_contract?: Record<string, unknown>;
+  priority: number;
+  product_id?: string | null;
+  product_name?: string | null;
+  repository_default_branch?: string | null;
+  repository_id?: string | null;
+  repository_name?: string | null;
+  runner_id?: string | null;
+  runner_name?: string | null;
+  status: string;
+  task_type: string;
+  timeout_seconds: number;
+  updated_at?: string | null;
+  workspace_root: string;
+};
+
+export type RdTaskExecutorPolicyPayload = {
+  branch?: string | null;
+  executor_type?: string;
+  instruction_template?: string;
+  name?: string;
+  output_contract?: Record<string, unknown>;
+  priority?: number;
+  product_id?: string | null;
+  repository_id?: string | null;
+  runner_id?: string | null;
+  status?: string;
+  task_type?: string;
+  timeout_seconds?: number;
+  workspace_root?: string;
 };
 
 export type AiExecutorTaskLogRecord = {
@@ -5316,6 +5355,59 @@ export async function fetchAiExecutorTaskLogs(taskId: string): Promise<AiExecuto
   return apiRequest<AiExecutorTaskLogsResponse>(`/api/system/ai-executor-tasks/${taskId}/logs`, {
     token,
   });
+}
+
+export async function fetchRdTaskExecutorPolicies(query: {
+  productId?: string;
+  status?: string;
+  taskType?: string;
+} = {}): Promise<RdTaskExecutorPolicyRecord[]> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'product_id', query.productId);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'task_type', query.taskType);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiRequest<ListResponse<RdTaskExecutorPolicyRecord>>(
+    `/api/delivery/rd-task-executor-policies${suffix}`,
+    { token },
+  );
+  return response.items;
+}
+
+export async function createRdTaskExecutorPolicy(payload: RdTaskExecutorPolicyPayload) {
+  const token = requireAccessToken();
+  return apiRequest<RdTaskExecutorPolicyRecord>('/api/delivery/rd-task-executor-policies', {
+    body: payload,
+    method: 'POST',
+    token,
+  });
+}
+
+export async function updateRdTaskExecutorPolicy(
+  policyId: string,
+  payload: RdTaskExecutorPolicyPayload,
+) {
+  const token = requireAccessToken();
+  return apiRequest<RdTaskExecutorPolicyRecord>(
+    `/api/delivery/rd-task-executor-policies/${policyId}`,
+    {
+      body: payload,
+      method: 'PATCH',
+      token,
+    },
+  );
+}
+
+export async function deleteRdTaskExecutorPolicy(policyId: string) {
+  const token = requireAccessToken();
+  return apiRequest<{ deleted: boolean; id: string }>(
+    `/api/delivery/rd-task-executor-policies/${policyId}`,
+    {
+      method: 'DELETE',
+      token,
+    },
+  );
 }
 
 export async function cancelAiExecutorTask(

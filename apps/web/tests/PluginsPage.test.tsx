@@ -6,8 +6,10 @@ import './proComponentsMock';
 
 import PluginsPage from '../src/pages/Plugins';
 import {
+  ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY,
   ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
   ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+  assistantScopedStorageKey,
 } from '../src/services/aiBrain';
 
 function createDeferred<T>() {
@@ -1201,6 +1203,7 @@ describe('PluginsPage', () => {
     expect(screen.getByText('Hermes')).toBeInTheDocument();
     expect(screen.getByText('OpenClaw')).toBeInTheDocument();
     expect(screen.getByText('/Users/zeek/source/e-ai-brain')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-13 17:00')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '下载安装包 Zeek Mac 本地执行器' }));
     await waitFor(() =>
       expect(runnerPackageCalls).toEqual([
@@ -1300,7 +1303,7 @@ describe('PluginsPage', () => {
     fireEvent.click(await screen.findByRole('tab', { name: '执行器' }));
 
     expect(await screen.findByText('Token v2')).toBeInTheDocument();
-    expect(screen.getByText('2026-06-13T09:10:00Z')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-13 17:10')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '轮换 Token Zeek Mac 本地执行器' }));
     const rotateDialog = await findDialogByTitle('轮换 Runner Token');
@@ -1314,6 +1317,7 @@ describe('PluginsPage', () => {
     expect(within(logDrawer).getByText('ai_executor_task_001')).toBeInTheDocument();
     expect(within(logDrawer).getByText('checkout repository')).toBeInTheDocument();
     expect(within(logDrawer).getByText('scan started')).toBeInTheDocument();
+    expect(within(logDrawer).getAllByText('2026-06-13 17:11').length).toBeGreaterThanOrEqual(2);
 
     fireEvent.click(within(logDrawer).getByRole('button', { name: '取消任务' }));
     await waitFor(() =>
@@ -1462,7 +1466,7 @@ describe('PluginsPage', () => {
       includeOfficialPlugins: true,
     });
     window.sessionStorage.setItem(
-      ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
+      assistantScopedStorageKey(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY),
       JSON.stringify({
         draftId: 'assistant_draft_github_plugin_action',
         payload: {
@@ -1488,7 +1492,9 @@ describe('PluginsPage', () => {
     render(<PluginsPage />);
 
     const dialog = await findDialogByTitle('新增动作');
-    expect(window.sessionStorage.getItem(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY)).toBeNull();
+    expect(
+      window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY)),
+    ).toBeNull();
     expect(within(dialog).getByText('GitHub (http)')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('名称')).toHaveValue('GitHub 代码巡检');
     expect(within(dialog).getByLabelText('编码')).toHaveValue('scan_github_code_inspection');
@@ -1532,7 +1538,7 @@ describe('PluginsPage', () => {
       includeOfficialPlugins: true,
     });
     window.sessionStorage.setItem(
-      ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+      assistantScopedStorageKey(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY),
       JSON.stringify({
         draftId: 'assistant_draft_github_plugin_connection',
         payload: {
@@ -1560,7 +1566,9 @@ describe('PluginsPage', () => {
     render(<PluginsPage />);
 
     const dialog = await findDialogByTitle('新增连接');
-    expect(window.sessionStorage.getItem(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY)).toBeNull();
+    expect(
+      window.sessionStorage.getItem(assistantScopedStorageKey(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY)),
+    ).toBeNull();
     expect(within(dialog).getByText('GitHub (http)')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('名称')).toHaveValue('生产 GitHub 连接');
     expect(within(dialog).getByLabelText('Endpoint URL')).toHaveValue('https://api.github.com');
@@ -1609,7 +1617,7 @@ describe('PluginsPage', () => {
       includeOfficialPlugins: true,
     });
     window.sessionStorage.setItem(
-      ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY,
+      assistantScopedStorageKey(ASSISTANT_PLUGIN_CONNECTION_DRAFT_STORAGE_KEY),
       JSON.stringify({
         draftId: 'assistant_draft_github_plugin_connection',
         payload: {
@@ -1638,7 +1646,13 @@ describe('PluginsPage', () => {
 
     await waitFor(() => expect(assistantDraftConfirmIds).toEqual(['assistant_draft_github_plugin_connection']));
     expect(connectionBodies).toEqual([]);
-    expect(JSON.parse(window.sessionStorage.getItem('ai_brain_assistant_draft_resolution') ?? '{}')).toEqual({
+    expect(
+      JSON.parse(
+        window.sessionStorage.getItem(
+          assistantScopedStorageKey(ASSISTANT_DRAFT_RESOLUTION_STORAGE_KEY),
+        ) ?? '{}',
+      ),
+    ).toEqual({
       assistant_draft_github_plugin_connection: {
         resource_id: 'connection_created',
         resource_type: 'plugin_connection',
@@ -1648,7 +1662,7 @@ describe('PluginsPage', () => {
 
     cleanup();
     window.sessionStorage.setItem(
-      ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY,
+      assistantScopedStorageKey(ASSISTANT_PLUGIN_ACTION_DRAFT_STORAGE_KEY),
       JSON.stringify({
         draftId: 'assistant_draft_github_plugin_action',
         payload: {

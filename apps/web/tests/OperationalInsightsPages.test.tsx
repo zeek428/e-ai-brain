@@ -98,7 +98,7 @@ describe('operational insights pages', () => {
                 product_id: 'product_api',
                 status: 'open',
                 summary: '已有反馈内容',
-                updated_at: '2026-06-01T08:00:00Z',
+                updated_at: '2026-06-20T13:02:00+00:00',
               },
             ],
             page: 1,
@@ -115,6 +115,7 @@ describe('operational insights pages', () => {
     render(<InsightsPage />);
 
     expect(await screen.findByText('已有反馈内容')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-20 21:02')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '数据类型' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '摘要' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '操作' })).toBeInTheDocument();

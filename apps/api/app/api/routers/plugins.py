@@ -17,6 +17,7 @@ from app.services.ai_executor_runners import (
     delete_ai_executor_runner_response,
     list_ai_executor_runners_response,
     list_ai_executor_task_logs_response,
+    list_ai_executor_tasks_response,
     patch_ai_executor_runner_response,
     rotate_ai_executor_runner_token_response,
     runner_heartbeat_response,
@@ -346,6 +347,28 @@ def ai_executor_runner_heartbeat(
             metadata=payload.metadata,
             request=request,
             runner_id=runner_id,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/ai-executor-tasks")
+def list_ai_executor_tasks(
+    request: Request,
+    ai_task_id: str | None = Query(default=None),
+    runner_id: str | None = Query(default=None),
+    scheduled_job_run_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        list_ai_executor_tasks_response(
+            ai_task_id=ai_task_id,
+            current_store=store(request),
+            runner_id=runner_id,
+            scheduled_job_run_id=scheduled_job_run_id,
+            status=status,
+            user=user,
         ),
         get_trace_id(request),
     )

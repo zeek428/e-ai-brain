@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.372 |
+| 功能版本 | v1.1.373 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.373 | 2026-06-21 | 研发执行器策略 API 新增：需求交付策略只匹配插件管理下 Codex/Claude Code/OpenClaw Runner，不装配 Agent/Skill；AI 任务启动命中策略后返回 `executor_task_id/runner_id`，AI 执行器任务列表支持按 `ai_task_id` 反查 | Codex |
 | v1.1.372 | 2026-06-20 | AI 助手运行状态接口补齐 self-check `checks[]` 与 `ready`，效果指标返回查看埋点口径说明；会话列表可按命令签名折叠重复命令，并新增系统管理侧 `@` 能力配置页与真实页面 smoke 覆盖 | Codex |
 | v1.1.371 | 2026-06-20 | AI 助手 @ 动作候选新增运营配置 API 和 `assistant_action_reference_configs` 表；效果指标新增时间窗口参数与 `/metrics/details` 明细钻取接口 | Codex |
 | v1.1.370 | 2026-06-20 | AI 助手聊天新增 `assistant_chat_runs` 运行生命周期、消息状态字段和服务端取消接口，停止生成可审计追踪 | Codex |
@@ -654,6 +655,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | AI Task | POST | `/api/ai-tasks` | 低层任务创建接口。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；停在 `model_gateway_failed` 或 `code_review_executor_failed` 的失败任务可用同一 task_id 重试。 |
 | AI Task | GET | `/api/ai-tasks/{task_id}` | 任务详情；PostgreSQL 运行时读取 task workflow source rows，并返回脱敏产品上下文、输入输出、待确认 Review、Review 列表、Graph Run、知识沉淀和 Mock Issue 回写状态。 |
+| AI Task | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 管理研发执行器策略；按任务类型、产品和优先级匹配插件管理下的 Codex、Claude Code 或 OpenClaw Runner，不接收 Agent/Skill/模型网关字段。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/more-info` | 提交补充信息。 |
 | AI Task | POST | `/api/ai-tasks/batch-cancel` | 批量取消任务，逐条校验状态并返回 updated/skipped 明细。 |
 | AI Task | POST | `/api/ai-tasks/batch-retry` | 批量重试失败任务，逐条校验 `model_gateway_failed` / `code_review_executor_failed` 并返回 retried/updated/skipped 明细。 |
@@ -731,7 +733,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | GET | `/api/system/ai-executor-runners/{runner_id}/install-package?target_os=&arch=&install_mode=` | 下载 Runner 安装包 ZIP。仅管理员可下载本地 Runner 安装包，系统默认执行器返回锁定错误。`target_os` 支持 `linux/macos/windows/docker/manual`，`arch` 支持 `amd64/arm64/universal`，`install_mode` 按目标系统校验：Linux 支持 `systemd/shell`，macOS 支持 `launchd/shell`，Windows 支持 `service/powershell`，Docker 固定 `docker`，通用手动固定 `manual`；未传时使用 Runner `metadata.target_os/package_arch/install_mode`，不兼容组合回退到该系统默认安装模式。响应 `Content-Type=application/zip`，`Content-Disposition` 使用 `ai-brain-runner-<runner_id>-<target_os>-<arch>-<install_mode>.zip`；包内公共文件包含 `README.md`、`START_STOP.md`、`ai-brain-runner.env`、`manifest.json`、`runner_config.json` 和 `skills/ai-brain-runner/SKILL.md`，其中 `START_STOP.md` 必须按目标系统说明启动、停止、状态查看、重启、禁用自启以及 AI Brain 页面停用不等于关闭本机进程。Linux 包含 `install.sh` 与可选 `systemd/ai-brain-runner.service`；macOS 包含 `install.sh` 与可选 `launchd/com.ai-brain.runner.plist`；Windows 包含 `install.ps1` 与可选 `windows/ai-brain-runner-service.xml`；Docker 包含 `Dockerfile` 和 `docker-compose.runner.yml`；通用手动包包含 `scripts/start-runner.sh` 和 `scripts/start-runner.ps1`。安装包写入 Runner ID、AI Brain 地址、支持的执行器、工作区白名单、命令模板、目标系统、架构和安装模式；由于服务端只保存 token hash，包内 `AI_BRAIN_RUNNER_TOKEN` 必须使用 `<runner_token>` 占位，用户需填入创建或轮换时返回的一次性 token。 |
 | Plugins | POST | `/api/system/ai-executor-runners/{runner_id}/rotate-token` | 管理员轮换 Runner token；请求可传 `runner_token`，未传则服务端生成新 token。成功后 `token_version` 递增、`token_rotated_at` 更新，响应只返回本次一次性明文 token，旧 token 立即失效。 |
 | Plugins | POST | `/api/system/ai-executor-runners/{runner_id}/heartbeat` | Runner 心跳接口。调用方必须通过 `X-Runner-Token` 或 Bearer Token 提交 Runner token；请求体可带 `metadata`，服务端更新 `last_heartbeat_at/status/metadata` 并返回脱敏 Runner 信息。 |
-| Plugins | POST | `/api/system/ai-executor-tasks/claim` | Runner 认领任务接口。调用方必须携带 Runner token，并提交 `runner_id` 和可选 `executor_type`；服务端只返回该 Runner 支持且处于 `queued` 的最早任务，任务进入 `claimed`，响应包含 `instruction/workspace_root/input_payload/request_config/timeout_seconds/scheduled_job_run_id` 等执行上下文。 |
+| Plugins | GET | `/api/system/ai-executor-tasks?ai_task_id=&runner_id=&scheduled_job_run_id=&status=` | 管理员查询 AI 执行器任务列表；支持按研发 AI 任务、Runner、定时作业运行和任务状态过滤，研发任务详情可通过 `ai_task_id` 反查关联 Runner 执行任务。 |
+| Plugins | POST | `/api/system/ai-executor-tasks/claim` | Runner 认领任务接口。调用方必须携带 Runner token，并提交 `runner_id` 和可选 `executor_type`；服务端只返回该 Runner 支持且处于 `queued` 的最早任务，任务进入 `claimed`，响应包含 `instruction/workspace_root/input_payload/request_config/timeout_seconds/scheduled_job_run_id/ai_task_id` 等执行上下文。 |
 | Plugins | POST | `/api/system/ai-executor-tasks/{task_id}/complete` | Runner 完成回写接口。调用方必须携带 Runner token，并提交 `runner_id/status/result_json/logs/error_code/error_message`；`status` 支持 `running/succeeded/failed/cancelled/timed_out`，完成回写会更新 `ai_executor_tasks`，并同步插件调用日志、定时作业运行的 `runner_execution` 节点、结果动作反馈、collector run 和作业最近运行状态。 |
 | Plugins | GET/POST | `/api/system/ai-executor-tasks/{task_id}/logs` | 查询或追加 AI 执行器任务日志。Runner 追加日志时必须携带 Runner token 和 `runner_id`，服务端按时间顺序保留日志行并同步任务 `updated_at`；管理员查询返回 `task_id/status/logs[]`，页面可作为流式日志查看的轮询数据源。 |
 | Plugins | POST | `/api/system/ai-executor-tasks/{task_id}/cancel` | 管理员取消 queued/claimed/running 的 AI 执行器任务；响应更新任务状态为 `cancelled`，并同步插件调用日志和关联定时作业运行摘要。 |
@@ -2394,7 +2397,7 @@ GET /api/ai-tasks?status=waiting_review&task_type=code_review&product_id=product
 POST /api/ai-tasks/{task_id}/start
 ```
 
-当前实现会同步运行到下一个人工确认点或失败状态。`draft` 任务可启动；已失败且 `current_step` 为 `model_gateway_failed` 或 `code_review_executor_failed` 的任务可用同一 `task_id` 再次调用 start 重试，并记录 `ai_task.retry_started` 审计事件。非 code_review 任务若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；若没有结构化默认配置但设置了 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY`，则使用环境模型网关。缺少可用模型网关或 active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`。code_review 任务通过 `code_review_executor` 执行：默认 `claude_code_skill/code-review` 命令适配器由 `CODE_REVIEW_EXECUTOR_COMMAND` 配置，输入 JSON 通过 stdin 提供，输出必须是包含 `summary`、`risk_level` 和 `findings` 的 JSON 对象，系统会补齐并持久化 executor 元数据；显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 时复用模型网关适配器；默认外部命令为空且存在 active/default 或环境模型网关时，系统会自动使用 `model_gateway` 适配器，并以 MR/PR 快照、技术方案、需求和产品上下文作为 Review 输入。执行器配置缺失、调用失败、超时、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。这些失败都会把任务置为 `failed`；使用模型网关适配器时保留模型调用元数据日志；任务启动不得生成本地 fallback 输出。
+当前实现会先匹配 active 研发执行器策略：若命中 `rd_task_executor_policies`，任务不会装配 Agent/Skill，也不会走模型网关，而是创建关联 `ai_executor_tasks(ai_task_id=<task_id>)`，把任务置为 `running/current_step=waiting_ai_executor`，并返回 `executor_policy_id/executor_task_id/runner_id`；后续由插件管理下的 Codex、Claude Code 或 OpenClaw Runner 认领执行，成功回写后任务进入 `waiting_review/current_step=executor_completed` 并创建待确认 Review，失败/取消/超时进入 `failed` 或 `cancelled`。未命中研发执行器策略时，当前实现会同步运行到下一个人工确认点或失败状态。`draft` 任务可启动；已失败且 `current_step` 为 `model_gateway_failed`、`code_review_executor_failed` 或 `executor_failed` 的任务可用同一 `task_id` 再次调用 start 重试，并记录 `ai_task.retry_started` 审计事件。非 code_review 任务若存在 active/default 的 OpenAI-compatible 模型网关配置且已配置 API Key，启动时调用 `{base_url}/chat/completions` 并要求 `response_format={"type":"json_object"}`；若没有结构化默认配置但设置了 `MODEL_GATEWAY_BASE_URL` 和 `MODEL_GATEWAY_API_KEY`，则使用环境模型网关。缺少可用模型网关或 active/default 配置缺失 API Key 返回 `MODEL_GATEWAY_CONFIG_INVALID`；provider 调用、响应解析或网络失败返回 `MODEL_GATEWAY_FAILED`。code_review 任务通过 `code_review_executor` 执行：默认 `claude_code_skill/code-review` 命令适配器由 `CODE_REVIEW_EXECUTOR_COMMAND` 配置，输入 JSON 通过 stdin 提供，输出必须是包含 `summary`、`risk_level` 和 `findings` 的 JSON 对象，系统会补齐并持久化 executor 元数据；显式设置 `CODE_REVIEW_EXECUTOR_TYPE=model_gateway` 时复用模型网关适配器；默认外部命令为空且存在 active/default 或环境模型网关时，系统会自动使用 `model_gateway` 适配器，并以 MR/PR 快照、技术方案、需求和产品上下文作为 Review 输入。执行器配置缺失、调用失败、超时、响应解析或结构化报告校验失败返回 `CODE_REVIEW_EXECUTOR_FAILED`。这些失败都会把任务置为 `failed`；使用模型网关适配器时保留模型调用元数据日志；任务启动不得生成本地 fallback 输出。
 典型响应：
 启动权限按任务类型收敛：`product_detail_design` 和 `technical_solution` 仅允许 `product_owner`/`rd_owner`，`code_review` 仅允许 `reviewer`/`rd_owner`；`admin` 可执行全部本地管理操作。
 
@@ -2404,6 +2407,22 @@ POST /api/ai-tasks/{task_id}/start
     "id": "task_001",
     "status": "waiting_review",
     "review_id": "review_001"
+  },
+  "trace_id": "trace_004"
+}
+```
+
+命中研发执行器策略时，典型响应为：
+
+```json
+{
+  "data": {
+    "id": "task_001",
+    "status": "running",
+    "current_step": "waiting_ai_executor",
+    "executor_policy_id": "rd_executor_policy_001",
+    "executor_task_id": "ai_executor_task_001",
+    "runner_id": "ai_executor_runner_001"
   },
   "trace_id": "trace_004"
 }

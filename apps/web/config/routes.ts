@@ -77,6 +77,12 @@ const routes = [
         component: './TaskCenter',
       },
       {
+        path: '/delivery/rd-executor-policies',
+        name: '研发执行器策略',
+        icon: 'ControlOutlined',
+        component: './RdExecutorPolicies',
+      },
+      {
         path: '/delivery/versions',
         name: '迭代版本',
         icon: 'BranchesOutlined',

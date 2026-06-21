@@ -1,4 +1,5 @@
 import { type AssistantReference } from '../../../services/aiBrain';
+import { formatDisplayDate } from '../../../utils/dateTime';
 
 export const ASSISTANT_KNOWLEDGE_CONTEXT_CHUNK_LIMIT = 8;
 
@@ -57,8 +58,7 @@ export function referenceUpdatedDate(reference: AssistantReference) {
   if (!value) {
     return undefined;
   }
-  const normalized = String(value);
-  return /^\d{4}-\d{2}-\d{2}/.test(normalized) ? normalized.slice(0, 10) : normalized;
+  return formatDisplayDate(value);
 }
 
 export function referencePermissionTagColor(reference: AssistantReference) {

@@ -1017,6 +1017,7 @@ def sync_ai_executor_runner_store(current_store: Any, *, status: str | None = No
 def sync_ai_executor_task_store(
     current_store: Any,
     *,
+    ai_task_id: str | None = None,
     runner_id: str | None = None,
     scheduled_job_run_id: str | None = None,
     status: str | None = None,
@@ -1028,6 +1029,7 @@ def sync_ai_executor_task_store(
         current_store,
         "ai_executor_tasks",
         repository.list_ai_executor_tasks(
+            ai_task_id=ai_task_id,
             runner_id=runner_id,
             scheduled_job_run_id=scheduled_job_run_id,
             status=status,
@@ -1111,6 +1113,22 @@ def _load_scheduled_job(current_store: Any, scheduled_job_id: str | None) -> dic
     return None
 
 
+def _load_ai_task(current_store: Any, ai_task_id: str | None) -> dict[str, Any] | None:
+    if not ai_task_id:
+        return None
+    task = current_store.ai_tasks.get(ai_task_id)
+    if task is not None:
+        return task
+    repository = getattr(current_store, "repository", None)
+    load_ai_tasks = getattr(repository, "load_ai_tasks", None)
+    if callable(load_ai_tasks):
+        payload = load_ai_tasks()
+        for candidate in payload.get("ai_tasks", {}).values():
+            current_store.ai_tasks[candidate["id"]] = candidate
+        return current_store.ai_tasks.get(ai_task_id)
+    return None
+
+
 def _runner_node_from_task(task: dict[str, Any]) -> dict[str, Any]:
     return {
         "error_code": task.get("error_code"),
@@ -1125,6 +1143,186 @@ def _runner_node_from_task(task: dict[str, Any]) -> dict[str, Any]:
         "status": task.get("status"),
         "workspace_root": task.get("workspace_root"),
     }
+
+
+def _persist_task_state_records(
+    current_store: Any,
+    *,
+    audit_events: list[dict[str, Any]],
+    reviews: list[dict[str, Any]] | None,
+    task: dict[str, Any],
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_records = getattr(repository, "save_task_state_records", None)
+    if callable(save_records):
+        save_records(task=task, audit_events=audit_events, reviews=reviews)
+
+
+def _existing_pending_review(
+    current_store: Any,
+    ai_task_id: str,
+    stage: str,
+) -> dict[str, Any] | None:
+    repository = getattr(current_store, "repository", None)
+    load_workflow_runtime = getattr(repository, "load_workflow_runtime", None)
+    if callable(load_workflow_runtime):
+        payload = load_workflow_runtime()
+        for review in payload.get("human_reviews", {}).values():
+            current_store.human_reviews[review["id"]] = review
+    for review in current_store.human_reviews.values():
+        if (
+            review.get("ai_task_id") == ai_task_id
+            and review.get("stage") == stage
+            and review.get("status") == "pending"
+        ):
+            return review
+    return None
+
+
+def _sync_runner_completion_to_ai_task(
+    current_store: Any,
+    *,
+    task: dict[str, Any],
+    runner_id: str,
+) -> None:
+    ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
+    if ai_task is None:
+        return
+    runner_status = str(task.get("status") or "running")
+    now = datetime.now(UTC).isoformat()
+    executor_snapshot = {
+        "executor_type": task.get("executor_type"),
+        "runner_id": task.get("runner_id"),
+        "runner_task_id": task.get("id"),
+        "status": runner_status,
+        "workspace_root": task.get("workspace_root"),
+    }
+    if runner_status in {"queued", "claimed", "running"}:
+        updated_task = {
+            **ai_task,
+            "current_step": "waiting_ai_executor",
+            "input_json": {
+                **dict(ai_task.get("input_json") or {}),
+                "executor": executor_snapshot,
+            },
+            "status": "running",
+            "updated_at": now,
+        }
+        current_store.ai_tasks[updated_task["id"]] = updated_task
+        audit_event = record_audit_event(
+            current_store,
+            event_type="ai_task.executor_waiting",
+            actor_id=runner_id,
+            subject_type="ai_task",
+            subject_id=updated_task["id"],
+            payload={"ai_task_id": updated_task["id"], **executor_snapshot},
+        )
+        _persist_task_state_records(
+            current_store,
+            audit_events=[audit_event],
+            reviews=None,
+            task=updated_task,
+        )
+        return
+
+    if runner_status == "succeeded":
+        output_json = {
+            "executor": {
+                **executor_snapshot,
+                "finished_at": task.get("finished_at"),
+            },
+            "result": task.get("result_json") or {},
+        }
+        updated_task = {
+            **ai_task,
+            "current_step": "executor_completed",
+            "output_json": output_json,
+            "status": "waiting_review",
+            "updated_at": now,
+        }
+        current_store.ai_tasks[updated_task["id"]] = updated_task
+        reviews: list[dict[str, Any]] = []
+        existing_review = _existing_pending_review(
+            current_store,
+            updated_task["id"],
+            str(updated_task.get("task_type") or "executor_result"),
+        )
+        if existing_review is None:
+            review_id = current_store.new_id("review")
+            review = {
+                "ai_task_id": updated_task["id"],
+                "content": output_json,
+                "created_at": now,
+                "decided_at": None,
+                "decided_by": None,
+                "decision_reason": None,
+                "id": review_id,
+                "questions": [],
+                "stage": updated_task.get("task_type") or "executor_result",
+                "status": "pending",
+                "updated_at": now,
+                "version": 1,
+            }
+            current_store.human_reviews[review_id] = review
+            reviews.append(review)
+        review_ids = list(updated_task.get("review_ids") or [])
+        for review in reviews or ([existing_review] if existing_review else []):
+            if review and review["id"] not in review_ids:
+                review_ids.append(review["id"])
+        updated_task = {
+            **updated_task,
+            "review_ids": review_ids,
+        }
+        current_store.ai_tasks[updated_task["id"]] = updated_task
+        audit_event = record_audit_event(
+            current_store,
+            event_type="ai_task.executor_completed",
+            actor_id=runner_id,
+            subject_type="ai_task",
+            subject_id=updated_task["id"],
+            payload={"ai_task_id": updated_task["id"], **executor_snapshot},
+        )
+        _persist_task_state_records(
+            current_store,
+            audit_events=[audit_event],
+            reviews=reviews or None,
+            task=updated_task,
+        )
+        return
+
+    next_status = "cancelled" if runner_status == "cancelled" else "failed"
+    updated_task = {
+        **ai_task,
+        "current_step": "executor_failed",
+        "error_code": task.get("error_code") or "AI_EXECUTOR_TASK_FAILED",
+        "error_message": task.get("error_message") or "AI executor task failed",
+        "output_json": {
+            "executor": executor_snapshot,
+            "result": task.get("result_json") or {},
+        },
+        "status": next_status,
+        "updated_at": now,
+    }
+    current_store.ai_tasks[updated_task["id"]] = updated_task
+    audit_event = record_audit_event(
+        current_store,
+        event_type="ai_task.executor_failed",
+        actor_id=runner_id,
+        subject_type="ai_task",
+        subject_id=updated_task["id"],
+        payload={
+            "ai_task_id": updated_task["id"],
+            **executor_snapshot,
+            "error_code": updated_task.get("error_code"),
+            "error_message": updated_task.get("error_message"),
+        },
+    )
+    _persist_task_state_records(
+        current_store,
+        audit_events=[audit_event],
+        reviews=None,
+        task=updated_task,
+    )
 
 
 def _status_for_runner_task(task_status: str) -> str:
@@ -1385,6 +1583,46 @@ def list_ai_executor_runners_response(
             item["latest_task_status"] = latest_task.get("status")
         items.append(item)
     items.sort(key=lambda item: (item.get("updated_at") or "", item["id"]), reverse=True)
+    return {"items": items, "total": len(items)}
+
+
+def list_ai_executor_tasks_response(
+    *,
+    ai_task_id: str | None,
+    current_store: Any,
+    runner_id: str | None,
+    scheduled_job_run_id: str | None,
+    status: str | None,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    _ensure_admin(user)
+    if status is not None:
+        _ensure_enum(status, AI_EXECUTOR_TASK_STATUSES, "status")
+    sync_ai_executor_task_store(
+        current_store,
+        ai_task_id=ai_task_id,
+        runner_id=runner_id,
+        scheduled_job_run_id=scheduled_job_run_id,
+        status=status,
+    )
+    items = [
+        _task_public(task)
+        for task in current_store.ai_executor_tasks.values()
+        if (ai_task_id is None or task.get("ai_task_id") == ai_task_id)
+        and (runner_id is None or task.get("runner_id") == runner_id)
+        and (
+            scheduled_job_run_id is None
+            or task.get("scheduled_job_run_id") == scheduled_job_run_id
+        )
+        and (status is None or task.get("status") == status)
+    ]
+    items.sort(
+        key=lambda task: (
+            task.get("updated_at") or task.get("created_at") or "",
+            task.get("id") or "",
+        ),
+        reverse=True,
+    )
     return {"items": items, "total": len(items)}
 
 
@@ -1822,11 +2060,13 @@ def create_ai_executor_task(
     scheduled_job_run_id: str | None,
     timeout_seconds: int,
     workspace_root: str,
+    ai_task_id: str | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     task_id = current_store.new_id("ai_executor_task")
     task = {
         "action_id": action_id,
+        "ai_task_id": ai_task_id,
         "claimed_at": None,
         "connection_id": connection_id,
         "created_at": now,
@@ -1862,6 +2102,7 @@ def create_ai_executor_task(
             "runner_id": runner_id,
             "scheduled_job_id": scheduled_job_id,
             "scheduled_job_run_id": scheduled_job_run_id,
+            "ai_task_id": ai_task_id,
             "workspace_root": workspace_root,
         },
     )
@@ -1921,6 +2162,11 @@ def claim_ai_executor_task_response(
         audit_event=audit_event,
     )
     _sync_runner_completion_to_scheduled_run(
+        current_store,
+        task=task,
+        runner_id=runner_id,
+    )
+    _sync_runner_completion_to_ai_task(
         current_store,
         task=task,
         runner_id=runner_id,
@@ -2011,6 +2257,7 @@ def append_ai_executor_task_logs_response(
         audit_event=audit_event,
     )
     _sync_runner_completion_to_scheduled_run(current_store, task=task, runner_id=runner_id)
+    _sync_runner_completion_to_ai_task(current_store, task=task, runner_id=runner_id)
     return {"logs": list(task.get("logs") or []), "task": _task_public(task)}
 
 
@@ -2055,6 +2302,11 @@ def cancel_ai_executor_task_response(
         audit_event=audit_event,
     )
     _sync_runner_completion_to_scheduled_run(
+        current_store,
+        task=task,
+        runner_id=str(task.get("runner_id") or user["id"]),
+    )
+    _sync_runner_completion_to_ai_task(
         current_store,
         task=task,
         runner_id=str(task.get("runner_id") or user["id"]),
@@ -2138,6 +2390,11 @@ def timeout_ai_executor_tasks_response(
             task=updated_task,
             runner_id=str(updated_task.get("runner_id") or user["id"]),
         )
+        _sync_runner_completion_to_ai_task(
+            current_store,
+            task=updated_task,
+            runner_id=str(updated_task.get("runner_id") or user["id"]),
+        )
         timed_out.append(updated_task)
     return {
         "timed_out_task_ids": [task["id"] for task in timed_out],
@@ -2194,6 +2451,11 @@ def complete_ai_executor_task_response(
         audit_event=audit_event,
     )
     _sync_runner_completion_to_scheduled_run(
+        current_store,
+        task=task,
+        runner_id=runner_id,
+    )
+    _sync_runner_completion_to_ai_task(
         current_store,
         task=task,
         runner_id=runner_id,

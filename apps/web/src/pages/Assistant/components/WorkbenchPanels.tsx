@@ -6,6 +6,7 @@ import {
   type AssistantMetricDetails,
   type AssistantMetrics,
 } from '../../../services/aiBrain';
+import { formatDisplayDateTime } from '../../../utils/dateTime';
 
 const { Text } = Typography;
 
@@ -299,7 +300,7 @@ export function AssistantMetricsPanel({
                       <Tag>{item.type}</Tag>
                       {item.action ? <Tag>{item.action}</Tag> : null}
                       {item.updated_at ?? item.created_at ? (
-                        <Tag>{item.updated_at ?? item.created_at}</Tag>
+                        <Tag>{formatDisplayDateTime(item.updated_at ?? item.created_at)}</Tag>
                       ) : null}
                       {item.url ? (
                         <a href={item.url}>查看来源</a>
