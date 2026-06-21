@@ -485,7 +485,7 @@ def _plugin_connection_draft_requested(normalized_message: str) -> bool:
     )
     has_supported_plugin = any(
         keyword in normalized_message
-        for keyword in ("github", "gitlab", "邮箱", "邮件", "email")
+        for keyword in ("github", "gitlab", "代码仓库", "代码托管", "邮箱", "邮件", "email")
     )
     return (
         has_create_intent

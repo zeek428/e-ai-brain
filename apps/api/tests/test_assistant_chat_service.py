@@ -294,6 +294,74 @@ def test_assistant_history_paginates_conversations_with_cursor():
     assert second_page["next_cursor"] is None
 
 
+def test_assistant_history_collapsed_pagination_fills_page_after_duplicate_window():
+    store = MemoryStore()
+    duplicate_title = "@提取每周用户反馈有价值信息 执行一次"
+    store.assistant_conversations = {
+        f"conversation_duplicate_{index:02d}": {
+            "created_at": f"2026-06-20T09:{30 - index:02d}:00+00:00",
+            "id": f"conversation_duplicate_{index:02d}",
+            "last_message_at": f"2026-06-20T09:{30 - index:02d}:00+00:00",
+            "message_count": 2,
+            "product_id": "product_119",
+            "title": duplicate_title,
+            "updated_at": f"2026-06-20T09:{30 - index:02d}:00+00:00",
+            "user_id": "user_admin",
+        }
+        for index in range(10)
+    }
+    store.assistant_conversations.update(
+        {
+            "conversation_unique_next": {
+                "created_at": "2026-06-20T09:20:00+00:00",
+                "id": "conversation_unique_next",
+                "last_message_at": "2026-06-20T09:20:00+00:00",
+                "message_count": 1,
+                "product_id": "product_119",
+                "title": "唯一对话一",
+                "updated_at": "2026-06-20T09:20:00+00:00",
+                "user_id": "user_admin",
+            },
+            "conversation_unique_tail": {
+                "created_at": "2026-06-20T09:19:00+00:00",
+                "id": "conversation_unique_tail",
+                "last_message_at": "2026-06-20T09:19:00+00:00",
+                "message_count": 1,
+                "product_id": "product_119",
+                "title": "唯一对话二",
+                "updated_at": "2026-06-20T09:19:00+00:00",
+                "user_id": "user_admin",
+            },
+        }
+    )
+
+    first_page = assistant_conversations_response(
+        store,
+        limit=2,
+        user_id="user_admin",
+    )
+
+    assert [item["id"] for item in first_page["items"]] == [
+        "conversation_duplicate_00",
+        "conversation_unique_next",
+    ]
+    assert first_page["items"][0]["duplicate_count"] == 10
+    assert first_page["items"][0]["collapsed_message_count"] == 20
+    assert first_page["next_cursor"] == (
+        "2026-06-20T09:20:00+00:00|conversation_unique_next"
+    )
+
+    second_page = assistant_conversations_response(
+        store,
+        cursor=first_page["next_cursor"],
+        limit=2,
+        user_id="user_admin",
+    )
+
+    assert [item["id"] for item in second_page["items"]] == ["conversation_unique_tail"]
+    assert second_page["next_cursor"] is None
+
+
 def test_ensure_assistant_conversation_reuses_existing_command_conversation():
     store = MemoryStore()
     user_id = "user_admin"

@@ -6,13 +6,28 @@ import {
   type AssistantRuntimeStatus,
 } from '../../../services/aiBrain';
 
+const RUNTIME_STATUS_FOCUS_REFRESH_TTL_MS = 30_000;
+
+type RefreshRuntimeStatusOptions = {
+  force?: boolean;
+};
+
 export function useAssistantRuntimeStatus() {
   const isMountedRef = useRef(true);
+  const lastRefreshAttemptAtRef = useRef(0);
   const [isRefreshingRuntimeStatus, setIsRefreshingRuntimeStatus] = useState(false);
   const [runtimeStatusCheckedAt, setRuntimeStatusCheckedAt] = useState<string>();
   const [runtimeStatus, setRuntimeStatus] = useState<AssistantRuntimeStatus>();
 
-  const refreshRuntimeStatus = useCallback(async () => {
+  const refreshRuntimeStatus = useCallback(async (options?: RefreshRuntimeStatusOptions) => {
+    const nowMs = Date.now();
+    if (
+      options?.force !== true
+      && nowMs - lastRefreshAttemptAtRef.current < RUNTIME_STATUS_FOCUS_REFRESH_TTL_MS
+    ) {
+      return;
+    }
+    lastRefreshAttemptAtRef.current = nowMs;
     if (!getStoredCurrentUser()) {
       if (isMountedRef.current) {
         setRuntimeStatus(undefined);
@@ -43,7 +58,7 @@ export function useAssistantRuntimeStatus() {
 
   useEffect(() => {
     isMountedRef.current = true;
-    void refreshRuntimeStatus();
+    void refreshRuntimeStatus({ force: true });
     return () => {
       isMountedRef.current = false;
     };

@@ -117,6 +117,8 @@ export function AssistantSidebar({
                 </Button>
               ) : null}
             </>
+          ) : isLoadingConversations ? (
+            <Text type="secondary">历史对话加载中</Text>
           ) : (
             <Text type="secondary">暂无历史对话</Text>
           )}

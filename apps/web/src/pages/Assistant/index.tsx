@@ -68,27 +68,18 @@ import { type QueryDraftResolution, useAssistantDrafts } from './hooks/useAssist
 import { useAssistantMetricsPanel } from './hooks/useAssistantMetricsPanel';
 import { useAssistantReferences } from './hooks/useAssistantReferences';
 import { useAssistantRuntimeStatus } from './hooks/useAssistantRuntimeStatus';
+import {
+  activeMentionQuery,
+  activeMentionRange,
+  assistantStopCommandRequested,
+  scheduledJobRunOnceRequested,
+  uniqueScheduledJobReferenceCandidate,
+} from './assistantCommandParsing';
 
 const { Text, Title } = Typography;
 const ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS = 250;
 const ASSISTANT_REFERENCE_CANDIDATE_LIMIT = 12;
 const ASSISTANT_ADD_ACTION_LIMIT = 20;
-const assistantStopCommands = ['终止', '停止', '取消', 'stop', 'cancel'];
-
-const scheduledJobRunOnceKeywords = [
-  '执行一次',
-  '执行一下',
-  '运行一次',
-  '运行一下',
-  '跑一次',
-  '跑一下',
-  '立即执行',
-  '立即运行',
-  '手动执行',
-  'run once',
-  'run now',
-  'execute once',
-];
 const queryReferenceTypes = new Set([
   'ai_agent',
   'ai_skill',
@@ -638,60 +629,6 @@ function comparisonDifferenceItems(item: AssistantToolResultItem) {
     : [];
 }
 
-type ActiveMentionRange = {
-  endIndex: number;
-  markerIndex: number;
-  query: string;
-};
-
-function activeMentionRange(value: string): ActiveMentionRange | undefined {
-  const markerIndex = Math.max(value.lastIndexOf('@'), value.lastIndexOf('＠'));
-  if (markerIndex < 0) {
-    return undefined;
-  }
-  const previousChar = markerIndex > 0 ? value[markerIndex - 1] : '';
-  if (previousChar && /[A-Za-z0-9._%+-]/.test(previousChar)) {
-    return undefined;
-  }
-  const tail = value.slice(markerIndex + 1);
-  if (tail.includes('\n')) {
-    return undefined;
-  }
-  if (tail.length > 0 && /^\s/.test(tail)) {
-    return undefined;
-  }
-  const rawQuery = tail.split(/\s+/)[0] ?? '';
-  const query = rawQuery;
-  const endIndex = markerIndex + 1 + rawQuery.length;
-  if (!scheduledJobRunOnceRequested(value)) {
-    return { endIndex, markerIndex, query };
-  }
-  return {
-    endIndex,
-    markerIndex,
-    query: trimRunOnceCommandFromMentionQuery(query),
-  };
-}
-
-function activeMentionQuery(value: string) {
-  return activeMentionRange(value)?.query;
-}
-
-function uniqueScheduledJobReferenceCandidate(references: AssistantReference[]) {
-  const scheduledJobReferences = references.filter((reference) => reference.type === 'scheduled_job');
-  return scheduledJobReferences.length === 1 ? scheduledJobReferences[0] : undefined;
-}
-
-function scheduledJobRunOnceRequested(value: string) {
-  const normalized = value.toLowerCase();
-  return scheduledJobRunOnceKeywords.some((keyword) => normalized.includes(keyword));
-}
-
-function assistantStopCommandRequested(value: string) {
-  const normalized = value.trim().toLowerCase();
-  return assistantStopCommands.some((command) => normalized === command);
-}
-
 function createAssistantChatRunId() {
   const randomId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -730,18 +667,6 @@ function currentUserCanRunScheduledJobFromAssistant() {
     || permissions.has('system.scheduled_jobs.run')
     || permissions.has('system.scheduled_jobs.manage')
   );
-}
-
-function trimRunOnceCommandFromMentionQuery(query: string) {
-  const normalizedQuery = query.toLowerCase();
-  let endIndex = query.length;
-  scheduledJobRunOnceKeywords.forEach((keyword) => {
-    const keywordIndex = normalizedQuery.indexOf(keyword);
-    if (keywordIndex >= 0) {
-      endIndex = Math.min(endIndex, keywordIndex);
-    }
-  });
-  return query.slice(0, endIndex).trim().replace(/[，,。；;：:]+$/u, '');
 }
 
 function mergeReferences(...referenceLists: AssistantReference[][]) {
@@ -2811,7 +2736,7 @@ export default function AssistantPage() {
             checkedAt={runtimeStatusCheckedAt}
             isRefreshing={isRefreshingRuntimeStatus}
             runtimeStatus={runtimeStatus}
-            onRefresh={() => void refreshRuntimeStatus()}
+            onRefresh={() => void refreshRuntimeStatus({ force: true })}
           />
           <AssistantChatRunRecovery
             isLoading={isLoadingChatRuns}

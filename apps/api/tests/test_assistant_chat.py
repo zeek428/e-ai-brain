@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 import app.api.routers.assistant as assistant_router
 import app.services.assistant_action_drafts as assistant_action_drafts_service
 import app.services.assistant_chat as assistant_chat_service
+import app.services.assistant_metrics as assistant_metrics_service
 import app.services.assistant_role_quick_tasks as assistant_role_quick_tasks_service
 from app.api.deps import api_error
 from app.core.repositories.authorization import CompatibilityAuthorizationRepository
@@ -3997,6 +3998,60 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
     assert windowed_details["total"] == 0
 
 
+def test_ai_assistant_metric_details_limits_knowledge_reference_materialization(monkeypatch):
+    app.state.store.reset()
+    app.state.store.assistant_messages = {
+        f"assistant_message_knowledge_{index}": {
+            "content": f"引用知识 {index}",
+            "conversation_id": "conversation_knowledge_metrics",
+            "created_at": f"2026-06-20T08:{index:02d}:00+00:00",
+            "id": f"assistant_message_knowledge_{index}",
+            "metadata_json": {
+                "references": [
+                    {
+                        "id": f"knowledge_document_{index}",
+                        "title": f"知识文档 {index}",
+                        "type": "knowledge_document",
+                    }
+                ]
+            },
+            "role": "user",
+            "updated_at": f"2026-06-20T08:{index:02d}:00+00:00",
+            "user_id": "user_admin",
+        }
+        for index in range(10)
+    }
+    materialized_knowledge_records: list[str] = []
+    original_with_metric_kind = assistant_metrics_service._with_metric_kind
+
+    def counting_with_metric_kind(record: dict, kind: str):
+        if kind == "knowledge_reference":
+            materialized_knowledge_records.append(str(record.get("id")))
+        return original_with_metric_kind(record, kind)
+
+    monkeypatch.setattr(
+        assistant_metrics_service,
+        "_with_metric_kind",
+        counting_with_metric_kind,
+    )
+
+    details = assistant_metric_details_response(
+        app.state.store,
+        limit=3,
+        metric="knowledge_reference_count",
+        user={"id": "user_admin"},
+    )
+
+    assert details["total"] == 10
+    assert len(details["items"]) == 3
+    assert len(materialized_knowledge_records) == 3
+    assert [item["id"] for item in details["items"]] == [
+        "assistant_message_knowledge_9:knowledge_document:knowledge_document_9",
+        "assistant_message_knowledge_8:knowledge_document:knowledge_document_8",
+        "assistant_message_knowledge_7:knowledge_document:knowledge_document_7",
+    ]
+
+
 def test_ai_assistant_action_draft_view_updates_metrics_and_audit():
     headers = auth_headers()
     app.state.store.reset()
@@ -6177,6 +6232,147 @@ def _seed_ai_code_inspection_draft_context() -> None:
         "status": "active",
         "updated_at": now,
     }
+
+
+def _seed_git_provider_plugins() -> None:
+    now = "2026-06-18T08:00:00+00:00"
+    app.state.store.integration_plugins["plugin_github"] = {
+        "code": "github",
+        "created_at": now,
+        "id": "plugin_github",
+        "name": "GitHub",
+        "plugin_type": "http",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.integration_plugins["plugin_gitlab"] = {
+        "code": "gitlab",
+        "created_at": now,
+        "id": "plugin_gitlab",
+        "name": "GitLab",
+        "plugin_type": "http",
+        "status": "active",
+        "updated_at": now,
+    }
+    app.state.store.plugin_connections["plugin_connection_gitlab"] = {
+        "auth_config": {},
+        "auth_type": "none",
+        "created_at": now,
+        "created_by": "user_admin",
+        "endpoint_url": "https://gitlab.example.com",
+        "environment": "prod",
+        "id": "plugin_connection_gitlab",
+        "max_retries": 0,
+        "name": "GitLab 生产连接",
+        "plugin_id": "plugin_gitlab",
+        "request_config": {},
+        "status": "active",
+        "timeout_seconds": 30,
+        "updated_at": now,
+    }
+
+
+def test_ai_assistant_chat_generates_provider_choice_for_ambiguous_git_connection(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    _seed_git_provider_plugins()
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("provider choice draft generation should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "帮我新增代码托管插件连接"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    draft_result = response.json()["data"]["message"]["tool_results"][0]
+    assert draft_result["intent"] == "plugin_connection_draft"
+    draft_item = draft_result["items"][0]
+    assert draft_item["client_draft_id"] == "assistant_draft_plugin_provider_choice_connection"
+    assert draft_item["payload"]["provider_candidates"] == ["github", "gitlab"]
+    assert draft_item["server_draft_id"] in app.state.store.assistant_action_drafts
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft_item['server_draft_id']}/confirm",
+        headers=headers,
+    )
+    assert confirm_response.status_code == 409
+    assert confirm_response.json()["detail"]["code"] == "DRAFT_PRECHECK_FAILED"
+
+    selected_response = client.post(
+        "/api/assistant/chat",
+        json={"message": "帮我新增 GitHub 插件连接"},
+        headers=headers,
+    )
+
+    assert selected_response.status_code == 200, selected_response.text
+    selected_item = selected_response.json()["data"]["message"]["tool_results"][0]["items"][0]
+    assert selected_item["client_draft_id"] == "assistant_draft_github_plugin_connection"
+    assert selected_item["payload"]["plugin_id"] == "plugin_github"
+    assert selected_item["payload"]["endpoint_url"] == "https://api.github.com"
+    selected_detail_response = client.get(
+        f"/api/assistant/action-drafts/{selected_item['server_draft_id']}",
+        headers=headers,
+    )
+    assert selected_detail_response.status_code == 200
+    assert selected_detail_response.json()["data"]["preview"]["validation"]["status"] == "passed"
+
+
+def test_ai_assistant_chat_generates_provider_choice_for_ambiguous_git_action(
+    monkeypatch,
+):
+    headers = auth_headers()
+    app.state.store.reset()
+    _seed_git_provider_plugins()
+
+    def fail_if_model_called(_request, timeout):
+        del timeout
+        raise AssertionError("provider choice draft generation should not call the model gateway")
+
+    monkeypatch.setattr(assistant_router, "urlopen", fail_if_model_called)
+
+    response = client.post(
+        "/api/assistant/chat",
+        json={"message": "帮我新增代码巡检插件动作"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    draft_item = response.json()["data"]["message"]["tool_results"][0]["items"][0]
+    assert draft_item["client_draft_id"] == "assistant_draft_plugin_provider_choice_action"
+    assert draft_item["payload"]["provider_candidates"] == ["github", "gitlab"]
+
+    confirm_response = client.post(
+        f"/api/assistant/action-drafts/{draft_item['server_draft_id']}/confirm",
+        headers=headers,
+    )
+    assert confirm_response.status_code == 409
+    assert confirm_response.json()["detail"]["code"] == "DRAFT_PRECHECK_FAILED"
+
+    selected_response = client.post(
+        "/api/assistant/chat",
+        json={"message": "帮我新增 GitLab 代码巡检插件动作"},
+        headers=headers,
+    )
+
+    assert selected_response.status_code == 200, selected_response.text
+    selected_item = selected_response.json()["data"]["message"]["tool_results"][0]["items"][0]
+    assert selected_item["client_draft_id"] == "assistant_draft_gitlab_plugin_action"
+    assert selected_item["payload"]["plugin_id"] == "plugin_gitlab"
+    assert selected_item["payload"]["connection_id"] == "plugin_connection_gitlab"
+    selected_detail_response = client.get(
+        f"/api/assistant/action-drafts/{selected_item['server_draft_id']}",
+        headers=headers,
+    )
+    assert selected_detail_response.status_code == 200
+    assert selected_detail_response.json()["data"]["preview"]["validation"]["status"] == "passed"
 
 
 def test_ai_assistant_chat_generates_ai_capability_prerequisites_for_ai_code_inspection(

@@ -135,6 +135,34 @@ describe('AssistantPage', () => {
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/assistant/conversations']);
   });
 
+  it('shows a loading state instead of empty history while conversations are loading', async () => {
+    let resolveConversations!: (response: Response) => void;
+    const conversationsPromise = new Promise<Response>((resolve) => {
+      resolveConversations = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return conversationsPromise;
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    expect(await screen.findByText('历史对话加载中')).toBeInTheDocument();
+    expect(screen.queryByText('暂无历史对话')).not.toBeInTheDocument();
+
+    resolveConversations(new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 200,
+    }));
+
+    expect(await screen.findByText('暂无历史对话')).toBeInTheDocument();
+  });
+
   it('restores unfinished assistant chat runs when conversations exist', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
@@ -1591,6 +1619,11 @@ describe('AssistantPage', () => {
     expect(runtimeStatus).toHaveTextContent('启动 Redis，或修正 REDIS_URL 后重启 API。');
     expect(runtimeStatus).not.toHaveTextContent('模型网关');
     expect(within(runtimeStatus).getByRole('button', { name: '重新检测' })).toBeInTheDocument();
+
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => {
+      expect(runtimeStatusCalls).toBe(1);
+    });
 
     fireEvent.click(within(runtimeStatus).getByRole('button', { name: '重新检测' }));
 

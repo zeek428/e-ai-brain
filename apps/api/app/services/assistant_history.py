@@ -39,13 +39,48 @@ def assistant_conversations_response(
     user_id: str,
 ) -> dict[str, Any]:
     normalized_limit = min(max(int(limit or 50), 1), 100)
-    repository_limit = min((normalized_limit * 4 if collapse_duplicates else normalized_limit) + 1, 401)
     repository = assistant_query_repository(current_store)
+    if collapse_duplicates:
+        page_items, next_cursor = _collapsed_conversation_page(
+            current_store,
+            cursor=cursor,
+            limit=normalized_limit,
+            repository=repository,
+            user_id=user_id,
+        )
+    else:
+        raw_limit = normalized_limit + 1
+        items = _conversation_page_items(
+            current_store,
+            cursor=cursor,
+            limit=raw_limit,
+            repository=repository,
+            user_id=user_id,
+        )
+        has_more = len(items) > normalized_limit
+        page_items = items[:normalized_limit]
+        next_cursor = _conversation_cursor(page_items[-1]) if has_more and page_items else None
+    return {
+        "items": page_items,
+        "limit": normalized_limit,
+        "next_cursor": next_cursor,
+        "total": len(page_items),
+    }
+
+
+def _conversation_page_items(
+    current_store: MemoryStore,
+    *,
+    cursor: str | None,
+    limit: int,
+    repository: Any | None,
+    user_id: str,
+) -> list[dict[str, Any]]:
     if repository is not None:
         conversations = _list_repository_assistant_conversations(
             repository,
             cursor=cursor,
-            limit=repository_limit,
+            limit=limit,
             user_id=user_id,
         )
     else:
@@ -57,24 +92,64 @@ def assistant_conversations_response(
         conversations = _conversation_page_slice(
             conversations,
             cursor=cursor,
-            limit=repository_limit,
+            limit=limit,
         )
-    items = [public_assistant_conversation(conversation) for conversation in conversations]
-    items = sorted(items, key=lambda item: str(item.get("id") or ""))
-    items.sort(key=lambda item: item.get("last_message_at") or item["updated_at"], reverse=True)
-    has_more = len(items) > repository_limit - 1
-    raw_page_items = items[: repository_limit - 1] if has_more else items
-    next_cursor = _conversation_cursor(raw_page_items[-1]) if has_more and raw_page_items else None
-    items = raw_page_items
-    if collapse_duplicates:
-        items = _collapse_duplicate_conversations(items)
-    page_items = items[:normalized_limit]
-    return {
-        "items": page_items,
-        "limit": normalized_limit,
-        "next_cursor": next_cursor,
-        "total": len(page_items),
-    }
+    return _sort_conversation_items(
+        [public_assistant_conversation(conversation) for conversation in conversations]
+    )
+
+
+def _sort_conversation_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sorted_items = sorted(items, key=lambda item: str(item.get("id") or ""))
+    sorted_items.sort(
+        key=lambda item: item.get("last_message_at") or item.get("updated_at") or "",
+        reverse=True,
+    )
+    return sorted_items
+
+
+def _collapsed_conversation_page(
+    current_store: MemoryStore,
+    *,
+    cursor: str | None,
+    limit: int,
+    repository: Any | None,
+    user_id: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    batch_limit = min(max(limit * 4, 50), 400)
+    batch_cursor = cursor
+    consumed_items: list[dict[str, Any]] = []
+    consumed_keys: set[tuple[str, str]] = set()
+    last_consumed_cursor: str | None = None
+
+    for _ in range(10):
+        batch = _conversation_page_items(
+            current_store,
+            cursor=batch_cursor,
+            limit=batch_limit + 1,
+            repository=repository,
+            user_id=user_id,
+        )
+        has_more = len(batch) > batch_limit
+        batch_items = batch[:batch_limit]
+        if not batch_items:
+            return _collapse_duplicate_conversations(consumed_items)[:limit], None
+
+        for item in batch_items:
+            key = _conversation_collapse_key(item)
+            if not key[0]:
+                key = (str(item["id"]), key[1])
+            if key not in consumed_keys and len(consumed_keys) >= limit:
+                return _collapse_duplicate_conversations(consumed_items)[:limit], last_consumed_cursor
+            consumed_items.append(item)
+            consumed_keys.add(key)
+            last_consumed_cursor = _conversation_cursor(item)
+
+        if not has_more:
+            return _collapse_duplicate_conversations(consumed_items)[:limit], None
+        batch_cursor = _conversation_cursor(batch_items[-1])
+
+    return _collapse_duplicate_conversations(consumed_items)[:limit], last_consumed_cursor
 
 
 def _conversation_cursor(conversation: dict[str, Any]) -> str:

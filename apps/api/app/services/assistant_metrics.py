@@ -467,8 +467,11 @@ def _assistant_metric_detail_records(
         "knowledge_reference_hit_rate",
         "knowledge_reference_request_count",
     }:
-        records = _knowledge_reference_detail_records(messages, metric=metric)
-        return records[:limit], len(records)
+        return _limited_knowledge_reference_detail_records(
+            messages,
+            limit=limit,
+            metric=metric,
+        )
     return [], 0
 
 
@@ -490,12 +493,14 @@ def _limited_metric_records(
     return items, total
 
 
-def _knowledge_reference_detail_records(
+def _limited_knowledge_reference_detail_records(
     messages: list[dict[str, Any]],
     *,
+    limit: int,
     metric: str,
-) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
+) -> tuple[list[dict[str, Any]], int]:
+    items: list[dict[str, Any]] = []
+    total = 0
     answered_by_conversation: dict[str, set[str]] = defaultdict(set)
     for message in messages:
         if message.get("role") != "assistant":
@@ -506,8 +511,9 @@ def _knowledge_reference_detail_records(
             for reference in _message_references(message)
             if reference.get("type") in KNOWLEDGE_REFERENCE_TYPES
         )
-    for message in messages:
+    for message in _sort_metric_records(messages):
         conversation_id = str(message.get("conversation_id") or "")
+        message_records: list[dict[str, Any]] = []
         for reference in _message_references(message):
             if reference.get("type") not in KNOWLEDGE_REFERENCE_TYPES:
                 continue
@@ -527,18 +533,20 @@ def _knowledge_reference_detail_records(
                 and not is_hit
             ):
                 continue
-            records.append(
-                _with_metric_kind(
-                    {
-                        **message,
-                        "id": f"{message.get('id') or 'message'}:{reference_key}",
-                        "reference": dict(reference),
-                        "status": "hit" if is_hit else "requested",
-                    },
-                    "knowledge_reference",
-                )
+            message_records.append(
+                {
+                    **message,
+                    "id": f"{message.get('id') or 'message'}:{reference_key}",
+                    "reference": dict(reference),
+                    "status": "hit" if is_hit else "requested",
+                }
             )
-    return _sort_metric_records(records)
+        message_records.sort(key=lambda item: str(item.get("id") or ""), reverse=True)
+        for record in message_records:
+            total += 1
+            if len(items) < limit:
+                items.append(_with_metric_kind(record, "knowledge_reference"))
+    return items, total
 
 
 def _assistant_metric_detail_item(record: dict[str, Any]) -> dict[str, Any]:
