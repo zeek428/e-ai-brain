@@ -555,7 +555,8 @@ def test_ai_assistant_reference_candidates_include_action_candidates_for_create_
 
 def test_ai_assistant_action_reference_configs_override_default_candidates():
     app.state.store.reset()
-    app.state.store.assistant_action_reference_configs["assistant_action_reference_config_requirement_off"] = {
+    disabled_requirement_config_id = "assistant_action_reference_config_requirement_off"
+    app.state.store.assistant_action_reference_configs[disabled_requirement_config_id] = {
         "action_key": "create_requirement",
         "aliases": ["新建", "需求"],
         "enabled": False,
@@ -570,7 +571,8 @@ def test_ai_assistant_action_reference_configs_override_default_candidates():
         "title": "新建需求",
         "url": "/delivery/requirements",
     }
-    app.state.store.assistant_action_reference_configs["assistant_action_reference_config_custom"] = {
+    custom_config_id = "assistant_action_reference_config_custom"
+    app.state.store.assistant_action_reference_configs[custom_config_id] = {
         "action_key": "create_security_review",
         "aliases": ["新建", "安全评审"],
         "enabled": True,
@@ -6876,6 +6878,20 @@ def test_ai_assistant_chat_generates_feedback_draft_when_run_once_job_missing(
         "requested": True,
         "source_message": "@提取每周用户反馈有价值信息 执行一次",
     }
+    history_response = client.get(
+        f"/api/assistant/conversations/{payload['conversation_id']}/messages",
+        headers=headers,
+    )
+    assert history_response.status_code == 200, history_response.text
+    history_items = history_response.json()["data"]["items"]
+    history_draft_result = history_items[1]["tool_results"][0]
+    history_draft_item = history_draft_result["items"][0]
+    assert history_draft_item["payload"]["job_type"] == "user_feedback_insight_extract"
+    assert history_draft_item["payload"]["config_json"]["assistant_run_once_request"] == {
+        "requested": True,
+        "source_message": "@提取每周用户反馈有价值信息 执行一次",
+    }
+    assert history_draft_item["wizard_steps"][0]["title"] == "数据来源"
 
 
 def test_ai_assistant_chat_runs_exact_explicit_mention_when_similar_jobs_exist(

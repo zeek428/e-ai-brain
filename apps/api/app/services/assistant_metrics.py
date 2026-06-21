@@ -320,11 +320,23 @@ def _assistant_metric_detail_records(
         return [_with_metric_kind(draft, "draft") for draft in drafts]
     if metric.startswith("draft_") and metric.endswith("_count"):
         if metric == "draft_user_modified_count":
-            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_user_modified(draft)]
+            return [
+                _with_metric_kind(draft, "draft")
+                for draft in drafts
+                if _draft_was_user_modified(draft)
+            ]
         if metric == "draft_viewed_count":
-            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_effectively_viewed(draft)]
+            return [
+                _with_metric_kind(draft, "draft")
+                for draft in drafts
+                if _draft_was_effectively_viewed(draft)
+            ]
         if metric == "draft_tracked_viewed_count":
-            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_viewed_by_tracking(draft)]
+            return [
+                _with_metric_kind(draft, "draft")
+                for draft in drafts
+                if _draft_was_viewed_by_tracking(draft)
+            ]
         if metric == "draft_inferred_viewed_count":
             return [
                 _with_metric_kind(draft, "draft")
@@ -332,9 +344,17 @@ def _assistant_metric_detail_records(
                 if _draft_was_effectively_viewed(draft) and not _draft_was_viewed_by_tracking(draft)
             ]
         if metric == "draft_detail_viewed_count":
-            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_detail_viewed(draft)]
+            return [
+                _with_metric_kind(draft, "draft")
+                for draft in drafts
+                if _draft_was_detail_viewed(draft)
+            ]
         if metric == "draft_deeplink_viewed_count":
-            return [_with_metric_kind(draft, "draft") for draft in drafts if _draft_was_deeplink_viewed(draft)]
+            return [
+                _with_metric_kind(draft, "draft")
+                for draft in drafts
+                if _draft_was_deeplink_viewed(draft)
+            ]
         status = metric.removeprefix("draft_").removesuffix("_count")
         return [
             _with_metric_kind(draft, "draft")
@@ -344,9 +364,17 @@ def _assistant_metric_detail_records(
     if metric in {"action_run_total", "action_run_success_rate"}:
         return [_with_metric_kind(run, "action_run") for run in runs]
     if metric == "action_run_succeeded_count":
-        return [_with_metric_kind(run, "action_run") for run in runs if run.get("status") == "succeeded"]
+        return [
+            _with_metric_kind(run, "action_run")
+            for run in runs
+            if run.get("status") == "succeeded"
+        ]
     if metric == "action_run_failed_count":
-        return [_with_metric_kind(run, "action_run") for run in runs if run.get("status") == "failed"]
+        return [
+            _with_metric_kind(run, "action_run")
+            for run in runs
+            if run.get("status") == "failed"
+        ]
     if metric in {
         "chat_run_total",
         "chat_run_success_rate",
@@ -356,7 +384,11 @@ def _assistant_metric_detail_records(
     }:
         return [_with_metric_kind(run, "chat_run") for run in chat_runs]
     if metric == "chat_run_model_failed_count":
-        return [_with_metric_kind(run, "chat_run") for run in chat_runs if _chat_run_model_failed(run)]
+        return [
+            _with_metric_kind(run, "chat_run")
+            for run in chat_runs
+            if _chat_run_model_failed(run)
+        ]
     if metric.startswith("chat_run_") and metric.endswith("_count"):
         status = metric.removeprefix("chat_run_").removesuffix("_count")
         return [
@@ -443,7 +475,10 @@ def _knowledge_reference_detail_records(
                 continue
             reference_key = _reference_key(reference)
             is_hit = reference_key in answered_by_conversation.get(conversation_id, set())
-            if metric in {"knowledge_reference_hit_count", "knowledge_reference_hit_rate"} and not is_hit:
+            if (
+                metric in {"knowledge_reference_hit_count", "knowledge_reference_hit_rate"}
+                and not is_hit
+            ):
                 continue
             records.append(
                 _with_metric_kind(
@@ -482,11 +517,21 @@ def _metric_record_title(record: dict[str, Any], *, kind: str) -> str:
     if kind == "draft":
         return str(record.get("title") or record.get("action") or record.get("id") or "草案")
     if kind == "action_run":
-        return str(record.get("result_type") or record.get("action") or record.get("id") or "动作运行")
+        return str(
+            record.get("result_type")
+            or record.get("action")
+            or record.get("id")
+            or "动作运行"
+        )
     if kind == "chat_run":
         return str(record.get("client_request_id") or record.get("id") or "AI 生成运行")
     if kind == "scheduled_job_run":
-        return str(record.get("name") or record.get("scheduled_job_id") or record.get("id") or "定时作业运行")
+        return str(
+            record.get("name")
+            or record.get("scheduled_job_id")
+            or record.get("id")
+            or "定时作业运行"
+        )
     if kind == "knowledge_reference":
         reference = record.get("reference") or {}
         if isinstance(reference, dict):
@@ -715,7 +760,10 @@ def _status_counts(records: list[dict[str, Any]], statuses: tuple[str, ...]) -> 
     return counts
 
 
-def _field_status_counts(records: list[dict[str, Any]], statuses: tuple[str, ...]) -> dict[str, int]:
+def _field_status_counts(
+    records: list[dict[str, Any]],
+    statuses: tuple[str, ...],
+) -> dict[str, int]:
     counts = {status: 0 for status in statuses}
     for record in records:
         status = str(record.get("status") or "")

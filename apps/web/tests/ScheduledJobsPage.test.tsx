@@ -1270,6 +1270,7 @@ describe('ScheduledJobsPage', () => {
           knowledge_document_ids: ['knowledge_payment_runbook'],
           model_gateway_config_id: 'model_gateway_scheduled_job',
           name: '每周用户反馈洞察',
+          next_run_at: '2026-06-21T02:47:12.123456+00:00',
           plugin_action_id: 'plugin_action_maxcompute',
           plugin_connection_id: 'connection_maxcompute_prod',
           plugin_input_mapping: {
@@ -1294,6 +1295,8 @@ describe('ScheduledJobsPage', () => {
     expect(screen.getByText('AI 生成 · 定时作业模型 · 洞察 Agent · 1 Skill')).toBeInTheDocument();
     expect(screen.getByText('获取本周用户反馈数据')).toBeInTheDocument();
     expect(screen.getByText('Cron 定时')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-21 10:47')).toBeInTheDocument();
+    expect(screen.queryByText(/2026-06-21T02:47:12/)).not.toBeInTheDocument();
     expect(screen.getByText('启用')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '操作' })).toHaveAttribute('data-fixed', 'right');
     fireEvent.click(screen.getByRole('button', { name: '编辑作业 每周用户反馈洞察' }));

@@ -202,8 +202,8 @@ describe('RequirementsPage', () => {
       '164',
     );
     expect(screen.getByText('创建时间')).toBeInTheDocument();
-    expect(screen.getByText('2026-06-04 08:00')).toBeInTheDocument();
-    expect(screen.getByText('2026-06-04 08:10')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-04 16:00')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-04 16:10')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('迭代版本'), { target: { value: '2026-05' } });
     fireEvent.submit(screen.getByRole('form', { name: '查询表格' }));

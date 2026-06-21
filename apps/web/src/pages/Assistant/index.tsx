@@ -2774,9 +2774,9 @@ export default function AssistantPage() {
         />
         <section className="assistant-chat-panel">
           <div className="assistant-chat-header">
-            <div>
-              <Title level={3}>研发助手</Title>
-              <Text type="secondary">研发大脑系统问答</Text>
+            <div className="assistant-chat-title-block">
+              <Title className="assistant-chat-title" level={3}>研发助手</Title>
+              <Text className="assistant-chat-subtitle" type="secondary">研发大脑系统问答</Text>
             </div>
             {lastResponse ? (
               <Space size={8} wrap>
@@ -2786,35 +2786,6 @@ export default function AssistantPage() {
             ) : null}
           </div>
           <AssistantRuntimeStatus runtimeStatus={runtimeStatus} />
-          {queryDraftResolution ? (
-            <div
-              aria-label="草案链接状态"
-              className={`assistant-query-draft-status assistant-query-draft-status-${queryDraftResolution.status}`}
-            >
-              <Space size={6} wrap>
-                <Tag color={queryDraftResolutionLabel(queryDraftResolution.status).color}>
-                  {queryDraftResolutionLabel(queryDraftResolution.status).text}
-                </Tag>
-                <Text type={queryDraftResolution.status === 'failed' ? 'danger' : 'secondary'}>
-                  {queryDraftResolutionText(queryDraftResolution)}
-                </Text>
-              </Space>
-              {linkedDraft ? (
-                <AssistantActionDraftCards
-                  draftMutationId={draftMutationId}
-                  draftResolutionById={draftResolutionById}
-                  drafts={[linkedDraft]}
-                  draftStatusById={draftStatusById}
-                  onCancelDraft={cancelDraft}
-                  onConfirmDraft={confirmDraft}
-                  onRegenerateDraft={regenerateDraft}
-                  onViewDraft={viewDraft}
-                  onUseDraftWizardStepPrompt={setInputValue}
-                  resultWriteTargetLabels={resultWriteTargetLabels}
-                />
-              ) : null}
-            </div>
-          ) : null}
           <AssistantChatRunRecovery
             isLoading={isLoadingChatRuns}
             isVisible={!isRecoveryDismissed}
@@ -2831,6 +2802,35 @@ export default function AssistantPage() {
             isLoadingMessages={isLoadingMessages}
             isSending={isSending}
           >
+            {queryDraftResolution ? (
+              <div
+                aria-label="草案链接状态"
+                className={`assistant-query-draft-status assistant-query-draft-status-${queryDraftResolution.status}`}
+              >
+                <Space size={6} wrap>
+                  <Tag color={queryDraftResolutionLabel(queryDraftResolution.status).color}>
+                    {queryDraftResolutionLabel(queryDraftResolution.status).text}
+                  </Tag>
+                  <Text type={queryDraftResolution.status === 'failed' ? 'danger' : 'secondary'}>
+                    {queryDraftResolutionText(queryDraftResolution)}
+                  </Text>
+                </Space>
+                {linkedDraft ? (
+                  <AssistantActionDraftCards
+                    draftMutationId={draftMutationId}
+                    draftResolutionById={draftResolutionById}
+                    drafts={[linkedDraft]}
+                    draftStatusById={draftStatusById}
+                    onCancelDraft={cancelDraft}
+                    onConfirmDraft={confirmDraft}
+                    onRegenerateDraft={regenerateDraft}
+                    onViewDraft={viewDraft}
+                    onUseDraftWizardStepPrompt={setInputValue}
+                    resultWriteTargetLabels={resultWriteTargetLabels}
+                  />
+                ) : null}
+              </div>
+            ) : null}
             {messages.map((item) => (
               <AssistantBubble
                 draftMutationId={draftMutationId}

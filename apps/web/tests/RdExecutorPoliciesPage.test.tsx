@@ -145,6 +145,15 @@ describe('RdExecutorPoliciesPage', () => {
     expect(within(dialog).queryByText('AI角色')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('Skill')).not.toBeInTheDocument();
 
+    fireEvent.mouseDown(within(dialog).getByLabelText('任务类型'));
+    expect((await screen.findAllByText('PRD / 原型 / 产品详细设计')).length).toBeGreaterThan(0);
+    expect(screen.getByText('技术方案设计')).toBeInTheDocument();
+    const codeImplementationOptions = screen.getAllByText('代码实现 / 开发计划');
+    expect(codeImplementationOptions.length).toBeGreaterThan(0);
+    expect(screen.getByText('发布上线评估')).toBeInTheDocument();
+    expect(screen.getByText('上线后分析')).toBeInTheDocument();
+    fireEvent.click(codeImplementationOptions[codeImplementationOptions.length - 1]);
+
     fireEvent.change(within(dialog).getByLabelText('策略名称'), { target: { value: '新增策略' } });
     fireEvent.change(within(dialog).getByLabelText('工作区'), {
       target: { value: '/Users/zeek/source/e-ai-brain' },
@@ -161,7 +170,7 @@ describe('RdExecutorPoliciesPage', () => {
       executor_type: 'codex',
       name: '新增策略',
       runner_id: 'runner_codex',
-      task_type: 'code_review',
+      task_type: 'development_planning',
       workspace_root: '/Users/zeek/source/e-ai-brain',
     });
     expect(createBodies[0]).not.toHaveProperty('agent_id');

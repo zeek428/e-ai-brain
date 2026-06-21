@@ -36,10 +36,14 @@ type PolicyFormValues = {
 };
 
 const TASK_TYPE_OPTIONS = [
+  { label: 'PRD / 原型 / 产品详细设计', value: 'product_detail_design' },
+  { label: '技术方案设计', value: 'technical_solution' },
+  { label: '代码实现 / 开发计划', value: 'development_planning' },
   { label: '代码评审', value: 'code_review' },
   { label: '自动化测试', value: 'automated_testing' },
   { label: '代码整改', value: 'code_inspection_remediation' },
-  { label: '开发计划', value: 'development_planning' },
+  { label: '发布上线评估', value: 'release_readiness' },
+  { label: '上线后分析', value: 'post_release_analysis' },
 ];
 
 const EXECUTOR_OPTIONS = [
@@ -179,7 +183,7 @@ export default function RdExecutorPoliciesPage() {
       output_contract_json: stableJson({ summary: 'string', details: 'object' }),
       priority: 100,
       status: 'active',
-      task_type: 'code_review',
+      task_type: 'product_detail_design',
       timeout_seconds: 1800,
       workspace_root: '',
     });
@@ -261,7 +265,7 @@ export default function RdExecutorPoliciesPage() {
       dataIndex: 'task_type',
       render: (_, row) => <Tag>{taskTypeLabel(row.task_type)}</Tag>,
       title: '任务类型',
-      width: 140,
+      width: 190,
     },
     {
       dataIndex: 'executor_type',
@@ -342,7 +346,7 @@ export default function RdExecutorPoliciesPage() {
         pagination={{ pageSize: 10 }}
         rowKey="id"
         search={false}
-        scroll={{ x: 1760 }}
+        scroll={{ x: 1810 }}
         toolBarRender={() => [
           <Button key="reload" icon={<ReloadOutlined />} onClick={reload}>
             刷新
@@ -366,7 +370,7 @@ export default function RdExecutorPoliciesPage() {
             <Input />
           </Form.Item>
           <Form.Item label="任务类型" name="task_type" rules={[{ required: true, message: '请选择任务类型' }]}>
-            <Select options={TASK_TYPE_OPTIONS} />
+            <Select optionFilterProp="label" options={TASK_TYPE_OPTIONS} showSearch />
           </Form.Item>
           <Form.Item label="执行器" name="executor_type" rules={[{ required: true, message: '请选择执行器' }]}>
             <Select

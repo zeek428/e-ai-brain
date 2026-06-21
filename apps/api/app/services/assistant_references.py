@@ -1244,7 +1244,10 @@ def _standard_assistant_action_config_rows() -> list[dict[str, Any]]:
                     "prompt": candidate.get("prompt"),
                     "roles": list(candidate.get("roles") or []),
                     "rollout_json": {},
-                    "sort_order": int(candidate.get("sort_order") or index * ASSISTANT_ACTION_STANDARD_SORT_STEP),
+                    "sort_order": int(
+                        candidate.get("sort_order")
+                        or index * ASSISTANT_ACTION_STANDARD_SORT_STEP
+                    ),
                     "summary": candidate.get("summary"),
                     "title": candidate.get("title"),
                     "url": candidate.get("url"),
@@ -1275,7 +1278,10 @@ def _assistant_action_config_rows(current_store: Any | None) -> list[dict[str, A
 
 def _normalized_assistant_action_config(payload: dict[str, Any]) -> dict[str, Any]:
     return {
-        "action_key": _required_text(payload.get("action_key") or payload.get("action"), "action_key"),
+        "action_key": _required_text(
+            payload.get("action_key") or payload.get("action"),
+            "action_key",
+        ),
         "aliases": _clean_string_list(payload.get("aliases")),
         "created_at": payload.get("created_at"),
         "created_by": _optional_text(payload.get("created_by")),

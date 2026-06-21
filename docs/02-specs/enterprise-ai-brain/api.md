@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.373 |
+| 功能版本 | v1.1.374 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.374 | 2026-06-21 | 研发执行器策略任务类型选项口径补齐：PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析均可在策略配置中选择 | Codex |
 | v1.1.373 | 2026-06-21 | 研发执行器策略 API 新增：需求交付策略只匹配插件管理下 Codex/Claude Code/OpenClaw Runner，不装配 Agent/Skill；AI 任务启动命中策略后返回 `executor_task_id/runner_id`，AI 执行器任务列表支持按 `ai_task_id` 反查 | Codex |
 | v1.1.372 | 2026-06-20 | AI 助手运行状态接口补齐 self-check `checks[]` 与 `ready`，效果指标返回查看埋点口径说明；会话列表可按命令签名折叠重复命令，并新增系统管理侧 `@` 能力配置页与真实页面 smoke 覆盖 | Codex |
 | v1.1.371 | 2026-06-20 | AI 助手 @ 动作候选新增运营配置 API 和 `assistant_action_reference_configs` 表；效果指标新增时间窗口参数与 `/metrics/details` 明细钻取接口 | Codex |
@@ -655,7 +656,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | AI Task | POST | `/api/ai-tasks` | 低层任务创建接口。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/start` | 启动任务；停在 `model_gateway_failed` 或 `code_review_executor_failed` 的失败任务可用同一 task_id 重试。 |
 | AI Task | GET | `/api/ai-tasks/{task_id}` | 任务详情；PostgreSQL 运行时读取 task workflow source rows，并返回脱敏产品上下文、输入输出、待确认 Review、Review 列表、Graph Run、知识沉淀和 Mock Issue 回写状态。 |
-| AI Task | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 管理研发执行器策略；按任务类型、产品和优先级匹配插件管理下的 Codex、Claude Code 或 OpenClaw Runner，不接收 Agent/Skill/模型网关字段。 |
+| AI Task | GET/POST/PATCH/DELETE | `/api/delivery/rd-task-executor-policies`, `/api/delivery/rd-task-executor-policies/{policy_id}` | 管理研发执行器策略；按任务类型、产品和优先级匹配插件管理下的 Codex、Claude Code 或 OpenClaw Runner，不接收 Agent/Skill/模型网关字段。前端任务类型选项覆盖 PRD/原型/产品详细设计（`product_detail_design`）、技术方案设计（`technical_solution`）、代码实现/开发计划（`development_planning`）、代码评审（`code_review`）、自动化测试（`automated_testing`）、代码整改（`code_inspection_remediation`）、发布上线评估（`release_readiness`）和上线后分析（`post_release_analysis`）。 |
 | AI Task | POST | `/api/ai-tasks/{task_id}/more-info` | 提交补充信息。 |
 | AI Task | POST | `/api/ai-tasks/batch-cancel` | 批量取消任务，逐条校验状态并返回 updated/skipped 明细。 |
 | AI Task | POST | `/api/ai-tasks/batch-retry` | 批量重试失败任务，逐条校验 `model_gateway_failed` / `code_review_executor_failed` 并返回 retried/updated/skipped 明细。 |

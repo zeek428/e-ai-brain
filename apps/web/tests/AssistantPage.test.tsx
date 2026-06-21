@@ -123,6 +123,8 @@ describe('AssistantPage', () => {
     render(<AssistantPage />);
 
     await screen.findByText('我在，直接问我当前进展。');
+    expect(screen.getByRole('heading', { name: '研发助手' })).toHaveClass('assistant-chat-title');
+    expect(screen.getByText('研发大脑系统问答')).toHaveClass('assistant-chat-subtitle');
     expect(screen.queryByLabelText('本次上下文')).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/assistant/conversations']);
   });
@@ -1829,6 +1831,105 @@ describe('AssistantPage', () => {
 
     expect(await screen.findByText('上一轮助手回答')).toBeInTheDocument();
     expect(assistantInput).toHaveValue('');
+  });
+
+  it('restores assistant draft payload when opening a recent conversation', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({
+          data: {
+            items: [
+              {
+                id: 'conversation_draft_history',
+                message_count: 2,
+                title: '@新建定时作业 每周从用户洞察中提取有价值内容',
+                updated_at: '2026-06-21T08:00:00+00:00',
+              },
+            ],
+            total: 1,
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/conversations/conversation_draft_history/messages') {
+        return new Response(JSON.stringify({
+          data: {
+            items: [
+              {
+                content: '@新建定时作业 每周从用户洞察中提取有价值内容',
+                conversation_id: 'conversation_draft_history',
+                created_at: '2026-06-21T08:00:00+00:00',
+                id: 'assistant_message_user_draft_history',
+                role: 'user',
+              },
+              {
+                content: '我已生成可确认的配置草案，确认前不会写入真实配置。',
+                conversation_id: 'conversation_draft_history',
+                created_at: '2026-06-21T08:00:01+00:00',
+                id: 'assistant_message_assistant_draft_history',
+                role: 'assistant',
+                tool_results: [
+                  {
+                    intent: 'scheduled_job_draft',
+                    items: [
+                      {
+                        action: 'create_scheduled_job',
+                        client_draft_id: 'assistant_draft_weekly_feedback_insight',
+                        draft_id: 'assistant_draft_weekly_feedback_insight',
+                        payload: {
+                          agent_id: 'agent_001',
+                          cron_expression: '0 9 * * MON',
+                          execution_mode: 'ai_generated',
+                          job_type: 'user_feedback_insight_extract',
+                          model_gateway_config_id: 'model_gateway_config_005',
+                          plugin_action_id: 'plugin_action_001',
+                          plugin_connection_id: 'plugin_connection_001',
+                          skill_ids: ['skill_004'],
+                        },
+                        preview: { validation: { issues: [], status: 'passed' } },
+                        requires_confirmation: true,
+                        risk_level: 'medium',
+                        server_draft_id: 'assistant_draft_weekly_feedback_insight',
+                        status: 'pending',
+                        title: '每周用户反馈洞察抽取',
+                        wizard_steps: [
+                          { key: 'data_source', status: 'ready', summary: '已选择用户反馈数据源', title: '数据来源' },
+                          { key: 'confirm', status: 'pending', summary: '确认后创建定时作业', title: '确认执行' },
+                        ],
+                      },
+                    ],
+                    summary: { draft_count: 1 },
+                    tool: 'assistant.action_draft',
+                  },
+                ],
+              },
+            ],
+            total: 2,
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /@新建定时作业 每周从用户洞察中提取有价值内容/ }));
+
+    expect(await screen.findByText('每周用户反馈洞察抽取')).toBeInTheDocument();
+    expect(screen.getByText('user_feedback_insight_extract')).toBeInTheDocument();
+    expect(screen.getByText('0 9 * * MON')).toBeInTheDocument();
+    expect(screen.getByText('model_gateway_config_005')).toBeInTheDocument();
+    expect(screen.getByText('plugin_connection_001')).toBeInTheDocument();
+    expect(screen.getByText('plugin_action_001')).toBeInTheDocument();
+    expect(screen.getByText(/数据来源：已就绪/)).toBeInTheDocument();
   });
 
   it('shows product quick tasks and routes feedback and risk into draft-first prompts', async () => {

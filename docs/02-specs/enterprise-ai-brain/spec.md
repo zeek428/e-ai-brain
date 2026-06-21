@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.469 |
+| 功能版本 | v1.1.470 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,8 +13,9 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.470 | 2026-06-21 | 研发执行器策略任务类型下拉按研发流程补齐：展示 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并与现有 `task_type` 匹配口径保持一致 | Codex |
 | v1.1.469 | 2026-06-21 | 新增研发执行器策略设计与实现口径：研发任务可按任务类型、产品和优先级匹配 Codex、Claude Code、OpenClaw Runner；该策略只引用插件管理下的 AI 执行器，不装配 Agent/Skill，Runner 完成后回写 AI 任务并进入人工确认 | Codex |
-| v1.1.468 | 2026-06-20 | 前端展示型时间统一按 `Asia/Shanghai` 转换后端 UTC 时间，覆盖管理列表、代码巡检、定时作业、Runner 和助手引用等页面，避免少显示 8 小时 | Codex |
+| v1.1.468 | 2026-06-20 | 前端展示型时间统一按 `Asia/Shanghai` 转换后端 UTC 时间，覆盖管理列表、代码巡检、定时作业下次运行/运行详情、Runner 和助手引用等页面，避免少显示 8 小时或直接暴露 ISO 原文 | Codex |
 | v1.1.467 | 2026-06-20 | AI 助手补齐运行环境自检引导、效果指标查看口径校准、历史命令会话签名折叠、@ 能力后台配置页和真实页面 smoke 验证 | Codex |
 | v1.1.466 | 2026-06-20 | AI 助手 @ 动作候选配置化：新增 `assistant_action_reference_configs` 表、管理 API、灰度/启停/排序/模板版本和审计；效果指标补齐明细钻取 | Codex |
 | v1.1.465 | 2026-06-20 | AI 助手新增聊天运行表、消息生命周期字段和服务端取消链路，停止生成后可持久化、审计和历史追踪 | Codex |
@@ -1291,7 +1292,7 @@ AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相
 | 线上运行日志 | GET/POST | /api/ops/online-log-metrics | 登记或查询按产品、模块、环境和时间窗口归属的线上运行日志指标。 |
 | 采集运行记录 | GET/POST/PATCH | /api/collectors/runs, /api/collectors/runs/{run_id} | 历史兼容 API：查询、登记和结束 DevOps/洞察采集运行台账，不自动生成指标；当前前端不提供入口。 |
 | AI 能力配置 | GET/POST/PATCH | /api/system/ai-skills, /api/system/ai-agents | 管理 AI角色（Agent）、Skill、默认模型网关、工具策略、Prompt 模板、输入/输出 Schema 和启停状态；配置变更必须审计，密钥不在配置中保存。 |
-| 研发执行器策略 | GET/POST/PATCH/DELETE | /api/delivery/rd-task-executor-policies, /api/delivery/rd-task-executor-policies/{policy_id} | 管理需求交付下研发任务到工程执行器的匹配策略；策略只允许选择 Codex、Claude Code、OpenClaw 执行器类型和插件管理下的本地/远程 Runner，可选绑定产品、产品 Git 仓库、分支、工作区、指令模板、输出契约、超时、优先级和状态，不允许配置 Agent/Skill；创建、修改和删除必须写入审计。 |
+| 研发执行器策略 | GET/POST/PATCH/DELETE | /api/delivery/rd-task-executor-policies, /api/delivery/rd-task-executor-policies/{policy_id} | 管理需求交付下研发任务到工程执行器的匹配策略；策略只允许选择 Codex、Claude Code、OpenClaw 执行器类型和插件管理下的本地/远程 Runner，可选绑定产品、产品 Git 仓库、分支、工作区、指令模板、输出契约、超时、优先级和状态，不允许配置 Agent/Skill；任务类型配置覆盖 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析；创建、修改和删除必须写入审计。 |
 | 插件管理 | GET/POST/PATCH/DELETE/POST(invoke/trial/copy) | /api/system/plugin-marketplace, /api/system/plugins, /api/system/plugins/{plugin_id}/copy, /api/system/plugin-connections, /api/system/plugin-connections/{connection_id}/test, /api/system/plugin-system-variables, /api/system/plugin-actions, /api/system/plugin-actions/{action_id}/invoke, /api/system/plugin-actions/{action_id}/trial, /api/system/result-write-targets, /api/system/plugin-invocation-logs, /api/system/ai-executor-runners, /api/system/ai-executor-runners/{runner_id}/test, /api/system/ai-executor-runners/{runner_id}/install-package, /api/system/ai-executor-runners/{runner_id}/rotate-token, /api/system/ai-executor-tasks/claim, /api/system/ai-executor-tasks/{task_id}/complete, /api/system/ai-executor-tasks/{task_id}/logs, /api/system/ai-executor-tasks/{task_id}/cancel, /api/system/ai-executor-tasks/timeout-scan | 管理 HTTP/MCP HTTP/MCP stdio/Runner 插件、三方系统连接、动作配置和 AI 执行器；插件管理页面不展示独立调用日志页签，插件调用日志由定时作业运行详情和结果写入记录统一消费，`/api/system/plugin-invocation-logs` 保留为运行排障兼容 API；官方插件市场只读展示 GitLab/GitHub/邮箱/AI 执行器标准插件的简介、推荐场景、`connection_defaults/connection_template_version/connection_schema`、动作模板、安装状态、模板版本状态和连接/动作数量，并可引导新增连接、直接创建官方动作模板或复制为自定义插件；`connection_schema` 是页面动态表单契约，按 section/field 声明字段 label、path、type、required、options 和是否支持系统变量，JSON 仅作为高级修改；非官方插件、连接和动作新增后必须可编辑、可删除维护；GitLab/GitHub/邮箱/AI 执行器作为官方标准插件返回 `is_system=true`，不能修改或删除，实例 endpoint、认证和平台参数在连接里维护；MaxCompute 作为普通 HTTP 插件/连接维护，历史官方 MaxCompute 需自动降级为 `is_system=false/protocol=http`，编辑连接时不展示“项目与表配置”官方 schema；官方插件可通过 copy 接口生成 `is_system=false/source_plugin_id/template_version/version_status=custom` 的自定义插件，用于企业私有扩展，源官方插件保持只读；邮箱连接模板覆盖发送和收取参数，AI 执行器模板默认使用系统默认执行器 `ai_executor_runner_system_default`、`executor_type=model_gateway` 和 `model-gateway://default`，由平台默认模型网关直接执行指令；如需 Codex/Claude/Hermes/OpenClaw，本地 Runner 连接可改选对应执行器类型、Runner、工作区和回写地址；执行器列表必须只读展示系统默认执行器，`health_status=managed`、无需 Token/心跳/启动命令，不允许编辑、删除或轮换 Token；本地 Runner 列表继续展示 `health_status`、`heartbeat_age_seconds`、可复制 `setup_command`、Token 版本、最近轮换时间、最近任务状态和按目标系统生成的安装包下载入口，便于本地 Runner 注册和运维；执行器列表每行提供“测试”入口，展示系统托管或 Runner 注册、Token、类型、endpoint、心跳诊断；管理员可轮换本地 Runner Token、查看任务日志、取消运行中任务并触发超时熔断；连接列表支持 `environment/plugin_id/status` 查询筛选，环境只接受 `default/dev/test/staging/prod/sandbox`；删除前必须提示使用清单，后端对被引用资源返回 409；连接密钥脱敏，PATCH 编辑不得用脱敏占位覆盖真实密钥；连接测试返回诊断步骤、原始与最终请求摘要、可复制 cURL、`variable_resolutions` 动态变量解析明细、`test_history` 最近记录、`action_template_draft` 动作草案和 `repair_suggestions` 修复建议，动作支持请求预览和试运行；配置和调用必须审计。 |
 | 定时系统作业 | GET/POST/PATCH/DELETE/POST(run/dry-run) | /api/system/scheduled-jobs, /api/system/scheduled-jobs/dry-run, /api/system/scheduled-jobs/{job_id}, /api/system/scheduled-jobs/{job_id}/run | 管理采集、AI 分析、动作调用、迭代建议、看板刷新等作业计划；支持手动触发、从运行记录复跑、编辑、删除、启停、重试策略、动作和 AI角色/Skill 装配；新增/编辑配置可先执行 dry-run 预览数据连接、AI 契约校验和写入策略；删除作业定义时必须写审计。 |
 | 定时作业运行 | GET/POST(cancel/template) | /api/system/scheduled-job-runs, /api/system/scheduled-job-runs/observability, /api/system/scheduled-job-runs/{run_id}/cancel, /api/system/scheduled-job-runs/{run_id}/template | 查询定时作业运行实例、AI 配置快照、collector run 关联、结果摘要和失败原因；运行可观测性接口聚合成功率、失败率、平均耗时、AI/Token/插件调用、动作写入成功率、失败原因、最近失败和慢运行，供运行记录页签顶部概览展示；前端运行记录必须提供详情、复跑和“问 AI”入口，详情展示作业类型、AI执行、AI 模型、AI角色、Skills、运行链路、结果摘要、插件调用、Skill/Prompt 快照、作业配置快照、Trace DAG 和错误信息，复跑使用记录中的 `scheduled_job_id` 调用作业运行接口并传入 `trigger_type=manual_rerun` 与 `source_run_id=<当前运行 ID>` 后打开新运行详情；失败运行详情必须额外提供“生成修复草案”和“对比上次成功”快捷入口，跳转 AI 助手时携带 `reference_type=scheduled_job_run`、`reference_id=<当前运行 ID>` 和对应 prompt，让用户不需要手工复制运行 ID；若响应包含 `source_run_summary`，详情页必须展示“复跑对比”，对比来源运行与本次运行的状态、导入数和错误码；成功运行可生成新作业模板草稿，保留运行来源；手动触发或复跑期间必须显示执行中状态并禁用重复触发；运行中作业可由管理员取消。 |
@@ -1438,6 +1439,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 
 **核心规则**:
 - 研发执行器策略只允许选择 Codex、Claude Code、OpenClaw 三类工程执行器和插件管理下 active Runner；不装配 AI角色（Agent）、Skill 或模型网关。Agent/Skill 仍只服务定时作业、用户洞察、日志分析、反馈提炼、知识巡检等平台内 AI 处理。
+- 页面任务类型下拉必须覆盖研发流程常用阶段：PRD / 原型 / 产品详细设计（`product_detail_design`）、技术方案设计（`technical_solution`）、代码实现 / 开发计划（`development_planning`）、代码评审（`code_review`）、自动化测试（`automated_testing`）、代码整改（`code_inspection_remediation`）、发布上线评估（`release_readiness`）和上线后分析（`post_release_analysis`）。其中 PRD 与原型当前随产品详细设计任务产出，代码实现当前沿用开发计划任务的执行策略匹配值。
 - 策略匹配优先级为：同任务类型下产品专属策略优先于全局策略，随后按 `priority` 升序匹配；未命中策略的研发任务继续沿用现有模型网关 / code_review executor 路径。
 - 策略可选绑定 `product_id`、`repository_id`、`branch`，必须配置 `workspace_root`、`instruction_template`、`output_contract`、`timeout_seconds` 和 `status`。`workspace_root` 必须落在 Runner 的 `workspace_roots` 白名单内。
 - 研发任务启动时先解析 active 策略；命中后创建 `ai_executor_tasks(ai_task_id=当前任务)`，任务状态进入 `running`，`current_step=waiting_ai_executor`，并在 `input_json.executor` 冻结策略 ID、执行器类型、Runner、Runner 任务 ID 和工作区。

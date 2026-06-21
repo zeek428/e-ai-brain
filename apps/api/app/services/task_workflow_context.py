@@ -44,6 +44,9 @@ class TaskWorkflowSourceStore:
         self.related_systems: dict[str, dict[str, Any]] = {}
         self.model_gateway_configs: dict[str, dict[str, Any]] = {}
         self.model_gateway_logs: list[dict[str, Any]] = []
+        self.ai_executor_runners: dict[str, dict[str, Any]] = {}
+        self.ai_executor_tasks: dict[str, dict[str, Any]] = {}
+        self.rd_task_executor_policies: dict[str, dict[str, Any]] = {}
         self.gitlab_mr_snapshots: dict[str, dict[str, Any]] = {}
         self.code_review_reports: dict[str, dict[str, Any]] = {}
         self.knowledge_deposits: dict[str, dict[str, Any]] = {}

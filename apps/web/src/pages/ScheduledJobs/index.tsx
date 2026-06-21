@@ -2910,7 +2910,12 @@ export default function ScheduledJobsPage() {
                       return ellipsisText([scheduleLabel, scheduleValue].filter(Boolean).join(' · '));
                     },
                   },
-                  { dataIndex: 'next_run_at', title: '下次运行', width: 180, render: (value) => ellipsisText(String(value ?? '')) },
+                  {
+                    dataIndex: 'next_run_at',
+                    title: '下次运行',
+                    width: 180,
+                    render: (_, row) => ellipsisText(formatDisplayDateTime(row.next_run_at)),
+                  },
                   {
                     dataIndex: 'status',
                     title: '状态',

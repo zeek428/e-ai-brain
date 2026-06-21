@@ -362,20 +362,21 @@ def _assistant_history_tool_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _safe_history_json(value: Any, *, depth: int = 0) -> Any:
+    if isinstance(value, int | float | bool) or value is None:
+        return value
+    if isinstance(value, str):
+        return _history_text_excerpt(value)
     if depth >= 3:
         return _history_text_excerpt(value, limit=180)
     if isinstance(value, dict):
         return {
             str(key): _safe_history_json(child, depth=depth + 1)
             for key, child in value.items()
-            if str(key).lower() not in {"content", "text", "body", "chunk_text", "raw", "prompt"}
+            if str(key).lower()
+            not in {"content", "text", "body", "chunk_text", "raw", "prompt", "markdown"}
         }
     if isinstance(value, list):
         return [_safe_history_json(item, depth=depth + 1) for item in value[:8]]
-    if isinstance(value, str):
-        return _history_text_excerpt(value)
-    if isinstance(value, int | float | bool) or value is None:
-        return value
     return _history_text_excerpt(value)
 
 
@@ -538,6 +539,8 @@ def _public_light_tool_item(tool_name: str, item: dict[str, Any]) -> dict[str, A
             "action",
             "client_draft_id",
             "draft_id",
+            "payload",
+            "preview",
             "requires_confirmation",
             "risk_level",
             "run_once_requested",
@@ -545,6 +548,7 @@ def _public_light_tool_item(tool_name: str, item: dict[str, Any]) -> dict[str, A
             "status",
             "title",
             "url",
+            "wizard_steps",
         )
     elif tool_name == "assistant.scheduled_job_run":
         allowed_keys = (
@@ -568,11 +572,16 @@ def _public_light_tool_item(tool_name: str, item: dict[str, Any]) -> dict[str, A
             "action",
             "url",
         )
-    return {
-        key: _safe_history_json(item.get(key))
-        for key in allowed_keys
-        if item.get(key) is not None
-    }
+    public_item: dict[str, Any] = {}
+    for key in allowed_keys:
+        value = item.get(key)
+        if value is None:
+            continue
+        safe_value = _safe_history_json(value)
+        if safe_value in ({}, []):
+            continue
+        public_item[key] = safe_value
+    return public_item
 
 
 def _iteration_progress(

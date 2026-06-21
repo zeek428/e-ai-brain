@@ -542,7 +542,13 @@ def _assistant_chat_run_status_filter(status: str | None) -> set[str]:
 
 
 def _assistant_chat_run_sort_key(run: dict[str, Any]) -> str:
-    return str(run.get("updated_at") or run.get("finished_at") or run.get("started_at") or run.get("created_at") or "")
+    return str(
+        run.get("updated_at")
+        or run.get("finished_at")
+        or run.get("started_at")
+        or run.get("created_at")
+        or ""
+    )
 
 
 def cancel_assistant_chat_run_response(

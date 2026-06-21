@@ -808,8 +808,8 @@ body {
 }
 
 .assistant-chat-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
   min-height: 0;
   min-width: 0;
@@ -825,15 +825,31 @@ body {
 
 .assistant-chat-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   padding-bottom: 18px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .assistant-chat-header > * {
   min-width: 0;
+}
+
+.assistant-chat-title-block {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.assistant-chat-title {
+  line-height: 1.28 !important;
+}
+
+.assistant-chat-subtitle {
+  display: block;
+  line-height: 1.55;
 }
 
 .assistant-chat-header .ant-space {
@@ -881,12 +897,13 @@ body {
 
 .assistant-message-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 14px;
   min-height: 0;
   min-width: 0;
   overflow: auto;
-  padding: 6px 4px 20px;
+  padding: 6px 4px 32px;
 }
 
 .assistant-chat-run-recovery {

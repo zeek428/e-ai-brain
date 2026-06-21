@@ -116,8 +116,8 @@ describe('bug management page', () => {
 
     expect(await screen.findByText('支付失败')).toBeInTheDocument();
     expect(screen.getByText('创建时间')).toBeInTheDocument();
-    expect(screen.getByText('2026-06-04 08:00')).toBeInTheDocument();
-    expect(screen.getByText('2026-06-04 08:10')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-04 16:00')).toBeInTheDocument();
+    expect(screen.getByText('2026-06-04 16:10')).toBeInTheDocument();
     expect(screen.getByText('v1 MVP')).toBeInTheDocument();
     expect(screen.getByText('v2 回归')).toBeInTheDocument();
 

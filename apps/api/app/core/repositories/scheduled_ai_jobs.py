@@ -221,54 +221,42 @@ class ScheduledAiJobReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    WITH RECURSIVE scoped_runs AS (
-                      SELECT id, scheduled_job_id, collector_run_id, source_run_id,
-                             trigger_type, status,
-                             scheduled_for, started_at, finished_at, records_imported,
-                             error_code, error_message, config_snapshot,
-                             resolved_agent_snapshot, resolved_skill_snapshots,
-                             resolved_prompt_snapshot, tool_policy_snapshot, result_summary,
-                             created_at, updated_at, resolved_plugin_snapshot,
-                             plugin_invocation_log_id, assistant_action_run_id,
-                             assistant_action_draft_id, assistant_source_message_id,
-                             triggered_by_assistant
+                    WITH RECURSIVE run_edges AS (
+                      SELECT source_run_id AS from_id, id AS to_id
+                      FROM scheduled_job_runs
+                      WHERE trigger_type = 'manual_rerun'
+                        AND source_run_id IS NOT NULL
+                      UNION
+                      SELECT id AS from_id, source_run_id AS to_id
+                      FROM scheduled_job_runs
+                      WHERE source_run_id IS NOT NULL
+                    ),
+                    scoped_run_ids AS (
+                      SELECT id
                       FROM scheduled_job_runs
                       WHERE {" OR ".join(predicates)}
                       UNION
-                      SELECT child.id, child.scheduled_job_id, child.collector_run_id,
-                             child.source_run_id,
-                             child.trigger_type, child.status,
-                             child.scheduled_for, child.started_at, child.finished_at,
-                             child.records_imported,
-                             child.error_code, child.error_message, child.config_snapshot,
-                             child.resolved_agent_snapshot, child.resolved_skill_snapshots,
-                             child.resolved_prompt_snapshot, child.tool_policy_snapshot,
-                             child.result_summary,
-                             child.created_at, child.updated_at, child.resolved_plugin_snapshot,
-                             child.plugin_invocation_log_id, child.assistant_action_run_id,
-                             child.assistant_action_draft_id, child.assistant_source_message_id,
-                             child.triggered_by_assistant
-                      FROM scheduled_job_runs child
-                      JOIN scoped_runs parent
-                        ON child.trigger_type = 'manual_rerun'
-                       AND child.source_run_id = parent.id
-                      UNION
-                      SELECT source.id, source.scheduled_job_id, source.collector_run_id,
-                             source.source_run_id,
-                             source.trigger_type, source.status,
-                             source.scheduled_for, source.started_at, source.finished_at,
-                             source.records_imported,
-                             source.error_code, source.error_message, source.config_snapshot,
-                             source.resolved_agent_snapshot, source.resolved_skill_snapshots,
-                             source.resolved_prompt_snapshot, source.tool_policy_snapshot,
-                             source.result_summary,
-                             source.created_at, source.updated_at, source.resolved_plugin_snapshot,
-                             source.plugin_invocation_log_id, source.assistant_action_run_id,
-                             source.assistant_action_draft_id, source.assistant_source_message_id,
-                             source.triggered_by_assistant
-                      FROM scheduled_job_runs source
-                      JOIN scoped_runs child
-                        ON child.source_run_id = source.id
+                      SELECT edge.to_id
+                      FROM scoped_run_ids scoped
+                      JOIN run_edges edge
+                        ON edge.from_id = scoped.id
+                    ),
+                    scoped_runs AS (
+                      SELECT run.id, run.scheduled_job_id, run.collector_run_id, run.source_run_id,
+                             run.trigger_type, run.status,
+                             run.scheduled_for, run.started_at, run.finished_at,
+                             run.records_imported,
+                             run.error_code, run.error_message, run.config_snapshot,
+                             run.resolved_agent_snapshot, run.resolved_skill_snapshots,
+                             run.resolved_prompt_snapshot, run.tool_policy_snapshot,
+                             run.result_summary,
+                             run.created_at, run.updated_at, run.resolved_plugin_snapshot,
+                             run.plugin_invocation_log_id, run.assistant_action_run_id,
+                             run.assistant_action_draft_id, run.assistant_source_message_id,
+                             run.triggered_by_assistant
+                      FROM scheduled_job_runs run
+                      JOIN scoped_run_ids scoped
+                        ON scoped.id = run.id
                     )
                     SELECT DISTINCT ON (id)
                            id, scheduled_job_id, collector_run_id, source_run_id,

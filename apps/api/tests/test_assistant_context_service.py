@@ -1057,14 +1057,18 @@ def test_public_assistant_message_can_strip_heavy_tool_result_details_for_histor
             "action": "create_scheduled_job",
             "client_draft_id": "client_draft_001",
             "draft_id": "draft_001",
+            "payload": {
+                "config_json": {},
+                "name": "每周反馈洞察",
+            },
             "requires_confirmation": True,
             "risk_level": "medium",
             "server_draft_id": "server_draft_001",
             "status": "pending",
             "title": "创建定时作业：每周反馈洞察",
             "url": "/tasks/scheduled-jobs",
+            "wizard_steps": [{"key": "connection"}],
         }
     ]
-    assert "payload" not in tool_result["items"][0]
     assert "preview" not in tool_result["items"][0]
-    assert "wizard_steps" not in tool_result["items"][0]
+    assert "prompt" not in tool_result["items"][0]["payload"]["config_json"]
