@@ -731,7 +731,13 @@ class AssistantChatRepository(Protocol):
 
     def get_assistant_chat_run(self, *, run_id: str) -> dict[str, Any] | None: ...
 
-    def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]: ...
+    def list_assistant_conversations(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+        user_id: str,
+    ) -> list[dict[str, Any]]: ...
 
     def find_reusable_assistant_conversation(
         self,

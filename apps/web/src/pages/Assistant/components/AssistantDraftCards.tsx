@@ -3,10 +3,11 @@ import {
   CloseCircleOutlined,
   FileTextOutlined,
   LinkOutlined,
+  MoreOutlined,
   ProjectOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
-import { Button, Modal, Space, Tag, Typography } from 'antd';
+import { Button, Dropdown, Modal, Space, Tag, Typography, type MenuProps } from 'antd';
 import { useMemo, useState } from 'react';
 
 import {
@@ -777,6 +778,69 @@ export function AssistantActionDraftCards({
           draftDependencyLabels,
           resultWriteTargetLabels,
         });
+        const moreActionItems: MenuProps['items'] = [];
+        if (canApplyDraftToForm && !resourceLink && isPluginConnectionDraft) {
+          moreActionItems.push({
+            key: 'apply-plugin-connection',
+            label: (
+              <a
+                href="/tasks/plugins"
+                onClick={() => storePluginConnectionDraft(draft)}
+                onMouseDown={() => storePluginConnectionDraft(draft)}
+              >
+                应用到插件连接表单
+              </a>
+            ),
+          });
+        }
+        if (canApplyDraftToForm && !resourceLink && isPluginActionDraft) {
+          moreActionItems.push({
+            key: 'apply-plugin-action',
+            label: (
+              <a
+                href="/tasks/plugins"
+                onClick={() => storePluginActionDraft(draft)}
+                onMouseDown={() => storePluginActionDraft(draft)}
+              >
+                应用到插件动作表单
+              </a>
+            ),
+          });
+        }
+        if (
+          canApplyDraftToForm
+          && !resourceLink
+          && !isAiCapabilityDraft
+          && !isPluginConnectionDraft
+          && !isPluginActionDraft
+          && !isRdTaskDraft
+          && !isAnalysisDraft
+        ) {
+          moreActionItems.push({
+            key: 'apply-scheduled-job',
+            label: (
+              <a
+                href="/tasks/scheduled-jobs"
+                onClick={() => storeScheduledJobDraft(draft)}
+                onMouseDown={() => storeScheduledJobDraft(draft)}
+              >
+                应用到定时作业表单
+              </a>
+            ),
+          });
+        }
+        if (draftId) {
+          moreActionItems.push({
+            key: 'open-draft-link',
+            label: <a href={`/assistant?draft_id=${draftId}`}>打开草案链接</a>,
+          });
+        }
+        moreActionItems.push({
+          key: 'regenerate',
+          label: '重新生成',
+          icon: <ReloadOutlined />,
+          onClick: () => onRegenerateDraft(draft),
+        });
         return (
           <div className="assistant-action-draft-card" key={draftId}>
             <div className="assistant-action-draft-header">
@@ -853,61 +917,14 @@ export function AssistantActionDraftCards({
                   {runResourceLink.label}
                 </Button>
               ) : null}
-              {canApplyDraftToForm && !resourceLink && isPluginConnectionDraft ? (
-                <Button
-                  href="/tasks/plugins"
-                  size="small"
-                  type="primary"
-                  onMouseDown={() => storePluginConnectionDraft(draft)}
-                  onClick={() => storePluginConnectionDraft(draft)}
-                >
-                  应用到插件连接表单
-                </Button>
-              ) : null}
-              {canApplyDraftToForm && !resourceLink && isPluginActionDraft ? (
-                <Button
-                  href="/tasks/plugins"
-                  size="small"
-                  type="primary"
-                  onMouseDown={() => storePluginActionDraft(draft)}
-                  onClick={() => storePluginActionDraft(draft)}
-                >
-                  应用到插件动作表单
-                </Button>
-              ) : null}
-              {canApplyDraftToForm
-              && !resourceLink
-              && !isAiCapabilityDraft
-              && !isPluginConnectionDraft
-              && !isPluginActionDraft
-              && !isRdTaskDraft
-              && !isAnalysisDraft ? (
-                <Button
-                  href="/tasks/scheduled-jobs"
-                  size="small"
-                  type="primary"
-                  onMouseDown={() => storeScheduledJobDraft(draft)}
-                  onClick={() => storeScheduledJobDraft(draft)}
-                >
-                  应用到定时作业表单
-                </Button>
-              ) : null}
               <Button size="small" onClick={() => { void openDraftDetail(draft); }}>
                 查看详情
               </Button>
-              {draftId ? (
-                <Button href={`/assistant?draft_id=${draftId}`} size="small">
-                  查看草案
+              <Dropdown menu={{ items: moreActionItems }} placement="bottomRight" trigger={['click']}>
+                <Button aria-label="更多草案操作" icon={<MoreOutlined />} size="small">
+                  更多
                 </Button>
-              ) : null}
-              <Button
-                aria-label="重新生成"
-                icon={<ReloadOutlined />}
-                size="small"
-                onClick={() => onRegenerateDraft(draft)}
-              >
-                重新生成
-              </Button>
+              </Dropdown>
             </Space>
           </div>
         );

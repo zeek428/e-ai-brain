@@ -1253,8 +1253,18 @@ class PostgresSnapshotRepository:
     def load_assistant_chat(self) -> dict[str, Any]:
         return self._assistant_chat_read_repository.load_assistant_chat()
 
-    def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]:
-        return self._assistant_chat_read_repository.list_assistant_conversations(user_id=user_id)
+    def list_assistant_conversations(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+        user_id: str,
+    ) -> list[dict[str, Any]]:
+        return self._assistant_chat_read_repository.list_assistant_conversations(
+            cursor=cursor,
+            limit=limit,
+            user_id=user_id,
+        )
 
     def find_reusable_assistant_conversation(
         self,

@@ -34,25 +34,107 @@ def assistant_conversations_response(
     current_store: MemoryStore,
     *,
     collapse_duplicates: bool = True,
+    cursor: str | None = None,
+    limit: int = 50,
     user_id: str,
 ) -> dict[str, Any]:
+    normalized_limit = min(max(int(limit or 50), 1), 100)
+    repository_limit = min((normalized_limit * 4 if collapse_duplicates else normalized_limit) + 1, 401)
     repository = assistant_query_repository(current_store)
     if repository is not None:
-        conversations = repository.list_assistant_conversations(user_id=user_id)
+        conversations = _list_repository_assistant_conversations(
+            repository,
+            cursor=cursor,
+            limit=repository_limit,
+            user_id=user_id,
+        )
     else:
         conversations = [
             conversation
             for conversation in current_store.assistant_conversations.values()
             if conversation.get("user_id") == user_id
         ]
+        conversations = _conversation_page_slice(
+            conversations,
+            cursor=cursor,
+            limit=repository_limit,
+        )
     items = [public_assistant_conversation(conversation) for conversation in conversations]
+    items = sorted(items, key=lambda item: str(item.get("id") or ""))
     items.sort(key=lambda item: item.get("last_message_at") or item["updated_at"], reverse=True)
+    has_more = len(items) > repository_limit - 1
+    raw_page_items = items[: repository_limit - 1] if has_more else items
+    next_cursor = _conversation_cursor(raw_page_items[-1]) if has_more and raw_page_items else None
+    items = raw_page_items
     if collapse_duplicates:
         items = _collapse_duplicate_conversations(items)
+    page_items = items[:normalized_limit]
     return {
-        "items": items,
-        "total": len(items),
+        "items": page_items,
+        "limit": normalized_limit,
+        "next_cursor": next_cursor,
+        "total": len(page_items),
     }
+
+
+def _conversation_cursor(conversation: dict[str, Any]) -> str:
+    sort_value = conversation.get("last_message_at") or conversation.get("updated_at") or ""
+    return f"{sort_value}|{conversation['id']}"
+
+
+def _list_repository_assistant_conversations(
+    repository: Any,
+    *,
+    cursor: str | None,
+    limit: int,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    try:
+        return repository.list_assistant_conversations(
+            cursor=cursor,
+            limit=limit,
+            user_id=user_id,
+        )
+    except TypeError:
+        conversations = repository.list_assistant_conversations(user_id=user_id)
+        return _conversation_page_slice(conversations, cursor=cursor, limit=limit)
+
+
+def _parse_conversation_cursor(cursor: str | None) -> tuple[str, str] | None:
+    if not cursor:
+        return None
+    sort_value, separator, conversation_id = str(cursor).partition("|")
+    if not separator or not sort_value or not conversation_id:
+        return None
+    return sort_value, conversation_id
+
+
+def _conversation_page_slice(
+    conversations: list[dict[str, Any]],
+    *,
+    cursor: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    items = sorted(conversations, key=lambda item: str(item.get("id") or ""))
+    items.sort(
+        key=lambda item: item.get("last_message_at") or item.get("updated_at") or "",
+        reverse=True,
+    )
+    parsed_cursor = _parse_conversation_cursor(cursor)
+    if parsed_cursor:
+        cursor_sort_value, cursor_id = parsed_cursor
+        items = [
+            item
+            for item in items
+            if (
+                (item.get("last_message_at") or item.get("updated_at") or "") < cursor_sort_value
+                or (
+                    (item.get("last_message_at") or item.get("updated_at") or "") == cursor_sort_value
+                    and str(item.get("id") or "") > cursor_id
+                )
+            )
+        ]
+    return items[:limit]
 
 
 def _conversation_collapse_key(conversation: dict[str, Any]) -> tuple[str, str]:

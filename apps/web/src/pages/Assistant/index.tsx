@@ -1567,12 +1567,15 @@ export default function AssistantPage() {
   const {
     conversationId,
     conversations,
+    hasMoreConversations,
     isLoadingConversations,
+    isLoadingMoreConversations,
     isLoadingMessages,
     isSending,
     lastResponse,
     loadConversationMessages,
     loadConversations,
+    loadMoreConversations,
     messages,
     setConversationId,
     setIsSending,
@@ -1635,7 +1638,12 @@ export default function AssistantPage() {
   const [draftTemplates, setDraftTemplates] = useState<AssistantDraftTemplate[]>([]);
   const [isLoadingDraftTemplates, setIsLoadingDraftTemplates] = useState(false);
   const [isContextExpanded, setIsContextExpanded] = useState(false);
-  const runtimeStatus = useAssistantRuntimeStatus();
+  const {
+    isRefreshingRuntimeStatus,
+    refreshRuntimeStatus,
+    runtimeStatus,
+    runtimeStatusCheckedAt,
+  } = useAssistantRuntimeStatus();
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [roleQuickTasksExpanded, setRoleQuickTasksExpanded] = useState(false);
   const [roleQuickTaskGroups, setRoleQuickTaskGroups] = useState<AssistantRoleQuickTaskGroup[]>([]);
@@ -1644,6 +1652,7 @@ export default function AssistantPage() {
   const addMenuTriggerRef = useRef<HTMLElement | null>(null);
   const messageListEndRef = useRef<HTMLDivElement | null>(null);
   const queryDraftHydratedRef = useRef(false);
+  const queryDraftStatusRef = useRef<HTMLDivElement | null>(null);
   const queryReferenceHydratedRef = useRef(false);
   const draftTemplatesLoadRequestedRef = useRef(false);
   const resultWriteTargetsLoadRequestedRef = useRef(false);
@@ -1718,8 +1727,18 @@ export default function AssistantPage() {
     if (typeof messageListEndRef.current?.scrollIntoView !== 'function') {
       return;
     }
+    if (queryDraftResolution && !isSending) {
+      return;
+    }
     messageListEndRef.current.scrollIntoView({ block: 'end' });
-  }, [isLoadingMessages, isSending, messages, scheduledJobRunById]);
+  }, [isLoadingMessages, isSending, messages, queryDraftResolution, scheduledJobRunById]);
+
+  useEffect(() => {
+    if (!queryDraftResolution || typeof queryDraftStatusRef.current?.scrollIntoView !== 'function') {
+      return;
+    }
+    queryDraftStatusRef.current.scrollIntoView({ block: 'nearest' });
+  }, [linkedDraft, queryDraftResolution]);
 
   useEffect(() => {
     if (
@@ -2758,13 +2777,16 @@ export default function AssistantPage() {
         <AssistantSidebar
           conversationId={conversationId}
           conversations={conversations}
+          hasMoreConversations={hasMoreConversations}
           isLoadingConversations={isLoadingConversations}
+          isLoadingMoreConversations={isLoadingMoreConversations}
           isLoadingMetrics={isLoadingMetrics}
           showDuplicateConversations={showDuplicateConversations}
           roleQuickTaskCount={roleQuickTaskCount}
           roleQuickTaskGroups={roleQuickTaskGroups}
           roleQuickTasksExpanded={roleQuickTasksExpanded}
           onToggleDuplicateConversations={toggleDuplicateConversations}
+          onLoadMoreConversations={loadMoreConversations}
           onOpenConversation={openConversation}
           onOpenDraftTemplateMarket={openDraftTemplateMarket}
           onOpenMetricsPanel={openMetricsPanel}
@@ -2785,7 +2807,12 @@ export default function AssistantPage() {
               </Space>
             ) : null}
           </div>
-          <AssistantRuntimeStatus runtimeStatus={runtimeStatus} />
+          <AssistantRuntimeStatus
+            checkedAt={runtimeStatusCheckedAt}
+            isRefreshing={isRefreshingRuntimeStatus}
+            runtimeStatus={runtimeStatus}
+            onRefresh={() => void refreshRuntimeStatus()}
+          />
           <AssistantChatRunRecovery
             isLoading={isLoadingChatRuns}
             isVisible={!isRecoveryDismissed}
@@ -2806,6 +2833,7 @@ export default function AssistantPage() {
               <div
                 aria-label="草案链接状态"
                 className={`assistant-query-draft-status assistant-query-draft-status-${queryDraftResolution.status}`}
+                ref={queryDraftStatusRef}
               >
                 <Space size={6} wrap>
                   <Tag color={queryDraftResolutionLabel(queryDraftResolution.status).color}>

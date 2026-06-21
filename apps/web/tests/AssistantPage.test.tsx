@@ -11,6 +11,7 @@ import {
   ASSISTANT_SCHEDULED_JOB_DRAFT_STORAGE_KEY,
   assistantScopedStorageKey,
   chatWithAssistant,
+  fetchAssistantConversationPage,
   fetchAssistantConversationMessages,
   fetchAssistantConversations,
   readAssistantDraftResolutions,
@@ -68,6 +69,11 @@ function roleQuickTasksResponse(groups: Array<Record<string, unknown>>) {
     }),
     { headers: { 'Content-Type': 'application/json' }, status: 200 },
   );
+}
+
+function openDraftMoreMenu(index = 0) {
+  const buttons = screen.getAllByLabelText('更多草案操作');
+  fireEvent.click(buttons[index]);
 }
 
 describe('AssistantPage', () => {
@@ -1470,6 +1476,7 @@ describe('AssistantPage', () => {
   });
 
   it('shows assistant runtime status only when required dependencies fail', async () => {
+    let runtimeStatusCalls = 0;
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
       if (input === '/api/assistant/conversations') {
@@ -1482,6 +1489,41 @@ describe('AssistantPage', () => {
         return roleQuickTasksResponse([]);
       }
       if (input === '/api/assistant/runtime-status') {
+        runtimeStatusCalls += 1;
+        if (runtimeStatusCalls > 1) {
+          return new Response(JSON.stringify({
+            data: {
+              chat_gateway: 'not_configured',
+              checks: [
+                {
+                  code: 'postgres',
+                  key: 'postgres',
+                  label: 'PostgreSQL',
+                  required: true,
+                  severity: 'critical',
+                  status: 'ok',
+                },
+                {
+                  code: 'redis',
+                  key: 'redis',
+                  label: 'Redis',
+                  required: true,
+                  severity: 'critical',
+                  status: 'ok',
+                },
+              ],
+              embedding_gateway: 'not_configured',
+              long_memory: 'disabled',
+              mode: 'deterministic_only',
+              model_gateway: 'not_configured',
+              ready: true,
+              warnings: [],
+            },
+          }), {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          });
+        }
         return new Response(JSON.stringify({
           data: {
             chat_gateway: 'not_configured',
@@ -1548,6 +1590,14 @@ describe('AssistantPage', () => {
     expect(runtimeStatus).toHaveTextContent('Redis');
     expect(runtimeStatus).toHaveTextContent('启动 Redis，或修正 REDIS_URL 后重启 API。');
     expect(runtimeStatus).not.toHaveTextContent('模型网关');
+    expect(within(runtimeStatus).getByRole('button', { name: '重新检测' })).toBeInTheDocument();
+
+    fireEvent.click(within(runtimeStatus).getByRole('button', { name: '重新检测' }));
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText('助手运行状态')).not.toBeInTheDocument();
+    });
+    expect(runtimeStatusCalls).toBe(2);
   });
 
   it('keeps recent conversations visible before collapsed role quick tasks', async () => {
@@ -4673,6 +4723,7 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '为「代码仓库质量安全规范巡检」生成或调整「数据来源」步骤草案。当前状态：已就绪。请给出建议配置、字段校验和下一步确认动作',
     );
+    openDraftMoreMenu();
     const applyDraftLink = screen.getByRole('link', { name: '应用到定时作业表单' });
     expect(applyDraftLink).toHaveAttribute(
       'href',
@@ -4695,7 +4746,7 @@ describe('AssistantPage', () => {
       },
       title: '代码仓库质量安全规范巡检',
     });
-    expect(screen.getByRole('link', { name: '查看草案' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '打开草案链接' })).toHaveAttribute(
       'href',
       '/assistant?draft_id=assistant_draft_code_repository_inspection',
     );
@@ -4990,7 +5041,8 @@ describe('AssistantPage', () => {
 
     expect(await screen.findByText('我生成了一个本地配置草案。')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '查看详情' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '查看草案' })).toHaveAttribute(
+    openDraftMoreMenu();
+    expect(screen.getByRole('link', { name: '打开草案链接' })).toHaveAttribute(
       'href',
       '/assistant?draft_id=assistant_action_draft_server_only',
     );
@@ -5259,6 +5311,11 @@ describe('AssistantPage', () => {
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     window.history.pushState({}, '', '/assistant?draft_id=assistant_action_draft_deeplink');
+    const scrollIntoViewMock = vi.fn();
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoViewMock,
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     render(<AssistantPage />);
@@ -5279,6 +5336,7 @@ describe('AssistantPage', () => {
     expect(within(draftLinkStatus).getByText('作业名称')).toBeInTheDocument();
     expect(within(draftLinkStatus).getByRole('button', { name: /确认创建/ })).toBeInTheDocument();
     expect(within(draftLinkStatus).getByRole('button', { name: /取消/ })).toBeInTheDocument();
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'nearest' });
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual(
       expect.arrayContaining([
         ['/api/assistant/conversations', 'GET'],
@@ -5471,7 +5529,8 @@ describe('AssistantPage', () => {
       'href',
       '/tasks/scheduled-jobs?job_id=scheduled_job_001&run_id=scheduled_job_run_001',
     );
-    fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
+    openDraftMoreMenu();
+    fireEvent.click(screen.getByText('重新生成'));
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('重新生成「创建仪表盘刷新定时任务」草案');
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
       '/api/assistant/action-drafts/assistant_action_draft_001/confirm',
@@ -5582,7 +5641,8 @@ describe('AssistantPage', () => {
     expect(await screen.findByText('待确认')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /确认创建/ })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
+    openDraftMoreMenu();
+    fireEvent.click(screen.getByText('重新生成'));
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('重新生成「创建会失败的定时任务」草案');
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
       '/api/assistant/action-drafts/assistant_action_draft_failed_confirm',
@@ -5747,7 +5807,8 @@ describe('AssistantPage', () => {
     expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '应用到定时作业表单' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
+    openDraftMoreMenu();
+    fireEvent.click(screen.getByText('重新生成'));
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue('重新生成「创建周反馈洞察定时作业」草案');
   });
 
@@ -6319,6 +6380,7 @@ describe('AssistantPage', () => {
     expect(screen.getByText('scan_github_code_inspection')).toBeInTheDocument();
     expect(screen.getByText('/repos/{{owner}}/{{repo}}/code-scanning/alerts')).toBeInTheDocument();
     expect(await screen.findByText('代码巡检报告')).toBeInTheDocument();
+    openDraftMoreMenu();
     const applyDraftLink = screen.getByRole('link', { name: '应用到插件动作表单' });
     expect(applyDraftLink).toHaveAttribute('href', '/tasks/plugins');
     fireEvent.mouseDown(applyDraftLink);
@@ -6436,6 +6498,7 @@ describe('AssistantPage', () => {
     expect(await screen.findByText('我已生成一个待确认的邮箱通知动作草案。')).toBeInTheDocument();
     expect(await screen.findByText('邮件通知记录')).toBeInTheDocument();
     expect(screen.getByText('/messages/send')).toBeInTheDocument();
+    openDraftMoreMenu();
     const applyDraftLink = screen.getByRole('link', { name: '应用到插件动作表单' });
     fireEvent.mouseDown(applyDraftLink);
     expect(JSON.parse(
@@ -6541,6 +6604,7 @@ describe('AssistantPage', () => {
     expect(screen.getByText('bearer')).toBeInTheDocument();
     expect(screen.getByText('Headers')).toBeInTheDocument();
     expect(screen.getByText('{"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}')).toBeInTheDocument();
+    openDraftMoreMenu();
     const applyDraftLink = screen.getByRole('link', { name: '应用到插件连接表单' });
     expect(applyDraftLink).toHaveAttribute('href', '/tasks/plugins');
     fireEvent.mouseDown(applyDraftLink);
@@ -6687,8 +6751,11 @@ describe('AssistantPage', () => {
     expect(screen.getByText('确认前不会写入插件连接')).toBeInTheDocument();
     expect(screen.getByText('确认前不会写入插件动作')).toBeInTheDocument();
     expect(screen.getByText('确认前不会写入作业定义')).toBeInTheDocument();
+    openDraftMoreMenu(0);
     expect(screen.getByRole('link', { name: '应用到插件连接表单' })).toHaveAttribute('href', '/tasks/plugins');
+    openDraftMoreMenu(1);
     expect(screen.getByRole('link', { name: '应用到插件动作表单' })).toHaveAttribute('href', '/tasks/plugins');
+    openDraftMoreMenu(2);
     expect(screen.getByRole('link', { name: '应用到定时作业表单' })).toHaveAttribute('href', '/tasks/scheduled-jobs');
     expect(await screen.findByText('代码巡检报告')).toBeInTheDocument();
     expect(screen.getByText('前置草案')).toBeInTheDocument();
@@ -7007,5 +7074,52 @@ describe('AssistantPage', () => {
         toolResults: [],
       },
     ]);
+  });
+
+  it('fetches paginated assistant conversation summaries with cursor metadata', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      expect(input).toBe('/api/assistant/conversations?collapse=false&cursor=2026-06-20T03%3A01%3A00%2B00%3A00%7Cconversation_3&limit=2');
+      return new Response(
+        JSON.stringify({
+          data: {
+            items: [
+              {
+                id: 'conversation_2',
+                last_message_at: '2026-06-20T03:00:00+00:00',
+                message_count: 2,
+                title: '第二页对话',
+                updated_at: '2026-06-20T03:00:00+00:00',
+              },
+            ],
+            limit: 2,
+            next_cursor: '2026-06-20T02:59:00+00:00|conversation_1',
+            total: 1,
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' }, status: 200 },
+      );
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAssistantConversationPage({
+      collapse: false,
+      cursor: '2026-06-20T03:01:00+00:00|conversation_3',
+      limit: 2,
+    })).resolves.toEqual({
+      items: [
+        {
+          id: 'conversation_2',
+          lastMessageAt: '2026-06-20T03:00:00+00:00',
+          messageCount: 2,
+          title: '第二页对话',
+          updatedAt: '2026-06-20T03:00:00+00:00',
+        },
+      ],
+      limit: 2,
+      nextCursor: '2026-06-20T02:59:00+00:00|conversation_1',
+      total: 1,
+    });
   });
 });

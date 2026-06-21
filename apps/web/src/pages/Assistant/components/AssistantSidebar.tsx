@@ -20,11 +20,13 @@ export function AssistantSidebar({
   conversationId,
   conversations,
   isLoadingConversations,
+  isLoadingMoreConversations,
   isLoadingMetrics,
   onToggleDuplicateConversations,
   onOpenConversation,
   onOpenDraftTemplateMarket,
   onOpenMetricsPanel,
+  onLoadMoreConversations,
   onStartNewConversation,
   onToggleRoleQuickTasks,
   onUseRoleTask,
@@ -32,15 +34,19 @@ export function AssistantSidebar({
   roleQuickTaskGroups,
   roleQuickTasksExpanded,
   showDuplicateConversations,
+  hasMoreConversations,
 }: {
   conversationId?: string;
   conversations: AssistantConversationSummary[];
+  hasMoreConversations: boolean;
   isLoadingConversations: boolean;
+  isLoadingMoreConversations: boolean;
   isLoadingMetrics: boolean;
   onToggleDuplicateConversations: () => void;
   onOpenConversation: (conversationId: string) => void;
   onOpenDraftTemplateMarket: () => void;
   onOpenMetricsPanel: () => void;
+  onLoadMoreConversations: () => void;
   onStartNewConversation: () => void;
   onToggleRoleQuickTasks: () => void;
   onUseRoleTask: (prompt: string) => void;
@@ -81,23 +87,36 @@ export function AssistantSidebar({
         </div>
         <div className="assistant-history-list">
           {conversations.length ? (
-            conversations.map((item) => (
-              <Button
-                block
-                className={item.id === conversationId ? 'assistant-history-active' : undefined}
-                icon={<MessageOutlined />}
-                key={item.id}
-                onClick={() => onOpenConversation(item.id)}
-              >
-                <span className="assistant-history-button-text">
-                  <span>{item.title}</span>
-                  <span>
-                    {item.collapsedMessageCount ?? item.messageCount} 条
-                    {Number(item.duplicateCount ?? 1) > 1 ? ` · 合并 ${item.duplicateCount} 个重复` : ''}
+            <>
+              {conversations.map((item) => (
+                <Button
+                  block
+                  className={item.id === conversationId ? 'assistant-history-active' : undefined}
+                  icon={<MessageOutlined />}
+                  key={item.id}
+                  onClick={() => onOpenConversation(item.id)}
+                >
+                  <span className="assistant-history-button-text">
+                    <span>{item.title}</span>
+                    <span>
+                      {item.collapsedMessageCount ?? item.messageCount} 条
+                      {Number(item.duplicateCount ?? 1) > 1 ? ` · 合并 ${item.duplicateCount} 个重复` : ''}
+                    </span>
                   </span>
-                </span>
-              </Button>
-            ))
+                </Button>
+              ))}
+              {hasMoreConversations ? (
+                <Button
+                  block
+                  className="assistant-history-load-more"
+                  loading={isLoadingMoreConversations}
+                  size="small"
+                  onClick={onLoadMoreConversations}
+                >
+                  加载更多
+                </Button>
+              ) : null}
+            </>
           ) : (
             <Text type="secondary">暂无历史对话</Text>
           )}

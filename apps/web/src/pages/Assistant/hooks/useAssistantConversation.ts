@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   fetchAssistantConversationMessages,
-  fetchAssistantConversations,
+  fetchAssistantConversationPage,
   type AssistantChatResponse,
   type AssistantConversationMessage,
   type AssistantConversationSummary,
@@ -86,22 +86,29 @@ export function useAssistantConversation() {
   const loadConversationAbortRef = useRef<AbortController | null>(null);
   const loadConversationRequestSeqRef = useRef(0);
   const [conversationId, setConversationId] = useState<string>();
+  const [conversationNextCursor, setConversationNextCursor] = useState<string>();
   const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
   const [showDuplicateConversations, setShowDuplicateConversations] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
+  const [isLoadingMoreConversations, setIsLoadingMoreConversations] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [lastResponse, setLastResponse] = useState<AssistantChatResponse>();
   const [messages, setMessages] = useState<ChatMessage[]>(welcomeMessages);
 
-  const fetchConversationList = useCallback(async (showDuplicates: boolean) => {
-    return fetchAssistantConversations({ collapse: !showDuplicates });
+  const fetchConversationList = useCallback(async (showDuplicates: boolean, cursor?: string) => {
+    return fetchAssistantConversationPage({
+      collapse: !showDuplicates,
+      cursor,
+    });
   }, []);
 
   const loadConversations = useCallback(async () => {
     setIsLoadingConversations(true);
     try {
-      setConversations(await fetchConversationList(showDuplicateConversations));
+      const page = await fetchConversationList(showDuplicateConversations);
+      setConversations(page.items);
+      setConversationNextCursor(page.nextCursor);
     } catch (error) {
       toast.error(formatMutationError(error));
     } finally {
@@ -109,12 +116,42 @@ export function useAssistantConversation() {
     }
   }, [fetchConversationList, showDuplicateConversations]);
 
+  const loadMoreConversations = useCallback(async () => {
+    if (!conversationNextCursor || isLoadingMoreConversations) {
+      return;
+    }
+    setIsLoadingMoreConversations(true);
+    try {
+      const page = await fetchConversationList(showDuplicateConversations, conversationNextCursor);
+      setConversations((currentItems) => {
+        const existingIds = new Set(currentItems.map((item) => item.id));
+        return [
+          ...currentItems,
+          ...page.items.filter((item) => !existingIds.has(item.id)),
+        ];
+      });
+      setConversationNextCursor(page.nextCursor);
+    } catch (error) {
+      toast.error(formatMutationError(error));
+    } finally {
+      setIsLoadingMoreConversations(false);
+    }
+  }, [
+    conversationNextCursor,
+    fetchConversationList,
+    isLoadingMoreConversations,
+    showDuplicateConversations,
+  ]);
+
   const toggleDuplicateConversations = useCallback(() => {
     const nextShowDuplicates = !showDuplicateConversations;
     setShowDuplicateConversations(nextShowDuplicates);
     setIsLoadingConversations(true);
     fetchConversationList(nextShowDuplicates)
-      .then(setConversations)
+      .then((page) => {
+        setConversations(page.items);
+        setConversationNextCursor(page.nextCursor);
+      })
       .catch((error) => {
         toast.error(formatMutationError(error));
       })
@@ -157,9 +194,10 @@ export function useAssistantConversation() {
   useEffect(() => {
     let didCancel = false;
     fetchConversationList(false)
-      .then((items) => {
+      .then((page) => {
         if (!didCancel) {
-          setConversations(items);
+          setConversations(page.items);
+          setConversationNextCursor(page.nextCursor);
         }
       })
       .catch((error) => {
@@ -184,12 +222,15 @@ export function useAssistantConversation() {
   return {
     conversationId,
     conversations,
+    hasMoreConversations: Boolean(conversationNextCursor),
     isLoadingConversations,
+    isLoadingMoreConversations,
     isLoadingMessages,
     isSending,
     lastResponse,
     loadConversationMessages,
     loadConversations,
+    loadMoreConversations,
     messages,
     setConversationId,
     setIsSending,

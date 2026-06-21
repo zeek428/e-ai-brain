@@ -232,16 +232,20 @@ def assistant_metric_details_response(
         user=user,
         window_days=window_days,
     )
-    items = _assistant_metric_detail_records(scoped_rows, metric=normalized_metric)
     normalized_limit = min(max(int(limit or 50), 1), 100)
+    items, total = _assistant_metric_detail_records(
+        scoped_rows,
+        limit=normalized_limit,
+        metric=normalized_metric,
+    )
     return {
         "items": [
             _assistant_metric_detail_item(item)
-            for item in items[:normalized_limit]
+            for item in items
         ],
         "metric": normalized_metric,
         "title": ASSISTANT_METRIC_DETAIL_LABELS.get(normalized_metric, normalized_metric),
-        "total": len(items),
+        "total": total,
         "window": {
             "days": window_days,
             "label": f"最近 {window_days} 天" if window_days else "全部时间",
@@ -309,72 +313,85 @@ def _assistant_scoped_metric_rows(
 def _assistant_metric_detail_records(
     scoped_rows: dict[str, Any],
     *,
+    limit: int,
     metric: str,
-) -> list[dict[str, Any]]:
-    drafts = list(scoped_rows["drafts"])
-    runs = list(scoped_rows["runs"])
-    messages = list(scoped_rows["messages"])
-    scheduled_job_runs = list(scoped_rows["scheduled_job_runs"])
-    chat_runs = list(scoped_rows["chat_runs"])
+) -> tuple[list[dict[str, Any]], int]:
+    drafts = scoped_rows["drafts"]
+    runs = scoped_rows["runs"]
+    messages = scoped_rows["messages"]
+    scheduled_job_runs = scoped_rows["scheduled_job_runs"]
+    chat_runs = scoped_rows["chat_runs"]
     if metric in {"draft_total", "draft_adoption_rate", "draft_resolution_rate"}:
-        return [_with_metric_kind(draft, "draft") for draft in drafts]
+        return _limited_metric_records(drafts, kind="draft", limit=limit)
     if metric.startswith("draft_") and metric.endswith("_count"):
         if metric == "draft_user_modified_count":
-            return [
-                _with_metric_kind(draft, "draft")
-                for draft in drafts
-                if _draft_was_user_modified(draft)
-            ]
+            return _limited_metric_records(
+                drafts,
+                kind="draft",
+                limit=limit,
+                predicate=_draft_was_user_modified,
+            )
         if metric == "draft_viewed_count":
-            return [
-                _with_metric_kind(draft, "draft")
-                for draft in drafts
-                if _draft_was_effectively_viewed(draft)
-            ]
+            return _limited_metric_records(
+                drafts,
+                kind="draft",
+                limit=limit,
+                predicate=_draft_was_effectively_viewed,
+            )
         if metric == "draft_tracked_viewed_count":
-            return [
-                _with_metric_kind(draft, "draft")
-                for draft in drafts
-                if _draft_was_viewed_by_tracking(draft)
-            ]
+            return _limited_metric_records(
+                drafts,
+                kind="draft",
+                limit=limit,
+                predicate=_draft_was_viewed_by_tracking,
+            )
         if metric == "draft_inferred_viewed_count":
-            return [
-                _with_metric_kind(draft, "draft")
-                for draft in drafts
-                if _draft_was_effectively_viewed(draft) and not _draft_was_viewed_by_tracking(draft)
-            ]
+            return _limited_metric_records(
+                drafts,
+                kind="draft",
+                limit=limit,
+                predicate=lambda draft: (
+                    _draft_was_effectively_viewed(draft)
+                    and not _draft_was_viewed_by_tracking(draft)
+                ),
+            )
         if metric == "draft_detail_viewed_count":
-            return [
-                _with_metric_kind(draft, "draft")
-                for draft in drafts
-                if _draft_was_detail_viewed(draft)
-            ]
+            return _limited_metric_records(
+                drafts,
+                kind="draft",
+                limit=limit,
+                predicate=_draft_was_detail_viewed,
+            )
         if metric == "draft_deeplink_viewed_count":
-            return [
-                _with_metric_kind(draft, "draft")
-                for draft in drafts
-                if _draft_was_deeplink_viewed(draft)
-            ]
+            return _limited_metric_records(
+                drafts,
+                kind="draft",
+                limit=limit,
+                predicate=_draft_was_deeplink_viewed,
+            )
         status = metric.removeprefix("draft_").removesuffix("_count")
-        return [
-            _with_metric_kind(draft, "draft")
-            for draft in drafts
-            if _effective_draft_status(draft) == status
-        ]
+        return _limited_metric_records(
+            drafts,
+            kind="draft",
+            limit=limit,
+            predicate=lambda draft: _effective_draft_status(draft) == status,
+        )
     if metric in {"action_run_total", "action_run_success_rate"}:
-        return [_with_metric_kind(run, "action_run") for run in runs]
+        return _limited_metric_records(runs, kind="action_run", limit=limit)
     if metric == "action_run_succeeded_count":
-        return [
-            _with_metric_kind(run, "action_run")
-            for run in runs
-            if run.get("status") == "succeeded"
-        ]
+        return _limited_metric_records(
+            runs,
+            kind="action_run",
+            limit=limit,
+            predicate=lambda run: run.get("status") == "succeeded",
+        )
     if metric == "action_run_failed_count":
-        return [
-            _with_metric_kind(run, "action_run")
-            for run in runs
-            if run.get("status") == "failed"
-        ]
+        return _limited_metric_records(
+            runs,
+            kind="action_run",
+            limit=limit,
+            predicate=lambda run: run.get("status") == "failed",
+        )
     if metric in {
         "chat_run_total",
         "chat_run_success_rate",
@@ -382,65 +399,95 @@ def _assistant_metric_detail_records(
         "chat_run_cancel_rate",
         "chat_run_model_failure_rate",
     }:
-        return [_with_metric_kind(run, "chat_run") for run in chat_runs]
+        return _limited_metric_records(chat_runs, kind="chat_run", limit=limit)
     if metric == "chat_run_model_failed_count":
-        return [
-            _with_metric_kind(run, "chat_run")
-            for run in chat_runs
-            if _chat_run_model_failed(run)
-        ]
+        return _limited_metric_records(
+            chat_runs,
+            kind="chat_run",
+            limit=limit,
+            predicate=_chat_run_model_failed,
+        )
     if metric.startswith("chat_run_") and metric.endswith("_count"):
         status = metric.removeprefix("chat_run_").removesuffix("_count")
-        return [
-            _with_metric_kind(run, "chat_run")
-            for run in chat_runs
-            if str(run.get("status") or "") == status
-        ]
+        return _limited_metric_records(
+            chat_runs,
+            kind="chat_run",
+            limit=limit,
+            predicate=lambda run: str(run.get("status") or "") == status,
+        )
     if metric in {
         "scheduled_job_run_total",
         "scheduled_job_run_success_rate",
         "failed_run_repair_rate",
     }:
-        return [_with_metric_kind(run, "scheduled_job_run") for run in scheduled_job_runs]
+        return _limited_metric_records(
+            scheduled_job_runs,
+            kind="scheduled_job_run",
+            limit=limit,
+        )
     if metric == "scheduled_job_run_succeeded_count":
-        return [
-            _with_metric_kind(run, "scheduled_job_run")
-            for run in scheduled_job_runs
-            if run.get("status") == "succeeded"
-        ]
+        return _limited_metric_records(
+            scheduled_job_runs,
+            kind="scheduled_job_run",
+            limit=limit,
+            predicate=lambda run: run.get("status") == "succeeded",
+        )
     if metric in {"scheduled_job_run_failed_count", "failed_run_total"}:
-        return [
-            _with_metric_kind(run, "scheduled_job_run")
-            for run in scheduled_job_runs
-            if run.get("status") == "failed"
-        ]
+        return _limited_metric_records(
+            scheduled_job_runs,
+            kind="scheduled_job_run",
+            limit=limit,
+            predicate=lambda run: run.get("status") == "failed",
+        )
     if metric == "failed_run_repaired_count":
         repaired_ids = _repaired_failed_run_ids(scheduled_job_runs)
-        return [
-            _with_metric_kind(run, "scheduled_job_run")
-            for run in scheduled_job_runs
-            if str(run.get("id")) in repaired_ids
-        ]
+        return _limited_metric_records(
+            scheduled_job_runs,
+            kind="scheduled_job_run",
+            limit=limit,
+            predicate=lambda run: str(run.get("id")) in repaired_ids,
+        )
     if metric in {"message_total", "user_message_total"}:
-        return [
-            _with_metric_kind(message, "message")
-            for message in messages
-            if metric == "message_total" or message.get("role") == "user"
-        ]
+        return _limited_metric_records(
+            messages,
+            kind="message",
+            limit=limit,
+            predicate=lambda message: metric == "message_total" or message.get("role") == "user",
+        )
     if metric in {"reference_total", "reference_usage_rate", "referenced_user_message_count"}:
-        return [
-            _with_metric_kind(message, "message")
-            for message in messages
-            if message.get("role") == "user" and _message_references(message)
-        ]
+        return _limited_metric_records(
+            messages,
+            kind="message",
+            limit=limit,
+            predicate=lambda message: message.get("role") == "user" and bool(_message_references(message)),
+        )
     if metric in {
         "knowledge_reference_count",
         "knowledge_reference_hit_count",
         "knowledge_reference_hit_rate",
         "knowledge_reference_request_count",
     }:
-        return _knowledge_reference_detail_records(messages, metric=metric)
-    return []
+        records = _knowledge_reference_detail_records(messages, metric=metric)
+        return records[:limit], len(records)
+    return [], 0
+
+
+def _limited_metric_records(
+    records: list[dict[str, Any]],
+    *,
+    kind: str,
+    limit: int,
+    predicate: Any | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    items: list[dict[str, Any]] = []
+    total = 0
+    for record in records:
+        if predicate is not None and not predicate(record):
+            continue
+        total += 1
+        if len(items) < limit:
+            items.append(_with_metric_kind(record, kind))
+    return items, total
 
 
 def _knowledge_reference_detail_records(

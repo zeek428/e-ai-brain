@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.470 |
+| 功能版本 | v1.1.471 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.471 | 2026-06-21 | AI 助手历史列表补齐 cursor 分页与加载更多，历史消息草案工具结果按动作白名单脱敏，指标明细按 limit 下推，草案深链自动滚动到可视区域 | Codex |
 | v1.1.470 | 2026-06-21 | 研发执行器策略任务类型下拉按研发流程补齐：展示 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并与现有 `task_type` 匹配口径保持一致 | Codex |
 | v1.1.469 | 2026-06-21 | 新增研发执行器策略设计与实现口径：研发任务可按任务类型、产品和优先级匹配 Codex、Claude Code、OpenClaw Runner；该策略只引用插件管理下的 AI 执行器，不装配 Agent/Skill，Runner 完成后回写 AI 任务并进入人工确认 | Codex |
 | v1.1.468 | 2026-06-20 | 前端展示型时间统一按 `Asia/Shanghai` 转换后端 UTC 时间，覆盖管理列表、代码巡检、定时作业下次运行/运行详情、Runner 和助手引用等页面，避免少显示 8 小时或直接暴露 ISO 原文 | Codex |
@@ -518,6 +519,10 @@ AI 助手侧栏提供角色化快捷任务入口，后端优先从 `assistant_ro
 AI 助手 `@` 动作候选入口同样必须服务端配置化。`assistant_action_reference_configs` 记录 `assistant_action` 候选的 `action_key/title/summary/prompt/url/aliases/roles/permissions/enabled/sort_order/template_version/enterprise_id/rollout_json`；后端候选查询优先读取该表并按角色、权限、启用状态、企业、模板版本、灰度和排序过滤。同一 `action_key` 的配置可覆盖或禁用默认动作，也可新增自定义动作；没有任何配置记录时回退内置默认候选，保证旧环境可用。具备 `assistant.action_references.manage` 权限的用户可通过 `/api/assistant/action-reference-configs` 新增、编辑、启停、调整灰度或删除配置，每次写入 `assistant_action_reference_config.*` 审计事件，不得只依赖 `admin` 角色硬编码。系统管理提供 `/system/assistant-action-references` 页面，支持搜索、分页、启停筛选、角色筛选、批量启停、配置启停、排序、角色、权限、关键词、企业、模板版本、灰度和审计跳转；页面必须只消费管理 API，不再从前端常量维护运营入口。前端 `+` 菜单和输入框 `@` 候选都只消费 `/api/assistant/reference-candidates?type=assistant_action` 返回结果，不得再硬编码动作清单。用户从输入框 `@` 候选选择已有定时作业时，输入框必须保留可继续编辑的 `@作业名称 ` 命令前缀，并同步把该作业作为结构化引用加入“本次上下文”，方便继续输入“执行一次”且避免同名作业误执行。
 
 AI 助手页面必须在进入时调用 `GET /api/assistant/runtime-status` 获取运行环境自检。接口返回 `ready`、`mode` 和 `checks[]`；每个检查项包含 `key/status/label/detail/remediation/action_label/action_url/required/severity`，覆盖 PostgreSQL、Redis、模型网关、Embedding 网关和 GBrain 长期记忆。`ready` 只代表必需检查项可用，GBrain 长期记忆、模型网关和 Embedding 属于增强能力，未配置时不得让核心助手入口被判定为不可用。对话页默认不展开模型网关、Embedding 和 GBrain 等增强能力未配置明细，仅在 PostgreSQL、Redis 等必需依赖异常时显示轻量提醒和修复入口；确定性草案、引用解析、运行诊断等不依赖模型的能力仍可使用，开放式问答受限信息可在模型网关配置、系统状态或错误反馈中说明。
+
+AI 助手最近对话必须支持服务端分页。`GET /api/assistant/conversations` 接受 `limit` 与 `cursor`，默认返回最新一页并带 `next_cursor`；前端侧栏首屏只展示当前页，存在 `next_cursor` 时提供“加载更多”，避免重复命令或大量历史把角色快捷任务和更多能力挤出首屏。折叠重复会话时，分页游标必须基于服务端真实排序窗口中的最后一条原始会话，而不是折叠后的最后一条，避免下一页重复或漏数据。历史消息接口返回 `assistant.action_draft` 工具结果时只允许保留渲染所需安全字段：草案 ID、标题、动作、状态、风险、有限 payload 字段、预检摘要和向导元数据；`api_key`、`auth_config`、`Authorization`、token、password、secret、cookie、private key 等敏感字段以及 preview diff 中敏感字段的 current/proposed 必须脱敏，不得因历史恢复草案而把密钥、Header 或外部请求明文暴露到前端、模型上下文或日志。
+
+AI 助手效果指标明细必须按 `limit` 在服务端下推并只返回当前页脱敏元数据；服务端可继续计算同一筛选范围下的 `total`，但不得为了展示前 50 条而完整构造所有历史草案、运行或消息明细。前端草案卡片的次要操作（应用到表单、打开草案链接、重新生成）默认收纳到“更多”菜单，确认、取消、查看详情和资源追踪保留为主要动作；`/assistant?draft_id=...` 深链加载成功后必须滚动到草案链接状态区域，避免草案被输入框或长消息遮挡。运行状态提醒必须提供手动“重新检测”，并在窗口重新聚焦时刷新必需依赖状态，避免 Redis/PostgreSQL 修复后页面仍停留在旧错误提示。GitHub/GitLab 等语义相近的插件连接或动作草案若无法从用户文本唯一确定提供方，助手必须生成需要用户补齐 provider 的待确认草案或向导提示，不得静默默认到某一提供方。
 
 当用户围绕一次 `scheduled_job_run` 追问“为什么失败/如何诊断”时，助手在模型调用前生成 `assistant.scheduled_job_diagnostic` 工具结果。若用户已经显式引用了 `scheduled_job_run`，后续短追问如“为什么这次失败？”也必须按该引用补足运行上下文，不要求再次出现“任务/作业/运行”关键词。诊断结果按 `data_connection`、`ai_processing`、`result_action` 三段输出状态、摘要、错误信息和关联日志 ID，来源可包括 `scheduled_job_runs.result_summary.execution_nodes`、`plugin_invocation_logs`、`model_gateway_logs` 和从运行结果派生的 `result_write_records`。数据连接段必须优先读取 `execution_nodes.data_connection.plugin_invocation_log_id`，结果动作段必须优先读取 `execution_nodes.result_action.plugin_invocation_log_id`，避免同一次运行存在取数和写入两条插件日志时只能追踪到其中一条。前端诊断卡片必须把三段状态显式呈现为“数据连接是否成功”“AI处理是否成功”“结果动作是否写入成功”的判断，并把 `succeeded/failed/running/queued/warning/skipped` 转成用户可读结果，避免用户只看到状态 Tag 后仍需要自己判断链路是否闭环；前端诊断卡片还必须在对应阶段展示安全的 `log_id`（如模型日志 ID 或插件调用日志 ID），帮助用户从对话继续追到具体日志元数据；结果动作段还必须返回 `result_write_record_id/result_write_status/result_write_target/result_write_target_label` 等安全元数据，帮助用户确认写入目标是否成功；前端诊断卡片必须把 `result_write_record_id` 链接到对应定时作业运行详情并携带写入记录 ID，定时作业页面接收 `result_write_record_id` 后必须自动打开运行详情并展开该结果写入记录，便于继续查看结果写入反馈。诊断卡片还必须提供“生成修复草案”和“对比上次成功”后续追问按钮；AI 助手内的运行记录卡片也必须提供“问这次运行”“生成修复草案”“对比上次成功”快捷追问。用户点击这些入口后，前端必须把当前 `scheduled_job_run` 重新加入“本次上下文”并回填带 `@运行记录标题` 的追问，避免用户手工复制运行 ID；若入口通过 `/assistant?reference_type=scheduled_job_run&reference_id=<run_id>&prompt=<prompt>` 打开，助手页“本次上下文”必须常驻展示该链接引用的解析状态，包括解析中、已从链接带入运行记录或引用不存在/无权限，避免只依赖临时 toast。该工具结果会随助手消息 metadata 持久化并进入模型上下文；完整插件请求/响应、Prompt、模型输出、密钥和外部系统 token 不进入模型日志。
 

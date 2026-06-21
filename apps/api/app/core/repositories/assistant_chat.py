@@ -74,19 +74,50 @@ class AssistantChatReadRepository:
             return None
         return self._assistant_chat_run_from_row(row)
 
-    def list_assistant_conversations(self, *, user_id: str) -> list[dict[str, Any]]:
+    def list_assistant_conversations(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+        user_id: str,
+    ) -> list[dict[str, Any]]:
+        cursor_sort_value = None
+        cursor_id = None
+        if cursor:
+            cursor_sort_value, separator, cursor_id = str(cursor).partition("|")
+            if not separator or not cursor_sort_value or not cursor_id:
+                cursor_sort_value = None
+                cursor_id = None
+        predicates = ["user_id = %s"]
+        params: list[Any] = [user_id]
+        if cursor_sort_value and cursor_id:
+            predicates.append(
+                """
+                (
+                  COALESCE(last_message_at, updated_at) < %s
+                  OR (
+                    COALESCE(last_message_at, updated_at) = %s
+                    AND id > %s
+                  )
+                )
+                """
+            )
+            params.extend([cursor_sort_value, cursor_sort_value, cursor_id])
+        normalized_limit = min(max(int(limit or 50), 1), 500)
+        params.append(normalized_limit)
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT id, user_id, product_id, title, message_count, last_message_at,
                            created_at, updated_at, command_signature,
                            source_message_hash, context_scope
                     FROM assistant_conversations
-                    WHERE user_id = %s
+                    WHERE {" AND ".join(predicates)}
                     ORDER BY COALESCE(last_message_at, updated_at) DESC, id
+                    LIMIT %s
                     """,
-                    (user_id,),
+                    tuple(params),
                 )
                 conversations = []
                 for row in cursor.fetchall():

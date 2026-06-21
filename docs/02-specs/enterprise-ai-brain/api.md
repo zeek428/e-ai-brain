@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.374 |
+| 功能版本 | v1.1.375 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.375 | 2026-06-21 | AI 助手会话列表新增 cursor/limit 分页响应，历史草案工具结果输出安全白名单和敏感字段脱敏，指标明细按 limit 下推返回 | Codex |
 | v1.1.374 | 2026-06-21 | 研发执行器策略任务类型选项口径补齐：PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析均可在策略配置中选择 | Codex |
 | v1.1.373 | 2026-06-21 | 研发执行器策略 API 新增：需求交付策略只匹配插件管理下 Codex/Claude Code/OpenClaw Runner，不装配 Agent/Skill；AI 任务启动命中策略后返回 `executor_task_id/runner_id`，AI 执行器任务列表支持按 `ai_task_id` 反查 | Codex |
 | v1.1.372 | 2026-06-20 | AI 助手运行状态接口补齐 self-check `checks[]` 与 `ready`，效果指标返回查看埋点口径说明；会话列表可按命令签名折叠重复命令，并新增系统管理侧 `@` 能力配置页与真实页面 smoke 覆盖 | Codex |
@@ -1904,14 +1905,14 @@ GET /api/assistant/metrics/details?metric=draft_total&window_days=30&limit=50
 }
 ```
 
-`metric` 只允许按服务端白名单映射到草案、动作运行、聊天运行、定时作业运行、失败修复、消息引用或知识引用明细；明细和 `/api/assistant/metrics` 使用同一套当前用户过滤、`window_days` 过滤和定时作业助手归因规则。响应仅返回脱敏来源元数据和站内入口，不返回完整 prompt、助手完整回复、知识正文、密钥、Header 或外部调用明文。
+`metric` 只允许按服务端白名单映射到草案、动作运行、聊天运行、定时作业运行、失败修复、消息引用或知识引用明细；`limit` 范围 1-100，默认 50。明细和 `/api/assistant/metrics` 使用同一套当前用户过滤、`window_days` 过滤和定时作业助手归因规则；服务端必须按 `limit` 下推构造明细列表，只返回当前页 `items`，同时用同一筛选口径返回匹配 `total`，不得为了展示少量明细而完整展开所有历史记录。响应仅返回脱敏来源元数据和站内入口，不返回完整 prompt、助手完整回复、知识正文、密钥、Header 或外部调用明文。
 
 `conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
 
 当前用户会话列表：
 
 ```http
-GET /api/assistant/conversations
+GET /api/assistant/conversations?collapse=true&limit=50&cursor=2026-06-20T03%3A01%3A00%2B00%3A00%7Cconversation_003
 ```
 
 响应：
@@ -1931,11 +1932,13 @@ GET /api/assistant/conversations
       "updated_at": "2026-06-03T09:00:00+00:00"
     }
   ],
+  "limit": 50,
+  "next_cursor": "2026-06-20T03:01:00+00:00|conversation_003",
   "total": 1
 }
 ```
 
-会话列表用于左侧最近对话展示。服务端保存命令式输入时可在内部记录 `source_message_hash`，但公开响应只返回可用于分组解释的 `command_signature` 与 `context_scope`；前端应按返回列表展示，不自行删除历史。对于 `@...执行一次`、`@新建需求 ...` 等重复命令，会话折叠优先使用 `command_signature + context_scope`，避免只按标题合并导致不同产品、不同上下文的同名命令被误折叠。
+会话列表用于左侧最近对话展示。`collapse` 默认为 `true`，`limit` 范围 1-100，`cursor` 使用上一页 `next_cursor` 原样传回；服务端按 `last_message_at/updated_at desc, id asc` 排序分页。存在下一页时返回 `next_cursor`，不存在时返回 `null` 或省略；`total` 表示本页返回条数，不代表全量历史总数。服务端保存命令式输入时可在内部记录 `source_message_hash`，但公开响应只返回可用于分组解释的 `command_signature` 与 `context_scope`；前端应按返回列表展示，提供“加载更多”，不自行删除历史。对于 `@...执行一次`、`@新建需求 ...` 等重复命令，会话折叠优先使用 `command_signature + context_scope`，避免只按标题合并导致不同产品、不同上下文的同名命令被误折叠；折叠后的分页游标仍必须来自原始排序窗口，避免翻页重复或漏会话。
 
 当前用户会话消息：
 
@@ -1988,6 +1991,8 @@ GET /api/assistant/conversations/{conversation_id}/messages
   "total": 2
 }
 ```
+
+历史消息中的 `tool_results` 是展示用安全视图，不等同于原始运行载荷。`assistant.action_draft` 历史项只返回草案展示所需字段和动作白名单内的有限 payload 字段；`api_key`、`auth_config`、`Authorization`、token、password、secret、cookie、private key 等敏感字段必须递归脱敏或移除。若 `preview.diffs[]` 的字段名、路径或标签命中敏感信息，`current`、`previous`、`proposed`、`default`、`value` 等值必须返回 `"***"`，不得在历史恢复、深链加载或模型上下文中泄露密钥和 Header 明文。
 
 ### 需求管理
 

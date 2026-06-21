@@ -6894,6 +6894,105 @@ def test_ai_assistant_chat_generates_feedback_draft_when_run_once_job_missing(
     assert history_draft_item["wizard_steps"][0]["title"] == "数据来源"
 
 
+def test_ai_assistant_history_redacts_sensitive_action_draft_payload_fields():
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.assistant_conversations = {
+        "conversation_sensitive_draft": {
+            "created_at": "2026-06-20T08:00:00+00:00",
+            "id": "conversation_sensitive_draft",
+            "last_message_at": "2026-06-20T08:01:00+00:00",
+            "message_count": 1,
+            "product_id": None,
+            "title": "敏感草案",
+            "updated_at": "2026-06-20T08:01:00+00:00",
+            "user_id": "user_admin",
+        }
+    }
+    app.state.store.assistant_messages = {
+        "assistant_message_sensitive_draft": {
+            "content": "我生成了一个插件连接草案。",
+            "conversation_id": "conversation_sensitive_draft",
+            "created_at": "2026-06-20T08:01:00+00:00",
+            "id": "assistant_message_sensitive_draft",
+            "metadata_json": {
+                "tool_results": [
+                    {
+                        "intent": "plugin_connection_draft",
+                        "items": [
+                            {
+                                "action": "create_plugin_connection",
+                                "draft_id": "assistant_draft_sensitive_connection",
+                                "payload": {
+                                    "api_key": "sk-history-should-not-leak",
+                                    "auth_config": {"token": "token-should-not-leak"},
+                                    "endpoint_url": "https://api.example.com",
+                                    "name": "敏感连接",
+                                    "plugin_id": "plugin_sensitive",
+                                    "request_config": {
+                                        "headers": {
+                                            "Authorization": "Bearer should-not-leak"
+                                        }
+                                    },
+                                    "status": "active",
+                                },
+                                "preview": {
+                                    "diffs": [
+                                        {
+                                            "current": "old-secret",
+                                            "field": "auth_config.token",
+                                            "label": "Token",
+                                            "proposed": "new-secret",
+                                        }
+                                    ],
+                                    "validation": {"issues": [], "status": "passed"},
+                                },
+                                "requires_confirmation": True,
+                                "risk_level": "medium",
+                                "title": "敏感连接草案",
+                                "wizard_steps": [
+                                    {
+                                        "key": "configuration",
+                                        "status": "ready",
+                                        "summary": "使用密钥配置连接",
+                                        "title": "配置",
+                                    }
+                                ],
+                            }
+                        ],
+                        "tool": "assistant.action_draft",
+                    }
+                ]
+            },
+            "role": "assistant",
+            "updated_at": "2026-06-20T08:01:00+00:00",
+            "user_id": "user_admin",
+        }
+    }
+
+    response = client.get(
+        "/api/assistant/conversations/conversation_sensitive_draft/messages",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["data"]["items"][0]["tool_results"][0]["items"][0]
+    serialized_item = json.dumps(item, ensure_ascii=False)
+    assert item["payload"] == {
+        "endpoint_url": "https://api.example.com",
+        "name": "敏感连接",
+        "plugin_id": "plugin_sensitive",
+        "status": "active",
+    }
+    assert item["preview"]["diffs"][0]["current"] == "***"
+    assert item["preview"]["diffs"][0]["proposed"] == "***"
+    assert "sk-history-should-not-leak" not in serialized_item
+    assert "token-should-not-leak" not in serialized_item
+    assert "should-not-leak" not in serialized_item
+    assert "Authorization" not in serialized_item
+    assert "auth_config" not in serialized_item
+
+
 def test_ai_assistant_chat_runs_exact_explicit_mention_when_similar_jobs_exist(
     monkeypatch,
 ):
@@ -7972,7 +8071,12 @@ def test_ai_assistant_chat_persists_user_scoped_conversation_history(monkeypatch
         "/api/assistant/conversations",
         headers=reviewer_headers,
     ).json()["data"]
-    assert reviewer_conversations == {"items": [], "total": 0}
+    assert reviewer_conversations == {
+        "items": [],
+        "limit": 50,
+        "next_cursor": None,
+        "total": 0,
+    }
     forbidden_messages = client.get(
         f"/api/assistant/conversations/{conversation_id}/messages",
         headers=reviewer_headers,

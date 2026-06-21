@@ -255,6 +255,45 @@ def test_assistant_history_does_not_collapse_blank_titles():
     ]
 
 
+def test_assistant_history_paginates_conversations_with_cursor():
+    store = MemoryStore()
+    store.assistant_conversations = {
+        f"conversation_{index}": {
+            "created_at": f"2026-06-20T0{index}:00:00+00:00",
+            "id": f"conversation_{index}",
+            "last_message_at": f"2026-06-20T0{index}:01:00+00:00",
+            "message_count": 1,
+            "product_id": None,
+            "title": f"对话 {index}",
+            "updated_at": f"2026-06-20T0{index}:01:00+00:00",
+            "user_id": "user_admin",
+        }
+        for index in range(1, 5)
+    }
+
+    first_page = assistant_conversations_response(
+        store,
+        collapse_duplicates=False,
+        limit=2,
+        user_id="user_admin",
+    )
+
+    assert [item["id"] for item in first_page["items"]] == ["conversation_4", "conversation_3"]
+    assert first_page["limit"] == 2
+    assert first_page["next_cursor"] == "2026-06-20T03:01:00+00:00|conversation_3"
+
+    second_page = assistant_conversations_response(
+        store,
+        collapse_duplicates=False,
+        cursor=first_page["next_cursor"],
+        limit=2,
+        user_id="user_admin",
+    )
+
+    assert [item["id"] for item in second_page["items"]] == ["conversation_2", "conversation_1"]
+    assert second_page["next_cursor"] is None
+
+
 def test_ensure_assistant_conversation_reuses_existing_command_conversation():
     store = MemoryStore()
     user_id = "user_admin"

@@ -58,6 +58,7 @@
 - AI 助手 @ 能力配置页运营化：配置页改用 Ant Design Table，补充关键词搜索、状态筛选、角色筛选、分页、批量启停和按钮级 loading，降低重复提交和长表格横向维护成本。
 - AI 助手真实页面 smoke 扩展：`npm run test:e2e:assistant` 新增桌面、窄屏和平板/手机视口布局断言，覆盖输入框可见、`+` 面板完整、最近对话可见和无横向溢出。
 - AI 助手历史会话折叠边界修复：空标题会话不再互相折叠，DB-backed runtime 下命令签名复用会优先通过 repository 查找最近会话。
+- AI 助手整体 review 修复：最近对话支持服务端分页和加载更多，历史草案工具结果按白名单脱敏，指标明细按 limit 下推，草案深链自动滚动到可视区域，运行依赖提示可手动重新检测。
 
 ### Added
 - AI 助手运行环境自检：`/api/assistant/runtime-status` 返回 `checks[]`、`ready` 和修复入口，页面展示规则能力模式、模型网关/Embedding/Redis/GBrain 状态和下一步配置入口。

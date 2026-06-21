@@ -37,6 +37,8 @@ type ApiErrorPayload = {
 
 type ListResponse<T> = {
   items: T[];
+  limit?: number;
+  next_cursor?: string | null;
   page?: number;
   page_size?: number;
   total: number;
@@ -606,6 +608,13 @@ export type AssistantConversationSummary = {
   sourceMessageHash?: string;
   title: string;
   updatedAt?: string;
+};
+
+export type AssistantConversationPage = {
+  items: AssistantConversationSummary[];
+  limit: number;
+  nextCursor?: string;
+  total: number;
 };
 
 export type AssistantConversationMessage = {
@@ -3024,23 +3033,10 @@ export async function markAssistantActionDraftViewed(
   );
 }
 
-export async function fetchAssistantConversations(params: {
-  collapse?: boolean;
-} = {}): Promise<AssistantConversationSummary[]> {
-  const token = requireAccessToken();
-  const searchParams = new URLSearchParams();
-  if (params.collapse === false) {
-    searchParams.set('collapse', 'false');
-  }
-  const query = searchParams.toString();
-  const response = await apiRequest<ListResponse<AssistantConversationApiRecord>>(
-    `/api/assistant/conversations${query ? `?${query}` : ''}`,
-    {
-      method: 'GET',
-      token,
-    },
-  );
-  return response.items.map((item) => ({
+function assistantConversationApiRecordToSummary(
+  item: AssistantConversationApiRecord,
+): AssistantConversationSummary {
+  return {
     collapsedConversationIds: item.collapsed_conversation_ids,
     collapsedMessageCount: item.collapsed_message_count,
     commandSignature: item.command_signature,
@@ -3055,7 +3051,48 @@ export async function fetchAssistantConversations(params: {
     sourceMessageHash: item.source_message_hash,
     title: item.title ?? '新对话',
     updatedAt: item.updated_at,
-  }));
+  };
+}
+
+export async function fetchAssistantConversationPage(params: {
+  collapse?: boolean;
+  cursor?: string;
+  limit?: number;
+} = {}): Promise<AssistantConversationPage> {
+  const token = requireAccessToken();
+  const searchParams = new URLSearchParams();
+  if (params.collapse === false) {
+    searchParams.set('collapse', 'false');
+  }
+  if (params.cursor) {
+    searchParams.set('cursor', params.cursor);
+  }
+  if (params.limit) {
+    searchParams.set('limit', String(params.limit));
+  }
+  const query = searchParams.toString();
+  const response = await apiRequest<ListResponse<AssistantConversationApiRecord>>(
+    `/api/assistant/conversations${query ? `?${query}` : ''}`,
+    {
+      method: 'GET',
+      token,
+    },
+  );
+  return {
+    items: response.items.map(assistantConversationApiRecordToSummary),
+    limit: Number(response.limit ?? params.limit ?? response.items.length),
+    nextCursor: response.next_cursor ?? undefined,
+    total: Number(response.total ?? response.items.length),
+  };
+}
+
+export async function fetchAssistantConversations(params: {
+  collapse?: boolean;
+  cursor?: string;
+  limit?: number;
+} = {}): Promise<AssistantConversationSummary[]> {
+  const response = await fetchAssistantConversationPage(params);
+  return response.items;
 }
 
 export async function fetchAssistantConversationMessages(

@@ -308,12 +308,16 @@ def _assistant_runtime_checks(health: dict[str, str]) -> list[dict[str, Any]]:
 def list_assistant_conversations(
     request: Request,
     collapse: bool = True,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, ASSISTANT_ACCESS_ROLES)
     payload = assistant_conversations_response(
         store(request),
         collapse_duplicates=collapse,
+        cursor=cursor,
+        limit=limit,
         user_id=user["id"],
     )
     return envelope(payload, get_trace_id(request))

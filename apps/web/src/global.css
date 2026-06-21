@@ -691,6 +691,12 @@ body {
   text-align: left;
 }
 
+.assistant-history-list .assistant-history-load-more {
+  justify-content: center;
+  min-height: 34px;
+  color: #4b5563;
+}
+
 .assistant-history-active {
   border-color: #2f6fed;
   background: #eef4ff;

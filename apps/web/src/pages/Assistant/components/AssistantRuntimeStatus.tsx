@@ -1,4 +1,4 @@
-import { LinkOutlined, WarningOutlined } from '@ant-design/icons';
+import { LinkOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons';
 import { Button, Space, Tag, Typography } from 'antd';
 import { useMemo } from 'react';
 
@@ -7,8 +7,14 @@ import type { AssistantRuntimeStatus as AssistantRuntimeStatusRecord } from '../
 const { Text } = Typography;
 
 export function AssistantRuntimeStatus({
+  checkedAt,
+  isRefreshing,
+  onRefresh,
   runtimeStatus,
 }: {
+  checkedAt?: string;
+  isRefreshing?: boolean;
+  onRefresh?: () => void;
   runtimeStatus?: AssistantRuntimeStatusRecord;
 }) {
   const requiredAttentionChecks = useMemo(
@@ -31,6 +37,20 @@ export function AssistantRuntimeStatus({
         <WarningOutlined />
         <Text strong>助手运行依赖异常</Text>
         <Text type="secondary">部分必需服务不可用，可能影响聊天、草案记录和运行追踪。</Text>
+        {checkedAt ? (
+          <Text type="secondary">{`检测于 ${new Date(checkedAt).toLocaleTimeString()}`}</Text>
+        ) : null}
+        {onRefresh ? (
+          <Button
+            aria-label="重新检测"
+            icon={<ReloadOutlined />}
+            loading={isRefreshing}
+            size="small"
+            onClick={onRefresh}
+          >
+            重新检测
+          </Button>
+        ) : null}
       </Space>
       <div className="assistant-runtime-checks" aria-label="助手运行自检">
         {requiredAttentionChecks.map((item) => (

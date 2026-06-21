@@ -130,9 +130,12 @@ class AssistantDraftBuilder:
 
     def plugin_connection_draft(self, *, message: str) -> dict[str, Any]:
         scenario = self._plugin_connection_scenario(message.lower())
-        plugin = _find_plugin_by_code(self.context["integration_plugins"], scenario)
-        plugin_id = _plugin_id_for_code(plugin, scenario)
-        item = self._plugin_connection_draft_item(scenario, plugin_id=plugin_id)
+        if scenario == "provider_choice":
+            item = _provider_choice_draft_item("create_plugin_connection")
+        else:
+            plugin = _find_plugin_by_code(self.context["integration_plugins"], scenario)
+            plugin_id = _plugin_id_for_code(plugin, scenario)
+            item = self._plugin_connection_draft_item(scenario, plugin_id=plugin_id)
         return {
             "intent": "plugin_connection_draft",
             "items": [item],
@@ -156,17 +159,20 @@ class AssistantDraftBuilder:
 
     def plugin_action_draft(self, *, message: str) -> dict[str, Any]:
         scenario = self._plugin_action_scenario(message.lower())
-        plugin = _find_plugin_by_code(self.context["integration_plugins"], scenario)
-        plugin_id = _plugin_id_for_code(plugin, scenario)
-        connection = _first_active(
-            self.context["plugin_connections"],
-            predicate=lambda item: item.get("plugin_id") == plugin_id,
-        )
-        item = self._plugin_action_draft_item(
-            scenario,
-            connection_id=connection.get("id") if connection else None,
-            plugin_id=plugin_id,
-        )
+        if scenario == "provider_choice":
+            item = _provider_choice_draft_item("create_plugin_action")
+        else:
+            plugin = _find_plugin_by_code(self.context["integration_plugins"], scenario)
+            plugin_id = _plugin_id_for_code(plugin, scenario)
+            connection = _first_active(
+                self.context["plugin_connections"],
+                predicate=lambda item: item.get("plugin_id") == plugin_id,
+            )
+            item = self._plugin_action_draft_item(
+                scenario,
+                connection_id=connection.get("id") if connection else None,
+                plugin_id=plugin_id,
+            )
         return {
             "intent": "plugin_action_draft",
             "items": [item],
@@ -227,15 +233,15 @@ class AssistantDraftBuilder:
     def scheduled_job_draft(self) -> dict[str, Any]:
         template = scheduled_job_template_by_code("weekly_feedback_insight") or {}
         defaults = _template_payload_defaults(template)
-        product = _first_active(self.context["products"])
+        product = _single_active(self.context["products"])
         action = _find_by_code(self.context["plugin_actions"], "fetch_weekly_user_feedback")
         connection = _connection_for_action(self.context["plugin_connections"], action)
         model_gateway = _first_active(
             self.context["model_gateway_configs"],
             predicate=lambda item: item.get("is_default") is True,
-        ) or _first_active(self.context["model_gateway_configs"])
-        agent = _first_active(self.context["ai_agents"])
-        skill = _first_active(self.context["ai_skills"])
+        ) or _single_active(self.context["model_gateway_configs"])
+        agent = _single_active(self.context["ai_agents"])
+        skill = _single_active(self.context["ai_skills"])
         knowledge_document = _first_indexed_knowledge_document(
             self.context["knowledge_documents"],
         )
@@ -885,6 +891,8 @@ class AssistantDraftBuilder:
             return "gitlab"
         if "github" in normalized_message:
             return "github"
+        if _ambiguous_git_provider(self.context["integration_plugins"]):
+            return "provider_choice"
         if _find_plugin_by_code(self.context["integration_plugins"], "github"):
             return "github"
         return "gitlab"
@@ -896,6 +904,8 @@ class AssistantDraftBuilder:
             return "gitlab"
         if "github" in normalized_message:
             return "github"
+        if _ambiguous_git_provider(self.context["integration_plugins"]):
+            return "provider_choice"
         if _find_plugin_by_code(self.context["integration_plugins"], "github"):
             return "github"
         return "gitlab"
@@ -1143,6 +1153,62 @@ def _first_active(
             continue
         return item
     return None
+
+
+def _single_active(
+    items: list[dict[str, Any]],
+    *,
+    predicate: Any | None = None,
+) -> dict[str, Any] | None:
+    active_items = [
+        item
+        for item in items
+        if item.get("status") == "active" and (predicate is None or predicate(item))
+    ]
+    return active_items[0] if len(active_items) == 1 else None
+
+
+def _ambiguous_git_provider(items: list[dict[str, Any]]) -> bool:
+    return (
+        _find_plugin_by_code(items, "github") is not None
+        and _find_plugin_by_code(items, "gitlab") is not None
+    )
+
+
+def _provider_choice_draft_item(action: str) -> dict[str, Any]:
+    if action == "create_plugin_connection":
+        return {
+            "action": "create_plugin_connection",
+            "draft_id": "assistant_draft_plugin_provider_choice_connection",
+            "payload": {
+                "endpoint_url": "",
+                "name": "请选择 GitHub 或 GitLab 插件连接",
+                "plugin_id": None,
+                "provider_candidates": ["github", "gitlab"],
+                "status": "active",
+            },
+            "requires_confirmation": True,
+            "risk_level": "medium",
+            "title": "选择代码托管插件连接",
+            "wizard_steps": _provider_choice_wizard_steps("选择后补齐连接地址和认证方式"),
+        }
+    return {
+        "action": "create_plugin_action",
+        "draft_id": "assistant_draft_plugin_provider_choice_action",
+        "payload": {
+            "action_type": "http_request",
+            "code": "",
+            "name": "请选择 GitHub 或 GitLab 插件动作",
+            "plugin_id": None,
+            "provider_candidates": ["github", "gitlab"],
+            "requires_human_review": False,
+            "status": "active",
+        },
+        "requires_confirmation": True,
+        "risk_level": "medium",
+        "title": "选择代码托管插件动作",
+        "wizard_steps": _provider_choice_wizard_steps("选择后补齐动作模板和连接"),
+    }
 
 
 def _find_by_code(items: list[dict[str, Any]], code: str) -> dict[str, Any] | None:
@@ -1400,6 +1466,32 @@ def _scheduled_job_wizard_steps(
             "summary": "确认前置草案后创建定时作业"
             if confirm_dependency_ids
             else "确认后创建定时作业",
+            "title": "确认执行",
+        },
+    ]
+
+
+def _provider_choice_wizard_steps(summary: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "depends_on": [],
+            "key": "provider",
+            "status": "needs_prerequisite",
+            "summary": "检测到 GitHub 和 GitLab 均可用，需要用户明确选择",
+            "title": "选择插件",
+        },
+        {
+            "depends_on": ["provider"],
+            "key": "configuration",
+            "status": "pending",
+            "summary": summary,
+            "title": "补齐配置",
+        },
+        {
+            "depends_on": ["provider", "configuration"],
+            "key": "confirm",
+            "status": "pending",
+            "summary": "确认前不会写入插件配置",
             "title": "确认执行",
         },
     ]

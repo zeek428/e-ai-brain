@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.596 |
+| 功能版本 | v1.1.597 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.597 | 2026-06-21 | 补充 AI 助手历史分页、历史草案脱敏、指标明细 limit 下推和草案深链可见性验收 | Codex |
 | v1.1.596 | 2026-06-21 | 补充研发执行器策略任务类型选项验收：新增策略下拉必须覆盖 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析 | Codex |
 | v1.1.595 | 2026-06-21 | 补充研发执行器策略验收：策略只引用插件管理 AI 执行器 Runner，不装配 Agent/Skill；研发任务启动命中策略后进入 Runner 队列，完成后回写任务并进入人工确认 | Codex |
 | v1.1.594 | 2026-06-20 | 补充前端展示型 UTC 时间转北京时间验收，覆盖用户洞察、代码巡检、定时作业下次运行/运行详情、Runner 和助手引用时间显示不再少 8 小时或暴露 ISO 原文 | Codex |
@@ -694,6 +695,8 @@ TC-AIBRAIN-{模块}-{类型}-{序号}
 以下用例适用于 AI 助手从问答页升级为可引用、可配置、可调度工作台的实现与回归。已落地 P0 自动化测试应拆入 `test_assistant_chat.py`、`test_assistant_chat_persistence.py`、`test_scheduled_ai_jobs.py`、`test_plugin_management.py` 和 `AssistantPage.test.tsx`，并补充真实浏览器页面 smoke。
 
 本轮增量验收口径：`TC-AIBRAIN-ASSISTANT-FUNC-010` 的定时作业和运行记录候选必须在产品级 scope 用户下过滤其它产品对象，回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_reference_candidates_filter_operational_items_by_product_scope`；`TC-AIBRAIN-ASSISTANT-FUNC-013` 中从草案应用到定时作业、插件连接或插件动作表单后，保存必须先调用 `PATCH /api/assistant/action-drafts/{draft_id}` 提交最终 payload 与 `modified_fields`，再调用 confirm，前端不得绕过草案直接创建领域资源，回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_payload_update_marks_modified_before_confirmation`、`apps/web/tests/ScheduledJobsPage.test.tsx::opens the create dialog from an assistant scheduled job draft and confirms through the server draft`、`apps/web/tests/PluginsPage.test.tsx::applies assistant plugin action drafts to the action form and confirms through the server draft`、`apps/web/tests/PluginsPage.test.tsx::applies assistant plugin connection drafts to the connection form and confirms through the server draft`；`TC-AIBRAIN-ASSISTANT-FUNC-014` 要求重复确认已成功草案幂等返回既有动作运行且不重复创建资源，回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_confirm_is_idempotent_after_success`；`TC-AIBRAIN-ASSISTANT-API-021B` 要求终态草案拒绝修改标记和 payload 更新，回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_action_draft_modification_rejects_terminal_status`；`TC-AIBRAIN-ASSISTANT-FUNC-022B` 要求管理员可在 `/system/assistant-role-quick-tasks` 查看、启停和调整灰度，回归见 `apps/web/tests/AssistantRoleQuickTasksPage.test.tsx::lists, toggles, and updates rollout for assistant quick task configs`。
+
+本轮补充验收口径：最近对话列表必须支持 `cursor/limit` 分页并在前端提供“加载更多”，重复折叠后的翻页不得重复或漏会话，回归见 `apps/api/tests/test_assistant_chat_service.py::test_assistant_history_paginates_conversations_with_cursor` 和 `apps/web/tests/AssistantPage.test.tsx::fetches paginated assistant conversation summaries with cursor metadata`；历史消息恢复草案时必须移除或脱敏 `api_key/auth_config/Authorization/token/secret/password` 等敏感字段，敏感 preview diff 只返回 `***`，回归见 `apps/api/tests/test_assistant_chat.py::test_ai_assistant_history_redacts_sensitive_action_draft_payload_fields`；`/api/assistant/metrics/details` 必须按 `limit` 构造明细并返回同口径 total，避免指标详情页扫描或展开全部历史；草案深链 `/assistant?draft_id=...` 加载成功后必须滚动到草案链接状态区域，运行状态异常提示必须支持手动重新检测，回归见 `apps/web/tests/AssistantPage.test.tsx` 中草案深链和运行状态自检用例。
 
 | 编号 | 阶段 | 优先级 | 用例 | 预期 |
 |------|------|--------|------|------|

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   fetchAssistantRuntimeStatus,
@@ -7,28 +7,60 @@ import {
 } from '../../../services/aiBrain';
 
 export function useAssistantRuntimeStatus() {
+  const isMountedRef = useRef(true);
+  const [isRefreshingRuntimeStatus, setIsRefreshingRuntimeStatus] = useState(false);
+  const [runtimeStatusCheckedAt, setRuntimeStatusCheckedAt] = useState<string>();
   const [runtimeStatus, setRuntimeStatus] = useState<AssistantRuntimeStatus>();
 
-  useEffect(() => {
+  const refreshRuntimeStatus = useCallback(async () => {
     if (!getStoredCurrentUser()) {
-      return undefined;
+      if (isMountedRef.current) {
+        setRuntimeStatus(undefined);
+        setRuntimeStatusCheckedAt(undefined);
+      }
+      return;
     }
-    let didCancel = false;
-    fetchAssistantRuntimeStatus()
-      .then((status) => {
-        if (!didCancel) {
-          setRuntimeStatus(status);
-        }
-      })
-      .catch(() => {
-        if (!didCancel) {
-          setRuntimeStatus(undefined);
-        }
-      });
-    return () => {
-      didCancel = true;
-    };
+    setIsRefreshingRuntimeStatus(true);
+    try {
+      const nextStatus = await fetchAssistantRuntimeStatus();
+      if (!isMountedRef.current) {
+        return;
+      }
+      setRuntimeStatus(nextStatus);
+      setRuntimeStatusCheckedAt(new Date().toISOString());
+    } catch {
+      if (!isMountedRef.current) {
+        return;
+      }
+      setRuntimeStatus(undefined);
+      setRuntimeStatusCheckedAt(new Date().toISOString());
+    } finally {
+      if (isMountedRef.current) {
+        setIsRefreshingRuntimeStatus(false);
+      }
+    }
   }, []);
 
-  return runtimeStatus;
+  useEffect(() => {
+    isMountedRef.current = true;
+    void refreshRuntimeStatus();
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [refreshRuntimeStatus]);
+
+  useEffect(() => {
+    const refreshOnFocus = () => {
+      void refreshRuntimeStatus();
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    return () => window.removeEventListener('focus', refreshOnFocus);
+  }, [refreshRuntimeStatus]);
+
+  return {
+    isRefreshingRuntimeStatus,
+    refreshRuntimeStatus,
+    runtimeStatus,
+    runtimeStatusCheckedAt,
+  };
 }

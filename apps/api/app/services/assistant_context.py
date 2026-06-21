@@ -361,6 +361,134 @@ def _assistant_history_tool_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+ASSISTANT_HISTORY_REDACTED_VALUE = "***"
+ASSISTANT_HISTORY_SENSITIVE_EXACT_KEYS = {
+    "api-key",
+    "api_key",
+    "apikey",
+    "auth_config",
+    "authorization",
+    "cookie",
+    "credentials",
+    "password",
+    "private_key",
+    "secret",
+    "set-cookie",
+    "set_cookie",
+}
+ASSISTANT_HISTORY_SENSITIVE_KEY_PARTS = (
+    "access_token",
+    "api_key",
+    "apikey",
+    "bearer",
+    "credential",
+    "cookie",
+    "password",
+    "private_key",
+    "refresh_token",
+    "secret",
+    "token",
+)
+ASSISTANT_ACTION_DRAFT_PUBLIC_PAYLOAD_FIELDS = {
+    "create_ai_agent": {
+        "code",
+        "default_skill_ids",
+        "description",
+        "model_gateway_config_id",
+        "name",
+        "status",
+    },
+    "create_ai_skill": {
+        "code",
+        "description",
+        "input_schema",
+        "name",
+        "output_schema",
+        "prompt_template",
+        "status",
+    },
+    "create_analysis_draft": {
+        "analysis_type",
+        "findings",
+        "source_reference_ids",
+        "summary",
+        "title",
+    },
+    "create_plugin_action": {
+        "action_type",
+        "assistant_prerequisite_draft_ids",
+        "code",
+        "connection_id",
+        "description",
+        "input_schema",
+        "name",
+        "output_schema",
+        "plugin_id",
+        "provider_candidates",
+        "requires_human_review",
+        "result_mapping",
+        "status",
+    },
+    "create_plugin_connection": {
+        "base_url",
+        "code",
+        "description",
+        "endpoint_url",
+        "environment",
+        "max_retries",
+        "name",
+        "plugin_id",
+        "provider_candidates",
+        "status",
+        "timeout_seconds",
+    },
+    "create_rd_task": {
+        "input",
+        "requirement_id",
+        "task_type",
+        "title",
+    },
+    "create_scheduled_job": {
+        "agent_id",
+        "assistant_prerequisite_draft_ids",
+        "config_json",
+        "cron_expression",
+        "enabled",
+        "execution_mode",
+        "interval_seconds",
+        "job_type",
+        "knowledge_document_ids",
+        "model_gateway_config_id",
+        "name",
+        "plugin_action_id",
+        "plugin_action_ids",
+        "plugin_connection_id",
+        "plugin_connection_ids",
+        "plugin_input_mapping",
+        "product_id",
+        "schedule_type",
+        "skill_ids",
+        "source_system",
+    },
+}
+
+
+def _history_sensitive_key(key: Any) -> bool:
+    normalized = str(key or "").strip().replace(".", "_").replace("-", "_").lower()
+    if not normalized:
+        return False
+    if normalized in ASSISTANT_HISTORY_SENSITIVE_EXACT_KEYS:
+        return True
+    return any(part in normalized for part in ASSISTANT_HISTORY_SENSITIVE_KEY_PARTS)
+
+
+def _history_sensitive_diff_item(value: dict[str, Any]) -> bool:
+    for key in ("field", "key", "path", "name", "label"):
+        if _history_sensitive_key(value.get(key)):
+            return True
+    return False
+
+
 def _safe_history_json(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, int | float | bool) or value is None:
         return value
@@ -369,15 +497,58 @@ def _safe_history_json(value: Any, *, depth: int = 0) -> Any:
     if depth >= 3:
         return _history_text_excerpt(value, limit=180)
     if isinstance(value, dict):
-        return {
-            str(key): _safe_history_json(child, depth=depth + 1)
-            for key, child in value.items()
-            if str(key).lower()
-            not in {"content", "text", "body", "chunk_text", "raw", "prompt", "markdown"}
-        }
+        sensitive_diff = _history_sensitive_diff_item(value)
+        public_value: dict[str, Any] = {}
+        for key, child in value.items():
+            if _history_sensitive_key(key) or str(key).lower() in {
+                "content",
+                "text",
+                "body",
+                "chunk_text",
+                "raw",
+                "prompt",
+                "markdown",
+            }:
+                continue
+            if sensitive_diff and str(key).lower() in {"field", "key", "label", "name", "path"}:
+                public_value[str(key)] = ASSISTANT_HISTORY_REDACTED_VALUE
+                continue
+            if sensitive_diff and str(key).lower() in {
+                "current",
+                "default",
+                "previous",
+                "proposed",
+                "value",
+            }:
+                public_value[str(key)] = ASSISTANT_HISTORY_REDACTED_VALUE
+                continue
+            public_value[str(key)] = _safe_history_json(child, depth=depth + 1)
+        return public_value
     if isinstance(value, list):
         return [_safe_history_json(item, depth=depth + 1) for item in value[:8]]
     return _history_text_excerpt(value)
+
+
+def _public_action_draft_payload(item: dict[str, Any]) -> dict[str, Any]:
+    payload = item.get("payload")
+    if not isinstance(payload, dict):
+        return {}
+    action = str(item.get("action") or "").strip()
+    allowed_fields = ASSISTANT_ACTION_DRAFT_PUBLIC_PAYLOAD_FIELDS.get(action)
+    if not allowed_fields:
+        allowed_fields = {
+            key
+            for key, value in payload.items()
+            if not _history_sensitive_key(key) and isinstance(value, str | int | float | bool | list | dict)
+        }
+    public_payload: dict[str, Any] = {}
+    for key in allowed_fields:
+        if key not in payload or _history_sensitive_key(key):
+            continue
+        value = _safe_history_json(payload[key])
+        if value not in ({}, []):
+            public_payload[key] = value
+    return public_payload
 
 
 def _history_text_excerpt(value: Any, *, limit: int = ASSISTANT_HISTORY_CONTENT_LIMIT) -> str:
@@ -577,7 +748,9 @@ def _public_light_tool_item(tool_name: str, item: dict[str, Any]) -> dict[str, A
         value = item.get(key)
         if value is None:
             continue
-        safe_value = _safe_history_json(value)
+        safe_value = _public_action_draft_payload(item) if (
+            tool_name == "assistant.action_draft" and key == "payload"
+        ) else _safe_history_json(value)
         if safe_value in ({}, []):
             continue
         public_item[key] = safe_value
