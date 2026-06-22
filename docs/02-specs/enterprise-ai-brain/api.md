@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.375 |
+| 功能版本 | v1.1.376 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.376 | 2026-06-21 | AI 助手效果指标补齐产品/角色/时间段/动作过滤、每日趋势、草案类型趋势和 `/api/assistant/metrics/export` 导出契约；助手页面样式迁移到页面级 scoped CSS | Codex |
 | v1.1.375 | 2026-06-21 | AI 助手会话列表新增 cursor/limit 分页响应，历史草案工具结果输出安全白名单和敏感字段脱敏，指标明细按 limit 下推返回 | Codex |
 | v1.1.374 | 2026-06-21 | 研发执行器策略任务类型选项口径补齐：PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析均可在策略配置中选择 | Codex |
 | v1.1.373 | 2026-06-21 | 研发执行器策略 API 新增：需求交付策略只匹配插件管理下 Codex/Claude Code/OpenClaw Runner，不装配 Agent/Skill；AI 任务启动命中策略后返回 `executor_task_id/runner_id`，AI 执行器任务列表支持按 `ai_task_id` 反查 | Codex |
@@ -637,8 +638,9 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/modification` | 标记当前用户对草案应用后的字段修改，写入用户修改率指标元数据；仅 pending 草案可写，confirmed/cancelled/expired/failed 返回 `409 DRAFT_NOT_PENDING` 或 `DRAFT_EXPIRED`。 |
 | Assistant | GET | `/api/assistant/chat-runs` | 查询当前登录用户的助手聊天运行记录，支持 `status=running,cancelled,failed,succeeded` 和 `limit`，用于刷新后恢复未完成生成、展示最近停止记录和继续打开所属会话。 |
 | Assistant | POST | `/api/assistant/chat-runs/{run_id}/cancel` | 取消当前登录用户的助手聊天运行；服务端写入运行与消息取消状态，并尽量中断仍在等待的模型网关请求，已终止或不存在运行返回幂等/明确错误语义。 |
-| Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，包括草案采纳、运行成功、用户修改、显式引用使用情况、助手聊天生成成功/取消/失败/平均耗时/模型失败率和 `funnel.stages[]` 效果漏斗（触发意图、生成草案、查看详情、修改字段、确认草案、运行成功、继续追问/修复）；响应同时返回 `instrumentation`，说明草案查看数中真实埋点和历史推断口径。 |
-| Assistant | GET | `/api/assistant/metrics/details` | 按 `metric`、`window_days` 和 `limit` 返回当前用户指标明细列表，支持从草案生成、草案状态、动作运行、聊天运行、定时作业运行、失败修复、引用使用和知识命中钻取到脱敏来源记录。 |
+| Assistant | GET | `/api/assistant/metrics` | 查询当前登录用户的 AI 助手效果指标，支持 `window_days/date_from/date_to/product_id/role/action` 过滤；返回草案采纳、运行成功、用户修改、显式引用使用、AI 生成质量、`funnel.stages[]`、`dimensions.products[]/roles[]`、`trends.daily[]/drafts_by_action_daily[]` 和 `instrumentation`。 |
+| Assistant | GET | `/api/assistant/metrics/details` | 按 `metric`、`window_days/date_from/date_to/product_id/role/action` 和 `limit` 返回当前用户指标明细列表，支持从草案生成、草案状态、动作运行、聊天运行、定时作业运行、失败修复、引用使用和知识命中钻取到脱敏来源记录。 |
+| Assistant | GET | `/api/assistant/metrics/export` | 按同一指标过滤口径导出助手效果指标，`format=csv` 返回 `content/content_type/filename`，`format=json` 返回结构化指标 payload；导出不得包含完整对话正文、知识正文、密钥、Header、完整 Prompt 或外部调用明文。 |
 | Requirement | GET | `/api/requirements` | 需求列表。 |
 | Requirement | POST | `/api/requirements` | 新增待审批需求。 |
 | Requirement | POST | `/api/requirements/batch-assign-owner` | 批量分配需求负责人。 |
@@ -1794,15 +1796,40 @@ GET /api/assistant/draft-templates
 AI 助手效果指标：
 
 ```http
-GET /api/assistant/metrics?window_days=30
+GET /api/assistant/metrics?window_days=30&product_id=product_alpha&role=admin&action=create_scheduled_job
 ```
 
 响应：
 
 ```json
-{
-  "data": {
-    "drafts_by_action": [
+	{
+	  "data": {
+	    "dimensions": {
+	      "products": [
+	        {
+	          "product_id": "product_alpha",
+	          "draft_total": 4,
+	          "draft_confirmed_count": 3,
+	          "message_total": 12,
+	          "chat_run_total": 5,
+	          "scheduled_job_run_total": 4,
+	          "scheduled_job_run_succeeded_count": 3,
+	          "scheduled_job_run_failed_count": 1,
+	          "draft_adoption_rate": 0.75,
+	          "scheduled_job_run_success_rate": 0.75
+	        }
+	      ],
+	      "roles": [
+	        {
+	          "role": "admin",
+	          "draft_total": 5,
+	          "message_total": 18,
+	          "chat_run_total": 6,
+	          "scheduled_job_run_total": 8
+	        }
+	      ]
+	    },
+	    "drafts_by_action": [
       {
         "action": "create_scheduled_job",
         "cancelled_count": 0,
@@ -1812,8 +1839,16 @@ GET /api/assistant/metrics?window_days=30
         "pending_count": 1,
         "total": 4
       }
-    ],
-    "summary": {
+	    ],
+	    "filters": {
+	      "action": "create_scheduled_job",
+	      "date_from": null,
+	      "date_to": null,
+	      "product_id": "product_alpha",
+	      "role": "admin",
+	      "window_days": 30
+	    },
+	    "summary": {
       "action_run_failed_count": 1,
       "action_run_succeeded_count": 3,
       "action_run_success_rate": 0.75,
@@ -1847,8 +1882,36 @@ GET /api/assistant/metrics?window_days=30
       "scheduled_job_run_success_rate": 0.75,
       "scheduled_job_run_total": 8,
       "user_message_total": 8
-    },
-    "instrumentation": {
+	    },
+	    "trends": {
+	      "daily": [
+	        {
+	          "day": "2026-06-21",
+	          "draft_total": 2,
+	          "draft_confirmed_count": 1,
+	          "message_total": 4,
+	          "chat_run_total": 2,
+	          "chat_run_succeeded_count": 2,
+	          "chat_run_failed_count": 0,
+	          "scheduled_job_run_total": 1,
+	          "scheduled_job_run_succeeded_count": 1,
+	          "scheduled_job_run_failed_count": 0
+	        }
+	      ],
+	      "drafts_by_action_daily": [
+	        {
+	          "day": "2026-06-21",
+	          "action": "create_scheduled_job",
+	          "total": 2,
+	          "pending_count": 1,
+	          "confirmed_count": 1,
+	          "cancelled_count": 0,
+	          "expired_count": 0,
+	          "failed_count": 0
+	        }
+	      ]
+	    },
+	    "instrumentation": {
       "notes": [
         {
           "code": "DRAFT_VIEW_TRACKING_ROLLOUT",
@@ -1867,7 +1930,7 @@ GET /api/assistant/metrics?window_days=30
 }
 ```
 
-该接口只返回当前登录用户范围内的助手效果数据，`window_days` 可选，范围为 1 到 365；未传时统计全部时间。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + expired + failed) / draft_total`，动作运行成功率为 `succeeded / action_run_total`，定时作业运行成功率为 `scheduled_job_run_succeeded_count / scheduled_job_run_total`，失败修复率为“失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用”的比例，非 `manual_rerun` 的成功运行即使携带 `source_run_id` 也不得计入修复；显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。定时作业运行指标不得按“助手创建或引用过的作业 ID”把该作业后续所有调度运行都归入助手，只能统计 `scheduled_job_runs.triggered_by_assistant=true` 且携带 `assistant_action_run_id`、`assistant_action_draft_id` 或 `assistant_source_message_id` 的运行、用户消息显式引用的具体 `scheduled_job_run`，以及这些运行通过 `source_run_id` 形成的复跑链；响应必须同时返回 `scheduled_job_run_attribution.items[]`，按“助手触发、显式引用、复跑链”解释成功率分母来源。知识引用命中率为“用户在同一会话显式引用的知识对象，后续助手回复也引用该知识对象”的比例；用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，前端从助手草案带入定时作业表单并保存时，若最终 payload 与草案初始 payload 在受跟踪字段上有差异，必须先调用 `POST /api/assistant/action-drafts/{draft_id}/modification` 写入该元数据；草案查看漏斗优先依据 `POST /api/assistant/action-drafts/{draft_id}/view` 写入的查看元数据统计，其中 `draft_detail_viewed_count` 只统计 `detail_viewed_at`，`draft_deeplink_viewed_count` 只统计 `deeplink_viewed_at`，`draft_tracked_viewed_count` 表示有真实查看埋点的草案数。为避免历史草案在埋点上线前全部显示为 0，`draft_viewed_count` 采用有效查看口径：真实查看埋点、已确认/取消/失败、存在用户修改或已产生动作运行的草案都计为被有效查看；`draft_inferred_viewed_count` 单独展示其中仅由历史行为推断的数量，`instrumentation.notes[]` 必须说明该口径。AI 助手工作台侧栏可按需调用该接口展示草案生成数、草案确认率、用户修改率、`@` 引用使用率、作业运行成功率、失败修复率和知识引用命中率，并展示草案状态、草案类型、作业运行成功/失败/总数、失败运行已修复/失败总数、运行归因来源、已引用用户消息/用户消息总数、知识命中/知识请求/知识引用数等分子分母计数，便于解释关键比率和定位闭环卡点。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
+该接口只返回当前登录用户范围内的助手效果数据，`window_days` 可选，范围为 1 到 365；`date_from/date_to` 可传 ISO 日期或时间并与 `window_days` 共同收敛时间窗口；`product_id` 按草案 payload、消息 context、运行 result/config 等可识别产品字段过滤；`role` 只能查询当前用户已有角色，非管理员查询其它角色返回空口径；`action` 按草案 action 过滤。草案采纳率为 `confirmed / draft_total`，草案处理率为 `(confirmed + cancelled + expired + failed) / draft_total`，动作运行成功率为 `succeeded / action_run_total`，定时作业运行成功率为 `scheduled_job_run_succeeded_count / scheduled_job_run_total`，失败修复率为“失败运行被成功 `manual_rerun` 通过 `source_run_id` 引用”的比例，非 `manual_rerun` 的成功运行即使携带 `source_run_id` 也不得计入修复；显式引用使用率为 `带 references 的用户消息 / 用户消息总数`。定时作业运行指标不得按“助手创建或引用过的作业 ID”把该作业后续所有调度运行都归入助手，只能统计 `scheduled_job_runs.triggered_by_assistant=true` 且携带 `assistant_action_run_id`、`assistant_action_draft_id` 或 `assistant_source_message_id` 的运行、用户消息显式引用的具体 `scheduled_job_run`，以及这些运行通过 `source_run_id` 形成的复跑链；响应必须同时返回 `scheduled_job_run_attribution.items[]`，按“助手触发、显式引用、复跑链”解释成功率分母来源。知识引用命中率为“用户在同一会话显式引用的知识对象，后续助手回复也引用该知识对象”的比例；用户修改率只依据草案元数据 `user_modified=true` 或 `modified_fields` 非空统计，前端从助手草案带入定时作业表单并保存时，若最终 payload 与草案初始 payload 在受跟踪字段上有差异，必须先调用 `POST /api/assistant/action-drafts/{draft_id}/modification` 写入该元数据；草案查看漏斗优先依据 `POST /api/assistant/action-drafts/{draft_id}/view` 写入的查看元数据统计，其中 `draft_detail_viewed_count` 只统计 `detail_viewed_at`，`draft_deeplink_viewed_count` 只统计 `deeplink_viewed_at`，`draft_tracked_viewed_count` 表示有真实查看埋点的草案数。为避免历史草案在埋点上线前全部显示为 0，`draft_viewed_count` 采用有效查看口径：真实查看埋点、已确认/取消/失败、存在用户修改或已产生动作运行的草案都计为被有效查看；`draft_inferred_viewed_count` 单独展示其中仅由历史行为推断的数量，`instrumentation.notes[]` 必须说明该口径。`dimensions.products[]` 用于定位不同产品的草案闭环和运行成功率，`dimensions.roles[]` 用于解释当前用户角色口径下的使用情况；`trends.daily[]` 和 `trends.drafts_by_action_daily[]` 用于观察时间段内采纳和草案类型变化。AI 助手工作台侧栏可按需调用该接口展示草案生成数、草案确认率、用户修改率、`@` 引用使用率、作业运行成功率、失败修复率和知识引用命中率，并展示草案状态、草案类型、作业运行成功/失败/总数、失败运行已修复/失败总数、运行归因来源、产品维度、角色维度、趋势和导出入口，便于解释关键比率和定位闭环卡点。接口不返回完整提示词、完整回复、知识正文、密钥或外部调用明文。
 
 指标明细钻取：
 
@@ -1905,7 +1968,29 @@ GET /api/assistant/metrics/details?metric=draft_total&window_days=30&limit=50
 }
 ```
 
-`metric` 只允许按服务端白名单映射到草案、动作运行、聊天运行、定时作业运行、失败修复、消息引用或知识引用明细；`limit` 范围 1-100，默认 50。明细和 `/api/assistant/metrics` 使用同一套当前用户过滤、`window_days` 过滤和定时作业助手归因规则；服务端必须按 `limit` 下推构造明细列表，只返回当前页 `items`，同时用同一筛选口径返回匹配 `total`，不得为了展示少量明细而完整展开所有历史记录。响应仅返回脱敏来源元数据和站内入口，不返回完整 prompt、助手完整回复、知识正文、密钥、Header 或外部调用明文。
+`metric` 只允许按服务端白名单映射到草案、动作运行、聊天运行、定时作业运行、失败修复、消息引用或知识引用明细；`limit` 范围 1-100，默认 50。明细和 `/api/assistant/metrics` 使用同一套当前用户、`window_days/date_from/date_to/product_id/role/action` 过滤和定时作业助手归因规则；服务端必须按 `limit` 下推构造明细列表，只返回当前页 `items`，同时用同一筛选口径返回匹配 `total`，不得为了展示少量明细而完整展开所有历史记录。响应仅返回脱敏来源元数据和站内入口，不返回完整 prompt、助手完整回复、知识正文、密钥、Header 或外部调用明文。
+
+指标导出：
+
+```http
+GET /api/assistant/metrics/export?format=csv&window_days=30&product_id=product_alpha
+```
+
+响应：
+
+```json
+{
+  "data": {
+    "content": "section,key,label,value\nsummary,draft_total,草案生成,5\n",
+    "content_type": "text/csv",
+    "filename": "assistant_metrics.csv",
+    "format": "csv"
+  },
+  "trace_id": "trace_..."
+}
+```
+
+`format=csv` 用于前端下载，导出 summary、草案类型拆分、产品维度和角色维度；`format=json` 返回与 `/api/assistant/metrics` 同口径结构化 payload。导出接口必须复用 metrics 的权限、时间、产品、角色、动作过滤和脱敏规则。
 
 `conversation_id` 可为空，服务端会创建新会话；也可传入已有会话 ID 继续对话。若传入的会话 ID 已存在但不属于当前用户，接口返回 404；若 ID 不存在，则按当前用户创建该会话以兼容客户端预分配 ID。成功问答会按当前登录用户保存一条 user 消息和一条 assistant 消息，保存内容不进入 `model_gateway_logs`。
 

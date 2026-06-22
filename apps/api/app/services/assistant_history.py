@@ -140,7 +140,8 @@ def _collapsed_conversation_page(
             if not key[0]:
                 key = (str(item["id"]), key[1])
             if key not in consumed_keys and len(consumed_keys) >= limit:
-                return _collapse_duplicate_conversations(consumed_items)[:limit], last_consumed_cursor
+                collapsed_items = _collapse_duplicate_conversations(consumed_items)[:limit]
+                return collapsed_items, last_consumed_cursor
             consumed_items.append(item)
             consumed_keys.add(key)
             last_consumed_cursor = _conversation_cursor(item)
@@ -204,7 +205,8 @@ def _conversation_page_slice(
             if (
                 (item.get("last_message_at") or item.get("updated_at") or "") < cursor_sort_value
                 or (
-                    (item.get("last_message_at") or item.get("updated_at") or "") == cursor_sort_value
+                    (item.get("last_message_at") or item.get("updated_at") or "")
+                    == cursor_sort_value
                     and str(item.get("id") or "") > cursor_id
                 )
             )

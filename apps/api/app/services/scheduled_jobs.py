@@ -253,6 +253,7 @@ def sync_scheduled_job_store(
 def sync_scheduled_job_run_store(
     current_store: Any,
     *,
+    run_ids: list[str] | None = None,
     scheduled_job_id: str | None = None,
     status: str | None = None,
 ) -> None:
@@ -262,7 +263,11 @@ def sync_scheduled_job_run_store(
     replace_collection(
         current_store,
         "scheduled_job_runs",
-        repository.list_scheduled_job_runs(scheduled_job_id=scheduled_job_id, status=status),
+        repository.list_scheduled_job_runs(
+            run_ids=run_ids,
+            scheduled_job_id=scheduled_job_id,
+            status=status,
+        ),
     )
 
 
@@ -3624,18 +3629,27 @@ def run_scheduled_job_response(
 def list_scheduled_job_runs_response(
     *,
     current_store: Any,
+    run_ids: list[str] | None = None,
     scheduled_job_id: str | None,
     status: str | None,
 ) -> dict[str, Any]:
     if status is not None:
         ensure_enum(status, SCHEDULED_JOB_RUN_STATUSES, "status")
+    normalized_run_ids = {
+        str(run_id).strip()
+        for run_id in (run_ids or [])
+        if str(run_id).strip()
+    }
     sync_scheduled_job_run_store(
         current_store,
+        run_ids=sorted(normalized_run_ids) if normalized_run_ids else None,
         scheduled_job_id=scheduled_job_id,
         status=status,
     )
     items = []
     for run in current_store.scheduled_job_runs.values():
+        if normalized_run_ids and run.get("id") not in normalized_run_ids:
+            continue
         if scheduled_job_id is not None and run.get("scheduled_job_id") != scheduled_job_id:
             continue
         if status is not None and run.get("status") != status:

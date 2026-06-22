@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from io import StringIO
 from typing import Any
 
 ASSISTANT_DRAFT_STATUSES = ("pending", "confirmed", "cancelled", "expired", "failed")
@@ -57,11 +59,21 @@ ASSISTANT_METRIC_DETAIL_LABELS = {
 def assistant_metrics_response(
     current_store: Any,
     *,
+    action: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    product_id: str | None = None,
+    role: str | None = None,
     user: dict[str, Any],
     window_days: int | None = None,
 ) -> dict[str, Any]:
     scoped_rows = _assistant_scoped_metric_rows(
         current_store,
+        action=action,
+        date_from=date_from,
+        date_to=date_to,
+        product_id=product_id,
+        role=role,
         user=user,
         window_days=window_days,
     )
@@ -107,7 +119,16 @@ def assistant_metrics_response(
     continued_followup_or_repair_count = _continued_followup_or_repair_count(user_messages)
 
     return {
+        "dimensions": _assistant_metric_dimensions(scoped_rows, user=user),
         "drafts_by_action": _drafts_by_action(drafts),
+        "filters": _assistant_metrics_filters(
+            action=action,
+            date_from=date_from,
+            date_to=date_to,
+            product_id=product_id,
+            role=role,
+            window_days=window_days,
+        ),
         "funnel": {
             "stages": _assistant_effectiveness_funnel_stages(
                 draft_confirmed_count=draft_status_counts["confirmed"],
@@ -213,14 +234,20 @@ def assistant_metrics_response(
             ],
             "total": scheduled_job_run_total,
         },
+        "trends": _assistant_metric_trends(scoped_rows),
     }
 
 
 def assistant_metric_details_response(
     current_store: Any,
     *,
+    action: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     limit: int = 50,
     metric: str,
+    product_id: str | None = None,
+    role: str | None = None,
     user: dict[str, Any],
     window_days: int | None = None,
 ) -> dict[str, Any]:
@@ -229,6 +256,11 @@ def assistant_metric_details_response(
         normalized_metric = "draft_total"
     scoped_rows = _assistant_scoped_metric_rows(
         current_store,
+        action=action,
+        date_from=date_from,
+        date_to=date_to,
+        product_id=product_id,
+        role=role,
         user=user,
         window_days=window_days,
     )
@@ -243,6 +275,14 @@ def assistant_metric_details_response(
             _assistant_metric_detail_item(item)
             for item in items
         ],
+        "filters": _assistant_metrics_filters(
+            action=action,
+            date_from=date_from,
+            date_to=date_to,
+            product_id=product_id,
+            role=role,
+            window_days=window_days,
+        ),
         "metric": normalized_metric,
         "title": ASSISTANT_METRIC_DETAIL_LABELS.get(normalized_metric, normalized_metric),
         "total": total,
@@ -253,9 +293,87 @@ def assistant_metric_details_response(
     }
 
 
+def assistant_metrics_export_response(
+    current_store: Any,
+    *,
+    action: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    export_format: str = "csv",
+    product_id: str | None = None,
+    role: str | None = None,
+    user: dict[str, Any],
+    window_days: int | None = None,
+) -> dict[str, Any]:
+    metrics = assistant_metrics_response(
+        current_store,
+        action=action,
+        date_from=date_from,
+        date_to=date_to,
+        product_id=product_id,
+        role=role,
+        user=user,
+        window_days=window_days,
+    )
+    normalized_format = str(export_format or "csv").strip().lower()
+    if normalized_format == "json":
+        return {
+            "content": metrics,
+            "content_type": "application/json",
+            "filename": "assistant_metrics.json",
+            "format": "json",
+        }
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["section", "key", "label", "value"])
+    for key, value in sorted((metrics.get("summary") or {}).items()):
+        writer.writerow(["summary", key, ASSISTANT_METRIC_DETAIL_LABELS.get(key, key), value])
+    for item in metrics.get("drafts_by_action") or []:
+        action_key = item.get("action") or "unknown"
+        writer.writerow(["drafts_by_action", action_key, "total", item.get("total", 0)])
+        for status_key in (
+            "pending_count",
+            "confirmed_count",
+            "cancelled_count",
+            "expired_count",
+            "failed_count",
+        ):
+            writer.writerow(["drafts_by_action", action_key, status_key, item.get(status_key, 0)])
+    for item in (metrics.get("dimensions") or {}).get("products") or []:
+        writer.writerow(
+            ["dimension_product", item.get("product_id"), "draft_total", item.get("draft_total", 0)]
+        )
+        writer.writerow(
+            [
+                "dimension_product",
+                item.get("product_id"),
+                "message_total",
+                item.get("message_total", 0),
+            ]
+        )
+    for item in (metrics.get("dimensions") or {}).get("roles") or []:
+        writer.writerow(
+            ["dimension_role", item.get("role"), "draft_total", item.get("draft_total", 0)]
+        )
+        writer.writerow(
+            ["dimension_role", item.get("role"), "message_total", item.get("message_total", 0)]
+        )
+    return {
+        "content": output.getvalue(),
+        "content_type": "text/csv",
+        "filename": "assistant_metrics.csv",
+        "format": "csv",
+    }
+
+
 def _assistant_scoped_metric_rows(
     current_store: Any,
     *,
+    action: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    product_id: str | None,
+    role: str | None,
     user: dict[str, Any],
     window_days: int | None,
 ) -> dict[str, Any]:
@@ -264,11 +382,36 @@ def _assistant_scoped_metric_rows(
         current_store,
         user_id=user_id,
     )
+    roles = {str(item) for item in user.get("roles") or []}
+    if role and str(role) not in roles and "admin" not in roles:
+        drafts, runs, messages, scheduled_job_runs, chat_runs = [], [], [], [], []
     cutoff = _metrics_cutoff(window_days)
+    explicit_start = _parse_date_boundary(date_from, end_of_day=False)
+    explicit_end = _parse_date_boundary(date_to, end_of_day=True)
+    normalized_action = str(action or "").strip()
+    normalized_product_id = str(product_id or "").strip()
     user_draft_ids = {str(draft["id"]) for draft in drafts if draft.get("id") is not None}
     runs = [run for run in runs if str(run.get("draft_id")) in user_draft_ids]
     messages = [message for message in messages if str(message.get("user_id")) == user_id]
     chat_runs = [run for run in chat_runs if str(run.get("user_id")) == user_id]
+    if normalized_action:
+        drafts = [draft for draft in drafts if str(draft.get("action") or "") == normalized_action]
+        user_draft_ids = {str(draft["id"]) for draft in drafts if draft.get("id") is not None}
+        runs = [run for run in runs if str(run.get("draft_id")) in user_draft_ids]
+    if normalized_product_id:
+        drafts = [
+            draft for draft in drafts if _record_matches_product(draft, normalized_product_id)
+        ]
+        user_draft_ids = {str(draft["id"]) for draft in drafts if draft.get("id") is not None}
+        runs = [run for run in runs if str(run.get("draft_id")) in user_draft_ids]
+        messages = [
+            message
+            for message in messages
+            if _record_matches_product(message, normalized_product_id)
+        ]
+        chat_runs = [
+            run for run in chat_runs if _record_matches_product(run, normalized_product_id)
+        ]
     if cutoff is not None:
         drafts = _filter_records_since(drafts, cutoff, ("created_at", "updated_at"))
         runs = _filter_records_since(runs, cutoff, ("started_at", "created_at", "updated_at"))
@@ -276,6 +419,31 @@ def _assistant_scoped_metric_rows(
         chat_runs = _filter_records_since(
             chat_runs,
             cutoff,
+            ("started_at", "created_at", "updated_at"),
+        )
+    if explicit_start is not None or explicit_end is not None:
+        drafts = _filter_records_between(
+            drafts,
+            explicit_start,
+            explicit_end,
+            ("created_at", "updated_at"),
+        )
+        runs = _filter_records_between(
+            runs,
+            explicit_start,
+            explicit_end,
+            ("started_at", "created_at", "updated_at"),
+        )
+        messages = _filter_records_between(
+            messages,
+            explicit_start,
+            explicit_end,
+            ("created_at", "updated_at"),
+        )
+        chat_runs = _filter_records_between(
+            chat_runs,
+            explicit_start,
+            explicit_end,
             ("started_at", "created_at", "updated_at"),
         )
     repository_scoped_runs = _repository_assistant_scoped_scheduled_job_runs(
@@ -290,6 +458,17 @@ def _assistant_scoped_metric_rows(
         scheduled_job_runs = _filter_records_since(
             scheduled_job_runs,
             cutoff,
+            ("started_at", "created_at", "updated_at"),
+        )
+    if normalized_product_id:
+        scheduled_job_runs = [
+            run for run in scheduled_job_runs if _record_matches_product(run, normalized_product_id)
+        ]
+    if explicit_start is not None or explicit_end is not None:
+        scheduled_job_runs = _filter_records_between(
+            scheduled_job_runs,
+            explicit_start,
+            explicit_end,
             ("started_at", "created_at", "updated_at"),
         )
     (
@@ -459,7 +638,9 @@ def _assistant_metric_detail_records(
             messages,
             kind="message",
             limit=limit,
-            predicate=lambda message: message.get("role") == "user" and bool(_message_references(message)),
+            predicate=lambda message: (
+                message.get("role") == "user" and bool(_message_references(message))
+            ),
         )
     if metric in {
         "knowledge_reference_count",
@@ -683,6 +864,283 @@ def _filter_records_since(
         if record_times and max(record_times) >= cutoff:
             filtered.append(record)
     return filtered
+
+
+def _filter_records_between(
+    records: list[dict[str, Any]],
+    start: datetime | None,
+    end: datetime | None,
+    time_fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        record_time = _record_primary_time(record, time_fields=time_fields)
+        if record_time is None:
+            continue
+        if start is not None and record_time < start:
+            continue
+        if end is not None and record_time > end:
+            continue
+        filtered.append(record)
+    return filtered
+
+
+def _record_primary_time(
+    record: dict[str, Any],
+    *,
+    time_fields: tuple[str, ...] = ("updated_at", "finished_at", "started_at", "created_at"),
+) -> datetime | None:
+    record_times = [
+        parsed
+        for parsed in (_parse_datetime(record.get(field)) for field in time_fields)
+        if parsed is not None
+    ]
+    if not record_times:
+        return None
+    return max(record_times)
+
+
+def _parse_date_boundary(value: str | None, *, end_of_day: bool) -> datetime | None:
+    if not value:
+        return None
+    raw_value = str(value).strip()
+    if not raw_value:
+        return None
+    if len(raw_value) == 10:
+        try:
+            parsed = datetime.fromisoformat(raw_value)
+        except ValueError:
+            return None
+        if end_of_day:
+            return parsed.replace(
+                hour=23,
+                minute=59,
+                second=59,
+                microsecond=999999,
+                tzinfo=UTC,
+            )
+        return parsed.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC)
+    return _parse_datetime(raw_value)
+
+
+def _assistant_metrics_filters(
+    *,
+    action: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    product_id: str | None,
+    role: str | None,
+    window_days: int | None,
+) -> dict[str, Any]:
+    return {
+        "action": str(action).strip() if action else None,
+        "date_from": str(date_from).strip() if date_from else None,
+        "date_to": str(date_to).strip() if date_to else None,
+        "product_id": str(product_id).strip() if product_id else None,
+        "role": str(role).strip() if role else None,
+        "window_days": window_days,
+    }
+
+
+def _assistant_metric_dimensions(
+    scoped_rows: dict[str, Any],
+    *,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    product_counts: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            "chat_run_total": 0,
+            "draft_confirmed_count": 0,
+            "draft_total": 0,
+            "message_total": 0,
+            "scheduled_job_run_failed_count": 0,
+            "scheduled_job_run_succeeded_count": 0,
+            "scheduled_job_run_total": 0,
+        }
+    )
+    for draft in scoped_rows["drafts"]:
+        product_id = _record_product_id(draft) or "unscoped"
+        product_counts[product_id]["draft_total"] += 1
+        if _effective_draft_status(draft) == "confirmed":
+            product_counts[product_id]["draft_confirmed_count"] += 1
+    for message in scoped_rows["messages"]:
+        product_counts[_record_product_id(message) or "unscoped"]["message_total"] += 1
+    for run in scoped_rows["chat_runs"]:
+        product_counts[_record_product_id(run) or "unscoped"]["chat_run_total"] += 1
+    for run in scoped_rows["scheduled_job_runs"]:
+        product_id = _record_product_id(run) or "unscoped"
+        product_counts[product_id]["scheduled_job_run_total"] += 1
+        if run.get("status") == "succeeded":
+            product_counts[product_id]["scheduled_job_run_succeeded_count"] += 1
+        elif run.get("status") == "failed":
+            product_counts[product_id]["scheduled_job_run_failed_count"] += 1
+
+    products = [
+        {
+            "product_id": product_id,
+            **counts,
+            "draft_adoption_rate": _rate(
+                int(counts["draft_confirmed_count"]),
+                int(counts["draft_total"]),
+            ),
+            "scheduled_job_run_success_rate": _rate(
+                int(counts["scheduled_job_run_succeeded_count"]),
+                int(counts["scheduled_job_run_total"]),
+            ),
+        }
+        for product_id, counts in sorted(product_counts.items(), key=lambda item: item[0])
+    ]
+    roles = [
+        {
+            "chat_run_total": len(scoped_rows["chat_runs"]),
+            "draft_total": len(scoped_rows["drafts"]),
+            "message_total": len(scoped_rows["messages"]),
+            "role": role,
+            "scheduled_job_run_total": len(scoped_rows["scheduled_job_runs"]),
+        }
+        for role in sorted({str(item) for item in user.get("roles") or []})
+    ]
+    return {
+        "products": products,
+        "roles": roles,
+    }
+
+
+def _assistant_metric_trends(scoped_rows: dict[str, Any]) -> dict[str, Any]:
+    daily: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            "action_run_failed_count": 0,
+            "action_run_succeeded_count": 0,
+            "action_run_total": 0,
+            "chat_run_failed_count": 0,
+            "chat_run_succeeded_count": 0,
+            "chat_run_total": 0,
+            "draft_confirmed_count": 0,
+            "draft_total": 0,
+            "message_total": 0,
+            "scheduled_job_run_failed_count": 0,
+            "scheduled_job_run_succeeded_count": 0,
+            "scheduled_job_run_total": 0,
+        }
+    )
+    drafts_by_action_daily: dict[tuple[str, str], dict[str, Any]] = defaultdict(
+        lambda: {
+            "cancelled_count": 0,
+            "confirmed_count": 0,
+            "expired_count": 0,
+            "failed_count": 0,
+            "pending_count": 0,
+            "total": 0,
+        }
+    )
+    for draft in scoped_rows["drafts"]:
+        day = _record_day(draft, time_fields=("created_at", "updated_at"))
+        if day is None:
+            continue
+        status = _effective_draft_status(draft)
+        daily[day]["draft_total"] += 1
+        if status == "confirmed":
+            daily[day]["draft_confirmed_count"] += 1
+        action = str(draft.get("action") or "unknown")
+        action_row = drafts_by_action_daily[(day, action)]
+        action_row["total"] += 1
+        status_key = f"{status}_count"
+        if status_key in action_row:
+            action_row[status_key] += 1
+    for run in scoped_rows["runs"]:
+        day = _record_day(run, time_fields=("started_at", "created_at", "updated_at"))
+        if day is None:
+            continue
+        daily[day]["action_run_total"] += 1
+        if run.get("status") == "succeeded":
+            daily[day]["action_run_succeeded_count"] += 1
+        elif run.get("status") == "failed":
+            daily[day]["action_run_failed_count"] += 1
+    for message in scoped_rows["messages"]:
+        day = _record_day(message, time_fields=("created_at", "updated_at"))
+        if day is not None:
+            daily[day]["message_total"] += 1
+    for run in scoped_rows["chat_runs"]:
+        day = _record_day(run, time_fields=("started_at", "created_at", "updated_at"))
+        if day is None:
+            continue
+        daily[day]["chat_run_total"] += 1
+        if run.get("status") == "succeeded":
+            daily[day]["chat_run_succeeded_count"] += 1
+        elif run.get("status") == "failed":
+            daily[day]["chat_run_failed_count"] += 1
+    for run in scoped_rows["scheduled_job_runs"]:
+        day = _record_day(run, time_fields=("started_at", "created_at", "updated_at"))
+        if day is None:
+            continue
+        daily[day]["scheduled_job_run_total"] += 1
+        if run.get("status") == "succeeded":
+            daily[day]["scheduled_job_run_succeeded_count"] += 1
+        elif run.get("status") == "failed":
+            daily[day]["scheduled_job_run_failed_count"] += 1
+    return {
+        "daily": [
+            {"day": day, **counts}
+            for day, counts in sorted(daily.items(), key=lambda item: item[0])
+        ],
+        "drafts_by_action_daily": [
+            {"action": action, "day": day, **counts}
+            for (day, action), counts in sorted(
+                drafts_by_action_daily.items(),
+                key=lambda item: (item[0][0], item[0][1]),
+            )
+        ],
+    }
+
+
+def _record_day(
+    record: dict[str, Any],
+    *,
+    time_fields: tuple[str, ...],
+) -> str | None:
+    record_time = _record_primary_time(record, time_fields=time_fields)
+    if record_time is None:
+        return None
+    return record_time.astimezone(UTC).date().isoformat()
+
+
+def _record_matches_product(record: dict[str, Any], product_id: str) -> bool:
+    return _record_product_id(record) == product_id
+
+
+def _record_product_id(record: dict[str, Any]) -> str | None:
+    direct_value = record.get("product_id") or record.get("resolved_product_id")
+    if direct_value:
+        return str(direct_value)
+    for field in ("payload", "metadata_json", "context", "result", "result_summary", "config_json"):
+        nested = record.get(field)
+        product_id = _nested_product_id(nested)
+        if product_id:
+            return product_id
+    return None
+
+
+def _nested_product_id(value: Any) -> str | None:
+    if isinstance(value, dict):
+        direct_value = value.get("product_id") or value.get("resolved_product_id")
+        if direct_value:
+            return str(direct_value)
+        for key in (
+            "assistant_context",
+            "config_json",
+            "filters",
+            "input",
+            "metadata",
+            "payload",
+            "product",
+            "request",
+            "scope",
+        ):
+            nested = value.get(key)
+            product_id = _nested_product_id(nested)
+            if product_id:
+                return product_id
+    return None
 
 
 def _assistant_metric_rows(

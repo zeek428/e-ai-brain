@@ -111,6 +111,20 @@ describe('scheduled AI job service mappings', () => {
           },
         });
       }
+      if (
+        input === '/api/system/scheduled-job-runs?run_id=scheduled_job_run_001&run_id=scheduled_job_run_002'
+        && init?.method === 'GET'
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              { id: 'scheduled_job_run_001', status: 'running' },
+              { id: 'scheduled_job_run_002', status: 'queued' },
+            ],
+            total: 2,
+          },
+        });
+      }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
@@ -158,6 +172,12 @@ describe('scheduled AI job service mappings', () => {
     await expect(runScheduledJob('scheduled_job_001')).resolves.toMatchObject({ id: 'scheduled_job_run_001' });
     await expect(fetchScheduledJobRuns({ scheduledJobId: 'scheduled_job_001' })).resolves.toEqual([
       expect.objectContaining({ id: 'scheduled_job_run_001' }),
+    ]);
+    await expect(
+      fetchScheduledJobRuns({ runIds: ['scheduled_job_run_001', 'scheduled_job_run_002'] }),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: 'scheduled_job_run_001' }),
+      expect.objectContaining({ id: 'scheduled_job_run_002' }),
     ]);
   });
 

@@ -112,6 +112,112 @@ def test_ai_assistant_runtime_status_returns_self_check_guidance():
     assert checks_by_code["model_gateway"]["url"] == "/system/model-gateway"
     assert checks_by_code["redis"]["remediation"]
     assert isinstance(payload["ready"], bool)
+    assert "operations" in payload
+
+
+def test_ai_assistant_runtime_status_includes_operational_diagnostics():
+    app.state.store.reset()
+    app.state.store.assistant_chat_runs = {
+        "assistant_chat_run_failed_runtime": {
+            "conversation_id": "assistant_conversation_runtime",
+            "created_at": "2026-06-20T09:00:00+00:00",
+            "error_code": "ASSISTANT_CHAT_FAILED",
+            "error_message": "模型网关 504",
+            "finished_at": "2026-06-20T09:00:10+00:00",
+            "id": "assistant_chat_run_failed_runtime",
+            "status": "failed",
+            "updated_at": "2026-06-20T09:00:10+00:00",
+            "user_id": "user_admin",
+        },
+        "assistant_chat_run_other_runtime": {
+            "created_at": "2026-06-20T09:01:00+00:00",
+            "error_message": "其他用户失败",
+            "id": "assistant_chat_run_other_runtime",
+            "status": "failed",
+            "updated_at": "2026-06-20T09:01:00+00:00",
+            "user_id": "user_reviewer",
+        },
+    }
+    app.state.store.model_gateway_logs = [
+        {
+            "created_at": "2026-06-20T09:03:00+00:00",
+            "error": "upstream timeout",
+            "id": "model_gateway_log_runtime_failed",
+            "model": "gpt-test",
+            "provider": "openai_compatible",
+            "purpose": "assistant_chat",
+            "status": "failed",
+            "updated_at": "2026-06-20T09:03:01+00:00",
+        }
+    ]
+    app.state.store.scheduled_job_runs = {
+        "scheduled_job_run_runtime_failed": {
+            "created_at": "2026-06-20T09:02:00+00:00",
+            "error_code": "RUNNER_TIMEOUT",
+            "error_message": "执行器未接单",
+            "id": "scheduled_job_run_runtime_failed",
+            "scheduled_job_id": "scheduled_job_runtime",
+            "status": "failed",
+            "updated_at": "2026-06-20T09:02:05+00:00",
+        }
+    }
+    app.state.store.ai_executor_runners = {
+        "runner_active": {
+            "id": "runner_active",
+            "status": "active",
+            "updated_at": "2026-06-20T09:00:00+00:00",
+        },
+        "runner_offline": {
+            "id": "runner_offline",
+            "status": "offline",
+            "updated_at": "2026-06-20T08:00:00+00:00",
+        },
+    }
+    app.state.store.ai_executor_tasks = {
+        "executor_task_queued": {
+            "created_at": "2026-06-20T08:58:00+00:00",
+            "id": "executor_task_queued",
+            "status": "queued",
+        },
+        "executor_task_running": {
+            "created_at": "2026-06-20T08:59:00+00:00",
+            "id": "executor_task_running",
+            "status": "running",
+        },
+        "executor_task_failed": {
+            "created_at": "2026-06-20T08:57:00+00:00",
+            "id": "executor_task_failed",
+            "status": "failed",
+        },
+    }
+
+    response = client.get("/api/assistant/runtime-status", headers=auth_headers())
+
+    assert response.status_code == 200, response.text
+    operations = response.json()["data"]["operations"]
+    assert operations["executor_queue"] == {
+        "active_runners": 1,
+        "failed": 1,
+        "offline_runners": 1,
+        "oldest_pending_task_created_at": "2026-06-20T08:58:00+00:00",
+        "oldest_pending_task_id": "executor_task_queued",
+        "queued": 1,
+        "running": 1,
+        "succeeded": 0,
+        "total_runners": 2,
+        "visible": True,
+    }
+    assert operations["model_gateway_recent_failure"]["id"] == "model_gateway_log_runtime_failed"
+    assert [
+        item["kind"] for item in operations["recent_failures"]
+    ] == [
+        "model_gateway_log",
+        "scheduled_job_run",
+        "assistant_chat_run",
+    ]
+    assert operations["recent_failures"][0]["url"] == (
+        "/system/model-gateway?log_id=model_gateway_log_runtime_failed"
+    )
 
 
 def test_ai_assistant_role_quick_tasks_can_be_loaded_from_repository_config():
@@ -3996,6 +4102,225 @@ def test_ai_assistant_metrics_summarize_drafts_runs_and_reference_usage():
     windowed_details = windowed_details_response.json()["data"]
     assert windowed_details["window"] == {"days": 1, "label": "最近 1 天"}
     assert windowed_details["total"] == 0
+
+
+def test_ai_assistant_metrics_support_product_role_date_action_filters_and_export():
+    headers = auth_headers()
+    app.state.store.reset()
+    app.state.store.assistant_action_drafts = {
+        "assistant_action_draft_product_alpha": {
+            "action": "create_scheduled_job",
+            "confirmed_at": "2026-06-16T09:30:00+00:00",
+            "confirmed_by": "user_admin",
+            "created_at": "2026-06-16T09:00:00+00:00",
+            "created_by": "user_admin",
+            "id": "assistant_action_draft_product_alpha",
+            "metadata_json": {"viewed_at": "2026-06-16T09:10:00+00:00"},
+            "payload": {"name": "Alpha 周反馈洞察", "product_id": "product_alpha"},
+            "product_id": "product_alpha",
+            "risk_level": "medium",
+            "status": "confirmed",
+            "title": "Alpha 周反馈洞察",
+            "updated_at": "2026-06-16T09:30:00+00:00",
+        },
+        "assistant_action_draft_product_beta": {
+            "action": "create_plugin_action",
+            "created_at": "2026-06-16T10:00:00+00:00",
+            "created_by": "user_admin",
+            "id": "assistant_action_draft_product_beta",
+            "metadata_json": {},
+            "payload": {"name": "Beta 动作配置", "product_id": "product_beta"},
+            "product_id": "product_beta",
+            "risk_level": "low",
+            "status": "pending",
+            "title": "Beta 动作配置",
+            "updated_at": "2026-06-16T10:00:00+00:00",
+        },
+    }
+    app.state.store.assistant_action_runs = {
+        "assistant_action_run_product_alpha": {
+            "action": "create_scheduled_job",
+            "created_at": "2026-06-16T09:35:00+00:00",
+            "draft_id": "assistant_action_draft_product_alpha",
+            "executed_by": "user_admin",
+            "finished_at": "2026-06-16T09:36:00+00:00",
+            "id": "assistant_action_run_product_alpha",
+            "result": {"id": "scheduled_job_product_alpha"},
+            "result_id": "scheduled_job_product_alpha",
+            "result_type": "scheduled_job",
+            "started_at": "2026-06-16T09:35:00+00:00",
+            "status": "succeeded",
+            "updated_at": "2026-06-16T09:36:00+00:00",
+        },
+        "assistant_action_run_product_beta": {
+            "action": "create_plugin_action",
+            "created_at": "2026-06-16T10:05:00+00:00",
+            "draft_id": "assistant_action_draft_product_beta",
+            "executed_by": "user_admin",
+            "finished_at": "2026-06-16T10:06:00+00:00",
+            "id": "assistant_action_run_product_beta",
+            "result": {},
+            "started_at": "2026-06-16T10:05:00+00:00",
+            "status": "failed",
+            "updated_at": "2026-06-16T10:06:00+00:00",
+        },
+    }
+    app.state.store.assistant_messages = {
+        "assistant_message_product_alpha_user": {
+            "content": "@Alpha 周反馈洞察 执行一次",
+            "conversation_id": "assistant_conversation_product_alpha",
+            "created_at": "2026-06-16T09:20:00+00:00",
+            "id": "assistant_message_product_alpha_user",
+            "metadata_json": {"references": []},
+            "product_id": "product_alpha",
+            "role": "user",
+            "updated_at": "2026-06-16T09:20:00+00:00",
+            "user_id": "user_admin",
+        },
+        "assistant_message_product_beta_user": {
+            "content": "帮我新建插件动作",
+            "conversation_id": "assistant_conversation_product_beta",
+            "created_at": "2026-06-16T10:10:00+00:00",
+            "id": "assistant_message_product_beta_user",
+            "metadata_json": {"references": []},
+            "product_id": "product_beta",
+            "role": "user",
+            "updated_at": "2026-06-16T10:10:00+00:00",
+            "user_id": "user_admin",
+        },
+    }
+    app.state.store.assistant_chat_runs = {
+        "assistant_chat_run_product_alpha": {
+            "conversation_id": "assistant_conversation_product_alpha",
+            "created_at": "2026-06-16T09:20:00+00:00",
+            "finished_at": "2026-06-16T09:20:02+00:00",
+            "id": "assistant_chat_run_product_alpha",
+            "product_id": "product_alpha",
+            "started_at": "2026-06-16T09:20:00+00:00",
+            "status": "succeeded",
+            "updated_at": "2026-06-16T09:20:02+00:00",
+            "user_id": "user_admin",
+        },
+        "assistant_chat_run_product_beta": {
+            "conversation_id": "assistant_conversation_product_beta",
+            "created_at": "2026-06-16T10:10:00+00:00",
+            "finished_at": "2026-06-16T10:10:02+00:00",
+            "id": "assistant_chat_run_product_beta",
+            "product_id": "product_beta",
+            "started_at": "2026-06-16T10:10:00+00:00",
+            "status": "failed",
+            "updated_at": "2026-06-16T10:10:02+00:00",
+            "user_id": "user_admin",
+        },
+    }
+    app.state.store.scheduled_job_runs = {
+        "scheduled_job_run_product_alpha": {
+            "assistant_action_draft_id": "assistant_action_draft_product_alpha",
+            "assistant_action_run_id": "assistant_action_run_product_alpha",
+            "created_at": "2026-06-16T09:37:00+00:00",
+            "finished_at": "2026-06-16T09:38:00+00:00",
+            "id": "scheduled_job_run_product_alpha",
+            "product_id": "product_alpha",
+            "scheduled_job_id": "scheduled_job_product_alpha",
+            "started_at": "2026-06-16T09:37:00+00:00",
+            "status": "succeeded",
+            "triggered_by_assistant": True,
+            "trigger_type": "manual",
+            "updated_at": "2026-06-16T09:38:00+00:00",
+        },
+        "scheduled_job_run_product_beta": {
+            "assistant_action_draft_id": "assistant_action_draft_product_beta",
+            "assistant_action_run_id": "assistant_action_run_product_beta",
+            "created_at": "2026-06-16T10:07:00+00:00",
+            "finished_at": "2026-06-16T10:08:00+00:00",
+            "id": "scheduled_job_run_product_beta",
+            "product_id": "product_beta",
+            "scheduled_job_id": "scheduled_job_product_beta",
+            "started_at": "2026-06-16T10:07:00+00:00",
+            "status": "failed",
+            "triggered_by_assistant": True,
+            "trigger_type": "manual",
+            "updated_at": "2026-06-16T10:08:00+00:00",
+        },
+    }
+
+    response = client.get(
+        "/api/assistant/metrics"
+        "?product_id=product_alpha&action=create_scheduled_job"
+        "&date_from=2026-06-16&date_to=2026-06-16&role=admin",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    metrics = response.json()["data"]
+    assert metrics["filters"] == {
+        "action": "create_scheduled_job",
+        "date_from": "2026-06-16",
+        "date_to": "2026-06-16",
+        "product_id": "product_alpha",
+        "role": "admin",
+        "window_days": None,
+    }
+    assert metrics["summary"]["draft_total"] == 1
+    assert metrics["summary"]["action_run_total"] == 1
+    assert metrics["summary"]["message_total"] == 1
+    assert metrics["summary"]["chat_run_total"] == 1
+    assert metrics["summary"]["scheduled_job_run_total"] == 1
+    assert metrics["dimensions"]["products"] == [
+        {
+            "chat_run_total": 1,
+            "draft_adoption_rate": 1.0,
+            "draft_confirmed_count": 1,
+            "draft_total": 1,
+            "message_total": 1,
+            "product_id": "product_alpha",
+            "scheduled_job_run_failed_count": 0,
+            "scheduled_job_run_succeeded_count": 1,
+            "scheduled_job_run_success_rate": 1.0,
+            "scheduled_job_run_total": 1,
+        }
+    ]
+    assert metrics["dimensions"]["roles"] == [
+        {
+            "chat_run_total": 1,
+            "draft_total": 1,
+            "message_total": 1,
+            "role": "admin",
+            "scheduled_job_run_total": 1,
+        }
+    ]
+    assert metrics["trends"]["daily"][0]["day"] == "2026-06-16"
+    assert metrics["trends"]["daily"][0]["draft_total"] == 1
+    assert metrics["trends"]["drafts_by_action_daily"] == [
+        {
+            "action": "create_scheduled_job",
+            "cancelled_count": 0,
+            "confirmed_count": 1,
+            "day": "2026-06-16",
+            "expired_count": 0,
+            "failed_count": 0,
+            "pending_count": 0,
+            "total": 1,
+        }
+    ]
+
+    details_response = client.get(
+        "/api/assistant/metrics/details?metric=draft_total&product_id=product_alpha",
+        headers=headers,
+    )
+    assert details_response.status_code == 200, details_response.text
+    assert details_response.json()["data"]["filters"]["product_id"] == "product_alpha"
+    assert details_response.json()["data"]["total"] == 1
+
+    export_response = client.get(
+        "/api/assistant/metrics/export?format=csv&product_id=product_alpha&action=create_scheduled_job",
+        headers=headers,
+    )
+    assert export_response.status_code == 200, export_response.text
+    export_payload = export_response.json()["data"]
+    assert export_payload["content_type"] == "text/csv"
+    assert export_payload["filename"] == "assistant_metrics.csv"
+    assert "dimension_product,product_alpha,draft_total,1" in export_payload["content"]
 
 
 def test_ai_assistant_metric_details_limits_knowledge_reference_materialization(monkeypatch):

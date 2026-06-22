@@ -9,28 +9,16 @@ import {
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import { Button, Modal, Space, Tag, Typography, message as toast } from 'antd';
-import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  cancelAssistantActionDraft,
-  cancelAssistantChatRun,
-  chatWithAssistant,
-  confirmAssistantActionDraft,
   fetchAssistantDraftTemplates,
-  fetchAssistantReferenceCandidates,
   fetchAssistantRoleQuickTasks,
-  fetchScheduledJobRuns,
   fetchResultWriteTargets,
-  getAssistantActionDraft,
   getStoredCurrentUser,
-  markAssistantActionDraftViewed,
-  rememberAssistantDraftResolution,
-  type AssistantActionDraftRecord,
   type AssistantDraftTemplate,
-  type AssistantReference,
   type AssistantDraftResolutionMap,
-  type AssistantDraftResolutionRecord,
-  type AssistantDraftResourceType,
+  type AssistantReference,
   type AssistantRoleQuickTaskGroup,
   type AssistantToolResult,
   type AssistantToolResultItem,
@@ -42,17 +30,10 @@ import { AssistantComposer } from './components/AssistantComposer';
 import { AssistantChatRunRecovery } from './components/AssistantChatRunRecovery';
 import { AssistantActionDraftCards } from './components/AssistantDraftCards';
 import { AssistantMessageList } from './components/AssistantMessageList';
-import {
-  assistantDraftId,
-  draftRegeneratePrompt,
-  draftStatusLabel,
-} from './components/draftPresentation';
+import { assistantDraftId } from './components/draftPresentation';
 import { AssistantReferenceContext } from './components/AssistantReferenceContext';
 import { AssistantRuntimeStatus } from './components/AssistantRuntimeStatus';
-import {
-  AssistantReferencePicker,
-  type AssistantReferenceEmptyState,
-} from './components/AssistantReferencePicker';
+import { AssistantReferencePicker } from './components/AssistantReferencePicker';
 import { AssistantSidebar } from './components/AssistantSidebar';
 import {
   AssistantDraftTemplateMarket,
@@ -64,59 +45,29 @@ import {
   welcomeMessages,
 } from './hooks/useAssistantConversation';
 import { useAssistantChatRuns } from './hooks/useAssistantChatRuns';
-import { type QueryDraftResolution, useAssistantDrafts } from './hooks/useAssistantDrafts';
+import { useAssistantComposerController } from './hooks/useAssistantComposerController';
+import { type QueryDraftResolution } from './hooks/useAssistantDrafts';
+import { useAssistantDraftLifecycle } from './hooks/useAssistantDraftLifecycle';
 import { useAssistantMetricsPanel } from './hooks/useAssistantMetricsPanel';
-import { useAssistantReferences } from './hooks/useAssistantReferences';
 import { useAssistantRuntimeStatus } from './hooks/useAssistantRuntimeStatus';
+import { useAssistantRunPolling } from './hooks/useAssistantRunPolling';
+import { useAssistantSendController } from './hooks/useAssistantSendController';
 import {
-  activeMentionQuery,
-  activeMentionRange,
-  assistantStopCommandRequested,
-  scheduledJobRunOnceRequested,
-  uniqueScheduledJobReferenceCandidate,
-} from './assistantCommandParsing';
+  type AssistantScheduledJobRunItem,
+  type AssistantScheduledJobRunNoticeItem,
+  scheduledJobRunDefaultFollowupPrompt,
+  scheduledJobRunFollowupPrompt,
+  scheduledJobRunIsActive,
+  scheduledJobRunItemFollowupPrompt,
+  scheduledJobRunItems,
+  scheduledJobRunNoticeItems,
+  scheduledJobRunReferenceFromRunItem,
+  scheduledJobRunReferenceFromToolItem,
+  scheduledJobRunStatusLabel,
+} from './assistantRunPresentation';
+import './Assistant.css';
 
 const { Text, Title } = Typography;
-const ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS = 250;
-const ASSISTANT_REFERENCE_CANDIDATE_LIMIT = 12;
-const ASSISTANT_ADD_ACTION_LIMIT = 20;
-const queryReferenceTypes = new Set([
-  'ai_agent',
-  'ai_skill',
-  'ai_task',
-  'knowledge_chunk',
-  'knowledge_document',
-  'knowledge_folder',
-  'knowledge_space',
-  'plugin_action',
-  'plugin_connection',
-  'requirement',
-  'scheduled_job',
-  'scheduled_job_run',
-]);
-const SCHEDULED_JOB_RUN_POLL_INTERVAL_MS = 5000;
-
-type AssistantScheduledJobRunItem = {
-  errorMessage?: string | null;
-  id: string;
-  latestStatusRefreshed?: boolean;
-  progressText?: string;
-  recordsImported?: number;
-  scheduledJobId?: string;
-  status: string;
-  title: string;
-  triggerType?: string;
-  url?: string;
-};
-
-type AssistantScheduledJobRunNoticeItem = {
-  description: string;
-  key: string;
-  requiredPermission?: string;
-  scheduledJobId?: string;
-  status: string;
-  title: string;
-};
 
 function actionDraftItems(toolResults?: AssistantToolResult[]) {
   return (toolResults ?? [])
@@ -172,18 +123,6 @@ function scheduledJobComparisonItems(toolResults?: AssistantToolResult[]) {
     .filter((item) => item.id || item.title);
 }
 
-function optionalText(value: unknown) {
-  if (value === undefined || value === null || value === '') {
-    return undefined;
-  }
-  return String(value);
-}
-
-function optionalNumber(value: unknown) {
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) ? numericValue : undefined;
-}
-
 function itemText(item: AssistantToolResultItem, field: string) {
   const value = item[field];
   if (Array.isArray(value)) {
@@ -197,34 +136,6 @@ function itemRecord(item: AssistantToolResultItem, field: string) {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as AssistantToolResultItem)
     : {};
-}
-
-function unknownRecord(value: unknown) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function isAbortError(error: unknown) {
-  return error instanceof Error && error.name === 'AbortError';
-}
-
-function assistantChatErrorMessage(error: unknown) {
-  const detail = error as Error & { code?: string; traceId?: string };
-  if (detail?.code === 'MODEL_GATEWAY_CONFIG_INVALID') {
-    return [
-      '模型网关未配置，当前仅支持 @ 动作、草案、运行诊断等规则能力。',
-      '如需开放式问答，请到「系统管理 / 模型网关」配置默认模型后重试。',
-      detail.traceId ? `trace_id=${detail.traceId}` : undefined,
-    ].filter(Boolean).join(' ');
-  }
-  if (detail?.code === 'ASSISTANT_CHAT_FAILED') {
-    return [
-      'AI 助手调用模型失败，请检查模型网关连通性或稍后重试。',
-      detail.traceId ? `trace_id=${detail.traceId}` : undefined,
-    ].filter(Boolean).join(' ');
-  }
-  return formatMutationError(error);
 }
 
 function diagnosticStageItems(item: AssistantToolResultItem) {
@@ -317,50 +228,6 @@ function diagnosticResultWriteRecordUrl(item: AssistantToolResultItem, stage: As
   return `${baseUrl}${separator}result_write_record_id=${encodeURIComponent(recordId)}`;
 }
 
-function scheduledJobRunReferenceFromToolItem(
-  item: AssistantToolResultItem,
-): AssistantReference | undefined {
-  const id = itemText(item, 'id');
-  if (id === '-') {
-    return undefined;
-  }
-  const title = itemText(item, 'title');
-  const url = itemText(item, 'url');
-  return {
-    id,
-    title: title === '-' ? id : title,
-    type: 'scheduled_job_run',
-    url: url === '-' ? `/tasks/scheduled-jobs?run_id=${encodeURIComponent(id)}` : url,
-  };
-}
-
-function scheduledJobRunReferenceFromRunItem(
-  item: AssistantScheduledJobRunItem,
-): AssistantReference {
-  return {
-    id: item.id,
-    title: item.title,
-    type: 'scheduled_job_run',
-    url: item.url ?? `/tasks/scheduled-jobs?run_id=${encodeURIComponent(item.id)}`,
-  };
-}
-
-function scheduledJobRunFollowupPrompt(
-  item: AssistantToolResultItem,
-  prompt: string,
-) {
-  const reference = scheduledJobRunReferenceFromToolItem(item);
-  return reference ? `@${reference.title} ${prompt}` : prompt;
-}
-
-function scheduledJobRunItemFollowupPrompt(
-  item: AssistantScheduledJobRunItem,
-  prompt: string,
-) {
-  const reference = scheduledJobRunReferenceFromRunItem(item);
-  return `@${reference.title} ${prompt}`;
-}
-
 function pluginConnectionReferenceFromDiagnosticItem(
   item: AssistantToolResultItem,
 ): AssistantReference | undefined {
@@ -386,240 +253,6 @@ function pluginConnectionDiagnosticFollowupPrompt(
   return reference ? `@${reference.title} ${prompt}` : prompt;
 }
 
-function scheduledJobRunStatusLabel(status?: string) {
-  const labels: Record<string, string> = {
-    cancelled: '已取消',
-    failed: '失败',
-    needs_scheduled_job_reference: '未执行',
-    needs_single_reference: '未执行',
-    not_run: '未运行',
-    permission_denied: '权限不足',
-    queued: '排队中',
-    running: '运行中',
-    succeeded: '成功',
-    waiting_runner: '等待执行器回写',
-  };
-  return labels[status ?? ''] ?? (status || '未知');
-}
-
-function scheduledJobRunExecutionProgressText(run?: ScheduledJobRunRecord) {
-  const summary = unknownRecord(run?.result_summary);
-  const nodes = unknownRecord(summary?.execution_nodes);
-  if (!nodes) {
-    return undefined;
-  }
-  const nodeOrder = ['data_connection', 'runner_execution', 'skill_processing', 'result_action'];
-  const nodeLabelFallbacks: Record<string, string> = {
-    data_connection: '数据连接获取内容',
-    result_action: '动作反馈内容',
-    runner_execution: 'AI 执行器执行内容',
-    skill_processing: 'AI执行处理内容',
-  };
-  const activeStatuses = new Set(['claimed', 'pending', 'queued', 'running', 'waiting_runner']);
-  for (const nodeKey of nodeOrder) {
-    const node = unknownRecord(nodes[nodeKey]);
-    if (!node) {
-      continue;
-    }
-    const status = optionalText(node.status);
-    if (!status || !activeStatuses.has(status)) {
-      continue;
-    }
-    const label = optionalText(node.label) ?? nodeLabelFallbacks[nodeKey] ?? nodeKey;
-    return `执行进度：${label}（${scheduledJobRunStatusLabel(status)}）`;
-  }
-  return undefined;
-}
-
-function scheduledJobRunExecutionFingerprint(run?: ScheduledJobRunRecord) {
-  const summary = unknownRecord(run?.result_summary);
-  const nodes = unknownRecord(summary?.execution_nodes);
-  if (!nodes) {
-    return '';
-  }
-  return JSON.stringify(
-    Object.entries(nodes).map(([nodeKey, rawNode]) => {
-      const node = unknownRecord(rawNode);
-      return {
-        errorCode: optionalText(node?.error_code),
-        errorMessage: optionalText(node?.error_message),
-        key: nodeKey,
-        label: optionalText(node?.label),
-        modelGatewayLogId: optionalText(node?.model_gateway_log_id),
-        pluginInvocationLogId: optionalText(node?.plugin_invocation_log_id),
-        runnerTaskId: optionalText(node?.runner_task_id),
-        status: optionalText(node?.status),
-      };
-    }),
-  );
-}
-
-function scheduledJobRunIsActive(status?: string) {
-  return status === 'queued' || status === 'running';
-}
-
-function scheduledJobRunDefaultFollowupPrompt(status?: string) {
-  return status === 'failed' ? '为什么这次任务失败？' : '帮我分析这次运行结果';
-}
-
-function scheduledJobRunRecordChanged(
-  current: ScheduledJobRunRecord | undefined,
-  next: ScheduledJobRunRecord,
-) {
-  return (
-    !current
-    || current.error_code !== next.error_code
-    || current.error_message !== next.error_message
-    || current.finished_at !== next.finished_at
-    || current.plugin_invocation_log_id !== next.plugin_invocation_log_id
-    || current.records_imported !== next.records_imported
-    || scheduledJobRunExecutionFingerprint(current) !== scheduledJobRunExecutionFingerprint(next)
-    || current.status !== next.status
-    || current.updated_at !== next.updated_at
-  );
-}
-
-function scheduledJobRunBaseItems(toolResults?: AssistantToolResult[]) {
-  const byRunId = new Map<string, AssistantScheduledJobRunItem>();
-  (toolResults ?? [])
-    .filter((toolResult) => toolResult.tool === 'assistant.scheduled_job_run')
-    .forEach((toolResult) => {
-      const summary = toolResult.summary ?? {};
-      const sourceItems = toolResult.items?.length
-        ? toolResult.items
-        : (summary.run_id ? [{ ...summary, id: summary.run_id }] : []);
-      sourceItems.forEach((item) => {
-        const id = optionalText(item.id ?? item.run_id);
-        if (!id || byRunId.has(id)) {
-          return;
-        }
-        const status = optionalText(item.status ?? summary.status) ?? 'unknown';
-        byRunId.set(id, {
-          errorMessage: optionalText(item.error_message ?? summary.error_message),
-          id,
-          progressText: optionalText(item.progress_text ?? summary.progress_text),
-          recordsImported: optionalNumber(item.records_imported ?? summary.records_imported),
-          scheduledJobId: optionalText(item.scheduled_job_id ?? summary.scheduled_job_id),
-          status,
-          title: optionalText(item.title ?? summary.scheduled_job_name) ?? `运行记录 ${id}`,
-          triggerType: optionalText(item.trigger_type ?? summary.trigger_type),
-          url: optionalText(item.url) ?? `/tasks/scheduled-jobs?run_id=${id}`,
-        });
-      });
-    });
-  return [...byRunId.values()];
-}
-
-function scheduledJobRunNoticeDescription(summary: Record<string, unknown>, status: string) {
-  const requiredPermission = optionalText(summary.required_permission) ?? 'system.scheduled_jobs.run';
-  const errorMessage = optionalText(summary.error_message);
-  if (status === 'permission_denied') {
-    return `当前账号缺少 ${requiredPermission}，本次尚未执行。`;
-  }
-  if (status === 'needs_single_reference') {
-    return '检测到多个定时作业引用，本次尚未执行。请只保留一个定时作业后再发送。';
-  }
-  if (status === 'needs_scheduled_job_reference') {
-    return '没有找到唯一可执行的定时作业，本次尚未执行。请从 @ 候选选择定时作业，或先确认生成的作业草案。';
-  }
-  if (status === 'failed') {
-    return errorMessage ? `运行未创建成功：${errorMessage}` : '运行未创建成功，请检查定时作业配置。';
-  }
-  return '本次没有生成新的运行记录，请根据提示补齐配置后再执行。';
-}
-
-function scheduledJobRunNoticeTitle(summary: Record<string, unknown>) {
-  const jobName = optionalText(summary.scheduled_job_name);
-  if (jobName) {
-    return jobName;
-  }
-  const queries = Array.isArray(summary.queries)
-    ? summary.queries.map((query) => String(query)).filter(Boolean)
-    : [];
-  return queries.length ? `执行一次：${queries.join('、')}` : '定时作业执行一次';
-}
-
-function scheduledJobRunNoticeItems(toolResults?: AssistantToolResult[]) {
-  const visibleStatuses = new Set([
-    'failed',
-    'needs_scheduled_job_reference',
-    'needs_single_reference',
-    'permission_denied',
-  ]);
-  return (toolResults ?? [])
-    .filter((toolResult) => toolResult.tool === 'assistant.scheduled_job_run')
-    .flatMap((toolResult, index) => {
-      const summary = toolResult.summary ?? {};
-      const hasRunItem = Boolean(optionalText(summary.run_id))
-        || Boolean((toolResult.items ?? []).some((item) => optionalText(item.id ?? item.run_id)));
-      if (hasRunItem) {
-        return [];
-      }
-      const status = optionalText(summary.status) ?? 'not_run';
-      if (!visibleStatuses.has(status)) {
-        return [];
-      }
-      return [
-        {
-          description: scheduledJobRunNoticeDescription(summary, status),
-          key: `${toolResult.intent ?? 'scheduled_job_run_once'}:${status}:${index}`,
-          requiredPermission: optionalText(summary.required_permission),
-          scheduledJobId: optionalText(summary.scheduled_job_id),
-          status,
-          title: scheduledJobRunNoticeTitle(summary),
-        },
-      ];
-    });
-}
-
-function scheduledJobRunItems(
-  toolResults: AssistantToolResult[] | undefined,
-  runById: Record<string, ScheduledJobRunRecord>,
-) {
-  return scheduledJobRunBaseItems(toolResults).map((item) => {
-    const latestRun = runById[item.id];
-    if (!latestRun) {
-      return item;
-    }
-    const latestStatus = latestRun.status || item.status;
-    const latestStatusRefreshed = latestStatus !== item.status;
-    return {
-      ...item,
-      errorMessage: latestRun.error_message ?? item.errorMessage,
-      latestStatusRefreshed,
-      progressText: scheduledJobRunExecutionProgressText(latestRun) ?? item.progressText,
-      recordsImported: latestRun.records_imported ?? item.recordsImported,
-      scheduledJobId: latestRun.scheduled_job_id ?? item.scheduledJobId,
-      status: latestStatus,
-      title: item.title.includes('/')
-        ? item.title.replace(/\/\s*[^/]+$/, `/ ${latestStatus}`)
-        : item.title,
-      triggerType: latestRun.trigger_type ?? item.triggerType,
-    };
-  });
-}
-
-function scheduledJobRunPollTargets(
-  messages: ChatMessage[],
-  runById: Record<string, ScheduledJobRunRecord>,
-) {
-  const byRunId = new Map<string, AssistantScheduledJobRunItem>();
-  messages.forEach((message) => {
-    scheduledJobRunBaseItems(message.toolResults).forEach((item) => {
-      const latestStatus = runById[item.id]?.status ?? item.status;
-      if (!scheduledJobRunIsActive(latestStatus)) {
-        return;
-      }
-      byRunId.set(item.id, {
-        ...item,
-        scheduledJobId: runById[item.id]?.scheduled_job_id ?? item.scheduledJobId,
-        status: latestStatus,
-      });
-    });
-  });
-  return [...byRunId.values()];
-}
-
 function comparisonDifferenceItems(item: AssistantToolResultItem) {
   return Array.isArray(item.differences)
     ? item.differences.filter(
@@ -627,147 +260,6 @@ function comparisonDifferenceItems(item: AssistantToolResultItem) {
         Boolean(difference) && typeof difference === 'object' && !Array.isArray(difference),
     )
     : [];
-}
-
-function createAssistantChatRunId() {
-  const randomId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return `assistant_chat_run_${randomId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-}
-
-function assistantReferenceEmptyState(value: string) {
-  if (scheduledJobRunOnceRequested(value)) {
-    return {
-      actionHref: '/tasks/scheduled-jobs',
-      actionLabel: '去任务中心新增定时作业',
-      description: '请先新增或确认一个定时作业，再回到助手里 @ 它执行一次。',
-      prompt: '我要新增任务，请先帮我选择任务类型并生成可确认的配置草案',
-      promptLabel: '让 AI 生成任务草案',
-      title: '没有找到可执行的定时作业引用',
-    };
-  }
-  return {
-    actionHref: '/knowledge/documents',
-    actionLabel: '去知识库查看文档',
-    description: '请换个关键词，或确认你是否有权限访问该对象。',
-    prompt: '我要新增任务，请先帮我选择任务类型并生成可确认的配置草案',
-    promptLabel: '让 AI 生成任务草案',
-    title: '无匹配引用',
-  };
-}
-
-function currentUserCanRunScheduledJobFromAssistant() {
-  const currentUser = getStoredCurrentUser();
-  const roles = new Set(currentUser?.roles ?? []);
-  const permissions = new Set(currentUser?.permissions ?? []);
-  return (
-    roles.has('admin')
-    || permissions.has('system.admin')
-    || permissions.has('system.scheduled_jobs.run')
-    || permissions.has('system.scheduled_jobs.manage')
-  );
-}
-
-function mergeReferences(...referenceLists: AssistantReference[][]) {
-  const references: AssistantReference[] = [];
-  const seen = new Set<string>();
-  referenceLists.forEach((referenceList) => {
-    referenceList.forEach((reference) => {
-      const key = referenceKey(reference);
-      if (seen.has(key)) {
-        return;
-      }
-      seen.add(key);
-      references.push(reference);
-    });
-  });
-  return references;
-}
-
-function referenceKey(reference: Pick<AssistantReference, 'id' | 'type'>) {
-  return `${reference.type}:${reference.id}`;
-}
-
-function assistantQueryReferenceParams() {
-  if (typeof window === 'undefined') {
-    return undefined;
-  }
-  const params = new URLSearchParams(window.location.search);
-  const referenceType = params.get('reference_type')?.trim();
-  const referenceId = params.get('reference_id')?.trim();
-  if (!referenceType || !referenceId || !queryReferenceTypes.has(referenceType)) {
-    return undefined;
-  }
-  return {
-    prompt: params.get('prompt')?.trim() || undefined,
-    referenceId,
-    referenceType,
-  };
-}
-
-function assistantQueryDraftId() {
-  if (typeof window === 'undefined') {
-    return undefined;
-  }
-  return new URLSearchParams(window.location.search).get('draft_id')?.trim() || undefined;
-}
-
-function assistantActionDraftRecordToToolItem(
-  draft: AssistantActionDraftRecord,
-): AssistantToolResultItem {
-  return {
-    action: draft.action,
-    client_draft_id: draft.client_draft_id,
-    draft_id: draft.id,
-    payload: draft.payload,
-    preview: draft.preview,
-    requires_confirmation: true,
-    risk_level: draft.risk_level,
-    server_draft_id: draft.id,
-    status: draft.status,
-    title: draft.title,
-    wizard_steps: draft.wizard_steps,
-  };
-}
-
-function assistantDraftResultRunResolution(
-  draft: AssistantActionDraftRecord,
-): AssistantDraftResolutionRecord | undefined {
-  const run = draft.result_run;
-  if (!run?.result_id || !run.result_type) {
-    return undefined;
-  }
-  const resourceType = run.result_type as AssistantDraftResourceType;
-  if (
-    resourceType !== 'assistant_analysis'
-    && resourceType !== 'ai_agent'
-    && resourceType !== 'ai_skill'
-    && resourceType !== 'ai_task'
-    && resourceType !== 'plugin_action'
-    && resourceType !== 'plugin_connection'
-    && resourceType !== 'scheduled_job'
-  ) {
-    return undefined;
-  }
-  const resolution: AssistantDraftResolutionRecord = {
-    resource_id: run.result_id,
-    resource_type: resourceType,
-    title: draft.title,
-  };
-  const scheduledJobRunId = scheduledJobRunIdFromActionResult(run.result);
-  if (scheduledJobRunId) {
-    resolution.scheduled_job_run_id = scheduledJobRunId;
-  }
-  return resolution;
-}
-
-function assistantDraftResolutionIds(
-  draft: Pick<AssistantActionDraftRecord, 'client_draft_id' | 'id'>,
-) {
-  return [draft.id, draft.client_draft_id]
-    .map((value) => (value ? String(value) : undefined))
-    .filter(Boolean) as string[];
 }
 
 function queryDraftResolutionLabel(status: QueryDraftResolution['status']) {
@@ -788,58 +280,6 @@ function queryDraftResolutionText(resolution: QueryDraftResolution) {
     return `已从链接打开草案：${resolution.title || resolution.draftId}`;
   }
   return `草案加载失败：${resolution.draftId} ${resolution.message || '不存在或无权限'}`;
-}
-
-function scheduledJobRunIdFromActionResult(result?: Record<string, unknown>) {
-  const scheduledJobRun = result?.scheduled_job_run;
-  if (!scheduledJobRun || typeof scheduledJobRun !== 'object' || Array.isArray(scheduledJobRun)) {
-    return undefined;
-  }
-  const runId = String((scheduledJobRun as Record<string, unknown>).id ?? '').trim();
-  return runId || undefined;
-}
-
-function isAssistantActionReference(reference: AssistantReference) {
-  return reference.type === 'assistant_action';
-}
-
-function assistantActionCommand(reference: AssistantReference) {
-  const title = String(reference.title || reference.id).replace(/\s+/g, '').trim();
-  return title ? `@${title}` : '@动作';
-}
-
-function isScheduledJobCommandReference(reference: AssistantReference) {
-  return reference.type === 'scheduled_job';
-}
-
-function scheduledJobCommand(reference: AssistantReference) {
-  const title = String(reference.title || reference.id).replace(/\s+/g, ' ').trim();
-  return title ? `@${title}` : '@定时作业';
-}
-
-function inputStartsWithActionCommand(value: string, command?: string) {
-  if (!command || !value.startsWith(command)) {
-    return false;
-  }
-  const nextChar = value[command.length];
-  return nextChar === undefined || /\s/.test(nextChar);
-}
-
-function inputWithMentionCommand(currentValue: string, command: string) {
-  const mention = activeMentionRange(currentValue);
-  const userText = mention
-    ? `${currentValue.slice(0, mention.markerIndex)}${currentValue.slice(mention.endIndex)}`
-    : currentValue;
-  const normalizedUserText = userText.replace(/[ \t]{2,}/g, ' ').trim();
-  return normalizedUserText ? `${command} ${normalizedUserText}` : `${command} `;
-}
-
-function inputWithAssistantActionCommand(currentValue: string, reference: AssistantReference) {
-  return inputWithMentionCommand(currentValue, assistantActionCommand(reference));
-}
-
-function inputWithScheduledJobCommand(currentValue: string, reference: AssistantReference) {
-  return inputWithMentionCommand(currentValue, scheduledJobCommand(reference));
 }
 
 function AssistantTaskCreationGuideCards({
@@ -1520,80 +960,89 @@ export default function AssistantPage() {
     enabled: !isLoadingConversations && conversations.length > 0,
   });
   const {
+    activeAddActionIndex,
+    activeMention,
+    activeReferenceIndex,
+    addActionCandidates,
+    addActionQuery,
+    addMenuRef,
+    addMenuTriggerRef,
+    addSelectedReference,
+    canSend,
+    changeAddActionQuery,
+    handleAddActionMenuKeyDown,
+    handleComposerKeyDown,
+    hasUnsentComposerState,
+    inputValue,
+    isAddMenuOpen,
+    isContextExpanded,
+    isLoadingAddActions,
+    isLoadingReferences,
+    onChangeInput,
+    prepareConversationSwitch,
+    queryReferenceResolution,
+    referenceCandidateGroups,
+    referenceCandidates,
+    referenceEmptyState,
+    rememberReferences,
+    removeSelectedReference,
+    resetComposerState: resetComposerControllerState,
+    resolveCommandReferenceCandidates,
+    runOncePermissionHint,
+    selectAddActionCandidate,
+    selectedReferences,
+    setActiveAddActionIndex,
+    setActiveReferenceIndex,
+    setCommittedActionCommand,
+    setDismissedReferencePickerValue,
+    setInputValue,
+    setIsAddMenuOpen,
+    setIsContextExpanded,
+    setReferenceCandidates,
+    setSelectedReferences,
+    shouldShowReferenceCandidates,
+    submitComposerEnter,
+    toggleAddMenu,
+  } = useAssistantComposerController({ isSending });
+  const {
+    cancelDraft,
+    confirmDraft,
     draftMutationId,
     draftResolutionById,
     draftStatusById,
     linkedDraft,
     queryDraftResolution,
-    setDraftMutationId,
-    setDraftResolutionById,
-    setDraftStatusById,
+    regenerateDraft,
     setLinkedDraft,
     setQueryDraftResolution,
-  } = useAssistantDrafts();
-  const {
-    activeReferenceIndex,
-    addActionCandidates,
-    committedActionCommand,
-    dismissedReferencePickerValue,
-    isLoadingAddActions,
-    isLoadingReferences,
-    orderedReferenceCandidates,
-    queryReferenceResolution,
-    referenceCandidateGroups,
-    referenceCandidates,
-    rememberReferences,
-    selectedReferenceKeys,
-    selectedReferences,
-    setActiveReferenceIndex,
-    setAddActionCandidates,
-    setCommittedActionCommand,
-    setDismissedReferencePickerValue,
-    setIsLoadingAddActions,
-    setIsLoadingReferences,
-    setQueryReferenceResolution,
-    setReferenceCandidates,
-    setSelectedReferences,
-  } = useAssistantReferences();
-  const [activeAddActionIndex, setActiveAddActionIndex] = useState(-1);
-  const [addActionQuery, setAddActionQuery] = useState('');
-  const [inputValue, setInputValue] = useState('');
-  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+    viewDraft,
+  } = useAssistantDraftLifecycle({ setInputValue });
   const [draftTemplateMarketOpened, setDraftTemplateMarketOpened] = useState(false);
   const [draftTemplates, setDraftTemplates] = useState<AssistantDraftTemplate[]>([]);
   const [isLoadingDraftTemplates, setIsLoadingDraftTemplates] = useState(false);
-  const [isContextExpanded, setIsContextExpanded] = useState(false);
   const {
     isRefreshingRuntimeStatus,
     refreshRuntimeStatus,
     runtimeStatus,
     runtimeStatusCheckedAt,
   } = useAssistantRuntimeStatus();
+  const [runtimeStatusPanelOpen, setRuntimeStatusPanelOpen] = useState(false);
   const [resultWriteTargets, setResultWriteTargets] = useState<ResultWriteTargetRecord[]>([]);
   const [roleQuickTasksExpanded, setRoleQuickTasksExpanded] = useState(false);
   const [roleQuickTaskGroups, setRoleQuickTaskGroups] = useState<AssistantRoleQuickTaskGroup[]>([]);
-  const [scheduledJobRunById, setScheduledJobRunById] = useState<Record<string, ScheduledJobRunRecord>>({});
-  const addMenuRef = useRef<HTMLDivElement | null>(null);
-  const addMenuTriggerRef = useRef<HTMLElement | null>(null);
+  const { scheduledJobRunById } = useAssistantRunPolling(messages);
   const messageListEndRef = useRef<HTMLDivElement | null>(null);
-  const queryDraftHydratedRef = useRef(false);
   const queryDraftStatusRef = useRef<HTMLDivElement | null>(null);
-  const queryReferenceHydratedRef = useRef(false);
   const draftTemplatesLoadRequestedRef = useRef(false);
   const resultWriteTargetsLoadRequestedRef = useRef(false);
   const roleQuickTasksLoadRequestedRef = useRef(false);
-  const chatAbortControllerRef = useRef<AbortController | null>(null);
-  const activeChatRequestRef = useRef<{
-    clientRequestId: string;
-    content: string;
-    references: AssistantReference[];
-    runId: string;
-  } | null>(null);
   const {
     assistantMetricDetails,
     assistantMetrics,
     assistantMetricsWindowDays,
     changeAssistantMetricsWindow,
+    exportAssistantMetricsFile,
+    isExportingMetrics,
     isLoadingMetricDetails,
     isLoadingMetrics,
     loadAssistantMetrics,
@@ -1602,8 +1051,32 @@ export default function AssistantPage() {
     openMetricsPanel,
     setMetricsPanelOpened,
   } = useAssistantMetricsPanel();
+  const {
+    restoreFailedRequest,
+    retryFailedRequest,
+    sendMessage,
+    stopGenerating,
+  } = useAssistantSendController({
+    conversationId,
+    inputValue,
+    isSending,
+    loadConversations,
+    rememberReferences,
+    resolveCommandReferenceCandidates,
+    selectedReferences,
+    setActiveReferenceIndex,
+    setCommittedActionCommand,
+    setConversationId,
+    setDismissedReferencePickerValue,
+    setInputValue,
+    setIsAddMenuOpen,
+    setIsSending,
+    setLastResponse,
+    setMessages,
+    setReferenceCandidates,
+    setSelectedReferences,
+  });
 
-  const canSend = useMemo(() => inputValue.trim().length > 0, [inputValue]);
   const hasPluginActionDraft = useMemo(
     () => messages.some((item) => actionDraftItems(item.toolResults).some((draft) => draft.action === 'create_plugin_action')),
     [messages],
@@ -1617,37 +1090,6 @@ export default function AssistantPage() {
     [roleQuickTaskGroups],
   );
 
-  useEffect(() => () => {
-    chatAbortControllerRef.current?.abort();
-  }, []);
-
-  const activeMention = useMemo(() => {
-    const mention = activeMentionRange(inputValue);
-    if (!mention) {
-      return undefined;
-    }
-    if (
-      mention.markerIndex === 0
-      && inputStartsWithActionCommand(inputValue, committedActionCommand)
-    ) {
-      return undefined;
-    }
-    return mention.query;
-  }, [committedActionCommand, inputValue]);
-  const runOncePermissionHint = useMemo(() => (
-    scheduledJobRunOnceRequested(inputValue) && !currentUserCanRunScheduledJobFromAssistant()
-  ), [inputValue]);
-  const shouldShowReferenceCandidates = !isAddMenuOpen
-    && activeMention !== undefined
-    && dismissedReferencePickerValue !== inputValue;
-  const referenceEmptyState: AssistantReferenceEmptyState = useMemo(
-    () => assistantReferenceEmptyState(inputValue),
-    [inputValue],
-  );
-  const activeRunPollTargets = useMemo(
-    () => scheduledJobRunPollTargets(messages, scheduledJobRunById),
-    [messages, scheduledJobRunById],
-  );
   useEffect(() => {
     if (typeof messageListEndRef.current?.scrollIntoView !== 'function') {
       return;
@@ -1664,361 +1106,6 @@ export default function AssistantPage() {
     }
     queryDraftStatusRef.current.scrollIntoView({ block: 'nearest' });
   }, [linkedDraft, queryDraftResolution]);
-
-  useEffect(() => {
-    if (
-      committedActionCommand
-      && !inputStartsWithActionCommand(inputValue, committedActionCommand)
-    ) {
-      setCommittedActionCommand(undefined);
-    }
-  }, [committedActionCommand, inputValue, setCommittedActionCommand]);
-
-  useEffect(() => {
-    if (!isAddMenuOpen) {
-      return undefined;
-    }
-    const closeOnOutsideClick = (event: globalThis.MouseEvent | TouchEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) {
-        return;
-      }
-      if (
-        addMenuRef.current?.contains(target)
-        || addMenuTriggerRef.current?.contains(target)
-      ) {
-        return;
-      }
-      setIsAddMenuOpen(false);
-    };
-    document.addEventListener('mousedown', closeOnOutsideClick);
-    document.addEventListener('touchstart', closeOnOutsideClick);
-    return () => {
-      document.removeEventListener('mousedown', closeOnOutsideClick);
-      document.removeEventListener('touchstart', closeOnOutsideClick);
-    };
-  }, [isAddMenuOpen]);
-
-  useEffect(() => {
-    if (!isAddMenuOpen) {
-      setAddActionCandidates([]);
-      setActiveAddActionIndex(-1);
-      setIsLoadingAddActions(false);
-      return undefined;
-    }
-    let didCancel = false;
-    const controller = new AbortController();
-    setIsLoadingAddActions(true);
-    const timer = window.setTimeout(() => {
-      fetchAssistantReferenceCandidates({
-        limit: ASSISTANT_ADD_ACTION_LIMIT,
-        query: addActionQuery,
-        signal: controller.signal,
-        type: 'assistant_action',
-      })
-        .then((items) => {
-          if (!didCancel) {
-            const actionItems = items.filter(isAssistantActionReference);
-            setAddActionCandidates(actionItems);
-            setActiveAddActionIndex(actionItems.length ? 0 : -1);
-          }
-        })
-        .catch((error) => {
-          if (!didCancel && (error as Error).name !== 'AbortError') {
-            toast.error(formatMutationError(error));
-            setAddActionCandidates([]);
-            setActiveAddActionIndex(-1);
-          }
-        })
-        .finally(() => {
-          if (!didCancel) {
-            setIsLoadingAddActions(false);
-          }
-        });
-    }, ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS);
-    return () => {
-      didCancel = true;
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [
-    addActionQuery,
-    isAddMenuOpen,
-    setAddActionCandidates,
-    setIsLoadingAddActions,
-  ]);
-
-  useEffect(() => {
-    if (!activeRunPollTargets.length) {
-      return undefined;
-    }
-    let didCancel = false;
-    let didShowError = false;
-
-    const pollRuns = async () => {
-      const targetsByJobId = new Map<string, AssistantScheduledJobRunItem[]>();
-      activeRunPollTargets.forEach((target) => {
-        const jobKey = target.scheduledJobId ?? '';
-        targetsByJobId.set(jobKey, [...(targetsByJobId.get(jobKey) ?? []), target]);
-      });
-      try {
-        await Promise.all(
-          [...targetsByJobId.entries()].map(async ([scheduledJobId, targets]) => {
-            const runIds = new Set(targets.map((target) => target.id));
-            const runs = await fetchScheduledJobRuns(
-              scheduledJobId ? { scheduledJobId } : {},
-            );
-            if (didCancel) {
-              return;
-            }
-            const relevantRuns = runs.filter((run) => runIds.has(run.id));
-            if (!relevantRuns.length) {
-              return;
-            }
-            setScheduledJobRunById((currentItems) => {
-              let changed = false;
-              const nextItems = { ...currentItems };
-              relevantRuns.forEach((run) => {
-                if (!scheduledJobRunRecordChanged(currentItems[run.id], run)) {
-                  return;
-                }
-                nextItems[run.id] = run;
-                changed = true;
-              });
-              return changed ? nextItems : currentItems;
-            });
-          }),
-        );
-      } catch (error) {
-        if (!didCancel && !didShowError) {
-          didShowError = true;
-          toast.error(formatMutationError(error));
-        }
-      }
-    };
-
-    void pollRuns();
-    const pollTimer = window.setInterval(() => {
-      void pollRuns();
-    }, SCHEDULED_JOB_RUN_POLL_INTERVAL_MS);
-    return () => {
-      didCancel = true;
-      window.clearInterval(pollTimer);
-    };
-  }, [activeRunPollTargets]);
-
-  useEffect(() => {
-    if (queryDraftHydratedRef.current) {
-      return undefined;
-    }
-    const draftId = assistantQueryDraftId();
-    if (!draftId) {
-      return undefined;
-    }
-    queryDraftHydratedRef.current = true;
-    let didCancel = false;
-    setQueryDraftResolution({
-      draftId,
-      status: 'loading',
-    });
-    getAssistantActionDraft(draftId)
-      .then(async (draft) => {
-        if (didCancel) {
-          return;
-        }
-        let viewedDraft = draft;
-        try {
-          viewedDraft = await markAssistantActionDraftViewed(draft.id, 'deeplink');
-        } catch (error) {
-          toast.warning(formatMutationError(error));
-        }
-        if (didCancel) {
-          return;
-        }
-        const toolItem = assistantActionDraftRecordToToolItem(viewedDraft);
-        setLinkedDraft(toolItem);
-        setDraftStatusById((items) => ({ ...items, [viewedDraft.id]: viewedDraft.status }));
-        const resultResolution = assistantDraftResultRunResolution(viewedDraft);
-        if (resultResolution) {
-          const draftIds = assistantDraftResolutionIds(viewedDraft);
-          draftIds.forEach((itemDraftId) => {
-            rememberAssistantDraftResolution({
-              draftId: itemDraftId,
-              resourceId: resultResolution.resource_id,
-              resourceType: resultResolution.resource_type,
-              scheduledJobRunId: resultResolution.scheduled_job_run_id,
-              title: resultResolution.title,
-            });
-          });
-          setDraftResolutionById((items) => {
-            const nextItems = { ...items };
-            draftIds.forEach((itemDraftId) => {
-              nextItems[itemDraftId] = resultResolution;
-            });
-            return nextItems;
-          });
-        }
-        setQueryDraftResolution({
-          draftId,
-          status: 'resolved',
-          title: viewedDraft.title,
-        });
-      })
-      .catch((error) => {
-        if (!didCancel) {
-          const messageText = formatMutationError(error);
-          toast.error(messageText);
-          setQueryDraftResolution({
-            draftId,
-            message: messageText,
-            status: 'failed',
-          });
-        }
-      });
-    return () => {
-      didCancel = true;
-    };
-  }, [setDraftResolutionById, setDraftStatusById, setLinkedDraft, setQueryDraftResolution]);
-
-  useEffect(() => {
-    if (queryReferenceHydratedRef.current) {
-      return undefined;
-    }
-    const queryReference = assistantQueryReferenceParams();
-    if (!queryReference) {
-      return undefined;
-    }
-    queryReferenceHydratedRef.current = true;
-    if (queryReference.prompt) {
-      setInputValue(queryReference.prompt);
-    }
-    let didCancel = false;
-    setQueryReferenceResolution({
-      referenceId: queryReference.referenceId,
-      referenceType: queryReference.referenceType,
-      status: 'loading',
-    });
-    fetchAssistantReferenceCandidates({
-      limit: 1,
-      query: queryReference.referenceId,
-      type: queryReference.referenceType,
-    })
-      .then((items) => {
-        if (didCancel) {
-          return;
-        }
-        const reference = items.find(
-          (item) => item.id === queryReference.referenceId && item.type === queryReference.referenceType,
-        );
-        if (!reference) {
-          toast.warning('引用对象不存在或无权限');
-          setQueryReferenceResolution({
-            message: '不存在或无权限',
-            referenceId: queryReference.referenceId,
-            referenceType: queryReference.referenceType,
-            status: 'failed',
-          });
-          return;
-        }
-        setQueryReferenceResolution({
-          referenceId: queryReference.referenceId,
-          referenceType: queryReference.referenceType,
-          status: 'resolved',
-          title: reference.title,
-        });
-        if (isAssistantActionReference(reference)) {
-          const command = assistantActionCommand(reference);
-          setCommittedActionCommand(command);
-          setInputValue(inputWithAssistantActionCommand(queryReference.prompt ?? '', reference));
-          return;
-        }
-        setSelectedReferences((currentItems) => (
-          currentItems.some((item) => item.id === reference.id && item.type === reference.type)
-            ? currentItems
-            : [...currentItems, reference]
-        ));
-        rememberReferences([reference]);
-      })
-      .catch((error) => {
-        if (!didCancel) {
-          const messageText = formatMutationError(error);
-          toast.error(messageText);
-          setQueryReferenceResolution({
-            message: messageText,
-            referenceId: queryReference.referenceId,
-            referenceType: queryReference.referenceType,
-            status: 'failed',
-          });
-        }
-      });
-    return () => {
-      didCancel = true;
-    };
-  }, [
-    rememberReferences,
-    setCommittedActionCommand,
-    setQueryReferenceResolution,
-    setSelectedReferences,
-  ]);
-
-  useEffect(() => {
-    const query = activeMention;
-    if (query === undefined) {
-      setReferenceCandidates([]);
-      setIsLoadingReferences(false);
-      return;
-    }
-    let didCancel = false;
-    const controller = new AbortController();
-    setIsLoadingReferences(true);
-    const timer = window.setTimeout(() => {
-      fetchAssistantReferenceCandidates({
-        limit: ASSISTANT_REFERENCE_CANDIDATE_LIMIT,
-        query,
-        signal: controller.signal,
-      })
-        .then((items) => {
-          if (!didCancel) {
-            const nextCandidates = items.filter(
-              (reference) => !selectedReferenceKeys.has(referenceKey(reference)),
-            );
-            setReferenceCandidates(nextCandidates);
-            setActiveReferenceIndex(nextCandidates.length ? 0 : -1);
-          }
-        })
-        .catch((error) => {
-          if (!didCancel && (error as Error).name !== 'AbortError') {
-            toast.error(formatMutationError(error));
-            setReferenceCandidates([]);
-          }
-        })
-        .finally(() => {
-          if (!didCancel) {
-            setIsLoadingReferences(false);
-          }
-        });
-    }, ASSISTANT_REFERENCE_CANDIDATE_DEBOUNCE_MS);
-    return () => {
-      didCancel = true;
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [
-    activeMention,
-    selectedReferenceKeys,
-    setActiveReferenceIndex,
-    setIsLoadingReferences,
-    setReferenceCandidates,
-  ]);
-
-  useEffect(() => {
-    setActiveReferenceIndex((index) => {
-      if (!orderedReferenceCandidates.length) {
-        return -1;
-      }
-      return Math.min(Math.max(index, 0), orderedReferenceCandidates.length - 1);
-    });
-  }, [orderedReferenceCandidates.length, setActiveReferenceIndex]);
 
   useEffect(() => {
     if (!getStoredCurrentUser() || roleQuickTasksLoadRequestedRef.current) {
@@ -2081,19 +1168,7 @@ export default function AssistantPage() {
   }, [hasPluginActionDraft]);
 
   const resetComposerState = (options: { clearInput?: boolean; keepDraftLink?: boolean } = {}) => {
-    if (options.clearInput) {
-      setInputValue('');
-    }
-    setActiveReferenceIndex(-1);
-    setActiveAddActionIndex(-1);
-    setAddActionQuery('');
-    setIsAddMenuOpen(false);
-    setReferenceCandidates([]);
-    setCommittedActionCommand(undefined);
-    setDismissedReferencePickerValue(undefined);
-    setSelectedReferences([]);
-    setQueryReferenceResolution(undefined);
-    setIsContextExpanded(false);
+    resetComposerControllerState({ clearInput: options.clearInput });
     if (!options.keepDraftLink) {
       setLinkedDraft(undefined);
       setQueryDraftResolution(undefined);
@@ -2112,226 +1187,30 @@ export default function AssistantPage() {
     void loadDraftTemplates();
   };
 
+  const openRuntimeStatusPanel = useCallback(() => {
+    setRuntimeStatusPanelOpen(true);
+    if (!runtimeStatus) {
+      void refreshRuntimeStatus({ force: true });
+    }
+  }, [refreshRuntimeStatus, runtimeStatus]);
+
   const applyDraftTemplate = (template: AssistantDraftTemplate) => {
     setCommittedActionCommand(undefined);
     setInputValue(template.prompt);
-  };
-
-  const addSelectedReference = (reference: AssistantReference) => {
-    if (isAssistantActionReference(reference)) {
-      const command = assistantActionCommand(reference);
-      const nextInputValue = inputWithAssistantActionCommand(inputValue, reference);
-      setCommittedActionCommand(command);
-      setInputValue(nextInputValue);
-      setDismissedReferencePickerValue(nextInputValue);
-      setActiveReferenceIndex(-1);
-      setReferenceCandidates([]);
-      return;
-    }
-    if (isScheduledJobCommandReference(reference)) {
-      const command = scheduledJobCommand(reference);
-      const nextInputValue = inputWithScheduledJobCommand(inputValue, reference);
-      setCommittedActionCommand(command);
-      setInputValue(nextInputValue);
-      setDismissedReferencePickerValue(nextInputValue);
-      setSelectedReferences((items) => (
-        items.some((item) => item.id === reference.id && item.type === reference.type)
-          ? items
-          : [...items, reference]
-      ));
-      rememberReferences([reference]);
-      setActiveReferenceIndex(-1);
-      setReferenceCandidates([]);
-      return;
-    }
-    setDismissedReferencePickerValue(inputValue);
-    setSelectedReferences((items) => (
-      items.some((item) => item.id === reference.id && item.type === reference.type)
-        ? items
-        : [...items, reference]
-    ));
-    rememberReferences([reference]);
-    setActiveReferenceIndex(-1);
-    setReferenceCandidates([]);
-  };
-
-  const toggleAddMenu = () => {
-    const nextOpen = !isAddMenuOpen;
-    setIsAddMenuOpen(nextOpen);
-    if (!nextOpen) {
-      setAddActionCandidates([]);
-      return;
-    }
-    setAddActionQuery('');
-    setAddActionCandidates([]);
-    setActiveAddActionIndex(-1);
-    setDismissedReferencePickerValue(inputValue);
-    setReferenceCandidates([]);
-    setActiveReferenceIndex(-1);
-  };
-
-  const changeAddActionQuery = (query: string) => {
-    setAddActionQuery(query);
-    setAddActionCandidates([]);
-    setActiveAddActionIndex(-1);
-  };
-
-  const selectAddActionCandidate = (reference: AssistantReference) => {
-    addSelectedReference(reference);
-    setIsAddMenuOpen(false);
-  };
-
-  const handleAddActionMenuKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      setIsAddMenuOpen(false);
-      return;
-    }
-    if (!addActionCandidates.length) {
-      return;
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setActiveAddActionIndex((index) => (index + 1) % addActionCandidates.length);
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setActiveAddActionIndex((index) => (
-        index <= 0 ? addActionCandidates.length - 1 : index - 1
-      ));
-      return;
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      const reference = addActionCandidates[Math.max(activeAddActionIndex, 0)];
-      if (reference) {
-        selectAddActionCandidate(reference);
-      }
-    }
-  };
-
-  const removeSelectedReference = (reference: AssistantReference) => {
-    if (
-      queryReferenceResolution?.referenceId === reference.id
-      && queryReferenceResolution.referenceType === reference.type
-    ) {
-      setQueryReferenceResolution(undefined);
-    }
-    setSelectedReferences((items) => (
-      items.filter((item) => !(item.id === reference.id && item.type === reference.type))
-    ));
-  };
-
-  const commandReferenceCandidates = (messageText: string) => {
-    if (!scheduledJobRunOnceRequested(messageText)) {
-      return [];
-    }
-    const scheduledJobReference = uniqueScheduledJobReferenceCandidate(orderedReferenceCandidates);
-    return scheduledJobReference ? [scheduledJobReference] : [];
-  };
-
-  const resolveCommandReferenceCandidates = async (messageText: string) => {
-    const currentCandidates = commandReferenceCandidates(messageText);
-    if (currentCandidates.length || !scheduledJobRunOnceRequested(messageText)) {
-      return currentCandidates;
-    }
-    const query = activeMentionQuery(messageText);
-    if (query === undefined) {
-      return [];
-    }
-    try {
-      const items = await fetchAssistantReferenceCandidates({
-        limit: ASSISTANT_REFERENCE_CANDIDATE_LIMIT,
-        query,
-        type: 'scheduled_job',
-      });
-      const scheduledJobReference = uniqueScheduledJobReferenceCandidate(items);
-      return scheduledJobReference ? [scheduledJobReference] : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const submitComposerEnter = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.shiftKey || event.nativeEvent.isComposing) {
-      return false;
-    }
-    event.preventDefault();
-    if (isSending && assistantStopCommandRequested(inputValue)) {
-      stopGenerating();
-      return true;
-    }
-    if (scheduledJobRunOnceRequested(inputValue)) {
-      const commandReferences = commandReferenceCandidates(inputValue);
-      void sendMessage(inputValue, commandReferences.length ? commandReferences : undefined);
-      return true;
-    }
-    const reference = orderedReferenceCandidates[Math.max(activeReferenceIndex, 0)];
-    if (reference) {
-      addSelectedReference(reference);
-      return true;
-    }
-    void sendMessage();
-    return true;
-  };
-
-  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.defaultPrevented) {
-      return;
-    }
-    if (event.key === 'Escape' && isAddMenuOpen) {
-      event.preventDefault();
-      setIsAddMenuOpen(false);
-      return;
-    }
-    if (event.key === 'Enter' && submitComposerEnter(event)) {
-      return;
-    }
-    if (!orderedReferenceCandidates.length) {
-      return;
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setActiveReferenceIndex((index) => (index + 1) % orderedReferenceCandidates.length);
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setActiveReferenceIndex((index) => (
-        index <= 0 ? orderedReferenceCandidates.length - 1 : index - 1
-      ));
-      return;
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      setActiveReferenceIndex(-1);
-      setReferenceCandidates([]);
-    }
   };
 
   const loadConversation = async (
     targetConversationId: string,
     options: { preserveComposer?: boolean } = {},
   ) => {
-    if (options.preserveComposer) {
-      setIsAddMenuOpen(false);
-      setReferenceCandidates([]);
-      setActiveReferenceIndex(-1);
-      setDismissedReferencePickerValue(inputValue);
-    } else {
-      resetComposerState({ clearInput: true });
+    prepareConversationSwitch(options);
+    if (!options.preserveComposer) {
+      setLinkedDraft(undefined);
+      setQueryDraftResolution(undefined);
     }
     setConversationId(targetConversationId);
     await loadConversationMessages(targetConversationId);
   };
-
-  const hasUnsentComposerState = () => (
-    inputValue.trim().length > 0
-    || selectedReferences.length > 0
-    || Boolean(committedActionCommand)
-    || Boolean(queryReferenceResolution)
-  );
 
   const openConversation = (targetConversationId: string) => {
     if (targetConversationId === conversationId) {
@@ -2353,226 +1232,6 @@ export default function AssistantPage() {
         void loadConversation(targetConversationId, { preserveComposer: true });
       },
     });
-  };
-
-  const sendMessage = async (
-    messageText = inputValue,
-    referenceOverrides?: AssistantReference[],
-    options: { replaceReferences?: boolean } = {},
-  ) => {
-    const content = messageText.trim();
-    if (!content) {
-      return;
-    }
-    if (isSending) {
-      if (assistantStopCommandRequested(content)) {
-        stopGenerating();
-      }
-      return;
-    }
-    const controller = new AbortController();
-    const runId = createAssistantChatRunId();
-    const clientRequestId = runId;
-    chatAbortControllerRef.current?.abort();
-    chatAbortControllerRef.current = controller;
-    activeChatRequestRef.current = {
-      clientRequestId,
-      content,
-      references: selectedReferences,
-      runId,
-    };
-    setIsSending(true);
-    const commandReferences = referenceOverrides ?? await resolveCommandReferenceCandidates(content);
-    if (controller.signal.aborted) {
-      return;
-    }
-    const baseReferences = options.replaceReferences ? [] : selectedReferences;
-    const referencesForRequest = mergeReferences(
-      baseReferences,
-      commandReferences,
-    );
-    activeChatRequestRef.current = {
-      clientRequestId,
-      content,
-      references: referencesForRequest,
-      runId,
-    };
-    rememberReferences(referencesForRequest);
-    const userMessage: ChatMessage = {
-      clientRequestId,
-      content,
-      id: `user-${Date.now()}`,
-      references: referencesForRequest,
-      role: 'user',
-      runId,
-      status: 'pending',
-    };
-    setMessages((items) => [...items, userMessage]);
-    setInputValue('');
-    setIsAddMenuOpen(false);
-    setCommittedActionCommand(undefined);
-    try {
-      const response = await chatWithAssistant({
-        clientRequestId,
-        context: { source: 'assistant-page' },
-        conversationId,
-        message: content,
-        references: referencesForRequest,
-        runId,
-        signal: controller.signal,
-      });
-      setConversationId(response.conversationId);
-      setLastResponse(response);
-      setActiveReferenceIndex(-1);
-      setSelectedReferences([]);
-      setReferenceCandidates([]);
-      setMessages((items) => [
-        ...items.map((item) => (
-          item.runId === runId ? { ...item, status: 'completed' } : item
-        )),
-        {
-          content: response.content,
-          id: response.messageId,
-          intent: response.intent,
-          references: response.references,
-          role: 'assistant',
-          runId: response.runId ?? runId,
-          status: response.status,
-          toolResults: response.toolResults,
-        },
-      ]);
-      await loadConversations();
-    } catch (error) {
-      if (isAbortError(error)) {
-        return;
-      }
-      toast.error(assistantChatErrorMessage(error));
-      setMessages((items) => [
-        ...items,
-        {
-          content: assistantChatErrorMessage(error),
-          clientRequestId,
-          failedRequest: {
-            content,
-            references: referencesForRequest,
-          },
-          id: `assistant-error-${Date.now()}`,
-          role: 'assistant',
-          runId,
-          status: 'failed',
-        },
-      ]);
-    } finally {
-      if (chatAbortControllerRef.current === controller) {
-        chatAbortControllerRef.current = null;
-        activeChatRequestRef.current = null;
-        setIsSending(false);
-      }
-    }
-  };
-
-  const stopGenerating = () => {
-    const activeRequest = activeChatRequestRef.current;
-    if (activeRequest?.runId) {
-      void cancelAssistantChatRun(activeRequest.runId).catch(() => {
-        // The browser-side abort is still useful even if the server run already finished.
-      });
-    }
-    chatAbortControllerRef.current?.abort();
-    chatAbortControllerRef.current = null;
-    activeChatRequestRef.current = null;
-    setIsSending(false);
-    setInputValue((current) => (current.trim() ? current : activeRequest?.content ?? current));
-    if (activeRequest?.references.length) {
-      setSelectedReferences((current) => (current.length ? current : activeRequest.references));
-    }
-    setReferenceCandidates([]);
-    setActiveReferenceIndex(-1);
-    setMessages((items) => [
-      ...items.map((item) => (
-        activeRequest?.runId && item.runId === activeRequest.runId
-          ? { ...item, status: 'cancelled' }
-          : item
-      )),
-      {
-        clientRequestId: activeRequest?.clientRequestId,
-        content: '已停止生成，可继续输入终止或新的指令。',
-        id: `assistant-stopped-${Date.now()}`,
-        role: 'assistant',
-        runId: activeRequest?.runId,
-        status: 'cancelled',
-      },
-    ]);
-  };
-
-  const retryFailedRequest = (request: NonNullable<ChatMessage['failedRequest']>) => {
-    void sendMessage(request.content, request.references, { replaceReferences: true });
-  };
-
-  const restoreFailedRequest = (request: NonNullable<ChatMessage['failedRequest']>) => {
-    setInputValue(request.content);
-    setSelectedReferences(request.references);
-    setReferenceCandidates([]);
-    setActiveReferenceIndex(-1);
-    setDismissedReferencePickerValue(undefined);
-  };
-
-  const rememberDraftResolution = (
-    draft: AssistantToolResultItem,
-    resourceId?: string,
-    resourceType?: string,
-    title?: string,
-    scheduledJobRunId?: string,
-  ) => {
-    if (!resourceId) {
-      return;
-    }
-    if (
-      resourceType !== 'assistant_analysis'
-      && resourceType !== 'ai_agent'
-      && resourceType !== 'ai_skill'
-      && resourceType !== 'ai_task'
-      && resourceType !== 'plugin_action'
-      && resourceType !== 'plugin_connection'
-      && resourceType !== 'scheduled_job'
-    ) {
-      return;
-    }
-    const draftIds = new Set(
-      [draft.draft_id, draft.client_draft_id, draft.server_draft_id]
-        .map((value) => (value ? String(value) : undefined))
-        .filter(Boolean) as string[],
-    );
-    draftIds.forEach((draftId) => {
-      rememberAssistantDraftResolution({
-        draftId,
-        resourceId,
-        resourceType,
-        scheduledJobRunId,
-        title,
-      });
-    });
-    setDraftResolutionById((items) => {
-      const resolution: AssistantDraftResolutionRecord = {
-        resource_id: resourceId,
-        resource_type: resourceType,
-      };
-      if (title) {
-        resolution.title = title;
-      }
-      if (scheduledJobRunId) {
-        resolution.scheduled_job_run_id = scheduledJobRunId;
-      }
-      const next = { ...items };
-      draftIds.forEach((draftId) => {
-        next[draftId] = resolution;
-      });
-      return next;
-    });
-  };
-
-  const regenerateDraft = (draft: AssistantToolResultItem) => {
-    setInputValue(draftRegeneratePrompt(draft));
   };
 
   const useScheduledJobRunFollowupPrompt = (
@@ -2605,97 +1264,6 @@ export default function AssistantPage() {
     setInputValue(pluginConnectionDiagnosticFollowupPrompt(item, prompt));
   };
 
-  const viewDraft = async (draft: AssistantToolResultItem) => {
-    const draftId = assistantDraftId(draft);
-    if (!draftId) {
-      return draft;
-    }
-    try {
-      const result = await markAssistantActionDraftViewed(draftId, 'detail_modal');
-      const viewedItem = assistantActionDraftRecordToToolItem(result);
-      const toolItem = {
-        ...draft,
-        ...viewedItem,
-        payload: viewedItem.payload ?? draft.payload,
-        preview: viewedItem.preview ?? draft.preview,
-        wizard_steps: viewedItem.wizard_steps ?? draft.wizard_steps,
-      };
-      setDraftStatusById((items) => ({ ...items, [draftId]: result.status }));
-      setLinkedDraft((currentDraft) => (
-        assistantDraftId(currentDraft) === draftId ? toolItem : currentDraft
-      ));
-      return toolItem;
-    } catch (error) {
-      toast.warning(formatMutationError(error));
-      return draft;
-    }
-  };
-
-  const confirmDraft = async (draft: AssistantToolResultItem) => {
-    const draftId = assistantDraftId(draft);
-    if (!draftId) {
-      return;
-    }
-    setDraftMutationId(draftId);
-    try {
-      const result = await confirmAssistantActionDraft(draftId);
-      setDraftStatusById((items) => ({ ...items, [draftId]: result.draft.status }));
-      setLinkedDraft((currentDraft) => (
-        assistantDraftId(currentDraft) === draftId
-          ? assistantActionDraftRecordToToolItem(result.draft)
-          : currentDraft
-      ));
-      rememberDraftResolution(
-        draft,
-        result.run.result_id,
-        result.run.result_type,
-        result.draft.title,
-        scheduledJobRunIdFromActionResult(result.run.result),
-      );
-      toast.success('草案已应用');
-    } catch (error) {
-      const errorMessage = formatMutationError(error);
-      try {
-        const latestDraft = await getAssistantActionDraft(draftId);
-        const latestToolItem = assistantActionDraftRecordToToolItem(latestDraft);
-        setDraftStatusById((items) => ({ ...items, [draftId]: latestDraft.status }));
-        setLinkedDraft((currentDraft) => (
-          assistantDraftId(currentDraft) === draftId
-            ? latestToolItem
-            : currentDraft
-        ));
-        toast.error(`${errorMessage}；已同步服务端草案状态：${draftStatusLabel(latestDraft.status).text}`);
-      } catch {
-        setDraftStatusById((items) => ({ ...items, [draftId]: 'unknown' }));
-        toast.error(`${errorMessage}；确认状态未知，可重试。`);
-      }
-    } finally {
-      setDraftMutationId(undefined);
-    }
-  };
-
-  const cancelDraft = async (draft: AssistantToolResultItem) => {
-    const draftId = assistantDraftId(draft);
-    if (!draftId) {
-      return;
-    }
-    setDraftMutationId(draftId);
-    try {
-      const result = await cancelAssistantActionDraft(draftId, '用户在 AI 助手取消');
-      setDraftStatusById((items) => ({ ...items, [draftId]: result.status }));
-      setLinkedDraft((currentDraft) => (
-        assistantDraftId(currentDraft) === draftId
-          ? assistantActionDraftRecordToToolItem(result)
-          : currentDraft
-      ));
-      toast.success('草案已取消');
-    } catch (error) {
-      toast.error(formatMutationError(error));
-    } finally {
-      setDraftMutationId(undefined);
-    }
-  };
-
   return (
     <PageContainer title={false}>
       <div className="assistant-workspace">
@@ -2706,6 +1274,7 @@ export default function AssistantPage() {
           isLoadingConversations={isLoadingConversations}
           isLoadingMoreConversations={isLoadingMoreConversations}
           isLoadingMetrics={isLoadingMetrics}
+          isRefreshingRuntimeStatus={isRefreshingRuntimeStatus}
           showDuplicateConversations={showDuplicateConversations}
           roleQuickTaskCount={roleQuickTaskCount}
           roleQuickTaskGroups={roleQuickTaskGroups}
@@ -2715,6 +1284,7 @@ export default function AssistantPage() {
           onOpenConversation={openConversation}
           onOpenDraftTemplateMarket={openDraftTemplateMarket}
           onOpenMetricsPanel={openMetricsPanel}
+          onOpenRuntimeStatusPanel={openRuntimeStatusPanel}
           onStartNewConversation={startNewConversation}
           onToggleRoleQuickTasks={() => setRoleQuickTasksExpanded((expanded) => !expanded)}
           onUseRoleTask={setInputValue}
@@ -2732,12 +1302,6 @@ export default function AssistantPage() {
               </Space>
             ) : null}
           </div>
-          <AssistantRuntimeStatus
-            checkedAt={runtimeStatusCheckedAt}
-            isRefreshing={isRefreshingRuntimeStatus}
-            runtimeStatus={runtimeStatus}
-            onRefresh={() => void refreshRuntimeStatus({ force: true })}
-          />
           <AssistantChatRunRecovery
             isLoading={isLoadingChatRuns}
             isVisible={!isRecoveryDismissed}
@@ -2851,17 +1415,23 @@ export default function AssistantPage() {
               />
             ) : undefined}
             runOncePermissionHint={runOncePermissionHint}
-            onChangeInput={(value) => {
-              setInputValue(value);
-              setDismissedReferencePickerValue(undefined);
-            }}
+            onChangeInput={onChangeInput}
             onChangeAddActionQuery={changeAddActionQuery}
             onCloseAddMenu={() => setIsAddMenuOpen(false)}
             onHoverAddAction={setActiveAddActionIndex}
             onAddActionMenuKeyDown={handleAddActionMenuKeyDown}
-            onKeyDown={handleComposerKeyDown}
+            onKeyDown={(event) => handleComposerKeyDown(event, {
+              sendMessage: (messageText, references) => void sendMessage(messageText, references),
+              stopGenerating,
+            })}
             onPressEnter={(event) => {
-              if (event.defaultPrevented || submitComposerEnter(event)) {
+              if (
+                event.defaultPrevented
+                || submitComposerEnter(event, {
+                  sendMessage: (messageText, references) => void sendMessage(messageText, references),
+                  stopGenerating,
+                })
+              ) {
                 return;
               }
             }}
@@ -2902,13 +1472,31 @@ export default function AssistantPage() {
       >
         <AssistantMetricsPanel
           isDetailLoading={isLoadingMetricDetails}
+          isExporting={isExportingMetrics}
           isLoading={isLoadingMetrics}
           metricDetails={assistantMetricDetails}
           metrics={assistantMetrics}
           onChangeWindow={changeAssistantMetricsWindow}
+          onExport={exportAssistantMetricsFile}
           onOpenDetail={openAssistantMetricDetails}
           onRefresh={() => void loadAssistantMetrics()}
           windowDays={assistantMetricsWindowDays}
+        />
+      </Modal>
+      <Modal
+        className="assistant-workbench-modal"
+        footer={null}
+        open={runtimeStatusPanelOpen}
+        title="运行诊断"
+        width={860}
+        onCancel={() => setRuntimeStatusPanelOpen(false)}
+      >
+        <AssistantRuntimeStatus
+          checkedAt={runtimeStatusCheckedAt}
+          isRefreshing={isRefreshingRuntimeStatus}
+          runtimeStatus={runtimeStatus}
+          showHealthy
+          onRefresh={() => void refreshRuntimeStatus({ force: true })}
         />
       </Modal>
     </PageContainer>

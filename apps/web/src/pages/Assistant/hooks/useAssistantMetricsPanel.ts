@@ -2,6 +2,7 @@ import { message as toast } from 'antd';
 import { useCallback, useState } from 'react';
 
 import {
+  exportAssistantMetrics,
   fetchAssistantMetricDetails,
   fetchAssistantMetrics,
   type AssistantMetricDetails,
@@ -13,6 +14,7 @@ export function useAssistantMetricsPanel() {
   const [assistantMetrics, setAssistantMetrics] = useState<AssistantMetrics>();
   const [assistantMetricDetails, setAssistantMetricDetails] = useState<AssistantMetricDetails>();
   const [assistantMetricsWindowDays, setAssistantMetricsWindowDays] = useState<number | undefined>();
+  const [isExportingMetrics, setIsExportingMetrics] = useState(false);
   const [isLoadingMetricDetails, setIsLoadingMetricDetails] = useState(false);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
   const [metricsPanelOpened, setMetricsPanelOpened] = useState(false);
@@ -63,11 +65,44 @@ export function useAssistantMetricsPanel() {
     void loadAssistantMetrics();
   }, [loadAssistantMetrics]);
 
+  const exportAssistantMetricsFile = useCallback(async () => {
+    setIsExportingMetrics(true);
+    try {
+      const payload = await exportAssistantMetrics({
+        format: 'csv',
+        windowDays: assistantMetricsWindowDays,
+      });
+      if (
+        typeof document !== 'undefined'
+        && typeof URL !== 'undefined'
+        && typeof URL.createObjectURL === 'function'
+        && typeof payload.content === 'string'
+      ) {
+        const blob = new Blob([payload.content], { type: payload.contentType || 'text/csv' });
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = payload.filename || 'assistant_metrics.csv';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL?.(href);
+      }
+      toast.success('指标已导出');
+    } catch (error) {
+      toast.error(formatMutationError(error));
+    } finally {
+      setIsExportingMetrics(false);
+    }
+  }, [assistantMetricsWindowDays]);
+
   return {
     assistantMetricDetails,
     assistantMetrics,
     assistantMetricsWindowDays,
     changeAssistantMetricsWindow,
+    exportAssistantMetricsFile,
+    isExportingMetrics,
     isLoadingMetricDetails,
     isLoadingMetrics,
     loadAssistantMetrics,

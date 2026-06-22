@@ -329,7 +329,10 @@ async function main() {
       Boolean([...document.querySelectorAll('button')].find((el) => el.getAttribute('aria-label') === '指标 草案生成数'))
     `), 20000);
     await clickButton('(el) => el.getAttribute("aria-label") === "指标 草案生成数"');
-    await waitFor('metric details', async () => (await hasText('草案生成')) && (await hasText('查看来源')), 10000);
+    await waitFor('metric details', async () => (
+      (await hasText('草案生成'))
+        && ((await hasText('查看来源')) || (await hasText('点击上方指标查看对应草案、运行或引用明细。')))
+    ), 10000);
     await client.send('Input.dispatchKeyEvent', { key: 'Escape', type: 'keyDown' });
 
     const duplicateButtonVisible = await evaluate(`

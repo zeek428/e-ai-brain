@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Query, Request
 from pydantic import BaseModel, Field
@@ -376,6 +376,7 @@ def run_scheduled_job(
 @router.get("/api/system/scheduled-job-runs")
 def list_scheduled_job_runs(
     request: Request,
+    run_id: Annotated[list[str] | None, Query()] = None,
     scheduled_job_id: str | None = None,
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
@@ -383,6 +384,7 @@ def list_scheduled_job_runs(
     return envelope(
         list_scheduled_job_runs_response(
             current_store=store(request),
+            run_ids=run_id,
             scheduled_job_id=scheduled_job_id,
             status=status,
         ),

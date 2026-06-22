@@ -143,10 +143,23 @@ class ScheduledAiJobReadRepository:
     def list_scheduled_job_runs(
         self,
         *,
+        run_ids: list[str] | None = None,
         scheduled_job_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         where, params = self._where({"scheduled_job_id": scheduled_job_id, "status": status})
+        normalized_run_ids = [
+            str(run_id).strip()
+            for run_id in (run_ids or [])
+            if str(run_id).strip()
+        ]
+        if normalized_run_ids:
+            run_id_clause = "id = ANY(%s)"
+            if where:
+                where = f"{where} AND {run_id_clause}"
+            else:
+                where = f"WHERE {run_id_clause}"
+            params.append(normalized_run_ids)
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(

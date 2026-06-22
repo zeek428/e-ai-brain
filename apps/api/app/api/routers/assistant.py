@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from urllib.request import urlopen
 
@@ -32,6 +33,7 @@ from app.services.assistant_chat import (
 from app.services.assistant_draft_templates import list_assistant_draft_templates_response
 from app.services.assistant_metrics import (
     assistant_metric_details_response,
+    assistant_metrics_export_response,
     assistant_metrics_response,
 )
 from app.services.assistant_references import (
@@ -208,8 +210,9 @@ def assistant_runtime_status(
 ) -> dict[str, Any]:
     require_roles(user, ASSISTANT_ACCESS_ROLES)
     trace_id = get_trace_id(request)
+    current_store = store(request)
     health = health_payload(
-        current_store=store(request),
+        current_store=current_store,
         settings=settings,
         trace_id=trace_id,
     )
@@ -227,6 +230,7 @@ def assistant_runtime_status(
         "model_gateway": health["model_gateway"],
         "mode": "model_gateway" if model_gateway_configured else "deterministic_only",
         "checks": checks,
+        "operations": _assistant_runtime_operations(current_store, user=user),
         "ready": required_checks_ready,
         "warnings": [] if model_gateway_configured else [
             {
@@ -236,6 +240,271 @@ def assistant_runtime_status(
         ],
     }
     return envelope(payload, trace_id)
+
+
+def _assistant_runtime_operations(
+    current_store: Any,
+    *,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    can_view_scheduled_jobs = _assistant_runtime_user_has_any_permission(
+        user,
+        {"system.admin", "system.scheduled_jobs.manage", "system.scheduled_jobs.run"},
+    )
+    can_view_model_gateway = _assistant_runtime_user_has_any_permission(
+        user,
+        {"system.admin", "system.model_gateway.manage"},
+    )
+    can_view_executor_queue = _assistant_runtime_user_has_any_permission(
+        user,
+        {"system.admin", "system.plugins.manage", "system.scheduled_jobs.manage"},
+    )
+    chat_failures = [
+        _assistant_runtime_chat_failure_item(run)
+        for run in _assistant_runtime_chat_runs(current_store, user_id=str(user["id"]))
+        if str(run.get("status") or "") == "failed"
+    ]
+    model_failures = (
+        [
+            _assistant_runtime_model_failure_item(log)
+            for log in _assistant_runtime_model_gateway_logs(current_store, status="failed")
+        ]
+        if can_view_model_gateway
+        else []
+    )
+    scheduled_failures = (
+        [
+            _assistant_runtime_scheduled_job_failure_item(run)
+            for run in _assistant_runtime_scheduled_job_runs(current_store, status="failed")
+        ]
+        if can_view_scheduled_jobs
+        else []
+    )
+    recent_failures = sorted(
+        [
+            item
+            for item in chat_failures + model_failures + scheduled_failures
+            if item is not None
+        ],
+        key=lambda item: _assistant_runtime_sort_time(
+            item.get("updated_at") or item.get("created_at")
+        ),
+        reverse=True,
+    )[:5]
+    model_gateway_recent_failure = model_failures[0] if model_failures else None
+    return {
+        "executor_queue": (
+            _assistant_runtime_executor_queue(current_store)
+            if can_view_executor_queue
+            else {
+                "active_runners": 0,
+                "failed": 0,
+                "offline_runners": 0,
+                "oldest_pending_task_created_at": None,
+                "oldest_pending_task_id": None,
+                "queued": 0,
+                "running": 0,
+                "succeeded": 0,
+                "total_runners": 0,
+                "visible": False,
+            }
+        ),
+        "model_gateway_recent_failure": model_gateway_recent_failure,
+        "recent_failures": recent_failures,
+    }
+
+
+def _assistant_runtime_user_has_any_permission(
+    user: dict[str, Any],
+    permissions: set[str],
+) -> bool:
+    roles = set(user.get("roles") or [])
+    user_permissions = set(user.get("permissions") or [])
+    return "admin" in roles or bool(user_permissions & permissions)
+
+
+def _assistant_runtime_chat_runs(current_store: Any, *, user_id: str) -> list[dict[str, Any]]:
+    repository = getattr(current_store, "repository", None)
+    list_runs = getattr(repository, "list_assistant_chat_runs", None)
+    if callable(list_runs):
+        return [dict(run) for run in list_runs(user_id=user_id)]
+    return [
+        dict(run)
+        for run in getattr(current_store, "assistant_chat_runs", {}).values()
+        if str(run.get("user_id") or "") == user_id
+    ]
+
+
+def _assistant_runtime_model_gateway_logs(
+    current_store: Any,
+    *,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    repository = getattr(current_store, "repository", None)
+    list_logs = getattr(repository, "list_model_gateway_logs", None)
+    if callable(list_logs):
+        return [dict(log) for log in list_logs(status=status)]
+    logs = [dict(log) for log in getattr(current_store, "model_gateway_logs", [])]
+    if status is not None:
+        logs = [log for log in logs if str(log.get("status") or "") == status]
+    return sorted(
+        logs,
+        key=lambda item: _assistant_runtime_sort_time(
+            item.get("created_at") or item.get("updated_at")
+        ),
+        reverse=True,
+    )
+
+
+def _assistant_runtime_scheduled_job_runs(
+    current_store: Any,
+    *,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    repository = getattr(current_store, "repository", None)
+    list_runs = getattr(repository, "list_scheduled_job_runs", None)
+    if callable(list_runs):
+        return [dict(run) for run in list_runs(status=status)]
+    runs = [dict(run) for run in getattr(current_store, "scheduled_job_runs", {}).values()]
+    if status is not None:
+        runs = [run for run in runs if str(run.get("status") or "") == status]
+    return sorted(
+        runs,
+        key=lambda item: _assistant_runtime_sort_time(
+            item.get("updated_at") or item.get("created_at")
+        ),
+        reverse=True,
+    )
+
+
+def _assistant_runtime_ai_executor_tasks(current_store: Any) -> list[dict[str, Any]]:
+    repository = getattr(current_store, "repository", None)
+    list_tasks = getattr(repository, "list_ai_executor_tasks", None)
+    if callable(list_tasks):
+        return [dict(task) for task in list_tasks()]
+    return [dict(task) for task in getattr(current_store, "ai_executor_tasks", {}).values()]
+
+
+def _assistant_runtime_ai_executor_runners(current_store: Any) -> list[dict[str, Any]]:
+    repository = getattr(current_store, "repository", None)
+    list_runners = getattr(repository, "list_ai_executor_runners", None)
+    if callable(list_runners):
+        return [dict(runner) for runner in list_runners()]
+    return [dict(runner) for runner in getattr(current_store, "ai_executor_runners", {}).values()]
+
+
+def _assistant_runtime_chat_failure_item(run: dict[str, Any]) -> dict[str, Any]:
+    run_id = str(run.get("id") or "")
+    conversation_id = str(run.get("conversation_id") or "")
+    return {
+        "created_at": run.get("created_at") or run.get("started_at"),
+        "error_code": run.get("error_code"),
+        "error_message": run.get("error_message") or "助手生成失败，请查看会话或模型网关日志。",
+        "id": run_id,
+        "kind": "assistant_chat_run",
+        "label": "助手聊天失败",
+        "status": run.get("status"),
+        "title": run.get("title") or run_id,
+        "updated_at": run.get("updated_at") or run.get("finished_at"),
+        "url": f"/assistant?conversation_id={conversation_id}" if conversation_id else "/assistant",
+    }
+
+
+def _assistant_runtime_model_failure_item(log: dict[str, Any]) -> dict[str, Any]:
+    log_id = str(log.get("id") or "")
+    return {
+        "created_at": log.get("created_at"),
+        "error_code": "MODEL_GATEWAY_LOG_FAILED",
+        "error_message": log.get("error") or "模型网关调用失败。",
+        "id": log_id,
+        "kind": "model_gateway_log",
+        "label": "模型网关失败",
+        "status": log.get("status"),
+        "title": str(log.get("purpose") or "模型调用"),
+        "updated_at": log.get("updated_at") or log.get("created_at"),
+        "url": f"/system/model-gateway?log_id={log_id}",
+    }
+
+
+def _assistant_runtime_scheduled_job_failure_item(run: dict[str, Any]) -> dict[str, Any]:
+    run_id = str(run.get("id") or "")
+    job_id = str(run.get("scheduled_job_id") or "")
+    return {
+        "created_at": run.get("created_at") or run.get("started_at"),
+        "error_code": run.get("error_code"),
+        "error_message": run.get("error_message") or "定时作业运行失败。",
+        "id": run_id,
+        "kind": "scheduled_job_run",
+        "label": "定时作业失败",
+        "status": run.get("status"),
+        "title": run.get("title") or run_id,
+        "updated_at": run.get("updated_at") or run.get("finished_at"),
+        "url": (
+            f"/tasks/scheduled-jobs?job_id={job_id}&run_id={run_id}"
+            if job_id
+            else f"/tasks/scheduled-jobs?run_id={run_id}"
+        ),
+    }
+
+
+def _assistant_runtime_executor_queue(current_store: Any) -> dict[str, Any]:
+    tasks = _assistant_runtime_ai_executor_tasks(current_store)
+    runners = _assistant_runtime_ai_executor_runners(current_store)
+    status_counts: dict[str, int] = {
+        "failed": 0,
+        "queued": 0,
+        "running": 0,
+        "succeeded": 0,
+    }
+    pending_tasks: list[dict[str, Any]] = []
+    for task in tasks:
+        status = str(task.get("status") or "")
+        if status in {"queued", "pending"}:
+            status_counts["queued"] += 1
+            pending_tasks.append(task)
+        elif status in {"claimed", "running"}:
+            status_counts["running"] += 1
+        elif status == "succeeded":
+            status_counts["succeeded"] += 1
+        elif status == "failed":
+            status_counts["failed"] += 1
+    pending_tasks = sorted(
+        pending_tasks,
+        key=lambda item: _assistant_runtime_sort_time(item.get("created_at")),
+    )
+    active_runners = sum(1 for runner in runners if str(runner.get("status") or "") == "active")
+    offline_runners = sum(
+        1
+        for runner in runners
+        if str(runner.get("status") or "") in {"inactive", "offline", "disabled"}
+    )
+    oldest_pending = pending_tasks[0] if pending_tasks else None
+    return {
+        "active_runners": active_runners,
+        "failed": status_counts["failed"],
+        "offline_runners": offline_runners,
+        "oldest_pending_task_created_at": (
+            oldest_pending.get("created_at") if oldest_pending else None
+        ),
+        "oldest_pending_task_id": oldest_pending.get("id") if oldest_pending else None,
+        "queued": status_counts["queued"],
+        "running": status_counts["running"],
+        "succeeded": status_counts["succeeded"],
+        "total_runners": len(runners),
+        "visible": True,
+    }
+
+
+def _assistant_runtime_sort_time(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+        except ValueError:
+            return datetime.min.replace(tzinfo=UTC)
+    return datetime.min.replace(tzinfo=UTC)
 
 
 def _assistant_runtime_checks(health: dict[str, str]) -> list[dict[str, Any]]:
@@ -442,12 +711,22 @@ def mark_assistant_action_draft_viewed(
 @router.get("/metrics")
 def assistant_metrics(
     request: Request,
+    action: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    product_id: str | None = Query(default=None),
+    role: str | None = Query(default=None),
     window_days: int | None = Query(default=None, ge=1, le=365),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, ASSISTANT_ACCESS_ROLES)
     payload = assistant_metrics_response(
         assistant_request_store(store(request), user_id=user["id"]),
+        action=action,
+        date_from=date_from,
+        date_to=date_to,
+        product_id=product_id,
+        role=role,
         user=user,
         window_days=window_days,
     )
@@ -457,16 +736,53 @@ def assistant_metrics(
 @router.get("/metrics/details")
 def assistant_metric_details(
     request: Request,
+    action: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     metric: str = Query(default="draft_total"),
+    product_id: str | None = Query(default=None),
+    role: str | None = Query(default=None),
     window_days: int | None = Query(default=None, ge=1, le=365),
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, ASSISTANT_ACCESS_ROLES)
     payload = assistant_metric_details_response(
         assistant_request_store(store(request), user_id=user["id"]),
+        action=action,
+        date_from=date_from,
+        date_to=date_to,
         limit=limit,
         metric=metric,
+        product_id=product_id,
+        role=role,
+        user=user,
+        window_days=window_days,
+    )
+    return envelope(payload, get_trace_id(request))
+
+
+@router.get("/metrics/export")
+def assistant_metrics_export(
+    request: Request,
+    action: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    export_format: str = Query(default="csv", alias="format"),
+    product_id: str | None = Query(default=None),
+    role: str | None = Query(default=None),
+    window_days: int | None = Query(default=None, ge=1, le=365),
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    payload = assistant_metrics_export_response(
+        assistant_request_store(store(request), user_id=user["id"]),
+        action=action,
+        date_from=date_from,
+        date_to=date_to,
+        export_format=export_format,
+        product_id=product_id,
+        role=role,
         user=user,
         window_days=window_days,
     )

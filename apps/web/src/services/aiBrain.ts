@@ -205,11 +205,40 @@ export type AssistantRuntimeStatus = {
   long_memory: string;
   mode: 'deterministic_only' | 'model_gateway' | string;
   model_gateway: string;
+  operations?: {
+    executor_queue?: {
+      active_runners?: number;
+      failed?: number;
+      offline_runners?: number;
+      oldest_pending_task_created_at?: string | null;
+      oldest_pending_task_id?: string | null;
+      queued?: number;
+      running?: number;
+      succeeded?: number;
+      total_runners?: number;
+      visible?: boolean;
+    };
+    model_gateway_recent_failure?: AssistantRuntimeFailure | null;
+    recent_failures?: AssistantRuntimeFailure[];
+  };
   ready?: boolean;
   warnings?: Array<{
     code?: string;
     message?: string;
   }>;
+};
+
+export type AssistantRuntimeFailure = {
+  created_at?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  id: string;
+  kind: string;
+  label?: string;
+  status?: string | null;
+  title?: string | null;
+  updated_at?: string | null;
+  url?: string | null;
 };
 
 export type AssistantIntent = {
@@ -328,8 +357,63 @@ export type AssistantRunAttributionMetric = {
   label: string;
 };
 
+export type AssistantMetricsFilters = {
+  action?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
+  product_id?: string | null;
+  role?: string | null;
+  window_days?: number | null;
+};
+
+export type AssistantMetricsProductDimension = {
+  chat_run_total?: number;
+  draft_adoption_rate?: number;
+  draft_confirmed_count?: number;
+  draft_total?: number;
+  message_total?: number;
+  product_id: string;
+  scheduled_job_run_failed_count?: number;
+  scheduled_job_run_succeeded_count?: number;
+  scheduled_job_run_success_rate?: number;
+  scheduled_job_run_total?: number;
+};
+
+export type AssistantMetricsRoleDimension = {
+  chat_run_total?: number;
+  draft_total?: number;
+  message_total?: number;
+  role: string;
+  scheduled_job_run_total?: number;
+};
+
+export type AssistantMetricsDailyTrend = {
+  action_run_failed_count?: number;
+  action_run_succeeded_count?: number;
+  action_run_total?: number;
+  chat_run_failed_count?: number;
+  chat_run_succeeded_count?: number;
+  chat_run_total?: number;
+  day: string;
+  draft_confirmed_count?: number;
+  draft_total?: number;
+  message_total?: number;
+  scheduled_job_run_failed_count?: number;
+  scheduled_job_run_succeeded_count?: number;
+  scheduled_job_run_total?: number;
+};
+
+export type AssistantDraftActionDailyTrend = AssistantDraftActionMetric & {
+  day: string;
+};
+
 export type AssistantMetrics = {
+  dimensions?: {
+    products?: AssistantMetricsProductDimension[];
+    roles?: AssistantMetricsRoleDimension[];
+  };
   drafts_by_action: AssistantDraftActionMetric[];
+  filters?: AssistantMetricsFilters;
   funnel?: {
     stages?: AssistantFunnelStage[];
   };
@@ -350,6 +434,10 @@ export type AssistantMetrics = {
     total?: number;
   };
   summary: AssistantMetricsSummary;
+  trends?: {
+    daily?: AssistantMetricsDailyTrend[];
+    drafts_by_action_daily?: AssistantDraftActionDailyTrend[];
+  };
   window?: {
     days?: number | null;
     label?: string;
@@ -369,6 +457,7 @@ export type AssistantMetricDetailItem = {
 };
 
 export type AssistantMetricDetails = {
+  filters?: AssistantMetricsFilters;
   items: AssistantMetricDetailItem[];
   metric: string;
   title: string;
@@ -377,6 +466,22 @@ export type AssistantMetricDetails = {
     days?: number | null;
     label?: string;
   };
+};
+
+export type AssistantMetricsQueryParams = {
+  action?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  productId?: string;
+  role?: string;
+  windowDays?: number;
+};
+
+export type AssistantMetricsExport = {
+  content: AssistantMetrics | string;
+  contentType: string;
+  filename: string;
+  format: string;
 };
 
 export type AssistantActionReferenceConfig = {
@@ -2761,14 +2866,36 @@ export async function fetchAssistantDraftTemplates(): Promise<AssistantDraftTemp
   return response.items;
 }
 
-export async function fetchAssistantMetrics(params: {
-  windowDays?: number;
-} = {}): Promise<AssistantMetrics> {
-  const token = requireAccessToken();
-  const searchParams = new URLSearchParams();
+function appendAssistantMetricsQueryParams(
+  searchParams: URLSearchParams,
+  params: AssistantMetricsQueryParams = {},
+) {
+  if (params.action) {
+    searchParams.set('action', params.action);
+  }
+  if (params.dateFrom) {
+    searchParams.set('date_from', params.dateFrom);
+  }
+  if (params.dateTo) {
+    searchParams.set('date_to', params.dateTo);
+  }
+  if (params.productId) {
+    searchParams.set('product_id', params.productId);
+  }
+  if (params.role) {
+    searchParams.set('role', params.role);
+  }
   if (params.windowDays) {
     searchParams.set('window_days', String(params.windowDays));
   }
+}
+
+export async function fetchAssistantMetrics(
+  params: AssistantMetricsQueryParams = {},
+): Promise<AssistantMetrics> {
+  const token = requireAccessToken();
+  const searchParams = new URLSearchParams();
+  appendAssistantMetricsQueryParams(searchParams, params);
   const query = searchParams.toString();
   return apiRequest<AssistantMetrics>(`/api/assistant/metrics${query ? `?${query}` : ''}`, {
     method: 'GET',
@@ -2777,16 +2904,19 @@ export async function fetchAssistantMetrics(params: {
 }
 
 export async function fetchAssistantMetricDetails(params: {
+  action?: string;
+  dateFrom?: string;
+  dateTo?: string;
   limit?: number;
   metric: string;
+  productId?: string;
+  role?: string;
   windowDays?: number;
 }): Promise<AssistantMetricDetails> {
   const token = requireAccessToken();
   const searchParams = new URLSearchParams();
   searchParams.set('metric', params.metric);
-  if (params.windowDays) {
-    searchParams.set('window_days', String(params.windowDays));
-  }
+  appendAssistantMetricsQueryParams(searchParams, params);
   if (params.limit) {
     searchParams.set('limit', String(params.limit));
   }
@@ -2797,6 +2927,30 @@ export async function fetchAssistantMetricDetails(params: {
       token,
     },
   );
+}
+
+export async function exportAssistantMetrics(params: AssistantMetricsQueryParams & {
+  format?: 'csv' | 'json';
+} = {}): Promise<AssistantMetricsExport> {
+  const token = requireAccessToken();
+  const searchParams = new URLSearchParams();
+  appendAssistantMetricsQueryParams(searchParams, params);
+  searchParams.set('format', params.format ?? 'csv');
+  const response = await apiRequest<{
+    content: AssistantMetrics | string;
+    content_type: string;
+    filename: string;
+    format: string;
+  }>(`/api/assistant/metrics/export?${searchParams.toString()}`, {
+    method: 'GET',
+    token,
+  });
+  return {
+    content: response.content,
+    contentType: response.content_type,
+    filename: response.filename,
+    format: response.format,
+  };
 }
 
 export async function fetchAssistantActionReferenceConfigs(): Promise<AssistantActionReferenceConfig[]> {
@@ -5831,10 +5985,15 @@ export async function runScheduledJob(
 }
 
 export async function fetchScheduledJobRuns(
-  query: { scheduledJobId?: string; status?: string } = {},
+  query: { runIds?: string[]; scheduledJobId?: string; status?: string } = {},
 ): Promise<ScheduledJobRunRecord[]> {
   const token = requireAccessToken();
   const params = new URLSearchParams();
+  query.runIds?.forEach((runId) => {
+    if (runId) {
+      params.append('run_id', runId);
+    }
+  });
   appendQueryParam(params, 'scheduled_job_id', query.scheduledJobId);
   appendQueryParam(params, 'status', query.status);
   const queryString = params.toString();

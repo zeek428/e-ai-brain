@@ -5,6 +5,7 @@ import {
   MessageOutlined,
   PlusOutlined,
   UpOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import { Button, Spin, Typography } from 'antd';
 import { useMemo } from 'react';
@@ -22,10 +23,12 @@ export function AssistantSidebar({
   isLoadingConversations,
   isLoadingMoreConversations,
   isLoadingMetrics,
+  isRefreshingRuntimeStatus,
   onToggleDuplicateConversations,
   onOpenConversation,
   onOpenDraftTemplateMarket,
   onOpenMetricsPanel,
+  onOpenRuntimeStatusPanel,
   onLoadMoreConversations,
   onStartNewConversation,
   onToggleRoleQuickTasks,
@@ -42,10 +45,12 @@ export function AssistantSidebar({
   isLoadingConversations: boolean;
   isLoadingMoreConversations: boolean;
   isLoadingMetrics: boolean;
+  isRefreshingRuntimeStatus?: boolean;
   onToggleDuplicateConversations: () => void;
   onOpenConversation: (conversationId: string) => void;
   onOpenDraftTemplateMarket: () => void;
   onOpenMetricsPanel: () => void;
+  onOpenRuntimeStatusPanel: () => void;
   onLoadMoreConversations: () => void;
   onStartNewConversation: () => void;
   onToggleRoleQuickTasks: () => void;
@@ -185,6 +190,14 @@ export function AssistantSidebar({
             onClick={onOpenMetricsPanel}
           >
             效果指标
+          </Button>
+          <Button
+            aria-label="查看助手运行诊断"
+            icon={<WarningOutlined />}
+            loading={isRefreshingRuntimeStatus}
+            onClick={onOpenRuntimeStatusPanel}
+          >
+            运行诊断
           </Button>
         </div>
       </div>

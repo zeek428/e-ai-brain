@@ -1,4 +1,4 @@
-import { BarChartOutlined } from '@ant-design/icons';
+import { BarChartOutlined, DownloadOutlined } from '@ant-design/icons';
 import { Button, Segmented, Space, Spin, Tag, Typography } from 'antd';
 
 import {
@@ -118,19 +118,23 @@ export function AssistantDraftTemplateMarket({
 
 export function AssistantMetricsPanel({
   isDetailLoading,
+  isExporting,
   isLoading,
   metricDetails,
   metrics,
   onChangeWindow,
+  onExport,
   onOpenDetail,
   onRefresh,
   windowDays,
 }: {
   isDetailLoading?: boolean;
+  isExporting?: boolean;
   isLoading: boolean;
   metricDetails?: AssistantMetricDetails;
   metrics?: AssistantMetrics;
   onChangeWindow: (windowDays?: number) => void;
+  onExport?: () => void;
   onOpenDetail: (metric: string) => void;
   onRefresh: () => void;
   windowDays?: number;
@@ -213,6 +217,10 @@ export function AssistantMetricsPanel({
       )} · 知识引用 ${metricCount(summary.knowledge_reference_count)}`,
     },
   ];
+  const productDimensionItems = metrics?.dimensions?.products ?? [];
+  const roleDimensionItems = metrics?.dimensions?.roles ?? [];
+  const dailyTrendItems = [...(metrics?.trends?.daily ?? [])].slice(-6);
+  const draftTrendItems = [...(metrics?.trends?.drafts_by_action_daily ?? [])].slice(-6);
 
   return (
     <div className="assistant-metrics-panel">
@@ -241,6 +249,17 @@ export function AssistantMetricsPanel({
           <Button loading={isLoading} size="small" onClick={onRefresh}>
             {metrics ? '刷新指标' : '查看指标'}
           </Button>
+          {onExport ? (
+            <Button
+              disabled={!metrics || isLoading}
+              icon={<DownloadOutlined />}
+              loading={isExporting}
+              size="small"
+              onClick={onExport}
+            >
+              导出CSV
+            </Button>
+          ) : null}
         </Space>
       </div>
       {metrics ? (
@@ -359,6 +378,82 @@ export function AssistantMetricsPanel({
                       Number(item.total ?? 0) - Number(item.pending_count ?? 0),
                       Number(item.total ?? 0),
                     )}
+                  </Text>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {productDimensionItems.length ? (
+            <div className="assistant-metrics-breakdown">
+              <Text strong>产品维度</Text>
+              <div className="assistant-metrics-action-list">
+                {productDimensionItems.map((item) => (
+                  <Text
+                    aria-label={`产品维度 ${item.product_id}`}
+                    key={item.product_id}
+                    type="secondary"
+                  >
+                    {item.product_id}：草案 {metricCount(item.draft_total)}
+                    {' · '}确认率 {metricPercent(item.draft_adoption_rate)}
+                    {' · '}消息 {metricCount(item.message_total)}
+                    {' · '}作业成功率 {metricPercent(item.scheduled_job_run_success_rate)}
+                  </Text>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {roleDimensionItems.length ? (
+            <div className="assistant-metrics-breakdown">
+              <Text strong>角色维度</Text>
+              <div className="assistant-metrics-action-list">
+                {roleDimensionItems.map((item) => (
+                  <Text
+                    aria-label={`角色维度 ${item.role}`}
+                    key={item.role}
+                    type="secondary"
+                  >
+                    {item.role}：草案 {metricCount(item.draft_total)}
+                    {' · '}消息 {metricCount(item.message_total)}
+                    {' · '}AI 生成 {metricCount(item.chat_run_total)}
+                    {' · '}作业运行 {metricCount(item.scheduled_job_run_total)}
+                  </Text>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {draftTrendItems.length ? (
+            <div className="assistant-metrics-breakdown">
+              <Text strong>草案趋势</Text>
+              <div className="assistant-metrics-action-list">
+                {draftTrendItems.map((item) => (
+                  <Text
+                    aria-label={`草案趋势 ${item.day}:${item.action}`}
+                    key={`${item.day}:${item.action}`}
+                    type="secondary"
+                  >
+                    {item.day} · {assistantDraftActionLabel(item.action)}：总数 {metricCount(item.total)}
+                    {' · '}待确认 {metricCount(item.pending_count)}
+                    {' · '}已应用 {metricCount(item.confirmed_count)}
+                  </Text>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {dailyTrendItems.length ? (
+            <div className="assistant-metrics-breakdown">
+              <Text strong>每日趋势</Text>
+              <div className="assistant-metrics-action-list">
+                {dailyTrendItems.map((item) => (
+                  <Text
+                    aria-label={`每日趋势 ${item.day}`}
+                    key={item.day}
+                    type="secondary"
+                  >
+                    {item.day}：草案 {metricCount(item.draft_total)}
+                    {' · '}消息 {metricCount(item.message_total)}
+                    {' · '}作业运行 {metricCount(item.scheduled_job_run_total)}
+                    {' · '}成功 {metricCount(item.scheduled_job_run_succeeded_count)}
+                    {' · '}失败 {metricCount(item.scheduled_job_run_failed_count)}
                   </Text>
                 ))}
               </div>

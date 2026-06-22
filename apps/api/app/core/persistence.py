@@ -1110,10 +1110,12 @@ class PostgresSnapshotRepository:
     def list_scheduled_job_runs(
         self,
         *,
+        run_ids: list[str] | None = None,
         scheduled_job_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         return self._scheduled_ai_job_read_repository.list_scheduled_job_runs(
+            run_ids=run_ids,
             scheduled_job_id=scheduled_job_id,
             status=status,
         )

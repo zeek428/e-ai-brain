@@ -14,6 +14,7 @@ from app.core.repositories.model_gateway import ModelGatewayReadRepository
 from app.core.repositories.operational_collection import OperationalCollectionReadRepository
 from app.core.repositories.product_config import ProductConfigReadRepository
 from app.core.repositories.requirements import RequirementReadRepository
+from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.repositories.system_state import SystemStateRepository
 from app.core.repositories.table_maintenance import TableMaintenanceRepository
 from app.core.repositories.tasks import TaskReadRepository
@@ -96,6 +97,46 @@ def test_postgres_table_maintenance_delegates_to_domain_repository(monkeypatch):
             "delete_missing_ids",
             {"cursor": cursor, "item_ids": ["audit_001"], "table_name": "audit_events"},
         ),
+    ]
+
+
+def test_postgres_scheduled_job_run_list_delegates_run_ids_filter(monkeypatch):
+    repository = PostgresSnapshotRepository("postgresql://unused")
+    calls: list[dict] = []
+
+    def fake_list_scheduled_job_runs(
+        self,
+        *,
+        run_ids: list[str] | None = None,
+        scheduled_job_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        calls.append(
+            {
+                "run_ids": run_ids,
+                "scheduled_job_id": scheduled_job_id,
+                "status": status,
+            },
+        )
+        return [{"id": "scheduled_job_run_001"}]
+
+    monkeypatch.setattr(
+        ScheduledAiJobReadRepository,
+        "list_scheduled_job_runs",
+        fake_list_scheduled_job_runs,
+    )
+
+    assert repository.list_scheduled_job_runs(
+        run_ids=["scheduled_job_run_001"],
+        scheduled_job_id="scheduled_job_001",
+        status="failed",
+    ) == [{"id": "scheduled_job_run_001"}]
+    assert calls == [
+        {
+            "run_ids": ["scheduled_job_run_001"],
+            "scheduled_job_id": "scheduled_job_001",
+            "status": "failed",
+        },
     ]
 
 
@@ -1731,7 +1772,7 @@ def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monke
         ("load_assistant_chat", {}),
         ("list_assistant_chat_runs", {"user_id": "user_admin"}),
         ("get_assistant_chat_run", {"run_id": "assistant_chat_run_001"}),
-        ("list_assistant_conversations", {"user_id": "user_admin"}),
+        ("list_assistant_conversations", {"cursor": None, "limit": None, "user_id": "user_admin"}),
         (
             "list_assistant_conversation_messages",
             {"conversation_id": "conversation_001", "user_id": "user_admin"},

@@ -11,11 +11,13 @@ export function AssistantRuntimeStatus({
   isRefreshing,
   onRefresh,
   runtimeStatus,
+  showHealthy = false,
 }: {
   checkedAt?: string;
   isRefreshing?: boolean;
   onRefresh?: () => void;
   runtimeStatus?: AssistantRuntimeStatusRecord;
+  showHealthy?: boolean;
 }) {
   const requiredAttentionChecks = useMemo(
     () => (runtimeStatus?.checks ?? []).filter(
@@ -23,10 +25,35 @@ export function AssistantRuntimeStatus({
     ),
     [runtimeStatus],
   );
+  const recentFailures = runtimeStatus?.operations?.recent_failures ?? [];
+  const executorQueue = runtimeStatus?.operations?.executor_queue;
+  const queueNeedsAttention = Boolean(
+    executorQueue?.visible
+    && (
+      Number(executorQueue.queued ?? 0) > 0
+      || Number(executorQueue.running ?? 0) > 0
+      || Number(executorQueue.failed ?? 0) > 0
+      || Number(executorQueue.offline_runners ?? 0) > 0
+    ),
+  );
+  const hasAttention = Boolean(
+    requiredAttentionChecks.length || recentFailures.length || queueNeedsAttention,
+  );
+  const shouldShow = Boolean(runtimeStatus ? hasAttention || showHealthy : showHealthy);
 
-  if (!runtimeStatus || !requiredAttentionChecks.length) {
+  if (!shouldShow) {
     return null;
   }
+  const title = requiredAttentionChecks.length
+    ? '助手运行依赖异常'
+    : (hasAttention ? '助手运行诊断' : '助手运行正常');
+  const description = requiredAttentionChecks.length
+    ? '部分必需服务不可用，可能影响聊天、草案记录和运行追踪。'
+    : (
+      hasAttention
+        ? '最近有失败或异步执行状态需要关注，可从这里快速定位。'
+        : '当前没有需要关注的运行异常。'
+    );
 
   return (
     <div
@@ -35,8 +62,8 @@ export function AssistantRuntimeStatus({
     >
       <Space size={6} wrap>
         <WarningOutlined />
-        <Text strong>助手运行依赖异常</Text>
-        <Text type="secondary">部分必需服务不可用，可能影响聊天、草案记录和运行追踪。</Text>
+        <Text strong>{title}</Text>
+        <Text type="secondary">{description}</Text>
         {checkedAt ? (
           <Text type="secondary">{`检测于 ${new Date(checkedAt).toLocaleTimeString()}`}</Text>
         ) : null}
@@ -53,20 +80,75 @@ export function AssistantRuntimeStatus({
         ) : null}
       </Space>
       <div className="assistant-runtime-checks" aria-label="助手运行自检">
-        {requiredAttentionChecks.map((item) => (
-          <div className="assistant-runtime-check" key={item.key ?? item.code}>
+        {!runtimeStatus ? (
+          <Text type="secondary">暂未获取到运行状态，请重新检测。</Text>
+        ) : null}
+        {runtimeStatus && !hasAttention ? (
+          <Text type="secondary">暂无运行异常，可继续使用 AI 助手。</Text>
+        ) : null}
+        {requiredAttentionChecks.length ? (
+          requiredAttentionChecks.map((item) => (
+            <div className="assistant-runtime-check" key={item.key ?? item.code}>
+              <Space size={6} wrap>
+                <Tag color="red">{item.label ?? item.key ?? item.code}</Tag>
+                <Tag color="red">必需</Tag>
+                <Text type="secondary">{item.remediation ?? item.detail ?? item.description}</Text>
+                {item.action_url ?? item.url ? (
+                  <Button href={item.action_url ?? item.url} icon={<LinkOutlined />} size="small" type="link">
+                    {item.action_label ?? '去配置'}
+                  </Button>
+                ) : null}
+              </Space>
+            </div>
+          ))
+        ) : null}
+        {recentFailures.length ? (
+          <div className="assistant-runtime-section" aria-label="助手最近失败">
+            <Text strong>最近失败</Text>
+            {recentFailures.map((item) => (
+              <div className="assistant-runtime-check" key={`${item.kind}:${item.id}`}>
+                <Space size={6} wrap>
+                  <Tag color={item.kind === 'model_gateway_log' ? 'orange' : 'red'}>
+                    {item.label ?? item.kind}
+                  </Tag>
+                  <Text>{item.title || item.id}</Text>
+                  {item.error_code ? <Tag>{item.error_code}</Tag> : null}
+                  <Text type="secondary">{item.error_message}</Text>
+                  {item.url ? (
+                    <Button href={item.url} icon={<LinkOutlined />} size="small" type="link">
+                      查看
+                    </Button>
+                  ) : null}
+                </Space>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {queueNeedsAttention && executorQueue ? (
+          <div className="assistant-runtime-section" aria-label="AI执行器队列状态">
+            <Text strong>AI执行器队列</Text>
             <Space size={6} wrap>
-              <Tag color="red">{item.label ?? item.key ?? item.code}</Tag>
-              <Tag color="red">必需</Tag>
-              <Text type="secondary">{item.remediation ?? item.detail ?? item.description}</Text>
-              {item.action_url ?? item.url ? (
-                <Button href={item.action_url ?? item.url} icon={<LinkOutlined />} size="small" type="link">
-                  {item.action_label ?? '去配置'}
-                </Button>
+              <Tag color={Number(executorQueue.queued ?? 0) ? 'blue' : 'default'}>
+                排队 {executorQueue.queued ?? 0}
+              </Tag>
+              <Tag color={Number(executorQueue.running ?? 0) ? 'processing' : 'default'}>
+                执行中 {executorQueue.running ?? 0}
+              </Tag>
+              <Tag color={Number(executorQueue.failed ?? 0) ? 'red' : 'default'}>
+                失败 {executorQueue.failed ?? 0}
+              </Tag>
+              <Tag color={Number(executorQueue.offline_runners ?? 0) ? 'orange' : 'default'}>
+                离线 Runner {executorQueue.offline_runners ?? 0}
+              </Tag>
+              <Tag color="default">可用 Runner {executorQueue.active_runners ?? 0}</Tag>
+              {executorQueue.oldest_pending_task_id ? (
+                <Text type="secondary">
+                  最早等待：{executorQueue.oldest_pending_task_id}
+                </Text>
               ) : null}
             </Space>
           </div>
-        ))}
+        ) : null}
       </div>
     </div>
   );

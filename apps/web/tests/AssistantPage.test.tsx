@@ -282,6 +282,31 @@ describe('AssistantPage', () => {
                   total: 4,
                 },
               ],
+              dimensions: {
+                products: [
+                  {
+                    chat_run_total: 10,
+                    draft_adoption_rate: 0.5,
+                    draft_confirmed_count: 2,
+                    draft_total: 4,
+                    message_total: 8,
+                    product_id: 'product_alpha',
+                    scheduled_job_run_failed_count: 1,
+                    scheduled_job_run_succeeded_count: 4,
+                    scheduled_job_run_success_rate: 0.8,
+                    scheduled_job_run_total: 5,
+                  },
+                ],
+                roles: [
+                  {
+                    chat_run_total: 10,
+                    draft_total: 4,
+                    message_total: 8,
+                    role: 'admin',
+                    scheduled_job_run_total: 5,
+                  },
+                ],
+              },
               funnel: {
                 stages: [
                   { count: 4, key: 'intent_triggered', label: '触发意图', sort_order: 10 },
@@ -347,6 +372,44 @@ describe('AssistantPage', () => {
                 ],
                 total: 5,
               },
+              trends: {
+                daily: [
+                  {
+                    day: '2026-06-20',
+                    draft_confirmed_count: 2,
+                    draft_total: 4,
+                    message_total: 8,
+                    scheduled_job_run_failed_count: 1,
+                    scheduled_job_run_succeeded_count: 4,
+                    scheduled_job_run_total: 5,
+                  },
+                ],
+                drafts_by_action_daily: [
+                  {
+                    action: 'create_scheduled_job',
+                    cancelled_count: 1,
+                    confirmed_count: 2,
+                    day: '2026-06-20',
+                    expired_count: 0,
+                    failed_count: 0,
+                    pending_count: 1,
+                    total: 4,
+                  },
+                ],
+              },
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' }, status: 200 },
+        );
+      }
+      if (input === '/api/assistant/metrics/export?format=csv') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              content: 'section,key,label,value\nsummary,draft_total,草案生成,4\n',
+              content_type: 'text/csv',
+              filename: 'assistant_metrics.csv',
+              format: 'csv',
             },
           }),
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
@@ -382,6 +445,16 @@ describe('AssistantPage', () => {
     });
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.stubGlobal('fetch', fetchMock);
+    const createObjectURL = vi.fn(() => 'blob:assistant_metrics');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL,
+      revokeObjectURL,
+    });
+    const anchorClickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
 
     render(<AssistantPage />);
 
@@ -441,6 +514,28 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('效果漏斗 查看详情')).toHaveTextContent('2');
     expect(screen.getByLabelText('效果漏斗 深链打开')).toHaveTextContent('1');
     expect(screen.getByLabelText('效果漏斗 继续追问/修复')).toHaveTextContent('1');
+    expect(screen.getByText('产品维度')).toBeInTheDocument();
+    expect(screen.getByLabelText('产品维度 product_alpha')).toHaveTextContent(
+      'product_alpha：草案 4 · 确认率 50% · 消息 8 · 作业成功率 80%',
+    );
+    expect(screen.getByText('角色维度')).toBeInTheDocument();
+    expect(screen.getByLabelText('角色维度 admin')).toHaveTextContent(
+      'admin：草案 4 · 消息 8 · AI 生成 10 · 作业运行 5',
+    );
+    expect(screen.getByText('草案趋势')).toBeInTheDocument();
+    expect(screen.getByLabelText('草案趋势 2026-06-20:create_scheduled_job')).toHaveTextContent(
+      '2026-06-20 · 创建定时作业：总数 4 · 待确认 1 · 已应用 2',
+    );
+    expect(screen.getByText('每日趋势')).toBeInTheDocument();
+    expect(screen.getByLabelText('每日趋势 2026-06-20')).toHaveTextContent(
+      '2026-06-20：草案 4 · 消息 8 · 作业运行 5 · 成功 4 · 失败 1',
+    );
+    fireEvent.click(screen.getByRole('button', { name: /导出CSV/ }));
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+    });
+    expect(anchorClickSpy).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:assistant_metrics');
     fireEvent.click(screen.getByLabelText('指标 草案生成数'));
     expect(await screen.findByText('草案生成')).toBeInTheDocument();
     expect(await screen.findByLabelText('指标明细 周反馈洞察草案')).toHaveTextContent(
@@ -450,6 +545,7 @@ describe('AssistantPage', () => {
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toEqual([
       ['/api/assistant/conversations', 'GET'],
       ['/api/assistant/metrics', 'GET'],
+      ['/api/assistant/metrics/export?format=csv', 'GET'],
       ['/api/assistant/metrics/details?metric=draft_total&limit=50', 'GET'],
     ]);
   });
@@ -842,11 +938,12 @@ describe('AssistantPage', () => {
           return new Response(
             JSON.stringify({
               detail: {
-                code: 'NETWORK_ERROR',
-                message: '网络暂时不可用',
+                code: 'ASSISTANT_CHAT_FAILED',
+                message: 'API request failed: 504',
+                trace_id: 'trace-assistant-504',
               },
             }),
-            { headers: { 'Content-Type': 'application/json' }, status: 500 },
+            { headers: { 'Content-Type': 'application/json' }, status: 504 },
           );
         }
         return new Response(
@@ -882,7 +979,8 @@ describe('AssistantPage', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText(/网络暂时不可用/)).toBeInTheDocument();
+    expect(await screen.findByText(/AI 助手调用模型失败/)).toBeInTheDocument();
+    expect(screen.getAllByText(/trace_id=trace-assistant-504/).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /重\s*试/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '恢复到输入框' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '恢复到输入框' }));
@@ -1496,11 +1594,13 @@ describe('AssistantPage', () => {
     expect(screen.getByLabelText('发送给 AI 助手')).toHaveValue(
       '请诊断最近失败的定时作业运行，按数据连接、AI处理、结果动作给出原因和修复建议。',
     );
-    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+    const requestedPaths = fetchMock.mock.calls.map(([path]) => path);
+    expect(requestedPaths).toHaveLength(3);
+    expect(requestedPaths).toEqual(expect.arrayContaining([
       '/api/assistant/conversations',
       '/api/assistant/runtime-status',
       '/api/assistant/role-quick-tasks',
-    ]);
+    ]));
   });
 
   it('shows assistant runtime status only when required dependencies fail', async () => {
@@ -1613,6 +1713,13 @@ describe('AssistantPage', () => {
 
     render(<AssistantPage />);
 
+    await waitFor(() => {
+      expect(runtimeStatusCalls).toBe(1);
+    });
+    expect(screen.queryByLabelText('助手运行状态')).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: '查看助手运行诊断' }));
+
     const runtimeStatus = await screen.findByLabelText('助手运行状态');
     expect(runtimeStatus).toHaveTextContent('助手运行依赖异常');
     expect(runtimeStatus).toHaveTextContent('Redis');
@@ -1628,9 +1735,137 @@ describe('AssistantPage', () => {
     fireEvent.click(within(runtimeStatus).getByRole('button', { name: '重新检测' }));
 
     await waitFor(() => {
-      expect(screen.queryByLabelText('助手运行状态')).not.toBeInTheDocument();
+      expect(runtimeStatusCalls).toBe(2);
     });
-    expect(runtimeStatusCalls).toBe(2);
+    const refreshedRuntimeStatus = screen.getByLabelText('助手运行状态');
+    expect(refreshedRuntimeStatus).toHaveTextContent('助手运行正常');
+    expect(refreshedRuntimeStatus).toHaveTextContent('暂无运行异常，可继续使用 AI 助手。');
+  });
+
+  it('shows assistant operational runtime diagnostics when recent failures exist', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (input === '/api/assistant/conversations') {
+        return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      if (input === '/api/assistant/role-quick-tasks') {
+        return roleQuickTasksResponse([]);
+      }
+      if (input === '/api/assistant/runtime-status') {
+        return new Response(JSON.stringify({
+          data: {
+            chat_gateway: 'configured',
+            checks: [
+              {
+                code: 'postgres',
+                key: 'postgres',
+                label: 'PostgreSQL',
+                required: true,
+                severity: 'critical',
+                status: 'ok',
+              },
+              {
+                code: 'redis',
+                key: 'redis',
+                label: 'Redis',
+                required: true,
+                severity: 'critical',
+                status: 'ok',
+              },
+            ],
+            embedding_gateway: 'configured',
+            long_memory: 'disabled',
+            mode: 'model_gateway',
+            model_gateway: 'configured',
+            operations: {
+              executor_queue: {
+                active_runners: 1,
+                failed: 1,
+                offline_runners: 1,
+                oldest_pending_task_id: 'executor_task_queued',
+                queued: 2,
+                running: 1,
+                succeeded: 5,
+                total_runners: 2,
+                visible: true,
+              },
+              model_gateway_recent_failure: {
+                error_code: 'MODEL_GATEWAY_LOG_FAILED',
+                error_message: 'upstream timeout',
+                id: 'model_gateway_log_failed',
+                kind: 'model_gateway_log',
+                label: '模型网关失败',
+                status: 'failed',
+                title: 'assistant_chat',
+                url: '/system/model-gateway?log_id=model_gateway_log_failed',
+              },
+              recent_failures: [
+                {
+                  error_code: 'MODEL_GATEWAY_LOG_FAILED',
+                  error_message: 'upstream timeout',
+                  id: 'model_gateway_log_failed',
+                  kind: 'model_gateway_log',
+                  label: '模型网关失败',
+                  status: 'failed',
+                  title: 'assistant_chat',
+                  url: '/system/model-gateway?log_id=model_gateway_log_failed',
+                },
+                {
+                  error_code: 'RUNNER_TIMEOUT',
+                  error_message: '执行器未接单',
+                  id: 'scheduled_job_run_failed',
+                  kind: 'scheduled_job_run',
+                  label: '定时作业失败',
+                  status: 'failed',
+                  title: 'scheduled_job_run_failed',
+                  url: '/tasks/scheduled-jobs?run_id=scheduled_job_run_failed',
+                },
+              ],
+            },
+            ready: true,
+            warnings: [],
+          },
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    saveCurrentUser({
+      display_name: 'AI Brain Admin',
+      id: 'user_admin',
+      roles: ['admin'],
+      username: 'admin@example.com',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<AssistantPage />);
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.map(([path]) => path)).toContain('/api/assistant/runtime-status');
+    });
+    expect(screen.queryByLabelText('助手运行状态')).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: '查看助手运行诊断' }));
+
+    const runtimeStatus = await screen.findByLabelText('助手运行状态');
+    await waitFor(() => {
+      expect(runtimeStatus).toHaveTextContent('助手运行诊断');
+    });
+    expect(runtimeStatus).toHaveTextContent('最近失败');
+    expect(runtimeStatus).toHaveTextContent('模型网关失败');
+    expect(runtimeStatus).toHaveTextContent('upstream timeout');
+    expect(runtimeStatus).toHaveTextContent('定时作业失败');
+    expect(runtimeStatus).toHaveTextContent('执行器未接单');
+    expect(runtimeStatus).toHaveTextContent('AI执行器队列');
+    expect(runtimeStatus).toHaveTextContent('排队 2');
+    expect(runtimeStatus).toHaveTextContent('执行中 1');
+    expect(runtimeStatus).toHaveTextContent('离线 Runner 1');
   });
 
   it('keeps recent conversations visible before collapsed role quick tasks', async () => {
@@ -2717,7 +2952,7 @@ describe('AssistantPage', () => {
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
         );
       }
-      if (input === '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_feedback_weekly') {
+      if (input === '/api/system/scheduled-job-runs?run_id=scheduled_job_run_001') {
         return new Response(
           JSON.stringify({
             data: {
@@ -2985,7 +3220,7 @@ describe('AssistantPage', () => {
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
         );
       }
-      if (input === '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_feedback_weekly') {
+      if (input === '/api/system/scheduled-job-runs?run_id=scheduled_job_run_waiting_runner') {
         return new Response(JSON.stringify({ data: { items: [], total: 0 } }), {
           headers: { 'Content-Type': 'application/json' },
           status: 200,
@@ -3207,7 +3442,7 @@ describe('AssistantPage', () => {
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
         );
       }
-      if (input === '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_feedback_weekly') {
+      if (input === '/api/system/scheduled-job-runs?run_id=scheduled_job_run_001') {
         return new Response(
           JSON.stringify({
             data: {
@@ -3541,7 +3776,7 @@ describe('AssistantPage', () => {
           { headers: { 'Content-Type': 'application/json' }, status: 200 },
         );
       }
-      if (input === '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_feedback_weekly') {
+      if (input === '/api/system/scheduled-job-runs?run_id=scheduled_job_run_001') {
         runPollCount += 1;
         return new Response(
           JSON.stringify({
@@ -3807,8 +4042,11 @@ describe('AssistantPage', () => {
     expect(screen.getByText('运行记录')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('这次失败发生在结果动作写入阶段。')).toBeInTheDocument();
-    expect(screen.getByText('运行诊断')).toBeInTheDocument();
+    const diagnosticAnswer = await screen.findByText('这次失败发生在结果动作写入阶段。');
+    expect(diagnosticAnswer).toBeInTheDocument();
+    const diagnosticBubble = diagnosticAnswer.closest('.assistant-bubble-content');
+    expect(diagnosticBubble).not.toBeNull();
+    expect(within(diagnosticBubble as HTMLElement).getByText('运行诊断')).toBeInTheDocument();
     expect(screen.getByText('数据连接')).toBeInTheDocument();
     expect(screen.getByText('AI处理')).toBeInTheDocument();
     expect(screen.getByText('结果动作')).toBeInTheDocument();

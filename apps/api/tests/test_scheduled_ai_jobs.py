@@ -1652,6 +1652,13 @@ def test_manual_scheduled_ai_job_run_creates_snapshot_collector_run_and_suggesti
     assert listed_rerun["source_run_summary"]["id"] == run["id"]
     assert listed_rerun["source_run_summary"]["records_imported"] == 1
 
+    scoped_runs = client.get(
+        f"/api/system/scheduled-job-runs?run_id={rerun['id']}",
+        headers=admin_headers,
+    ).json()["data"]
+    assert scoped_runs["total"] == 1
+    assert scoped_runs["items"][0]["id"] == rerun["id"]
+
     rerun_audit_events = client.get(
         f"/api/audit/events?event_type=scheduled_job_run.succeeded&subject_id={rerun['id']}",
         headers=admin_headers,

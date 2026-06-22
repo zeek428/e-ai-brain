@@ -539,7 +539,8 @@ def _public_action_draft_payload(item: dict[str, Any]) -> dict[str, Any]:
         allowed_fields = {
             key
             for key, value in payload.items()
-            if not _history_sensitive_key(key) and isinstance(value, str | int | float | bool | list | dict)
+            if not _history_sensitive_key(key)
+            and isinstance(value, str | int | float | bool | list | dict)
         }
     public_payload: dict[str, Any] = {}
     for key in allowed_fields:
@@ -548,6 +549,8 @@ def _public_action_draft_payload(item: dict[str, Any]) -> dict[str, Any]:
         value = _safe_history_json(payload[key])
         if value not in ({}, []):
             public_payload[key] = value
+        elif isinstance(payload[key], dict):
+            public_payload[key] = {}
     return public_payload
 
 

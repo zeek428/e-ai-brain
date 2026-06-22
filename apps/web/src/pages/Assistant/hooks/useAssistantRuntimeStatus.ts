@@ -58,8 +58,11 @@ export function useAssistantRuntimeStatus() {
 
   useEffect(() => {
     isMountedRef.current = true;
-    void refreshRuntimeStatus({ force: true });
+    const initialRefreshTimer = window.setTimeout(() => {
+      void refreshRuntimeStatus({ force: true });
+    }, 0);
     return () => {
+      window.clearTimeout(initialRefreshTimer);
       isMountedRef.current = false;
     };
   }, [refreshRuntimeStatus]);
