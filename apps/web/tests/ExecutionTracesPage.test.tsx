@@ -111,6 +111,46 @@ function installExecutionTracesFetchMock() {
       },
     ],
   };
+  const assistantDetail = {
+    ...assistantTrace,
+    edges: [
+      {
+        from: 'assistant_chat_run:assistant_chat_run_trace',
+        label: 'calls_model',
+        to: 'model_gateway_log:model_gateway_log_assistant_trace',
+      },
+    ],
+    nodes: [
+      {
+        duration_ms: 5000,
+        error_code: 'MODEL_GATEWAY_FAILED',
+        error_message: '模型网关调用失败',
+        finished_at: '2026-06-20T02:00:05Z',
+        id: 'assistant_chat_run:assistant_chat_run_trace',
+        label: 'AI 助手运行',
+        metadata: { conversation_id: 'assistant_conversation_trace' },
+        source_id: 'assistant_chat_run_trace',
+        source_type: 'assistant_chat_run',
+        started_at: '2026-06-20T02:00:00Z',
+        status: 'failed',
+        summary: '模型网关调用失败。',
+      },
+      {
+        duration_ms: 1800,
+        error_code: null,
+        error_message: 'upstream failed',
+        finished_at: '2026-06-20T02:00:03Z',
+        id: 'model_gateway_log:model_gateway_log_assistant_trace',
+        label: '模型网关调用',
+        metadata: { model: 'gpt-5.5', provider: 'openai_compatible' },
+        source_id: 'model_gateway_log_assistant_trace',
+        source_type: 'model_gateway_log',
+        started_at: '2026-06-20T02:00:01Z',
+        status: 'failed',
+        summary: 'upstream failed',
+      },
+    ],
+  };
   const jsonResponse = (body: unknown) =>
     new Response(JSON.stringify(body), {
       headers: { 'Content-Type': 'application/json' },
@@ -120,6 +160,17 @@ function installExecutionTracesFetchMock() {
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
     const url = String(input);
     if (url.startsWith('/api/governance/execution-traces?') && init?.method === 'GET') {
+      const query = new URLSearchParams(url.split('?')[1] ?? '');
+      if (query.get('source_id') === 'model_gateway_log_assistant_trace') {
+        return jsonResponse({
+          data: {
+            items: [assistantTrace],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
       return jsonResponse({
         data: {
           items: [trace, assistantTrace],
@@ -131,6 +182,9 @@ function installExecutionTracesFetchMock() {
     }
     if (input === '/api/governance/execution-traces/scheduled_job_run_trace' && init?.method === 'GET') {
       return jsonResponse({ data: detail });
+    }
+    if (input === '/api/governance/execution-traces/assistant_chat_run_trace' && init?.method === 'GET') {
+      return jsonResponse({ data: assistantDetail });
     }
     throw new Error(`Unexpected fetch call: ${String(input)}`);
   });
@@ -145,6 +199,7 @@ describe('ExecutionTracesPage', () => {
     message.destroy();
     cleanup();
     window.localStorage.clear();
+    window.history.pushState({}, '', '/');
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -174,5 +229,31 @@ describe('ExecutionTracesPage', () => {
     expect(within(dialog).getAllByText('model_gateway_log_trace').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('dispatches')).toBeInTheDocument();
     expect(within(dialog).queryByText('secret-run-token')).not.toBeInTheDocument();
+  });
+
+  it('opens the trace detail from a source_id deep link', async () => {
+    const { fetchMock } = installExecutionTracesFetchMock();
+    window.history.pushState(
+      {},
+      '',
+      '/governance/execution-traces?source_id=model_gateway_log_assistant_trace&source_type=assistant_chat_run',
+    );
+
+    render(<ExecutionTracesPage />);
+
+    await screen.findByText('AI 助手运行 assistant_chat_run_trace');
+    const dialog = await screen.findByRole('dialog', { name: '执行诊断详情' });
+    await waitFor(() => expect(within(dialog).getByText('执行节点')).toBeInTheDocument());
+
+    expect(within(dialog).getAllByText('AI 助手运行').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('model_gateway_log_assistant_trace').length).toBeGreaterThan(0);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('source_id=model_gateway_log_assistant_trace'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/governance/execution-traces/assistant_chat_run_trace',
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 });

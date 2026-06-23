@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 执行诊断来源 ID 深链：`GET /api/governance/execution-traces` 支持 `source_id` 按任一节点来源 ID 精准定位，前端 `/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情。
 - 执行诊断 AI 助手运行链路：`assistant_chat_run` 可作为 `/api/governance/execution-traces` 的根类型，关联模型网关日志和审计事件，详情元数据继续脱敏且不返回完整对话或 Prompt。
 - RBAC 策略矩阵：新增 `GET /api/system/permissions/matrix`，按角色聚合权限点、菜单入口、数据范围、高风险权限和菜单权限缺口；角色管理页新增“权限审计矩阵”用于授权排障。
 - 执行诊断持久化读模型：新增 `execution_trace_snapshots` 可重建快照表，PostgreSQL 运行时统一刷新定时作业、插件调用、Runner、模型网关、代码巡检和审计链路快照，列表和详情优先从快照分页/过滤/排序读取。

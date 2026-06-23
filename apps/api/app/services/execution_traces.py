@@ -1068,6 +1068,13 @@ def _trace_matches_related_id(trace: dict[str, Any], trace_id: str) -> bool:
     return any(node.get("source_id") == trace_id for node in trace.get("nodes", []))
 
 
+def _trace_matches_source_id(trace: dict[str, Any], source_id: str | None) -> bool:
+    normalized = str(source_id or "").strip()
+    if not normalized:
+        return True
+    return _trace_matches_related_id(trace, normalized)
+
+
 def _list_item(trace: dict[str, Any]) -> dict[str, Any]:
     return {
         "duration_ms": trace.get("duration_ms"),
@@ -1096,6 +1103,7 @@ def list_execution_traces_response(
     page_size: int | None,
     sort_by: str | None,
     sort_order: str,
+    source_id: str | None,
     source_type: str | None,
     started_at: float | None,
     status: str | None,
@@ -1116,6 +1124,7 @@ def list_execution_traces_response(
             created_from=from_at,
             created_to=to_at,
             keyword=keyword,
+            source_id=source_id,
             source_type=source_type,
             status=status,
         )
@@ -1131,6 +1140,7 @@ def list_execution_traces_response(
             offset=offset,
             sort_by=resolved_sort_by,
             sort_order=sort_order,
+            source_id=source_id,
             source_type=source_type,
             status=status,
         )
@@ -1148,6 +1158,7 @@ def list_execution_traces_response(
                     "created_from": created_from,
                     "created_to": created_to,
                     "keyword": keyword,
+                    "source_id": source_id,
                     "source_type": source_type,
                     "status": status,
                 },
@@ -1160,7 +1171,12 @@ def list_execution_traces_response(
             ),
             trace_id,
         )
-    traces = [_list_item(trace) for trace in ExecutionTraceBuilder(current_store).traces()]
+    full_traces = ExecutionTraceBuilder(current_store).traces()
+    if source_id:
+        full_traces = [
+            trace for trace in full_traces if _trace_matches_source_id(trace, source_id)
+        ]
+    traces = [_list_item(trace) for trace in full_traces]
     if source_type:
         traces = [trace for trace in traces if trace["root_type"] == source_type]
     if status:
@@ -1200,6 +1216,7 @@ def list_execution_traces_response(
             "created_from": created_from,
             "created_to": created_to,
             "keyword": keyword,
+            "source_id": source_id,
             "source_type": source_type,
             "status": status,
         },

@@ -38,6 +38,7 @@ class ExecutionTraceReadRepository:
         created_from: Any = None,
         created_to: Any = None,
         keyword: str | None = None,
+        source_id: str | None = None,
         source_type: str | None = None,
         status: str | None = None,
     ) -> int:
@@ -45,6 +46,7 @@ class ExecutionTraceReadRepository:
             created_from=created_from,
             created_to=created_to,
             keyword=keyword,
+            source_id=source_id,
             source_type=source_type,
             status=status,
         )
@@ -67,6 +69,7 @@ class ExecutionTraceReadRepository:
         offset: int,
         sort_by: str,
         sort_order: str,
+        source_id: str | None = None,
         source_type: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -74,6 +77,7 @@ class ExecutionTraceReadRepository:
             created_from=created_from,
             created_to=created_to,
             keyword=keyword,
+            source_id=source_id,
             source_type=source_type,
             status=status,
         )
@@ -181,6 +185,7 @@ class ExecutionTraceReadRepository:
         created_from: Any = None,
         created_to: Any = None,
         keyword: str | None = None,
+        source_id: str | None = None,
         source_type: str | None = None,
         status: str | None = None,
     ) -> tuple[str, list[Any]]:
@@ -192,6 +197,30 @@ class ExecutionTraceReadRepository:
         if status:
             clauses.append("status = %s")
             params.append(status)
+        normalized_source_id = str(source_id or "").strip()
+        if normalized_source_id:
+            params.extend(
+                [
+                    normalized_source_id,
+                    normalized_source_id,
+                    json.dumps([{"source_id": normalized_source_id}], ensure_ascii=False),
+                    normalized_source_id,
+                ]
+            )
+            clauses.append(
+                """
+                (
+                  id = %s
+                  OR root_id = %s
+                  OR nodes @> %s::jsonb
+                  OR EXISTS (
+                    SELECT 1
+                    FROM jsonb_each(related_ids) AS related(key, value)
+                    WHERE related.value @> to_jsonb(ARRAY[%s]::text[])
+                  )
+                )
+                """
+            )
         if created_from is not None:
             clauses.append("COALESCE(started_at, updated_at, created_at) >= %s")
             params.append(created_from)

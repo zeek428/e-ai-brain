@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.622 |
+| 功能版本 | v1.1.623 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.623 | 2026-06-24 | 补充执行诊断来源 ID 深链验收：`GET /api/governance/execution-traces?source_id=...` 可按任一节点来源 ID 精准返回所属链路，`/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情 | Codex |
 | v1.1.622 | 2026-06-23 | 补充定时作业运行详情弹窗组件化验收：运行结果详情从主页面收口到 `ScheduledJobRunDetailModal` 后，`ScheduledJobsPage.test.tsx`、typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |
 | v1.1.621 | 2026-06-23 | 补充插件管理 Runner 新增/编辑弹窗组件化验收：Runner Modal/Form 外壳和目标系统联动从主页面收口到 `PluginRunnerModal` 后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.620 | 2026-06-23 | 补充插件管理 Runner Token 轮换组件化验收：轮换成功提示和确认弹窗从主页面收口到 `PluginUtilityModals` 后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |

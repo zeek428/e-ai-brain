@@ -1273,6 +1273,7 @@ class PostgresSnapshotRepository:
         created_from: Any = None,
         created_to: Any = None,
         keyword: str | None = None,
+        source_id: str | None = None,
         source_type: str | None = None,
         status: str | None = None,
     ) -> int:
@@ -1280,6 +1281,7 @@ class PostgresSnapshotRepository:
             created_from=created_from,
             created_to=created_to,
             keyword=keyword,
+            source_id=source_id,
             source_type=source_type,
             status=status,
         )
@@ -1294,6 +1296,7 @@ class PostgresSnapshotRepository:
         offset: int,
         sort_by: str,
         sort_order: str,
+        source_id: str | None = None,
         source_type: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -1305,6 +1308,7 @@ class PostgresSnapshotRepository:
             offset=offset,
             sort_by=sort_by,
             sort_order=sort_order,
+            source_id=source_id,
             source_type=source_type,
             status=status,
         )

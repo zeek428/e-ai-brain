@@ -47,10 +47,27 @@ class FakeExecutionTraceRepository:
         self,
         *,
         keyword: str | None = None,
+        source_id: str | None = None,
         source_type: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         traces = list(self.snapshots.values())
+        normalized_source_id = str(source_id or "").strip()
+        if normalized_source_id:
+            traces = [
+                trace
+                for trace in traces
+                if trace["id"] == normalized_source_id
+                or trace["root_id"] == normalized_source_id
+                or any(
+                    normalized_source_id in values
+                    for values in trace.get("related_ids", {}).values()
+                )
+                or any(
+                    node.get("source_id") == normalized_source_id
+                    for node in trace.get("nodes", [])
+                )
+            ]
         if source_type:
             traces = [trace for trace in traces if trace["root_type"] == source_type]
         if status:
@@ -80,12 +97,14 @@ class FakeExecutionTraceRepository:
         created_from: Any = None,
         created_to: Any = None,
         keyword: str | None = None,
+        source_id: str | None = None,
         source_type: str | None = None,
         status: str | None = None,
     ) -> int:
         return len(
             self._filtered(
                 keyword=keyword,
+                source_id=source_id,
                 source_type=source_type,
                 status=status,
             )
@@ -101,11 +120,13 @@ class FakeExecutionTraceRepository:
         offset: int,
         sort_by: str,
         sort_order: str,
+        source_id: str | None = None,
         source_type: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         traces = self._filtered(
             keyword=keyword,
+            source_id=source_id,
             source_type=source_type,
             status=status,
         )
@@ -414,6 +435,24 @@ def test_execution_trace_includes_assistant_chat_run_model_and_audit_nodes():
     assert "<redacted>" in serialized_detail
 
 
+def test_execution_trace_list_filters_by_any_related_source_id():
+    app.state.store.reset()
+    seed_assistant_execution_trace_records()
+    headers = auth_headers()
+
+    response = client.get(
+        "/api/governance/execution-traces"
+        "?source_id=model_gateway_log_assistant_trace&page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == "assistant_chat_run_trace"
+    assert body["items"][0]["root_type"] == "assistant_chat_run"
+
+
 def test_execution_trace_requires_admin_diagnostics_permission():
     app.state.store.reset()
     seed_execution_trace_records()
@@ -441,6 +480,7 @@ def test_execution_trace_uses_repository_snapshots_when_available():
             page_size=10,
             sort_by="started_at",
             sort_order="desc",
+            source_id=None,
             source_type=None,
             started_at=None,
             status=None,
@@ -488,6 +528,7 @@ def test_execution_trace_reuses_fresh_repository_snapshots_for_repeated_lists():
                 page_size=10,
                 sort_by="started_at",
                 sort_order="desc",
+                source_id=None,
                 source_type=None,
                 started_at=None,
                 status=None,
@@ -521,6 +562,7 @@ def test_execution_trace_detail_forces_refresh_when_fresh_snapshot_misses():
             page_size=10,
             sort_by="started_at",
             sort_order="desc",
+            source_id=None,
             source_type=None,
             started_at=None,
             status=None,

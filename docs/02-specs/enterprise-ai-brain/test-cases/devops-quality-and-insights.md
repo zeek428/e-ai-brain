@@ -302,10 +302,11 @@
 | 1 | 管理员 GET `/api/governance/execution-traces` | 返回按运行根聚合的链路列表，包含 root_type、status、node_count、failed_node_count、duration_ms、started_at、updated_at 和 related_ids。 |
 | 2 | 使用 `scheduled_job_run_id`、`plugin_invocation_log_id` 或任一节点 `source_id` GET `/api/governance/execution-traces/{trace_id}` | 返回同一条详情链路，nodes 至少覆盖定时作业运行、阶段节点、插件调用、AI 执行器任务、模型网关日志、代码巡检报告和审计事件，edges 展示 invokes/dispatches/writes_report/audits 等关系。 |
 | 3 | 管理员 GET `/api/governance/execution-traces?source_type=assistant_chat_run`，再用关联的 `model_gateway_log_id` 打开详情 | 返回 `root_type=assistant_chat_run` 的链路，nodes 至少覆盖 AI 助手运行、模型网关日志和审计事件，edges 展示 `calls_model` 和 `audits`，详情不返回完整用户提问、助手回复、Prompt 或知识正文。 |
-| 4 | 在插件请求摘要、执行器 request_config 或审计 payload 中放入 token/API key/Authorization | 响应详情 metadata 中敏感值统一为 `<redacted>`，不得泄露明文 token、API key、cookie、password 或 secret。 |
-| 5 | reviewer 调用列表或详情接口 | 返回 `403 FORBIDDEN`，不暴露运行链路。 |
-| 6 | 打开运营治理 / 执行诊断页面 | 页面使用服务端分页、排序和筛选；列表显示规范化北京时间、状态、耗时和节点数；点击详情弹窗展示关联对象、节点表、节点关系表，长文本和 JSON 不撑坏布局。 |
-| 7 | 在 repository 快照已刷新的短 TTL 内连续查询列表和已存在详情，再新增一条 AI 助手运行并用其模型日志 ID 打开详情 | 连续列表和已存在详情复用快照，不重复全量刷新；新链路详情未命中旧快照时强制重建并返回最新聚合链路。 |
+| 4 | 管理员 GET `/api/governance/execution-traces?source_id={model_gateway_log_id}`，并打开 `/governance/execution-traces?source_id={model_gateway_log_id}` | 列表只返回该来源 ID 所属链路；前端深链命中唯一链路时自动打开详情弹窗，便于从模型网关、插件、Runner、代码巡检或 AI 助手页面跳转排障。 |
+| 5 | 在插件请求摘要、执行器 request_config 或审计 payload 中放入 token/API key/Authorization | 响应详情 metadata 中敏感值统一为 `<redacted>`，不得泄露明文 token、API key、cookie、password 或 secret。 |
+| 6 | reviewer 调用列表或详情接口 | 返回 `403 FORBIDDEN`，不暴露运行链路。 |
+| 7 | 打开运营治理 / 执行诊断页面 | 页面使用服务端分页、排序和筛选；列表显示规范化北京时间、状态、耗时和节点数；点击详情弹窗展示关联对象、节点表、节点关系表，长文本和 JSON 不撑坏布局。 |
+| 8 | 在 repository 快照已刷新的短 TTL 内连续查询列表和已存在详情，再新增一条 AI 助手运行并用其模型日志 ID 打开详情 | 连续列表和已存在详情复用快照，不重复全量刷新；新链路详情未命中旧快照时强制重建并返回最新聚合链路。 |
 
 **预期结果**:
 1. 执行诊断只读聚合已有运行事实，不新增业务写入事实源。

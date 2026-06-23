@@ -1,6 +1,6 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import { Button, Modal, Typography, message } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
 import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
@@ -87,8 +87,51 @@ function buildTraceQuery(query: ManagementListQuery): ExecutionTraceListQuery {
       ? traceSortFieldMap[query.sortField] ?? query.sortField
       : undefined,
     sortOrder: query.sortOrder,
+    sourceId: normalizeFilterText(query.filters.sourceId),
     sourceType: normalizeFilterText(query.filters.sourceType),
     status: normalizeFilterText(query.filters.status),
+  };
+}
+
+function initialTraceListQuery(): ManagementListQuery {
+  if (typeof window === 'undefined') {
+    return {
+      filters: {},
+      page: 1,
+      pageSize: 10,
+      sortField: 'started_at',
+      sortOrder: 'descend',
+    };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const filters: Record<string, unknown> = {};
+  const keyword = normalizeFilterText(params.get('keyword'));
+  const sourceId = normalizeFilterText(params.get('source_id') ?? params.get('sourceId'));
+  const sourceType = normalizeFilterText(params.get('source_type') ?? params.get('sourceType'));
+  const status = normalizeFilterText(params.get('status'));
+  const createdFrom = normalizeFilterText(params.get('created_from') ?? params.get('createdFrom'));
+  const createdTo = normalizeFilterText(params.get('created_to') ?? params.get('createdTo'));
+  if (keyword) {
+    filters.keyword = keyword;
+  }
+  if (sourceId) {
+    filters.sourceId = sourceId;
+  }
+  if (sourceType) {
+    filters.sourceType = sourceType;
+  }
+  if (status) {
+    filters.status = status;
+  }
+  if (createdFrom || createdTo) {
+    filters.startedAt = [createdFrom ?? '', createdTo ?? ''];
+  }
+  return {
+    filters,
+    page: Number(params.get('page') ?? 1) || 1,
+    pageSize: Number(params.get('page_size') ?? params.get('pageSize') ?? 10) || 10,
+    sortField: params.get('sort_by') ?? params.get('sortField') ?? 'started_at',
+    sortOrder: params.get('sort_order') === 'asc' ? 'ascend' : 'descend',
   };
 }
 
@@ -130,18 +173,13 @@ function formatDuration(value?: number | null) {
 }
 
 export default function ExecutionTracesPage() {
+  const autoOpenedSourceIdRef = useRef<string | undefined>(undefined);
   const [detailState, setDetailState] = useState<{
     detail?: ExecutionTraceDetailRecord;
     loading: boolean;
     row?: ExecutionTraceListItem;
   }>();
-  const [listQuery, setListQuery] = useState<ManagementListQuery>({
-    filters: {},
-    page: 1,
-    pageSize: 10,
-    sortField: 'started_at',
-    sortOrder: 'descend',
-  });
+  const [listQuery, setListQuery] = useState<ManagementListQuery>(() => initialTraceListQuery());
   const [listState, setListState] = useState<{
     error?: RemoteRowsError;
     page: number;
@@ -218,6 +256,19 @@ export default function ExecutionTracesPage() {
       message.error(formatMutationError(detailError));
     }
   }, []);
+
+  const deepLinkSourceId = normalizeFilterText(listQuery.filters.sourceId);
+
+  useEffect(() => {
+    if (!deepLinkSourceId || listState.status !== 'ready' || listState.rows.length !== 1) {
+      return;
+    }
+    if (autoOpenedSourceIdRef.current === deepLinkSourceId) {
+      return;
+    }
+    autoOpenedSourceIdRef.current = deepLinkSourceId;
+    void openDetail(listState.rows[0]);
+  }, [deepLinkSourceId, listState.rows, listState.status, openDetail]);
 
   const columns = useMemo<ProColumns<ExecutionTraceListItem>[]>(
     () => [
@@ -304,6 +355,7 @@ export default function ExecutionTracesPage() {
         dataSource={listState.rows}
         filters={[
           { label: '关键词', name: 'keyword', type: 'text' },
+          { label: '来源 ID', name: 'sourceId', type: 'text' },
           {
             label: '根类型',
             name: 'sourceType',

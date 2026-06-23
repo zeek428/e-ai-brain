@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.383 |
+| 功能版本 | v1.1.384 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.384 | 2026-06-24 | 执行诊断列表新增 `source_id` 查询参数，支持按任一链路节点来源 ID 精准定位；前端 `/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情 | Codex |
 | v1.1.383 | 2026-06-23 | 执行诊断 API 的 `source_type` 新增 `assistant_chat_run`，AI 助手聊天运行可作为链路根节点关联模型网关日志与审计事件 | Codex |
 | v1.1.382 | 2026-06-23 | 代码巡检治理概览 `sla` 补充整改任务覆盖率、已派生任务数、未派生任务数和最早未派生时间，页面展示整改任务覆盖率 | Codex |
 | v1.1.381 | 2026-06-23 | 代码巡检治理概览 `trend[]` 补充质量门禁通过、失败、跳过和未知计数，运营治理 / 代码巡检页面展示质量门禁趋势 | Codex |
@@ -4192,6 +4193,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 ```http
 GET /api/governance/execution-traces?keyword=scheduled_job_run_001&source_type=scheduled_job_run&status=failed&page=1&page_size=10&sort_by=started_at&sort_order=desc
+GET /api/governance/execution-traces?source_id=model_gateway_log_001&source_type=assistant_chat_run
 GET /api/governance/execution-traces/{trace_id}
 ```
 
@@ -4202,6 +4204,7 @@ GET /api/governance/execution-traces/{trace_id}
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | keyword | string | 按链路 ID、根 ID、根类型、标题、摘要或关联 ID 搜索。 |
+| source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report` 或 `audit_event` 的 ID；前端深链命中唯一记录时自动打开详情。 |
 | source_type | enum | 根类型：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`audit_event`。 |
 | status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
 | created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |

@@ -1164,6 +1164,7 @@ export type ExecutionTraceListQuery = RemoteListQuery & {
   createdFrom?: string;
   createdTo?: string;
   keyword?: string;
+  sourceId?: string;
   sourceType?: string;
   status?: string;
 };
@@ -7183,6 +7184,7 @@ export async function fetchExecutionTraces(
   appendQueryParam(params, 'created_from', query.createdFrom);
   appendQueryParam(params, 'created_to', query.createdTo);
   appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'source_id', query.sourceId);
   appendQueryParam(params, 'source_type', query.sourceType);
   appendQueryParam(params, 'status', query.status);
   appendRemoteListParams(params, query);
