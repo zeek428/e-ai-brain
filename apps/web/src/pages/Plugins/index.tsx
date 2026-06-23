@@ -2,7 +2,7 @@ import {
   ApiOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
+import { Alert, Button, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
@@ -63,12 +63,13 @@ import {
   type ScheduledJobRecord,
 } from '../../services/aiBrain';
 import {
-  RequestParameterRows,
-} from './components/PluginConnectionFormFields';
-import {
   PluginConnectionModal,
   type PluginConnectionFormValues,
 } from './components/PluginConnectionModal';
+import {
+  PluginActionModal,
+  type PluginActionFormValues,
+} from './components/PluginActionModal';
 import {
   pluginCategoryOptions,
 } from './components/pluginCatalogHelpers';
@@ -83,9 +84,6 @@ import {
   JsonDiagnosticsBlock,
   RunnerTestDiagnosticsContent,
 } from './components/PluginDiagnostics';
-import {
-  compactJson,
-} from './components/pluginDiagnosticsHelpers';
 import {
   parseGitLabProjectAddress,
   parseGitRepositoryAddress,
@@ -116,41 +114,7 @@ type PluginFormValues = {
 
 type ConnectionFormValues = PluginConnectionFormValues;
 
-type ActionFormValues = {
-  action_type: string;
-  branch_path?: string;
-  code: string;
-  commit_sha_path?: string;
-  connection_id?: string;
-  delivery_id_path?: string;
-  delivery_status_path?: string;
-  description?: string;
-  findings_path?: string;
-  header_rows?: RequestParameterRow[];
-  insights_path?: string;
-  max_rows?: number;
-  method?: string;
-  name: string;
-  param_rows?: RequestParameterRow[];
-  path?: string;
-  plugin_id: string;
-  request_config?: string;
-  requires_human_review: boolean;
-  records_imported_path?: string;
-  recipients_path?: string;
-  repository_id_path?: string;
-  result_mapping?: string;
-  risk_level_path?: string;
-  rows_path?: string;
-  returned_fields?: string;
-  scenario?: string;
-  status: string;
-  subject_path?: string;
-  summary_path?: string;
-  table_name?: string;
-  time_field?: string;
-  write_target?: string;
-};
+type ActionFormValues = PluginActionFormValues;
 
 type RequestParameterRow = {
   description?: string;
@@ -169,11 +133,6 @@ const MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO = 'maxcompute_weekly_feedback';
 const MAXCOMPUTE_DEFAULT_FIELDS =
   'feedback_id,user_id,product_id,module_code,feedback_type,content,sentiment,created_at';
 const DEFAULT_RESULT_WRITE_TARGET = 'scheduled_job_result';
-
-const requestMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((value) => ({
-  label: value,
-  value,
-}));
 
 const systemVariableOptions = [
   { description: 'YYYYMMDD 格式，适合分区字段', label: '当前日期', value: '{{current_date}}' },
@@ -829,33 +788,6 @@ function buildVisualResultMapping(
     },
     writeTarget,
   );
-}
-
-function ResultWriteTargetMappingFields({
-  writeTarget,
-  writeTargets,
-}: {
-  writeTarget?: string;
-  writeTargets: ResultWriteTargetRecord[];
-}) {
-  const target = resultWriteTargetRecordByCode(writeTargets, writeTarget);
-  if (target?.mapping_fields.length) {
-    return (
-      <Space wrap>
-        {target.mapping_fields.map((field) => (
-          <Form.Item
-            key={field.key}
-            label={field.label}
-            name={field.key}
-            rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : undefined}
-          >
-            <Input placeholder={field.placeholder} style={{ width: 220 }} />
-          </Form.Item>
-        ))}
-      </Space>
-    );
-  }
-  return null;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -2794,168 +2726,45 @@ export default function PluginsPage() {
         systemVariableOptions={systemVariableOptions}
       />
 
-      <Modal
-        cancelText="取消"
-        okText="确定"
-        open={actionModalOpen}
-        title={editingAction ? '编辑动作' : '新增动作'}
+      <PluginActionModal
+        actionScenario={actionScenario}
+        advancedJsonOpen={advancedActionJsonOpen}
+        connectionOptions={connectionOptions}
+        defaultWriteTarget={DEFAULT_RESULT_WRITE_TARGET}
+        form={actionForm}
+        isEditing={Boolean(editingAction)}
+        maxComputeScenario={MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO}
+        onApplyJsonToVisual={applyActionJsonToVisual}
         onCancel={closeActionModal}
-        onOk={submitAction}
-      >
-        <Form
-          form={actionForm}
-          layout="vertical"
-          onValuesChange={(changedValues, allValues) => {
-            if (
-              advancedActionJsonOpen
-              && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
-              && !Object.prototype.hasOwnProperty.call(changedValues, 'result_mapping')
-            ) {
-              const requestConfig =
-                allValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
-                  ? buildMaxComputeRequestConfig(allValues)
-                  : buildVisualRequestConfig(allValues);
-              actionForm.setFieldsValue({
-                request_config: stableJson(requestConfig),
-                result_mapping: stableJson(buildVisualResultMapping(allValues, resultWriteTargets)),
-              });
-            }
-          }}
-          initialValues={{
-            action_type: 'http_request',
-            method: 'GET',
-            requires_human_review: false,
-            write_target: DEFAULT_RESULT_WRITE_TARGET,
-            status: 'active',
-          }}
-        >
-          <Form.Item label="配置场景" name="scenario">
-            <Select
-              allowClear
-              onChange={applyActionScenario}
-              options={actionTemplateOptions}
-            />
-          </Form.Item>
-          <Form.Item label="插件" name="plugin_id" rules={[{ required: true }]}>
-            <Select options={pluginOptions} />
-          </Form.Item>
-          <Form.Item label="连接" name="connection_id">
-            <Select allowClear options={connectionOptions} />
-          </Form.Item>
-          <Form.Item label="结果写入目标" name="write_target">
-            <Select options={resultWriteTargetOptions} onChange={applyWriteTargetDefaults} />
-          </Form.Item>
-          <Form.Item noStyle shouldUpdate={(previous, current) => previous.write_target !== current.write_target}>
-            {({ getFieldValue }) => {
-              const writeTarget = getFieldValue('write_target');
-              return (
-                <ResultWriteTargetMappingFields
-                  writeTarget={writeTarget}
-                  writeTargets={resultWriteTargets}
-                />
-              );
-            }}
-          </Form.Item>
-          <Form.Item label="名称" name="name" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="编码" name="code" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Space>
-            <Form.Item label="动作类型" name="action_type">
-              <Select
-                options={[
-                  { label: 'http_request', value: 'http_request' },
-                  { label: 'mcp_tool', value: 'mcp_tool' },
-                ]}
-              />
-            </Form.Item>
-            <Form.Item label="人工确认" name="requires_human_review" valuePropName="checked">
-              <Switch />
-            </Form.Item>
-            <Form.Item label="状态" name="status">
-              <Select
-                options={[
-                  { label: 'active', value: 'active' },
-                  { label: 'draft', value: 'draft' },
-                  { label: 'disabled', value: 'disabled' },
-                ]}
-              />
-            </Form.Item>
-          </Space>
-          {actionScenario !== MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO ? (
-            <>
-              <Space wrap>
-                <Form.Item label="请求方法" name="method">
-                  <Select options={requestMethodOptions} style={{ width: 140 }} />
-                </Form.Item>
-                <Form.Item label="请求路径" name="path">
-                  <Input placeholder="/api/path" style={{ width: 320 }} />
-                </Form.Item>
-              </Space>
-              <RequestParameterRows
-                addText="添加 Params"
-                name="param_rows"
-                namePlaceholder="参数名"
-                systemVariableOptions={systemVariableOptions}
-                title="Params"
-                valuePlaceholder="参数值"
-              />
-              <RequestParameterRows
-                addText="添加 Headers"
-                name="header_rows"
-                namePlaceholder="Header 名"
-                systemVariableOptions={systemVariableOptions}
-                title="Headers"
-                valuePlaceholder="Header 值"
-              />
-            </>
-          ) : null}
-          {actionScenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO ? (
-            <>
-              <Form.Item label="表名" name="table_name">
-                <Input />
-              </Form.Item>
-              <Space wrap>
-                <Form.Item label="时间字段" name="time_field">
-                  <Input />
-                </Form.Item>
-                <Form.Item label="最大行数" name="max_rows">
-                  <InputNumber min={1} style={{ width: 160 }} />
-                </Form.Item>
-              </Space>
-              <Form.Item label="返回字段" name="returned_fields">
-                <Input />
-              </Form.Item>
-            </>
-          ) : null}
-          <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-            <Typography.Text strong>请求预览</Typography.Text>
-            <pre style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{compactJson(requestPreview)}</pre>
-          </div>
-          <Button type="link" onClick={toggleAdvancedActionJson}>
-            高级 JSON 修改
-          </Button>
-          {advancedActionJsonOpen ? (
-            <>
-              <Space style={{ marginBottom: 8 }}>
-                <Button onClick={syncActionJsonFromVisual}>同步可视化到 JSON</Button>
-                <Button onClick={applyActionJsonToVisual}>从 JSON 应用到 Params / Headers</Button>
-              </Space>
-              <Form.Item label="请求配置 JSON" name="request_config">
-                <Input.TextArea rows={5} placeholder='{"method":"GET","path":"/api/v4/projects/1/metrics"}' />
-              </Form.Item>
-              <Form.Item label="结果映射 JSON" name="result_mapping">
-                <Input.TextArea rows={3} placeholder='{"records_imported_path":"$.commits"}' />
-              </Form.Item>
-            </>
-          ) : null}
-          <Form.Item label="说明" name="description">
-            <Input.TextArea rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
+        onScenarioChange={applyActionScenario}
+        onSubmit={submitAction}
+        onSyncJsonFromVisual={syncActionJsonFromVisual}
+        onToggleAdvancedJson={toggleAdvancedActionJson}
+        onValuesChange={(changedValues, allValues) => {
+          if (
+            advancedActionJsonOpen
+            && !Object.prototype.hasOwnProperty.call(changedValues, 'request_config')
+            && !Object.prototype.hasOwnProperty.call(changedValues, 'result_mapping')
+          ) {
+            const requestConfig =
+              allValues.scenario === MAXCOMPUTE_WEEKLY_FEEDBACK_SCENARIO
+                ? buildMaxComputeRequestConfig(allValues)
+                : buildVisualRequestConfig(allValues);
+            actionForm.setFieldsValue({
+              request_config: stableJson(requestConfig),
+              result_mapping: stableJson(buildVisualResultMapping(allValues, resultWriteTargets)),
+            });
+          }
+        }}
+        onWriteTargetChange={applyWriteTargetDefaults}
+        open={actionModalOpen}
+        pluginOptions={pluginOptions}
+        requestPreview={requestPreview}
+        resultWriteTargetOptions={resultWriteTargetOptions}
+        resultWriteTargets={resultWriteTargets}
+        scenarioOptions={actionTemplateOptions}
+        systemVariableOptions={systemVariableOptions}
+      />
 
       <PluginActionTrialModal
         action={trialAction}
