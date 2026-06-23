@@ -72,7 +72,7 @@ import { PluginActionTable } from './components/PluginActionTable';
 import { PluginConnectionTable } from './components/PluginConnectionTable';
 import { PluginMarketplaceTable } from './components/PluginMarketplaceTable';
 import { PluginRunnerTable } from './components/PluginRunnerTable';
-import { PluginRunnerFormFields } from './components/PluginRunnerFormFields';
+import { PluginRunnerModal } from './components/PluginRunnerModal';
 import { PluginTable } from './components/PluginTable';
 import {
   ConnectionRequestDebugPanel,
@@ -85,7 +85,6 @@ import {
   safeDecodeURIComponent,
 } from './components/pluginConnectionAddressHelpers';
 import {
-  runnerDefaultInstallMode,
   runnerExecutorCommandsFromMetadata,
   runnerExecutorCommandsFromValues,
   runnerPackageOptionsFromMetadata,
@@ -2548,45 +2547,13 @@ export default function PluginsPage() {
         open={pluginModalOpen}
       />
 
-      <Modal
-        open={runnerModalOpen}
-        title={editingRunner ? '编辑执行器' : '新增执行器'}
-        width={760}
-        cancelText="取消"
-        okText="确定"
+      <PluginRunnerModal
+        form={runnerForm}
+        isEditing={Boolean(editingRunner)}
         onCancel={closeRunnerModal}
-        onOk={submitRunner}
-      >
-        <Form
-          form={runnerForm}
-          layout="vertical"
-          initialValues={{
-            endpoint_url: 'runner://local',
-            executor_types: ['codex', 'openclaw'],
-            heartbeat_timeout_seconds: 120,
-            install_mode: 'systemd',
-            max_concurrent_tasks: 1,
-            metadata: '{}',
-            package_arch: 'amd64',
-            protocol: 'runner_polling',
-            status: 'active',
-            target_os: 'linux',
-          }}
-          onValuesChange={(changedValues) => {
-            if (Object.prototype.hasOwnProperty.call(changedValues, 'target_os')) {
-              const targetOs = stringValue(changedValues.target_os, 'linux');
-              runnerForm.setFieldValue('install_mode', runnerDefaultInstallMode(targetOs));
-              if (targetOs === 'manual') {
-                runnerForm.setFieldValue('package_arch', 'universal');
-              } else if (!runnerForm.getFieldValue('package_arch')) {
-                runnerForm.setFieldValue('package_arch', 'amd64');
-              }
-            }
-          }}
-        >
-          <PluginRunnerFormFields editingRunner={Boolean(editingRunner)} />
-        </Form>
-      </Modal>
+        onSubmit={submitRunner}
+        open={runnerModalOpen}
+      />
 
       <PluginConnectionModal
         advancedAuthJsonOpen={advancedConnectionJsonOpen}
