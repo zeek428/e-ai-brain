@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.619 |
+| 功能版本 | v1.1.620 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.620 | 2026-06-23 | 补充插件管理 Runner Token 轮换组件化验收：轮换成功提示和确认弹窗从主页面收口到 `PluginUtilityModals` 后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.619 | 2026-06-23 | 补充插件管理插件定义弹窗组件化验收：插件新增/编辑字段从主页面拆到 `PluginModal` 后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.618 | 2026-06-23 | 补充执行诊断快照刷新节流验收：repository 快照列表短 TTL 内重复查询不得重复全量刷新，详情命中现有快照不刷新，详情未命中新链路时必须强制刷新并返回最新聚合链路 | Codex |
 | v1.1.617 | 2026-06-23 | 补充定时作业基础信息组件化验收：新增/编辑作业的名称、作业类型、所属产品和启用字段从主页面拆出后，`ScheduledJobsPage.test.tsx`、typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |

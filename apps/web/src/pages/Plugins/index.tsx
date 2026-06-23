@@ -94,6 +94,8 @@ import {
 import {
   PluginActionTrialModal,
   RunnerLogModal,
+  RunnerTokenRotationModal,
+  RunnerTokenRotationNotice,
   SystemVariableModal,
 } from './components/PluginUtilityModals';
 
@@ -2517,44 +2519,17 @@ export default function PluginsPage() {
         ]}
       />
 
-      {rotatedRunnerToken ? (
-        <Alert
-          closable
-          onClose={() => setRotatedRunnerToken(undefined)}
-          showIcon
-          style={{ marginTop: 16 }}
-          title="Runner Token 已轮换"
-          type="success"
-          description={(
-            <Space orientation="vertical" size={6}>
-              <Typography.Text>新 Token 仅本次返回，请同步更新本地 Runner 配置。</Typography.Text>
-              <Typography.Text code copyable={{ text: rotatedRunnerToken }}>
-                {rotatedRunnerToken}
-              </Typography.Text>
-            </Space>
-          )}
-        />
-      ) : null}
+      <RunnerTokenRotationNotice
+        onClose={() => setRotatedRunnerToken(undefined)}
+        token={rotatedRunnerToken}
+      />
 
-      <Modal
-        cancelText="取消"
-        confirmLoading={rotatingRunnerLoading}
-        destroyOnHidden
-        okText="确定"
-        open={Boolean(rotatingRunner)}
-        title="轮换 Runner Token"
+      <RunnerTokenRotationModal
+        loading={rotatingRunnerLoading}
         onCancel={() => setRotatingRunner(undefined)}
-        onOk={submitRotateRunnerToken}
-      >
-        <Space orientation="vertical" size={8}>
-          <Typography.Text>
-            轮换后旧 Token 会立即失效，请将新 Token 配置到本地 Runner。
-          </Typography.Text>
-          <Typography.Text type="secondary">
-            当前执行器：{rotatingRunner?.name ?? '-'}
-          </Typography.Text>
-        </Space>
-      </Modal>
+        onSubmit={submitRotateRunnerToken}
+        runner={rotatingRunner}
+      />
 
       <RunnerLogModal
         loading={runnerLogLoading}

@@ -4,6 +4,7 @@ import type { SelectProps } from 'antd';
 import { Alert, Button, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 
 import type {
+  AiExecutorRunnerRecord,
   AiExecutorTaskLogRecord,
   AiExecutorTaskRecord,
   PluginActionRecord,
@@ -43,6 +44,18 @@ type PluginActionTrialModalProps = {
   open: boolean;
   result?: PluginActionTrialResult;
   running: boolean;
+};
+
+type RunnerTokenRotationNoticeProps = {
+  onClose: () => void;
+  token?: string;
+};
+
+type RunnerTokenRotationModalProps = {
+  loading: boolean;
+  onCancel: () => void;
+  onSubmit: () => void | Promise<void>;
+  runner?: AiExecutorRunnerRecord;
 };
 
 const TERMINAL_RUNNER_TASK_STATUSES = new Set(['cancelled', 'failed', 'succeeded', 'timed_out']);
@@ -141,6 +154,62 @@ export function RunnerLogModal({
           rowKey={(row) => `${row.sequence ?? row.created_at ?? row.message}-${row.message}`}
           size="small"
         />
+      </Space>
+    </Modal>
+  );
+}
+
+export function RunnerTokenRotationNotice({
+  onClose,
+  token,
+}: RunnerTokenRotationNoticeProps) {
+  if (!token) {
+    return null;
+  }
+  return (
+    <Alert
+      closable
+      description={(
+        <Space orientation="vertical" size={6}>
+          <Typography.Text>新 Token 仅本次返回，请同步更新本地 Runner 配置。</Typography.Text>
+          <Typography.Text code copyable={{ text: token }}>
+            {token}
+          </Typography.Text>
+        </Space>
+      )}
+      onClose={onClose}
+      showIcon
+      style={{ marginTop: 16 }}
+      title="Runner Token 已轮换"
+      type="success"
+    />
+  );
+}
+
+export function RunnerTokenRotationModal({
+  loading,
+  onCancel,
+  onSubmit,
+  runner,
+}: RunnerTokenRotationModalProps) {
+  return (
+    <Modal
+      cancelText="取消"
+      confirmLoading={loading}
+      destroyOnHidden
+      okText="确定"
+      onCancel={onCancel}
+      onOk={() => void onSubmit()}
+      open={Boolean(runner)}
+      title="轮换 Runner Token"
+    >
+      <Space orientation="vertical" size={8}>
+        <Typography.Text>
+          轮换后旧 Token 会立即失效，请将新 Token 配置到本地 Runner。
+        </Typography.Text>
+        <Typography.Text type="secondary">
+          当前执行器：{runner?.name ?? '-'}
+        </Typography.Text>
       </Space>
     </Modal>
   );
