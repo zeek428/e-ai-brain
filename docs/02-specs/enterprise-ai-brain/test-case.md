@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.615 |
+| 功能版本 | v1.1.616 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.616 | 2026-06-23 | 补充定时作业代码仓库配置组件化验收：代码巡检作业的仓库/分支、扫描引擎、规则、baseline、已接受风险和质量门禁字段从主页面拆出后，`ScheduledJobsPage.test.tsx`、typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |
 | v1.1.615 | 2026-06-23 | 补充插件管理动作编辑弹窗组件化验收：动作新增/编辑表单、结果写入映射字段、请求预览和高级 JSON 字段从主页面拆出后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.614 | 2026-06-23 | 补充插件管理连接编辑弹窗组件化验收：连接新增/编辑表单、认证 JSON、请求 JSON、schema 字段和保存并测试从主页面拆出后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.613 | 2026-06-23 | 补充插件管理连接/动作表格组件化验收：环境筛选、连接测试入口、动作试运行/运行/删除和写入目标展示从主页面拆出后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
