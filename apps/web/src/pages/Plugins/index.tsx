@@ -9,7 +9,6 @@ import {
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
-  StopOutlined,
 } from '@ant-design/icons';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
@@ -84,7 +83,6 @@ import {
   JsonDiagnosticsBlock,
   MarketplaceConnectionSchemaDetail,
   MarketplaceConnectionSchemaSummary,
-  TrialWritePreviewBlock,
 } from './components/PluginDiagnostics';
 import {
   compactJson,
@@ -104,6 +102,11 @@ import {
   runnerPackageOptionsFromMetadata,
   type AiExecutorRunnerFormValues,
 } from './components/pluginRunnerHelpers';
+import {
+  PluginActionTrialModal,
+  RunnerLogModal,
+  SystemVariableModal,
+} from './components/PluginUtilityModals';
 
 type PluginFormValues = {
   category: string;
@@ -2614,29 +2617,13 @@ export default function PluginsPage() {
           </Space>
         </div>
       </Space>
-      {systemVariableModalOpen ? (
-        <Modal
-          footer={null}
-          onCancel={() => setSystemVariableModalOpen(false)}
-          open={systemVariableModalOpen}
-          title="全部系统变量"
-          width={920}
-        >
-          <Space orientation="vertical" size={12} style={{ display: 'flex' }}>
-            <Typography.Text type="secondary">
-              解析时区：{systemVariableTimezone}。表达式和值都可以复制，保存配置时保留表达式，运行时再按时区解析。
-            </Typography.Text>
-            <Table<PluginSystemVariableRecord>
-              columns={systemVariablePreviewColumns}
-              dataSource={systemVariablePreviewItems}
-              pagination={false}
-              rowKey="expression"
-              scroll={{ x: 720 }}
-              size="small"
-            />
-          </Space>
-        </Modal>
-      ) : null}
+      <SystemVariableModal
+        columns={systemVariablePreviewColumns}
+        items={systemVariablePreviewItems}
+        onClose={() => setSystemVariableModalOpen(false)}
+        open={systemVariableModalOpen}
+        timezone={systemVariableTimezone}
+      />
       <Tabs
         defaultActiveKey="plugins"
         items={[
@@ -3428,66 +3415,14 @@ export default function PluginsPage() {
         </Space>
       </Modal>
 
-      <Modal
-        aria-label="Runner 执行日志"
-        destroyOnHidden
-        footer={(
-          <Space>
-            <Button onClick={() => setRunnerLogModalOpen(false)}>关闭</Button>
-            <Button
-              aria-label="取消任务"
-              danger
-              disabled={!runnerLogTask?.id || ['cancelled', 'failed', 'succeeded', 'timed_out'].includes(runnerLogTask.status)}
-              icon={<StopOutlined />}
-              loading={runnerLogLoading}
-              onClick={cancelRunnerTask}
-            >
-              取消任务
-            </Button>
-          </Space>
-        )}
+      <RunnerLogModal
+        loading={runnerLogLoading}
+        onCancelTask={cancelRunnerTask}
+        onClose={() => setRunnerLogModalOpen(false)}
         open={runnerLogModalOpen}
-        title="Runner 执行日志"
-        width={820}
-        onCancel={() => setRunnerLogModalOpen(false)}
-      >
-        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-          <Space wrap>
-            <Typography.Text strong>任务 ID</Typography.Text>
-            <Typography.Text code copyable={runnerLogTask?.id ? { text: runnerLogTask.id } : false}>
-              {runnerLogTask?.id ?? '-'}
-            </Typography.Text>
-            <Tag>{runnerLogTask?.status ?? '-'}</Tag>
-          </Space>
-          <Table<AiExecutorTaskLogRecord>
-            columns={[
-              { dataIndex: 'sequence', title: '#', width: 72 },
-              { dataIndex: 'level', title: '级别', width: 100, render: (value) => String(value ?? 'info') },
-              {
-                dataIndex: 'message',
-                title: '日志内容',
-                render: (value) => (
-                  <Typography.Text style={{ whiteSpace: 'pre-wrap' }}>
-                    {String(value ?? '')}
-                  </Typography.Text>
-                ),
-              },
-              {
-                key: 'created_at',
-                title: '时间',
-                width: 220,
-                render: (_, row) =>
-                  formatDisplayDateTime(row.created_at ?? String((row as unknown as Record<string, unknown>).timestamp ?? '-')),
-              },
-            ]}
-            dataSource={runnerLogRows}
-            loading={runnerLogLoading}
-            pagination={false}
-            rowKey={(row) => `${row.sequence ?? row.created_at ?? row.message}-${row.message}`}
-            size="small"
-          />
-        </Space>
-      </Modal>
+        rows={runnerLogRows}
+        task={runnerLogTask}
+      />
 
       <Modal
         open={pluginModalOpen}
@@ -3936,67 +3871,19 @@ export default function PluginsPage() {
         </Form>
       </Modal>
 
-      <Modal
-        confirmLoading={trialRunning}
-        okText="试运行"
+      <PluginActionTrialModal
+        action={trialAction}
+        connectionId={trialConnectionId}
+        connectionOptions={connectionOptions}
+        inputJson={trialInputJson}
+        onClose={() => setTrialModalOpen(false)}
+        onConnectionChange={setTrialConnectionId}
+        onInputJsonChange={setTrialInputJson}
+        onRun={runActionTrial}
         open={trialModalOpen}
-        title={`动作试运行${trialAction ? `：${trialAction.name}` : ''}`}
-        width={820}
-        onCancel={() => setTrialModalOpen(false)}
-        onOk={runActionTrial}
-      >
-        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-          <Space wrap>
-            <Typography.Text strong>连接</Typography.Text>
-            <Select
-              allowClear
-              options={connectionOptions}
-              style={{ width: 320 }}
-              value={trialConnectionId}
-              onChange={setTrialConnectionId}
-            />
-          </Space>
-          <div>
-            <Typography.Text strong>试运行输入 JSON</Typography.Text>
-            <Input.TextArea
-              rows={5}
-              value={trialInputJson}
-              onChange={(event) => setTrialInputJson(event.target.value)}
-            />
-          </div>
-          {trialResult ? (
-            <Space orientation="vertical" size={10} style={{ width: '100%' }}>
-              <div>
-                状态：<Tag color={trialResult.status === 'succeeded' ? 'green' : 'red'}>{trialResult.status}</Tag>
-                耗时：{trialResult.latency_ms}ms
-              </div>
-              {trialResult.error_message ? <Alert title={trialResult.error_message} type="error" /> : null}
-              <Typography.Text strong>请求预览</Typography.Text>
-              <pre style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
-                {compactJson(trialResult.request_preview)}
-              </pre>
-              <Typography.Text strong>结果映射命中</Typography.Text>
-              <Table
-                columns={[
-                  { dataIndex: 'key', title: '字段' },
-                  { dataIndex: 'path', title: 'JSONPath' },
-                  { dataIndex: 'matched', title: '命中', render: (value: boolean) => <Tag color={value ? 'green' : 'red'}>{value ? '是' : '否'}</Tag> },
-                  { dataIndex: 'value_preview', title: '值预览', ellipsis: true, render: (value: unknown) => compactJson(value) },
-                ]}
-                dataSource={trialResult.mapping_hits ?? []}
-                pagination={false}
-                rowKey="key"
-                size="small"
-              />
-              <TrialWritePreviewBlock value={trialResult.write_preview} />
-              <Typography.Text strong>响应摘要</Typography.Text>
-              <pre style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, whiteSpace: 'pre-wrap' }}>
-                {compactJson(trialResult.response_summary)}
-              </pre>
-            </Space>
-          ) : null}
-        </Space>
-      </Modal>
+        result={trialResult}
+        running={trialRunning}
+      />
     </PageContainer>
   );
 }

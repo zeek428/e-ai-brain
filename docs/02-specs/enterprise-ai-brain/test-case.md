@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.608 |
+| 功能版本 | v1.1.609 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.609 | 2026-06-23 | 补充插件管理工具弹窗组件化验收：系统变量全集、Runner 执行日志和动作试运行弹窗从主页面拆出后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/system/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.608 | 2026-06-23 | 补充 RBAC 策略矩阵验收：`GET /api/system/permissions/matrix` 返回角色权限、菜单、范围、高风险权限和菜单权限缺口；角色管理页展示权限审计矩阵并可刷新 | Codex |
 | v1.1.607 | 2026-06-23 | 补充定时作业运行健康概览组件化验收：`ScheduledJobRunObservabilityOverview` 抽出后，定时作业页签切换、运行概览、最近失败和慢运行展示需通过 typecheck、单测和真实页面 smoke | Codex |
 | v1.1.606 | 2026-06-23 | 补充执行诊断 PostgreSQL 快照读模型验收：启动兼容迁移必须包含 `069_execution_trace_read_model.sql`，服务层测试覆盖 repository 快照刷新、列表分页和关联 ID 详情命中 | Codex |
