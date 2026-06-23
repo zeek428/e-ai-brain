@@ -18,6 +18,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 插件管理插件列表继续减重：插件表格、官方插件复制、编辑/删除操作和分类/版本标签 helper 抽到 `PluginTable` 与 `pluginCatalogHelpers`，主页面只保留插件事件编排。
 - 插件管理 Runner 表格继续减重：执行器列表、展开启动命令、健康状态、Token 状态和操作列抽到 `PluginRunnerTable`，主页面只保留 Runner 事件编排。
 - 插件管理 Runner 测试诊断继续减重：执行器状态摘要、健康状态标签和诊断检查项表格抽到 `RunnerTestDiagnosticsContent`，主页面只保留测试触发、弹窗和消息编排。
 - 定时作业执行链路预览继续减重：配置向导 Steps、编排节点卡片和默认向导步骤抽到 `ScheduledJobOrchestrationFlow`，主页面只保留节点数据构造。

@@ -71,8 +71,15 @@ import {
   ConnectionSchemaFields,
   RequestParameterRows,
 } from './components/PluginConnectionFormFields';
+import {
+  OFFICIAL_PLUGIN_LABEL,
+  pluginCategoryLabel,
+  pluginCategoryOptions,
+  pluginVersionStatusTag,
+} from './components/pluginCatalogHelpers';
 import { PluginRunnerTable } from './components/PluginRunnerTable';
 import { PluginRunnerFormFields } from './components/PluginRunnerFormFields';
+import { PluginTable } from './components/PluginTable';
 import {
   ConnectionLastTestSummary,
   ConnectionRequestDebugPanel,
@@ -208,22 +215,6 @@ const systemVariableDescriptionByExpression = new Map(
   systemVariableOptions.map((option) => [option.value, option.description]),
 );
 
-const pluginCategoryOptions = [
-  { label: '通用集成', value: 'general' },
-  { label: '数据仓库 / BI', value: 'data_warehouse' },
-  { label: 'DevOps / 代码平台', value: 'devops' },
-  { label: '需求 / 缺陷系统', value: 'issue_tracking' },
-  { label: '日志 / 监控', value: 'observability' },
-  { label: '知识库 / 文档', value: 'knowledge_base' },
-  { label: '协同 / 通知', value: 'collaboration' },
-  { label: 'AI / 模型服务', value: 'ai_service' },
-  { label: '业务系统', value: 'business_system' },
-];
-
-const pluginCategoryLabelByValue = new Map(
-  pluginCategoryOptions.map((option) => [option.value, option.label]),
-);
-
 const connectionEnvironmentOptions = [
   { label: '默认', value: 'default' },
   { label: '开发', value: 'dev' },
@@ -237,31 +228,12 @@ const connectionEnvironmentLabelByValue = new Map(
   connectionEnvironmentOptions.map((option) => [option.value, option.label]),
 );
 
-const OFFICIAL_PLUGIN_LABEL = '官方标准';
-const pluginVersionStatusLabelByValue = new Map([
-  ['custom', '自定义'],
-  ['latest', '最新'],
-  ['upgrade_available', '可升级'],
-]);
-
 const genericIntegrationChainSteps = [
   { color: 'blue', label: '插件', text: '定义三方系统能力与协议' },
   { color: 'cyan', label: '连接', text: '维护环境、Endpoint、认证和公共参数' },
   { color: 'purple', label: '动作', text: '定义请求、变量和结果映射' },
   { color: 'green', label: '定时作业', text: '编排取数、AI 处理和结果写入' },
 ];
-
-function pluginVersionStatusTag(record: {
-  template_version?: string;
-  upgrade_available?: boolean;
-  version_status?: string;
-}) {
-  const version = record.template_version ?? '-';
-  const status = record.upgrade_available ? 'upgrade_available' : record.version_status ?? 'custom';
-  const label = pluginVersionStatusLabelByValue.get(status) ?? status;
-  const color = status === 'upgrade_available' ? 'orange' : status === 'latest' ? 'green' : 'default';
-  return <Tag color={color}>{`${version} ${label}`}</Tag>;
-}
 
 function stableJson(value: Record<string, unknown>): string {
   return JSON.stringify(value, null, 2);
@@ -2613,7 +2585,7 @@ export default function PluginsPage() {
                     dataIndex: 'category',
                     title: '分类',
                     width: 150,
-                    render: (value) => pluginCategoryLabelByValue.get(String(value)) ?? String(value ?? '-'),
+                    render: (value) => pluginCategoryLabel(value),
                   },
                   { dataIndex: 'protocol', title: '协议', width: 110 },
                   {
@@ -2721,116 +2693,14 @@ export default function PluginsPage() {
             key: 'plugins',
             label: '插件',
             children: (
-              <ProTable<PluginRecord>
-                cardBordered
-                className="management-list-table"
-                dateFormatter="string"
-                headerTitle="插件"
+              <PluginTable
                 loading={loading}
-                options={{
-                  density: true,
-                  fullScreen: true,
-                  reload,
-                  setting: true,
-                }}
-                pagination={{
-                  showSizeChanger: true,
-                  showTotal: (total) => `共 ${total} 条`,
-                }}
-                rowKey="id"
-                scroll={{ x: 1252 }}
-                search={false}
-                dataSource={plugins}
-                tableLayout="fixed"
-                toolBarRender={() => [
-                  <Button key="create-plugin" aria-label="新增插件" icon={<PlusOutlined />} type="primary" onClick={openCreatePluginModal}>
-                    新增插件
-                  </Button>,
-                  <Button key="reload-plugins" icon={<ReloadOutlined />} onClick={reload}>
-                    刷新
-                  </Button>,
-                ]}
-                columns={[
-                  {
-                    dataIndex: 'name',
-                    title: '名称',
-                    ellipsis: true,
-                    width: 240,
-                    render: (_, row) => (
-                      <Space wrap={false}>
-                        <Typography.Text ellipsis style={{ maxWidth: 150 }}>
-                          {row.name}
-                        </Typography.Text>
-                        {row.is_system ? <Tag color="blue">{OFFICIAL_PLUGIN_LABEL}</Tag> : null}
-                      </Space>
-                    ),
-                  },
-                  { dataIndex: 'code', title: '编码', ellipsis: true, width: 200 },
-                  { dataIndex: 'protocol', title: '协议', width: 120 },
-                  {
-                    dataIndex: 'template_version',
-                    title: '模板版本',
-                    width: 120,
-                    render: (_, row) => pluginVersionStatusTag(row),
-                  },
-                  {
-                    dataIndex: 'category',
-                    title: '分类',
-                    width: 150,
-                    render: (value) => pluginCategoryLabelByValue.get(String(value)) ?? String(value ?? '-'),
-                  },
-                  { dataIndex: 'risk_level', title: '风险', width: 100 },
-                  {
-                    dataIndex: 'status',
-                    title: '状态',
-                    width: 110,
-                    render: (value) => <Tag color={value === 'active' ? 'green' : 'default'}>{String(value)}</Tag>,
-                  },
-                  {
-                    fixed: 'right',
-                    key: 'actions',
-                    title: '操作',
-                    valueType: 'option',
-                    width: 164,
-                    render: (_, row) => {
-                      if (row.is_system) {
-                        return (
-                          <Space className="management-row-actions" size={0}>
-                            <Button
-                              aria-label={`复制官方插件 ${row.name}`}
-                              icon={<PlusOutlined />}
-                              onClick={() => void copyOfficialPlugin(row)}
-                              type="link"
-                            >
-                              复制
-                            </Button>
-                          </Space>
-                        );
-                      }
-                      return (
-                        <Space className="management-row-actions" size={0}>
-                          <Button
-                            aria-label={`编辑插件 ${row.name}`}
-                            icon={<EditOutlined />}
-                            onClick={() => openEditPluginModal(row)}
-                            type="link"
-                          >
-                            编辑
-                          </Button>
-                          <Button
-                            aria-label={`删除插件 ${row.name}`}
-                            danger
-                            icon={<DeleteOutlined />}
-                            onClick={() => confirmDeletePlugin(row)}
-                            type="link"
-                          >
-                            删除
-                          </Button>
-                        </Space>
-                      );
-                    },
-                  },
-                ]}
+                plugins={plugins}
+                onCopyOfficialPlugin={(plugin) => void copyOfficialPlugin(plugin)}
+                onCreatePlugin={openCreatePluginModal}
+                onDeletePlugin={confirmDeletePlugin}
+                onEditPlugin={openEditPluginModal}
+                onReload={reload}
               />
             ),
           },
