@@ -14,6 +14,9 @@
 - 研发执行器策略：需求交付新增研发执行器策略页面和 API，按任务类型、产品与优先级匹配插件管理下的 Codex、Claude Code、OpenClaw Runner；策略不装配 Agent/Skill，研发任务命中策略后投递 Runner 队列，完成回写后进入人工确认。
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
+### Changed
+- AI 助手页面主文件继续减重：消息气泡、草案工具结果、运行诊断、插件连接诊断和运行对比卡片抽到 `AssistantMessageBubble`，共享消息 helper 独立成 `assistantMessageHelpers`，主页面从消息渲染细节中解耦，便于继续扩展草案和诊断场景。
+
 ### Fixed
 - AI 助手页面样式隔离：将 `.assistant-*` 规则从全局样式迁移到助手页面级 `Assistant.css`，并保留多视口真实页面 smoke 覆盖，降低其它页面样式变更影响助手布局的风险。
 - AI 助手升级文档对齐：工作台升级方案、API 文档和测试用例同步补齐 hooks 拆分、意图 registry、运行诊断、指标维度/趋势/导出和 scoped CSS 的当前落地状态。
