@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- RBAC 策略矩阵：新增 `GET /api/system/permissions/matrix`，按角色聚合权限点、菜单入口、数据范围、高风险权限和菜单权限缺口；角色管理页新增“权限审计矩阵”用于授权排障。
 - 执行诊断持久化读模型：新增 `execution_trace_snapshots` 可重建快照表，PostgreSQL 运行时统一刷新定时作业、插件调用、Runner、模型网关、代码巡检和审计链路快照，列表和详情优先从快照分页/过滤/排序读取。
 - AI 助手草案任务台：新增 `/assistant/drafts` 页面和 `GET /api/assistant/action-drafts` 列表接口，按当前用户展示待确认、失败、已采纳和已修改草案，支持筛选、排序、详情查看埋点、继续编辑、确认/取消以及采纳率、处理率、用户修改率汇总。
 - 执行诊断中心：运营治理新增 `/governance/execution-traces`，后端提供 `/api/governance/execution-traces` 列表和详情接口，统一聚合定时作业运行、插件调用、AI 执行器任务、模型网关日志、代码巡检报告和审计事件，并对元数据敏感字段脱敏。

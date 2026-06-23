@@ -478,6 +478,31 @@ body {
   overflow-wrap: anywhere;
 }
 
+.role-policy-matrix {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid #eef1f5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.role-policy-matrix-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.role-policy-matrix-summary {
+  min-width: 0;
+}
+
+.role-policy-matrix-error {
+  display: block;
+}
+
 
 .dashboard-list {
   display: grid;

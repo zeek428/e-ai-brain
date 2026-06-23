@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, api_error, require_any_permission, require_permissions
 from app.core.trace import envelope, get_trace_id
+from app.services.rbac_matrix import build_rbac_policy_matrix
 
 router = APIRouter(tags=["system-rbac"])
 
@@ -169,6 +170,18 @@ def list_permissions(
     require_permissions(user, {"system.roles.manage"})
     return envelope(
         {"items": _authorization_repository(request).list_permissions()},
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/permissions/matrix")
+def get_permission_matrix(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_any_permission(user, {"system.roles.read", "system.roles.manage"})
+    return envelope(
+        build_rbac_policy_matrix(_authorization_repository(request)),
         get_trace_id(request),
     )
 

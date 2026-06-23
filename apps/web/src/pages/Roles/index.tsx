@@ -10,10 +10,12 @@ import {
   Select,
   Space,
   Switch,
+  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ManagementListPage, StatusTag } from '../../components/ManagementListPage';
@@ -26,8 +28,7 @@ import {
 import {
   copySystemRole,
   createSystemRole,
-  fetchSystemMenus,
-  fetchSystemPermissions,
+  fetchSystemPermissionMatrix,
   fetchSystemRoleList,
   setSystemRoleStatus,
   updateSystemRole,
@@ -36,6 +37,8 @@ import {
   updateSystemRoleScopes,
   type MenuResourceRecord,
   type PermissionRecord,
+  type RbacPolicyMatrix,
+  type RbacPolicyMatrixRow,
   type RoleListQuery,
   type ScopeGrant,
   type SystemRoleRecord,
@@ -112,6 +115,91 @@ function renderRoleScopeSummary(row: RoleManagementRow) {
 
 function renderCountSummary(count: number, unit: string) {
   return <Tag color={count > 0 ? 'blue' : 'default'}>{`${count} ${unit}`}</Tag>;
+}
+
+function renderCompactCodes(codes: string[], maxVisible = 3) {
+  if (!codes.length) {
+    return <Text type="secondary">-</Text>;
+  }
+  const visibleCodes = codes.slice(0, maxVisible);
+  return (
+    <Space size={[4, 4]} wrap>
+      {visibleCodes.map((code) => (
+        <Tag key={code}>{code}</Tag>
+      ))}
+      {codes.length > visibleCodes.length ? <Tag>+{codes.length - visibleCodes.length}</Tag> : null}
+    </Space>
+  );
+}
+
+function matrixColumns(): ColumnsType<RbacPolicyMatrixRow> {
+  return [
+    {
+      dataIndex: 'role_name',
+      fixed: 'left',
+      render: (_, row) => (
+        <Space orientation="vertical" size={2}>
+          <Text strong>{row.role_name}</Text>
+          <Text type="secondary">{row.role_code}</Text>
+        </Space>
+      ),
+      title: '角色',
+      width: 180,
+    },
+    {
+      dataIndex: 'permission_count',
+      render: (_, row) => (
+        <Space size={[4, 4]} wrap>
+          <Tag color="blue">{row.permission_count} 权限点</Tag>
+          {row.high_risk_permission_count > 0 ? (
+            <Tag color="red">{row.high_risk_permission_count} 高风险</Tag>
+          ) : null}
+        </Space>
+      ),
+      title: '权限',
+      width: 170,
+    },
+    {
+      dataIndex: 'menu_count',
+      render: (_, row) => <Tag color={row.menu_count ? 'cyan' : 'default'}>{row.menu_count} 菜单</Tag>,
+      title: '菜单',
+      width: 120,
+    },
+    {
+      dataIndex: 'missing_menu_permission_codes',
+      render: (_, row) =>
+        row.missing_menu_permission_codes.length ? (
+          renderCompactCodes(row.missing_menu_permission_codes)
+        ) : (
+          <StatusTag color="green" label="已对齐" />
+        ),
+      title: '菜单权限缺口',
+      width: 240,
+    },
+    {
+      dataIndex: 'scope_summary',
+      ellipsis: true,
+      title: '数据范围',
+      width: 180,
+    },
+    {
+      dataIndex: 'diagnostics',
+      render: (_, row) =>
+        row.diagnostics.length ? (
+          <Space size={[4, 4]} wrap>
+            {row.diagnostics.map((item) => (
+              <Tag color={item.level === 'risk' ? 'red' : 'gold'} key={item.code}>
+                {item.message}
+              </Tag>
+            ))}
+          </Space>
+        ) : (
+          <StatusTag color="green" label="正常" />
+        ),
+      title: '诊断',
+      width: 220,
+    },
+  ];
 }
 
 function buildColumns({
@@ -293,6 +381,9 @@ export default function RolesPage() {
   const [submitting, setSubmitting] = useState(false);
   const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
   const [menus, setMenus] = useState<MenuResourceRecord[]>([]);
+  const [policyMatrix, setPolicyMatrix] = useState<RbacPolicyMatrix>();
+  const [policyMatrixError, setPolicyMatrixError] = useState<RemoteRowsError>();
+  const [policyMatrixLoading, setPolicyMatrixLoading] = useState(false);
   const [roleForm] = Form.useForm<RoleFormValues>();
   const [grantForm] = Form.useForm<{
     menuCodes?: string[];
@@ -327,6 +418,23 @@ export default function RolesPage() {
     status: 'loading',
     total: 0,
   });
+  const loadPolicyMatrix = useCallback(async () => {
+    setPolicyMatrixLoading(true);
+    try {
+      const matrix = await fetchSystemPermissionMatrix();
+      setPolicyMatrix(matrix);
+      setPolicyMatrixError(undefined);
+      setPermissions(matrix.permissions);
+      setMenus(matrix.menus);
+    } catch (loadError: unknown) {
+      setPolicyMatrix(undefined);
+      setPolicyMatrixError(normalizeRemoteRowsError(loadError));
+      setPermissions([]);
+      setMenus([]);
+    } finally {
+      setPolicyMatrixLoading(false);
+    }
+  }, []);
   const reload = useCallback(async () => {
     setListState((current) => ({ ...current, status: 'loading' }));
     try {
@@ -377,24 +485,8 @@ export default function RolesPage() {
     };
   }, [listQuery]);
   useEffect(() => {
-    let isCurrent = true;
-    Promise.all([fetchSystemPermissions(), fetchSystemMenus()])
-      .then(([permissionRows, menuRows]) => {
-        if (isCurrent) {
-          setPermissions(permissionRows);
-          setMenus(menuRows);
-        }
-      })
-      .catch(() => {
-        if (isCurrent) {
-          setPermissions([]);
-          setMenus([]);
-        }
-      });
-    return () => {
-      isCurrent = false;
-    };
-  }, []);
+    void loadPolicyMatrix();
+  }, [loadPolicyMatrix]);
 
   const openCreateRole = useCallback(() => {
     setEditingRole(undefined);
@@ -438,6 +530,7 @@ export default function RolesPage() {
       setRoleFormOpen(false);
       setEditingRole(undefined);
       await reload();
+      await loadPolicyMatrix();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '角色保存失败');
     } finally {
@@ -463,6 +556,7 @@ export default function RolesPage() {
       message.success('授权配置已更新');
       setGrantModal(undefined);
       await reload();
+      await loadPolicyMatrix();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '授权配置保存失败');
     } finally {
@@ -475,12 +569,13 @@ export default function RolesPage() {
       await setSystemRoleStatus(row.id, row.status === 'active' ? 'inactive' : 'active');
       message.success(row.status === 'active' ? '角色已停用' : '角色已启用');
       await reload();
+      await loadPolicyMatrix();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '角色状态更新失败');
     } finally {
       setSubmitting(false);
     }
-  }, [reload]);
+  }, [loadPolicyMatrix, reload]);
   const copyRole = useCallback(
     (row: RoleManagementRow) => {
       Modal.confirm({
@@ -495,6 +590,7 @@ export default function RolesPage() {
             });
             message.success('角色已复制');
             await reload();
+            await loadPolicyMatrix();
           } catch (error) {
             message.error(error instanceof Error ? error.message : '角色复制失败');
           }
@@ -502,7 +598,7 @@ export default function RolesPage() {
         title: '复制角色',
       });
     },
-    [reload],
+    [loadPolicyMatrix, reload],
   );
   const columns = useMemo(
     () =>
@@ -515,6 +611,61 @@ export default function RolesPage() {
       }),
     [copyRole, openEditRole, openGrantModal, toggleRoleStatus],
   );
+  const policyMatrixColumns = useMemo(() => matrixColumns(), []);
+  const policyMatrixPanel = useMemo(() => {
+    const summary = policyMatrix?.summary;
+    return (
+      <section className="role-policy-matrix" aria-label="权限审计矩阵">
+        <div className="role-policy-matrix-header">
+          <Space orientation="vertical" size={4}>
+            <Text strong>权限审计矩阵</Text>
+            <Text type="secondary">
+              按角色汇总权限点、菜单入口、数据范围和授权缺口，帮助排查入口可见但接口无权等问题。
+            </Text>
+          </Space>
+          <Button loading={policyMatrixLoading} onClick={() => void loadPolicyMatrix()}>
+            刷新矩阵
+          </Button>
+        </div>
+        {summary ? (
+          <Space className="role-policy-matrix-summary" size={[8, 8]} wrap>
+            <Tag color="blue">{summary.role_count} 个角色</Tag>
+            <Tag color="cyan">{summary.permission_count} 个权限点</Tag>
+            <Tag color="geekblue">{summary.menu_count} 个菜单</Tag>
+            <Tag color={summary.roles_with_menu_permission_gaps > 0 ? 'gold' : 'green'}>
+              {summary.roles_with_menu_permission_gaps} 个菜单权限缺口
+            </Tag>
+            <Tag color={summary.roles_with_high_risk_permissions > 0 ? 'red' : 'green'}>
+              {summary.roles_with_high_risk_permissions} 个高风险角色
+            </Tag>
+            <Tag>{summary.scope_grant_count} 条范围授权</Tag>
+          </Space>
+        ) : null}
+        {policyMatrixError ? (
+          <Text className="role-policy-matrix-error" type="danger">
+            {formatRemoteRowsError(policyMatrixError)}
+          </Text>
+        ) : null}
+        <Table<RbacPolicyMatrixRow>
+          columns={policyMatrixColumns}
+          dataSource={policyMatrix?.rows ?? []}
+          loading={policyMatrixLoading}
+          pagination={false}
+          rowKey="role_code"
+          scroll={{ x: 1110 }}
+          size="small"
+          tableLayout="fixed"
+        />
+      </section>
+    );
+  }, [
+    loadPolicyMatrix,
+    policyMatrix?.rows,
+    policyMatrix?.summary,
+    policyMatrixColumns,
+    policyMatrixError,
+    policyMatrixLoading,
+  ]);
   const activeMenus = useMemo(
     () =>
       menus
@@ -601,6 +752,7 @@ export default function RolesPage() {
         onPrimaryAction={openCreateRole}
         onReload={() => void reload()}
         primaryAction="新增角色"
+        beforeTable={policyMatrixPanel}
         remote={{
           onChange: setListQuery,
           page: listState.page,

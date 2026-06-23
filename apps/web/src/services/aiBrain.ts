@@ -154,6 +154,49 @@ export type SystemRoleRecord = UserRoleDefinition & {
   scopes: ScopeGrant[];
 };
 
+export type RbacPolicyMatrixRow = {
+  category: string;
+  diagnostics: Array<{
+    code: string;
+    level: string;
+    message: string;
+    permission_codes?: string[];
+  }>;
+  granted_menu_codes: string[];
+  granted_permission_codes: string[];
+  high_risk_permission_codes: string[];
+  high_risk_permission_count: number;
+  is_system: boolean;
+  menu_count: number;
+  missing_menu_permission_codes: string[];
+  permission_count: number;
+  required_permission_codes: string[];
+  role_code: string;
+  role_id: string;
+  role_name: string;
+  scope_count: number;
+  scope_summary: string;
+  scopes: ScopeGrant[];
+  standalone_permission_codes: string[];
+  status: string;
+};
+
+export type RbacPolicyMatrix = {
+  menus: MenuResourceRecord[];
+  permissions: PermissionRecord[];
+  roles: SystemRoleRecord[];
+  rows: RbacPolicyMatrixRow[];
+  summary: {
+    active_role_count: number;
+    menu_count: number;
+    permission_count: number;
+    role_count: number;
+    roles_with_high_risk_permissions: number;
+    roles_with_menu_permission_gaps: number;
+    scope_grant_count: number;
+  };
+};
+
 export type AssistantChatResponse = {
   content: string;
   conversationId: string;
@@ -4574,6 +4617,15 @@ export async function fetchSystemMenus(): Promise<MenuResourceRecord[]> {
   const token = requireAccessToken();
   const menus = await apiRequest<{ items: MenuResourceRecord[] }>('/api/system/menus', { token });
   return menus.items;
+}
+
+export async function fetchSystemPermissionMatrix(): Promise<RbacPolicyMatrix> {
+  const token = requireAccessToken();
+  const matrix = await apiRequest<RbacPolicyMatrix>('/api/system/permissions/matrix', { token });
+  return {
+    ...matrix,
+    roles: matrix.roles.map(mapSystemRole),
+  };
 }
 
 export async function createSystemMenu(

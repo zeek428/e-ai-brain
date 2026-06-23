@@ -111,6 +111,34 @@ def test_role_menu_grants_return_updated_menu_codes():
     ]
 
 
+def test_permission_matrix_explains_role_grants_and_menu_permission_gaps():
+    headers = auth_headers()
+    role = client.post(
+        "/api/system/roles",
+        headers=headers,
+        json={"code": "matrix_operator", "name": "Matrix Operator"},
+    ).json()["data"]
+    client.put(
+        f"/api/system/roles/{role['id']}/menus",
+        headers=headers,
+        json={"menu_codes": ["workspace.dashboard"]},
+    )
+
+    response = client.get("/api/system/permissions/matrix", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["summary"]["role_count"] >= 1
+    assert data["summary"]["permission_count"] >= 1
+    assert data["summary"]["roles_with_menu_permission_gaps"] >= 1
+    rows_by_code = {row["role_code"]: row for row in data["rows"]}
+    matrix_row = rows_by_code["matrix_operator"]
+    assert matrix_row["menu_count"] == 1
+    assert matrix_row["permission_count"] == 0
+    assert matrix_row["missing_menu_permission_codes"] == ["workspace.read"]
+    assert matrix_row["diagnostics"][0]["code"] == "menu_permission_gap"
+
+
 def test_task_center_contains_ai_jobs_and_plugin_menus():
     response = client.get("/api/system/menus", headers=auth_headers())
 

@@ -149,6 +149,116 @@ describe('system management pages', () => {
           },
         );
       }
+      if (String(input) === '/api/system/permissions/matrix') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              menus: [
+                { code: 'system', menu_type: 'group', name: '系统管理', path: '/system' },
+                {
+                  code: 'system.roles',
+                  menu_type: 'page',
+                  name: '角色管理',
+                  path: '/system/roles',
+                  required_permissions: ['system.roles.manage'],
+                },
+                {
+                  code: 'governance.audit',
+                  menu_type: 'page',
+                  name: '审计与运行',
+                  path: '/governance/audit',
+                  required_permissions: [],
+                },
+                {
+                  code: 'workspace.dashboard',
+                  menu_type: 'page',
+                  name: '团队看板',
+                  path: '/welcome',
+                  required_permissions: ['workspace.read'],
+                },
+              ],
+              permissions: [
+                { code: 'system.roles.manage', name: '角色管理', risk_level: 'high', status: 'active' },
+                { code: 'system.roles.read', name: '查看角色', status: 'active' },
+                { code: 'system.users.manage', name: '用户管理', status: 'active' },
+                { code: 'workspace.read', name: '工作台读取', status: 'active' },
+              ],
+              roles: roleCatalogEnvelope.data.items,
+              rows: [
+                {
+                  category: 'system',
+                  diagnostics: [
+                    {
+                      code: 'high_risk_permission',
+                      level: 'risk',
+                      message: '包含高风险权限点',
+                      permission_codes: ['system.roles.manage'],
+                    },
+                  ],
+                  granted_menu_codes: ['system', 'system.roles', 'governance.audit'],
+                  granted_permission_codes: ['system.roles.read', 'system.roles.manage', 'system.users.manage'],
+                  high_risk_permission_codes: ['system.roles.manage'],
+                  high_risk_permission_count: 1,
+                  is_system: true,
+                  menu_count: 3,
+                  missing_menu_permission_codes: [],
+                  permission_count: 3,
+                  required_permission_codes: ['system.roles.manage'],
+                  role_code: 'admin',
+                  role_id: 'role_admin',
+                  role_name: '系统管理员',
+                  scope_count: 1,
+                  scope_summary: 'global 1 项',
+                  scopes: [{ access_level: 'admin', scope_id: '*', scope_type: 'global' }],
+                  standalone_permission_codes: ['system.roles.read', 'system.users.manage'],
+                  status: 'active',
+                },
+                {
+                  category: 'readonly',
+                  diagnostics: [
+                    {
+                      code: 'menu_permission_gap',
+                      level: 'warning',
+                      message: '已授权菜单缺少对应权限点',
+                      permission_codes: ['workspace.read'],
+                    },
+                  ],
+                  granted_menu_codes: ['workspace.dashboard'],
+                  granted_permission_codes: [],
+                  high_risk_permission_codes: [],
+                  high_risk_permission_count: 0,
+                  is_system: true,
+                  menu_count: 1,
+                  missing_menu_permission_codes: ['workspace.read'],
+                  permission_count: 0,
+                  required_permission_codes: ['workspace.read'],
+                  role_code: 'viewer',
+                  role_id: 'role_viewer',
+                  role_name: '查看者',
+                  scope_count: 0,
+                  scope_summary: '未配置数据范围',
+                  scopes: [],
+                  standalone_permission_codes: [],
+                  status: 'active',
+                },
+              ],
+              summary: {
+                active_role_count: 2,
+                menu_count: 4,
+                permission_count: 4,
+                role_count: 2,
+                roles_with_high_risk_permissions: 1,
+                roles_with_menu_permission_gaps: 1,
+                scope_grant_count: 1,
+              },
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
       expect(String(input)).toBe('/api/system/roles');
       return new Response(
         JSON.stringify({
@@ -166,11 +276,15 @@ describe('system management pages', () => {
     render(<RolesPage />);
 
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('系统管理');
+    expect(await screen.findByText('权限审计矩阵')).toBeInTheDocument();
+    expect(screen.getByText('1 个菜单权限缺口')).toBeInTheDocument();
+    expect(screen.getByText('1 个高风险角色')).toBeInTheDocument();
+    expect(screen.getByText('已授权菜单缺少对应权限点')).toBeInTheDocument();
     expect(await screen.findByText('角色定义')).toBeInTheDocument();
-    expect(screen.getByText('系统管理员')).toBeInTheDocument();
-    expect(screen.getByText('admin')).toBeInTheDocument();
-    expect(screen.getByText('查看者')).toBeInTheDocument();
-    expect(screen.getByText('viewer')).toBeInTheDocument();
+    expect(screen.getAllByText('系统管理员').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('admin').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('查看者').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('viewer').length).toBeGreaterThan(0);
     expect(screen.getAllByText('系统管理').length).toBeGreaterThan(0);
     expect(screen.getAllByText('3 个入口').length).toBeGreaterThan(0);
     expect(screen.getAllByText('3 个权限点').length).toBeGreaterThan(0);
