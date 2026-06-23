@@ -35,6 +35,9 @@ class FakeExecutionTraceRepository:
     def list_scheduled_job_runs(self) -> list[dict[str, Any]]:
         return list(self.store.scheduled_job_runs.values())
 
+    def list_execution_trace_assistant_chat_runs(self) -> list[dict[str, Any]]:
+        return list(self.store.assistant_chat_runs.values())
+
     def refresh_execution_trace_snapshots(self, traces: list[dict[str, Any]]) -> None:
         self.refresh_calls += 1
         self.snapshots = {str(trace["id"]): trace for trace in traces}
@@ -261,6 +264,63 @@ def seed_execution_trace_records() -> None:
     )
 
 
+def seed_assistant_execution_trace_records() -> None:
+    store = app.state.store
+    store.assistant_chat_runs["assistant_chat_run_trace"] = {
+        "assistant_message_id": "assistant_message_trace",
+        "client_request_id": "client_request_trace",
+        "conversation_id": "assistant_conversation_trace",
+        "created_at": "2026-06-20T02:00:00+00:00",
+        "error_code": "MODEL_GATEWAY_FAILED",
+        "error_message": "模型网关调用失败",
+        "finished_at": "2026-06-20T02:00:05+00:00",
+        "id": "assistant_chat_run_trace",
+        "metadata_json": {
+            "context_source": "assistant-page",
+            "message_excerpt": "请帮我诊断这次失败",
+            "product_id": "product_trace",
+            "reference_count": 1,
+        },
+        "started_at": "2026-06-20T02:00:00+00:00",
+        "status": "failed",
+        "updated_at": "2026-06-20T02:00:05+00:00",
+        "user_id": "user_admin",
+        "user_message_id": "assistant_user_message_trace",
+    }
+    store.model_gateway_logs.append(
+        {
+            "created_at": "2026-06-20T02:00:01+00:00",
+            "error": "upstream timeout",
+            "id": "model_gateway_log_assistant_trace",
+            "latency_ms": 1800,
+            "model": "gpt-5.5",
+            "model_gateway_config_id": "model_gateway_config_trace",
+            "provider": "openai_compatible",
+            "purpose": "assistant_chat",
+            "status": "failed",
+            "tokens": {"prompt": 120, "completion": 0},
+            "updated_at": "2026-06-20T02:00:03+00:00",
+        }
+    )
+    store.audit_events.append(
+        {
+            "actor_id": "user_admin",
+            "created_at": "2026-06-20T02:00:05+00:00",
+            "event_type": "assistant.chat_failed",
+            "id": "audit_assistant_trace",
+            "payload": {
+                "api_key": "sk-assistant-secret",
+                "chat_run_id": "assistant_chat_run_trace",
+                "model_log_id": "model_gateway_log_assistant_trace",
+            },
+            "result": "failed",
+            "sequence": 2,
+            "subject_id": "assistant_conversation_trace",
+            "subject_type": "assistant_conversation",
+        }
+    )
+
+
 def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
     app.state.store.reset()
     seed_execution_trace_records()
@@ -309,6 +369,42 @@ def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
     assert "secret-run-token" not in serialized_detail
     assert "runner-secret-token" not in serialized_detail
     assert "sk-test-secret" not in serialized_detail
+    assert "<redacted>" in serialized_detail
+
+
+def test_execution_trace_includes_assistant_chat_run_model_and_audit_nodes():
+    app.state.store.reset()
+    seed_assistant_execution_trace_records()
+    headers = auth_headers()
+
+    response = client.get(
+        "/api/governance/execution-traces?source_type=assistant_chat_run&page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert body["total"] == 1
+    item = body["items"][0]
+    assert item["id"] == "assistant_chat_run_trace"
+    assert item["root_type"] == "assistant_chat_run"
+    assert item["status"] == "failed"
+    assert item["related_ids"]["model_gateway_log"] == ["model_gateway_log_assistant_trace"]
+    assert item["related_ids"]["audit_event"] == ["audit_assistant_trace"]
+
+    detail_response = client.get(
+        "/api/governance/execution-traces/model_gateway_log_assistant_trace",
+        headers=headers,
+    )
+
+    assert detail_response.status_code == 200, detail_response.text
+    detail = detail_response.json()["data"]
+    assert detail["root_id"] == "assistant_chat_run_trace"
+    source_types = {node["source_type"] for node in detail["nodes"]}
+    assert {"assistant_chat_run", "audit_event", "model_gateway_log"}.issubset(source_types)
+    assert any(edge["label"] == "calls_model" for edge in detail["edges"])
+    serialized_detail = str(detail)
+    assert "sk-assistant-secret" not in serialized_detail
     assert "<redacted>" in serialized_detail
 
 

@@ -1344,6 +1344,9 @@ class PostgresSnapshotRepository:
     def list_assistant_chat_runs(self, *, user_id: str) -> list[dict[str, Any]]:
         return self._assistant_chat_read_repository.list_assistant_chat_runs(user_id=user_id)
 
+    def list_execution_trace_assistant_chat_runs(self) -> list[dict[str, Any]]:
+        return self._assistant_chat_read_repository.list_execution_trace_assistant_chat_runs()
+
     def get_assistant_chat_run(self, *, run_id: str) -> dict[str, Any] | None:
         return self._assistant_chat_read_repository.get_assistant_chat_run(run_id=run_id)
 

@@ -28,6 +28,7 @@ EXECUTION_TRACE_SORT_FIELDS = {
 EXECUTION_TRACE_SOURCE_TYPES = {
     "ai_executor_task",
     "audit_event",
+    "assistant_chat_run",
     "code_inspection_report",
     "model_gateway_log",
     "plugin_invocation_log",
@@ -133,6 +134,11 @@ def _records(current_store: Any) -> dict[str, list[dict[str, Any]]]:
             current_store,
             "list_ai_executor_tasks",
             getattr(current_store, "ai_executor_tasks", {}),
+        ),
+        "assistant_chat_runs": _repository_list(
+            current_store,
+            "list_execution_trace_assistant_chat_runs",
+            getattr(current_store, "assistant_chat_runs", {}),
         ),
         "scheduled_job_runs": _repository_list(
             current_store,
@@ -270,6 +276,19 @@ def _indexed(records: list[dict[str, Any]], field: str) -> dict[str, list[dict[s
     return result
 
 
+def _indexed_payload(records: list[dict[str, Any]], field: str) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        value = payload.get(field)
+        if value is None:
+            continue
+        result.setdefault(str(value), []).append(record)
+    return result
+
+
 def _by_id(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {str(record["id"]): record for record in records if record.get("id")}
 
@@ -280,6 +299,7 @@ class ExecutionTraceBuilder:
         self.runs = self.records["scheduled_job_runs"]
         self.plugins = self.records["plugin_invocation_logs"]
         self.tasks = self.records["ai_executor_tasks"]
+        self.assistant_chat_runs = self.records["assistant_chat_runs"]
         self.model_logs = self.records["model_gateway_logs"]
         self.audit_events = self.records["audit_events"]
         self.reports = self.records["code_inspection_reports"]
@@ -294,12 +314,14 @@ class ExecutionTraceBuilder:
         self.reports_by_plugin = _indexed(self.reports, "plugin_invocation_log_id")
         self.audit_by_subject_id = _indexed(self.audit_events, "subject_id")
         self.audit_by_ai_task = _indexed(self.audit_events, "ai_task_id")
+        self.audit_by_chat_run = _indexed_payload(self.audit_events, "chat_run_id")
 
     def traces(self) -> list[dict[str, Any]]:
         traces: list[dict[str, Any]] = []
         consumed = {
             "audit_event": set(),
             "ai_executor_task": set(),
+            "assistant_chat_run": set(),
             "code_inspection_report": set(),
             "model_gateway_log": set(),
             "plugin_invocation_log": set(),
@@ -323,6 +345,14 @@ class ExecutionTraceBuilder:
             task_id = str(task.get("id") or "")
             if task_id and task_id not in consumed["ai_executor_task"]:
                 trace = self.trace_for_task(task)
+                traces.append(trace)
+                for source_type, ids in trace["related_ids"].items():
+                    consumed.setdefault(source_type, set()).update(ids)
+
+        for chat_run in self.assistant_chat_runs:
+            chat_run_id = str(chat_run.get("id") or "")
+            if chat_run_id and chat_run_id not in consumed["assistant_chat_run"]:
+                trace = self.trace_for_assistant_chat_run(chat_run)
                 traces.append(trace)
                 for source_type, ids in trace["related_ids"].items():
                     consumed.setdefault(source_type, set()).update(ids)
@@ -502,6 +532,46 @@ class ExecutionTraceBuilder:
             title=f"执行器任务 {task_id}",
         )
 
+    def trace_for_assistant_chat_run(self, chat_run: dict[str, Any]) -> dict[str, Any]:
+        run_id = str(chat_run["id"])
+        root_node_id = f"assistant_chat_run:{run_id}"
+        nodes = [self.assistant_chat_run_node(chat_run)]
+        edges: list[dict[str, str]] = []
+        related = self._empty_related()
+        related["assistant_chat_run"].add(run_id)
+
+        audit_events = _unique_records(
+            list(self.audit_by_subject_id.get(run_id, []))
+            + list(self.audit_by_chat_run.get(run_id, []))
+        )
+        model_log_ids = _collect_ids(chat_run, ("model_log_id", "model_gateway_log_id"))
+        for event in audit_events:
+            model_log_ids.update(
+                _collect_ids(
+                    event.get("payload") or {},
+                    ("model_log_id", "model_gateway_log_id"),
+                )
+            )
+        for log_id in model_log_ids:
+            model_log = self.model_logs_by_id.get(log_id)
+            if model_log is None:
+                continue
+            nodes.append(self.model_log_node(model_log))
+            edges.append(_edge(root_node_id, f"model_gateway_log:{log_id}", "calls_model"))
+            related["model_gateway_log"].add(log_id)
+        for event in audit_events:
+            nodes.append(self.audit_node(event))
+            edges.append(_edge(root_node_id, f"audit_event:{event['id']}", "audits"))
+            related["audit_event"].add(str(event["id"]))
+        return self._trace_payload(
+            nodes=nodes,
+            edges=edges,
+            related=related,
+            root=chat_run,
+            root_type="assistant_chat_run",
+            title=f"AI 助手运行 {run_id}",
+        )
+
     def trace_for_report(self, report: dict[str, Any]) -> dict[str, Any]:
         report_id = str(report["id"])
         nodes = [self.report_node(report)]
@@ -622,6 +692,37 @@ class ExecutionTraceBuilder:
             started_at=task.get("claimed_at") or task.get("created_at"),
             status=task.get("status"),
             summary=task.get("error_message") or task.get("executor_type") or task.get("status"),
+        )
+
+    def assistant_chat_run_node(self, chat_run: dict[str, Any]) -> dict[str, Any]:
+        metadata = (
+            chat_run.get("metadata_json")
+            if isinstance(chat_run.get("metadata_json"), dict)
+            else {}
+        )
+        return _node(
+            duration_ms=_duration_ms(chat_run.get("started_at"), chat_run.get("finished_at")),
+            error_code=chat_run.get("error_code"),
+            error_message=chat_run.get("error_message"),
+            finished_at=chat_run.get("finished_at") or chat_run.get("cancelled_at"),
+            label="AI 助手运行",
+            metadata={
+                "assistant_message_id": chat_run.get("assistant_message_id"),
+                "cancel_reason": chat_run.get("cancel_reason"),
+                "cancelled_by": chat_run.get("cancelled_by"),
+                "client_request_id": chat_run.get("client_request_id"),
+                "context_source": metadata.get("context_source"),
+                "conversation_id": chat_run.get("conversation_id"),
+                "product_id": metadata.get("product_id"),
+                "reference_count": metadata.get("reference_count"),
+                "user_id": chat_run.get("user_id"),
+                "user_message_id": chat_run.get("user_message_id"),
+            },
+            source_id=str(chat_run["id"]),
+            source_type="assistant_chat_run",
+            started_at=chat_run.get("started_at") or chat_run.get("created_at"),
+            status=chat_run.get("status"),
+            summary=chat_run.get("error_message") or chat_run.get("status"),
         )
 
     def model_log_node(self, log: dict[str, Any]) -> dict[str, Any]:

@@ -29,6 +29,29 @@ function installExecutionTracesFetchMock() {
     title: '定时作业运行 scheduled_job_run_trace',
     updated_at: '2026-06-20T01:00:08Z',
   };
+  const assistantTrace = {
+    duration_ms: 5000,
+    failed_node_count: 1,
+    id: 'assistant_chat_run_trace',
+    node_count: 3,
+    related_ids: {
+      ai_executor_task: [],
+      assistant_chat_run: ['assistant_chat_run_trace'],
+      audit_event: ['audit_assistant_trace'],
+      code_inspection_report: [],
+      model_gateway_log: ['model_gateway_log_assistant_trace'],
+      plugin_invocation_log: [],
+      scheduled_job_run: [],
+    },
+    root_id: 'assistant_chat_run_trace',
+    root_type: 'assistant_chat_run',
+    running_node_count: 0,
+    started_at: '2026-06-20T02:00:00Z',
+    status: 'failed',
+    summary: '模型网关调用失败。',
+    title: 'AI 助手运行 assistant_chat_run_trace',
+    updated_at: '2026-06-20T02:00:05Z',
+  };
   const detail = {
     ...trace,
     edges: [
@@ -99,10 +122,10 @@ function installExecutionTracesFetchMock() {
     if (url.startsWith('/api/governance/execution-traces?') && init?.method === 'GET') {
       return jsonResponse({
         data: {
-          items: [trace],
+          items: [trace, assistantTrace],
           page: 1,
           page_size: 10,
-          total: 1,
+          total: 2,
         },
       });
     }
@@ -132,12 +155,14 @@ describe('ExecutionTracesPage', () => {
     render(<ExecutionTracesPage />);
 
     await screen.findByText('定时作业运行 scheduled_job_run_trace');
+    expect(screen.getByText('AI 助手运行 assistant_chat_run_trace')).toBeInTheDocument();
+    expect(screen.getAllByText('AI 助手运行').length).toBeGreaterThan(0);
     expect(screen.getAllByText('成功').length).toBeGreaterThan(0);
     expect(screen.getAllByText('定时作业运行').length).toBeGreaterThan(0);
     expect(screen.getAllByText('2026-06-20 09:00').length).toBeGreaterThan(0);
     expect(screen.getByText('8.00 s')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
 
     const dialog = await screen.findByRole('dialog', { name: '执行诊断详情' });
     await waitFor(() => expect(within(dialog).getByText('执行节点')).toBeInTheDocument());

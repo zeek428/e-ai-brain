@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.382 |
+| 功能版本 | v1.1.383 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.383 | 2026-06-23 | 执行诊断 API 的 `source_type` 新增 `assistant_chat_run`，AI 助手聊天运行可作为链路根节点关联模型网关日志与审计事件 | Codex |
 | v1.1.382 | 2026-06-23 | 代码巡检治理概览 `sla` 补充整改任务覆盖率、已派生任务数、未派生任务数和最早未派生时间，页面展示整改任务覆盖率 | Codex |
 | v1.1.381 | 2026-06-23 | 代码巡检治理概览 `trend[]` 补充质量门禁通过、失败、跳过和未知计数，运营治理 / 代码巡检页面展示质量门禁趋势 | Codex |
 | v1.1.380 | 2026-06-23 | 新增 `GET /api/system/permissions/matrix` 只读 RBAC 策略矩阵接口，返回角色权限、菜单入口、数据范围、高风险权限和菜单权限缺口诊断，角色管理页用于权限审计和排障 | Codex |
@@ -4194,14 +4195,14 @@ GET /api/governance/execution-traces?keyword=scheduled_job_run_001&source_type=s
 GET /api/governance/execution-traces/{trace_id}
 ```
 
-权限：需要 `diagnostics.execution_traces.read`。当前默认授予 `admin`，用于跨定时作业、插件、AI 执行器、模型和审计的管理员级排障。
+权限：需要 `diagnostics.execution_traces.read`。当前默认授予 `admin`，用于跨定时作业、插件、AI 执行器、AI 助手运行、模型和审计的管理员级排障。
 
 列表查询参数：
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | keyword | string | 按链路 ID、根 ID、根类型、标题、摘要或关联 ID 搜索。 |
-| source_type | enum | 根类型：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`model_gateway_log`、`code_inspection_report`、`audit_event`。 |
+| source_type | enum | 根类型：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`audit_event`。 |
 | status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
 | created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |
 | sort_by | enum | `started_at`、`updated_at`、`duration_ms`、`node_count`、`failed_node_count`、`root_type`、`status`、`id`。 |
@@ -4250,6 +4251,7 @@ GET /api/governance/execution-traces/{trace_id}
 规则：
 
 - 详情 `trace_id` 可传链路根 ID，也可传任一关联对象 ID 或节点 `source_id`；服务端会返回同一条聚合链路。
+- `assistant_chat_run` 链路根来自 `assistant_chat_runs`，详情节点只展示运行状态、会话/消息 ID、用户、产品和引用数量等排障元数据，不返回完整用户提问、助手回复、Prompt 或知识正文。
 - 聚合来源是现有结构表或 repository source rows；PostgreSQL 运行时会刷新可重建的 `execution_trace_snapshots` 只读快照并优先从该表分页/过滤/排序读取。该表不是新的业务事实源，也不在查询时写审计。
 - 元数据返回前必须按敏感键脱敏，包含但不限于 `token`、`api_key`、`authorization`、`password`、`secret`、`cookie`；敏感值统一替换为 `<redacted>`。
 - 无匹配链路返回 `404 EXECUTION_TRACE_NOT_FOUND`；非法枚举或时间格式返回 `400 VALIDATION_ERROR`。

@@ -19,6 +19,7 @@ const sourceTypeOptions = [
   { label: '定时作业运行', value: 'scheduled_job_run' },
   { label: '插件调用', value: 'plugin_invocation_log' },
   { label: 'AI 执行器任务', value: 'ai_executor_task' },
+  { label: 'AI 助手运行', value: 'assistant_chat_run' },
   { label: '模型网关调用', value: 'model_gateway_log' },
   { label: '代码巡检报告', value: 'code_inspection_report' },
   { label: '审计事件', value: 'audit_event' },

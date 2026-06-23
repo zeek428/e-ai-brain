@@ -54,6 +54,22 @@ class AssistantChatReadRepository:
                 )
                 return [self._assistant_chat_run_from_row(row) for row in cursor.fetchall()]
 
+    def list_execution_trace_assistant_chat_runs(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, user_id, conversation_id, user_message_id,
+                           assistant_message_id, client_request_id, status,
+                           cancel_reason, cancelled_by, cancelled_at, error_code,
+                           error_message, metadata_json, started_at, finished_at,
+                           created_at, updated_at
+                    FROM assistant_chat_runs
+                    ORDER BY updated_at DESC, id
+                    """
+                )
+                return [self._assistant_chat_run_from_row(row) for row in cursor.fetchall()]
+
     def get_assistant_chat_run(self, *, run_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
