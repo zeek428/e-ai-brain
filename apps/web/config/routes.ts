@@ -147,6 +147,12 @@ const routes = [
         component: './Audit',
       },
       {
+        path: '/governance/execution-traces',
+        name: '执行诊断',
+        icon: 'NodeIndexOutlined',
+        component: './ExecutionTraces',
+      },
+      {
         path: '/governance/code-inspections',
         name: '代码巡检',
         icon: 'CodeOutlined',

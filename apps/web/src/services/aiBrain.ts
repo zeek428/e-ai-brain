@@ -1062,6 +1062,14 @@ export type AuditListQuery = RemoteListQuery & {
   subject?: string;
 };
 
+export type ExecutionTraceListQuery = RemoteListQuery & {
+  createdFrom?: string;
+  createdTo?: string;
+  keyword?: string;
+  sourceType?: string;
+  status?: string;
+};
+
 export type OperationalMetricListQuery = RemoteListQuery & {
   category?: string;
   name?: string;
@@ -1213,6 +1221,48 @@ export type OperationalMetricRecord = {
   status: string;
   updatedAt: string;
   value: string;
+};
+
+export type ExecutionTraceNodeRecord = {
+  duration_ms?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  finished_at?: string | null;
+  id: string;
+  label: string;
+  metadata?: Record<string, unknown>;
+  source_id: string;
+  source_type: string;
+  started_at?: string | null;
+  status: string;
+  summary?: string | null;
+};
+
+export type ExecutionTraceEdgeRecord = {
+  from: string;
+  label?: string;
+  to: string;
+};
+
+export type ExecutionTraceListItem = {
+  duration_ms?: number | null;
+  failed_node_count: number;
+  id: string;
+  node_count: number;
+  related_ids?: Record<string, string[]>;
+  root_id: string;
+  root_type: string;
+  running_node_count: number;
+  started_at?: string | null;
+  status: string;
+  summary: string;
+  title: string;
+  updated_at?: string | null;
+};
+
+export type ExecutionTraceDetailRecord = ExecutionTraceListItem & {
+  edges: ExecutionTraceEdgeRecord[];
+  nodes: ExecutionTraceNodeRecord[];
 };
 
 export type UserInsightRecord = {
@@ -6977,6 +7027,40 @@ export async function fetchManagementAuditList(
     rows: events.items.map(mapAuditRecord),
     total: events.total,
   };
+}
+
+export async function fetchExecutionTraces(
+  query: ExecutionTraceListQuery = {},
+): Promise<RemoteListResult<ExecutionTraceListItem>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'created_from', query.createdFrom);
+  appendQueryParam(params, 'created_to', query.createdTo);
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'source_type', query.sourceType);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const traces = await apiRequest<ListResponse<ExecutionTraceListItem>>(
+    queryString
+      ? `/api/governance/execution-traces?${queryString}`
+      : '/api/governance/execution-traces',
+    { token },
+  );
+
+  return {
+    page: traces.page ?? query.page ?? 1,
+    pageSize: traces.page_size ?? query.pageSize ?? 10,
+    rows: traces.items,
+    total: traces.total,
+  };
+}
+
+export async function fetchExecutionTraceDetail(traceId: string): Promise<ExecutionTraceDetailRecord> {
+  const token = requireAccessToken();
+  return apiRequest<ExecutionTraceDetailRecord>(`/api/governance/execution-traces/${traceId}`, {
+    token,
+  });
 }
 
 function mapLifecycleRelation(item: LifecycleRelationItem): LifecycleRelationRecord {

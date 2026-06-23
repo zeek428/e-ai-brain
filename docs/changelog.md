@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 执行诊断中心：运营治理新增 `/governance/execution-traces`，后端提供 `/api/governance/execution-traces` 列表和详情接口，统一聚合定时作业运行、插件调用、AI 执行器任务、模型网关日志、代码巡检报告和审计事件，并对元数据敏感字段脱敏。
 - AI 助手效果指标维度与导出：`/api/assistant/metrics` 支持产品、角色、时间段和动作过滤，返回产品/角色维度、每日趋势、草案类型趋势；新增 `/api/assistant/metrics/export`，前端指标弹窗支持 CSV 导出。
 - 研发执行器策略：需求交付新增研发执行器策略页面和 API，按任务类型、产品与优先级匹配插件管理下的 Codex、Claude Code、OpenClaw Runner；策略不装配 Agent/Skill，研发任务命中策略后投递 Runner 队列，完成回写后进入人工确认。
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。

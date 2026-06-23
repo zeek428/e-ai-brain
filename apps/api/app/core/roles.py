@@ -32,6 +32,7 @@ ROLE_DEFINITIONS: list[dict[str, Any]] = [
             "delivery.rd_executor_policies.manage",
             "assistant.action_references.manage",
             "code_inspection.read",
+            "diagnostics.execution_traces.read",
             "audit.read",
             "workspace.read",
             "workspace.write",

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.376 |
+| 功能版本 | v1.1.377 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.377 | 2026-06-23 | 新增执行诊断 API：`GET /api/governance/execution-traces` 和详情接口按运行根聚合定时作业、插件、AI 执行器、模型网关、代码巡检和审计节点，并统一脱敏元数据 | Codex |
 | v1.1.376 | 2026-06-21 | AI 助手效果指标补齐产品/角色/时间段/动作过滤、每日趋势、草案类型趋势和 `/api/assistant/metrics/export` 导出契约；助手页面样式迁移到页面级 scoped CSS | Codex |
 | v1.1.375 | 2026-06-21 | AI 助手会话列表新增 cursor/limit 分页响应，历史草案工具结果输出安全白名单和敏感字段脱敏，指标明细按 limit 下推返回 | Codex |
 | v1.1.374 | 2026-06-21 | 研发执行器策略任务类型选项口径补齐：PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析均可在策略配置中选择 | Codex |
@@ -4166,6 +4167,73 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 
 当前实现按 `sequence DESC` 返回事件。审计列表行内“详情”展示事件主体、操作者、时间和载荷；“链路追踪”优先以 `subject_type + subject_id` 查询 `/api/lifecycle/context`，无可追踪主体时再使用 `ai_task_id` 兜底。
 
+### 执行诊断
+
+```http
+GET /api/governance/execution-traces?keyword=scheduled_job_run_001&source_type=scheduled_job_run&status=failed&page=1&page_size=10&sort_by=started_at&sort_order=desc
+GET /api/governance/execution-traces/{trace_id}
+```
+
+权限：需要 `diagnostics.execution_traces.read`。当前默认授予 `admin`，用于跨定时作业、插件、AI 执行器、模型和审计的管理员级排障。
+
+列表查询参数：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| keyword | string | 按链路 ID、根 ID、根类型、标题、摘要或关联 ID 搜索。 |
+| source_type | enum | 根类型：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`model_gateway_log`、`code_inspection_report`、`audit_event`。 |
+| status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
+| created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |
+| sort_by | enum | `started_at`、`updated_at`、`duration_ms`、`node_count`、`failed_node_count`、`root_type`、`status`、`id`。 |
+| sort_order | enum | `asc` 或 `desc`。 |
+| page / page_size | number | 页码与每页数量，`page_size` 最大 100。 |
+
+响应示例：
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "scheduled_job_run_001",
+        "root_id": "scheduled_job_run_001",
+        "root_type": "scheduled_job_run",
+        "title": "定时作业运行 scheduled_job_run_001",
+        "summary": "代码仓库质量安全规范巡检完成。",
+        "status": "succeeded",
+        "started_at": "2026-06-20T01:00:00+00:00",
+        "updated_at": "2026-06-20T01:00:08+00:00",
+        "duration_ms": 8000,
+        "node_count": 8,
+        "failed_node_count": 0,
+        "running_node_count": 0,
+        "related_ids": {
+          "plugin_invocation_log": ["plugin_invocation_log_001"],
+          "ai_executor_task": ["ai_executor_task_001"],
+          "model_gateway_log": ["model_gateway_log_001"],
+          "code_inspection_report": ["code_inspection_report_001"],
+          "audit_event": ["audit_001"]
+        }
+      }
+    ],
+    "total": 1
+  },
+  "trace_id": "trace_010"
+}
+```
+
+详情响应在列表字段基础上返回：
+
+- `nodes[]`：包含 `id/source_type/source_id/label/status/summary/error_message/started_at/finished_at/duration_ms/metadata`。
+- `edges[]`：包含 `from/to/label`，用于展示调用、派发、写报告、审计等依赖关系。
+
+规则：
+
+- 详情 `trace_id` 可传链路根 ID，也可传任一关联对象 ID 或节点 `source_id`；服务端会返回同一条聚合链路。
+- 聚合来源是现有结构表或 repository source rows，不新增执行诊断专用业务事实表，也不在查询时写审计。
+- 元数据返回前必须按敏感键脱敏，包含但不限于 `token`、`api_key`、`authorization`、`password`、`secret`、`cookie`；敏感值统一替换为 `<redacted>`。
+- 无匹配链路返回 `404 EXECUTION_TRACE_NOT_FOUND`；非法枚举或时间格式返回 `400 VALIDATION_ERROR`。
+
 ---
 
 ## 核心接口错误语义
@@ -4204,6 +4272,7 @@ GET /api/audit/events?actor_id=user_admin&created_from=2026-05-31T00:00:00Z&crea
 | POST model gateway configs | 400 | VALIDATION_ERROR / MODEL_GATEWAY_CONFIG_INVALID | 否 | 记录配置失败，不记录密钥明文。 | 标出 provider、base_url 或 model 配置错误。 |
 | GET `/api/audit/events` | 403 | FORBIDDEN | 否 | 安全审计可采样记录。 | 提示无权限查看审计。 |
 | GET `/api/audit/events` | 200 | 无 | 不适用 | 查询本身不强制审计。 | 无结果返回空列表。 |
+| GET `/api/governance/execution-traces` | 400/403/404 | VALIDATION_ERROR / FORBIDDEN / EXECUTION_TRACE_NOT_FOUND | 否 | 查询本身不强制审计；响应必须脱敏元数据。 | 列表显示空状态或无权限提示；详情不存在时提示刷新运行来源。 |
 | PATCH `/api/collectors/runs/{run_id}` | 409 | COLLECTOR_RUN_STATE_INVALID | 否 | 记录已成功的创建或更新审计；非法状态流转不要求写入业务审计。 | 刷新采集运行列表并禁用终态行操作。 |
 | POST `/api/attribution/pending-items/{item_id}/resolve` | 409 | PENDING_ATTRIBUTION_STATE_INVALID | 否 | 非法重复处理不要求写入业务审计；成功归属或忽略必须记录审计。 | 刷新待归属队列，并禁用已归属或已忽略项的处理入口。 |
 
