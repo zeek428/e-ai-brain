@@ -18,6 +18,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 定时作业运行详情继续减重：结果写入记录表格、来源/状态/摘要展示和展开 JSON 预览抽到 `ScheduledJobRunResultWriteRecords`，主页面只保留运行详情编排。
 - 定时作业页面试运行结果继续减重：通用 JSON 预览抽到 `ScheduledJobJsonPreview`，全链路试运行结果面板抽到 `ScheduledJobDryRunResultPanel`，主页面只保留试运行状态和提交编排。
 - 定时作业页面调度配置继续减重：调度方式、Cron 表达式和固定间隔字段抽到 `ScheduledJobScheduleConfigSection`，主页面只保留表单段落编排。
 - 定时作业页面结果动作编辑器继续减重：写入策略多选、代码巡检结果动作、严重级别和通知动作字段抽到 `ScheduledJobActionConfigSection`，主页面只保留插件动作数据与保存编排。
