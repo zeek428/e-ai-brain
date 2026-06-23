@@ -77,6 +77,8 @@ import {
 import type { ModelGatewayConfigRecord } from '../../data/management';
 import type { KnowledgeRecord } from '../../data/management';
 import { formatDisplayDateTime } from '../../utils/dateTime';
+import { ScheduledJobAiExecutionSection } from './components/ScheduledJobAiExecutionSection';
+import { ScheduledJobFormSection as FormSection } from './components/ScheduledJobFormSection';
 import {
   RunExecutionChain,
   RunSourceComparison,
@@ -839,34 +841,6 @@ function RunResultWriteRecords({
         size="small"
       />
     </Space>
-  );
-}
-
-function FormSection({
-  children,
-  label,
-  marker,
-}: {
-  children: ReactNode;
-  label: string;
-  marker: string;
-}) {
-  return (
-    <div
-      aria-label={label}
-      style={{
-        borderTop: '1px solid #e5e7eb',
-        paddingTop: 14,
-      }}
-    >
-      <Space orientation="vertical" size={10} style={{ width: '100%' }}>
-        <Space align="center" size={8}>
-          <Tag color="blue">{marker}</Tag>
-          <Typography.Text strong>{label}</Typography.Text>
-        </Space>
-        {children}
-      </Space>
-    </div>
   );
 }
 
@@ -2924,88 +2898,14 @@ export default function ScheduledJobsPage() {
               </Row>
             </FormSection>
           ) : null}
-          <FormSection label="AI执行配置" marker="处理">
-            <Row gutter={12}>
-              <Col span={8}>
-                <Form.Item label="AI执行" name="execution_mode">
-                  <Select options={executionModeOptions} />
-                </Form.Item>
-              </Col>
-              <Col span={16}>
-                <Form.Item
-                  dependencies={['execution_mode', 'job_type']}
-                  label="AI 模型"
-                  name="model_gateway_config_id"
-                  rules={[requiredForAiAssembly('请选择 AI 模型')]}
-                >
-                  <Select
-                    allowClear
-                    optionFilterProp="label"
-                    placeholder="请选择 AI 模型"
-                    showSearch
-                    options={modelGatewayConfigs.map((config) => ({
-                      label: `${config.name} (${config.defaultChatModel})`,
-                      value: config.id,
-                    }))}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item
-                  dependencies={['execution_mode', 'job_type']}
-                  label="AI角色"
-                  name="agent_id"
-                  rules={[requiredForAiAssembly('请选择 AI角色')]}
-                >
-                  <Select
-                    allowClear
-                    optionFilterProp="label"
-                    placeholder="请选择 AI角色"
-                    showSearch
-                    options={agents.map((agent) => ({
-                      label: `${agent.name} (${agent.code})`,
-                      value: agent.id,
-                    }))}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item
-                  dependencies={['execution_mode', 'job_type']}
-                  label="Skills"
-                  name="skill_ids"
-                  rules={[requiredForAiAssembly('请选择 Skills')]}
-                >
-                  <Select
-                    allowClear
-                    mode="multiple"
-                    optionFilterProp="label"
-                    placeholder="请选择 Skills"
-                    showSearch
-                    options={skills.map((skill) => ({
-                      label: `${skill.name} (${skill.code})`,
-                      value: skill.id,
-                    }))}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={24}>
-                <Form.Item label="知识引用" name="knowledge_document_ids">
-                  <Select
-                    allowClear
-                    mode="multiple"
-                    optionFilterProp="label"
-                    placeholder="请选择知识文档"
-                    showSearch
-                    options={knowledgeDocuments.map((document) => ({
-                      label: `${document.title} (${document.documentType})`,
-                      value: document.id,
-                    }))}
-                  />
-                </Form.Item>
-              </Col>
-            </Row>
-          </FormSection>
+          <ScheduledJobAiExecutionSection
+            agents={agents}
+            executionModeOptions={executionModeOptions}
+            knowledgeDocuments={knowledgeDocuments}
+            modelGatewayConfigs={modelGatewayConfigs}
+            requiredForAiAssembly={requiredForAiAssembly}
+            skills={skills}
+          />
           <FormSection label="动作配置" marker="输出">
             <Form.Item
               label="写入策略"
