@@ -1,12 +1,8 @@
 import {
   ApiOutlined,
-  DeleteOutlined,
-  EditOutlined,
   PlayCircleOutlined,
-  PlusOutlined,
-  ReloadOutlined,
 } from '@ant-design/icons';
-import { PageContainer, ProTable } from '@ant-design/pro-components';
+import { PageContainer } from '@ant-design/pro-components';
 import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -74,12 +70,13 @@ import {
 import {
   pluginCategoryOptions,
 } from './components/pluginCatalogHelpers';
+import { PluginActionTable } from './components/PluginActionTable';
+import { PluginConnectionTable } from './components/PluginConnectionTable';
 import { PluginMarketplaceTable } from './components/PluginMarketplaceTable';
 import { PluginRunnerTable } from './components/PluginRunnerTable';
 import { PluginRunnerFormFields } from './components/PluginRunnerFormFields';
 import { PluginTable } from './components/PluginTable';
 import {
-  ConnectionLastTestSummary,
   ConnectionRequestDebugPanel,
   JsonDiagnosticsBlock,
   RunnerTestDiagnosticsContent,
@@ -2558,132 +2555,21 @@ export default function PluginsPage() {
             key: 'connections',
             label: '连接',
             children: (
-              <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-                <Space wrap>
-                  <Typography.Text type="secondary">环境</Typography.Text>
-                  <Select
-                    allowClear
-                    onChange={(value) => setConnectionEnvironmentFilter(value)}
-                    options={connectionEnvironmentOptions}
-                    placeholder="全部环境"
-                    style={{ width: 160 }}
-                    value={connectionEnvironmentFilter}
-                  />
-                  <Button
-                    aria-label="新增连接"
-                    htmlType="button"
-                    icon={<PlusOutlined />}
-                    type="primary"
-                    onClick={openCreateConnectionModal}
-                  >
-                    新增连接
-                  </Button>
-                  <Button
-                    htmlType="button"
-                    icon={<ReloadOutlined />}
-                    onClick={() => void reload()}
-                  >
-                    刷新
-                  </Button>
-                </Space>
-                <ProTable<PluginConnectionRecord>
-                  cardBordered
-                  className="management-list-table"
-                  dateFormatter="string"
-                  headerTitle="连接"
-                  loading={loading}
-                  options={{
-                    density: true,
-                    fullScreen: true,
-                    reload,
-                    setting: true,
-                  }}
-                  pagination={{
-                    showSizeChanger: true,
-                    showTotal: (total) => `共 ${total} 条`,
-                  }}
-                  rowKey="id"
-                  scroll={{ x: 1600 }}
-                  search={false}
-                  dataSource={connections}
-                  tableLayout="fixed"
-                  columns={[
-                  { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
-                  {
-                    dataIndex: 'plugin_id',
-                    title: '插件',
-                    ellipsis: true,
-                    width: 220,
-                    render: (value) => pluginById.get(String(value))?.name ?? value,
-                  },
-                  {
-                    dataIndex: 'environment',
-                    title: '环境',
-                    width: 130,
-                    render: (value) => connectionEnvironmentLabelByValue.get(String(value)) ?? String(value ?? '-'),
-                  },
-                  { dataIndex: 'auth_type', title: '认证', width: 130 },
-                  { dataIndex: 'endpoint_url', title: 'Endpoint', ellipsis: true, width: 320 },
-                  {
-                    dataIndex: 'last_test_summary',
-                    title: '最近测试',
-                    width: 180,
-                    render: (_, row) => <ConnectionLastTestSummary connection={row} />,
-                  },
-                  { dataIndex: 'status', title: '状态', width: 110 },
-                  {
-                    fixed: 'right',
-                    key: 'actions',
-                    title: '操作',
-                    valueType: 'option',
-                    width: 260,
-                    render: (_, row) => {
-                      const isTestingConnection = testingConnectionId === row.id;
-                      return (
-                        <Space className="management-row-actions" size={0}>
-                          <Button
-                            aria-label={`编辑连接 ${row.name}`}
-                            disabled={Boolean(testingConnectionId)}
-                            htmlType="button"
-                            icon={<EditOutlined />}
-                            onClick={() => openEditConnectionModal(row)}
-                            type="link"
-                          >
-                            编辑
-                          </Button>
-                          <Button
-                            aria-label={
-                              isTestingConnection
-                                ? `连接测试中 ${row.name}`
-                                : `测试连接 ${row.name}`
-                            }
-                            disabled={Boolean(testingConnectionId)}
-                            htmlType="button"
-                            icon={<PlayCircleOutlined />}
-                            loading={isTestingConnection}
-                            onClick={() => runConnectionTest(row)}
-                            type="link"
-                          >
-                            {isTestingConnection ? '测试中' : '测试'}
-                          </Button>
-                          <Button
-                            aria-label={`删除连接 ${row.name}`}
-                            danger
-                            disabled={Boolean(testingConnectionId)}
-                            htmlType="button"
-                            icon={<DeleteOutlined />}
-                            onClick={() => confirmDeleteConnection(row)}
-                            type="link"
-                          >
-                            删除
-                          </Button>
-                        </Space>
-                      );
-                    },
-                  },
-                  ]}
-                />
-              </Space>
+              <PluginConnectionTable
+                connections={connections}
+                environmentFilter={connectionEnvironmentFilter}
+                environmentLabels={connectionEnvironmentLabelByValue}
+                environmentOptions={connectionEnvironmentOptions}
+                loading={loading}
+                pluginById={pluginById}
+                testingConnectionId={testingConnectionId}
+                onCreateConnection={openCreateConnectionModal}
+                onDeleteConnection={confirmDeleteConnection}
+                onEditConnection={openEditConnectionModal}
+                onEnvironmentFilterChange={setConnectionEnvironmentFilter}
+                onReload={reload}
+                onTestConnection={runConnectionTest}
+              />
             ),
           },
           {
@@ -2710,101 +2596,21 @@ export default function PluginsPage() {
             key: 'actions',
             label: '动作',
             children: (
-              <ProTable<PluginActionRecord>
-                cardBordered
-                className="management-list-table"
-                dateFormatter="string"
-                headerTitle="动作"
+              <PluginActionTable
+                actions={actions}
+                connectionById={connectionById}
+                formatWriteTarget={(writeTarget) => resultWriteTargetLabel(
+                  writeTarget ?? DEFAULT_RESULT_WRITE_TARGET,
+                  resultWriteTargets,
+                )}
                 loading={loading}
-                options={{
-                  density: true,
-                  fullScreen: true,
-                  reload,
-                  setting: true,
-                }}
-                pagination={{
-                  showSizeChanger: true,
-                  showTotal: (total) => `共 ${total} 条`,
-                }}
-                rowKey="id"
-                scroll={{ x: 1570 }}
-                search={false}
-                dataSource={actions}
-                tableLayout="fixed"
-                toolBarRender={() => [
-                  <Button key="create-action" aria-label="新增动作" icon={<PlusOutlined />} type="primary" onClick={openCreateActionModal}>
-                    新增动作
-                  </Button>,
-                  <Button key="reload-actions" icon={<ReloadOutlined />} onClick={reload}>
-                    刷新
-                  </Button>,
-                ]}
-                columns={[
-                  { dataIndex: 'name', title: '名称', ellipsis: true, width: 220 },
-                  { dataIndex: 'code', title: '编码', ellipsis: true, width: 200 },
-                  { dataIndex: 'action_type', title: '类型', width: 130 },
-                  {
-                    dataIndex: 'plugin_id',
-                    title: '插件',
-                    ellipsis: true,
-                    width: 200,
-                    render: (value) => pluginById.get(String(value))?.name ?? value,
-                  },
-                  {
-                    dataIndex: 'connection_id',
-                    title: '连接',
-                    ellipsis: true,
-                    width: 200,
-                    render: (value) => value ? connectionById.get(String(value))?.name ?? value : '-',
-                  },
-                  {
-                    dataIndex: 'result_mapping',
-                    title: '写入目标',
-                    ellipsis: true,
-                    width: 220,
-                    render: (value) => {
-                      const writeTarget = value && typeof value === 'object'
-                        ? (value as unknown as Record<string, unknown>).write_target
-                        : undefined;
-                      return typeof writeTarget === 'string'
-                        ? resultWriteTargetLabel(writeTarget, resultWriteTargets)
-                        : resultWriteTargetLabel(DEFAULT_RESULT_WRITE_TARGET, resultWriteTargets);
-                    },
-                  },
-                  { dataIndex: 'status', title: '状态', width: 100 },
-                  {
-                    fixed: 'right',
-                    key: 'actions',
-                    title: '操作',
-                    valueType: 'option',
-                    width: 300,
-                    render: (_, row) => (
-                      <Space className="management-row-actions" size={0}>
-                        <Button
-                          aria-label={`编辑动作 ${row.name}`}
-                          icon={<EditOutlined />}
-                          onClick={() => openEditActionModal(row)}
-                          type="link"
-                        >
-                          编辑
-                        </Button>
-                        <Button icon={<PlayCircleOutlined />} onClick={() => openTrialModal(row)} type="link">
-                          试运行
-                        </Button>
-                        <Button onClick={() => runAction(row)} type="link">运行</Button>
-                        <Button
-                          aria-label={`删除动作 ${row.name}`}
-                          danger
-                          icon={<DeleteOutlined />}
-                          onClick={() => confirmDeleteAction(row)}
-                          type="link"
-                        >
-                          删除
-                        </Button>
-                      </Space>
-                    ),
-                  },
-                ]}
+                pluginById={pluginById}
+                onCreateAction={openCreateActionModal}
+                onDeleteAction={confirmDeleteAction}
+                onEditAction={openEditActionModal}
+                onReload={reload}
+                onRunAction={runAction}
+                onTrialAction={openTrialModal}
               />
             ),
           },

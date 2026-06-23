@@ -24,7 +24,7 @@
 
 ## 当前落地要求
 
-- 插件页主文件只保留插件、连接、动作和 Runner 编排；插件市场表格、插件表格、连接表单、Runner 表单、Runner 表格、连接/Runner 诊断展示、系统变量全集、Runner 日志和动作试运行弹窗都应保持组件化。
+- 插件页主文件只保留插件、连接、动作和 Runner 编排；插件市场表格、插件表格、连接表格、动作表格、连接表单、Runner 表单、Runner 表格、连接/Runner 诊断展示、系统变量全集、Runner 日志和动作试运行弹窗都应保持组件化。
 - 定时作业页主文件只保留作业配置、运行列表和详情编排；表单分区使用 `ScheduledJobFormSection`，执行链路预览收口到 `ScheduledJobOrchestrationFlow`，数据连接选择收口到 `ScheduledJobDataConnectionSection`，AI 模型、AI角色、Skills 和知识引用字段收口到 `ScheduledJobAiExecutionSection`，写入策略和代码巡检结果动作编辑器收口到 `ScheduledJobActionConfigSection`，调度方式、Cron 表达式和固定间隔字段收口到 `ScheduledJobScheduleConfigSection`，试运行结果与 JSON 预览收口到 `ScheduledJobDryRunResultPanel` 和 `ScheduledJobJsonPreview`，运行详情的结果写入记录收口到 `ScheduledJobRunResultWriteRecords`。
 - 定时作业运行详情必须优先展示数据连接、AI 执行、结果动作和 Runner 执行链路，失败运行提供修复草案和复跑对比。
 - Runner 安装包按操作系统区分，并包含启动、停止、状态查看和卸载说明。
