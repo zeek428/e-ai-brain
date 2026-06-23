@@ -5,12 +5,14 @@ from typing import Any
 
 from app.api.deps import api_error
 from app.core.listing import (
+    add_list_observability,
     ensure_list_enum,
     list_datetime_timestamp,
     list_text_matches,
     paginated_list_payload,
     sort_list_items,
 )
+from app.core.trace import envelope
 
 EXECUTION_TRACE_SORT_FIELDS = {
     "duration_ms",
@@ -69,6 +71,30 @@ def parse_trace_datetime(value: str, field_name: str) -> datetime:
 
 def _repository(current_store: Any) -> Any | None:
     return getattr(current_store, "repository", None)
+
+
+def _trace_snapshot_repository(current_store: Any) -> Any | None:
+    repository = _repository(current_store)
+    required_methods = (
+        "count_execution_trace_snapshots",
+        "get_execution_trace_snapshot",
+        "list_execution_trace_snapshots",
+        "refresh_execution_trace_snapshots",
+    )
+    if repository and all(
+        callable(getattr(repository, method, None)) for method in required_methods
+    ):
+        return repository
+    return None
+
+
+def _refresh_trace_snapshots(current_store: Any) -> Any | None:
+    repository = _trace_snapshot_repository(current_store)
+    if repository is None:
+        return None
+    traces = ExecutionTraceBuilder(current_store).traces()
+    repository.refresh_execution_trace_snapshots(traces)
+    return repository
 
 
 def _repository_list(current_store: Any, method_name: str, fallback: Any) -> list[dict[str, Any]]:
@@ -940,6 +966,58 @@ def list_execution_traces_response(
         ensure_list_enum(sort_by, EXECUTION_TRACE_SORT_FIELDS, "sort_by")
     from_at = parse_trace_datetime(created_from, "created_from") if created_from else None
     to_at = parse_trace_datetime(created_to, "created_to") if created_to else None
+    repository = _refresh_trace_snapshots(current_store)
+    if repository is not None:
+        resolved_sort_by = sort_by or "started_at"
+        with_pagination = page is not None or page_size is not None
+        total = repository.count_execution_trace_snapshots(
+            created_from=from_at,
+            created_to=to_at,
+            keyword=keyword,
+            source_type=source_type,
+            status=status,
+        )
+        resolved_page = page or 1
+        resolved_page_size = page_size or 10
+        limit = resolved_page_size if with_pagination else max(total, 1)
+        offset = (resolved_page - 1) * resolved_page_size if with_pagination else 0
+        snapshots = repository.list_execution_trace_snapshots(
+            created_from=from_at,
+            created_to=to_at,
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            source_type=source_type,
+            status=status,
+        )
+        payload: dict[str, Any] = {
+            "items": [_list_item(snapshot) for snapshot in snapshots],
+            "total": total,
+        }
+        if with_pagination:
+            payload["page"] = resolved_page
+            payload["page_size"] = resolved_page_size
+        return envelope(
+            add_list_observability(
+                payload,
+                filters={
+                    "created_from": created_from,
+                    "created_to": created_to,
+                    "keyword": keyword,
+                    "source_type": source_type,
+                    "status": status,
+                },
+                list_name="execution_traces",
+                page=resolved_page if with_pagination else None,
+                page_size=resolved_page_size if with_pagination else None,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                started_at=started_at,
+            ),
+            trace_id,
+        )
     traces = [_list_item(trace) for trace in ExecutionTraceBuilder(current_store).traces()]
     if source_type:
         traces = [trace for trace in traces if trace["root_type"] == source_type]
@@ -999,6 +1077,12 @@ def get_execution_trace_response(
     current_store: Any,
     trace_id: str,
 ) -> dict[str, Any]:
+    repository = _refresh_trace_snapshots(current_store)
+    if repository is not None:
+        trace = repository.get_execution_trace_snapshot(trace_id)
+        if trace is not None:
+            return trace
+        raise api_error(404, "EXECUTION_TRACE_NOT_FOUND", "Execution trace not found")
     for trace in ExecutionTraceBuilder(current_store).traces():
         if _trace_matches_related_id(trace, trace_id):
             return trace

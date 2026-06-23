@@ -221,6 +221,10 @@ class PostgresSnapshotRepository:
                     cursor,
                     "068_assistant_draft_workbench.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "069_execution_trace_read_model.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1259,6 +1263,54 @@ class PostgresSnapshotRepository:
             purpose=purpose,
             status=status,
         )
+
+    def refresh_execution_trace_snapshots(self, traces: list[dict[str, Any]]) -> None:
+        self._execution_trace_read_repository.refresh_execution_trace_snapshots(traces)
+
+    def count_execution_trace_snapshots(
+        self,
+        *,
+        created_from: Any = None,
+        created_to: Any = None,
+        keyword: str | None = None,
+        source_type: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return self._execution_trace_read_repository.count_execution_trace_snapshots(
+            created_from=created_from,
+            created_to=created_to,
+            keyword=keyword,
+            source_type=source_type,
+            status=status,
+        )
+
+    def list_execution_trace_snapshots(
+        self,
+        *,
+        created_from: Any = None,
+        created_to: Any = None,
+        keyword: str | None = None,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        source_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._execution_trace_read_repository.list_execution_trace_snapshots(
+            created_from=created_from,
+            created_to=created_to,
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            source_type=source_type,
+            status=status,
+        )
+
+    def get_execution_trace_snapshot(self, trace_id: str) -> dict[str, Any] | None:
+        return self._execution_trace_read_repository.get_execution_trace_snapshot(trace_id)
 
     def load_assistant_chat(self) -> dict[str, Any]:
         return self._assistant_chat_read_repository.load_assistant_chat()

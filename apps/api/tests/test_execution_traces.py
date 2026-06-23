@@ -1,8 +1,126 @@
+from typing import Any
+
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.execution_traces import (
+    get_execution_trace_response,
+    list_execution_traces_response,
+)
 
 client = TestClient(app)
+
+
+class FakeExecutionTraceRepository:
+    def __init__(self, store: Any) -> None:
+        self.store = store
+        self.refresh_calls = 0
+        self.snapshots: dict[str, dict[str, Any]] = {}
+
+    def list_audit_events(self) -> list[dict[str, Any]]:
+        return list(self.store.audit_events)
+
+    def list_code_inspection_reports(self) -> list[dict[str, Any]]:
+        return list(self.store.code_inspection_reports.values())
+
+    def list_model_gateway_logs(self) -> list[dict[str, Any]]:
+        return list(self.store.model_gateway_logs)
+
+    def list_plugin_invocation_logs(self) -> list[dict[str, Any]]:
+        return list(self.store.plugin_invocation_logs.values())
+
+    def list_ai_executor_tasks(self) -> list[dict[str, Any]]:
+        return list(self.store.ai_executor_tasks.values())
+
+    def list_scheduled_job_runs(self) -> list[dict[str, Any]]:
+        return list(self.store.scheduled_job_runs.values())
+
+    def refresh_execution_trace_snapshots(self, traces: list[dict[str, Any]]) -> None:
+        self.refresh_calls += 1
+        self.snapshots = {str(trace["id"]): trace for trace in traces}
+
+    def _filtered(
+        self,
+        *,
+        keyword: str | None = None,
+        source_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        traces = list(self.snapshots.values())
+        if source_type:
+            traces = [trace for trace in traces if trace["root_type"] == source_type]
+        if status:
+            traces = [trace for trace in traces if trace["status"] == status]
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            traces = [
+                trace
+                for trace in traces
+                if normalized_keyword
+                in " ".join(
+                    [
+                        str(trace.get("id", "")),
+                        str(trace.get("root_id", "")),
+                        str(trace.get("root_type", "")),
+                        str(trace.get("title", "")),
+                        str(trace.get("summary", "")),
+                        str(trace.get("related_ids", "")),
+                    ]
+                ).lower()
+            ]
+        return traces
+
+    def count_execution_trace_snapshots(
+        self,
+        *,
+        created_from: Any = None,
+        created_to: Any = None,
+        keyword: str | None = None,
+        source_type: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return len(
+            self._filtered(
+                keyword=keyword,
+                source_type=source_type,
+                status=status,
+            )
+        )
+
+    def list_execution_trace_snapshots(
+        self,
+        *,
+        created_from: Any = None,
+        created_to: Any = None,
+        keyword: str | None = None,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        sort_order: str,
+        source_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        traces = self._filtered(
+            keyword=keyword,
+            source_type=source_type,
+            status=status,
+        )
+        traces = sorted(
+            traces,
+            key=lambda trace: str(trace.get(sort_by) or ""),
+            reverse=sort_order == "desc",
+        )
+        return traces[offset : offset + limit]
+
+    def get_execution_trace_snapshot(self, trace_id: str) -> dict[str, Any] | None:
+        for trace in self.snapshots.values():
+            if trace["id"] == trace_id or trace["root_id"] == trace_id:
+                return trace
+            if any(trace_id in values for values in trace.get("related_ids", {}).values()):
+                return trace
+            if any(node.get("source_id") == trace_id for node in trace.get("nodes", [])):
+                return trace
+        return None
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
@@ -202,3 +320,47 @@ def test_execution_trace_requires_admin_diagnostics_permission():
     response = client.get("/api/governance/execution-traces", headers=reviewer_headers)
 
     assert response.status_code == 403
+
+
+def test_execution_trace_uses_repository_snapshots_when_available():
+    app.state.store.reset()
+    seed_execution_trace_records()
+    repository = FakeExecutionTraceRepository(app.state.store)
+    old_repository = getattr(app.state.store, "repository", None)
+    app.state.store.repository = repository
+    try:
+        response = list_execution_traces_response(
+            created_from=None,
+            created_to=None,
+            current_store=app.state.store,
+            keyword="质量安全",
+            page=1,
+            page_size=10,
+            sort_by="started_at",
+            sort_order="desc",
+            source_type=None,
+            started_at=None,
+            status=None,
+            trace_id="trace-test",
+        )
+
+        body = response["data"]
+        assert body["total"] == 1
+        assert body["items"][0]["id"] == "scheduled_job_run_trace"
+        assert body["items"][0]["related_ids"]["plugin_invocation_log"] == [
+            "plugin_invocation_log_trace"
+        ]
+        assert repository.refresh_calls == 1
+
+        detail = get_execution_trace_response(
+            current_store=app.state.store,
+            trace_id="plugin_invocation_log_trace",
+        )
+
+        assert detail["root_id"] == "scheduled_job_run_trace"
+        assert repository.refresh_calls == 2
+    finally:
+        if old_repository is None:
+            delattr(app.state.store, "repository")
+        else:
+            app.state.store.repository = old_repository

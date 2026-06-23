@@ -8,6 +8,7 @@ from app.core.repositories.brain_apps import BrainAppReadRepository
 from app.core.repositories.bugs import BugReadRepository
 from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.core.repositories.devops import DevopsReadRepository
+from app.core.repositories.execution_traces import ExecutionTraceReadRepository
 from app.core.repositories.git_review import GitReviewReadRepository
 from app.core.repositories.knowledge import KnowledgeReadRepository
 from app.core.repositories.lifecycle_dashboard import LifecycleDashboardReadRepository
@@ -120,6 +121,9 @@ def install_snapshot_repositories(repository: Any) -> None:
         delete_missing=callbacks.delete_missing,
         upsert_audit_events=callbacks.upsert_audit_events,
         upsert_model_gateway_logs=callbacks.upsert_model_gateway_logs,
+    )
+    repository._execution_trace_read_repository = ExecutionTraceReadRepository(
+        repository._connect,
     )
     repository._lifecycle_dashboard_read_repository = LifecycleDashboardReadRepository(
         repository._connect,

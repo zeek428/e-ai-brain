@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.378 |
+| 功能版本 | v1.1.379 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.379 | 2026-06-23 | 执行诊断 API 在 PostgreSQL 模式下新增 `execution_trace_snapshots` 快照读模型，列表和详情优先读取可重建快照并保留测试 fallback | Codex |
 | v1.1.378 | 2026-06-23 | 新增 AI 助手草案任务台列表 API：`GET /api/assistant/action-drafts` 支持当前用户草案分页、筛选、排序、状态汇总、采纳率、处理率和用户修改率，用于 `/assistant/drafts` 工作台闭环 | Codex |
 | v1.1.377 | 2026-06-23 | 新增执行诊断 API：`GET /api/governance/execution-traces` 和详情接口按运行根聚合定时作业、插件、AI 执行器、模型网关、代码巡检和审计节点，并统一脱敏元数据 | Codex |
 | v1.1.376 | 2026-06-21 | AI 助手效果指标补齐产品/角色/时间段/动作过滤、每日趋势、草案类型趋势和 `/api/assistant/metrics/export` 导出契约；助手页面样式迁移到页面级 scoped CSS | Codex |
@@ -4244,7 +4245,7 @@ GET /api/governance/execution-traces/{trace_id}
 规则：
 
 - 详情 `trace_id` 可传链路根 ID，也可传任一关联对象 ID 或节点 `source_id`；服务端会返回同一条聚合链路。
-- 聚合来源是现有结构表或 repository source rows，不新增执行诊断专用业务事实表，也不在查询时写审计。
+- 聚合来源是现有结构表或 repository source rows；PostgreSQL 运行时会刷新可重建的 `execution_trace_snapshots` 只读快照并优先从该表分页/过滤/排序读取。该表不是新的业务事实源，也不在查询时写审计。
 - 元数据返回前必须按敏感键脱敏，包含但不限于 `token`、`api_key`、`authorization`、`password`、`secret`、`cookie`；敏感值统一替换为 `<redacted>`。
 - 无匹配链路返回 `404 EXECUTION_TRACE_NOT_FOUND`；非法枚举或时间格式返回 `400 VALIDATION_ERROR`。
 

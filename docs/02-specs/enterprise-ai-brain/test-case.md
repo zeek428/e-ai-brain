@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.605 |
+| 功能版本 | v1.1.606 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.606 | 2026-06-23 | 补充执行诊断 PostgreSQL 快照读模型验收：启动兼容迁移必须包含 `069_execution_trace_read_model.sql`，服务层测试覆盖 repository 快照刷新、列表分页和关联 ID 详情命中 | Codex |
 | v1.1.605 | 2026-06-23 | 补充执行诊断详情组件化验收：链路概要、关联对象、节点表、关系表和元数据预览从主页面拆出后，`ExecutionTracesPage.test.tsx`、typecheck、lint 和真实 `/governance/execution-traces` 页面 smoke 必须通过 | Codex |
 | v1.1.604 | 2026-06-23 | 补充插件管理 Runner 配置组件化验收：执行器协议、命令、目标系统、安装模式、工作区和 Token 字段从主页面拆出后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/system/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.603 | 2026-06-23 | 补充插件管理连接表单组件化验收：请求参数行、连接 schema 字段、GitHub/GitLab 地址校验从主页面拆出后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/system/plugins` 页面 smoke 必须通过 | Codex |

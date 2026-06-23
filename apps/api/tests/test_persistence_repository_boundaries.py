@@ -188,6 +188,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "058_assistant_action_draft_expiry.sql" in applied_migrations
     assert "059_assistant_rd_task_drafts.sql" in applied_migrations
     assert "063_assistant_chat_runs.sql" in applied_migrations
+    assert "069_execution_trace_read_model.sql" in applied_migrations
 
 
 def test_assistant_action_draft_constraint_migrations_cover_supported_actions():
