@@ -1297,7 +1297,9 @@ def code_inspection_dashboard_response(
     trend_stats: dict[str, dict[str, Any]] = {}
     severe_finding_count = 0
     covered_by_bug_count = 0
+    covered_by_task_count = 0
     oldest_uncovered_at: str | None = None
+    oldest_without_task_at: str | None = None
 
     for report in reports:
         report_id = str(report["id"])
@@ -1415,6 +1417,13 @@ def code_inspection_dashboard_response(
                     or str(finding.get("created_at") or "") < oldest_uncovered_at
                 ):
                     oldest_uncovered_at = str(finding.get("created_at") or "")
+                if finding.get("created_task_id"):
+                    covered_by_task_count += 1
+                elif (
+                    oldest_without_task_at is None
+                    or str(finding.get("created_at") or "") < oldest_without_task_at
+                ):
+                    oldest_without_task_at = str(finding.get("created_at") or "")
             rule_entry = rule_stats.setdefault(
                 rule_id,
                 {
@@ -1477,6 +1486,14 @@ def code_inspection_dashboard_response(
         if severe_finding_count
         else 1
     )
+    task_coverage_rate = (
+        round(covered_by_task_count / severe_finding_count, 4)
+        if severe_finding_count
+        else 1
+    )
+    sla_status = (
+        "healthy" if bug_coverage_rate >= 0.8 and task_coverage_rate >= 0.8 else "at_risk"
+    )
     return {
         "branch_ranking": branch_ranking,
         "category_distribution": counter_rows(category_counts, key_name="category"),
@@ -1494,11 +1511,15 @@ def code_inspection_dashboard_response(
         "sla": {
             "bug_coverage_rate": bug_coverage_rate,
             "covered_by_bug_count": covered_by_bug_count,
+            "covered_by_task_count": covered_by_task_count,
             "oldest_uncovered_at": oldest_uncovered_at,
+            "oldest_without_task_at": oldest_without_task_at,
             "severe_finding_count": severe_finding_count,
             "severe_threshold": SEVERE_FINDING_THRESHOLD,
-            "status": "healthy" if bug_coverage_rate >= 0.8 else "at_risk",
+            "status": sla_status,
+            "task_coverage_rate": task_coverage_rate,
             "uncovered_severe_finding_count": severe_finding_count - covered_by_bug_count,
+            "uncovered_task_finding_count": severe_finding_count - covered_by_task_count,
         },
         "summary": {
             "bug_created_count": sum(

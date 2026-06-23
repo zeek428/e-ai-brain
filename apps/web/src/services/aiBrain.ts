@@ -6333,11 +6333,15 @@ export type CodeInspectionDashboardRecord = {
   sla: {
     bug_coverage_rate: number;
     covered_by_bug_count: number;
+    covered_by_task_count: number;
     oldest_uncovered_at?: string | null;
+    oldest_without_task_at?: string | null;
     severe_finding_count: number;
     severe_threshold: string;
     status: 'at_risk' | 'healthy' | string;
+    task_coverage_rate: number;
     uncovered_severe_finding_count: number;
+    uncovered_task_finding_count: number;
   };
   summary: {
     bug_created_count: number;

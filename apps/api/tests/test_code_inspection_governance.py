@@ -1365,6 +1365,10 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
                     "severity_threshold": "critical",
                     "type": "create_bug_for_severe_findings",
                 },
+                {
+                    "severity_threshold": "critical",
+                    "type": "create_task_for_severe_findings",
+                },
             ],
             "schedule_type": "manual",
             "source_system": "repo-quality-scanner",
@@ -1392,6 +1396,10 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["summary"]["bug_created_count"] == 1
     assert payload["sla"]["status"] == "healthy"
     assert payload["sla"]["bug_coverage_rate"] == 1
+    assert payload["sla"]["task_coverage_rate"] == 1
+    assert payload["sla"]["covered_by_task_count"] == 1
+    assert payload["sla"]["uncovered_task_finding_count"] == 0
+    assert payload["sla"]["oldest_without_task_at"] is None
     assert payload["rule_distribution"][0]["rule_id"] == "SEC001"
     assert payload["rule_distribution"][0]["severe_finding_count"] == 1
     assert payload["repository_ranking"][0]["repository_id"] == repository["id"]

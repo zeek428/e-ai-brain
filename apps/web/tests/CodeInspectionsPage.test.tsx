@@ -144,11 +144,15 @@ function installCodeInspectionsFetchMock() {
           sla: {
             bug_coverage_rate: 1,
             covered_by_bug_count: 1,
+            covered_by_task_count: 1,
             oldest_uncovered_at: null,
+            oldest_without_task_at: null,
             severe_finding_count: 1,
             severe_threshold: 'high',
             status: 'healthy',
+            task_coverage_rate: 1,
             uncovered_severe_finding_count: 0,
+            uncovered_task_finding_count: 0,
           },
           summary: {
             bug_created_count: 1,
@@ -274,6 +278,9 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
     expect(screen.getByText('质量门禁趋势')).toBeInTheDocument();
     expect(screen.getByText('严重问题 SLA')).toBeInTheDocument();
+    expect(screen.getByText('整改任务覆盖率')).toBeInTheDocument();
+    expect(screen.getByText('已生成整改任务')).toBeInTheDocument();
+    expect(screen.getAllByText('整体 healthy').length).toBeGreaterThan(0);
     expect(screen.getAllByText('SEC001').length).toBeGreaterThan(0);
     expect(screen.getByText('2026-06-12')).toBeInTheDocument();
     expect(screen.getAllByText('100%').length).toBeGreaterThan(0);

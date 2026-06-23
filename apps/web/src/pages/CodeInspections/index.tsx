@@ -240,9 +240,22 @@ function CodeInspectionGovernanceOverview({
         <Col lg={6} md={12} xs={24}>
           <Card loading={loading} size="small">
             <Statistic
-              suffix={<Tag color={sla?.status === 'healthy' ? 'green' : 'orange'}>{sla?.status ?? '-'}</Tag>}
+              suffix={
+                <Tag color={sla?.status === 'healthy' ? 'green' : 'orange'}>整体 {sla?.status ?? '-'}</Tag>
+              }
               title="Bug 覆盖率"
               value={percentText(sla?.bug_coverage_rate)}
+            />
+          </Card>
+        </Col>
+        <Col lg={6} md={12} xs={24}>
+          <Card loading={loading} size="small">
+            <Statistic
+              suffix={
+                <Tag color={sla?.status === 'healthy' ? 'green' : 'orange'}>整体 {sla?.status ?? '-'}</Tag>
+              }
+              title="整改任务覆盖率"
+              value={percentText(sla?.task_coverage_rate)}
             />
           </Card>
         </Col>
@@ -355,6 +368,9 @@ function CodeInspectionGovernanceOverview({
             { key: 'covered', label: '已关联 Bug', children: sla?.covered_by_bug_count ?? 0 },
             { key: 'uncovered', label: '未覆盖严重问题', children: sla?.uncovered_severe_finding_count ?? 0 },
             { key: 'oldest', label: '最早未覆盖', children: sla?.oldest_uncovered_at ?? '-' },
+            { key: 'task_covered', label: '已生成整改任务', children: sla?.covered_by_task_count ?? 0 },
+            { key: 'task_uncovered', label: '未派生整改任务', children: sla?.uncovered_task_finding_count ?? 0 },
+            { key: 'task_oldest', label: '最早未派生任务', children: sla?.oldest_without_task_at ?? '-' },
           ]}
           size="small"
         />

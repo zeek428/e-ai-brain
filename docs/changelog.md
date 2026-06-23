@@ -17,6 +17,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 代码巡检严重问题 SLA 扩展为 Bug 与整改任务双覆盖：治理概览接口新增整改任务覆盖率、已生成/未派生整改任务数量和最早未派生时间，页面顶部展示“整改任务覆盖率”。
 - 代码巡检治理概览增强：`/api/governance/code-inspections/dashboard` 的 `trend[]` 增加质量门禁通过、失败、跳过和未知计数，代码巡检页面新增“质量门禁趋势”表。
 - 技术规格开始按业务域拆分：新增 `docs/02-specs/enterprise-ai-brain/domains/` 索引和五个域文档，主 `spec.md` 保留跨域原则、状态机、安全与测试门禁。
 - 插件管理页面主文件继续减重：系统变量全集、Runner 执行日志和动作试运行弹窗抽到 `PluginUtilityModals`，主页面只保留弹窗状态和动作编排。
@@ -256,7 +257,7 @@
 - 定时作业运行可观测性：新增 `/api/system/scheduled-job-runs/observability`，运行记录页签顶部展示总运行数、成功率、失败率、平均耗时、AI/Token/插件调用、动作写入成功率、失败原因、最近失败和慢运行。
 - AI 助手动作草案写入目标收口：动作草案卡片从 `/api/system/result-write-targets` 懒加载 `form_label/label` 渲染中文写入目标，不再维护前端本地映射。
 - 定时作业运行详情和连接请求回放继续结构化：运行节点卡片展示请求方法、URL、HTTP 状态、耗时、候选/写入数量和业务记录 ID，插件连接最近测试记录可展开查看历史完整请求、响应、修复建议和动作模板草案。
-- 代码巡检治理概览：新增 `/api/governance/code-inspections/dashboard`，运营治理 / 代码巡检页面展示报告、问题、严重问题、Bug 覆盖 SLA、规则统计、仓库/分支/提交人排行和趋势摘要。
+- 代码巡检治理概览：新增 `/api/governance/code-inspections/dashboard`，运营治理 / 代码巡检页面展示报告、问题、严重问题、Bug/整改任务覆盖 SLA、规则统计、仓库/分支/提交人排行和趋势摘要。
 - 结果写入目标注册表：新增 `/api/system/result-write-targets`，统一 `scheduled_job_result`、`user_feedback_insights`、`code_inspection_reports` 和 `email_notifications` 的标签、默认映射和可视化 JSONPath 字段，动作表单、写入预览和助手草案均使用服务端注册表，插件页不再维护本地写入目标文案和默认映射兜底。
 - 插件连接请求回放台：连接测试结果保存最近测试记录，诊断弹窗展示变量解析前/后差异和失败修复建议，并可一键复制当次请求为动作模板草案。
 - 定时作业新增/编辑弹窗增加“任务编排流程”预览，按数据连接、AI 处理、知识引用和结果动作展示配置状态、核心资源名称，并可直接在数据连接节点发起连接测试。
