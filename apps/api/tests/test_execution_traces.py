@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.execution_traces import (
+    EXECUTION_TRACE_SNAPSHOT_REFRESH_STATE_ATTR,
     get_execution_trace_response,
     list_execution_traces_response,
 )
@@ -130,6 +131,11 @@ def auth_headers(username: str = "admin@example.com", password: str = "admin123"
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     token = response.json()["data"]["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def clear_execution_trace_refresh_state() -> None:
+    if hasattr(app.state.store, EXECUTION_TRACE_SNAPSHOT_REFRESH_STATE_ATTR):
+        delattr(app.state.store, EXECUTION_TRACE_SNAPSHOT_REFRESH_STATE_ATTR)
 
 
 def seed_execution_trace_records() -> None:
@@ -420,6 +426,7 @@ def test_execution_trace_requires_admin_diagnostics_permission():
 
 def test_execution_trace_uses_repository_snapshots_when_available():
     app.state.store.reset()
+    clear_execution_trace_refresh_state()
     seed_execution_trace_records()
     repository = FakeExecutionTraceRepository(app.state.store)
     old_repository = getattr(app.state.store, "repository", None)
@@ -454,8 +461,84 @@ def test_execution_trace_uses_repository_snapshots_when_available():
         )
 
         assert detail["root_id"] == "scheduled_job_run_trace"
+        assert repository.refresh_calls == 1
+    finally:
+        clear_execution_trace_refresh_state()
+        if old_repository is None:
+            delattr(app.state.store, "repository")
+        else:
+            app.state.store.repository = old_repository
+
+
+def test_execution_trace_reuses_fresh_repository_snapshots_for_repeated_lists():
+    app.state.store.reset()
+    clear_execution_trace_refresh_state()
+    seed_execution_trace_records()
+    repository = FakeExecutionTraceRepository(app.state.store)
+    old_repository = getattr(app.state.store, "repository", None)
+    app.state.store.repository = repository
+    try:
+        for _ in range(2):
+            response = list_execution_traces_response(
+                created_from=None,
+                created_to=None,
+                current_store=app.state.store,
+                keyword=None,
+                page=1,
+                page_size=10,
+                sort_by="started_at",
+                sort_order="desc",
+                source_type=None,
+                started_at=None,
+                status=None,
+                trace_id="trace-test",
+            )
+            assert response["data"]["total"] == 1
+
+        assert repository.refresh_calls == 1
+    finally:
+        clear_execution_trace_refresh_state()
+        if old_repository is None:
+            delattr(app.state.store, "repository")
+        else:
+            app.state.store.repository = old_repository
+
+
+def test_execution_trace_detail_forces_refresh_when_fresh_snapshot_misses():
+    app.state.store.reset()
+    clear_execution_trace_refresh_state()
+    seed_execution_trace_records()
+    repository = FakeExecutionTraceRepository(app.state.store)
+    old_repository = getattr(app.state.store, "repository", None)
+    app.state.store.repository = repository
+    try:
+        response = list_execution_traces_response(
+            created_from=None,
+            created_to=None,
+            current_store=app.state.store,
+            keyword=None,
+            page=1,
+            page_size=10,
+            sort_by="started_at",
+            sort_order="desc",
+            source_type=None,
+            started_at=None,
+            status=None,
+            trace_id="trace-test",
+        )
+        assert response["data"]["total"] == 1
+        assert repository.refresh_calls == 1
+
+        seed_assistant_execution_trace_records()
+        detail = get_execution_trace_response(
+            current_store=app.state.store,
+            trace_id="model_gateway_log_assistant_trace",
+        )
+
+        assert detail["root_id"] == "assistant_chat_run_trace"
         assert repository.refresh_calls == 2
     finally:
+        clear_execution_trace_refresh_state()
         if old_repository is None:
             delattr(app.state.store, "repository")
         else:

@@ -45,6 +45,8 @@ EXECUTION_TRACE_STATUSES = {
     "succeeded",
     "unknown",
 }
+EXECUTION_TRACE_SNAPSHOT_REFRESH_TTL_SECONDS = 5
+EXECUTION_TRACE_SNAPSHOT_REFRESH_STATE_ATTR = "_execution_trace_snapshot_refresh_state"
 
 FAILED_STATUSES = {"cancelled", "failed"}
 RUNNING_STATUSES = {"pending", "queued", "running"}
@@ -89,12 +91,51 @@ def _trace_snapshot_repository(current_store: Any) -> Any | None:
     return None
 
 
-def _refresh_trace_snapshots(current_store: Any) -> Any | None:
+def _trace_snapshots_are_fresh(
+    current_store: Any,
+    repository: Any,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    state = getattr(current_store, EXECUTION_TRACE_SNAPSHOT_REFRESH_STATE_ATTR, None)
+    if not isinstance(state, dict):
+        return False
+    if state.get("repository_id") != id(repository):
+        return False
+    refreshed_at = state.get("refreshed_at")
+    if not isinstance(refreshed_at, datetime):
+        return False
+    checked_at = now or datetime.now(UTC)
+    age_seconds = (checked_at - refreshed_at).total_seconds()
+    return 0 <= age_seconds < EXECUTION_TRACE_SNAPSHOT_REFRESH_TTL_SECONDS
+
+
+def _remember_trace_snapshot_refresh(
+    current_store: Any,
+    repository: Any,
+    *,
+    refreshed_at: datetime,
+) -> None:
+    setattr(
+        current_store,
+        EXECUTION_TRACE_SNAPSHOT_REFRESH_STATE_ATTR,
+        {
+            "repository_id": id(repository),
+            "refreshed_at": refreshed_at,
+        },
+    )
+
+
+def _refresh_trace_snapshots(current_store: Any, *, force: bool = False) -> Any | None:
     repository = _trace_snapshot_repository(current_store)
     if repository is None:
         return None
+    now = datetime.now(UTC)
+    if not force and _trace_snapshots_are_fresh(current_store, repository, now=now):
+        return repository
     traces = ExecutionTraceBuilder(current_store).traces()
     repository.refresh_execution_trace_snapshots(traces)
+    _remember_trace_snapshot_refresh(current_store, repository, refreshed_at=now)
     return repository
 
 
@@ -1178,8 +1219,18 @@ def get_execution_trace_response(
     current_store: Any,
     trace_id: str,
 ) -> dict[str, Any]:
-    repository = _refresh_trace_snapshots(current_store)
+    repository = _trace_snapshot_repository(current_store)
     if repository is not None:
+        if not _trace_snapshots_are_fresh(current_store, repository):
+            _refresh_trace_snapshots(current_store, force=True)
+            trace = repository.get_execution_trace_snapshot(trace_id)
+            if trace is not None:
+                return trace
+            raise api_error(404, "EXECUTION_TRACE_NOT_FOUND", "Execution trace not found")
+        trace = repository.get_execution_trace_snapshot(trace_id)
+        if trace is not None:
+            return trace
+        _refresh_trace_snapshots(current_store, force=True)
         trace = repository.get_execution_trace_snapshot(trace_id)
         if trace is not None:
             return trace

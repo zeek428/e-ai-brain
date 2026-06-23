@@ -4252,7 +4252,7 @@ GET /api/governance/execution-traces/{trace_id}
 
 - 详情 `trace_id` 可传链路根 ID，也可传任一关联对象 ID 或节点 `source_id`；服务端会返回同一条聚合链路。
 - `assistant_chat_run` 链路根来自 `assistant_chat_runs`，详情节点只展示运行状态、会话/消息 ID、用户、产品和引用数量等排障元数据，不返回完整用户提问、助手回复、Prompt 或知识正文。
-- 聚合来源是现有结构表或 repository source rows；PostgreSQL 运行时会刷新可重建的 `execution_trace_snapshots` 只读快照并优先从该表分页/过滤/排序读取。该表不是新的业务事实源，也不在查询时写审计。
+- 聚合来源是现有结构表或 repository source rows；PostgreSQL 运行时会刷新可重建的 `execution_trace_snapshots` 只读快照并优先从该表分页/过滤/排序读取。列表和已命中详情可在短 TTL 内复用快照；详情未命中时必须强制重建一次快照再判定 404。该表不是新的业务事实源，也不在查询时写审计。
 - 元数据返回前必须按敏感键脱敏，包含但不限于 `token`、`api_key`、`authorization`、`password`、`secret`、`cookie`；敏感值统一替换为 `<redacted>`。
 - 无匹配链路返回 `404 EXECUTION_TRACE_NOT_FOUND`；非法枚举或时间格式返回 `400 VALIDATION_ERROR`。
 

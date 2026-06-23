@@ -305,11 +305,13 @@
 | 4 | 在插件请求摘要、执行器 request_config 或审计 payload 中放入 token/API key/Authorization | 响应详情 metadata 中敏感值统一为 `<redacted>`，不得泄露明文 token、API key、cookie、password 或 secret。 |
 | 5 | reviewer 调用列表或详情接口 | 返回 `403 FORBIDDEN`，不暴露运行链路。 |
 | 6 | 打开运营治理 / 执行诊断页面 | 页面使用服务端分页、排序和筛选；列表显示规范化北京时间、状态、耗时和节点数；点击详情弹窗展示关联对象、节点表、节点关系表，长文本和 JSON 不撑坏布局。 |
+| 7 | 在 repository 快照已刷新的短 TTL 内连续查询列表和已存在详情，再新增一条 AI 助手运行并用其模型日志 ID 打开详情 | 连续列表和已存在详情复用快照，不重复全量刷新；新链路详情未命中旧快照时强制重建并返回最新聚合链路。 |
 
 **预期结果**:
 1. 执行诊断只读聚合已有运行事实，不新增业务写入事实源。
 2. 诊断入口能把作业运行失败排障需要的插件、执行器、模型、巡检报告、AI 助手运行和审计线索放在同一视图中。
 3. 所有响应必须脱敏敏感配置和值，权限由后端强制校验。
+4. `execution_trace_snapshots` 是可重建读模型；短 TTL 只能用于降低重复读取成本，详情未命中必须刷新后再判断不存在。
 
 **状态**: 已新增后端和前端自动化覆盖；见 `apps/api/tests/test_execution_traces.py` 与 `apps/web/tests/ExecutionTracesPage.test.tsx`。
 
