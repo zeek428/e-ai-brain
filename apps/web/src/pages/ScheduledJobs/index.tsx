@@ -77,6 +77,7 @@ import {
 import type { ModelGatewayConfigRecord } from '../../data/management';
 import type { KnowledgeRecord } from '../../data/management';
 import { formatDisplayDateTime } from '../../utils/dateTime';
+import { ScheduledJobActionConfigSection } from './components/ScheduledJobActionConfigSection';
 import { ScheduledJobAiExecutionSection } from './components/ScheduledJobAiExecutionSection';
 import { ScheduledJobDataConnectionSection } from './components/ScheduledJobDataConnectionSection';
 import { ScheduledJobFormSection as FormSection } from './components/ScheduledJobFormSection';
@@ -270,11 +271,6 @@ const severityThresholdOptions = [
   { label: 'critical', value: 'critical' },
   { label: 'high', value: 'high' },
   { label: 'medium', value: 'medium' },
-];
-
-const notificationChannelOptions = [
-  { label: '邮件', value: 'email' },
-  { label: '钉钉机器人', value: 'dingtalk' },
 ];
 
 const defaultCodeInspectionResultActions: ScheduledJobResultAction[] = [
@@ -2880,91 +2876,15 @@ export default function ScheduledJobsPage() {
             requiredForAiAssembly={requiredForAiAssembly}
             skills={skills}
           />
-          <FormSection label="动作配置" marker="输出">
-            <Form.Item
-              label="写入策略"
-              name="plugin_action_ids"
-              rules={[requiredForPluginResource('请选择写入策略')]}
-              extra={selectedCodeInspectionUsesNativeScan ? '本地完整扫描使用下方结果动作写入代码巡检报告' : '选择结果写到哪里或通知到哪里，后台按配置顺序执行对应动作'}
-            >
-              <Select
-                allowClear
-                disabled={selectedCodeInspectionUsesNativeScan}
-                mode="multiple"
-                maxTagCount={2}
-                optionFilterProp="label"
-                placeholder="请选择写入策略"
-                showSearch
-                options={pluginActions.map((action) => ({
-                  label: writeStrategyLabelFromAction(action),
-                  value: action.id,
-                }))}
-              />
-            </Form.Item>
-          {selectedJobType === 'code_repository_inspection' ? (
-            <Form.List name="result_actions">
-              {(fields, { add, remove }) => (
-                <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-                  <Typography.Text strong>结果动作</Typography.Text>
-                  {fields.map(({ key, ...field }) => (
-                    <Space key={key} align="start" size={8} style={{ width: '100%' }}>
-                      <Form.Item
-                        {...field}
-                        name={[field.name, 'type']}
-                        rules={[{ required: true, message: '请选择结果动作' }]}
-                        style={{ flex: 1, marginBottom: 8 }}
-                      >
-                        <Select options={codeInspectionResultActionOptions} placeholder="请选择结果动作" />
-                      </Form.Item>
-                      <Form.Item noStyle shouldUpdate>
-                        {({ getFieldValue }) => {
-                          const actionType = getFieldValue(['result_actions', field.name, 'type']);
-                          if (
-                            actionType === 'create_bug_for_severe_findings'
-                            || actionType === 'create_task_for_severe_findings'
-                          ) {
-                            return (
-                              <Form.Item
-                                name={[field.name, 'severity_threshold']}
-                                style={{ marginBottom: 8, width: 150 }}
-                              >
-                                <Select options={severityThresholdOptions} placeholder="严重级别" />
-                              </Form.Item>
-                            );
-                          }
-                          if (actionType === 'send_notification') {
-                            return (
-                              <Space orientation="vertical" size={8} style={{ width: 360 }}>
-                                <Form.Item
-                                  name={[field.name, 'channels']}
-                                  rules={[{ required: true, message: '请选择通知渠道' }]}
-                                  style={{ marginBottom: 0 }}
-                                >
-                                  <Select mode="multiple" options={notificationChannelOptions} placeholder="通知渠道" />
-                                </Form.Item>
-                                <Form.Item name={[field.name, 'recipients']} style={{ marginBottom: 0 }}>
-                                  <Select mode="tags" placeholder="邮件收件人" tokenSeparators={[',', '，']} />
-                                </Form.Item>
-                                <Form.Item name={[field.name, 'webhook_url']} style={{ marginBottom: 8 }}>
-                                  <Input placeholder="钉钉机器人 Webhook" />
-                                </Form.Item>
-                              </Space>
-                            );
-                          }
-                          return null;
-                        }}
-                      </Form.Item>
-                      <Button danger icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
-                    </Space>
-                  ))}
-                  <Button icon={<PlusOutlined />} onClick={() => add({ type: 'write_code_inspection_report' })}>
-                    新增结果动作
-                  </Button>
-                </Space>
-              )}
-            </Form.List>
-          ) : null}
-          </FormSection>
+          <ScheduledJobActionConfigSection
+            codeInspectionResultActionOptions={codeInspectionResultActionOptions}
+            isCodeInspectionJob={selectedJobType === 'code_repository_inspection'}
+            pluginActions={pluginActions}
+            requiredForPluginResource={requiredForPluginResource}
+            severityThresholdOptions={severityThresholdOptions}
+            usesNativeScan={selectedCodeInspectionUsesNativeScan}
+            writeStrategyLabelFromAction={writeStrategyLabelFromAction}
+          />
           <FormSection label="调度配置" marker="调度">
             <Space align="start" wrap>
               <Form.Item label="调度方式" name="schedule_type">
