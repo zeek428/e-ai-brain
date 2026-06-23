@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 执行诊断详情排障建议：详情页自动汇总失败、取消、运行中或排队节点，提供来源 ID 深链和“问 AI”入口，成功链路展示无失败节点提示。
 - 执行诊断来源 ID 深链：`GET /api/governance/execution-traces` 支持 `source_id` 按任一节点来源 ID 精准定位，前端 `/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情。
 - 执行诊断 AI 助手运行链路：`assistant_chat_run` 可作为 `/api/governance/execution-traces` 的根类型，关联模型网关日志和审计事件，详情元数据继续脱敏且不返回完整对话或 Prompt。
 - RBAC 策略矩阵：新增 `GET /api/system/permissions/matrix`，按角色聚合权限点、菜单入口、数据范围、高风险权限和菜单权限缺口；角色管理页新增“权限审计矩阵”用于授权排障。

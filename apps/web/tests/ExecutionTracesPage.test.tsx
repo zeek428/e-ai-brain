@@ -222,6 +222,8 @@ describe('ExecutionTracesPage', () => {
     const dialog = await screen.findByRole('dialog', { name: '执行诊断详情' });
     await waitFor(() => expect(within(dialog).getByText('执行节点')).toBeInTheDocument());
 
+    expect(within(dialog).getByText('诊断建议')).toBeInTheDocument();
+    expect(within(dialog).getByText(/当前链路没有失败或运行中节点/)).toBeInTheDocument();
     expect(within(dialog).getByText('节点关系')).toBeInTheDocument();
     expect(within(dialog).getAllByText('插件调用').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('模型网关调用').length).toBeGreaterThan(0);
@@ -245,6 +247,9 @@ describe('ExecutionTracesPage', () => {
     const dialog = await screen.findByRole('dialog', { name: '执行诊断详情' });
     await waitFor(() => expect(within(dialog).getByText('执行节点')).toBeInTheDocument());
 
+    expect(within(dialog).getByText(/发现 2 个失败节点/)).toBeInTheDocument();
+    expect(within(dialog).getAllByRole('link', { name: 'model_gateway_log_assistant_trace' }).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByRole('link', { name: /问 AI/ }).length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('AI 助手运行').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('model_gateway_log_assistant_trace').length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledWith(

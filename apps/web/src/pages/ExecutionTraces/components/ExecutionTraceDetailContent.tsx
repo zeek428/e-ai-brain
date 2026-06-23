@@ -1,4 +1,5 @@
-import { Descriptions, Space, Table, Tag, Typography } from 'antd';
+import { LinkOutlined, RobotOutlined } from '@ant-design/icons';
+import { Alert, Button, Descriptions, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useMemo, type ReactNode } from 'react';
 
@@ -10,6 +11,9 @@ import {
 import { formatDisplayDateTime } from '../../../utils/dateTime';
 
 const { Text } = Typography;
+
+const ATTENTION_NODE_STATUSES = new Set(['cancelled', 'failed', 'pending', 'queued', 'running']);
+const FAILED_NODE_STATUSES = new Set(['cancelled', 'failed']);
 
 type ExecutionTraceDetailContentProps = {
   compactText: (value?: string | null) => ReactNode;
@@ -37,7 +41,9 @@ function RelatedIds({
         <Space key={sourceType} size={6} wrap>
           <Tag>{sourceTypeLabel(sourceType)}</Tag>
           {ids.slice(0, 8).map((id) => (
-            <Tag key={id}>{id}</Tag>
+            <Tag key={id}>
+              <Typography.Link href={executionTraceSourceHref(id)}>{id}</Typography.Link>
+            </Tag>
           ))}
           {ids.length > 8 ? <Text type="secondary">等 {ids.length} 个</Text> : null}
         </Space>
@@ -48,6 +54,116 @@ function RelatedIds({
 
 function jsonPreview(value?: Record<string, unknown>) {
   return <pre className="audit-json">{JSON.stringify(value ?? {}, null, 2)}</pre>;
+}
+
+function executionTraceSourceHref(sourceId?: string | null) {
+  const params = new URLSearchParams();
+  params.set('source_id', String(sourceId || ''));
+  return `/governance/execution-traces?${params.toString()}`;
+}
+
+function assistantDiagnosticHref(
+  detail: ExecutionTraceDetailRecord,
+  node: ExecutionTraceNodeRecord,
+  sourceTypeLabel: (value?: string | null) => string,
+) {
+  const params = new URLSearchParams();
+  params.set('reference_type', node.source_type);
+  params.set('reference_id', node.source_id);
+  params.set(
+    'prompt',
+    [
+      `请基于执行诊断链路「${detail.title}」继续排查。`,
+      `重点分析节点：${sourceTypeLabel(node.source_type)} ${node.source_id}，当前状态 ${node.status}。`,
+      node.error_message ? `错误信息：${node.error_message}` : '',
+      node.summary ? `摘要：${node.summary}` : '',
+      '请给出可能原因、需要查看的证据和修复步骤。',
+    ].filter(Boolean).join('\n'),
+  );
+  return `/assistant?${params.toString()}`;
+}
+
+function TraceDiagnostics({
+  detail,
+  multilineText,
+  sourceTypeLabel,
+  statusTag,
+}: {
+  detail: ExecutionTraceDetailRecord;
+  multilineText: (value?: string | null) => ReactNode;
+  sourceTypeLabel: (value?: string | null) => string;
+  statusTag: (status?: string | null) => ReactNode;
+}) {
+  const attentionNodes = detail.nodes.filter((node) => ATTENTION_NODE_STATUSES.has(node.status));
+  const failedNodes = attentionNodes.filter((node) => FAILED_NODE_STATUSES.has(node.status));
+  if (attentionNodes.length === 0) {
+    return (
+      <Alert
+        title="诊断建议"
+        description="当前链路没有失败或运行中节点，可继续查看关联对象、节点关系和脱敏元数据确认写入结果。"
+        showIcon
+        type="success"
+      />
+    );
+  }
+
+  const alertType = failedNodes.length > 0 ? 'error' : 'warning';
+  const alertSummary = failedNodes.length > 0
+    ? `发现 ${failedNodes.length} 个失败节点`
+    : `发现 ${attentionNodes.length} 个运行中或排队节点`;
+
+  return (
+    <Alert
+      title="诊断建议"
+      description={(
+        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
+          <Text>{alertSummary}，建议优先从下面的节点继续排查。</Text>
+          {attentionNodes.slice(0, 5).map((node) => (
+            <Space
+              align="start"
+              key={node.id}
+              size={8}
+              style={{ justifyContent: 'space-between', width: '100%' }}
+              wrap
+            >
+              <Space orientation="vertical" size={4} style={{ flex: 1, minWidth: 260 }}>
+                <Space size={6} wrap>
+                  <Tag>{sourceTypeLabel(node.source_type)}</Tag>
+                  {statusTag(node.status)}
+                  <Typography.Link href={executionTraceSourceHref(node.source_id)}>
+                    {node.source_id}
+                  </Typography.Link>
+                </Space>
+                {multilineText(node.error_message || node.summary || node.label)}
+              </Space>
+              <Space size={6} wrap>
+                <Button
+                  href={executionTraceSourceHref(node.source_id)}
+                  icon={<LinkOutlined />}
+                  size="small"
+                >
+                  打开诊断链接
+                </Button>
+                <Button
+                  href={assistantDiagnosticHref(detail, node, sourceTypeLabel)}
+                  icon={<RobotOutlined />}
+                  size="small"
+                  type="primary"
+                >
+                  问 AI
+                </Button>
+              </Space>
+            </Space>
+          ))}
+          {attentionNodes.length > 5 ? (
+            <Text type="secondary">还有 {attentionNodes.length - 5} 个节点可在下方节点表继续查看。</Text>
+          ) : null}
+        </Space>
+      )}
+      showIcon
+      type={alertType}
+    />
+  );
 }
 
 export function ExecutionTraceDetailContent({
@@ -76,7 +192,16 @@ export function ExecutionTraceDetailContent({
         dataIndex: 'source_id',
         title: '来源 ID',
         width: 220,
-        render: (_, row) => compactText(row.source_id),
+        render: (_, row) => (
+          <Typography.Link
+            ellipsis
+            href={executionTraceSourceHref(row.source_id)}
+            title={row.source_id}
+            style={{ display: 'block', maxWidth: '100%' }}
+          >
+            {row.source_id}
+          </Typography.Link>
+        ),
       },
       {
         dataIndex: 'status',
@@ -144,6 +269,12 @@ export function ExecutionTraceDetailContent({
           <RelatedIds relatedIds={detail.related_ids} sourceTypeLabel={sourceTypeLabel} />
         </div>
       </section>
+      <TraceDiagnostics
+        detail={detail}
+        multilineText={multilineText}
+        sourceTypeLabel={sourceTypeLabel}
+        statusTag={statusTag}
+      />
       <Table<ExecutionTraceNodeRecord>
         columns={nodeColumns}
         dataSource={detail.nodes}
