@@ -165,6 +165,10 @@ function installCodeInspectionsFetchMock() {
               bug_count: 1,
               date: '2026-06-12',
               finding_count: 1,
+              quality_gate_failed_count: 1,
+              quality_gate_passed_count: 0,
+              quality_gate_skipped_count: 0,
+              quality_gate_unknown_count: 0,
               report_count: 1,
               severe_finding_count: 1,
             },
@@ -268,8 +272,10 @@ describe('CodeInspectionsPage', () => {
     expect(screen.getByText('规则维度统计')).toBeInTheDocument();
     expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
     expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
+    expect(screen.getByText('质量门禁趋势')).toBeInTheDocument();
     expect(screen.getByText('严重问题 SLA')).toBeInTheDocument();
     expect(screen.getAllByText('SEC001').length).toBeGreaterThan(0);
+    expect(screen.getByText('2026-06-12')).toBeInTheDocument();
     expect(screen.getAllByText('100%').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: '详情' }));

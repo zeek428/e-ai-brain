@@ -1373,6 +1373,11 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     ).json()["data"]
     run = client.post(f"/api/system/scheduled-jobs/{job['id']}/run", headers=headers)
     assert run.status_code == 200
+    report_id = run.json()["data"]["result_summary"]["report_id"]
+    app.state.store.code_inspection_reports[report_id]["quality_gate"] = {
+        "status": "failed",
+        "violations": [{"metric": "critical", "actual": 1, "limit": 0}],
+    }
 
     dashboard = client.get(
         f"/api/governance/code-inspections/dashboard?product_id={product['id']}",
@@ -1395,6 +1400,10 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["committer_ranking"][0]["email"] == "alice@example.com"
     assert payload["committer_ranking"][0]["bug_count"] == 1
     assert payload["trend"][0]["report_count"] == 1
+    assert payload["trend"][0]["quality_gate_passed_count"] == 0
+    assert payload["trend"][0]["quality_gate_failed_count"] == 1
+    assert payload["trend"][0]["quality_gate_skipped_count"] == 0
+    assert payload["trend"][0]["quality_gate_unknown_count"] == 0
 
     filtered = client.get(
         "/api/governance/code-inspections/dashboard?committer=carol@example.com",

@@ -6353,6 +6353,10 @@ export type CodeInspectionDashboardRecord = {
     bug_count: number;
     date: string;
     finding_count: number;
+    quality_gate_failed_count: number;
+    quality_gate_passed_count: number;
+    quality_gate_skipped_count: number;
+    quality_gate_unknown_count: number;
     report_count: number;
     severe_finding_count: number;
   }>;

@@ -1223,6 +1223,20 @@ def report_date_bucket(report: dict[str, Any]) -> str:
         return raw_created_at[:10] or "unknown"
 
 
+def report_quality_gate_status(report: dict[str, Any]) -> str:
+    quality_gate = report.get("quality_gate")
+    if not isinstance(quality_gate, dict):
+        return "unknown"
+    status = str(quality_gate.get("status") or "").strip().lower()
+    if status in {"passed", "pass", "succeeded", "success"}:
+        return "passed"
+    if status in {"failed", "fail", "blocked"}:
+        return "failed"
+    if status in {"skipped", "disabled", "not_configured"}:
+        return "skipped"
+    return status or "unknown"
+
+
 def counter_rows(counter: Counter[str], *, key_name: str = "key") -> list[dict[str, Any]]:
     return [
         {key_name: key, "count": count}
@@ -1297,6 +1311,10 @@ def code_inspection_dashboard_response(
                 "bug_count": 0,
                 "date": bucket,
                 "finding_count": 0,
+                "quality_gate_failed_count": 0,
+                "quality_gate_passed_count": 0,
+                "quality_gate_skipped_count": 0,
+                "quality_gate_unknown_count": 0,
                 "report_count": 0,
                 "severe_finding_count": 0,
             },
@@ -1305,6 +1323,15 @@ def code_inspection_dashboard_response(
         trend["finding_count"] += int(report.get("finding_count") or len(report_findings))
         trend["severe_finding_count"] += int(report.get("severe_finding_count") or 0)
         trend["bug_count"] += len(report.get("created_bug_ids") or [])
+        quality_gate_status = report_quality_gate_status(report)
+        if quality_gate_status == "passed":
+            trend["quality_gate_passed_count"] += 1
+        elif quality_gate_status == "failed":
+            trend["quality_gate_failed_count"] += 1
+        elif quality_gate_status == "skipped":
+            trend["quality_gate_skipped_count"] += 1
+        else:
+            trend["quality_gate_unknown_count"] += 1
 
         repository_key = str(report.get("repository_id") or report.get("repository_name") or "-")
         repository_entry = repository_stats.setdefault(

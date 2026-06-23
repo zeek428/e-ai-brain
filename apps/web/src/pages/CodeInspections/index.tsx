@@ -332,6 +332,21 @@ function CodeInspectionGovernanceOverview({
           </Card>
         </Col>
       </Row>
+      <Card loading={loading} size="small" title="质量门禁趋势">
+        {compactMetricTable({
+          columns: [
+            { dataIndex: 'date', title: '日期', width: 140 },
+            { dataIndex: 'report_count', title: '报告', width: 90 },
+            { dataIndex: 'quality_gate_failed_count', title: '失败', width: 90 },
+            { dataIndex: 'quality_gate_passed_count', title: '通过', width: 90 },
+            { dataIndex: 'quality_gate_skipped_count', title: '跳过', width: 90 },
+            { dataIndex: 'severe_finding_count', title: '严重问题', width: 110 },
+            { dataIndex: 'bug_count', title: 'Bug', width: 90 },
+          ],
+          dataSource: dashboard?.trend ?? [],
+          rowKey: 'date',
+        })}
+      </Card>
       <Card loading={loading} size="small" title="严重问题 SLA">
         <Descriptions
           column={{ lg: 4, md: 2, xs: 1 }}
