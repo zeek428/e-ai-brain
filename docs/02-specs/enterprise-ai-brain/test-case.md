@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.624 |
+| 功能版本 | v1.1.625 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.625 | 2026-06-24 | 补充插件管理表单转换组件化验收：连接/动作/Runner payload、请求预览、结果映射、schema 回填和助手草案回填从主页面抽到 `pluginFormTransformHelpers` 后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.624 | 2026-06-24 | 补充执行诊断详情排障建议验收：详情需汇总失败/运行中节点，提供来源 ID 深链和“问 AI”入口；成功链路展示无失败节点提示 | Codex |
 | v1.1.623 | 2026-06-24 | 补充执行诊断来源 ID 深链验收：`GET /api/governance/execution-traces?source_id=...` 可按任一节点来源 ID 精准返回所属链路，`/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情 | Codex |
 | v1.1.622 | 2026-06-23 | 补充定时作业运行详情弹窗组件化验收：运行结果详情从主页面收口到 `ScheduledJobRunDetailModal` 后，`ScheduledJobsPage.test.tsx`、typecheck、lint 和真实 `/tasks/scheduled-jobs` 页面 smoke 必须通过 | Codex |
