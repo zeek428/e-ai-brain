@@ -11,17 +11,14 @@ import {
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import {
   Button,
-  Col,
   Descriptions,
   Form,
   Input,
   Modal,
-  Row,
   Select,
   Space,
   Tabs,
   Tag,
-  Switch,
   Typography,
   message,
 } from 'antd';
@@ -75,10 +72,10 @@ import type { KnowledgeRecord } from '../../data/management';
 import { formatDisplayDateTime } from '../../utils/dateTime';
 import { ScheduledJobActionConfigSection } from './components/ScheduledJobActionConfigSection';
 import { ScheduledJobAiExecutionSection } from './components/ScheduledJobAiExecutionSection';
+import { ScheduledJobBasicInfoSection } from './components/ScheduledJobBasicInfoSection';
 import { ScheduledJobCodeRepositorySection } from './components/ScheduledJobCodeRepositorySection';
 import { ScheduledJobDataConnectionSection } from './components/ScheduledJobDataConnectionSection';
 import { ScheduledJobDryRunResultPanel } from './components/ScheduledJobDryRunResultPanel';
-import { ScheduledJobFormSection as FormSection } from './components/ScheduledJobFormSection';
 import {
   ScheduledJobJsonPreview as JsonPreview,
 } from './components/ScheduledJobJsonPreview';
@@ -2277,69 +2274,38 @@ export default function ScheduledJobsPage() {
           <Form.Item hidden name="source_system">
             <Input />
           </Form.Item>
-          <FormSection label="基础信息" marker="基本">
-            <Row gutter={12}>
-              <Col span={14}>
-                <Form.Item label="名称" name="name" rules={[{ required: true }]}>
-                  <Input />
-                </Form.Item>
-              </Col>
-              <Col span={10}>
-                <Form.Item label="作业类型" name="job_type" rules={[{ required: true }]}>
-                  <Select
-                    options={jobTypeOptions}
-                    onChange={(value) => {
-                      if (value === 'code_repository_inspection') {
-                        form.setFieldsValue({
-                          config_json: {
-                            ...(recordValue(form.getFieldValue('config_json')) ?? {}),
-                            scan_mode: nativeCodeInspectionScanMode,
-                          },
-                          execution_mode: 'deterministic',
-                          plugin_action_id: undefined,
-                          plugin_action_ids: [],
-                          plugin_connection_id: undefined,
-                          plugin_connection_ids: [],
-                          result_actions: form.getFieldValue('result_actions')?.length
-                            ? form.getFieldValue('result_actions')
-                            : cloneResultActions(defaultCodeInspectionResultActions),
-                        });
-                      }
-                    }}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={18}>
-                <Form.Item
-                  label="所属产品"
-                  name="product_id"
-                  rules={[requiredForJobTypes(productRequiredJobTypes, '请选择产品')]}
-                >
-                  <Select
-                    allowClear
-                    showSearch
-                    optionFilterProp="label"
-                    placeholder="请选择产品"
-                    onChange={() => {
-                      if (selectedJobType === 'code_repository_inspection') {
-                        form.setFieldValue(['config_json', 'repository_id'], undefined);
-                        form.setFieldValue(['config_json', 'branch'], undefined);
-                      }
-                    }}
-                    options={products.map((product) => ({
-                      label: `${product.name} (${product.code})`,
-                      value: product.id,
-                    }))}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item label="启用" name="enabled" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-              </Col>
-            </Row>
-          </FormSection>
+          <ScheduledJobBasicInfoSection
+            jobTypeOptions={jobTypeOptions}
+            onJobTypeChange={(value) => {
+              if (value === 'code_repository_inspection') {
+                form.setFieldsValue({
+                  config_json: {
+                    ...(recordValue(form.getFieldValue('config_json')) ?? {}),
+                    scan_mode: nativeCodeInspectionScanMode,
+                  },
+                  execution_mode: 'deterministic',
+                  plugin_action_id: undefined,
+                  plugin_action_ids: [],
+                  plugin_connection_id: undefined,
+                  plugin_connection_ids: [],
+                  result_actions: form.getFieldValue('result_actions')?.length
+                    ? form.getFieldValue('result_actions')
+                    : cloneResultActions(defaultCodeInspectionResultActions),
+                });
+              }
+            }}
+            onProductChange={() => {
+              if (selectedJobType === 'code_repository_inspection') {
+                form.setFieldValue(['config_json', 'repository_id'], undefined);
+                form.setFieldValue(['config_json', 'branch'], undefined);
+              }
+            }}
+            productOptions={products.map((product) => ({
+              label: `${product.name} (${product.code})`,
+              value: product.id,
+            }))}
+            productRequiredRule={requiredForJobTypes(productRequiredJobTypes, '请选择产品')}
+          />
           <ScheduledJobDataConnectionSection
             connectionEnvironmentOptions={connectionEnvironmentOptions}
             filteredPluginConnections={filteredPluginConnections}
