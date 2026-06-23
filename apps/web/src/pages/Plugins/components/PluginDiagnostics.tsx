@@ -2,12 +2,18 @@ import { Alert, Button, Space, Table, Tag, Typography } from 'antd';
 
 import {
   type PluginActionTrialResult,
+  type AiExecutorRunnerRecord,
+  type AiExecutorRunnerTestResult,
   type PluginConnectionRecord,
   type PluginConnectionRepairSuggestion,
   type PluginConnectionTestHistoryRecord,
   type PluginMarketplaceItem,
 } from '../../../services/aiBrain';
-import { compactJson, connectionTestStatusColor } from './pluginDiagnosticsHelpers';
+import {
+  compactJson,
+  connectionTestStatusColor,
+  runnerHealthStatusColor,
+} from './pluginDiagnosticsHelpers';
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -185,6 +191,61 @@ export function ConnectionLastTestSummary({ connection }: { connection: PluginCo
       >
         {detail}
       </Typography.Text>
+    </Space>
+  );
+}
+
+export function RunnerTestDiagnosticsContent({
+  result,
+  runner,
+}: {
+  result: AiExecutorRunnerTestResult;
+  runner: AiExecutorRunnerRecord;
+}) {
+  const resultRunner = result.runner ?? runner;
+  return (
+    <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+      <Space size={8} wrap>
+        <Typography.Text strong>{resultRunner.name ?? runner.name}</Typography.Text>
+        <Tag color={connectionTestStatusColor(result.status)}>{result.status}</Tag>
+        {result.health_status ? (
+          <Tag color={runnerHealthStatusColor(result.health_status)}>{result.health_status}</Tag>
+        ) : null}
+        <Typography.Text type="secondary">
+          耗时 {result.latency_ms ?? '-'}ms
+        </Typography.Text>
+        {result.checked_at ? (
+          <Typography.Text type="secondary">
+            检测时间 {result.checked_at}
+          </Typography.Text>
+        ) : null}
+      </Space>
+      <Table
+        columns={[
+          { dataIndex: 'name', title: '检查项', width: 190 },
+          {
+            dataIndex: 'status',
+            title: '状态',
+            width: 120,
+            render: (value: string) => <Tag color={connectionTestStatusColor(value)}>{value}</Tag>,
+          },
+          {
+            dataIndex: 'detail',
+            title: '说明',
+            render: (value?: string | null) => (
+              <Typography.Text style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {value ?? '-'}
+              </Typography.Text>
+            ),
+          },
+          { dataIndex: 'latency_ms', title: '耗时 ms', width: 100, render: (value?: number | null) => value ?? '-' },
+        ]}
+        dataSource={result.diagnostics ?? []}
+        pagination={false}
+        rowKey="name"
+        scroll={{ x: 760 }}
+        size="small"
+      />
     </Space>
   );
 }
