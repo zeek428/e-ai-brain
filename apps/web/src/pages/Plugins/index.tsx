@@ -12,7 +12,7 @@ import {
   StopOutlined,
 } from '@ant-design/icons';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
+import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tabs, Tag, Switch, Typography, message } from 'antd';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
@@ -74,6 +74,10 @@ import {
 } from '../../services/aiBrain';
 import { formatDisplayDateTime } from '../../utils/dateTime';
 import {
+  ConnectionSchemaFields,
+  RequestParameterRows,
+} from './components/PluginConnectionFormFields';
+import {
   ConnectionLastTestSummary,
   ConnectionRequestDebugPanel,
   JsonDiagnosticsBlock,
@@ -86,6 +90,11 @@ import {
   connectionTestStatusColor,
   runnerHealthStatusColor,
 } from './components/pluginDiagnosticsHelpers';
+import {
+  parseGitLabProjectAddress,
+  parseGitRepositoryAddress,
+  safeDecodeURIComponent,
+} from './components/pluginConnectionAddressHelpers';
 
 type PluginFormValues = {
   category: string;
@@ -198,12 +207,6 @@ const requestMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((valu
   label: value,
   value,
 }));
-
-const requestParameterTypeOptions = [
-  { label: 'string', value: 'string' },
-  { label: 'number', value: 'number' },
-  { label: 'boolean', value: 'boolean' },
-];
 
 const aiExecutorTypeOptions = [
   { label: 'Codex', value: 'codex' },
@@ -623,99 +626,6 @@ function setValueAtPath(target: Record<string, unknown>, path: string | undefine
     cursor = cursor[segment] as Record<string, unknown>;
   });
   cursor[segments[segments.length - 1]] = value;
-}
-
-function parseGitRepositoryAddress(value: unknown): { owner: string; repo: string } | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  const sshMatch = trimmed.match(/^[^@\s]+@[^:\s]+:(.+)$/);
-  let path = sshMatch?.[1] ?? trimmed;
-  if (!sshMatch) {
-    const firstSegment = trimmed.split('/')[0] ?? '';
-    const looksLikeUrl = trimmed.includes('://') || firstSegment.includes('.');
-    try {
-      if (looksLikeUrl) {
-        const url = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
-        path = url.pathname;
-      }
-    } catch {
-      path = trimmed;
-    }
-  }
-  const segments = path
-    .replace(/^\/+/, '')
-    .replace(/\/+$/, '')
-    .split('/')
-    .filter(Boolean);
-  const repoSegments = segments[0] === 'repos' ? segments.slice(1) : segments;
-  const owner = repoSegments[0]?.trim();
-  const repo = repoSegments[1]?.replace(/\.git$/i, '').trim();
-  return owner && repo ? { owner, repo } : undefined;
-}
-
-function safeDecodeURIComponent(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function parseGitLabProjectAddress(
-  value: unknown,
-): { endpointUrl?: string; projectId: string; projectPath: string } | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  const sshMatch = trimmed.match(/^[^@\s]+@([^:\s]+):(.+)$/);
-  let endpointUrl: string | undefined;
-  let path = sshMatch?.[2] ?? trimmed;
-  if (sshMatch) {
-    endpointUrl = `https://${sshMatch[1]}`;
-  } else {
-    const firstSegment = trimmed.split('/')[0] ?? '';
-    const looksLikeUrl =
-      trimmed.includes('://')
-      || firstSegment.includes('.')
-      || firstSegment.includes(':')
-      || firstSegment === 'localhost';
-    try {
-      if (looksLikeUrl) {
-        const url = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
-        endpointUrl = `${url.protocol}//${url.host}`;
-        path = url.pathname;
-      }
-    } catch {
-      path = trimmed;
-    }
-  }
-  const normalizedPath = path.split('/-/', 1)[0] ?? path;
-  let segments = normalizedPath
-    .replace(/^\/+/, '')
-    .replace(/\/+$/, '')
-    .split('/')
-    .filter(Boolean);
-  if (segments.length >= 4 && segments[0] === 'api' && segments[2] === 'projects') {
-    segments = [safeDecodeURIComponent(segments[3])];
-  }
-  const projectPath = safeDecodeURIComponent(segments.join('/')).replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '');
-  if (!projectPath || !projectPath.includes('/')) {
-    return undefined;
-  }
-  return {
-    endpointUrl,
-    projectId: encodeURIComponent(projectPath),
-    projectPath,
-  };
 }
 
 function buildGitRepositoryAddress(payload: Record<string, unknown>): string | undefined {
@@ -1257,193 +1167,6 @@ function isSystemDefaultRunner(runner: AiExecutorRunnerRecord) {
   return runner.id === SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
     || runner.protocol === SYSTEM_DEFAULT_AI_EXECUTOR_TYPE
     || runner.metadata?.is_system === true;
-}
-
-function RequestParameterRows({
-  addText,
-  name,
-  namePlaceholder,
-  title,
-  valuePlaceholder,
-}: {
-  addText: string;
-  name: 'connection_header_rows' | 'connection_param_rows' | 'header_rows' | 'param_rows';
-  namePlaceholder: string;
-  title: string;
-  valuePlaceholder: string;
-}) {
-  const form = Form.useFormInstance();
-  return (
-    <Form.List name={name}>
-      {(fields, { add, remove }) => (
-        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-          <div style={{ color: '#53627a', fontWeight: 600 }}>{title}</div>
-          <Space orientation="vertical" size={6} style={{ width: '100%' }}>
-            {fields.map((field) => (
-              <Space key={field.key} align="baseline" wrap>
-                <Form.Item
-                  name={[field.name, 'enabled']}
-                  valuePropName="checked"
-                  initialValue
-                  style={{ marginBottom: 0 }}
-                >
-                  <Checkbox />
-                </Form.Item>
-                <Form.Item name={[field.name, 'name']} style={{ marginBottom: 0 }}>
-                  <Input placeholder={namePlaceholder} style={{ width: 180 }} />
-                </Form.Item>
-                <Form.Item name={[field.name, 'value']} style={{ marginBottom: 0 }}>
-                  <Input placeholder={valuePlaceholder} style={{ width: 260 }} />
-                </Form.Item>
-                <Select
-                  allowClear
-                  options={systemVariableOptions}
-                  placeholder="系统变量"
-                  style={{ width: 190 }}
-                  onChange={(value) => {
-                    if (value) {
-                      form.setFieldValue([name, field.name, 'value'], value);
-                    }
-                  }}
-                />
-                <Form.Item name={[field.name, 'type']} initialValue="string" style={{ marginBottom: 0 }}>
-                  <Select options={requestParameterTypeOptions} style={{ width: 120 }} />
-                </Form.Item>
-                <Form.Item name={[field.name, 'description']} style={{ marginBottom: 0 }}>
-                  <Input placeholder="说明" style={{ width: 180 }} />
-                </Form.Item>
-                <Button aria-label="删除参数" icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
-              </Space>
-            ))}
-          </Space>
-          <Button
-            icon={<PlusOutlined />}
-            onClick={() => add({ enabled: true, type: 'string' })}
-            type="dashed"
-          >
-            {addText}
-          </Button>
-        </Space>
-      )}
-    </Form.List>
-  );
-}
-
-function normalizeSchemaOptions(field: PluginConnectionSchemaFieldRecord) {
-  return (field.options ?? []).map((option) => (
-    typeof option === 'string' ? { label: option, value: option } : option
-  ));
-}
-
-function ConnectionSchemaFields({
-  pluginCode,
-  schema,
-}: {
-  pluginCode?: string;
-  schema?: PluginConnectionSchemaRecord;
-}) {
-  const form = Form.useFormInstance();
-  const sections = schema?.sections ?? [];
-  if (!sections.length) {
-    return null;
-  }
-
-  return (
-    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-      {pluginCode === 'github' ? (
-        <Alert
-          description="Params 属于高级查询参数，只有需要补充 GitHub API query 时再填写，例如 state、per_page、ref。Headers 默认保留 Accept 和 X-GitHub-Api-Version。"
-          showIcon
-          title="GitHub 连接只需要粘贴仓库地址；系统会自动解析 owner/repo，Params 不用再填。"
-          type="info"
-        />
-      ) : null}
-      {pluginCode === 'gitlab' ? (
-        <Alert
-          description="填写本地 GitLab 项目地址后，系统会自动同步 Endpoint URL，并解析 project_id/project_path 给 GitLab API 使用。Params 只用于补充额外查询参数。"
-          showIcon
-          title="GitLab 连接只需要粘贴本地项目地址。"
-          type="info"
-        />
-      ) : null}
-      {sections.map((section) => (
-        <Space key={section.key} orientation="vertical" size={8} style={{ width: '100%' }}>
-          <div style={{ color: '#53627a', fontWeight: 600 }}>{section.title}</div>
-          <Space wrap align="start">
-            {(section.fields ?? []).map((field) => {
-              const rules = [
-                ...(field.required ? [{ required: true, message: `请输入${field.label}` }] : []),
-                ...(field.type === 'github_repository_url'
-                  ? [{
-                    validator: (_: unknown, value: unknown) => (
-                      !value || parseGitRepositoryAddress(value)
-                        ? Promise.resolve()
-                        : Promise.reject(new Error('请输入有效的 GitHub 仓库地址，例如 https://github.com/acme/ai-brain.git'))
-                    ),
-                  }]
-                  : []),
-                ...(field.type === 'gitlab_project_url'
-                  ? [{
-                    validator: (_: unknown, value: unknown) => (
-                      !value || parseGitLabProjectAddress(value)
-                        ? Promise.resolve()
-                        : Promise.reject(new Error('请输入有效的 GitLab 地址，例如 http://gitlab.local/acme/ai-brain.git'))
-                    ),
-                  }]
-                  : []),
-              ];
-              const fieldName = ['schema_values', field.key];
-              const schemaOptions = normalizeSchemaOptions(field);
-              const control = field.type === 'select' && schemaOptions.length > 0 ? (
-                <Select
-                  allowClear={!field.required}
-                  options={schemaOptions}
-                  placeholder={field.placeholder || field.label}
-                  style={{ width: 240 }}
-                />
-              ) : field.type === 'number' ? (
-                <InputNumber placeholder={field.placeholder || field.label} style={{ width: 240 }} />
-              ) : field.type === 'boolean' ? (
-                <Switch />
-              ) : (
-                <Input
-                  placeholder={field.placeholder || field.label}
-                  style={{ width: ['github_repository_url', 'gitlab_project_url'].includes(field.type ?? '') ? 420 : 240 }}
-                />
-              );
-              return (
-                <Space key={field.key} align="baseline" size={6}>
-                  <Form.Item
-                    extra={field.description}
-                    label={field.label}
-                    name={fieldName}
-                    rules={rules.length ? rules : undefined}
-                    style={{ marginBottom: 8 }}
-                    valuePropName={field.type === 'boolean' ? 'checked' : 'value'}
-                  >
-                    {control}
-                  </Form.Item>
-                  {field.supports_system_variables ? (
-                    <Select
-                      allowClear
-                      options={systemVariableOptions}
-                      placeholder="系统变量"
-                      style={{ width: 190, marginTop: 30 }}
-                      onChange={(value) => {
-                        if (value) {
-                          form.setFieldValue(fieldName, value);
-                        }
-                      }}
-                    />
-                  ) : null}
-                </Space>
-              );
-            })}
-          </Space>
-        </Space>
-      ))}
-    </Space>
-  );
 }
 
 export default function PluginsPage() {
@@ -4180,11 +3903,13 @@ export default function PluginsPage() {
           <ConnectionSchemaFields
             pluginCode={selectedConnectionPluginCode}
             schema={selectedConnectionSchema}
+            systemVariableOptions={systemVariableOptions}
           />
           <RequestParameterRows
             addText="添加 Params"
             name="connection_param_rows"
             namePlaceholder="参数名"
+            systemVariableOptions={systemVariableOptions}
             title="高级查询 Params"
             valuePlaceholder="参数值"
           />
@@ -4192,6 +3917,7 @@ export default function PluginsPage() {
             addText="添加 Headers"
             name="connection_header_rows"
             namePlaceholder="Header 名"
+            systemVariableOptions={systemVariableOptions}
             title="Headers"
             valuePlaceholder="Header 值"
           />
@@ -4333,6 +4059,7 @@ export default function PluginsPage() {
                 addText="添加 Params"
                 name="param_rows"
                 namePlaceholder="参数名"
+                systemVariableOptions={systemVariableOptions}
                 title="Params"
                 valuePlaceholder="参数值"
               />
@@ -4340,6 +4067,7 @@ export default function PluginsPage() {
                 addText="添加 Headers"
                 name="header_rows"
                 namePlaceholder="Header 名"
+                systemVariableOptions={systemVariableOptions}
                 title="Headers"
                 valuePlaceholder="Header 值"
               />

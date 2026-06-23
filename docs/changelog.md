@@ -18,6 +18,7 @@
 - AI 助手页面主文件继续减重：消息气泡、草案工具结果、运行诊断、插件连接诊断和运行对比卡片抽到 `AssistantMessageBubble`，共享消息 helper 独立成 `assistantMessageHelpers`，主页面从消息渲染细节中解耦，便于继续扩展草案和诊断场景。
 - 定时作业运行详情继续减重：运行链路、Trace DAG、模板来源和复跑对比抽到 `ScheduledJobRunTraceDetails`，执行节点 helper 独立维护，主页面从运行详情渲染细节中解耦。
 - 插件管理页面主文件继续减重：连接测试请求调试台、市场连接 schema 展示、最近测试摘要、试运行写入预览和状态颜色 helper 抽到 `PluginDiagnostics`，让主页面聚焦插件、连接、动作和 Runner 编排。
+- 插件管理连接表单继续减重：请求参数行、连接 schema 字段和 GitHub/GitLab 地址解析校验抽到 `PluginConnectionFormFields` 与 `pluginConnectionAddressHelpers`，避免连接表单逻辑继续堆在主页面。
 
 ### Fixed
 - AI 助手页面样式隔离：将 `.assistant-*` 规则从全局样式迁移到助手页面级 `Assistant.css`，并保留多视口真实页面 smoke 覆盖，降低其它页面样式变更影响助手布局的风险。
