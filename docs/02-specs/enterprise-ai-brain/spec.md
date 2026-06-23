@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.483 |
+| 功能版本 | v1.1.484 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.484 | 2026-06-23 | 技术规格启动按业务域拆分：新增 `domains/` 索引和需求交付、AI 助手、插件定时作业执行器、质量运营洞察、系统治理 RBAC 平台配置五个域文档，主规格保留跨域原则和导航 | Codex |
 | v1.1.483 | 2026-06-23 | 插件管理前端继续按工具弹窗边界减重：系统变量全集、Runner 执行日志和动作试运行弹窗抽到 `PluginUtilityModals`，主页面保留插件、连接、动作和 Runner 状态编排 | Codex |
 | v1.1.482 | 2026-06-23 | 系统角色治理新增只读 RBAC 策略矩阵：后端按角色聚合权限点、菜单入口、数据范围、高风险权限和菜单权限缺口，角色管理页展示“权限审计矩阵”用于排查入口可见但接口无权等授权问题 | Codex |
 | v1.1.481 | 2026-06-23 | 定时作业前端继续按运行页签边界减重：运行健康概览、最近失败和慢运行表格抽到 `ScheduledJobRunObservabilityOverview`，主页面保留作业/运行编排逻辑 | Codex |
@@ -1864,7 +1865,8 @@ suggested → rejected
 - PRD: [01-prd/enterprise-ai-brain/prd.md](../../01-prd/enterprise-ai-brain/prd.md)
 - API: [api.md](./api.md)
 - 测试用例: [test-case.md](./test-case.md)
+- 业务域规格索引: [domains/README.md](./domains/README.md)
 - 整体方案评审与业务流程: [03-guides/ai-development-workflow.md](../../03-guides/ai-development-workflow.md)
 
 ---
-最后更新: 2026-06-11
+最后更新: 2026-06-23

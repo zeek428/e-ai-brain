@@ -1,0 +1,37 @@
+# 质量、运营与洞察
+
+> 来源：../spec.md。本文承接代码巡检、执行诊断、Bug、用户洞察、生命周期上下文和团队看板的业务域规格导航。
+
+## 职责边界
+
+- 执行诊断统一追踪定时作业、插件调用、Runner、模型网关、代码巡检和审计事件。
+- 代码巡检从“生成报告”升级为质量治理闭环，覆盖本地完整扫描、质量门禁、baseline、Bug/任务派生和趋势分析。
+- Bug 管理维护人工、自动化测试、代码巡检和发布后分析产生的问题生命周期。
+- 用户洞察将用户反馈转需求，反馈状态随需求归属和处理动作同步。
+- 团队看板可以在 Python 中做聚合，但来源必须是 PostgreSQL source rows 或可重建只读缓存。
+
+## 关键数据
+
+- `execution_trace_snapshots`
+- `code_inspection_reports`、`code_inspection_findings`、`code_inspection_notifications`
+- `bugs`、`user_feedback`、`user_usage_metrics`、`iteration_plan_suggestions`
+- `lifecycle_context_edges`、`lifecycle_risk_signals`、`dashboard_metric_snapshots`
+
+## 关键 API 与页面
+
+- 执行诊断：`/governance/execution-traces`
+- 代码巡检：`/governance/code-inspections`
+- 用户洞察：`/governance/insights`
+- Bug 管理：`/governance/bugs`
+- 团队看板：首页工作台
+
+## 当前落地要求
+
+- 执行诊断列表和详情优先读取 `execution_trace_snapshots`，节点元数据必须脱敏。
+- 代码巡检本地完整扫描需记录仓库、分支、提交、提交人、规则版本、扫描覆盖、质量门禁和 suppression 摘要。
+- 严重代码巡检 finding 可派生 Bug 或整改任务，并通过 fingerprint 去重。
+- 用户洞察列表固定列宽、服务端筛选和详情查看保持稳定，优质反馈可转需求。
+
+## 验收映射
+
+- 详细验收见 [../test-cases/devops-quality-and-insights.md](../test-cases/devops-quality-and-insights.md)。
