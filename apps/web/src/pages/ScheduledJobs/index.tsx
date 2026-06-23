@@ -80,8 +80,13 @@ import { formatDisplayDateTime } from '../../utils/dateTime';
 import { ScheduledJobActionConfigSection } from './components/ScheduledJobActionConfigSection';
 import { ScheduledJobAiExecutionSection } from './components/ScheduledJobAiExecutionSection';
 import { ScheduledJobDataConnectionSection } from './components/ScheduledJobDataConnectionSection';
+import { ScheduledJobDryRunResultPanel } from './components/ScheduledJobDryRunResultPanel';
 import { ScheduledJobFormSection as FormSection } from './components/ScheduledJobFormSection';
+import {
+  ScheduledJobJsonPreview as JsonPreview,
+} from './components/ScheduledJobJsonPreview';
 import { ScheduledJobScheduleConfigSection } from './components/ScheduledJobScheduleConfigSection';
+import { formatJsonValue } from './components/scheduledJobJsonPreviewHelpers';
 import {
   RunExecutionChain,
   RunSourceComparison,
@@ -610,16 +615,6 @@ function ellipsisText(value: string | undefined) {
   );
 }
 
-function isEmptyJsonValue(value: unknown): boolean {
-  return (
-    value == null
-    || (Array.isArray(value) && value.length === 0)
-    || (typeof value === 'object'
-      && !Array.isArray(value)
-      && Object.keys(value as Record<string, unknown>).length === 0)
-  );
-}
-
 function comparableDraftValue(value: unknown): unknown {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -656,36 +651,6 @@ function scheduledJobRunIdFromAssistantResult(result?: Record<string, unknown>) 
   }
   const runId = (run as { id?: unknown }).id;
   return typeof runId === 'string' && runId ? runId : undefined;
-}
-
-function formatJsonValue(value: unknown): string {
-  if (isEmptyJsonValue(value)) {
-    return '暂无数据';
-  }
-  return JSON.stringify(value, null, 2);
-}
-
-function JsonPreview({ title, value }: { title: string; value: unknown }) {
-  return (
-    <Space orientation="vertical" size={6} style={{ width: '100%' }}>
-      <Typography.Text strong>{title}</Typography.Text>
-      <Typography.Paragraph
-        copyable={!isEmptyJsonValue(value)}
-        style={{
-          background: '#f6f8fa',
-          border: '1px solid #e5e7eb',
-          borderRadius: 6,
-          marginBottom: 0,
-          maxHeight: 260,
-          overflow: 'auto',
-          padding: 12,
-          whiteSpace: 'pre-wrap',
-        }}
-      >
-        {formatJsonValue(value)}
-      </Typography.Paragraph>
-    </Space>
-  );
 }
 
 function resultWriteRecordFieldText(value: unknown): string {
@@ -2887,29 +2852,7 @@ export default function ScheduledJobsPage() {
             writeStrategyLabelFromAction={writeStrategyLabelFromAction}
           />
           <ScheduledJobScheduleConfigSection scheduleTypeOptions={scheduleTypeOptions} />
-          {dryRunResult ? (
-            <div
-              aria-label="全链路试运行结果"
-              style={{
-                background: '#f8fafc',
-                border: '1px solid #dbeafe',
-                borderRadius: 6,
-                marginTop: 16,
-                padding: 16,
-              }}
-            >
-              <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-                <Space>
-                  <Typography.Text strong>全链路试运行结果</Typography.Text>
-                  <Tag color={dryRunResult.status === 'succeeded' ? 'green' : 'red'}>{dryRunResult.status}</Tag>
-                  <Typography.Text type="secondary">{dryRunResult.job_type}</Typography.Text>
-                </Space>
-                <JsonPreview title="数据连接预览" value={dryRunResult.stages?.data_connection} />
-                <JsonPreview title="AI契约校验" value={dryRunResult.stages?.ai_processing} />
-                <JsonPreview title="结果写入预览" value={dryRunResult.stages?.result_actions} />
-              </Space>
-            </div>
-          ) : null}
+          {dryRunResult ? <ScheduledJobDryRunResultPanel result={dryRunResult} /> : null}
         </Form>
       </Modal>
 
