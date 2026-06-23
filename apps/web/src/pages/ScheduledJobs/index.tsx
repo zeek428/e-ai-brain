@@ -78,6 +78,7 @@ import type { ModelGatewayConfigRecord } from '../../data/management';
 import type { KnowledgeRecord } from '../../data/management';
 import { formatDisplayDateTime } from '../../utils/dateTime';
 import { ScheduledJobAiExecutionSection } from './components/ScheduledJobAiExecutionSection';
+import { ScheduledJobDataConnectionSection } from './components/ScheduledJobDataConnectionSection';
 import { ScheduledJobFormSection as FormSection } from './components/ScheduledJobFormSection';
 import {
   RunExecutionChain,
@@ -1478,6 +1479,11 @@ export default function ScheduledJobsPage() {
     ],
   );
 
+  const handleConnectionEnvironmentChange = useCallback(() => {
+    form.setFieldValue('plugin_connection_id', undefined);
+    form.setFieldValue('plugin_connection_ids', []);
+  }, [form]);
+
   const orchestrationNodes = useMemo<ScheduledJobOrchestrationNode[]>(() => {
     const selectedConnections = normalizedSelectedPluginConnectionIds
       .map((connectionId) => pluginConnectionById.get(connectionId))
@@ -2685,46 +2691,14 @@ export default function ScheduledJobsPage() {
               </Col>
             </Row>
           </FormSection>
-          <FormSection label="数据连接配置" marker="输入">
-            <Row gutter={12}>
-              <Col span={8}>
-                <Form.Item label="连接环境" name="connection_environment">
-                  <Select
-                    allowClear
-                    options={connectionEnvironmentOptions}
-                    placeholder="筛选数据连接环境"
-                    onChange={() => {
-                      form.setFieldValue('plugin_connection_id', undefined);
-                      form.setFieldValue('plugin_connection_ids', []);
-                    }}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={16}>
-                <Form.Item
-                  label="数据连接"
-                  name="plugin_connection_ids"
-                  rules={[requiredForPluginResource('请选择数据连接')]}
-                  extra={selectedCodeInspectionUsesNativeScan ? '本地完整扫描直接 clone 产品代码仓库，不需要外部数据连接' : '可选择多个连接，运行时按配置顺序作为数据来源'}
-                >
-                  <Select
-                    allowClear
-                    disabled={selectedCodeInspectionUsesNativeScan}
-                    mode="multiple"
-                    maxTagCount={2}
-                    onChange={handlePluginConnectionChange}
-                    optionFilterProp="label"
-                    placeholder="请选择取数连接"
-                    showSearch
-                    options={filteredPluginConnections.map((connection) => ({
-                      label: `${connection.name} (${connection.environment ?? 'default'})`,
-                      value: connection.id,
-                    }))}
-                  />
-                </Form.Item>
-              </Col>
-            </Row>
-          </FormSection>
+          <ScheduledJobDataConnectionSection
+            connectionEnvironmentOptions={connectionEnvironmentOptions}
+            filteredPluginConnections={filteredPluginConnections}
+            onConnectionEnvironmentChange={handleConnectionEnvironmentChange}
+            onPluginConnectionChange={handlePluginConnectionChange}
+            requiredForPluginResource={requiredForPluginResource}
+            usesNativeScan={selectedCodeInspectionUsesNativeScan}
+          />
           {selectedJobType === 'code_repository_inspection' ? (
             <FormSection label="代码仓库配置" marker="仓库">
               <Row gutter={12}>
