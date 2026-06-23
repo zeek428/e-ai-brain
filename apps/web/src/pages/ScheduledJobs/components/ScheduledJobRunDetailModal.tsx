@@ -1,0 +1,212 @@
+import {
+  CopyOutlined,
+  EditOutlined,
+  ReloadOutlined,
+  RobotOutlined,
+} from '@ant-design/icons';
+import { Button, Descriptions, Modal, Space } from 'antd';
+
+import type {
+  ResultWriteRecord,
+  ScheduledJobRunRecord,
+} from '../../../services/aiBrain';
+import { formatDisplayDateTime } from '../../../utils/dateTime';
+import { ScheduledJobJsonPreview as JsonPreview } from './ScheduledJobJsonPreview';
+import { ScheduledJobRunResultWriteRecords } from './ScheduledJobRunResultWriteRecords';
+import {
+  RunExecutionChain,
+  RunSourceComparison,
+  RunTraceDag,
+  TemplateSourceSummary,
+} from './ScheduledJobRunTraceDetails';
+import {
+  getRunExecutionNode,
+  isTraceRecord,
+  templateSourceFromConfig,
+} from './scheduledJobRunTraceHelpers';
+
+type ScheduledJobRunDetailModalProps = {
+  agentLabel: string;
+  executionModeLabel: string;
+  focusedResultWriteRecordId?: string;
+  jobTypeLabel: string;
+  modelLabel: string;
+  onClose: () => void;
+  onCopyRun: (run: ScheduledJobRunRecord) => void;
+  onGenerateTemplate: (run: ScheduledJobRunRecord) => void | Promise<void>;
+  resultWriteRecords: ResultWriteRecord[];
+  resultWriteRecordsLoading: boolean;
+  run?: ScheduledJobRunRecord;
+  skillLabels: string;
+};
+
+const runTriggerTypeLabelByValue = new Map([
+  ['manual', '手动触发'],
+  ['manual_rerun', '运行记录复跑'],
+  ['scheduler', '调度触发'],
+]);
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return isTraceRecord(value) ? value : undefined;
+}
+
+function assistantRunFollowupPrompt(run: ScheduledJobRunRecord) {
+  return run.status === 'failed' ? '为什么这次任务失败？' : '帮我分析这次运行结果';
+}
+
+function assistantRunRepairDraftPrompt() {
+  return '这次失败怎么修？帮我生成修复草案';
+}
+
+function assistantRunComparisonPrompt() {
+  return '和上次成功有什么不同？';
+}
+
+function assistantRunFollowupUrl(run: ScheduledJobRunRecord, prompt = assistantRunFollowupPrompt(run)) {
+  const params = new URLSearchParams();
+  params.set('reference_type', 'scheduled_job_run');
+  params.set('reference_id', run.id);
+  params.set('prompt', prompt);
+  return `/assistant?${params.toString()}`;
+}
+
+export function ScheduledJobRunDetailModal({
+  agentLabel,
+  executionModeLabel,
+  focusedResultWriteRecordId,
+  jobTypeLabel,
+  modelLabel,
+  onClose,
+  onCopyRun,
+  onGenerateTemplate,
+  resultWriteRecords,
+  resultWriteRecordsLoading,
+  run,
+  skillLabels,
+}: ScheduledJobRunDetailModalProps) {
+  return (
+    <Modal
+      destroyOnHidden
+      footer={(
+        <Space>
+          <Button onClick={onClose}>关闭</Button>
+          {run?.status === 'succeeded' ? (
+            <Button onClick={() => void onGenerateTemplate(run)}>
+              生成模板
+            </Button>
+          ) : null}
+          {run ? (
+            <Button
+              aria-label="问 AI"
+              href={assistantRunFollowupUrl(run)}
+              icon={<RobotOutlined />}
+            >
+              问 AI
+            </Button>
+          ) : null}
+          {run?.status === 'failed' ? (
+            <>
+              <Button
+                aria-label="继续诊断"
+                href={assistantRunFollowupUrl(run, assistantRunFollowupPrompt(run))}
+                icon={<RobotOutlined />}
+              >
+                继续诊断
+              </Button>
+              <Button
+                aria-label="生成修复草案"
+                href={assistantRunFollowupUrl(run, assistantRunRepairDraftPrompt())}
+                icon={<EditOutlined />}
+              >
+                生成修复草案
+              </Button>
+              <Button
+                aria-label="对比上次成功"
+                href={assistantRunFollowupUrl(run, assistantRunComparisonPrompt())}
+                icon={<ReloadOutlined />}
+              >
+                对比上次成功
+              </Button>
+            </>
+          ) : null}
+          {run ? (
+            <Button icon={<CopyOutlined />} type="primary" onClick={() => onCopyRun(run)}>
+              复制本次配置
+            </Button>
+          ) : null}
+        </Space>
+      )}
+      open={Boolean(run)}
+      title="运行结果详情"
+      width={980}
+      onCancel={onClose}
+    >
+      {run ? (
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <Descriptions
+            bordered
+            column={2}
+            items={[
+              { key: 'id', label: '运行 ID', children: run.id },
+              { key: 'status', label: '状态', children: run.status },
+              { key: 'job_type', label: '作业类型', children: jobTypeLabel },
+              { key: 'execution_mode', label: 'AI执行', children: executionModeLabel },
+              { key: 'model_gateway_config_id', label: 'AI 模型', children: modelLabel },
+              { key: 'agent_id', label: 'AI角色', children: agentLabel },
+              { key: 'skill_ids', label: 'Skills', children: skillLabels },
+              {
+                key: 'trigger_type',
+                label: '触发方式',
+                children: runTriggerTypeLabelByValue.get(String(run.trigger_type ?? '')) ?? run.trigger_type ?? '-',
+              },
+              { key: 'records_imported', label: '导入数', children: run.records_imported ?? 0 },
+              { key: 'source_run_id', label: '复跑来源', children: run.source_run_id || '-' },
+              {
+                key: 'template_source',
+                label: '模板来源',
+                children: (
+                  <TemplateSourceSummary
+                    source={templateSourceFromConfig(recordValue(run.config_snapshot?.config_json))}
+                  />
+                ),
+              },
+              { key: 'collector_run_id', label: '采集运行', children: run.collector_run_id || '-' },
+              { key: 'plugin_invocation_log_id', label: '插件调用', children: run.plugin_invocation_log_id || '-' },
+              { key: 'scheduled_job_id', label: '作业 ID', children: run.scheduled_job_id || '-' },
+              { key: 'started_at', label: '开始时间', children: formatDisplayDateTime(run.started_at) },
+              { key: 'finished_at', label: '结束时间', children: formatDisplayDateTime(run.finished_at) },
+              { key: 'error_code', label: '错误码', children: run.error_code || '-' },
+              {
+                key: 'error_message',
+                label: '错误信息',
+                children: run.error_message || '-',
+              },
+            ]}
+            size="small"
+          />
+          <RunSourceComparison run={run} />
+          <RunExecutionChain run={run} />
+          <RunTraceDag run={run} />
+          <ScheduledJobRunResultWriteRecords
+            focusedRecordId={focusedResultWriteRecordId}
+            loading={resultWriteRecordsLoading}
+            records={resultWriteRecords}
+          />
+          <JsonPreview title="数据连接获取内容" value={getRunExecutionNode(run, 'data_connection')} />
+          <JsonPreview title="AI执行处理内容" value={getRunExecutionNode(run, 'skill_processing')} />
+          <JsonPreview title="动作反馈内容" value={getRunExecutionNode(run, 'result_action')} />
+          <JsonPreview title="代码巡检报告写入结果" value={getRunExecutionNode(run, 'code_inspection_report')} />
+          <JsonPreview title="严重问题自动创建 Bug" value={getRunExecutionNode(run, 'bug_creation')} />
+          <JsonPreview title="严重问题自动创建整改任务" value={getRunExecutionNode(run, 'task_creation')} />
+          <JsonPreview title="问题消息通知" value={getRunExecutionNode(run, 'notifications')} />
+          <JsonPreview title="动作执行状态" value={getRunExecutionNode(run, 'result_actions')} />
+          <JsonPreview title="结果摘要" value={run.result_summary} />
+          <JsonPreview title="插件快照" value={run.resolved_plugin_snapshot} />
+          <JsonPreview title="Skill 快照" value={run.resolved_skill_snapshots} />
+          <JsonPreview title="Prompt 快照" value={run.resolved_prompt_snapshot} />
+          <JsonPreview title="作业配置快照" value={run.config_snapshot} />
+        </Space>
+      ) : null}
+    </Modal>
+  );
+}
