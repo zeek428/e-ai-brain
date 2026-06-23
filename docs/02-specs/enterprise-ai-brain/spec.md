@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.478 |
+| 功能版本 | v1.1.479 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.479 | 2026-06-23 | 执行诊断中心前端详情继续按组件边界减重：链路概要、关联对象、节点表、关系表和元数据预览抽到 `ExecutionTraceDetailContent`，为后续 Trace DAG 钻取和诊断建议扩展预留稳定边界 | Codex |
 | v1.1.478 | 2026-06-23 | 插件管理前端 Runner 配置继续减重：执行器协议、命令、目标系统、安装模式、工作区白名单和 Token 字段抽到 `PluginRunnerFormFields`，Runner 选项与安装包 helper 独立为 `pluginRunnerHelpers` | Codex |
 | v1.1.477 | 2026-06-23 | 插件管理前端连接表单继续减重：请求参数行、连接 schema 字段、GitHub/GitLab 地址校验抽到 `PluginConnectionFormFields` 与 `pluginConnectionAddressHelpers`，主页面保留插件、连接和动作编排逻辑 | Codex |
 | v1.1.476 | 2026-06-23 | 插件管理前端继续按诊断边界减重：连接测试请求调试台、市场连接 schema 展示、最近测试摘要、试运行写入预览和状态颜色 helper 抽到 `PluginDiagnostics`，主页面聚焦插件、连接、动作和 Runner 编排 | Codex |

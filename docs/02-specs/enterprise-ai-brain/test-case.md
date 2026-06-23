@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.604 |
+| 功能版本 | v1.1.605 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.605 | 2026-06-23 | 补充执行诊断详情组件化验收：链路概要、关联对象、节点表、关系表和元数据预览从主页面拆出后，`ExecutionTracesPage.test.tsx`、typecheck、lint 和真实 `/governance/execution-traces` 页面 smoke 必须通过 | Codex |
 | v1.1.604 | 2026-06-23 | 补充插件管理 Runner 配置组件化验收：执行器协议、命令、目标系统、安装模式、工作区和 Token 字段从主页面拆出后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/system/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.603 | 2026-06-23 | 补充插件管理连接表单组件化验收：请求参数行、连接 schema 字段、GitHub/GitLab 地址校验从主页面拆出后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/system/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.602 | 2026-06-23 | 补充插件管理诊断组件化验收：连接测试请求调试台、市场连接 schema、最近测试摘要和试运行写入预览从主页面拆出后，typecheck、lint 和真实 `/system/plugins` 页面 smoke 必须通过 | Codex |

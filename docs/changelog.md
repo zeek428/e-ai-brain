@@ -20,6 +20,7 @@
 - 插件管理页面主文件继续减重：连接测试请求调试台、市场连接 schema 展示、最近测试摘要、试运行写入预览和状态颜色 helper 抽到 `PluginDiagnostics`，让主页面聚焦插件、连接、动作和 Runner 编排。
 - 插件管理连接表单继续减重：请求参数行、连接 schema 字段和 GitHub/GitLab 地址解析校验抽到 `PluginConnectionFormFields` 与 `pluginConnectionAddressHelpers`，避免连接表单逻辑继续堆在主页面。
 - 插件管理 Runner 配置继续减重：执行器协议、命令、目标系统、安装模式、工作区白名单和 Token 字段抽到 `PluginRunnerFormFields`，Runner 选项与安装包 helper 独立维护。
+- 执行诊断中心详情继续减重：链路概要、关联对象、节点表、关系表和元数据预览抽到 `ExecutionTraceDetailContent`，主页面从详情渲染细节中解耦，为后续 Trace DAG 钻取和诊断建议扩展预留组件边界。
 
 ### Fixed
 - AI 助手页面样式隔离：将 `.assistant-*` 规则从全局样式迁移到助手页面级 `Assistant.css`，并保留多视口真实页面 smoke 覆盖，降低其它页面样式变更影响助手布局的风险。
