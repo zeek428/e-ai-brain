@@ -8,6 +8,12 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.api.deps import api_error
+from app.core.listing import (
+    ensure_list_enum,
+    list_text_matches,
+    paginated_list_payload,
+    sort_list_items,
+)
 from app.services.plugins import (
     create_plugin_action_response,
     create_plugin_connection_response,
@@ -44,6 +50,7 @@ ASSISTANT_ACTION_DRAFT_STATUSES = {
     "pending",
 }
 ASSISTANT_ACTION_RUN_STATUSES = {"failed", "succeeded"}
+ASSISTANT_ACTION_DRAFT_VALIDATION_STATUSES = {"blocked", "passed", "unknown", "warning"}
 ASSISTANT_DRAFT_ACTIONS = {
     "create_ai_agent",
     "create_ai_skill",
@@ -52,6 +59,21 @@ ASSISTANT_DRAFT_ACTIONS = {
     "create_plugin_connection",
     "create_rd_task",
     "create_scheduled_job",
+}
+ASSISTANT_ACTION_DRAFT_SORT_FIELDS = {
+    "action",
+    "created_at",
+    "expires_at",
+    "id",
+    "modified_field_count",
+    "result_status",
+    "risk_level",
+    "status",
+    "title",
+    "updated_at",
+    "validation_issue_count",
+    "validation_status",
+    "view_count",
 }
 AI_AGENT_DEFAULTS = {
     "brain_app_id": "rd_brain",
@@ -206,6 +228,112 @@ def get_assistant_action_draft_response(
     ensure_draft_access(draft, user=user)
     draft = refresh_assistant_action_draft_expiry(current_store, draft)
     return public_assistant_action_draft(draft, current_store=current_store, user=user)
+
+
+def list_assistant_action_drafts_response(
+    *,
+    action: str | None,
+    created_from: str | None,
+    created_to: str | None,
+    current_store: Any,
+    keyword: str | None,
+    page: int | None,
+    page_size: int | None,
+    sort_by: str | None,
+    sort_order: str,
+    started_at: float | None,
+    status: str | None,
+    trace_id: str,
+    user: dict[str, Any],
+    validation_status: str | None,
+) -> dict[str, Any]:
+    ensure_list_enum(action, ASSISTANT_DRAFT_ACTIONS, "action")
+    ensure_list_enum(status, ASSISTANT_ACTION_DRAFT_STATUSES, "status")
+    ensure_list_enum(
+        validation_status,
+        ASSISTANT_ACTION_DRAFT_VALIDATION_STATUSES,
+        "validation_status",
+    )
+    ensure_list_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        ensure_list_enum(sort_by, ASSISTANT_ACTION_DRAFT_SORT_FIELDS, "sort_by")
+
+    from_at = _parse_draft_datetime(created_from)
+    to_at = _parse_draft_datetime(created_to)
+    visible_drafts = [
+        _assistant_action_draft_workbench_item(
+            public_assistant_action_draft(
+                draft,
+                current_store=current_store,
+                user=user,
+            )
+        )
+        for draft in list_user_assistant_action_drafts(current_store, user=user)
+    ]
+    if action:
+        visible_drafts = [draft for draft in visible_drafts if draft["action"] == action]
+    if status:
+        visible_drafts = [draft for draft in visible_drafts if draft["status"] == status]
+    if validation_status:
+        visible_drafts = [
+            draft for draft in visible_drafts if draft["validation_status"] == validation_status
+        ]
+    if from_at or to_at:
+        visible_drafts = [
+            draft
+            for draft in visible_drafts
+            if _assistant_draft_within_time_range(
+                draft.get("created_at") or draft.get("updated_at"),
+                from_at,
+                to_at,
+            )
+        ]
+    visible_drafts = [
+        draft
+        for draft in visible_drafts
+        if list_text_matches(
+            draft,
+            keyword,
+            (
+                "action",
+                "id",
+                "result_id",
+                "result_type",
+                "source_message_id",
+                "status",
+                "title",
+                "validation_status",
+            ),
+        )
+    ]
+    visible_drafts = sort_list_items(
+        visible_drafts,
+        allowed_fields=ASSISTANT_ACTION_DRAFT_SORT_FIELDS,
+        default_sort_by="updated_at",
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    response = paginated_list_payload(
+        visible_drafts,
+        filters={
+            "action": action,
+            "created_from": created_from,
+            "created_to": created_to,
+            "keyword": keyword,
+            "status": status,
+            "validation_status": validation_status,
+        },
+        list_name="assistant_action_drafts",
+        observed=True,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by or "updated_at",
+        sort_order=sort_order,
+        started_at=started_at,
+        trace_id=trace_id,
+    )
+    response["data"]["summary"] = _assistant_action_draft_workbench_summary(visible_drafts)
+    return response
 
 
 def confirm_assistant_action_draft_response(
@@ -823,11 +951,7 @@ def _assistant_prerequisite_resolutions(
         draft=draft,
         prerequisite_ids=prerequisite_ids,
     )
-    drafts_by_id = {
-        str(item.get("id")): item
-        for item in draft_items
-        if item.get("id")
-    }
+    drafts_by_id = {str(item.get("id")): item for item in draft_items if item.get("id")}
     drafts_by_client_id = {
         str(item.get("client_draft_id")): item
         for item in draft_items
@@ -836,9 +960,7 @@ def _assistant_prerequisite_resolutions(
     runs_by_id = _assistant_action_runs_by_id(current_store)
     resolutions: list[dict[str, str]] = []
     for prerequisite_id in prerequisite_ids:
-        prerequisite = drafts_by_id.get(prerequisite_id) or drafts_by_client_id.get(
-            prerequisite_id
-        )
+        prerequisite = drafts_by_id.get(prerequisite_id) or drafts_by_client_id.get(prerequisite_id)
         if not prerequisite or prerequisite.get("status") != "confirmed":
             continue
         if prerequisite.get("created_by") != draft.get("created_by"):
@@ -885,9 +1007,7 @@ def _assistant_prerequisite_draft_items(
     get_draft = getattr(repository, "get_assistant_action_draft", None)
     if callable(get_draft):
         known_lookup_keys = {
-            str(item.get("id") or "").strip()
-            for item in items
-            if item.get("id")
+            str(item.get("id") or "").strip() for item in items if item.get("id")
         } | {
             str(item.get("client_draft_id") or "").strip()
             for item in items
@@ -1017,6 +1137,128 @@ def get_assistant_action_draft(
     if draft is None:
         raise api_error(404, "NOT_FOUND", "Assistant action draft not found")
     return dict(draft)
+
+
+def list_user_assistant_action_drafts(
+    current_store: Any,
+    *,
+    user: dict[str, Any],
+) -> list[dict[str, Any]]:
+    repository = assistant_action_repository(current_store)
+    list_drafts = getattr(repository, "list_assistant_action_drafts", None)
+    if callable(list_drafts):
+        return [dict(draft) for draft in (list_drafts(user_id=user["id"]) or [])]
+    drafts = getattr(current_store, "assistant_action_drafts", {})
+    return [
+        dict(draft)
+        for draft in drafts.values()
+        if isinstance(draft, dict) and draft.get("created_by") == user["id"]
+    ]
+
+
+def _assistant_action_draft_workbench_item(public_draft: dict[str, Any]) -> dict[str, Any]:
+    metadata_json = (
+        public_draft.get("metadata_json")
+        if isinstance(public_draft.get("metadata_json"), dict)
+        else {}
+    )
+    preview = public_draft.get("preview") if isinstance(public_draft.get("preview"), dict) else {}
+    validation = preview.get("validation") if isinstance(preview.get("validation"), dict) else {}
+    issues = validation.get("issues") if isinstance(validation.get("issues"), list) else []
+    result_run = (
+        public_draft.get("result_run") if isinstance(public_draft.get("result_run"), dict) else {}
+    )
+    modified_fields = (
+        metadata_json.get("modified_fields")
+        if isinstance(metadata_json.get("modified_fields"), list)
+        else []
+    )
+    validation_status = str(validation.get("status") or "unknown")
+    result_status = str(result_run.get("status") or "").strip() or None
+    return {
+        "action": public_draft["action"],
+        "cancel_reason": public_draft.get("cancel_reason"),
+        "client_draft_id": public_draft.get("client_draft_id"),
+        "confirmed_at": public_draft.get("confirmed_at"),
+        "created_at": public_draft["created_at"],
+        "created_by": public_draft["created_by"],
+        "expires_at": public_draft.get("expires_at"),
+        "id": public_draft["id"],
+        "modified_field_count": len(modified_fields),
+        "result_id": result_run.get("result_id"),
+        "result_run_id": public_draft.get("result_run_id"),
+        "result_status": result_status,
+        "result_type": result_run.get("result_type"),
+        "risk_level": public_draft.get("risk_level", "medium"),
+        "source_link": f"/assistant?draft_id={public_draft['id']}",
+        "source_message_id": public_draft.get("source_message_id"),
+        "status": public_draft["status"],
+        "title": public_draft["title"],
+        "updated_at": public_draft["updated_at"],
+        "user_modified": bool(metadata_json.get("user_modified") or modified_fields),
+        "validation_issue_count": len(issues),
+        "validation_status": (
+            validation_status
+            if validation_status in ASSISTANT_ACTION_DRAFT_VALIDATION_STATUSES
+            else "unknown"
+        ),
+        "view_count": _safe_int(metadata_json.get("view_count")),
+        "wizard_step_count": len(public_draft.get("wizard_steps") or []),
+    }
+
+
+def _assistant_action_draft_workbench_summary(
+    drafts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    total = len(drafts)
+    status_counts = {
+        status: sum(1 for draft in drafts if draft.get("status") == status)
+        for status in sorted(ASSISTANT_ACTION_DRAFT_STATUSES)
+    }
+    validation_counts = {
+        status: sum(1 for draft in drafts if draft.get("validation_status") == status)
+        for status in sorted(ASSISTANT_ACTION_DRAFT_VALIDATION_STATUSES)
+    }
+    modified_count = sum(1 for draft in drafts if draft.get("user_modified"))
+    terminal_count = sum(
+        status_counts[status] for status in ("cancelled", "confirmed", "expired", "failed")
+    )
+    confirmed_count = status_counts["confirmed"]
+    return {
+        "adoption_rate": _ratio(confirmed_count, total),
+        "draft_total": total,
+        "resolution_rate": _ratio(terminal_count, total),
+        "status_counts": status_counts,
+        "user_modified_count": modified_count,
+        "user_modified_rate": _ratio(modified_count, total),
+        "validation_counts": validation_counts,
+    }
+
+
+def _assistant_draft_within_time_range(
+    value: Any,
+    from_at: datetime | None,
+    to_at: datetime | None,
+) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = _parse_draft_datetime(str(value))
+    except Exception:
+        return False
+    if parsed is None:
+        return False
+    if from_at and parsed < from_at:
+        return False
+    if to_at and parsed > to_at:
+        return False
+    return True
+
+
+def _ratio(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator, 4)
 
 
 def refresh_assistant_action_draft_expiry(
@@ -1647,11 +1889,7 @@ def _append_action_permission_validation(
 def _user_has_permission(user: dict[str, Any], permission: str) -> bool:
     roles = set(user.get("roles") or [])
     permissions = set(user.get("permissions") or [])
-    return (
-        "admin" in roles
-        or "system.admin" in permissions
-        or permission in permissions
-    )
+    return "admin" in roles or "system.admin" in permissions or permission in permissions
 
 
 def _generic_create_draft_preview(
@@ -1677,9 +1915,7 @@ def _generic_create_draft_preview(
         if source_payload is not None and current == proposed:
             continue
         change_type = (
-            "update"
-            if source_payload is not None and current not in (None, "", [])
-            else "create"
+            "update" if source_payload is not None and current not in (None, "", []) else "create"
         )
         diffs.append(
             {
@@ -1712,9 +1948,7 @@ def _draft_source_resource(
     expected_type: str,
 ) -> dict[str, Any] | None:
     metadata_json = (
-        draft.get("metadata_json")
-        if isinstance(draft.get("metadata_json"), dict)
-        else {}
+        draft.get("metadata_json") if isinstance(draft.get("metadata_json"), dict) else {}
     )
     source_resource = metadata_json.get("source_resource")
     if not isinstance(source_resource, dict):
@@ -1836,8 +2070,7 @@ def _valid_cron_field(
     if not field:
         return False
     return all(
-        _valid_cron_part(part, minimum, maximum, aliases)
-        for part in field.upper().split(",")
+        _valid_cron_part(part, minimum, maximum, aliases) for part in field.upper().split(",")
     )
 
 
@@ -1895,9 +2128,7 @@ def _add_issue(
     resolved_repair_action = repair_action or _default_repair_action(field)
     if resolved_repair_action is not None:
         issue["repair_action"] = resolved_repair_action
-    validation.setdefault("issues", []).append(
-        issue
-    )
+    validation.setdefault("issues", []).append(issue)
 
 
 def _default_repair_action(field: str) -> dict[str, Any] | None:

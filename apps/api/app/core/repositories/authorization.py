@@ -46,6 +46,16 @@ COMPATIBILITY_MENU_RESOURCES: list[dict[str, Any]] = [
         "status": "active",
     },
     {
+        "code": "assistant.drafts",
+        "name": "草案任务台",
+        "path": "/assistant/drafts",
+        "parent_code": None,
+        "menu_type": "page",
+        "sort_order": 16,
+        "required_permissions": ["assistant.chat"],
+        "status": "active",
+    },
+    {
         "code": "task",
         "name": "任务中心",
         "path": "/tasks",
@@ -331,6 +341,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     "admin": {
         "workspace.dashboard",
         "assistant.chat",
+        "assistant.drafts",
         "task",
         "task.center",
         "delivery",
@@ -363,6 +374,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     "product_owner": {
         "workspace.dashboard",
         "assistant.chat",
+        "assistant.drafts",
         "task",
         "task.center",
         "delivery",
@@ -380,6 +392,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     "rd_owner": {
         "workspace.dashboard",
         "assistant.chat",
+        "assistant.drafts",
         "task",
         "task.center",
         "delivery",
@@ -397,6 +410,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     "knowledge_owner": {
         "workspace.dashboard",
         "assistant.chat",
+        "assistant.drafts",
         "product.assets",
         "knowledge.center",
         "knowledge.search",
@@ -406,6 +420,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     "viewer": {
         "workspace.dashboard",
         "assistant.chat",
+        "assistant.drafts",
         "task",
         "task.center",
         "delivery",
@@ -418,6 +433,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     "developer": {
         "workspace.dashboard",
         "assistant.chat",
+        "assistant.drafts",
         "task",
         "task.center",
         "delivery",
@@ -428,6 +444,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     "test_owner": {
         "workspace.dashboard",
         "assistant.chat",
+        "assistant.drafts",
         "task",
         "task.center",
         "delivery",
@@ -436,6 +453,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     "tester": {
         "workspace.dashboard",
         "assistant.chat",
+        "assistant.drafts",
         "task",
         "task.center",
         "delivery",
@@ -444,6 +462,7 @@ COMPATIBILITY_ROLE_MENU_GRANTS: dict[str, set[str]] = {
     "release_owner": {
         "workspace.dashboard",
         "assistant.chat",
+        "assistant.drafts",
         "task",
         "task.center",
         "delivery",

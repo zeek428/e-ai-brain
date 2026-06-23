@@ -15,6 +15,7 @@ from app.services.assistant_action_drafts import (
     confirm_assistant_action_draft_response,
     create_assistant_action_draft_response,
     get_assistant_action_draft_response,
+    list_assistant_action_drafts_response,
     mark_assistant_action_draft_modified_response,
     mark_assistant_action_draft_viewed_response,
     patch_assistant_action_draft_response,
@@ -201,6 +202,11 @@ class AssistantActionReferenceConfigRolloutRequest(BaseModel):
     enterprise_id: str | None = None
     rollout_json: dict[str, Any] = Field(default_factory=dict)
     template_version: str | None = None
+
+
+def _request_started_at(request: Request) -> float | None:
+    started_at = getattr(request.state, "started_at", None)
+    return started_at if isinstance(started_at, float) else None
 
 
 @router.get("/runtime-status")
@@ -605,6 +611,40 @@ def create_assistant_action_draft(
         user=user,
     )
     return envelope(result, get_trace_id(request))
+
+
+@router.get("/action-drafts")
+def list_assistant_action_drafts(
+    request: Request,
+    action: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
+    keyword: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    status: str | None = None,
+    validation_status: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_roles(user, ASSISTANT_ACCESS_ROLES)
+    return list_assistant_action_drafts_response(
+        action=action,
+        created_from=created_from,
+        created_to=created_to,
+        current_store=store(request),
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        started_at=_request_started_at(request),
+        status=status,
+        trace_id=get_trace_id(request),
+        user=user,
+        validation_status=validation_status,
+    )
 
 
 @router.get("/action-drafts/{draft_id}")

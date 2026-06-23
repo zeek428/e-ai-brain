@@ -22,6 +22,12 @@ const routes = [
     component: './Assistant',
   },
   {
+    path: '/assistant/drafts',
+    name: '草案任务台',
+    icon: 'ProfileOutlined',
+    component: './AssistantDrafts',
+  },
+  {
     path: '/tasks',
     name: '任务中心',
     icon: 'ProjectOutlined',

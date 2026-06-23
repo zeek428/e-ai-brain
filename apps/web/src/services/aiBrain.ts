@@ -820,9 +820,13 @@ export type AssistantActionDraftRecord = {
   action: string;
   cancel_reason?: string;
   client_draft_id?: string;
+  confirmed_at?: string;
+  confirmed_by?: string;
   created_at?: string;
   created_by?: string;
+  expires_at?: string;
   id: string;
+  metadata_json?: Record<string, unknown>;
   payload: Record<string, unknown>;
   preview?: AssistantActionDraftPreview;
   result_run?: AssistantActionRunRecord;
@@ -834,6 +838,57 @@ export type AssistantActionDraftRecord = {
   updated_at?: string;
   wizard_steps?: unknown[];
 };
+
+export type AssistantActionDraftWorkbenchSummary = {
+  adoption_rate: number;
+  draft_total: number;
+  resolution_rate: number;
+  status_counts: Record<string, number>;
+  user_modified_count: number;
+  user_modified_rate: number;
+  validation_counts: Record<string, number>;
+};
+
+export type AssistantActionDraftWorkbenchItem = {
+  action: string;
+  cancel_reason?: string | null;
+  client_draft_id?: string | null;
+  confirmed_at?: string | null;
+  created_at?: string | null;
+  created_by?: string | null;
+  expires_at?: string | null;
+  id: string;
+  modified_field_count: number;
+  result_id?: string | null;
+  result_run_id?: string | null;
+  result_status?: string | null;
+  result_type?: string | null;
+  risk_level?: string | null;
+  source_link: string;
+  source_message_id?: string | null;
+  status: string;
+  title: string;
+  updated_at?: string | null;
+  user_modified: boolean;
+  validation_issue_count: number;
+  validation_status: string;
+  view_count: number;
+  wizard_step_count: number;
+};
+
+export type AssistantActionDraftWorkbenchQuery = RemoteListQuery & {
+  action?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  keyword?: string;
+  status?: string;
+  validationStatus?: string;
+};
+
+export type AssistantActionDraftWorkbenchResult =
+  RemoteListResult<AssistantActionDraftWorkbenchItem> & {
+    summary: AssistantActionDraftWorkbenchSummary;
+  };
 
 export type AssistantActionDraftPreviewDiff = {
   change_type: string;
@@ -3155,6 +3210,37 @@ export async function getAssistantActionDraft(
     method: 'GET',
     token,
   });
+}
+
+export async function fetchAssistantActionDraftWorkbench(
+  query: AssistantActionDraftWorkbenchQuery = {},
+): Promise<AssistantActionDraftWorkbenchResult> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'action', query.action);
+  appendQueryParam(params, 'created_from', query.createdFrom);
+  appendQueryParam(params, 'created_to', query.createdTo);
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'validation_status', query.validationStatus);
+  appendRemoteListParams(params, query);
+  const queryString = params.toString();
+  const response = await apiRequest<ListResponse<AssistantActionDraftWorkbenchItem> & {
+    summary: AssistantActionDraftWorkbenchSummary;
+  }>(
+    queryString
+      ? `/api/assistant/action-drafts?${queryString}`
+      : '/api/assistant/action-drafts',
+    { token },
+  );
+
+  return {
+    page: response.page ?? query.page ?? 1,
+    pageSize: response.page_size ?? query.pageSize ?? 10,
+    rows: response.items,
+    summary: response.summary,
+    total: response.total,
+  };
 }
 
 export async function confirmAssistantActionDraft(

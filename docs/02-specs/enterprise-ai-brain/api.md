@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.377 |
+| 功能版本 | v1.1.378 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.378 | 2026-06-23 | 新增 AI 助手草案任务台列表 API：`GET /api/assistant/action-drafts` 支持当前用户草案分页、筛选、排序、状态汇总、采纳率、处理率和用户修改率，用于 `/assistant/drafts` 工作台闭环 | Codex |
 | v1.1.377 | 2026-06-23 | 新增执行诊断 API：`GET /api/governance/execution-traces` 和详情接口按运行根聚合定时作业、插件、AI 执行器、模型网关、代码巡检和审计节点，并统一脱敏元数据 | Codex |
 | v1.1.376 | 2026-06-21 | AI 助手效果指标补齐产品/角色/时间段/动作过滤、每日趋势、草案类型趋势和 `/api/assistant/metrics/export` 导出契约；助手页面样式迁移到页面级 scoped CSS | Codex |
 | v1.1.375 | 2026-06-21 | AI 助手会话列表新增 cursor/limit 分页响应，历史草案工具结果输出安全白名单和敏感字段脱敏，指标明细按 limit 下推返回 | Codex |
@@ -631,6 +632,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Assistant | GET | `/api/assistant/reference-candidates` | 按 query/type/product_id 返回当前用户可通过 `@` 使用的候选；覆盖引用类业务对象、可读知识空间/知识目录/知识文档/知识片段、管理员或专项权限可见的定时作业/运行/插件动作/插件连接/AI角色/Skill，以及 `assistant_action` 动作入口；运营类定时作业和运行记录必须再按当前用户产品 scope 过滤，未指定 type 的默认候选按类型均衡合并。 |
 | Assistant | POST | `/api/assistant/references/resolve` | 解析并校验显式引用，返回可进入上下文的脱敏引用快照和限量知识上下文。 |
 | Assistant | POST | `/api/assistant/action-drafts` | 创建 AI 助手动作草案，支持研发任务、AI Skill、AI角色、定时作业、插件连接、动作配置和分析草案。 |
+| Assistant | GET | `/api/assistant/action-drafts` | 查询当前登录用户草案任务台列表，支持 `action/status/validation_status/keyword/created_from/created_to/page/page_size/sort_by/sort_order`，返回草案行、分页元数据和状态/采纳/处理/修改率汇总。 |
 | Assistant | GET | `/api/assistant/action-drafts/{draft_id}` | 查询当前用户动作草案详情；`preview.validation.issues[]` 可返回 `repair_action={action,label,field,resource_type,resource_id}`，用于前端展示修正字段、生成前置草案或打开连接测试等操作。 |
 | Assistant | PATCH | `/api/assistant/action-drafts/{draft_id}` | 在 pending 草案确认前更新草案 payload，并写入 `modified_fields/user_modified/modified_at/modified_by` 元数据和 `assistant_action_draft.updated` 审计；表单页从助手草案进入后保存必须走该接口再调用 confirm，不得直接绕过服务端草案生命周期创建领域对象。 |
 | Assistant | POST | `/api/assistant/action-drafts/{draft_id}/view` | 记录当前用户查看草案详情或深链加载草案，`surface=detail_modal` 写入 `detail_viewed_at`，`surface=deeplink` 写入 `deeplink_viewed_at`，并统一写入 `viewed_at/last_viewed_at/view_count/viewed_by/last_view_surface` 和 `assistant_action_draft.viewed` 审计，用于区分“查看详情”和“深链打开”。 |
@@ -1675,6 +1677,7 @@ run-once 草案兜底与执行权限一致：管理员、`system.admin`、`syste
 
 ```http
 POST /api/assistant/action-drafts
+GET /api/assistant/action-drafts
 GET /api/assistant/action-drafts/{draft_id}
 PATCH /api/assistant/action-drafts/{draft_id}
 POST /api/assistant/action-drafts/{draft_id}/view
@@ -1682,6 +1685,17 @@ POST /api/assistant/action-drafts/{draft_id}/confirm
 POST /api/assistant/action-drafts/{draft_id}/cancel
 POST /api/assistant/action-drafts/{draft_id}/modification
 ```
+
+草案任务台列表只返回当前登录用户创建的草案。查询参数支持：
+
+- `action`: `create_rd_task`、`create_ai_skill`、`create_ai_agent`、`create_scheduled_job`、`create_plugin_connection`、`create_plugin_action` 或 `create_analysis_draft`。
+- `status`: `pending`、`confirmed`、`cancelled`、`expired` 或 `failed`。
+- `validation_status`: `passed`、`warning`、`blocked` 或 `unknown`，来自草案预检结果。
+- `keyword`: 匹配草案标题、ID、动作、状态、来源消息和结果资源。
+- `created_from` / `created_to`: ISO 日期或时间，按草案创建时间过滤。
+- `page` / `page_size` / `sort_by` / `sort_order`: 管理列表统一分页、排序参数，默认按 `updated_at desc`。
+
+响应在通用列表字段外返回 `summary`，包括 `draft_total`、`status_counts`、`validation_counts`、`adoption_rate=confirmed/total`、`resolution_rate=(confirmed+cancelled+expired+failed)/total`、`user_modified_count` 和 `user_modified_rate`。列表行包含 `source_link=/assistant?draft_id=<id>`、`view_count`、`modified_field_count`、`validation_issue_count`、`wizard_step_count`、`result_status/result_type/result_id` 等任务台字段；敏感 payload 仍只能通过详情接口按现有脱敏规则查看。
 
 创建草案请求：
 

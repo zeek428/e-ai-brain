@@ -1,0 +1,187 @@
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+client = TestClient(app)
+
+
+def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
+    response = client.post("/api/auth/login", json={"username": username, "password": password})
+    token = response.json()["data"]["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _draft(
+    draft_id: str,
+    *,
+    action: str = "create_scheduled_job",
+    created_by: str = "user_admin",
+    metadata_json: dict | None = None,
+    payload: dict | None = None,
+    result_run_id: str | None = None,
+    risk_level: str = "medium",
+    status: str = "pending",
+    title: str = "草案",
+    updated_at: str = "2026-06-20T10:00:00+00:00",
+) -> dict:
+    default_payload = {
+        "execution_mode": "deterministic",
+        "job_type": "dashboard_snapshot_refresh",
+        "name": title,
+        "schedule_type": "manual",
+    }
+    return {
+        "action": action,
+        "created_at": updated_at,
+        "created_by": created_by,
+        "id": draft_id,
+        "metadata_json": metadata_json or {},
+        "payload": payload or default_payload,
+        "result_run_id": result_run_id,
+        "risk_level": risk_level,
+        "status": status,
+        "title": title,
+        "updated_at": updated_at,
+    }
+
+
+def test_assistant_action_draft_workbench_lists_current_user_drafts_with_summary():
+    app.state.store.reset()
+    app.state.store.assistant_action_drafts = {
+        "assistant_action_draft_pending": _draft(
+            "assistant_action_draft_pending",
+            metadata_json={
+                "modified_fields": ["cron_expression"],
+                "user_modified": True,
+                "view_count": 3,
+                "wizard_steps": [{"key": "source"}],
+            },
+            title="待确认定时作业草案",
+        ),
+        "assistant_action_draft_confirmed": _draft(
+            "assistant_action_draft_confirmed",
+            result_run_id="assistant_action_run_confirmed",
+            status="confirmed",
+            title="已采纳插件动作草案",
+            updated_at="2026-06-20T11:00:00+00:00",
+        ),
+        "assistant_action_draft_blocked": _draft(
+            "assistant_action_draft_blocked",
+            action="create_plugin_connection",
+            payload={"name": "缺少插件和 Endpoint"},
+            risk_level="high",
+            title="阻塞草案",
+            updated_at="2026-06-20T12:00:00+00:00",
+        ),
+        "assistant_action_draft_other_user": _draft(
+            "assistant_action_draft_other_user",
+            created_by="user_reviewer",
+            title="其他用户草案",
+            updated_at="2026-06-20T13:00:00+00:00",
+        ),
+    }
+    app.state.store.assistant_action_runs = {
+        "assistant_action_run_confirmed": {
+            "action": "create_scheduled_job",
+            "created_at": "2026-06-20T11:00:00+00:00",
+            "draft_id": "assistant_action_draft_confirmed",
+            "executed_by": "user_admin",
+            "finished_at": "2026-06-20T11:00:00+00:00",
+            "id": "assistant_action_run_confirmed",
+            "result": {"id": "plugin_action_001"},
+            "result_id": "plugin_action_001",
+            "result_type": "plugin_action",
+            "started_at": "2026-06-20T11:00:00+00:00",
+            "status": "succeeded",
+            "updated_at": "2026-06-20T11:00:00+00:00",
+        }
+    }
+
+    response = client.get(
+        "/api/assistant/action-drafts?page=1&page_size=10&sort_by=updated_at&sort_order=desc",
+        headers=auth_headers(),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["total"] == 3
+    assert [item["id"] for item in payload["items"]] == [
+        "assistant_action_draft_blocked",
+        "assistant_action_draft_confirmed",
+        "assistant_action_draft_pending",
+    ]
+    assert payload["summary"]["draft_total"] == 3
+    assert payload["summary"]["status_counts"]["pending"] == 2
+    assert payload["summary"]["status_counts"]["confirmed"] == 1
+    assert payload["summary"]["validation_counts"]["blocked"] == 1
+    assert payload["summary"]["adoption_rate"] == 0.3333
+    assert payload["summary"]["user_modified_rate"] == 0.3333
+    pending = next(
+        item for item in payload["items"] if item["id"] == "assistant_action_draft_pending"
+    )
+    assert pending["modified_field_count"] == 1
+    assert pending["view_count"] == 3
+    assert pending["wizard_step_count"] == 1
+    assert pending["source_link"] == "/assistant?draft_id=assistant_action_draft_pending"
+    confirmed = next(
+        item for item in payload["items"] if item["id"] == "assistant_action_draft_confirmed"
+    )
+    assert confirmed["result_status"] == "succeeded"
+    assert confirmed["result_type"] == "plugin_action"
+    assert confirmed["result_id"] == "plugin_action_001"
+
+
+def test_assistant_action_draft_workbench_filters_and_scopes_to_current_user():
+    app.state.store.reset()
+    app.state.store.assistant_action_drafts = {
+        "assistant_action_draft_admin_pending": _draft(
+            "assistant_action_draft_admin_pending",
+            status="pending",
+            title="管理员待确认草案",
+        ),
+        "assistant_action_draft_reviewer_confirmed": _draft(
+            "assistant_action_draft_reviewer_confirmed",
+            created_by="user_reviewer",
+            status="confirmed",
+            title="评审已采纳草案",
+        ),
+    }
+
+    admin_response = client.get(
+        "/api/assistant/action-drafts?status=confirmed",
+        headers=auth_headers(),
+    )
+    reviewer_response = client.get(
+        "/api/assistant/action-drafts?status=confirmed",
+        headers=auth_headers("reviewer@example.com", "reviewer123"),
+    )
+
+    assert admin_response.status_code == 200, admin_response.text
+    assert admin_response.json()["data"]["total"] == 0
+    assert reviewer_response.status_code == 200, reviewer_response.text
+    reviewer_payload = reviewer_response.json()["data"]
+    assert reviewer_payload["total"] == 1
+    assert reviewer_payload["items"][0]["id"] == "assistant_action_draft_reviewer_confirmed"
+
+
+def test_assistant_action_draft_workbench_refreshes_expired_drafts():
+    app.state.store.reset()
+    app.state.store.assistant_action_drafts = {
+        "assistant_action_draft_expired": {
+            **_draft("assistant_action_draft_expired", title="过期草案"),
+            "expires_at": "2026-01-01T00:00:00+00:00",
+        }
+    }
+
+    response = client.get(
+        "/api/assistant/action-drafts?status=expired",
+        headers=auth_headers(),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["total"] == 1
+    assert payload["items"][0]["status"] == "expired"
+    assert app.state.store.assistant_action_drafts["assistant_action_draft_expired"]["status"] == (
+        "expired"
+    )

@@ -15,6 +15,7 @@ DEFAULT_LIST_SLOW_THRESHOLD_MS = DEFAULT_LIST_P95_TARGET_MS
 LIST_P95_TARGETS_MS = {
     "ai_tasks": 300,
     "audit_events": 500,
+    "assistant_action_drafts": 400,
     "bugs": 300,
     "devops_operational_metrics": 500,
     "execution_traces": 500,

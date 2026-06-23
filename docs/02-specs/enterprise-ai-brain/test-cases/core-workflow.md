@@ -396,3 +396,39 @@
 **状态**: 已自动化覆盖。后端系统上下文注入、迭代进度/阻塞/待确认/代码评审/Bug 分布摘要、引用候选生成、模型日志脱敏和助手审计见 `apps/api/tests/test_assistant_context_service.py` 与 `apps/api/tests/test_assistant_chat.py`；前端聊天页面、快速问题、来源链接、用户级会话历史和服务请求映射见 `apps/web/tests/AssistantPage.test.tsx`。
 
 ---
+
+### TC-AIBRAIN-ASSISTANT-FUNC-027B: AI 助手草案任务台
+
+| 项目 | 内容 |
+|------|------|
+| 用例编号 | TC-AIBRAIN-ASSISTANT-FUNC-027B |
+| 用例名称 | AI 助手草案任务台 |
+| 优先级 | P0 |
+| 适用阶段 | v1.1 |
+| 模块 | ASSISTANT |
+| 创建人 | Codex |
+| 创建日期 | 2026-06-23 |
+
+**前置条件**:
+1. 用户已登录并具备 AI 助手访问权限。
+2. 当前用户已有 `pending/confirmed/failed/cancelled/expired` 等状态的助手动作草案。
+3. 至少一个草案包含查看次数、用户修改字段、预检问题或动作运行结果。
+
+**测试步骤**:
+| 步骤 | 操作 | 预期结果 |
+|------|------|----------|
+| 1 | 进入 `/assistant/drafts` 草案任务台 | 页面调用 `GET /api/assistant/action-drafts`，按 `updated_at desc` 展示当前用户草案，不展示其它用户草案。 |
+| 2 | 查看顶部汇总 | 展示待确认草案、失败草案、已采纳草案、采纳率、处理率和用户修改率。 |
+| 3 | 按草案类型、状态、校验状态、关键词和创建时间筛选 | API 接收相同筛选参数并返回分页结果，列表不会前端拼装跨页数据。 |
+| 4 | 点击某条草案“详情” | 页面调用 `POST /api/assistant/action-drafts/{draft_id}/view` 且 `surface=detail_modal`，弹窗展示 payload、校验问题、状态、风险和来源消息。 |
+| 5 | 点击“继续编辑” | 跳转 `/assistant?draft_id=<draft_id>`，复用助手深链加载草案。 |
+| 6 | 对 pending 草案点击确认或取消 | 页面调用对应 confirm/cancel API，完成后刷新任务台；终态草案不展示确认或取消入口。 |
+
+**预期结果**:
+1. 草案任务台是用户级 read model，不从聊天历史或前端本地缓存拼装主列表。
+2. 查看详情、确认、取消仍复用草案生命周期接口并写入审计。
+3. 列表 summary 与行字段能支撑草案采纳率、处理率、用户修改率和来源链路追踪。
+
+**状态**: 已自动化覆盖。后端列表、筛选、用户隔离、过期刷新和 summary 见 `apps/api/tests/test_assistant_draft_workbench.py`；前端页面指标、详情弹窗和继续编辑入口见 `apps/web/tests/AssistantDraftsPage.test.tsx`。真实页面 smoke 应覆盖 `/assistant/drafts` 非空渲染和无控制台错误。
+
+---
