@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.480 |
+| 功能版本 | v1.1.481 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.481 | 2026-06-23 | 定时作业前端继续按运行页签边界减重：运行健康概览、最近失败和慢运行表格抽到 `ScheduledJobRunObservabilityOverview`，主页面保留作业/运行编排逻辑 | Codex |
 | v1.1.480 | 2026-06-23 | 执行诊断中心新增 PostgreSQL 持久化读模型：统一链路构建后刷新 `execution_trace_snapshots`，列表和详情优先读取快照分页，保留 MemoryStore 测试 fallback | Codex |
 | v1.1.479 | 2026-06-23 | 执行诊断中心前端详情继续按组件边界减重：链路概要、关联对象、节点表、关系表和元数据预览抽到 `ExecutionTraceDetailContent`，为后续 Trace DAG 钻取和诊断建议扩展预留稳定边界 | Codex |
 | v1.1.478 | 2026-06-23 | 插件管理前端 Runner 配置继续减重：执行器协议、命令、目标系统、安装模式、工作区白名单和 Token 字段抽到 `PluginRunnerFormFields`，Runner 选项与安装包 helper 独立为 `pluginRunnerHelpers` | Codex |

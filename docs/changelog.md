@@ -16,6 +16,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 定时作业页面继续减重：运行健康概览、最近失败和慢运行表格抽到 `ScheduledJobRunObservabilityOverview`，主页面聚焦作业配置、运行列表和详情编排。
 - AI 助手页面主文件继续减重：消息气泡、草案工具结果、运行诊断、插件连接诊断和运行对比卡片抽到 `AssistantMessageBubble`，共享消息 helper 独立成 `assistantMessageHelpers`，主页面从消息渲染细节中解耦，便于继续扩展草案和诊断场景。
 - 定时作业运行详情继续减重：运行链路、Trace DAG、模板来源和复跑对比抽到 `ScheduledJobRunTraceDetails`，执行节点 helper 独立维护，主页面从运行详情渲染细节中解耦。
 - 插件管理页面主文件继续减重：连接测试请求调试台、市场连接 schema 展示、最近测试摘要、试运行写入预览和状态颜色 helper 抽到 `PluginDiagnostics`，让主页面聚焦插件、连接、动作和 Runner 编排。
