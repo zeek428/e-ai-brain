@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.490 |
+| 功能版本 | v1.1.491 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.491 | 2026-06-23 | 定时作业前端调度配置继续组件化：调度方式、Cron 表达式和固定间隔字段抽到 `ScheduledJobScheduleConfigSection`，主页面只保留表单段落编排 | Codex |
 | v1.1.490 | 2026-06-23 | 定时作业前端结果动作编辑器继续组件化：写入策略选择、代码巡检结果动作列表、严重级别和通知动作字段抽到 `ScheduledJobActionConfigSection`，主页面保留插件动作数据和提交编排 | Codex |
 | v1.1.489 | 2026-06-23 | 定时作业前端数据连接选择器继续组件化：连接环境筛选、数据连接多选、native full scan 禁用提示和插件资源校验抽到 `ScheduledJobDataConnectionSection`，主页面保留筛选数据与自动匹配动作编排 | Codex |
 | v1.1.488 | 2026-06-23 | 定时作业前端表单继续按配置域减重：通用表单分区抽到 `ScheduledJobFormSection`，AI 模型、AI角色、Skills 和知识引用字段抽到 `ScheduledJobAiExecutionSection`，主页面保留作业编排和提交逻辑 | Codex |
