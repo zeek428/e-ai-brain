@@ -77,6 +77,7 @@ import {
   ConnectionSchemaFields,
   RequestParameterRows,
 } from './components/PluginConnectionFormFields';
+import { PluginRunnerFormFields } from './components/PluginRunnerFormFields';
 import {
   ConnectionLastTestSummary,
   ConnectionRequestDebugPanel,
@@ -95,6 +96,14 @@ import {
   parseGitRepositoryAddress,
   safeDecodeURIComponent,
 } from './components/pluginConnectionAddressHelpers';
+import {
+  aiExecutorTypeOptions,
+  runnerDefaultInstallMode,
+  runnerExecutorCommandsFromMetadata,
+  runnerExecutorCommandsFromValues,
+  runnerPackageOptionsFromMetadata,
+  type AiExecutorRunnerFormValues,
+} from './components/pluginRunnerHelpers';
 
 type PluginFormValues = {
   category: string;
@@ -163,26 +172,6 @@ type ActionFormValues = {
   write_target?: string;
 };
 
-type AiExecutorRunnerFormValues = {
-  claude_command?: string;
-  codex_command?: string;
-  endpoint_url: string;
-  executor_types: string[];
-  hermes_command?: string;
-  heartbeat_timeout_seconds: number;
-  install_mode?: string;
-  max_concurrent_tasks: number;
-  metadata?: string;
-  name: string;
-  openclaw_command?: string;
-  package_arch?: string;
-  protocol: string;
-  runner_token?: string;
-  status: string;
-  target_os?: string;
-  workspace_roots?: string;
-};
-
 type RequestParameterRow = {
   description?: string;
   enabled?: boolean;
@@ -208,70 +197,10 @@ const requestMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((valu
   value,
 }));
 
-const aiExecutorTypeOptions = [
-  { label: 'Codex', value: 'codex' },
-  { label: 'Claude Code', value: 'claude' },
-  { label: 'Hermes', value: 'hermes' },
-  { label: 'OpenClaw', value: 'openclaw' },
-];
-
 const aiExecutorTypeLabelByValue = new Map([
   [SYSTEM_DEFAULT_AI_EXECUTOR_TYPE, '系统默认模型'],
   ...aiExecutorTypeOptions.map((option) => [option.value, option.label] as const),
 ]);
-
-const aiExecutorCommandFieldByType = new Map([
-  ['codex', 'codex_command'],
-  ['claude', 'claude_command'],
-  ['hermes', 'hermes_command'],
-  ['openclaw', 'openclaw_command'],
-] as const);
-
-const aiExecutorRunnerTargetOsOptions = [
-  { label: 'Linux', value: 'linux' },
-  { label: 'macOS', value: 'macos' },
-  { label: 'Windows', value: 'windows' },
-  { label: 'Docker', value: 'docker' },
-  { label: '通用手动安装', value: 'manual' },
-];
-
-const aiExecutorRunnerArchOptions = [
-  { label: 'amd64', value: 'amd64' },
-  { label: 'arm64', value: 'arm64' },
-  { label: 'universal', value: 'universal' },
-];
-
-const defaultInstallModeByTargetOs = new Map([
-  ['docker', 'docker'],
-  ['linux', 'systemd'],
-  ['macos', 'launchd'],
-  ['manual', 'manual'],
-  ['windows', 'service'],
-]);
-
-const installModeOptionsByTargetOs = new Map([
-  ['docker', [{ label: 'Docker Compose', value: 'docker' }]],
-  ['linux', [
-    { label: 'systemd 服务', value: 'systemd' },
-    { label: 'Shell 脚本', value: 'shell' },
-  ]],
-  ['macos', [
-    { label: 'launchd 服务', value: 'launchd' },
-    { label: 'Shell 脚本', value: 'shell' },
-  ]],
-  ['manual', [{ label: '手动启动脚本', value: 'manual' }]],
-  ['windows', [
-    { label: 'Windows Service', value: 'service' },
-    { label: 'PowerShell 脚本', value: 'powershell' },
-  ]],
-]);
-
-const aiExecutorRunnerProtocolOptions = [
-  { label: 'Runner Polling', value: 'runner_polling' },
-  { label: 'Runner WebSocket', value: 'runner_websocket' },
-  { label: 'MCP HTTP', value: 'mcp_http' },
-  { label: 'MCP Stdio', value: 'mcp_stdio' },
-];
 
 const systemVariableOptions = [
   { description: 'YYYYMMDD 格式，适合分区字段', label: '当前日期', value: '{{current_date}}' },
@@ -420,42 +349,6 @@ function arrayToLines(value?: string[]): string {
 function aiExecutorTypeLabel(value: unknown): string {
   const key = String(value ?? '');
   return aiExecutorTypeLabelByValue.get(key) ?? key;
-}
-
-function runnerExecutorCommandsFromValues(values: AiExecutorRunnerFormValues): Record<string, string> {
-  return Object.fromEntries(
-    Array.from(aiExecutorCommandFieldByType.entries())
-      .map(([executorType, field]) => [executorType, stringValue(values[field]).trim()] as const)
-      .filter(([, command]) => Boolean(command)),
-  );
-}
-
-function runnerExecutorCommandsFromMetadata(metadata: Record<string, unknown> | undefined): Record<string, string> {
-  const commands = isPlainRecord(metadata?.executor_commands) ? metadata.executor_commands : {};
-  return Object.fromEntries(
-    Array.from(aiExecutorCommandFieldByType.keys())
-      .map((executorType) => [executorType, stringValue(commands[executorType])] as const)
-      .filter(([, command]) => Boolean(command)),
-  );
-}
-
-function runnerInstallModeOptions(targetOs: unknown) {
-  const key = stringValue(targetOs, 'linux');
-  return installModeOptionsByTargetOs.get(key) ?? installModeOptionsByTargetOs.get('linux') ?? [];
-}
-
-function runnerDefaultInstallMode(targetOs: unknown) {
-  const key = stringValue(targetOs, 'linux');
-  return defaultInstallModeByTargetOs.get(key) ?? 'systemd';
-}
-
-function runnerPackageOptionsFromMetadata(metadata: Record<string, unknown> | undefined) {
-  const targetOs = stringValue(metadata?.target_os, 'linux');
-  return {
-    arch: stringValue(metadata?.package_arch, targetOs === 'manual' ? 'universal' : 'amd64'),
-    install_mode: stringValue(metadata?.install_mode, runnerDefaultInstallMode(targetOs)),
-    target_os: targetOs,
-  };
 }
 
 function runnerPayload(values: AiExecutorRunnerFormValues): Partial<AiExecutorRunnerRecord> {
@@ -3687,82 +3580,7 @@ export default function PluginsPage() {
             }
           }}
         >
-          <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入执行器名称' }]}>
-            <Input placeholder="Zeek Mac 本地执行器" />
-          </Form.Item>
-          <Space wrap>
-            <Form.Item label="协议" name="protocol" rules={[{ required: true }]}>
-              <Select options={aiExecutorRunnerProtocolOptions} style={{ width: 180 }} />
-            </Form.Item>
-            <Form.Item label="状态" name="status" rules={[{ required: true }]}>
-              <Select
-                options={[
-                  { label: 'active', value: 'active' },
-                  { label: 'offline', value: 'offline' },
-                  { label: 'disabled', value: 'disabled' },
-                ]}
-                style={{ width: 150 }}
-              />
-            </Form.Item>
-            <Form.Item label="心跳超时秒数" name="heartbeat_timeout_seconds">
-              <InputNumber min={10} style={{ width: 160 }} />
-            </Form.Item>
-            <Form.Item label="最大并发" name="max_concurrent_tasks">
-              <InputNumber min={1} style={{ width: 130 }} />
-            </Form.Item>
-          </Space>
-          <Form.Item label="Endpoint" name="endpoint_url" rules={[{ required: true }]}>
-            <Input placeholder="runner://local 或 mcp://runner" />
-          </Form.Item>
-          <Form.Item label="执行器类型" name="executor_types" rules={[{ required: true, message: '请选择至少一个执行器类型' }]}>
-            <Select mode="multiple" options={aiExecutorTypeOptions} />
-          </Form.Item>
-          <Typography.Text strong>执行器命令配置</Typography.Text>
-          <Space wrap>
-            <Form.Item label="Codex 命令" name="codex_command">
-              <Input placeholder="codex" style={{ width: 220 }} />
-            </Form.Item>
-            <Form.Item label="Claude Code 命令" name="claude_command">
-              <Input placeholder="claude" style={{ width: 220 }} />
-            </Form.Item>
-            <Form.Item label="Hermes 命令" name="hermes_command">
-              <Input placeholder="hermes" style={{ width: 220 }} />
-            </Form.Item>
-            <Form.Item label="OpenClaw 命令" name="openclaw_command">
-              <Input placeholder="openclaw" style={{ width: 220 }} />
-            </Form.Item>
-          </Space>
-          <Typography.Text strong>Runner 安装包配置</Typography.Text>
-          <Space wrap>
-            <Form.Item label="目标系统" name="target_os" rules={[{ required: true, message: '请选择目标系统' }]}>
-              <Select options={aiExecutorRunnerTargetOsOptions} style={{ width: 180 }} />
-            </Form.Item>
-            <Form.Item label="CPU 架构" name="package_arch" rules={[{ required: true, message: '请选择 CPU 架构' }]}>
-              <Select options={aiExecutorRunnerArchOptions} style={{ width: 160 }} />
-            </Form.Item>
-            <Form.Item noStyle shouldUpdate={(prev, current) => prev.target_os !== current.target_os}>
-              {({ getFieldValue }) => (
-                <Form.Item label="安装模式" name="install_mode" rules={[{ required: true, message: '请选择安装模式' }]}>
-                  <Select
-                    options={runnerInstallModeOptions(getFieldValue('target_os'))}
-                    style={{ width: 190 }}
-                  />
-                </Form.Item>
-              )}
-            </Form.Item>
-          </Space>
-          <Form.Item label="工作区白名单" name="workspace_roots">
-            <Input.TextArea
-              placeholder="/Users/zeek/source/e-ai-brain"
-              rows={3}
-            />
-          </Form.Item>
-          <Form.Item label="Runner Token" name="runner_token">
-            <Input.Password placeholder={editingRunner ? '留空表示不修改 Token' : '留空自动生成'} />
-          </Form.Item>
-          <Form.Item label="Metadata JSON" name="metadata">
-            <Input.TextArea rows={4} placeholder='{"codex_path":"/Applications/Codex.app/Contents/Resources/codex"}' />
-          </Form.Item>
+          <PluginRunnerFormFields editingRunner={Boolean(editingRunner)} />
         </Form>
       </Modal>
 
