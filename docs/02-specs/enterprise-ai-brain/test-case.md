@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.632 |
+| 功能版本 | v1.1.633 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.633 | 2026-06-24 | 补充 AI 助手草案继续编辑深链验收：草案任务台列表和详情弹窗的“继续编辑”必须统一跳转 `/assistant?draft_id=...`，助手页需按 draft_id 加载草案卡；`AssistantDraftsPage.test.tsx`、typecheck、lint 和真实 `/assistant/drafts`、`/assistant` 页面 smoke 必须通过 | Codex |
 | v1.1.632 | 2026-06-24 | 补充执行诊断统一入口验收：`ExecutionTraceLink` 需在 AI 助手草案、定时作业运行详情和代码巡检报告详情生成一致深链；代码巡检详情需提供巡检报告、来源运行和插件调用三个诊断入口，`AssistantDraftsPage.test.tsx`、`CodeInspectionsPage.test.tsx`、`ScheduledJobsPage.test.tsx`、typecheck、lint 和真实页面 smoke 必须通过 | Codex |
 | v1.1.631 | 2026-06-24 | 补充 AI 助手草案来源链路验收：执行诊断可按 `assistant_message` source_id 定位 `assistant_chat_run` 链路，草案任务台列表和详情展示“来源链路”并跳转 `/governance/execution-traces?source_id=...` | Codex |
 | v1.1.630 | 2026-06-24 | 补充插件管理测试诊断弹窗组件化验收：连接测试诊断和 Runner 测试诊断从主页面收口到 `PluginDiagnostics` 后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |

@@ -159,6 +159,16 @@ function percent(value?: number) {
   return `${Math.round((value ?? 0) * 1000) / 10}%`;
 }
 
+function assistantDraftEditHref(draftId?: string | null) {
+  const normalizedDraftId = String(draftId ?? '').trim();
+  if (!normalizedDraftId) {
+    return undefined;
+  }
+  const params = new URLSearchParams();
+  params.set('draft_id', normalizedDraftId);
+  return `/assistant?${params.toString()}`;
+}
+
 function SummaryStrip({ summary }: { summary?: AssistantActionDraftWorkbenchSummary }) {
   const statusCounts = summary?.status_counts ?? {};
   const metrics = [
@@ -394,7 +404,7 @@ export default function AssistantDraftsPage() {
             <Button onClick={() => void openDetail(row)} type="link">
               详情
             </Button>
-            <Button href={row.source_link} type="link">
+            <Button href={assistantDraftEditHref(row.id)} type="link">
               继续编辑
             </Button>
             {row.status === 'pending' ? (
@@ -474,6 +484,14 @@ export default function AssistantDraftsPage() {
       >
         {detail ? (
           <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+            <Space wrap>
+              <Button href={assistantDraftEditHref(detail.id)} type="primary">
+                继续编辑
+              </Button>
+              <ExecutionTraceLink asButton sourceId={detail.source_message_id} sourceType="assistant_message">
+                来源链路
+              </ExecutionTraceLink>
+            </Space>
             <Descriptions column={3} size="small">
               <Descriptions.Item label="草案标题" span={2}>{detail.title}</Descriptions.Item>
               <Descriptions.Item label="状态">{statusTag(detail.status)}</Descriptions.Item>
