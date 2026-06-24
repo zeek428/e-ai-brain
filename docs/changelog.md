@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- DB-first 兼容层扫描：新增 `scripts/audit_memory_store_usage.py`，按读路径、写路径和 helper 对 `current_store.*` 残留输出 P0/P1/P2 分级，便于持续清理 MemoryStore 生产兼容路径。
 - 执行诊断结果写入节点：定时作业和插件调用链路新增派生 `result_write_record` 节点，可按写入记录 ID 反查同一条 Trace，确认报告、反馈或通知是否真正写入。
 - 代码巡检 finding 误报忽略审批：报告详情支持对单条问题提交忽略申请，管理员可批准或驳回，审批通过后同步报告 suppression 统计、治理概览分布和审计事件。
 - 用户权限诊断：新增 `GET /api/system/permissions/diagnostics`，按用户、菜单路径、权限点和数据范围解释允许/阻断原因；角色管理页新增“用户权限诊断”工具用于排查某用户为什么能看或不能看。

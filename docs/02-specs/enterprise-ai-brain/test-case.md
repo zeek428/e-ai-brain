@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.644 |
+| 功能版本 | v1.1.645 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.645 | 2026-06-24 | 补充 DB-first 兼容层扫描验收：`scripts/audit_memory_store_usage.py` 必须能识别 `current_store.*` 读、写和 helper 残留并输出 P0/P1/P2 分级，`test_memory_store_usage_audit.py` 必须通过 | Codex |
 | v1.1.644 | 2026-06-24 | 补充产品配置子资源创建 DB-first 验收：PostgreSQL/repository 运行态即使 runtime store 为空，迭代版本、产品模块、产品 Git 仓库和相关系统 create 也必须按产品 ID 读取产品存在性，同产品版本/模块 code 冲突使用列表读模型，相关系统 code 冲突使用单查，并直接写回记录和审计；`test_product_config_persistence.py` 必须通过 | Codex |
 | v1.1.643 | 2026-06-24 | 补充迭代版本编辑/删除 DB-first 验收：PostgreSQL/repository 运行态即使 runtime store 为空，迭代版本 patch/delete 也必须按版本 ID 读取源记录，修改版本编码时只读取同产品版本列表做冲突校验，删除前通过 repository EXISTS 检查需求、任务、Bug 和分支配置引用；`test_product_config_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.642 | 2026-06-24 | 补充产品模块删除 DB-first 验收：PostgreSQL/repository 运行态即使 runtime store 为空，产品模块 delete 也必须按模块 ID 读取源记录，并通过 repository EXISTS 检查需求、任务和 Bug 引用后再直接删除记录与审计；`test_product_config_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
