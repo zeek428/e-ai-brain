@@ -33,6 +33,7 @@
 - 管理列表型接口必须在 SQL/repository/read model 层完成分页、排序和筛选，并返回查询性能元数据。
 - 启用统一 `ManagementListPage` 的管理页面可通过页面级 `viewStorageKey` 保存、应用和删除本地筛选视图；该能力仅作为当前浏览器偏好保存筛选/排序组合，不进入业务数据库，也不替代服务端权限或查询条件校验。
 - 单记录创建、更新、状态流转和跨表写入不得为了兼容旧客户端而依赖运行时内存全量集合；例如迭代版本、产品模块、产品 Git 仓库和相关系统创建应按产品 ID 从 repository 读取产品存在性并使用轻量冲突校验；迭代版本编辑/删除、产品模块编辑/删除、产品 Git 仓库/相关系统更新删除、迭代版本分支配置更新删除、用户反馈更新/转需求应按业务 ID 从 repository 读取源记录，再在同一仓储边界写入业务记录和审计。
+- 模型网关配置新增、编辑、删除由 repository 单记录写入或删除；MemoryStore 测试 fallback 的配置替换和模型调用日志追加必须通过模型网关配置集合/日志集合 helper 操作，不得直接赋值 `current_store.model_gateway_configs` 或 append `current_store.model_gateway_logs`。
 - 只读缓存允许用于看板等汇总视图，但必须可重建、权限过滤清晰，且不得作为写入事实源。
 - DB-first 收口专项审计使用 `python scripts/audit_memory_store_usage.py --format text` 扫描 `apps/api/app` 内 `current_store.*` 残留；报告按 `P0/write|helper`、`P1/read` 和 `P2/helper` 分级，P0 项应优先迁移为 repository 直接写入或领域读模型，P1 项应确认是否为可重建只读缓存或测试 fallback。
 

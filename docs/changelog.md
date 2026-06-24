@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 模型网关配置与日志 DB-first fallback 收口：配置替换不再直接赋值 `current_store.model_gateway_configs`，模型调用日志不再直接 append `current_store.model_gateway_logs`，统一通过模型网关配置集合和日志集合 helper 操作测试集合。
 - Mock Issue 写回 DB-first fallback 收口：写回结果创建不再直接写 `current_store.mock_writebacks` 或调用 `current_store.audit()`，统一通过写回保存 helper 在 repository 或 MemoryStore 测试 fallback 中落写结果和审计，并在 repository 运行态刷新本地读缓存保持幂等。
 - 研发执行器策略 DB-first fallback 收口：策略列表刷新、新增、编辑、删除和按需补齐产品/代码库资源缓存不再直接写 `current_store.rd_task_executor_policies` / `current_store.products` / `current_store.product_git_repositories`，统一通过策略保存/删除和资源缓存 helper 操作测试集合。
 - 需求主流程 DB-first fallback 收口：需求创建、编辑、删除、审批、拒绝、关闭、批量分配、批量排期、批量推进和产品详细设计任务生成不再在调用方直接写 `current_store.requirements` / `current_store.ai_tasks` 或调用 `current_store.audit()`，统一由需求保存、删除、任务联动和审计 helper 写入。

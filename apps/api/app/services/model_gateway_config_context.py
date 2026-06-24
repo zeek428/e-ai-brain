@@ -30,6 +30,18 @@ def runtime_repository(current_store: Any) -> Any | None:
     return getattr(current_store, "repository", None)
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _model_gateway_configs_collection(current_store: Any) -> dict[str, dict[str, Any]]:
+    return _memory_dict(current_store, "model_gateway_configs")
+
+
 def model_gateway_query_repository(current_store: Any) -> Any | None:
     repository = runtime_repository(current_store)
     if repository is None:
@@ -123,7 +135,9 @@ def replace_memory_model_gateway_configs(
     configs: dict[str, dict[str, Any]],
 ) -> None:
     if runtime_repository(current_store) is None:
-        current_store.model_gateway_configs = configs
+        collection = _model_gateway_configs_collection(current_store)
+        collection.clear()
+        collection.update({str(config_id): dict(config) for config_id, config in configs.items()})
 
 
 def save_model_gateway_config_record(

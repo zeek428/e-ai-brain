@@ -2,6 +2,8 @@ from test_database_persistence import FakeSnapshotRepository, app, auth_headers,
 
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.users import MemoryUserRepository
+from app.services.model_gateway_config_context import replace_memory_model_gateway_configs
+from app.services.model_gateway_logging import model_gateway_log
 
 
 def test_model_gateway_config_and_logs_are_persisted_through_fine_grained_repository_payload():
@@ -70,6 +72,43 @@ def test_model_gateway_config_and_logs_are_persisted_through_fine_grained_reposi
             }
         ],
     }
+
+
+def test_model_gateway_memory_fallback_helpers_replace_configs_and_append_logs():
+    current_store = app.state.store
+    current_store.reset()
+
+    replace_memory_model_gateway_configs(
+        current_store,
+        {
+            "model_gateway_config_helper": {
+                "api_key": "sk-helper",
+                "base_url": "https://helper.example.com/v1",
+                "default_chat_model": "helper-chat",
+                "id": "model_gateway_config_helper",
+                "is_default": True,
+                "name": "Helper 网关",
+                "provider": "openai_compatible",
+                "status": "active",
+                "timeout_seconds": 30,
+            }
+        },
+    )
+    log = model_gateway_log(
+        current_store,
+        config_id="model_gateway_config_helper",
+        latency_ms=12,
+        model="helper-chat",
+        provider="openai_compatible",
+        status="succeeded",
+        tokens={"prompt": 1, "completion": 2, "total": 3},
+    )
+
+    assert list(current_store.model_gateway_configs) == ["model_gateway_config_helper"]
+    assert current_store.model_gateway_configs["model_gateway_config_helper"]["api_key"] == (
+        "sk-helper"
+    )
+    assert current_store.model_gateway_logs == [log]
 
 
 

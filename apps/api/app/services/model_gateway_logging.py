@@ -39,6 +39,18 @@ def openai_embedding_usage_tokens(
     return {"prompt": prompt, "completion": 0, "total": total}
 
 
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _model_gateway_logs_collection(current_store: Any) -> list[dict[str, Any]]:
+    return _memory_list(current_store, "model_gateway_logs")
+
+
 def model_gateway_log(
     current_store: Any,
     *,
@@ -67,5 +79,5 @@ def model_gateway_log(
         "model_gateway_config_id": config_id,
         "created_at": datetime.now(UTC).isoformat(),
     }
-    current_store.model_gateway_logs.append(log)
+    _model_gateway_logs_collection(current_store).append(log)
     return log
