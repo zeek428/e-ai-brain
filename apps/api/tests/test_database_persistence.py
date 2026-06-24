@@ -32,6 +32,7 @@ class FakeSnapshotRepository:
         self.dashboard_payload: dict | None = None
         self.id_counters: dict[str, int] = {}
         self.product_config_direct_writes: list[str] = []
+        self.product_config_single_reads: list[str] = []
         self.requirement_direct_writes: list[str] = []
         self.ai_task_direct_writes: list[str] = []
         self.workflow_direct_writes: list[str] = []
@@ -96,8 +97,28 @@ class FakeSnapshotRepository:
         return [item for item in products if not active_only or item.get("status") == "active"]
 
     def get_product(self, product_id: str) -> dict | None:
+        self.product_config_single_reads.append(f"get_product:{product_id}")
         product = self._product_config_collection("products").get(product_id)
         return dict(product) if product is not None else None
+
+    def get_product_git_repository(self, repository_id: str) -> dict | None:
+        self.product_config_single_reads.append(f"get_product_git_repository:{repository_id}")
+        repository = self._product_config_collection("product_git_repositories").get(
+            repository_id,
+        )
+        return dict(repository) if repository is not None else None
+
+    def get_related_system(self, system_id: str) -> dict | None:
+        self.product_config_single_reads.append(f"get_related_system:{system_id}")
+        system = self._product_config_collection("related_systems").get(system_id)
+        return dict(system) if system is not None else None
+
+    def get_related_system_by_code(self, code: str) -> dict | None:
+        self.product_config_single_reads.append(f"get_related_system_by_code:{code}")
+        for system in self._product_config_collection("related_systems").values():
+            if system.get("code") == code:
+                return dict(system)
+        return None
 
     def list_product_versions(
         self,

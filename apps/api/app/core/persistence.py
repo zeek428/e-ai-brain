@@ -302,6 +302,15 @@ class PostgresSnapshotRepository:
     def get_product(self, product_id: str) -> dict[str, Any] | None:
         return self._product_config_read_repository.get_product(product_id)
 
+    def get_product_git_repository(self, repository_id: str) -> dict[str, Any] | None:
+        return self._product_config_read_repository.get_product_git_repository(repository_id)
+
+    def get_related_system(self, system_id: str) -> dict[str, Any] | None:
+        return self._product_config_read_repository.get_related_system(system_id)
+
+    def get_related_system_by_code(self, code: str) -> dict[str, Any] | None:
+        return self._product_config_read_repository.get_related_system_by_code(code)
+
     def list_product_versions(
         self,
         product_id: str,

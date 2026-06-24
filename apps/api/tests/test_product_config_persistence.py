@@ -587,6 +587,134 @@ def test_product_config_get_routes_use_repository_when_runtime_store_is_stale():
         app.state.user_repository = original_users
 
 
+def test_product_config_subresource_writes_read_repository_records_when_runtime_store_is_stale():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    repository.product_config_payload = {
+        "products": {
+            "product_single_read": {
+                "code": "SINGLE-READ",
+                "description": None,
+                "display_order": 1,
+                "id": "product_single_read",
+                "name": "单记录读取产品",
+                "owner_team": "platform",
+                "status": "active",
+            },
+        },
+        "product_versions": {},
+        "product_modules": {},
+        "product_git_repositories": {
+            "repo_single_read": {
+                "credential_ref": "secret://github/single",
+                "default_branch": "main",
+                "git_provider": "github",
+                "id": "repo_single_read",
+                "name": "单记录仓库",
+                "product_id": "product_single_read",
+                "project_id": None,
+                "project_path": "org/single-read",
+                "remote_url": "git@github.com:org/single-read.git",
+                "repo_type": "code",
+                "root_path": "/",
+                "status": "active",
+            },
+        },
+        "product_version_branch_configs": {},
+        "related_systems": {
+            "related_single_read": {
+                "code": "REL-SINGLE",
+                "description": "repository related system",
+                "display_order": 3,
+                "id": "related_single_read",
+                "name": "单记录相关系统",
+                "owner_team": "ops",
+                "product_id": "product_single_read",
+                "status": "active",
+            },
+        },
+    }
+    app.state.store = PostgresRuntimeStore(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        patched_repository = client.patch(
+            "/api/product-git-repositories/repo_single_read",
+            json={"status": "inactive"},
+            headers=headers,
+        )
+        assert patched_repository.status_code == 200
+        assert patched_repository.json()["data"]["status"] == "inactive"
+
+        patched_system = client.patch(
+            "/api/system/related-systems/related_single_read",
+            json={
+                "code": "REL-SINGLE-2",
+                "product_id": "product_single_read",
+                "status": "inactive",
+            },
+            headers=headers,
+        )
+        assert patched_system.status_code == 200
+        assert patched_system.json()["data"]["code"] == "REL-SINGLE-2"
+
+        assert repository.product_config_single_reads == [
+            "get_product_git_repository:repo_single_read",
+            "get_related_system:related_single_read",
+            "get_related_system_by_code:REL-SINGLE-2",
+            "get_product:product_single_read",
+        ]
+        assert (
+            repository.product_config_payload["product_git_repositories"]["repo_single_read"][
+                "status"
+            ]
+            == "inactive"
+        )
+        assert (
+            repository.product_config_payload["related_systems"]["related_single_read"]["status"]
+            == "inactive"
+        )
+        assert (
+            "save:product_git_repositories:repo_single_read"
+            in repository.product_config_direct_writes
+        )
+        assert "save:related_systems:related_single_read" in repository.product_config_direct_writes
+
+        repository.product_config_single_reads.clear()
+        deleted_repository = client.delete(
+            "/api/product-git-repositories/repo_single_read",
+            headers=headers,
+        )
+        deleted_system = client.delete(
+            "/api/system/related-systems/related_single_read",
+            headers=headers,
+        )
+
+        assert deleted_repository.status_code == 200
+        assert deleted_system.status_code == 200
+        assert repository.product_config_single_reads == [
+            "get_product_git_repository:repo_single_read",
+            "get_related_system:related_single_read",
+        ]
+        assert "repo_single_read" not in repository.product_config_payload[
+            "product_git_repositories"
+        ]
+        assert "related_single_read" not in repository.product_config_payload["related_systems"]
+        assert (
+            "delete:product_git_repositories:repo_single_read"
+            in repository.product_config_direct_writes
+        )
+        assert (
+            "delete:related_systems:related_single_read"
+            in repository.product_config_direct_writes
+        )
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
 def test_product_config_writes_use_postgres_runtime_source_rows():
     original_store = app.state.store
     original_users = app.state.user_repository

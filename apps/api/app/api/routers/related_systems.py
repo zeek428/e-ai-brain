@@ -12,7 +12,11 @@ from app.services.product_config_context import (
     ensure_enum,
     ensure_non_blank,
     ensure_unique_value,
+    get_product_record,
+    get_related_system_by_code,
+    get_related_system_record,
     payload_updates,
+    product_config_record_write_store,
     product_config_write_store,
     record_audit_event,
     save_product_config_record,
@@ -118,8 +122,8 @@ def patch_related_system(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
-    related_system = current_store.related_systems.get(system_id)
+    current_store = product_config_record_write_store(store(request))
+    related_system = get_related_system_record(current_store, system_id)
     if related_system is None:
         raise api_error(404, "NOT_FOUND", "Related system not found")
     updates = payload_updates(payload)
@@ -127,18 +131,13 @@ def patch_related_system(
         updates["name"] = ensure_non_blank(updates["name"], "name")
     if "code" in updates:
         updates["code"] = ensure_non_blank(updates["code"], "code")
-        ensure_unique_value(
-            current_store.related_systems,
-            field="code",
-            value=updates["code"],
-            conflict_code="RELATED_SYSTEM_CODE_EXISTS",
-            message="Related system code already exists",
-            exclude_id=system_id,
-        )
+        conflicting_system = get_related_system_by_code(current_store, updates["code"])
+        if conflicting_system is not None and conflicting_system.get("id") != system_id:
+            raise api_error(409, "RELATED_SYSTEM_CODE_EXISTS", "Related system code already exists")
     if "status" in updates:
         ensure_enum(updates["status"], RELATED_SYSTEM_STATUSES, "related system status")
     if "product_id" in updates and updates["product_id"] is not None:
-        if updates["product_id"] not in current_store.products:
+        if get_product_record(current_store, updates["product_id"]) is None:
             raise api_error(404, "NOT_FOUND", "Product not found")
     related_system = {**related_system, **updates}
     if not uses_repository_context(current_store):
@@ -166,8 +165,8 @@ def delete_related_system(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
-    if system_id not in current_store.related_systems:
+    current_store = product_config_record_write_store(store(request))
+    if get_related_system_record(current_store, system_id) is None:
         raise api_error(404, "NOT_FOUND", "Related system not found")
     if not uses_repository_context(current_store):
         del current_store.related_systems[system_id]

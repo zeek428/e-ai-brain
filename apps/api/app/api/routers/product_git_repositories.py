@@ -11,7 +11,9 @@ from app.services.product_config_context import (
     delete_product_config_record,
     ensure_enum,
     ensure_non_blank,
+    get_product_git_repository_record,
     payload_updates,
+    product_config_record_write_store,
     product_config_write_store,
     record_audit_event,
     save_product_config_record,
@@ -145,8 +147,8 @@ def patch_product_git_repository(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
-    repository = current_store.product_git_repositories.get(repo_id)
+    current_store = product_config_record_write_store(store(request))
+    repository = get_product_git_repository_record(current_store, repo_id)
     if repository is None:
         raise api_error(404, "NOT_FOUND", "Product Git repository not found")
     updates = payload_updates(payload)
@@ -190,8 +192,8 @@ def delete_product_git_repository(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
-    if repo_id not in current_store.product_git_repositories:
+    current_store = product_config_record_write_store(store(request))
+    if get_product_git_repository_record(current_store, repo_id) is None:
         raise api_error(404, "NOT_FOUND", "Product Git repository not found")
     if not uses_repository_context(current_store):
         del current_store.product_git_repositories[repo_id]

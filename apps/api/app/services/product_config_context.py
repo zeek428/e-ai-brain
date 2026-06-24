@@ -154,6 +154,47 @@ def product_config_write_store(current_store: MemoryStore) -> Any:
     return product_config_source_store(repository)
 
 
+def product_config_record_write_store(current_store: MemoryStore) -> Any:
+    repository = runtime_repository(current_store)
+    if repository is None:
+        return current_store
+    return ProductConfigRequestContext(repository)
+
+
+def get_product_record(current_store: Any, product_id: str) -> dict[str, Any] | None:
+    get_product = getattr(runtime_repository(current_store), "get_product", None)
+    if callable(get_product):
+        return get_product(product_id)
+    return current_store.products.get(product_id)
+
+
+def get_product_git_repository_record(
+    current_store: Any,
+    repository_id: str,
+) -> dict[str, Any] | None:
+    get_repository = getattr(runtime_repository(current_store), "get_product_git_repository", None)
+    if callable(get_repository):
+        return get_repository(repository_id)
+    return current_store.product_git_repositories.get(repository_id)
+
+
+def get_related_system_record(current_store: Any, system_id: str) -> dict[str, Any] | None:
+    get_system = getattr(runtime_repository(current_store), "get_related_system", None)
+    if callable(get_system):
+        return get_system(system_id)
+    return current_store.related_systems.get(system_id)
+
+
+def get_related_system_by_code(current_store: Any, code: str) -> dict[str, Any] | None:
+    get_system = getattr(runtime_repository(current_store), "get_related_system_by_code", None)
+    if callable(get_system):
+        return get_system(code)
+    for system in current_store.related_systems.values():
+        if system.get("code") == code:
+            return system
+    return None
+
+
 def save_product_config_record(
     current_store: Any,
     collection_name: str,

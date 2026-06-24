@@ -69,6 +69,51 @@ class ProductConfigReadRepository:
             "status": row[5],
         }
 
+    def get_product_git_repository(self, repository_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, product_id, repo_type, name, remote_url, git_provider, project_id,
+                           project_path, credential_ref, default_branch, root_path, status
+                    FROM product_git_repositories
+                    WHERE id = %s
+                    """,
+                    (repository_id,),
+                )
+                row = cursor.fetchone()
+        return _row_to_product_git_repository(row) if row is not None else None
+
+    def get_related_system(self, system_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, code, name, description, owner_team, status,
+                           display_order, product_id
+                    FROM related_systems
+                    WHERE id = %s
+                    """,
+                    (system_id,),
+                )
+                row = cursor.fetchone()
+        return _row_to_related_system(row) if row is not None else None
+
+    def get_related_system_by_code(self, code: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, code, name, description, owner_team, status,
+                           display_order, product_id
+                    FROM related_systems
+                    WHERE code = %s
+                    """,
+                    (code,),
+                )
+                row = cursor.fetchone()
+        return _row_to_related_system(row) if row is not None else None
+
     def list_product_versions(
         self,
         product_id: str,
@@ -163,20 +208,7 @@ class ProductConfigReadRepository:
                     tuple(params),
                 )
                 return [
-                    {
-                        "credential_ref": row[8],
-                        "default_branch": row[9],
-                        "git_provider": row[5],
-                        "id": row[0],
-                        "name": row[3],
-                        "product_id": row[1],
-                        "project_id": row[6],
-                        "project_path": row[7],
-                        "remote_url": row[4],
-                        "repo_type": row[2],
-                        "root_path": row[10],
-                        "status": row[11],
-                    }
+                    _row_to_product_git_repository(row)
                     for row in cursor.fetchall()
                 ]
 
@@ -227,16 +259,7 @@ class ProductConfigReadRepository:
                     tuple(params),
                 )
                 return [
-                    {
-                        "code": row[1],
-                        "description": row[3],
-                        "display_order": row[6],
-                        "id": row[0],
-                        "name": row[2],
-                        "owner_team": row[4],
-                        "product_id": row[7],
-                        "status": row[5],
-                    }
+                    _row_to_related_system(row)
                     for row in cursor.fetchall()
                 ]
 
@@ -374,20 +397,7 @@ class ProductConfigReadRepository:
             """
         )
         return {
-            row[0]: {
-                "credential_ref": row[8],
-                "default_branch": row[9],
-                "git_provider": row[5],
-                "id": row[0],
-                "name": row[3],
-                "product_id": row[1],
-                "project_id": row[6],
-                "project_path": row[7],
-                "remote_url": row[4],
-                "repo_type": row[2],
-                "root_path": row[10],
-                "status": row[11],
-            }
+            row[0]: _row_to_product_git_repository(row)
             for row in cursor.fetchall()
         }
 
@@ -416,16 +426,7 @@ class ProductConfigReadRepository:
             """
         )
         return {
-            row[0]: {
-                "code": row[1],
-                "description": row[3],
-                "display_order": row[6],
-                "id": row[0],
-                "name": row[2],
-                "owner_team": row[4],
-                "product_id": row[7],
-                "status": row[5],
-            }
+            row[0]: _row_to_related_system(row)
             for row in cursor.fetchall()
         }
 
@@ -567,4 +568,34 @@ def _row_to_product_version_branch_config(row: tuple[Any, ...]) -> dict[str, Any
         "repository_provider": row[10],
         "version_id": row[2],
         "working_branch": row[5],
+    }
+
+
+def _row_to_product_git_repository(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "credential_ref": row[8],
+        "default_branch": row[9],
+        "git_provider": row[5],
+        "id": row[0],
+        "name": row[3],
+        "product_id": row[1],
+        "project_id": row[6],
+        "project_path": row[7],
+        "remote_url": row[4],
+        "repo_type": row[2],
+        "root_path": row[10],
+        "status": row[11],
+    }
+
+
+def _row_to_related_system(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "code": row[1],
+        "description": row[3],
+        "display_order": row[6],
+        "id": row[0],
+        "name": row[2],
+        "owner_team": row[4],
+        "product_id": row[7],
+        "status": row[5],
     }
