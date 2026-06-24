@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.546 |
+| 功能版本 | v1.1.547 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.547 | 2026-06-24 | Git Review 快照 DB-first 写路径收口：GitLab MR / GitHub PR 快照成功、复用和失败审计不再在服务层直接写 `current_store.gitlab_mr_snapshots` 或追加 `current_store.audit_events`；统一通过 `save_git_review_snapshot_record` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态快照和审计使用同一数据库事务提交 | Codex |
 | v1.1.546 | 2026-06-24 | 代码巡检 DB-first 写路径收口：巡检报告、finding、通知、误报忽略审批和整改任务派生不再在生产服务层直接写 `current_store.code_inspection_*` 或 `current_store.ai_tasks`；统一通过 `persist_code_inspection_records` / `persist_ai_task_record` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态的巡检报告、finding、通知和审计使用同一数据库事务提交 | Codex |
 | v1.1.545 | 2026-06-24 | Bug 管理 DB-first 收口：Bug 创建、批量更新、编辑和删除不再直接调用 `current_store.audit()` 或写 `current_store.bugs`，统一通过 `save_bug_record` / `delete_bug_record` 写入 MemoryStore fallback 或 repository；Bug 单记录写入、删除和审计在 PostgreSQL 运行态使用同一数据库事务 | Codex |
 | v1.1.544 | 2026-06-24 | AI 助手历史与配置 DB-first 收口：会话/消息测试 fallback 写入改为 helper 访问，助手动作引用配置和角色快捷任务配置不再调用 `current_store.audit()` 或直接写配置集合，统一通过 repository 单记录写入或 MemoryStore fallback 写入配置和审计 | Codex |
@@ -1571,6 +1572,7 @@ Git Review API 入口已收口到独立 `app.api.routers.git_review`：GitLab MR
 
 **核心规则**:
 - 只能读取产品已绑定且当前用户有权限的 GitLab 项目/MR 或 GitHub 仓库/PR。
+- MR/PR 快照成功、复用和失败审计属于 DB-first 写路径：服务层不得直接写 `current_store.gitlab_mr_snapshots` 或追加 `current_store.audit_events`；MemoryStore fallback 由 `save_git_review_snapshot_record` 承接，PostgreSQL 运行态快照和审计必须在同一数据库事务中提交。
 - MR/PR 快照至少保存 provider、project_id 或 project_path、mr_iid/PR number、标题、作者、source/target branch、commit sha 或 diff refs、变更文件摘要、diff 内容或存储引用、Web URL 和快照时间。
 - MR/PR 快照一经生成不得被远端后续变更静默覆盖；重新 Review 必须重新拉取并记录新的运行或快照。
 - 同一 repository_id 和 snapshot_hash 不应重复入库；重复拉取相同 diff 时可返回已有 snapshot_id，并写入可追踪审计事件。

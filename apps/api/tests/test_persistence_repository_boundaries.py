@@ -3143,6 +3143,62 @@ def test_postgres_git_review_writes_delegate_to_domain_repository(monkeypatch):
     ]
 
 
+def test_git_review_snapshot_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    upsert_calls: list[dict] = []
+    audit_calls: list[list[dict]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def record_snapshot_upsert(self, cursor, snapshots):  # type: ignore[no-untyped-def]
+        upsert_calls.append(snapshots)
+
+    monkeypatch.setattr(
+        GitReviewReadRepository,
+        "upsert_gitlab_mr_snapshots",
+        record_snapshot_upsert,
+    )
+
+    repository = GitReviewReadRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+    )
+    snapshot = {"id": "snapshot_atomic"}
+    audit_event = {"id": "audit_git_review_atomic"}
+
+    repository.save_gitlab_review_snapshot_record(
+        snapshot=snapshot,
+        audit_event=audit_event,
+    )
+
+    assert connect_calls == [{"autocommit": False}]
+    assert upsert_calls == [{"snapshot_atomic": snapshot}]
+    assert audit_calls == [[audit_event]]
+
+
 def test_postgres_mock_writeback_read_models_delegate_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []

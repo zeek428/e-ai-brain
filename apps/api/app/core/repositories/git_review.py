@@ -47,7 +47,7 @@ class GitReviewReadRepository:
         snapshot: dict[str, Any] | None,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 if snapshot is not None:
                     self.upsert_gitlab_mr_snapshots(cursor, {snapshot["id"]: snapshot})

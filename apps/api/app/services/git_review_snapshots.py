@@ -18,6 +18,27 @@ def save_git_review_snapshot_record(
     save_record = getattr(repository, "save_gitlab_review_snapshot_record", None)
     if callable(save_record):
         save_record(snapshot=snapshot, audit_event=audit_event)
+        return
+    if snapshot is not None:
+        _memory_collection(current_store, "gitlab_mr_snapshots")[str(snapshot["id"])] = snapshot
+    if audit_event is not None:
+        _memory_list(current_store, "audit_events").append(audit_event)
+
+
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
 
 
 def record_audit_event(
@@ -29,25 +50,19 @@ def record_audit_event(
     subject_id: str,
     subject_type: str,
 ) -> dict[str, Any]:
-    audit = getattr(current_store, "audit", None)
-    if callable(audit):
-        return audit(
-            event_type=event_type,
-            actor_id=actor_id,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            payload=payload,
-        )
+    audit_events = getattr(current_store, "audit_events", None)
+    sequence = len(audit_events) + 1 if isinstance(audit_events, list) else 1
     event = {
         "id": current_store.new_id("audit_event"),
         "event_type": event_type,
         "actor_id": actor_id,
+        "ai_task_id": None,
         "subject_type": subject_type,
         "subject_id": subject_id,
         "payload": payload,
+        "sequence": sequence,
         "created_at": datetime.now(UTC).isoformat(),
     }
-    current_store.audit_events.append(event)
     return event
 
 
@@ -225,7 +240,6 @@ def create_code_review_source_snapshot(
         "source_provider": repository.get("git_provider", "gitlab"),
         "writeback_allowed": False,
     }
-    current_store.gitlab_mr_snapshots[snapshot_id] = snapshot
     audit_event = record_audit_event(
         current_store,
         event_type=f"{event_prefix}.snapshotted",
