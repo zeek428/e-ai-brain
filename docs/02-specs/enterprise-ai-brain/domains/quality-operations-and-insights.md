@@ -36,6 +36,7 @@
 - 代码巡检治理概览必须展示质量门禁趋势，按日期聚合通过、失败、跳过和未知门禁数，便于判断规则升级或仓库质量门禁是否持续恶化。
 - 代码巡检严重问题 SLA 必须同时展示 Bug 覆盖率和整改任务覆盖率，未关联 Bug 或未派生整改任务的严重 finding 要暴露数量和最早时间。
 - 严重代码巡检 finding 可派生 Bug 或整改任务，并通过 fingerprint 去重。
+- Bug 创建、批量更新、编辑和删除属于 DB-first 写路径：服务层不得直接调用 `current_store.audit()` 或写 `current_store.bugs`；MemoryStore fallback 由 `save_bug_record` / `delete_bug_record` 承接，PostgreSQL 运行态的 Bug 单记录写入、删除和审计必须在同一数据库事务中提交。
 - 用户洞察列表固定列宽、服务端筛选和详情查看保持稳定，优质反馈可转需求。
 - 用户反馈更新和转需求必须在 repository/SQL 路径按反馈 ID 读取源记录；PostgreSQL 运行态不得依赖运行时 `MemoryStore.user_feedback` 全量集合，转需求需把反馈 linked 状态、需求记录和审计事件一次性写回仓储。
 

@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- Bug 管理 DB-first 收口：Bug 创建、批量更新、编辑和删除不再直接调用 `current_store.audit()` 或写 `current_store.bugs`，统一通过 `save_bug_record` / `delete_bug_record` 写入 MemoryStore fallback 或 repository；PostgreSQL 运行态的单记录写入、删除和审计使用同一数据库事务。
 - AI 助手历史与配置 DB-first 收口：会话和消息的测试 fallback 写入改为 helper 访问，动作引用配置和角色快捷任务配置创建、更新、启停、灰度与删除不再直接调用 `current_store.audit()` 或写配置集合，统一通过 repository 单记录写入或 MemoryStore fallback 同步审计。
 - AI 助手聊天 DB-first 收口：聊天运行开始、完成、取消、失败和模型网关调用审计不再直接写 `current_store.assistant_chat_runs` 或调用 `current_store.audit()`，统一通过 `save_assistant_chat_records` 和 repository 事务写入聊天运行、会话、消息、模型日志和审计；助手触发定时作业运行归因同步写回 repository。
 - AI 助手草案 DB-first 收口：草案创建、确认、失败、取消、修改、查看和过期链路不再直接写 `current_store.assistant_action_drafts` / `assistant_action_runs` 或调用 `current_store.audit()`；助手触发定时作业运行归因不再直接写 `current_store.scheduled_job_runs`，统一通过 `save_assistant_action_records` 和 repository 事务写入草案、动作运行和审计。

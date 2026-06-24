@@ -47,14 +47,6 @@ def record_audit_event(
     subject_type: str,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if not uses_repository_context(current_store):
-        return current_store.audit(
-            event_type=event_type,
-            actor_id=actor_id,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            payload=payload,
-        )
     return {
         "id": current_store.new_id("audit"),
         "event_type": event_type,
@@ -63,7 +55,7 @@ def record_audit_event(
         "subject_type": subject_type,
         "subject_id": subject_id,
         "payload": payload or {},
-        "sequence": len(getattr(current_store, "audit_events", [])) + 1,
+        "sequence": len(_memory_list(current_store, "audit_events")) + 1,
         "created_at": datetime.now(UTC).isoformat(),
     }
 
@@ -78,6 +70,10 @@ def save_bug_record(
     save_record = getattr(repository, "save_bug_record", None)
     if callable(save_record):
         save_record(record, audit_event=audit_event)
+        return
+    _memory_collection(current_store, "bugs")[str(record["id"])] = record
+    if audit_event is not None:
+        save_audit_event(current_store, audit_event)
 
 
 def delete_bug_record(
@@ -90,6 +86,16 @@ def delete_bug_record(
     delete_record = getattr(repository, "delete_bug_record", None)
     if callable(delete_record):
         delete_record(record_id, audit_event=audit_event)
+        return
+    bugs = _memory_collection(current_store, "bugs")
+    bugs.pop(record_id, None)
+    now = datetime.now(UTC).isoformat()
+    for bug in bugs.values():
+        if bug.get("duplicate_of_bug_id") == record_id:
+            bug["duplicate_of_bug_id"] = None
+            bug["updated_at"] = now
+    if audit_event is not None:
+        save_audit_event(current_store, audit_event)
 
 
 def save_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
@@ -101,6 +107,24 @@ def save_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
     save_events = getattr(repository, "save_audit_events", None)
     if callable(save_events):
         save_events({"audit_events": [audit_event]})
+        return
+    _memory_list(current_store, "audit_events").append(audit_event)
+
+
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
 
 
 def create_bug_result(
@@ -144,8 +168,6 @@ def create_bug_result(
         "created_at": now,
         "updated_at": now,
     }
-    if not uses_repository_context(current_store):
-        current_store.bugs[bug_id] = bug
     audit_event = record_audit_event(
         current_store,
         event_type="bug.created",
@@ -232,8 +254,6 @@ def batch_update_bugs_result(
             updates["assignee"] = payload.assignee.strip() if payload.assignee else None
 
         patched_bug = {**bug, **updates, "updated_at": now}
-        if not uses_repository_context(current_store):
-            current_store.bugs[bug_id] = patched_bug
         audit_event = record_audit_event(
             current_store,
             event_type="bug.updated",
@@ -310,8 +330,6 @@ def patch_bug_result(
         ensure_bug_status_transition(bug["status"], next_status)
     bug = {**bug, **updates}
     bug["updated_at"] = datetime.now(UTC).isoformat()
-    if not uses_repository_context(current_store):
-        current_store.bugs[bug_id] = bug
     audit_event = record_audit_event(
         current_store,
         event_type="bug.updated",
@@ -336,14 +354,6 @@ def delete_bug_result(
     require_bug_write_role(user)
     if bug_id not in current_store.bugs:
         raise api_error(404, "NOT_FOUND", "Bug not found")
-    if not uses_repository_context(current_store):
-        del current_store.bugs[bug_id]
-    now = datetime.now(UTC).isoformat()
-    if not uses_repository_context(current_store):
-        for bug in current_store.bugs.values():
-            if bug.get("duplicate_of_bug_id") == bug_id:
-                bug["duplicate_of_bug_id"] = None
-                bug["updated_at"] = now
     audit_event = record_audit_event(
         current_store,
         event_type="bug.deleted",

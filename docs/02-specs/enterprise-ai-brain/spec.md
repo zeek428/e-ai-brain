@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.544 |
+| 功能版本 | v1.1.545 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.545 | 2026-06-24 | Bug 管理 DB-first 收口：Bug 创建、批量更新、编辑和删除不再直接调用 `current_store.audit()` 或写 `current_store.bugs`，统一通过 `save_bug_record` / `delete_bug_record` 写入 MemoryStore fallback 或 repository；Bug 单记录写入、删除和审计在 PostgreSQL 运行态使用同一数据库事务 | Codex |
 | v1.1.544 | 2026-06-24 | AI 助手历史与配置 DB-first 收口：会话/消息测试 fallback 写入改为 helper 访问，助手动作引用配置和角色快捷任务配置不再调用 `current_store.audit()` 或直接写配置集合，统一通过 repository 单记录写入或 MemoryStore fallback 写入配置和审计 | Codex |
 | v1.1.543 | 2026-06-24 | AI 助手聊天 DB-first 收口：`assistant_chat` 服务移除聊天运行完成、取消、失败和模型网关审计链路中的直接 `current_store` 写入，不再通过 `current_store.audit_events` 切片收集本次审计；聊天运行、会话、消息、模型日志和审计统一通过 `save_assistant_chat_records` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态使用数据库事务提交；助手触发定时作业运行归因同步通过 repository 写回 | Codex |
 | v1.1.542 | 2026-06-24 | AI 助手草案 DB-first 收口：`assistant_action_drafts` 服务移除草案、动作运行和助手触发定时作业运行归因链路中的直接 `current_store` 写入，不再调用 `current_store.audit()` 生成草案审计；草案、动作运行和审计统一通过 `save_assistant_action_records` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态使用数据库事务提交 | Codex |

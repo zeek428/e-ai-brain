@@ -1397,6 +1397,61 @@ def test_postgres_bug_writes_delegate_to_domain_repository(monkeypatch):
     ]
 
 
+def test_bug_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    upsert_calls: list[dict] = []
+    audit_calls: list[list[dict]] = []
+    executed_sql: list[str] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql: str, params=None):  # type: ignore[no-untyped-def]
+            executed_sql.append(sql)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def record_upsert(self, cursor, bugs):  # type: ignore[no-untyped-def]
+        upsert_calls.append(bugs)
+
+    monkeypatch.setattr(BugReadRepository, "upsert_bugs", record_upsert)
+
+    repository = BugReadRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+    )
+    bug = {"id": "bug_atomic", "title": "事务缺陷"}
+    audit_event = {"id": "audit_bug_atomic", "event_type": "bug.updated"}
+
+    repository.save_bug_record(bug, audit_event=audit_event)
+    repository.delete_bug_record("bug_atomic", audit_event=audit_event)
+
+    assert connect_calls == [{"autocommit": False}, {"autocommit": False}]
+    assert upsert_calls == [{"bug_atomic": bug}]
+    assert audit_calls == [[audit_event], [audit_event]]
+    assert any("DELETE FROM bugs" in sql for sql in executed_sql)
+
+
 def test_postgres_user_insight_read_models_delegate_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []
