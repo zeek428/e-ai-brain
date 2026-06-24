@@ -195,6 +195,20 @@ def get_related_system_by_code(current_store: Any, code: str) -> dict[str, Any] 
     return None
 
 
+def get_product_version_branch_config_record(
+    current_store: Any,
+    branch_config_id: str,
+) -> dict[str, Any] | None:
+    get_branch_config = getattr(
+        runtime_repository(current_store),
+        "get_product_version_branch_config",
+        None,
+    )
+    if callable(get_branch_config):
+        return get_branch_config(branch_config_id)
+    return current_store.product_version_branch_configs.get(branch_config_id)
+
+
 def save_product_config_record(
     current_store: Any,
     collection_name: str,

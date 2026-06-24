@@ -14,8 +14,10 @@ from app.services.product_config_context import (
     ensure_enum,
     ensure_non_blank,
     ensure_unique_value,
+    get_product_version_branch_config_record,
     payload_updates,
     product_config_query_repository,
+    product_config_record_write_store,
     product_config_write_store,
     product_version_summary_projection,
     record_audit_event,
@@ -277,8 +279,8 @@ def patch_product_version_branch_config(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
-    current_store = product_config_write_store(store(request))
-    branch_config = current_store.product_version_branch_configs.get(branch_config_id)
+    current_store = product_config_record_write_store(store(request))
+    branch_config = get_product_version_branch_config_record(current_store, branch_config_id)
     if branch_config is None:
         raise api_error(404, "NOT_FOUND", "Product version branch config not found")
     updates = payload_updates(payload)
@@ -316,8 +318,8 @@ def delete_product_version_branch_config(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner", "rd_owner"})
-    current_store = product_config_write_store(store(request))
-    if branch_config_id not in current_store.product_version_branch_configs:
+    current_store = product_config_record_write_store(store(request))
+    if get_product_version_branch_config_record(current_store, branch_config_id) is None:
         raise api_error(404, "NOT_FOUND", "Product version branch config not found")
     if not uses_repository_context(current_store):
         del current_store.product_version_branch_configs[branch_config_id]

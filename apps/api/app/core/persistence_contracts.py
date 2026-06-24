@@ -128,6 +128,11 @@ class ProductConfigRepository(Protocol):
 
     def get_related_system_by_code(self, code: str) -> dict[str, Any] | None: ...
 
+    def get_product_version_branch_config(
+        self,
+        branch_config_id: str,
+    ) -> dict[str, Any] | None: ...
+
     def list_product_versions(
         self,
         product_id: str,

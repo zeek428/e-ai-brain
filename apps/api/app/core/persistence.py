@@ -311,6 +311,14 @@ class PostgresSnapshotRepository:
     def get_related_system_by_code(self, code: str) -> dict[str, Any] | None:
         return self._product_config_read_repository.get_related_system_by_code(code)
 
+    def get_product_version_branch_config(
+        self,
+        branch_config_id: str,
+    ) -> dict[str, Any] | None:
+        return self._product_config_read_repository.get_product_version_branch_config(
+            branch_config_id,
+        )
+
     def list_product_versions(
         self,
         product_id: str,

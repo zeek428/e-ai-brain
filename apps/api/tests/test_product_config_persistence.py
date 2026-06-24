@@ -99,7 +99,18 @@ def test_empty_product_config_tables_ignore_snapshot_product_data():
         "counters": {"product": 1},
         "product_git_repositories": {},
         "product_modules": {},
-        "product_versions": {},
+        "product_versions": {
+            "version_single_read": {
+                "code": "v1",
+                "description": None,
+                "id": "version_single_read",
+                "name": "v1",
+                "product_id": "product_single_read",
+                "release_date": None,
+                "start_date": None,
+                "status": "active",
+            },
+        },
         "products": {
             "product_001": {
                 "code": "SNAPSHOT-PRODUCT",
@@ -621,7 +632,19 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
                 "status": "active",
             },
         },
-        "product_version_branch_configs": {},
+        "product_version_branch_configs": {
+            "version_branch_single_read": {
+                "base_branch": "main",
+                "branch_status": "active",
+                "creation_source": "manual",
+                "description": "repository branch config",
+                "id": "version_branch_single_read",
+                "product_id": "product_single_read",
+                "repository_id": "repo_single_read",
+                "version_id": "version_single_read",
+                "working_branch": "feature/single-read",
+            },
+        },
         "related_systems": {
             "related_single_read": {
                 "code": "REL-SINGLE",
@@ -660,11 +683,21 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
         assert patched_system.status_code == 200
         assert patched_system.json()["data"]["code"] == "REL-SINGLE-2"
 
+        patched_branch_config = client.patch(
+            "/api/product-version-branch-configs/version_branch_single_read",
+            json={"branch_status": "testing"},
+            headers=headers,
+        )
+        assert patched_branch_config.status_code == 200
+        assert patched_branch_config.json()["data"]["branch_status"] == "testing"
+        assert patched_branch_config.json()["data"]["repository_name"] == "单记录仓库"
+
         assert repository.product_config_single_reads == [
             "get_product_git_repository:repo_single_read",
             "get_related_system:related_single_read",
             "get_related_system_by_code:REL-SINGLE-2",
             "get_product:product_single_read",
+            "get_product_version_branch_config:version_branch_single_read",
         ]
         assert (
             repository.product_config_payload["product_git_repositories"]["repo_single_read"][
@@ -677,12 +710,26 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
             == "inactive"
         )
         assert (
+            repository.product_config_payload["product_version_branch_configs"][
+                "version_branch_single_read"
+            ]["branch_status"]
+            == "testing"
+        )
+        assert (
             "save:product_git_repositories:repo_single_read"
             in repository.product_config_direct_writes
         )
         assert "save:related_systems:related_single_read" in repository.product_config_direct_writes
+        assert (
+            "save:product_version_branch_configs:version_branch_single_read"
+            in repository.product_config_direct_writes
+        )
 
         repository.product_config_single_reads.clear()
+        deleted_branch_config = client.delete(
+            "/api/product-version-branch-configs/version_branch_single_read",
+            headers=headers,
+        )
         deleted_repository = client.delete(
             "/api/product-git-repositories/repo_single_read",
             headers=headers,
@@ -692,11 +739,16 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
             headers=headers,
         )
 
+        assert deleted_branch_config.status_code == 200
         assert deleted_repository.status_code == 200
         assert deleted_system.status_code == 200
         assert repository.product_config_single_reads == [
+            "get_product_version_branch_config:version_branch_single_read",
             "get_product_git_repository:repo_single_read",
             "get_related_system:related_single_read",
+        ]
+        assert "version_branch_single_read" not in repository.product_config_payload[
+            "product_version_branch_configs"
         ]
         assert "repo_single_read" not in repository.product_config_payload[
             "product_git_repositories"
@@ -704,6 +756,10 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
         assert "related_single_read" not in repository.product_config_payload["related_systems"]
         assert (
             "delete:product_git_repositories:repo_single_read"
+            in repository.product_config_direct_writes
+        )
+        assert (
+            "delete:product_version_branch_configs:version_branch_single_read"
             in repository.product_config_direct_writes
         )
         assert (

@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.639 |
+| 功能版本 | v1.1.640 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.640 | 2026-06-24 | 补充迭代版本分支配置 DB-first 验收：PostgreSQL/repository 运行态即使 runtime store 为空，版本代码分支配置 patch/delete 也必须按分支配置 ID 从 repository 读取源记录并把更新、删除和审计写回仓储；`test_product_config_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.639 | 2026-06-24 | 补充产品配置子资源 DB-first 验收：PostgreSQL/repository 运行态即使 runtime store 为空，产品 Git 仓库和相关系统 patch/delete 也必须按资源 ID 从 repository 读取源记录并把更新、删除和审计写回仓储；`test_product_config_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.638 | 2026-06-24 | 补充用户反馈更新/转需求 DB-first 验收：PostgreSQL/repository 运行态即使 runtime store 为空，也必须按反馈 ID 从 repository 读取源记录并把更新、转需求和审计写回仓储；`test_insight_planning_api_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.637 | 2026-06-24 | 补充管理列表筛选视图验收：启用 `viewStorageKey` 的 `ManagementListPage` 页面可保存、应用和删除本地筛选/排序视图，需求、任务、迭代版本、Bug、用户洞察、代码巡检、执行诊断、草案任务台、产品资产和系统管理列表均应展示筛选视图入口；`ManagementListPage.test.tsx`、typecheck 和真实管理页面 smoke 必须通过 | Codex |

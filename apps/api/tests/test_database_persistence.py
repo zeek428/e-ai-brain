@@ -120,6 +120,32 @@ class FakeSnapshotRepository:
                 return dict(system)
         return None
 
+    def _branch_config_projection(self, branch_config: dict) -> dict:
+        repository = self._product_config_collection("product_git_repositories").get(
+            branch_config.get("repository_id"),
+            {},
+        )
+        return {
+            **dict(branch_config),
+            "repository_default_branch": repository.get("default_branch"),
+            "repository_name": repository.get("name"),
+            "repository_path": repository.get("project_path"),
+            "repository_provider": repository.get("git_provider"),
+        }
+
+    def get_product_version_branch_config(self, branch_config_id: str) -> dict | None:
+        self.product_config_single_reads.append(
+            f"get_product_version_branch_config:{branch_config_id}",
+        )
+        branch_config = self._product_config_collection("product_version_branch_configs").get(
+            branch_config_id,
+        )
+        return (
+            self._branch_config_projection(branch_config)
+            if branch_config is not None
+            else None
+        )
+
     def list_product_versions(
         self,
         product_id: str,
@@ -151,6 +177,19 @@ class FakeSnapshotRepository:
             key=lambda item: (item.get("display_order", 0), item["code"]),
         )
         return [item for item in modules if not active_only or item.get("status") == "active"]
+
+    def list_product_version_branch_configs(self, version_id: str) -> list[dict]:
+        branch_configs = sorted(
+            (
+                self._branch_config_projection(item)
+                for item in self._product_config_collection(
+                    "product_version_branch_configs",
+                ).values()
+                if item.get("version_id") == version_id
+            ),
+            key=lambda item: (item.get("repository_name") or "", item["working_branch"]),
+        )
+        return list(branch_configs)
 
     def list_product_git_repositories(
         self,

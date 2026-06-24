@@ -114,6 +114,26 @@ class ProductConfigReadRepository:
                 row = cursor.fetchone()
         return _row_to_related_system(row) if row is not None else None
 
+    def get_product_version_branch_config(
+        self,
+        branch_config_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT b.id, b.product_id, b.version_id, b.repository_id, b.base_branch,
+                           b.working_branch, b.branch_status, b.creation_source, b.description,
+                           r.name, r.git_provider, r.project_path, r.default_branch
+                    FROM product_version_branch_configs b
+                    JOIN product_git_repositories r ON r.id = b.repository_id
+                    WHERE b.id = %s
+                    """,
+                    (branch_config_id,),
+                )
+                row = cursor.fetchone()
+        return _row_to_product_version_branch_config(row) if row is not None else None
+
     def list_product_versions(
         self,
         product_id: str,
