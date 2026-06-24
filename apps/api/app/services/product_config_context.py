@@ -202,6 +202,29 @@ def list_product_module_records(
     ]
 
 
+def product_module_has_related_records(
+    current_store: Any,
+    *,
+    product_id: str,
+    module_code: str,
+) -> bool:
+    has_related_records = getattr(
+        runtime_repository(current_store),
+        "product_module_has_related_records",
+        None,
+    )
+    if callable(has_related_records):
+        return bool(has_related_records(product_id, module_code))
+    return any(
+        item["product_id"] == product_id and item.get("module_code") == module_code
+        for item in [
+            *current_store.requirements.values(),
+            *current_store.ai_tasks.values(),
+            *current_store.bugs.values(),
+        ]
+    )
+
+
 def get_related_system_record(current_store: Any, system_id: str) -> dict[str, Any] | None:
     get_system = getattr(runtime_repository(current_store), "get_related_system", None)
     if callable(get_system):

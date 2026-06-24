@@ -308,6 +308,12 @@ class PostgresSnapshotRepository:
     def get_product_module(self, module_id: str) -> dict[str, Any] | None:
         return self._product_config_read_repository.get_product_module(module_id)
 
+    def product_module_has_related_records(self, product_id: str, module_code: str) -> bool:
+        return self._product_config_read_repository.product_module_has_related_records(
+            product_id,
+            module_code,
+        )
+
     def get_related_system(self, system_id: str) -> dict[str, Any] | None:
         return self._product_config_read_repository.get_related_system(system_id)
 

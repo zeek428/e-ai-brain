@@ -755,6 +755,10 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
         )
 
         repository.product_config_single_reads.clear()
+        deleted_module = client.delete(
+            "/api/product-modules/module_single_read",
+            headers=headers,
+        )
         deleted_branch_config = client.delete(
             "/api/product-version-branch-configs/version_branch_single_read",
             headers=headers,
@@ -768,14 +772,18 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
             headers=headers,
         )
 
+        assert deleted_module.status_code == 200
         assert deleted_branch_config.status_code == 200
         assert deleted_repository.status_code == 200
         assert deleted_system.status_code == 200
         assert repository.product_config_single_reads == [
+            "get_product_module:module_single_read",
+            "product_module_has_related_records:product_single_read:core-updated",
             "get_product_version_branch_config:version_branch_single_read",
             "get_product_git_repository:repo_single_read",
             "get_related_system:related_single_read",
         ]
+        assert "module_single_read" not in repository.product_config_payload["product_modules"]
         assert "version_branch_single_read" not in repository.product_config_payload[
             "product_version_branch_configs"
         ]
@@ -783,6 +791,10 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
             "product_git_repositories"
         ]
         assert "related_single_read" not in repository.product_config_payload["related_systems"]
+        assert (
+            "delete:product_modules:module_single_read"
+            in repository.product_config_direct_writes
+        )
         assert (
             "delete:product_git_repositories:repo_single_read"
             in repository.product_config_direct_writes

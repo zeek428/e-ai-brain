@@ -17,6 +17,7 @@ from app.services.product_config_context import (
     payload_updates,
     product_config_record_write_store,
     product_config_write_store,
+    product_module_has_related_records,
     record_audit_event,
     save_product_config_record,
     uses_repository_context,
@@ -175,18 +176,14 @@ def delete_product_module(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
-    module = current_store.product_modules.get(module_id)
+    current_store = product_config_record_write_store(store(request))
+    module = get_product_module_record(current_store, module_id)
     if module is None:
         raise api_error(404, "NOT_FOUND", "Product module not found")
-    if any(
-        item["product_id"] == module["product_id"]
-        and item.get("module_code") == module["code"]
-        for item in [
-            *current_store.requirements.values(),
-            *current_store.ai_tasks.values(),
-            *current_store.bugs.values(),
-        ]
+    if product_module_has_related_records(
+        current_store,
+        product_id=str(module["product_id"]),
+        module_code=str(module["code"]),
     ):
         raise api_error(409, "RESOURCE_IN_USE", "Product module still has related records")
     if not uses_repository_context(current_store):

@@ -113,6 +113,21 @@ class FakeSnapshotRepository:
         module = self._product_config_collection("product_modules").get(module_id)
         return dict(module) if module is not None else None
 
+    def product_module_has_related_records(self, product_id: str, module_code: str) -> bool:
+        self.product_config_single_reads.append(
+            f"product_module_has_related_records:{product_id}:{module_code}",
+        )
+        related_payloads = (
+            (self.requirements_payload or {}).get("requirements", {}),
+            (self.ai_tasks_payload or {}).get("ai_tasks", {}),
+            (self.bugs_payload or {}).get("bugs", {}),
+        )
+        return any(
+            item.get("product_id") == product_id and item.get("module_code") == module_code
+            for payload in related_payloads
+            for item in payload.values()
+        )
+
     def get_related_system(self, system_id: str) -> dict | None:
         self.product_config_single_reads.append(f"get_related_system:{system_id}")
         system = self._product_config_collection("related_systems").get(system_id)

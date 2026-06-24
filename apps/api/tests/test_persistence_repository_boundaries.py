@@ -288,6 +288,17 @@ def test_postgres_product_config_read_models_delegate_to_domain_repository(monke
     )
     monkeypatch.setattr(
         ProductConfigReadRepository,
+        "product_module_has_related_records",
+        lambda self, product_id, module_code: calls.append(
+            (
+                "product_module_has_related_records",
+                {"module_code": module_code, "product_id": product_id},
+            )
+        )
+        or False,
+    )
+    monkeypatch.setattr(
+        ProductConfigReadRepository,
         "get_related_system",
         lambda self, system_id: calls.append(("get_related_system", {"system_id": system_id}))
         or {"source": "get_related_system"},
@@ -362,6 +373,7 @@ def test_postgres_product_config_read_models_delegate_to_domain_repository(monke
         "get_product_git_repository"
     )
     assert repository.get_product_module("module_001")["source"] == "get_product_module"
+    assert repository.product_module_has_related_records("product_001", "core") is False
     assert repository.get_related_system("related_001")["source"] == "get_related_system"
     assert repository.get_related_system_by_code("CRM")["source"] == (
         "get_related_system_by_code"
@@ -394,6 +406,7 @@ def test_postgres_product_config_read_models_delegate_to_domain_repository(monke
         "get_product",
         "get_product_git_repository",
         "get_product_module",
+        "product_module_has_related_records",
         "get_related_system",
         "get_related_system_by_code",
         "get_product_version_branch_config",
@@ -408,11 +421,12 @@ def test_postgres_product_config_read_models_delegate_to_domain_repository(monke
     assert calls[3][1] == {"product_id": "product_001"}
     assert calls[4][1] == {"repository_id": "repo_001"}
     assert calls[5][1] == {"module_id": "module_001"}
-    assert calls[6][1] == {"system_id": "related_001"}
-    assert calls[7][1] == {"code": "CRM"}
-    assert calls[8][1] == {"branch_config_id": "version_branch_001"}
-    assert calls[9][1] == {"active_only": True, "product_id": "product_001"}
-    assert calls[12][1] == {"active_only": False, "product_id": "product_001"}
+    assert calls[6][1] == {"module_code": "core", "product_id": "product_001"}
+    assert calls[7][1] == {"system_id": "related_001"}
+    assert calls[8][1] == {"code": "CRM"}
+    assert calls[9][1] == {"branch_config_id": "version_branch_001"}
+    assert calls[10][1] == {"active_only": True, "product_id": "product_001"}
+    assert calls[13][1] == {"active_only": False, "product_id": "product_001"}
 
 
 def test_postgres_product_config_writes_delegate_to_domain_repository(monkeypatch):

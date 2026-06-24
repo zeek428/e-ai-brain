@@ -99,6 +99,37 @@ class ProductConfigReadRepository:
                 row = cursor.fetchone()
         return _row_to_product_module(row) if row is not None else None
 
+    def product_module_has_related_records(self, product_id: str, module_code: str) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                      EXISTS (
+                        SELECT 1 FROM requirements
+                        WHERE product_id = %s AND module_code = %s
+                      )
+                      OR EXISTS (
+                        SELECT 1 FROM ai_tasks
+                        WHERE product_id = %s AND module_code = %s
+                      )
+                      OR EXISTS (
+                        SELECT 1 FROM bugs
+                        WHERE product_id = %s AND module_code = %s
+                      )
+                    """,
+                    (
+                        product_id,
+                        module_code,
+                        product_id,
+                        module_code,
+                        product_id,
+                        module_code,
+                    ),
+                )
+                row = cursor.fetchone()
+        return bool(row[0]) if row is not None else False
+
     def get_related_system(self, system_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
