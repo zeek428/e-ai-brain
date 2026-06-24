@@ -1638,6 +1638,8 @@ def list_code_inspection_reports_response(
         "committer": committer,
     }
     global_access, product_scope_ids = user_product_access(user)
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
     if not global_access and product_id is not None and str(product_id) not in product_scope_ids:
         items = []
         payload = paginated_list_payload(
@@ -1658,6 +1660,48 @@ def list_code_inspection_reports_response(
             list_name="code_inspections",
             page=payload.get("page"),
             page_size=payload.get("page_size"),
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+    repository = code_inspection_query_repository(current_store)
+    if (
+        repository is not None
+        and callable(getattr(repository, "count_code_inspection_reports", None))
+        and callable(getattr(repository, "list_code_inspection_reports_page", None))
+    ):
+        product_scope_filter = None if global_access else sorted(product_scope_ids)
+        query_filters = {
+            "committer": committer,
+            "product_id": product_id,
+            "product_scope_ids": product_scope_filter,
+            "repository_id": repository_id,
+            "risk_level": risk_level,
+            "status": status,
+            "title": title,
+        }
+        total = repository.count_code_inspection_reports(**query_filters)
+        items = [
+            public_code_inspection_report(item, current_store)
+            for item in repository.list_code_inspection_reports_page(
+                **query_filters,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="code_inspections",
+            page=resolved_page,
+            page_size=resolved_page_size,
             sort_by=resolved_sort_by,
             sort_order=sort_order,
             started_at=started_at,

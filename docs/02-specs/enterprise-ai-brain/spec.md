@@ -1350,7 +1350,7 @@ AI 助手聊天生成必须以 `assistant_chat_runs` 作为服务端运行真相
 | GitHub PR 预览 | GET | /api/devops/github/pull-requests/{repository_id}/{pr_number}/preview | 读取 GitHub PR 标题、作者、分支、变更文件数、文件摘要和只读权限诊断；端点由 `app.api.routers.git_review` 单一路由承载。 |
 | GitHub PR diff 快照 | POST | /api/devops/github/pull-requests/{repository_id}/{pr_number}/snapshot | 拉取 PR 元信息和文件摘要，生成 code_review 任务输入快照，并在响应中返回上一快照引用、diff 对比摘要和复用标记；端点由 `app.api.routers.git_review` 单一路由承载。 |
 | Code Review 报告 | GET | /api/ai-tasks/{id}/code-review-report | 查询 GitLab MR / GitHub PR 代码 Review 报告、执行器信息、确认状态和只读 Review 结论回写模板。 |
-| 代码巡检报告 | GET | /api/governance/code-inspections, /api/governance/code-inspections/{report_id} | 查询周期性代码仓库巡检报告列表和详情，返回仓库、分支、提交人、风险级别、finding 统计、问题明细和通知反馈；端点由 `app.api.routers.code_inspections` 单一路由承载。 |
+| 代码巡检报告 | GET | /api/governance/code-inspections, /api/governance/code-inspections/{report_id} | 查询周期性代码仓库巡检报告列表和详情，列表优先使用 PostgreSQL read model 完成产品 scope、仓库、风险、状态、摘要、提交人筛选以及排序分页，返回仓库、分支、提交人、风险级别、finding 统计、问题明细和通知反馈；端点由 `app.api.routers.code_inspections` 单一路由承载。 |
 | Jenkins 发布 | GET/POST | /api/devops/jenkins/releases | 登记或查询按产品和版本归属的发布记录。 |
 | 线上运行日志 | GET/POST | /api/ops/online-log-metrics | 登记或查询按产品、模块、环境和时间窗口归属的线上运行日志指标。 |
 | 采集运行记录 | GET/POST/PATCH | /api/collectors/runs, /api/collectors/runs/{run_id} | 历史兼容 API：查询、登记和结束 DevOps/洞察采集运行台账，不自动生成指标；当前前端不提供入口。 |

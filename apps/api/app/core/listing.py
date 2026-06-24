@@ -17,6 +17,7 @@ LIST_P95_TARGETS_MS = {
     "audit_events": 500,
     "assistant_action_drafts": 400,
     "bugs": 300,
+    "code_inspections": 400,
     "devops_operational_metrics": 500,
     "execution_traces": 500,
     "knowledge_documents": 400,

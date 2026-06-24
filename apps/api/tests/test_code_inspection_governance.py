@@ -9,7 +9,11 @@ import app.services.native_code_scanner as native_code_scanner
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.main import app
-from app.services.code_inspections import existing_code_inspection_bug_id, finding_fingerprint
+from app.services.code_inspections import (
+    existing_code_inspection_bug_id,
+    finding_fingerprint,
+    list_code_inspection_reports_response,
+)
 
 client = TestClient(app)
 
@@ -187,6 +191,164 @@ def test_code_inspection_finding_upsert_accepts_suppression_metadata():
             }
         },
     )
+
+
+def test_code_inspection_report_repository_supports_paged_filtered_queries():
+    class CapturingCursor:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple | None]] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple | None = None) -> None:
+            self.calls.append((query, params))
+
+        def fetchone(self):
+            return (3,)
+
+        def fetchall(self):
+            return []
+
+    class CapturingConnection:
+        def __init__(self, cursor: CapturingCursor) -> None:
+            self._cursor = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def cursor(self):
+            return self._cursor
+
+    cursor = CapturingCursor()
+    repository = CodeInspectionReadRepository(lambda: CapturingConnection(cursor))
+
+    total = repository.count_code_inspection_reports(
+        committer="alice",
+        product_scope_ids=["product_ai_brain"],
+        risk_level="critical",
+        title="secret",
+    )
+    page_items = repository.list_code_inspection_reports_page(
+        committer="alice",
+        limit=5,
+        offset=10,
+        product_scope_ids=["product_ai_brain"],
+        risk_level="critical",
+        sort_by="finding_count",
+        sort_order="asc",
+        title="secret",
+    )
+
+    assert total == 3
+    assert page_items == []
+    count_query, count_params = cursor.calls[0]
+    page_query, page_params = cursor.calls[1]
+    assert "SELECT count(*) FROM code_inspection_reports" in count_query
+    assert "product_id = ANY(%s)" in count_query
+    assert "lower(committer_summary::text) LIKE %s" in count_query
+    assert "lower(summary) LIKE %s" in count_query
+    assert count_params == (
+        "critical",
+        ["product_ai_brain"],
+        "%secret%",
+        "%secret%",
+        "%secret%",
+        "%alice%",
+    )
+    assert "ORDER BY finding_count ASC NULLS FIRST, id ASC" in page_query
+    assert "LIMIT %s OFFSET %s" in page_query
+    assert page_params[-2:] == (5, 10)
+
+
+def test_code_inspection_report_list_uses_repository_pagination_and_product_scope():
+    class PagedRepository:
+        def __init__(self) -> None:
+            self.count_filters: dict | None = None
+            self.page_filters: dict | None = None
+
+        def list_code_inspection_reports(self, **_kwargs):
+            raise AssertionError("full list fallback should not be used")
+
+        def count_code_inspection_reports(self, **kwargs):
+            self.count_filters = kwargs
+            return 1
+
+        def list_code_inspection_reports_page(self, **kwargs):
+            self.page_filters = kwargs
+            return [
+                {
+                    "committer_summary": [{"email": "alice@example.com"}],
+                    "created_at": "2026-06-24T00:00:00+00:00",
+                    "finding_count": 2,
+                    "id": "code_inspection_report_paged",
+                    "product_id": "product_ai_brain",
+                    "repository": {"name": "AI Brain", "project_path": "example/ai-brain"},
+                    "repository_id": "repo_ai_brain",
+                    "risk_level": "critical",
+                    "severe_finding_count": 1,
+                    "status": "completed",
+                    "summary": "secret finding",
+                    "updated_at": "2026-06-24T00:00:00+00:00",
+                }
+            ]
+
+    repository = PagedRepository()
+    current_store = SimpleNamespace(product_git_repositories={}, repository=repository)
+
+    payload = list_code_inspection_reports_response(
+        committer="alice",
+        current_store=current_store,
+        page=2,
+        page_size=5,
+        product_id=None,
+        repository_id="repo_ai_brain",
+        risk_level="critical",
+        sort_by="finding_count",
+        sort_order="asc",
+        started_at=None,
+        status="completed",
+        title="secret",
+        trace_id="trace_code_inspection_list",
+        user={
+            "id": "user_product_owner",
+            "roles": ["product_owner"],
+            "scope_summary": [
+                {
+                    "access_level": "read",
+                    "scope_id": "product_ai_brain",
+                    "scope_type": "product",
+                }
+            ],
+        },
+    )
+
+    assert payload["total"] == 1
+    assert payload["page"] == 2
+    assert payload["page_size"] == 5
+    assert payload["items"][0]["repository_name"] == "AI Brain"
+    assert repository.count_filters == {
+        "committer": "alice",
+        "product_id": None,
+        "product_scope_ids": ["product_ai_brain"],
+        "repository_id": "repo_ai_brain",
+        "risk_level": "critical",
+        "status": "completed",
+        "title": "secret",
+    }
+    assert repository.page_filters == {
+        **repository.count_filters,
+        "limit": 5,
+        "offset": 5,
+        "sort_by": "finding_count",
+        "sort_order": "asc",
+    }
 
 
 def create_model_gateway(headers: dict[str, str]) -> dict:

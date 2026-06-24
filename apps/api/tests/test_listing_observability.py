@@ -34,6 +34,7 @@ def test_management_list_p95_targets_are_explicit():
         "ai_tasks": 300,
         "audit_events": 500,
         "bugs": 300,
+        "code_inspections": 400,
         "devops_operational_metrics": 500,
         "knowledge_documents": 400,
         "model_gateway_configs": 300,

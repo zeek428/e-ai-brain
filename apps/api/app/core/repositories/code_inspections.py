@@ -5,6 +5,33 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Any
 
+CODE_INSPECTION_REPORT_SELECT = """
+id, product_id, repository_id, repository, scheduled_job_id,
+scheduled_job_run_id, collector_run_id, plugin_invocation_log_id,
+plugin_action_id, plugin_connection_id, source_system, branch,
+commit_sha, summary, risk_level, scan_mode, scanner_name,
+is_full_scan, files_scanned, lines_scanned, rules_loaded,
+coverage_warning, artifact_ref, checkout_path,
+checkout_path_retained, remote_url_hash, remote_url_summary,
+scan_started_at, scan_finished_at, scanner_version, rules_version,
+suppressed_finding_count, suppression_summary, quality_gate,
+scan_profile, previous_report_id, previous_comparison,
+finding_count, severe_finding_count, status, result_actions,
+created_bug_ids, notification_ids, created_task_ids,
+committer_count, committer_summary, created_by, created_at, updated_at
+"""
+
+CODE_INSPECTION_REPORT_SORT_COLUMNS = {
+    "created_at": "created_at",
+    "committer_count": "committer_count",
+    "finding_count": "finding_count",
+    "id": "id",
+    "risk_level": "risk_level",
+    "severe_finding_count": "severe_finding_count",
+    "status": "status",
+    "updated_at": "updated_at",
+}
+
 
 def _json(value: Any, default: Any) -> str:
     if value is None:
@@ -64,22 +91,85 @@ class CodeInspectionReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, product_id, repository_id, repository, scheduled_job_id,
-                           scheduled_job_run_id, collector_run_id, plugin_invocation_log_id,
-                           plugin_action_id, plugin_connection_id, source_system, branch,
-                           commit_sha, summary, risk_level, scan_mode, scanner_name,
-                           is_full_scan, files_scanned, lines_scanned, rules_loaded,
-                           coverage_warning, artifact_ref, checkout_path,
-                           checkout_path_retained, remote_url_hash, remote_url_summary,
-                           scan_started_at, scan_finished_at, scanner_version, rules_version,
-                           suppressed_finding_count, suppression_summary, quality_gate,
-                           scan_profile, previous_report_id, previous_comparison,
-                           finding_count, severe_finding_count, status, result_actions,
-                           created_bug_ids, notification_ids, created_task_ids,
-                           committer_count, committer_summary, created_by, created_at, updated_at
+                    SELECT {CODE_INSPECTION_REPORT_SELECT}
                     FROM code_inspection_reports
                     {where}
                     ORDER BY created_at DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                return [self._report_from_row(row) for row in cursor.fetchall()]
+
+    def count_code_inspection_reports(
+        self,
+        *,
+        committer: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        repository_id: str | None = None,
+        risk_level: str | None = None,
+        status: str | None = None,
+        title: str | None = None,
+    ) -> int:
+        where, params = self._report_where(
+            {
+                "product_id": product_id,
+                "repository_id": repository_id,
+                "risk_level": risk_level,
+                "status": status,
+            },
+            committer=committer,
+            product_scope_ids=product_scope_ids,
+            title=title,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM code_inspection_reports {where}",
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_code_inspection_reports_page(
+        self,
+        *,
+        committer: str | None = None,
+        limit: int,
+        offset: int,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        repository_id: str | None = None,
+        risk_level: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+        title: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._report_where(
+            {
+                "product_id": product_id,
+                "repository_id": repository_id,
+                "risk_level": risk_level,
+                "status": status,
+            },
+            committer=committer,
+            product_scope_ids=product_scope_ids,
+            title=title,
+        )
+        sort_column = CODE_INSPECTION_REPORT_SORT_COLUMNS.get(sort_by, "created_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT {CODE_INSPECTION_REPORT_SELECT}
+                    FROM code_inspection_reports
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
                     """,
                     tuple(params),
                 )
@@ -410,6 +500,40 @@ class CodeInspectionReadRepository:
                 continue
             clauses.append(f"{field} = %s")
             params.append(value)
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _report_where(
+        self,
+        values: dict[str, Any],
+        *,
+        committer: str | None,
+        product_scope_ids: list[str] | None,
+        title: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for field, value in values.items():
+            if value is None:
+                continue
+            clauses.append(f"{field} = %s")
+            params.append(value)
+        if product_scope_ids is not None:
+            if product_scope_ids:
+                clauses.append("product_id = ANY(%s)")
+                params.append(product_scope_ids)
+            else:
+                clauses.append("FALSE")
+        normalized_title = str(title or "").strip().lower()
+        if normalized_title:
+            probe = f"%{normalized_title}%"
+            clauses.append(
+                "(lower(id) LIKE %s OR lower(summary) LIKE %s OR lower(repository_id) LIKE %s)"
+            )
+            params.extend([probe, probe, probe])
+        normalized_committer = str(committer or "").strip().lower()
+        if normalized_committer:
+            clauses.append("lower(committer_summary::text) LIKE %s")
+            params.append(f"%{normalized_committer}%")
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
 
     def _report_from_row(self, row: Any) -> dict[str, Any]:

@@ -1183,6 +1183,56 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def count_code_inspection_reports(
+        self,
+        *,
+        committer: str | None = None,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        repository_id: str | None = None,
+        risk_level: str | None = None,
+        status: str | None = None,
+        title: str | None = None,
+    ) -> int:
+        return self._code_inspection_read_repository.count_code_inspection_reports(
+            committer=committer,
+            product_id=product_id,
+            product_scope_ids=product_scope_ids,
+            repository_id=repository_id,
+            risk_level=risk_level,
+            status=status,
+            title=title,
+        )
+
+    def list_code_inspection_reports_page(
+        self,
+        *,
+        committer: str | None = None,
+        limit: int,
+        offset: int,
+        product_id: str | None = None,
+        product_scope_ids: list[str] | None = None,
+        repository_id: str | None = None,
+        risk_level: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+        title: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._code_inspection_read_repository.list_code_inspection_reports_page(
+            committer=committer,
+            limit=limit,
+            offset=offset,
+            product_id=product_id,
+            product_scope_ids=product_scope_ids,
+            repository_id=repository_id,
+            risk_level=risk_level,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+            title=title,
+        )
+
     def get_code_inspection_detail(self, report_id: str) -> dict[str, Any] | None:
         return self._code_inspection_read_repository.get_code_inspection_detail(report_id)
 
