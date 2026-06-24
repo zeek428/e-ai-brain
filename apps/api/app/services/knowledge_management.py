@@ -1027,7 +1027,7 @@ def upload_knowledge_document_result(
         "created_at": timestamp,
         "updated_at": timestamp,
     }
-    current_store.knowledge_import_jobs[import_job["id"]] = import_job
+    put_knowledge_import_job_to_memory(current_store, import_job)
 
     if not uses_repository_context(current_store):
         current_store.knowledge_documents[document_id] = document
@@ -1086,7 +1086,7 @@ def _mark_import_job_failed(
         "finished_at": timestamp,
         "updated_at": timestamp,
     }
-    current_store.knowledge_import_jobs[failed_job["id"]] = failed_job
+    put_knowledge_import_job_to_memory(current_store, failed_job)
     failed_document = {
         **document,
         "index_status": "index_failed",
@@ -1103,7 +1103,7 @@ def run_knowledge_import_job_result(
     job_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    import_job = current_store.knowledge_import_jobs.get(job_id)
+    import_job = get_knowledge_import_job_from_memory(current_store, job_id)
     if import_job is None:
         raise api_error(404, "NOT_FOUND", "Knowledge import job not found")
     document = current_store.knowledge_documents.get(import_job.get("document_id"))
@@ -1133,7 +1133,7 @@ def run_knowledge_import_job_result(
         "error_message": None,
         "updated_at": timestamp,
     }
-    current_store.knowledge_import_jobs[job_id] = running_job
+    put_knowledge_import_job_to_memory(current_store, running_job)
     document = {
         **document,
         "index_status": "importing",
@@ -1305,7 +1305,7 @@ def run_knowledge_import_job_result(
             "finished_at": now_iso(),
             "updated_at": now_iso(),
         }
-        current_store.knowledge_import_jobs[job_id] = completed_job
+        put_knowledge_import_job_to_memory(current_store, completed_job)
         if not uses_repository_context(current_store):
             apply_knowledge_document_to_memory(current_store, indexed_document, chunks)
         audit_event = record_audit_event(
@@ -1354,7 +1354,7 @@ def retry_knowledge_import_job_result(
     job_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    import_job = current_store.knowledge_import_jobs.get(job_id)
+    import_job = get_knowledge_import_job_from_memory(current_store, job_id)
     if import_job is None:
         raise api_error(404, "NOT_FOUND", "Knowledge import job not found")
     document = current_store.knowledge_documents.get(import_job.get("document_id"))
@@ -1380,7 +1380,7 @@ def retry_knowledge_import_job_result(
         "finished_at": None,
         "updated_at": now_iso(),
     }
-    current_store.knowledge_import_jobs[job_id] = retried_job
+    put_knowledge_import_job_to_memory(current_store, retried_job)
     document = {
         **document,
         "index_status": "importing",
@@ -1409,7 +1409,7 @@ def cancel_knowledge_import_job_result(
     job_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    import_job = current_store.knowledge_import_jobs.get(job_id)
+    import_job = get_knowledge_import_job_from_memory(current_store, job_id)
     if import_job is None:
         raise api_error(404, "NOT_FOUND", "Knowledge import job not found")
     document = current_store.knowledge_documents.get(import_job.get("document_id"))
@@ -1429,7 +1429,7 @@ def cancel_knowledge_import_job_result(
         "finished_at": now_iso(),
         "updated_at": now_iso(),
     }
-    current_store.knowledge_import_jobs[job_id] = cancelled_job
+    put_knowledge_import_job_to_memory(current_store, cancelled_job)
     document = {
         **document,
         "index_status": (
@@ -1630,7 +1630,7 @@ def reparse_knowledge_document_result(
         "created_at": timestamp,
         "updated_at": timestamp,
     }
-    current_store.knowledge_import_jobs[import_job["id"]] = import_job
+    put_knowledge_import_job_to_memory(current_store, import_job)
     current_store.knowledge_documents[document_id] = {
         **document,
         "index_status": "importing",
