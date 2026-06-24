@@ -7,9 +7,6 @@ from app.api.deps import api_error, require_roles
 from app.services.user_insights import (
     ensure_enum,
     ensure_non_blank,
-    record_audit_event,
-    save_iteration_decision_records,
-    save_single_repository_record,
     user_insight_query_repository,
     user_insight_write_store,
     uses_repository_context,
@@ -71,6 +68,104 @@ def validate_iteration_context(
             for module in current_store.product_modules.values()
         ):
             raise api_error(404, "NOT_FOUND", "Product module not found")
+
+
+def record_audit_event(
+    current_store: Any,
+    *,
+    event_type: str,
+    actor_id: str,
+    subject_type: str,
+    subject_id: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    audit_events = (
+        getattr(current_store, "audit_events", None)
+        if uses_repository_context(current_store)
+        else _memory_list(current_store, "audit_events")
+    )
+    sequence = len(audit_events) + 1 if isinstance(audit_events, list) else 1
+    event = {
+        "id": current_store.new_id("audit"),
+        "event_type": event_type,
+        "actor_id": actor_id,
+        "ai_task_id": None,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "payload": payload or {},
+        "sequence": sequence,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    if not uses_repository_context(current_store):
+        audit_events.append(event)
+    return event
+
+
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _append_memory_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
+    audit_events = _memory_list(current_store, "audit_events")
+    if not any(event.get("id") == audit_event.get("id") for event in audit_events):
+        audit_events.append(audit_event)
+
+
+def persist_iteration_suggestion_record(
+    current_store: Any,
+    *,
+    audit_event: dict[str, Any],
+    suggestion: dict[str, Any],
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_record = getattr(repository, "save_iteration_suggestion_record", None)
+    if callable(save_record):
+        save_record(suggestion, audit_event=audit_event)
+        return
+    _memory_collection(current_store, "iteration_plan_suggestions")[str(suggestion["id"])] = (
+        suggestion
+    )
+    _append_memory_audit_event(current_store, audit_event)
+
+
+def persist_iteration_decision_records(
+    current_store: Any,
+    *,
+    audit_events: list[dict[str, Any]],
+    decision: dict[str, Any],
+    requirement: dict[str, Any] | None,
+    suggestion: dict[str, Any],
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    save_records = getattr(repository, "save_iteration_decision_records", None)
+    if callable(save_records):
+        save_records(
+            suggestion=suggestion,
+            decision=decision,
+            audit_events=audit_events,
+            requirement=requirement,
+        )
+        return
+    if requirement is not None:
+        _memory_collection(current_store, "requirements")[str(requirement["id"])] = requirement
+    _memory_collection(current_store, "iteration_plan_suggestions")[str(suggestion["id"])] = (
+        suggestion
+    )
+    _memory_collection(current_store, "iteration_plan_decisions")[str(decision["id"])] = decision
+    for audit_event in audit_events:
+        _append_memory_audit_event(current_store, audit_event)
 
 
 def iteration_evidence_matches_modules(item: dict[str, Any], module_codes: list[str]) -> bool:
@@ -209,8 +304,6 @@ def create_iteration_requirement(
         "title": title,
         "version_id": version_id,
     }
-    if not uses_repository_context(current_store):
-        current_store.requirements[requirement_id] = requirement
     audit_event = record_audit_event(
         current_store,
         event_type="requirement.created",
@@ -287,8 +380,6 @@ def create_iteration_suggestions_response(
         payload=payload,
         user=user,
     )
-    if not uses_repository_context(current_store):
-        current_store.iteration_plan_suggestions[suggestion["id"]] = suggestion
     audit_event = record_audit_event(
         current_store,
         event_type="iteration_suggestion.generated",
@@ -302,10 +393,9 @@ def create_iteration_suggestions_response(
             "status": suggestion["status"],
         },
     )
-    save_single_repository_record(
+    persist_iteration_suggestion_record(
         current_store,
-        "save_iteration_suggestion_record",
-        suggestion,
+        suggestion=suggestion,
         audit_event=audit_event,
     )
     return {"items": [suggestion], "total": 1}
@@ -336,7 +426,6 @@ def decide_iteration_suggestion_response(
             "ITERATION_PLAN_DECISION_INVALID",
             "Rejected suggestion cannot convert to requirement",
         )
-    audit_start_index = len(current_store.audit_events)
     requirement = None
     requirement_audit_event = None
     if payload.convert_to_requirement:
@@ -369,9 +458,6 @@ def decide_iteration_suggestion_response(
         "id": current_store.new_id("iteration_decision"),
         "suggestion_id": suggestion_id,
     }
-    if not uses_repository_context(current_store):
-        current_store.iteration_plan_suggestions[suggestion_id] = suggestion
-        current_store.iteration_plan_decisions[decision["id"]] = decision
     audit_event = record_audit_event(
         current_store,
         event_type="iteration_suggestion.decided",
@@ -384,21 +470,16 @@ def decide_iteration_suggestion_response(
             "status": suggestion["status"],
         },
     )
-    save_iteration_decision_records(
+    audit_events = [
+        *([] if requirement_audit_event is None else [requirement_audit_event]),
+        audit_event,
+    ]
+    persist_iteration_decision_records(
         current_store,
         suggestion=suggestion,
         decision=decision,
         requirement=requirement,
-        audit_events=[
-            *current_store.audit_events[audit_start_index:],
-            *(
-                []
-                if requirement_audit_event is None
-                or requirement_audit_event in current_store.audit_events
-                else [requirement_audit_event]
-            ),
-            *([] if audit_event in current_store.audit_events else [audit_event]),
-        ],
+        audit_events=audit_events,
     )
     return {
         **suggestion,

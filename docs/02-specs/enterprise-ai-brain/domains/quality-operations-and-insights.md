@@ -40,6 +40,7 @@
 - Bug 创建、批量更新、编辑和删除属于 DB-first 写路径：服务层不得直接调用 `current_store.audit()` 或写 `current_store.bugs`；MemoryStore fallback 由 `save_bug_record` / `delete_bug_record` 承接，PostgreSQL 运行态的 Bug 单记录写入、删除和审计必须在同一数据库事务中提交。
 - 用户洞察列表固定列宽、服务端筛选和详情查看保持稳定，优质反馈可转需求。
 - 用户反馈更新和转需求必须在 repository/SQL 路径按反馈 ID 读取源记录；PostgreSQL 运行态不得依赖运行时 `MemoryStore.user_feedback` 全量集合，转需求需把反馈 linked 状态、需求记录和审计事件一次性写回仓储。
+- 迭代规划建议生成、建议决策和建议转需求属于 DB-first 写路径：服务层不得直接写 `current_store.requirements`、`current_store.iteration_plan_suggestions` 或 `current_store.iteration_plan_decisions`，也不得通过 `audit_events` 切片拼装本次审计；MemoryStore fallback 由 `persist_iteration_suggestion_record` / `persist_iteration_decision_records` 承接，PostgreSQL 运行态建议、决策、转需求和审计必须在同一数据库事务中提交。
 
 ## 验收映射
 

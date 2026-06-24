@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 迭代规划 DB-first 收口：迭代建议生成、建议决策和建议转需求不再直接写 `current_store.requirements`、`current_store.iteration_plan_suggestions`、`current_store.iteration_plan_decisions` 或通过审计切片收集本次事件，统一通过 `persist_iteration_suggestion_record` / `persist_iteration_decision_records` 写入 MemoryStore 测试 fallback 或 repository；PostgreSQL 运行态建议、决策、转需求和审计使用同一数据库事务。
 - Git Review 快照 DB-first 收口：GitLab MR / GitHub PR 快照成功、复用和失败审计不再直接写 `current_store.gitlab_mr_snapshots` 或追加 `current_store.audit_events`，统一通过 `save_git_review_snapshot_record` 写入 MemoryStore 测试 fallback 或 repository；PostgreSQL 运行态快照和审计使用同一数据库事务。
 - 代码巡检 DB-first 收口：巡检报告、finding、通知、误报忽略审批和整改任务派生不再直接写 `current_store.code_inspection_*` 或 `current_store.ai_tasks`，统一通过 `persist_code_inspection_records` / `persist_ai_task_record` 写入 MemoryStore 测试 fallback 或 repository；PostgreSQL 运行态巡检报告、finding、通知和审计使用同一数据库事务。
 - Bug 管理 DB-first 收口：Bug 创建、批量更新、编辑和删除不再直接调用 `current_store.audit()` 或写 `current_store.bugs`，统一通过 `save_bug_record` / `delete_bug_record` 写入 MemoryStore fallback 或 repository；PostgreSQL 运行态的单记录写入、删除和审计使用同一数据库事务。

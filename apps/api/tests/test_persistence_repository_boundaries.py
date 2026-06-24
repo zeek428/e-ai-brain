@@ -22,6 +22,7 @@ from app.core.repositories.system_state import SystemStateRepository
 from app.core.repositories.table_maintenance import TableMaintenanceRepository
 from app.core.repositories.tasks import TaskReadRepository
 from app.core.repositories.user_insights import UserInsightReadRepository
+from app.core.repositories.user_insights_writes import UserInsightWriteRepository
 from app.services.assistant_action_drafts import ASSISTANT_DRAFT_ACTIONS
 from tests.test_database_persistence import FakeSnapshotRepository
 
@@ -1859,6 +1860,89 @@ def test_postgres_user_insight_writes_delegate_to_domain_repository(monkeypatch)
             {"cursor": cursor, "items": planning_payload["iteration_plan_decisions"]},
         ),
     ]
+
+
+def test_iteration_planning_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    upsert_calls: list[tuple[str, dict]] = []
+    audit_calls: list[list[dict]] = []
+    requirement_calls: list[dict] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def upsert_requirements(cursor, requirements):  # type: ignore[no-untyped-def]
+        requirement_calls.append(requirements)
+
+    def record_upsert(name: str):
+        def _call(self, cursor, items):  # type: ignore[no-untyped-def]
+            upsert_calls.append((name, items))
+
+        return _call
+
+    monkeypatch.setattr(
+        UserInsightWriteRepository,
+        "upsert_iteration_plan_suggestions",
+        record_upsert("suggestion"),
+    )
+    monkeypatch.setattr(
+        UserInsightWriteRepository,
+        "upsert_iteration_plan_decisions",
+        record_upsert("decision"),
+    )
+
+    repository = UserInsightWriteRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+        upsert_requirements=upsert_requirements,
+    )
+    suggestion = {"id": "suggestion_atomic"}
+    decision = {"id": "decision_atomic"}
+    requirement = {"id": "requirement_atomic"}
+    audit_event = {"id": "audit_iteration_atomic"}
+    decision_audit_event = {"id": "audit_iteration_decision_atomic"}
+
+    repository.save_iteration_suggestion_record(
+        suggestion,
+        audit_event=audit_event,
+    )
+    repository.save_iteration_decision_records(
+        suggestion=suggestion,
+        decision=decision,
+        audit_events=[audit_event, decision_audit_event],
+        requirement=requirement,
+    )
+
+    assert connect_calls == [{"autocommit": False}, {"autocommit": False}]
+    assert upsert_calls == [
+        ("suggestion", {"suggestion_atomic": suggestion}),
+        ("suggestion", {"suggestion_atomic": suggestion}),
+        ("decision", {"decision_atomic": decision}),
+    ]
+    assert requirement_calls == [{"requirement_atomic": requirement}]
+    assert audit_calls == [[audit_event], [audit_event, decision_audit_event]]
 
 
 def test_postgres_devops_read_models_delegate_to_domain_repository(monkeypatch):

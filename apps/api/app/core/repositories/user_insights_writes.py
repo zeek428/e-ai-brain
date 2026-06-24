@@ -92,7 +92,7 @@ class UserInsightWriteRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_iteration_plan_suggestions(cursor, {record["id"]: record})
                 if audit_event is not None and self._upsert_audit_events is not None:
@@ -106,7 +106,7 @@ class UserInsightWriteRepository:
         audit_events: list[dict[str, Any]],
         requirement: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 if requirement is not None and self._upsert_requirements is not None:
                     self._upsert_requirements(cursor, {requirement["id"]: requirement})
