@@ -136,6 +136,62 @@ def test_rd_task_executor_policy_rejects_agent_and_skill_fields():
     assert rejected.status_code == 422
 
 
+def test_rd_task_executor_policy_create_update_delete_memory_fallback():
+    headers = auth_headers()
+    app.state.store.reset()
+    runner = create_codex_runner(headers)
+
+    created = client.post(
+        "/api/delivery/rd-task-executor-policies",
+        json={
+            "executor_type": "codex",
+            "instruction_template": "处理任务 {{task_id}}。",
+            "name": "策略 fallback 验证",
+            "output_contract": {"summary": "string"},
+            "priority": 20,
+            "runner_id": runner["id"],
+            "status": "active",
+            "task_type": "development_planning",
+            "timeout_seconds": 600,
+            "workspace_root": "/Users/zeek/source/e-ai-brain",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 200
+    policy = created.json()["data"]
+    assert app.state.store.rd_task_executor_policies[policy["id"]]["name"] == (
+        "策略 fallback 验证"
+    )
+
+    updated = client.patch(
+        f"/api/delivery/rd-task-executor-policies/{policy['id']}",
+        json={"name": "策略 fallback 已更新", "priority": 30, "status": "disabled"},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert app.state.store.rd_task_executor_policies[policy["id"]]["name"] == (
+        "策略 fallback 已更新"
+    )
+    assert app.state.store.rd_task_executor_policies[policy["id"]]["priority"] == 30
+    assert app.state.store.rd_task_executor_policies[policy["id"]]["status"] == "disabled"
+
+    deleted = client.delete(
+        f"/api/delivery/rd-task-executor-policies/{policy['id']}",
+        headers=headers,
+    )
+    assert deleted.status_code == 200
+    assert policy["id"] not in app.state.store.rd_task_executor_policies
+    assert {
+        event["event_type"]
+        for event in app.state.store.audit_events
+        if event.get("subject_id") == policy["id"]
+    } >= {
+        "rd_task_executor_policy.created",
+        "rd_task_executor_policy.updated",
+        "rd_task_executor_policy.deleted",
+    }
+
+
 def test_rd_task_executor_policy_rejects_model_gateway_executor():
     headers = auth_headers()
     app.state.store.reset()

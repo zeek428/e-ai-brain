@@ -31,6 +31,7 @@
 - 定时作业配置列表是管理型列表，分页、排序和筛选必须优先走 PostgreSQL read model；`GET /api/system/scheduled-jobs` 传入 `page/page_size` 时按名称、关键字、产品、来源、类型、启停、状态过滤并返回 `query/performance` 观测信息，MemoryStore 全量读取只允许作为旧客户端和测试 helper 兼容。
 - 插件连接和动作配置列表也是管理型配置列表；`GET /api/system/plugin-connections` 与 `GET /api/system/plugin-actions` 传入 `page/page_size` 时必须优先走 PostgreSQL read model 完成关键字、插件、状态和连接环境筛选，以及白名单排序，并返回 `query/performance` 观测信息；未带分页的全量返回仅用于旧插件页下拉、模板回填和测试 helper 兼容。
 - AI 执行器 Runner 服务不得在生产路径直接写 `current_store` 的 Runner、Runner 任务、插件调用日志、定时作业运行、定时作业、采集运行、AI 任务或人审集合；状态同步、日志追加、任务领取、取消、超时和完成回写必须通过单记录 helper 写入，MemoryStore 只作为测试 fallback，PostgreSQL 运行态通过 repository 单记录方法写库。Runner/任务/插件调用/定时作业/采集运行单记录写入和审计事件必须在同一数据库事务中提交。
+- 研发执行器策略的新增、编辑、删除、策略刷新和按需补齐产品/代码库资源缓存不得直接写 `current_store.rd_task_executor_policies` / `current_store.products` / `current_store.product_git_repositories`；PostgreSQL 运行态通过 rd_task_executor_policy repository 写入策略与审计，MemoryStore 仅作为测试 fallback 并由策略保存/删除和资源缓存 helper 维护。
 - 定时作业运行详情必须优先展示数据连接、AI 执行、结果动作和 Runner 执行链路，失败运行提供修复草案和复跑对比。
 - Runner 安装包按操作系统区分，并包含启动、停止、状态查看和卸载说明。
 - 连接、动作、Runner 的测试接口只返回脱敏诊断，不泄露 token、API key、完整请求体或完整响应。

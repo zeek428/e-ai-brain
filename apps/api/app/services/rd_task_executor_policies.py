@@ -11,7 +11,7 @@ from app.services.ai_executor_runners import (
     find_available_runner,
     sync_ai_executor_runner_store,
 )
-from app.services.operational_records import record_audit_event, save_single_repository_record
+from app.services.operational_records import record_audit_event
 
 RD_TASK_EXECUTOR_POLICY_MANAGE_PERMISSION = "delivery.rd_executor_policies.manage"
 RD_TASK_EXECUTOR_TYPES = {"claude", "codex", "openclaw"}
@@ -74,12 +74,67 @@ def _repository(current_store: Any) -> Any | None:
     return None
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _policy_collection(current_store: Any) -> dict[str, dict[str, Any]]:
+    return _memory_dict(current_store, "rd_task_executor_policies")
+
+
 def _replace_policies(current_store: Any, policies: list[dict[str, Any]]) -> None:
-    current_store.rd_task_executor_policies = {
+    collection = _policy_collection(current_store)
+    collection.clear()
+    collection.update({
         str(policy["id"]): dict(policy)
         for policy in policies
         if policy.get("id") is not None
-    }
+    })
+
+
+def _cache_product_record(current_store: Any, product: dict[str, Any]) -> None:
+    if product.get("id") is not None:
+        _memory_dict(current_store, "products")[str(product["id"])] = dict(product)
+
+
+def _cache_product_git_repository_record(
+    current_store: Any,
+    git_repository: dict[str, Any],
+) -> None:
+    if git_repository.get("id") is not None:
+        _memory_dict(current_store, "product_git_repositories")[
+            str(git_repository["id"])
+        ] = dict(git_repository)
+
+
+def save_rd_task_executor_policy_record(
+    current_store: Any,
+    policy: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _repository(current_store)
+    if repository is not None:
+        repository.save_rd_task_executor_policy_record(policy, audit_event=audit_event)
+        return
+    _policy_collection(current_store)[policy["id"]] = policy
+
+
+def delete_rd_task_executor_policy_record(
+    current_store: Any,
+    policy_id: str,
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> None:
+    repository = _repository(current_store)
+    if repository is not None:
+        repository.delete_rd_task_executor_policy_record(policy_id, audit_event=audit_event)
+        return
+    _policy_collection(current_store).pop(policy_id, None)
 
 
 def sync_rd_task_executor_policy_store(
@@ -121,7 +176,7 @@ def sync_policy_resource_store(current_store: Any, policy: dict[str, Any]) -> No
     product_id = policy.get("product_id")
     if product_id and product_id not in current_store.products and callable(list_products):
         for product in list_products(active_only=False):
-            current_store.products[str(product["id"])] = dict(product)
+            _cache_product_record(current_store, product)
 
     list_repositories = getattr(repository, "list_product_git_repositories", None)
     repository_id = policy.get("repository_id")
@@ -132,9 +187,7 @@ def sync_policy_resource_store(current_store: Any, policy: dict[str, Any]) -> No
         and callable(list_repositories)
     ):
         for git_repository in list_repositories(product_id, active_only=False):
-            current_store.product_git_repositories[str(git_repository["id"])] = dict(
-                git_repository
-            )
+            _cache_product_git_repository_record(current_store, git_repository)
 
     if policy.get("runner_id"):
         sync_ai_executor_runner_store(current_store)
@@ -264,7 +317,6 @@ def create_rd_task_executor_policy_response(
         payload=payload,
         user=user,
     )
-    current_store.rd_task_executor_policies[policy["id"]] = policy
     audit_event = record_audit_event(
         current_store,
         event_type="rd_task_executor_policy.created",
@@ -277,9 +329,8 @@ def create_rd_task_executor_policy_response(
             "task_type": policy["task_type"],
         },
     )
-    save_single_repository_record(
+    save_rd_task_executor_policy_record(
         current_store,
-        "save_rd_task_executor_policy_record",
         policy,
         audit_event=audit_event,
     )
@@ -304,7 +355,6 @@ def patch_rd_task_executor_policy_response(
         payload=payload,
         user=user,
     )
-    current_store.rd_task_executor_policies[policy_id] = policy
     audit_event = record_audit_event(
         current_store,
         event_type="rd_task_executor_policy.updated",
@@ -318,9 +368,8 @@ def patch_rd_task_executor_policy_response(
             "task_type": policy["task_type"],
         },
     )
-    save_single_repository_record(
+    save_rd_task_executor_policy_record(
         current_store,
-        "save_rd_task_executor_policy_record",
         policy,
         audit_event=audit_event,
     )
@@ -338,7 +387,6 @@ def delete_rd_task_executor_policy_response(
     existing = current_store.rd_task_executor_policies.get(policy_id)
     if existing is None:
         raise api_error(404, "NOT_FOUND", "RD task executor policy not found")
-    current_store.rd_task_executor_policies.pop(policy_id, None)
     audit_event = record_audit_event(
         current_store,
         event_type="rd_task_executor_policy.deleted",
@@ -347,9 +395,11 @@ def delete_rd_task_executor_policy_response(
         subject_id=policy_id,
         payload={"task_type": existing.get("task_type")},
     )
-    repository = _repository(current_store)
-    if repository is not None:
-        repository.delete_rd_task_executor_policy_record(policy_id, audit_event=audit_event)
+    delete_rd_task_executor_policy_record(
+        current_store,
+        policy_id,
+        audit_event=audit_event,
+    )
     return {"deleted": True, "id": policy_id}
 
 

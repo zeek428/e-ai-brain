@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.560 |
+| 功能版本 | v1.1.561 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.561 | 2026-06-25 | 研发执行器策略 DB-first fallback 写入收口：策略列表刷新、策略新增/编辑/删除以及按需补齐产品/代码库资源缓存不再直接写 `current_store.rd_task_executor_policies` / `current_store.products` / `current_store.product_git_repositories`；统一通过策略保存/删除和资源缓存 helper 操作 MemoryStore 测试集合，PostgreSQL 运行态继续通过 rd_task_executor_policy repository 写入策略和审计 | Codex |
 | v1.1.560 | 2026-06-25 | 需求主流程 DB-first fallback 写入收口：需求创建、编辑、删除、审批、拒绝、关闭、批量分配、批量排期、批量推进和产品详细设计任务生成不再在调用方直接写 `current_store.requirements` / `current_store.ai_tasks` 或调用 `current_store.audit()`；统一通过需求保存、删除、任务联动和审计 helper 写入 MemoryStore 测试集合或 repository，PostgreSQL 运行态继续使用单记录/联动写入事务 | Codex |
 | v1.1.559 | 2026-06-24 | 生命周期上下文与风险信号 MemoryStore fallback 写入收口：上下文边和风险信号刷新不再直接写 `current_store.lifecycle_context_edges` / `current_store.lifecycle_risk_signals`，统一通过锚点替换和风险范围替换 helper 操作测试集合；PostgreSQL 运行态继续由 lifecycle_context repository 持久化刷新结果 | Codex |
 | v1.1.558 | 2026-06-24 | 知识空间配置 MemoryStore fallback 写入收口：知识空间、空间成员和文件夹新增/更新不再直接写 `current_store.knowledge_spaces` / `current_store.knowledge_space_members` / `current_store.knowledge_folders`，统一通过空间、成员替换和文件夹 helper 操作测试集合；PostgreSQL 运行态继续由知识 payload repository 持久化空间配置 | Codex |
