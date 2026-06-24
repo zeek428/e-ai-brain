@@ -41,6 +41,7 @@ class FakeSnapshotRepository:
         self.dashboard_source_row_reads = 0
         self.dashboard_snapshot_direct_writes: list[str] = []
         self.lifecycle_source_row_reads = 0
+        self.model_gateway_direct_writes: list[str] = []
 
     def load(self) -> dict | None:
         return self.payload
@@ -965,6 +966,11 @@ class FakeSnapshotRepository:
         configs = payload.get("model_gateway_configs", {})
         return [dict(configs[config_id]) for config_id in sorted(configs)]
 
+    def get_model_gateway_config(self, config_id: str) -> dict | None:
+        payload = self.model_gateway_payload or {}
+        config = payload.get("model_gateway_configs", {}).get(config_id)
+        return dict(config) if config is not None else None
+
     def list_model_gateway_logs(
         self,
         *,
@@ -993,6 +999,42 @@ class FakeSnapshotRepository:
         audit_event: dict | None = None,
     ) -> None:
         self.model_gateway_payload = payload
+        if audit_event is not None:
+            self._append_direct_audit_event(audit_event)
+
+    def upsert_model_gateway_config_record(
+        self,
+        config: dict,
+        *,
+        audit_event: dict | None = None,
+    ) -> None:
+        payload = self.model_gateway_payload or {
+            "model_gateway_configs": {},
+            "model_gateway_logs": [],
+        }
+        configs = payload.setdefault("model_gateway_configs", {})
+        if config.get("is_default"):
+            for existing_config in configs.values():
+                existing_config["is_default"] = False
+        configs[config["id"]] = dict(config)
+        self.model_gateway_payload = payload
+        self.model_gateway_direct_writes.append(f"upsert:{config['id']}")
+        if audit_event is not None:
+            self._append_direct_audit_event(audit_event)
+
+    def delete_model_gateway_config_record(
+        self,
+        config_id: str,
+        *,
+        audit_event: dict | None = None,
+    ) -> None:
+        payload = self.model_gateway_payload or {
+            "model_gateway_configs": {},
+            "model_gateway_logs": [],
+        }
+        payload.setdefault("model_gateway_configs", {}).pop(config_id, None)
+        self.model_gateway_payload = payload
+        self.model_gateway_direct_writes.append(f"delete:{config_id}")
         if audit_event is not None:
             self._append_direct_audit_event(audit_event)
 

@@ -1090,6 +1090,9 @@ class PostgresSnapshotRepository:
     def list_model_gateway_configs(self) -> list[dict[str, Any]]:
         return self._model_gateway_read_repository.list_model_gateway_configs()
 
+    def get_model_gateway_config(self, config_id: str) -> dict[str, Any] | None:
+        return self._model_gateway_read_repository.get_model_gateway_config(config_id)
+
     def list_ai_skills(
         self,
         *,
@@ -2221,6 +2224,28 @@ class PostgresSnapshotRepository:
     ) -> None:
         self._model_gateway_read_repository.save_model_gateway_records(
             payload,
+            audit_event=audit_event,
+        )
+
+    def upsert_model_gateway_config_record(
+        self,
+        config: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._model_gateway_read_repository.upsert_model_gateway_config_record(
+            config,
+            audit_event=audit_event,
+        )
+
+    def delete_model_gateway_config_record(
+        self,
+        config_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._model_gateway_read_repository.delete_model_gateway_config_record(
+            config_id,
             audit_event=audit_event,
         )
 

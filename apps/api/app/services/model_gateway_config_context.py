@@ -43,6 +43,20 @@ def model_gateway_query_repository(current_store: Any) -> Any | None:
     return None
 
 
+def model_gateway_config_write_repository(current_store: Any) -> Any | None:
+    repository = runtime_repository(current_store)
+    if repository is None:
+        return None
+    required_methods = [
+        "delete_model_gateway_config_record",
+        "get_model_gateway_config",
+        "upsert_model_gateway_config_record",
+    ]
+    if all(callable(getattr(repository, method_name, None)) for method_name in required_methods):
+        return repository
+    return None
+
+
 def model_gateway_source_store(repository: Any) -> ModelGatewayRequestContext:
     source_store = ModelGatewayRequestContext(repository)
     source_store.model_gateway_configs = {
@@ -93,6 +107,49 @@ def save_model_gateway_payload(
             },
             audit_event=audit_event,
         )
+
+
+def get_model_gateway_config_record(current_store: Any, config_id: str) -> dict[str, Any] | None:
+    repository = model_gateway_config_write_repository(current_store)
+    if repository is not None:
+        config = repository.get_model_gateway_config(config_id)
+        return dict(config) if config is not None else None
+    config = current_store.model_gateway_configs.get(config_id)
+    return dict(config) if config is not None else None
+
+
+def replace_memory_model_gateway_configs(
+    current_store: Any,
+    configs: dict[str, dict[str, Any]],
+) -> None:
+    if runtime_repository(current_store) is None:
+        current_store.model_gateway_configs = configs
+
+
+def save_model_gateway_config_record(
+    current_store: Any,
+    config: dict[str, Any],
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> bool:
+    repository = model_gateway_config_write_repository(current_store)
+    if repository is None:
+        return False
+    repository.upsert_model_gateway_config_record(config, audit_event=audit_event)
+    return True
+
+
+def delete_model_gateway_config_record(
+    current_store: Any,
+    config_id: str,
+    *,
+    audit_event: dict[str, Any] | None = None,
+) -> bool:
+    repository = model_gateway_config_write_repository(current_store)
+    if repository is None:
+        return False
+    repository.delete_model_gateway_config_record(config_id, audit_event=audit_event)
+    return True
 
 
 def public_model_gateway_config(config: dict[str, Any]) -> dict[str, Any]:

@@ -182,6 +182,7 @@ def test_model_gateway_config_api_writes_fine_grained_repository_payload():
         assert persisted["api_key"] == "sk-api-secret"
         assert persisted["is_default"] is True
         assert persisted["default_chat_model"] == "gpt-api"
+        assert repository.model_gateway_direct_writes == [f"upsert:{config['id']}"]
 
         use_empty_postgres_runtime_store()
         patched = client.patch(
@@ -198,6 +199,10 @@ def test_model_gateway_config_api_writes_fine_grained_repository_payload():
         updated = repository.model_gateway_payload["model_gateway_configs"][config["id"]]
         assert updated["default_chat_model"] == "gpt-api-updated"
         assert updated["status"] == "inactive"
+        assert repository.model_gateway_direct_writes == [
+            f"upsert:{config['id']}",
+            f"upsert:{config['id']}",
+        ]
 
         use_empty_postgres_runtime_store()
         deleted = client.delete(
@@ -206,7 +211,11 @@ def test_model_gateway_config_api_writes_fine_grained_repository_payload():
         ).json()["data"]
         assert deleted == {"deleted": True, "id": config["id"]}
         assert config["id"] not in repository.model_gateway_payload["model_gateway_configs"]
+        assert repository.model_gateway_direct_writes == [
+            f"upsert:{config['id']}",
+            f"upsert:{config['id']}",
+            f"delete:{config['id']}",
+        ]
     finally:
         app.state.store = original_store
         app.state.user_repository = original_users
-

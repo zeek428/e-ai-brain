@@ -21,7 +21,7 @@ class ModelGatewayReadRepository:
         self._upsert_audit_events = upsert_audit_events
 
     def load_model_gateway(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 configs = self._load_model_gateway_configs(cursor)
                 logs = self._load_model_gateway_logs(cursor)
@@ -31,10 +31,27 @@ class ModelGatewayReadRepository:
         }
 
     def list_model_gateway_configs(self) -> list[dict[str, Any]]:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 configs = self._load_model_gateway_configs(cursor)
         return [configs[config_id] for config_id in sorted(configs)]
+
+    def get_model_gateway_config(self, config_id: str) -> dict[str, Any] | None:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, name, provider, base_url, api_key_ref, default_chat_model,
+                           default_embedding_model, timeout_seconds, max_retries, status,
+                           is_default, created_at, updated_at, embedding_connection_mode,
+                           embedding_base_url, embedding_api_key_ref, embedding_dimension
+                    FROM model_gateway_configs
+                    WHERE id = %s
+                    """,
+                    (config_id,),
+                )
+                configs = self._model_gateway_configs_from_rows(cursor.fetchall())
+        return configs.get(config_id)
 
     def list_model_gateway_logs(
         self,
@@ -55,7 +72,7 @@ class ModelGatewayReadRepository:
             where_clauses.append("status = %s")
             params.append(status)
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
@@ -96,6 +113,34 @@ class ModelGatewayReadRepository:
                         raise RuntimeError("Audit upsert callback is not configured")
                     self._upsert_audit_events(cursor, [audit_event])
 
+    def upsert_model_gateway_config_record(
+        self,
+        config: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._upsert_model_gateway_config(cursor, config, reset_other_defaults=True)
+                if audit_event is not None:
+                    if self._upsert_audit_events is None:
+                        raise RuntimeError("Audit upsert callback is not configured")
+                    self._upsert_audit_events(cursor, [audit_event])
+
+    def delete_model_gateway_config_record(
+        self,
+        config_id: str,
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM model_gateway_configs WHERE id = %s", (config_id,))
+                if audit_event is not None:
+                    if self._upsert_audit_events is None:
+                        raise RuntimeError("Audit upsert callback is not configured")
+                    self._upsert_audit_events(cursor, [audit_event])
+
     def _load_model_gateway_configs(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
             """
@@ -107,8 +152,11 @@ class ModelGatewayReadRepository:
                     ORDER BY id
             """
         )
+        return self._model_gateway_configs_from_rows(cursor.fetchall())
+
+    def _model_gateway_configs_from_rows(self, rows: list[Any]) -> dict[str, dict[str, Any]]:
         configs = {}
-        for row in cursor.fetchall():
+        for row in rows:
             config = {
                 "api_key": row[4],
                 "base_url": row[3],
@@ -206,58 +254,72 @@ class ModelGatewayReadRepository:
     ) -> None:
         cursor.execute("UPDATE model_gateway_configs SET is_default = false")
         for config in configs.values():
-            created_at = config.get("created_at")
-            updated_at = config.get("updated_at") or created_at
+            self._upsert_model_gateway_config(cursor, config)
+
+    def _upsert_model_gateway_config(
+        self,
+        cursor,
+        config: dict[str, Any],
+        *,
+        reset_other_defaults: bool = False,
+    ) -> None:
+        if reset_other_defaults and config.get("is_default"):
             cursor.execute(
-                """
-                INSERT INTO model_gateway_configs (
-                  id, name, provider, base_url, api_key_ref, default_chat_model,
-                  default_embedding_model, embedding_connection_mode, embedding_base_url,
-                  embedding_api_key_ref, embedding_dimension, timeout_seconds, max_retries, status,
-                  is_default, created_at, updated_at
-                )
-                VALUES (
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                  COALESCE(%s::timestamptz, now()),
-                  COALESCE(%s::timestamptz, now())
-                )
-                ON CONFLICT (id) DO UPDATE SET
-                  name = EXCLUDED.name,
-                  provider = EXCLUDED.provider,
-                  base_url = EXCLUDED.base_url,
-                  api_key_ref = EXCLUDED.api_key_ref,
-                  default_chat_model = EXCLUDED.default_chat_model,
-                  default_embedding_model = EXCLUDED.default_embedding_model,
-                  embedding_connection_mode = EXCLUDED.embedding_connection_mode,
-                  embedding_base_url = EXCLUDED.embedding_base_url,
-                  embedding_api_key_ref = EXCLUDED.embedding_api_key_ref,
-                  embedding_dimension = EXCLUDED.embedding_dimension,
-                  timeout_seconds = EXCLUDED.timeout_seconds,
-                  max_retries = EXCLUDED.max_retries,
-                  status = EXCLUDED.status,
-                  is_default = EXCLUDED.is_default,
-                  updated_at = EXCLUDED.updated_at
-                """,
-                (
-                    config["id"],
-                    config["name"],
-                    config.get("provider", "openai_compatible"),
-                    config["base_url"],
-                    config.get("api_key"),
-                    config["default_chat_model"],
-                    config.get("default_embedding_model"),
-                    config.get("embedding_connection_mode", "reuse_chat"),
-                    config.get("embedding_base_url"),
-                    config.get("embedding_api_key"),
-                    config.get("embedding_dimension"),
-                    config.get("timeout_seconds", 60),
-                    config.get("max_retries", 1),
-                    config.get("status", "active"),
-                    config.get("is_default", False),
-                    created_at,
-                    updated_at,
-                ),
+                "UPDATE model_gateway_configs SET is_default = false WHERE id <> %s",
+                (config["id"],),
             )
+        created_at = config.get("created_at")
+        updated_at = config.get("updated_at") or created_at
+        cursor.execute(
+            """
+            INSERT INTO model_gateway_configs (
+              id, name, provider, base_url, api_key_ref, default_chat_model,
+              default_embedding_model, embedding_connection_mode, embedding_base_url,
+              embedding_api_key_ref, embedding_dimension, timeout_seconds, max_retries, status,
+              is_default, created_at, updated_at
+            )
+            VALUES (
+              %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+              COALESCE(%s::timestamptz, now()),
+              COALESCE(%s::timestamptz, now())
+            )
+            ON CONFLICT (id) DO UPDATE SET
+              name = EXCLUDED.name,
+              provider = EXCLUDED.provider,
+              base_url = EXCLUDED.base_url,
+              api_key_ref = EXCLUDED.api_key_ref,
+              default_chat_model = EXCLUDED.default_chat_model,
+              default_embedding_model = EXCLUDED.default_embedding_model,
+              embedding_connection_mode = EXCLUDED.embedding_connection_mode,
+              embedding_base_url = EXCLUDED.embedding_base_url,
+              embedding_api_key_ref = EXCLUDED.embedding_api_key_ref,
+              embedding_dimension = EXCLUDED.embedding_dimension,
+              timeout_seconds = EXCLUDED.timeout_seconds,
+              max_retries = EXCLUDED.max_retries,
+              status = EXCLUDED.status,
+              is_default = EXCLUDED.is_default,
+              updated_at = EXCLUDED.updated_at
+            """,
+            (
+                config["id"],
+                config["name"],
+                config.get("provider", "openai_compatible"),
+                config["base_url"],
+                config.get("api_key"),
+                config["default_chat_model"],
+                config.get("default_embedding_model"),
+                config.get("embedding_connection_mode", "reuse_chat"),
+                config.get("embedding_base_url"),
+                config.get("embedding_api_key"),
+                config.get("embedding_dimension"),
+                config.get("timeout_seconds", 60),
+                config.get("max_retries", 1),
+                config.get("status", "active"),
+                config.get("is_default", False),
+                created_at,
+                updated_at,
+            ),
+        )
 
     def upsert_model_gateway_logs(self, cursor, logs: list[dict[str, Any]]) -> None:
         for log in logs:

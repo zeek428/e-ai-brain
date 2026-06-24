@@ -727,6 +727,8 @@ class ModelGatewayRepository(Protocol):
 
     def list_model_gateway_configs(self) -> list[dict[str, Any]]: ...
 
+    def get_model_gateway_config(self, config_id: str) -> dict[str, Any] | None: ...
+
     def list_model_gateway_logs(
         self,
         *,
@@ -740,6 +742,20 @@ class ModelGatewayRepository(Protocol):
     def save_model_gateway_records(
         self,
         payload: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def upsert_model_gateway_config_record(
+        self,
+        config: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def delete_model_gateway_config_record(
+        self,
+        config_id: str,
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None: ...

@@ -11,14 +11,17 @@ from app.services.model_gateway import (
     MODEL_GATEWAY_EMBEDDING_CONNECTION_MODES,
     MODEL_GATEWAY_PROVIDERS,
     MODEL_GATEWAY_STATUSES,
+    delete_model_gateway_config_record,
     embedding_connection_mode,
+    get_model_gateway_config_record,
     model_gateway_configs_after_default,
     model_gateway_write_store,
     normalize_embedding_dimension,
     normalized_model_gateway_embedding_fields,
     optional_non_blank,
     public_model_gateway_config,
-    save_model_gateway_payload,
+    replace_memory_model_gateway_configs,
+    save_model_gateway_config_record,
 )
 from app.services.model_gateway_config_tests import run_model_gateway_config_test
 from app.services.model_gateway_listing import (
@@ -30,7 +33,6 @@ from app.services.product_config_context import (
     ensure_non_blank,
     payload_updates,
     record_audit_event,
-    uses_repository_context,
 )
 
 router = APIRouter(tags=["model_gateway"])
@@ -146,7 +148,7 @@ def create_model_gateway_config(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"admin"})
-    current_store = model_gateway_write_store(store(request))
+    current_store = store(request)
     name = ensure_non_blank(payload.name, "name")
     base_url = ensure_non_blank(payload.base_url, "base_url")
     default_chat_model = ensure_non_blank(payload.default_chat_model, "default_chat_model")
@@ -184,8 +186,7 @@ def create_model_gateway_config(
         config_id=config_id,
         is_default=payload.is_default,
     )
-    if not uses_repository_context(current_store):
-        current_store.model_gateway_configs = next_configs
+    config = next_configs[config_id]
     audit_event = record_audit_event(
         current_store,
         event_type="model_gateway_config.created",
@@ -193,12 +194,8 @@ def create_model_gateway_config(
         subject_type="model_gateway_config",
         subject_id=config_id,
     )
-    save_model_gateway_payload(
-        current_store,
-        configs=next_configs,
-        logs=current_store.model_gateway_logs,
-        audit_event=audit_event,
-    )
+    if not save_model_gateway_config_record(current_store, config, audit_event=audit_event):
+        replace_memory_model_gateway_configs(current_store, next_configs)
     return envelope(public_model_gateway_config(config), get_trace_id(request))
 
 
@@ -210,8 +207,8 @@ def patch_model_gateway_config(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"admin"})
-    current_store = model_gateway_write_store(store(request))
-    config = current_store.model_gateway_configs.get(config_id)
+    current_store = store(request)
+    config = get_model_gateway_config_record(current_store, config_id)
     if config is None:
         raise api_error(404, "NOT_FOUND", "Model gateway config not found")
     updates = payload_updates(payload)
@@ -286,8 +283,7 @@ def patch_model_gateway_config(
         config_id=config_id,
         is_default=bool(config.get("is_default")),
     )
-    if not uses_repository_context(current_store):
-        current_store.model_gateway_configs = next_configs
+    config = next_configs[config_id]
     audit_event = record_audit_event(
         current_store,
         event_type="model_gateway_config.updated",
@@ -295,12 +291,8 @@ def patch_model_gateway_config(
         subject_type="model_gateway_config",
         subject_id=config_id,
     )
-    save_model_gateway_payload(
-        current_store,
-        configs=next_configs,
-        logs=current_store.model_gateway_logs,
-        audit_event=audit_event,
-    )
+    if not save_model_gateway_config_record(current_store, config, audit_event=audit_event):
+        replace_memory_model_gateway_configs(current_store, next_configs)
     return envelope(public_model_gateway_config(config), get_trace_id(request))
 
 
@@ -311,13 +303,11 @@ def delete_model_gateway_config(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"admin"})
-    current_store = model_gateway_write_store(store(request))
-    if config_id not in current_store.model_gateway_configs:
+    current_store = store(request)
+    if get_model_gateway_config_record(current_store, config_id) is None:
         raise api_error(404, "NOT_FOUND", "Model gateway config not found")
     next_configs = dict(current_store.model_gateway_configs)
     next_configs.pop(config_id, None)
-    if not uses_repository_context(current_store):
-        current_store.model_gateway_configs = next_configs
     audit_event = record_audit_event(
         current_store,
         event_type="model_gateway_config.deleted",
@@ -325,12 +315,8 @@ def delete_model_gateway_config(
         subject_type="model_gateway_config",
         subject_id=config_id,
     )
-    save_model_gateway_payload(
-        current_store,
-        configs=next_configs,
-        logs=current_store.model_gateway_logs,
-        audit_event=audit_event,
-    )
+    if not delete_model_gateway_config_record(current_store, config_id, audit_event=audit_event):
+        replace_memory_model_gateway_configs(current_store, next_configs)
     return envelope({"deleted": True, "id": config_id}, get_trace_id(request))
 
 

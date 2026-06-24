@@ -2038,6 +2038,14 @@ def test_postgres_model_gateway_read_models_delegate_to_domain_repository(monkey
     )
     monkeypatch.setattr(
         ModelGatewayReadRepository,
+        "get_model_gateway_config",
+        lambda self, config_id: calls.append(
+            ("get_model_gateway_config", {"config_id": config_id})
+        )
+        or {"source": "get_model_gateway_config"},
+    )
+    monkeypatch.setattr(
+        ModelGatewayReadRepository,
         "list_model_gateway_logs",
         record_call("list_model_gateway_logs", [{"source": "list_model_gateway_logs"}]),
     )
@@ -2047,6 +2055,9 @@ def test_postgres_model_gateway_read_models_delegate_to_domain_repository(monkey
         "model_gateway_logs": [],
     }
     assert repository.list_model_gateway_configs()[0]["source"] == "list_model_gateway_configs"
+    assert repository.get_model_gateway_config("model_gateway_config_001")["source"] == (
+        "get_model_gateway_config"
+    )
     assert repository.list_model_gateway_logs(
         ai_task_id="task_001",
         purpose="chat",
@@ -2056,6 +2067,7 @@ def test_postgres_model_gateway_read_models_delegate_to_domain_repository(monkey
     assert calls == [
         ("load_model_gateway", {}),
         ("list_model_gateway_configs", {}),
+        ("get_model_gateway_config", {"config_id": "model_gateway_config_001"}),
         (
             "list_model_gateway_logs",
             {"ai_task_id": "task_001", "purpose": "chat", "status": "success"},
@@ -2088,6 +2100,20 @@ def test_postgres_model_gateway_writes_delegate_to_domain_repository(monkeypatch
     )
     monkeypatch.setattr(
         ModelGatewayReadRepository,
+        "upsert_model_gateway_config_record",
+        lambda self, config, **kwargs: calls.append(
+            ("upsert_model_gateway_config_record", {"config": config, **kwargs})
+        ),
+    )
+    monkeypatch.setattr(
+        ModelGatewayReadRepository,
+        "delete_model_gateway_config_record",
+        lambda self, config_id, **kwargs: calls.append(
+            ("delete_model_gateway_config_record", {"config_id": config_id, **kwargs})
+        ),
+    )
+    monkeypatch.setattr(
+        ModelGatewayReadRepository,
         "upsert_model_gateway_logs",
         record_log_upsert,
     )
@@ -2101,11 +2127,27 @@ def test_postgres_model_gateway_writes_delegate_to_domain_repository(monkeypatch
 
     repository.save_model_gateway(payload)
     repository.save_model_gateway_records(payload, audit_event=audit_event)
+    repository.upsert_model_gateway_config_record(
+        {"id": "model_gateway_config_002"},
+        audit_event=audit_event,
+    )
+    repository.delete_model_gateway_config_record(
+        "model_gateway_config_002",
+        audit_event=audit_event,
+    )
     repository._upsert_model_gateway_logs(cursor, [{"id": "model_log_002"}])
 
     assert calls == [
         ("save_model_gateway", {"payload": payload}),
         ("save_model_gateway_records", {"payload": payload, "audit_event": audit_event}),
+        (
+            "upsert_model_gateway_config_record",
+            {"config": {"id": "model_gateway_config_002"}, "audit_event": audit_event},
+        ),
+        (
+            "delete_model_gateway_config_record",
+            {"config_id": "model_gateway_config_002", "audit_event": audit_event},
+        ),
         ("upsert_model_gateway_logs", {"cursor": cursor, "logs": [{"id": "model_log_002"}]}),
     ]
 

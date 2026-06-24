@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.536 |
+| 功能版本 | v1.1.537 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.537 | 2026-06-24 | 模型网关配置 DB-first 收口：配置 create/patch/delete 新增 repository 单记录读取、upsert 和 delete，默认配置切换与审计随单条记录写入，不再通过整包 `model_gateway_configs/model_gateway_logs` payload 同步配置变更 | Codex |
 | v1.1.536 | 2026-06-24 | DB-first 剩余兼容层专项扫描工具化：新增 `scripts/audit_memory_store_usage.py`，按读路径、写路径和 helper 对 `current_store.*` 残留分级输出，用于后续收口和发布前审计 | Codex |
 | v1.1.535 | 2026-06-24 | 产品配置 DB-first 收口继续推进：迭代版本、产品模块、产品 Git 仓库和相关系统 create 使用 repository 单记录产品存在性校验、同产品列表或 code 单查冲突校验，不再为子资源创建预加载全量产品配置集合 | Codex |
 | v1.1.534 | 2026-06-24 | 产品配置 DB-first 收口继续推进：迭代版本 patch/delete 使用 repository 单记录读取，同产品版本 code 冲突和需求/任务/Bug/分支配置引用检查不再预加载全量产品配置及业务集合 | Codex |
