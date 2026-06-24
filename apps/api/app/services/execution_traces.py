@@ -13,6 +13,10 @@ from app.core.listing import (
     sort_list_items,
 )
 from app.core.trace import envelope
+from app.services.plugins import (
+    result_write_record_from_invocation_log,
+    result_write_record_from_scheduled_run,
+)
 
 EXECUTION_TRACE_SORT_FIELDS = {
     "duration_ms",
@@ -33,6 +37,7 @@ EXECUTION_TRACE_SOURCE_TYPES = {
     "code_inspection_report",
     "model_gateway_log",
     "plugin_invocation_log",
+    "result_write_record",
     "scheduled_job_run",
 }
 
@@ -151,43 +156,74 @@ def _repository_list(current_store: Any, method_name: str, fallback: Any) -> lis
 
 
 def _records(current_store: Any) -> dict[str, list[dict[str, Any]]]:
+    audit_events = _repository_list(
+        current_store,
+        "list_audit_events",
+        getattr(current_store, "audit_events", []),
+    )
+    code_inspection_reports = _repository_list(
+        current_store,
+        "list_code_inspection_reports",
+        getattr(current_store, "code_inspection_reports", {}),
+    )
+    model_gateway_logs = _repository_list(
+        current_store,
+        "list_model_gateway_logs",
+        getattr(current_store, "model_gateway_logs", []),
+    )
+    plugin_invocation_logs = _repository_list(
+        current_store,
+        "list_plugin_invocation_logs",
+        getattr(current_store, "plugin_invocation_logs", {}),
+    )
+    ai_executor_tasks = _repository_list(
+        current_store,
+        "list_ai_executor_tasks",
+        getattr(current_store, "ai_executor_tasks", {}),
+    )
+    assistant_chat_runs = _repository_list(
+        current_store,
+        "list_execution_trace_assistant_chat_runs",
+        getattr(current_store, "assistant_chat_runs", {}),
+    )
+    scheduled_job_runs = _repository_list(
+        current_store,
+        "list_scheduled_job_runs",
+        getattr(current_store, "scheduled_job_runs", {}),
+    )
+    result_write_records = _result_write_records(
+        current_store,
+        plugin_invocation_logs=plugin_invocation_logs,
+        scheduled_job_runs=scheduled_job_runs,
+    )
     return {
-        "audit_events": _repository_list(
-            current_store,
-            "list_audit_events",
-            getattr(current_store, "audit_events", []),
-        ),
-        "code_inspection_reports": _repository_list(
-            current_store,
-            "list_code_inspection_reports",
-            getattr(current_store, "code_inspection_reports", {}),
-        ),
-        "model_gateway_logs": _repository_list(
-            current_store,
-            "list_model_gateway_logs",
-            getattr(current_store, "model_gateway_logs", []),
-        ),
-        "plugin_invocation_logs": _repository_list(
-            current_store,
-            "list_plugin_invocation_logs",
-            getattr(current_store, "plugin_invocation_logs", {}),
-        ),
-        "ai_executor_tasks": _repository_list(
-            current_store,
-            "list_ai_executor_tasks",
-            getattr(current_store, "ai_executor_tasks", {}),
-        ),
-        "assistant_chat_runs": _repository_list(
-            current_store,
-            "list_execution_trace_assistant_chat_runs",
-            getattr(current_store, "assistant_chat_runs", {}),
-        ),
-        "scheduled_job_runs": _repository_list(
-            current_store,
-            "list_scheduled_job_runs",
-            getattr(current_store, "scheduled_job_runs", {}),
-        ),
+        "audit_events": audit_events,
+        "code_inspection_reports": code_inspection_reports,
+        "model_gateway_logs": model_gateway_logs,
+        "plugin_invocation_logs": plugin_invocation_logs,
+        "ai_executor_tasks": ai_executor_tasks,
+        "assistant_chat_runs": assistant_chat_runs,
+        "result_write_records": result_write_records,
+        "scheduled_job_runs": scheduled_job_runs,
     }
+
+
+def _result_write_records(
+    current_store: Any,
+    *,
+    plugin_invocation_logs: list[dict[str, Any]],
+    scheduled_job_runs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for run in scheduled_job_runs:
+        record = result_write_record_from_scheduled_run(current_store, run)
+        if record is not None:
+            records.append(record)
+    for log in plugin_invocation_logs:
+        record = result_write_record_from_invocation_log(current_store, log)
+        if record is not None:
+            records.append(record)
+    return records
 
 
 def _sanitize(value: Any, *, depth: int = 0) -> Any:
@@ -345,6 +381,7 @@ class ExecutionTraceBuilder:
         self.model_logs = self.records["model_gateway_logs"]
         self.audit_events = self.records["audit_events"]
         self.reports = self.records["code_inspection_reports"]
+        self.result_write_records = self.records["result_write_records"]
         self.plugins_by_id = _by_id(self.plugins)
         self.plugins_by_run = _indexed(self.plugins, "scheduled_job_run_id")
         self.tasks_by_id = _by_id(self.tasks)
@@ -354,6 +391,12 @@ class ExecutionTraceBuilder:
         self.model_logs_by_ai_task = _indexed(self.model_logs, "ai_task_id")
         self.reports_by_run = _indexed(self.reports, "scheduled_job_run_id")
         self.reports_by_plugin = _indexed(self.reports, "plugin_invocation_log_id")
+        self.result_writes_by_id = _by_id(self.result_write_records)
+        self.result_writes_by_run = _indexed(self.result_write_records, "scheduled_job_run_id")
+        self.result_writes_by_plugin = _indexed(
+            self.result_write_records,
+            "plugin_invocation_log_id",
+        )
         self.audit_by_subject_id = _indexed(self.audit_events, "subject_id")
         self.audit_by_ai_task = _indexed(self.audit_events, "ai_task_id")
         self.audit_by_chat_run = _indexed_payload(self.audit_events, "chat_run_id")
@@ -368,6 +411,7 @@ class ExecutionTraceBuilder:
             "code_inspection_report": set(),
             "model_gateway_log": set(),
             "plugin_invocation_log": set(),
+            "result_write_record": set(),
             "scheduled_job_run": set(),
         }
         for run in self.runs:
@@ -497,6 +541,18 @@ class ExecutionTraceBuilder:
             )
             related["code_inspection_report"].add(str(report["id"]))
 
+        for result_record in self.result_writes_by_run.get(run_id, []):
+            nodes.append(self.result_write_node(result_record))
+            source = (
+                f"plugin_invocation_log:{result_record['plugin_invocation_log_id']}"
+                if result_record.get("plugin_invocation_log_id")
+                else f"scheduled_job_run:{run_id}"
+            )
+            edges.append(
+                _edge(source, f"result_write_record:{result_record['id']}", "writes_result")
+            )
+            related["result_write_record"].add(str(result_record["id"]))
+
         self._attach_audit(
             nodes, edges, related, run_id, root_node_id=f"scheduled_job_run:{run_id}"
         )
@@ -525,6 +581,29 @@ class ExecutionTraceBuilder:
                 )
             )
             related["ai_executor_task"].add(str(task["id"]))
+
+        model_log_ids = _collect_ids(plugin, ("model_log_id", "model_gateway_log_id"))
+        for task in self.tasks_by_plugin.get(plugin_id, []):
+            model_log_ids.update(_collect_ids(task, ("model_log_id", "model_gateway_log_id")))
+            model_log_ids.update(
+                str(log.get("id"))
+                for log in self.model_logs_by_ai_task.get(str(task.get("ai_task_id")), [])
+                if log.get("id")
+            )
+        for log_id in model_log_ids:
+            model_log = self.model_logs_by_id.get(log_id)
+            if model_log is None:
+                continue
+            nodes.append(self.model_log_node(model_log))
+            edges.append(
+                _edge(
+                    f"plugin_invocation_log:{plugin_id}",
+                    f"model_gateway_log:{log_id}",
+                    "calls_model",
+                )
+            )
+            related["model_gateway_log"].add(log_id)
+
         for report in self.reports_by_plugin.get(plugin_id, []):
             nodes.append(self.report_node(report))
             edges.append(
@@ -535,6 +614,16 @@ class ExecutionTraceBuilder:
                 )
             )
             related["code_inspection_report"].add(str(report["id"]))
+        for result_record in self.result_writes_by_plugin.get(plugin_id, []):
+            nodes.append(self.result_write_node(result_record))
+            edges.append(
+                _edge(
+                    f"plugin_invocation_log:{plugin_id}",
+                    f"result_write_record:{result_record['id']}",
+                    "writes_result",
+                )
+            )
+            related["result_write_record"].add(str(result_record["id"]))
         self._attach_audit(
             nodes, edges, related, plugin_id, root_node_id=f"plugin_invocation_log:{plugin_id}"
         )
@@ -553,7 +642,16 @@ class ExecutionTraceBuilder:
         edges: list[dict[str, str]] = []
         related = self._empty_related()
         related["ai_executor_task"].add(task_id)
-        for model_log in self.model_logs_by_ai_task.get(str(task.get("ai_task_id")), []):
+        model_log_ids = _collect_ids(task, ("model_log_id", "model_gateway_log_id"))
+        model_log_ids.update(
+            str(log.get("id"))
+            for log in self.model_logs_by_ai_task.get(str(task.get("ai_task_id")), [])
+            if log.get("id")
+        )
+        for log_id in model_log_ids:
+            model_log = self.model_logs_by_id.get(log_id)
+            if model_log is None:
+                continue
             nodes.append(self.model_log_node(model_log))
             edges.append(
                 _edge(
@@ -866,6 +964,38 @@ class ExecutionTraceBuilder:
             started_at=report.get("scan_started_at") or report.get("created_at"),
             status=report.get("status"),
             summary=report.get("summary") or report.get("risk_level"),
+        )
+
+    def result_write_node(self, record: dict[str, Any]) -> dict[str, Any]:
+        return _node(
+            finished_at=record.get("updated_at") or record.get("created_at"),
+            label="结果写入记录",
+            metadata={
+                "feedback": record.get("feedback"),
+                "plugin_action_id": record.get("plugin_action_id"),
+                "plugin_code": record.get("plugin_code"),
+                "plugin_connection_id": record.get("plugin_connection_id"),
+                "plugin_id": record.get("plugin_id"),
+                "plugin_invocation_log_id": record.get("plugin_invocation_log_id"),
+                "preview": record.get("preview"),
+                "records_imported": record.get("records_imported"),
+                "scheduled_job_id": record.get("scheduled_job_id"),
+                "scheduled_job_name": record.get("scheduled_job_name"),
+                "scheduled_job_run_id": record.get("scheduled_job_run_id"),
+                "source_type": record.get("source_type"),
+                "summary_fields": record.get("summary_fields"),
+                "write_target": record.get("write_target"),
+                "write_target_label": record.get("write_target_label"),
+            },
+            source_id=str(record["id"]),
+            source_type="result_write_record",
+            started_at=record.get("created_at"),
+            status=record.get("status"),
+            summary=_first_non_empty(
+                record.get("write_target_label"),
+                record.get("write_target"),
+                record.get("status"),
+            ),
         )
 
     def audit_node(self, event: dict[str, Any]) -> dict[str, Any]:

@@ -375,10 +375,13 @@ def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
     assert item["related_ids"]["ai_executor_task"] == ["ai_executor_task_trace"]
     assert item["related_ids"]["model_gateway_log"] == ["model_gateway_log_trace"]
     assert item["related_ids"]["code_inspection_report"] == ["code_inspection_report_trace"]
+    assert item["related_ids"]["result_write_record"] == [
+        "result_write_record_scheduled_job_run_trace"
+    ]
     assert item["related_ids"]["audit_event"] == ["audit_trace"]
 
     detail_response = client.get(
-        "/api/governance/execution-traces/plugin_invocation_log_trace",
+        "/api/governance/execution-traces/result_write_record_scheduled_job_run_trace",
         headers=headers,
     )
 
@@ -392,11 +395,13 @@ def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
         "code_inspection_report",
         "model_gateway_log",
         "plugin_invocation_log",
+        "result_write_record",
         "scheduled_job_run",
         "scheduled_job_stage",
     }.issubset(source_types)
     assert any(edge["label"] == "dispatches" for edge in detail["edges"])
     assert any(edge["label"] == "writes_report" for edge in detail["edges"])
+    assert any(edge["label"] == "writes_result" for edge in detail["edges"])
     serialized_detail = str(detail)
     assert "secret-run-token" not in serialized_detail
     assert "runner-secret-token" not in serialized_detail
@@ -486,6 +491,28 @@ def test_execution_trace_list_filters_by_any_related_source_id():
     message_type_body = message_type_response.json()["data"]
     assert message_type_body["total"] == 1
     assert message_type_body["items"][0]["id"] == "assistant_chat_run_trace"
+
+
+def test_execution_trace_list_filters_by_result_write_record_source():
+    app.state.store.reset()
+    seed_execution_trace_records()
+    headers = auth_headers()
+
+    response = client.get(
+        "/api/governance/execution-traces"
+        "?source_type=result_write_record&source_id=result_write_record_scheduled_job_run_trace"
+        "&page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == "scheduled_job_run_trace"
+    assert body["items"][0]["root_type"] == "scheduled_job_run"
+    assert body["items"][0]["related_ids"]["result_write_record"] == [
+        "result_write_record_scheduled_job_run_trace"
+    ]
 
 
 def test_execution_trace_requires_admin_diagnostics_permission():

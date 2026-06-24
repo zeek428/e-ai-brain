@@ -23,6 +23,7 @@ const sourceTypeOptions = [
   { label: 'AI 助手消息', value: 'assistant_message' },
   { label: '模型网关调用', value: 'model_gateway_log' },
   { label: '代码巡检报告', value: 'code_inspection_report' },
+  { label: '结果写入记录', value: 'result_write_record' },
   { label: '审计事件', value: 'audit_event' },
 ];
 

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.389 |
+| 功能版本 | v1.1.390 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.390 | 2026-06-24 | 执行诊断 `source_type` 新增 `result_write_record`，定时作业和插件调用链路聚合结果写入记录，可按写入记录 ID 反查“是否真正写入报告/反馈/通知” | Codex |
 | v1.1.389 | 2026-06-24 | 代码巡检 finding 新增误报忽略审批 API：支持提交 suppression 申请、审批通过或驳回，详情返回审批状态并同步报告 suppression 统计和审计事件 | Codex |
 | v1.1.388 | 2026-06-24 | 代码巡检治理概览新增 `rule_governance`，聚合最近报告规则/扫描器版本、版本分布、suppression 总量和过滤原因分布，用于页面展示规则包漂移与误报/已接受风险治理状态 | Codex |
 | v1.1.387 | 2026-06-24 | 执行诊断 `source_type` 新增 `assistant_message` 节点类型，AI 助手运行链路可按用户消息或助手消息 ID 通过 `source_id` 精准定位，供草案任务台来源链路跳转使用 | Codex |
@@ -4217,8 +4218,8 @@ GET /api/governance/execution-traces/{trace_id}
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | keyword | string | 按链路 ID、根 ID、根类型、标题、摘要或关联 ID 搜索。 |
-| source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report` 或 `audit_event` 的 ID；前端深链命中唯一记录时自动打开详情。 |
-| source_type | enum | 根类型或节点类型：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`audit_event`。 |
+| source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`result_write_record` 或 `audit_event` 的 ID；前端深链命中唯一记录时自动打开详情。 |
+| source_type | enum | 根类型或节点类型：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`result_write_record`、`audit_event`。 |
 | status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
 | created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |
 | sort_by | enum | `started_at`、`updated_at`、`duration_ms`、`node_count`、`failed_node_count`、`root_type`、`status`、`id`。 |
@@ -4249,6 +4250,7 @@ GET /api/governance/execution-traces/{trace_id}
           "ai_executor_task": ["ai_executor_task_001"],
           "model_gateway_log": ["model_gateway_log_001"],
           "code_inspection_report": ["code_inspection_report_001"],
+          "result_write_record": ["result_write_record_scheduled_job_run_001"],
           "audit_event": ["audit_001"]
         }
       }
@@ -4268,6 +4270,7 @@ GET /api/governance/execution-traces/{trace_id}
 
 - 详情 `trace_id` 可传链路根 ID，也可传任一关联对象 ID 或节点 `source_id`；服务端会返回同一条聚合链路。
 - `assistant_chat_run` 链路根来自 `assistant_chat_runs`，详情节点只展示运行状态、会话/消息 ID、用户、产品和引用数量等排障元数据，不返回完整用户提问、助手回复、Prompt 或知识正文。
+- `result_write_record` 是从定时作业运行或独立插件调用派生的可重建写入记录节点，不是新的事实源；详情元数据仅展示写入目标、状态、导入数、预览摘要和安全反馈，用于判断运行是否真正写入报告、用户反馈、通知等产物。
 - 聚合来源是现有结构表或 repository source rows；PostgreSQL 运行时会刷新可重建的 `execution_trace_snapshots` 只读快照并优先从该表分页/过滤/排序读取。列表和已命中详情可在短 TTL 内复用快照；详情未命中时必须强制重建一次快照再判定 404。该表不是新的业务事实源，也不在查询时写审计。
 - 元数据返回前必须按敏感键脱敏，包含但不限于 `token`、`api_key`、`authorization`、`password`、`secret`、`cookie`；敏感值统一替换为 `<redacted>`。
 - 无匹配链路返回 `404 EXECUTION_TRACE_NOT_FOUND`；非法枚举或时间格式返回 `400 VALIDATION_ERROR`。

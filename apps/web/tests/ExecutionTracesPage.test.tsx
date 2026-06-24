@@ -18,6 +18,7 @@ function installExecutionTracesFetchMock() {
       code_inspection_report: ['code_inspection_report_trace'],
       model_gateway_log: ['model_gateway_log_trace'],
       plugin_invocation_log: ['plugin_invocation_log_trace'],
+      result_write_record: ['result_write_record_scheduled_job_run_trace'],
       scheduled_job_run: ['scheduled_job_run_trace'],
     },
     root_id: 'scheduled_job_run_trace',
@@ -65,6 +66,11 @@ function installExecutionTracesFetchMock() {
         label: 'dispatches',
         to: 'ai_executor_task:ai_executor_task_trace',
       },
+      {
+        from: 'plugin_invocation_log:plugin_invocation_log_trace',
+        label: 'writes_result',
+        to: 'result_write_record:result_write_record_scheduled_job_run_trace',
+      },
     ],
     nodes: [
       {
@@ -108,6 +114,24 @@ function installExecutionTracesFetchMock() {
         started_at: '2026-06-20T01:00:03Z',
         status: 'succeeded',
         summary: 'openai_compatible/gpt-5.5',
+      },
+      {
+        duration_ms: null,
+        error_code: null,
+        error_message: null,
+        finished_at: '2026-06-20T01:00:08Z',
+        id: 'result_write_record:result_write_record_scheduled_job_run_trace',
+        label: '结果写入记录',
+        metadata: {
+          records_imported: 1,
+          write_target: 'code_inspection_reports',
+          write_target_label: '代码巡检报告',
+        },
+        source_id: 'result_write_record_scheduled_job_run_trace',
+        source_type: 'result_write_record',
+        started_at: '2026-06-20T01:00:08Z',
+        status: 'succeeded',
+        summary: '代码巡检报告',
       },
     ],
   };
@@ -227,9 +251,12 @@ describe('ExecutionTracesPage', () => {
     expect(within(dialog).getByText('节点关系')).toBeInTheDocument();
     expect(within(dialog).getAllByText('插件调用').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('模型网关调用').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('结果写入记录').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('plugin_invocation_log_trace').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('model_gateway_log_trace').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('result_write_record_scheduled_job_run_trace').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('dispatches')).toBeInTheDocument();
+    expect(within(dialog).getByText('writes_result')).toBeInTheDocument();
     expect(within(dialog).queryByText('secret-run-token')).not.toBeInTheDocument();
   });
 
