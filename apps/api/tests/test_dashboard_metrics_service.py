@@ -216,3 +216,43 @@ def test_dashboard_snapshot_record_and_store_sync_use_stable_id():
     }
     assert record["id"] == "dashboard_snapshot_all_7d"
     assert record["metrics"] == {"summary": {"requirements": 2}}
+
+
+def test_dashboard_snapshot_sync_uses_repository_when_available():
+    def stable_id(prefix: str, payload: dict[str, str]) -> str:
+        return f"{prefix}_{payload['product_id']}_{payload['time_range']}"
+
+    saved_snapshots: list[dict] = []
+
+    class Repository:
+        def save_dashboard_metric_snapshot_record(self, snapshot: dict) -> None:
+            saved_snapshots.append(snapshot)
+
+    store = SimpleNamespace(
+        dashboard_metric_snapshots={},
+        repository=Repository(),
+        snapshot=lambda value: dict(value),
+    )
+
+    sync_dashboard_metric_snapshot(
+        store,
+        data={"summary": {"requirements": 3}},
+        cutoff=None,
+        product_id="product_001",
+        stable_record_id=stable_id,
+        time_range="7d",
+    )
+
+    assert store.dashboard_metric_snapshots == {}
+    assert saved_snapshots == [
+        {
+            "created_at": saved_snapshots[0]["created_at"],
+            "id": "dashboard_snapshot_product_001_7d",
+            "metrics": {"summary": {"requirements": 3}},
+            "product_id": "product_001",
+            "time_range": "7d",
+            "updated_at": saved_snapshots[0]["updated_at"],
+            "window_end": saved_snapshots[0]["window_end"],
+            "window_start": None,
+        }
+    ]

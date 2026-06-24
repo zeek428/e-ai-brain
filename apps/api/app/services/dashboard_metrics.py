@@ -23,8 +23,24 @@ def sync_dashboard_metric_snapshot(
             "time_range": time_range or "all",
         },
     )
-    existing = current_store.dashboard_metric_snapshots.get(snapshot_id, {})
-    current_store.dashboard_metric_snapshots[snapshot_id] = {
+    save_record = _dashboard_metric_snapshot_repository_save(current_store)
+    if save_record is not None:
+        save_record(
+            {
+                "created_at": now,
+                "id": snapshot_id,
+                "metrics": json.loads(json.dumps(data, ensure_ascii=False)),
+                "product_id": product_id,
+                "time_range": time_range or "all",
+                "updated_at": now,
+                "window_end": now,
+                "window_start": cutoff.isoformat() if cutoff else None,
+            }
+        )
+        return
+    snapshots = _dashboard_metric_snapshot_collection(current_store)
+    existing = snapshots.get(snapshot_id, {})
+    snapshots[snapshot_id] = {
         "created_at": existing.get("created_at") or now,
         "id": snapshot_id,
         "metrics": current_store.snapshot(data),
@@ -34,6 +50,22 @@ def sync_dashboard_metric_snapshot(
         "window_end": now,
         "window_start": cutoff.isoformat() if cutoff else None,
     }
+
+
+def _dashboard_metric_snapshot_repository_save(
+    current_store: Any,
+) -> Callable[[dict[str, Any]], None] | None:
+    repository = getattr(current_store, "repository", None)
+    save_record = getattr(repository, "save_dashboard_metric_snapshot_record", None)
+    return save_record if callable(save_record) else None
+
+
+def _dashboard_metric_snapshot_collection(current_store: Any) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, "dashboard_metric_snapshots", None)
+    if not isinstance(collection, dict):
+        collection = {}
+        vars(current_store)["dashboard_metric_snapshots"] = collection
+    return collection
 
 
 def dashboard_metric_snapshot_record(
