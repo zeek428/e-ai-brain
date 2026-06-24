@@ -274,6 +274,12 @@ def test_postgres_product_config_read_models_delegate_to_domain_repository(monke
     )
     monkeypatch.setattr(
         ProductConfigReadRepository,
+        "get_product_version",
+        lambda self, version_id: calls.append(("get_product_version", {"version_id": version_id}))
+        or {"source": "get_product_version"},
+    )
+    monkeypatch.setattr(
+        ProductConfigReadRepository,
         "get_product_git_repository",
         lambda self, repository_id: calls.append(
             ("get_product_git_repository", {"repository_id": repository_id})
@@ -294,6 +300,14 @@ def test_postgres_product_config_read_models_delegate_to_domain_repository(monke
                 "product_module_has_related_records",
                 {"module_code": module_code, "product_id": product_id},
             )
+        )
+        or False,
+    )
+    monkeypatch.setattr(
+        ProductConfigReadRepository,
+        "product_version_has_related_records",
+        lambda self, version_id: calls.append(
+            ("product_version_has_related_records", {"version_id": version_id})
         )
         or False,
     )
@@ -369,11 +383,13 @@ def test_postgres_product_config_read_models_delegate_to_domain_repository(monke
     assert repository.count_product_summaries(status="active") == 7
     assert repository.list_product_summaries(code="AI")[0]["source"] == "list_product_summaries"
     assert repository.get_product("product_001")["source"] == "get_product"
+    assert repository.get_product_version("version_001")["source"] == "get_product_version"
     assert repository.get_product_git_repository("repo_001")["source"] == (
         "get_product_git_repository"
     )
     assert repository.get_product_module("module_001")["source"] == "get_product_module"
     assert repository.product_module_has_related_records("product_001", "core") is False
+    assert repository.product_version_has_related_records("version_001") is False
     assert repository.get_related_system("related_001")["source"] == "get_related_system"
     assert repository.get_related_system_by_code("CRM")["source"] == (
         "get_related_system_by_code"
@@ -404,9 +420,11 @@ def test_postgres_product_config_read_models_delegate_to_domain_repository(monke
         "count_product_summaries",
         "list_product_summaries",
         "get_product",
+        "get_product_version",
         "get_product_git_repository",
         "get_product_module",
         "product_module_has_related_records",
+        "product_version_has_related_records",
         "get_related_system",
         "get_related_system_by_code",
         "get_product_version_branch_config",
@@ -419,14 +437,16 @@ def test_postgres_product_config_read_models_delegate_to_domain_repository(monke
         "list_product_version_summaries",
     ]
     assert calls[3][1] == {"product_id": "product_001"}
-    assert calls[4][1] == {"repository_id": "repo_001"}
-    assert calls[5][1] == {"module_id": "module_001"}
-    assert calls[6][1] == {"module_code": "core", "product_id": "product_001"}
-    assert calls[7][1] == {"system_id": "related_001"}
-    assert calls[8][1] == {"code": "CRM"}
-    assert calls[9][1] == {"branch_config_id": "version_branch_001"}
-    assert calls[10][1] == {"active_only": True, "product_id": "product_001"}
-    assert calls[13][1] == {"active_only": False, "product_id": "product_001"}
+    assert calls[4][1] == {"version_id": "version_001"}
+    assert calls[5][1] == {"repository_id": "repo_001"}
+    assert calls[6][1] == {"module_id": "module_001"}
+    assert calls[7][1] == {"module_code": "core", "product_id": "product_001"}
+    assert calls[8][1] == {"version_id": "version_001"}
+    assert calls[9][1] == {"system_id": "related_001"}
+    assert calls[10][1] == {"code": "CRM"}
+    assert calls[11][1] == {"branch_config_id": "version_branch_001"}
+    assert calls[12][1] == {"active_only": True, "product_id": "product_001"}
+    assert calls[15][1] == {"active_only": False, "product_id": "product_001"}
 
 
 def test_postgres_product_config_writes_delegate_to_domain_repository(monkeypatch):

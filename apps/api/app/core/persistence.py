@@ -302,6 +302,9 @@ class PostgresSnapshotRepository:
     def get_product(self, product_id: str) -> dict[str, Any] | None:
         return self._product_config_read_repository.get_product(product_id)
 
+    def get_product_version(self, version_id: str) -> dict[str, Any] | None:
+        return self._product_config_read_repository.get_product_version(version_id)
+
     def get_product_git_repository(self, repository_id: str) -> dict[str, Any] | None:
         return self._product_config_read_repository.get_product_git_repository(repository_id)
 
@@ -312,6 +315,11 @@ class PostgresSnapshotRepository:
         return self._product_config_read_repository.product_module_has_related_records(
             product_id,
             module_code,
+        )
+
+    def product_version_has_related_records(self, version_id: str) -> bool:
+        return self._product_config_read_repository.product_version_has_related_records(
+            version_id,
         )
 
     def get_related_system(self, system_id: str) -> dict[str, Any] | None:

@@ -69,6 +69,20 @@ class ProductConfigReadRepository:
             "status": row[5],
         }
 
+    def get_product_version(self, version_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, product_id, code, name, description, status, start_date, release_date
+                    FROM product_versions
+                    WHERE id = %s
+                    """,
+                    (version_id,),
+                )
+                row = cursor.fetchone()
+        return _row_to_product_version(row) if row is not None else None
+
     def get_product_git_repository(self, repository_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -126,6 +140,34 @@ class ProductConfigReadRepository:
                         product_id,
                         module_code,
                     ),
+                )
+                row = cursor.fetchone()
+        return bool(row[0]) if row is not None else False
+
+    def product_version_has_related_records(self, version_id: str) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                      EXISTS (
+                        SELECT 1 FROM requirements
+                        WHERE version_id = %s
+                      )
+                      OR EXISTS (
+                        SELECT 1 FROM ai_tasks
+                        WHERE version_id = %s
+                      )
+                      OR EXISTS (
+                        SELECT 1 FROM bugs
+                        WHERE version_id = %s
+                      )
+                      OR EXISTS (
+                        SELECT 1 FROM product_version_branch_configs
+                        WHERE version_id = %s
+                      )
+                    """,
+                    (version_id, version_id, version_id, version_id),
                 )
                 row = cursor.fetchone()
         return bool(row[0]) if row is not None else False
@@ -201,19 +243,7 @@ class ProductConfigReadRepository:
                     """,
                     tuple(params),
                 )
-                return [
-                    {
-                        "code": row[2],
-                        "description": row[4],
-                        "id": row[0],
-                        "name": row[3],
-                        "product_id": row[1],
-                        "release_date": row[7].isoformat() if row[7] else None,
-                        "start_date": row[6].isoformat() if row[6] else None,
-                        "status": row[5],
-                    }
-                    for row in cursor.fetchall()
-                ]
+                return [_row_to_product_version(row) for row in cursor.fetchall()]
 
     def list_product_modules(
         self,
@@ -406,16 +436,7 @@ class ProductConfigReadRepository:
             """
         )
         return {
-            row[0]: {
-                "code": row[2],
-                "description": row[4],
-                "id": row[0],
-                "name": row[3],
-                "product_id": row[1],
-                "release_date": row[7].isoformat() if row[7] else None,
-                "start_date": row[6].isoformat() if row[6] else None,
-                "status": row[5],
-            }
+            row[0]: _row_to_product_version(row)
             for row in cursor.fetchall()
         }
 
@@ -608,6 +629,19 @@ def _row_to_product_module(row: tuple[Any, ...]) -> dict[str, Any]:
         "owner_team": row[5],
         "product_id": row[1],
         "status": row[6],
+    }
+
+
+def _row_to_product_version(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "code": row[2],
+        "description": row[4],
+        "id": row[0],
+        "name": row[3],
+        "product_id": row[1],
+        "release_date": row[7].isoformat() if row[7] else None,
+        "start_date": row[6].isoformat() if row[6] else None,
+        "status": row[5],
     }
 
 

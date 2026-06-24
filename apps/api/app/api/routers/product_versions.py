@@ -15,10 +15,13 @@ from app.services.product_config_context import (
     ensure_non_blank,
     ensure_unique_value,
     get_product_version_branch_config_record,
+    get_product_version_record,
+    list_product_version_records,
     payload_updates,
     product_config_query_repository,
     product_config_record_write_store,
     product_config_write_store,
+    product_version_has_related_records,
     product_version_summary_projection,
     record_audit_event,
     save_product_config_record,
@@ -507,8 +510,8 @@ def patch_product_version(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
-    version = current_store.product_versions.get(version_id)
+    current_store = product_config_record_write_store(store(request))
+    version = get_product_version_record(current_store, version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
     updates = payload_updates(payload)
@@ -516,8 +519,17 @@ def patch_product_version(
         updates["name"] = ensure_non_blank(updates["name"], "name")
     if "code" in updates:
         updates["code"] = ensure_non_blank(updates["code"], "code")
+        versions_for_product = {
+            str(item["id"]): dict(item)
+            for item in list_product_version_records(
+                current_store,
+                str(version["product_id"]),
+                active_only=False,
+            )
+            if item.get("id") is not None
+        }
         ensure_unique_value(
-            current_store.product_versions,
+            versions_for_product,
             field="code",
             value=updates["code"],
             conflict_code="PRODUCT_VERSION_CODE_EXISTS",
@@ -559,19 +571,11 @@ def delete_product_version(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
-    version = current_store.product_versions.get(version_id)
+    current_store = product_config_record_write_store(store(request))
+    version = get_product_version_record(current_store, version_id)
     if version is None:
         raise api_error(404, "NOT_FOUND", "Product version not found")
-    if (
-        any(item["version_id"] == version_id for item in current_store.requirements.values())
-        or any(item.get("version_id") == version_id for item in current_store.ai_tasks.values())
-        or any(item.get("version_id") == version_id for item in current_store.bugs.values())
-        or any(
-            item.get("version_id") == version_id
-            for item in current_store.product_version_branch_configs.values()
-        )
-    ):
+    if product_version_has_related_records(current_store, version_id):
         raise api_error(409, "RESOURCE_IN_USE", "Product version still has related records")
     if not uses_repository_context(current_store):
         del current_store.product_versions[version_id]

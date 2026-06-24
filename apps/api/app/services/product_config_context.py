@@ -168,6 +168,30 @@ def get_product_record(current_store: Any, product_id: str) -> dict[str, Any] | 
     return current_store.products.get(product_id)
 
 
+def get_product_version_record(current_store: Any, version_id: str) -> dict[str, Any] | None:
+    get_version = getattr(runtime_repository(current_store), "get_product_version", None)
+    if callable(get_version):
+        return get_version(version_id)
+    return current_store.product_versions.get(version_id)
+
+
+def list_product_version_records(
+    current_store: Any,
+    product_id: str,
+    *,
+    active_only: bool = False,
+) -> list[dict[str, Any]]:
+    list_versions = getattr(runtime_repository(current_store), "list_product_versions", None)
+    if callable(list_versions):
+        return list_versions(product_id, active_only=active_only)
+    return [
+        dict(version)
+        for version in current_store.product_versions.values()
+        if version.get("product_id") == product_id
+        and (not active_only or version.get("status") == "active")
+    ]
+
+
 def get_product_git_repository_record(
     current_store: Any,
     repository_id: str,
@@ -222,6 +246,25 @@ def product_module_has_related_records(
             *current_store.ai_tasks.values(),
             *current_store.bugs.values(),
         ]
+    )
+
+
+def product_version_has_related_records(current_store: Any, version_id: str) -> bool:
+    has_related_records = getattr(
+        runtime_repository(current_store),
+        "product_version_has_related_records",
+        None,
+    )
+    if callable(has_related_records):
+        return bool(has_related_records(version_id))
+    return (
+        any(item.get("version_id") == version_id for item in current_store.requirements.values())
+        or any(item.get("version_id") == version_id for item in current_store.ai_tasks.values())
+        or any(item.get("version_id") == version_id for item in current_store.bugs.values())
+        or any(
+            item.get("version_id") == version_id
+            for item in current_store.product_version_branch_configs.values()
+        )
     )
 
 

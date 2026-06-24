@@ -101,6 +101,11 @@ class FakeSnapshotRepository:
         product = self._product_config_collection("products").get(product_id)
         return dict(product) if product is not None else None
 
+    def get_product_version(self, version_id: str) -> dict | None:
+        self.product_config_single_reads.append(f"get_product_version:{version_id}")
+        version = self._product_config_collection("product_versions").get(version_id)
+        return dict(version) if version is not None else None
+
     def get_product_git_repository(self, repository_id: str) -> dict | None:
         self.product_config_single_reads.append(f"get_product_git_repository:{repository_id}")
         repository = self._product_config_collection("product_git_repositories").get(
@@ -124,6 +129,22 @@ class FakeSnapshotRepository:
         )
         return any(
             item.get("product_id") == product_id and item.get("module_code") == module_code
+            for payload in related_payloads
+            for item in payload.values()
+        )
+
+    def product_version_has_related_records(self, version_id: str) -> bool:
+        self.product_config_single_reads.append(
+            f"product_version_has_related_records:{version_id}",
+        )
+        related_payloads = (
+            (self.requirements_payload or {}).get("requirements", {}),
+            (self.ai_tasks_payload or {}).get("ai_tasks", {}),
+            (self.bugs_payload or {}).get("bugs", {}),
+            self._product_config_collection("product_version_branch_configs"),
+        )
+        return any(
+            item.get("version_id") == version_id
             for payload in related_payloads
             for item in payload.values()
         )
