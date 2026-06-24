@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.660 |
+| 功能版本 | v1.1.661 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.661 | 2026-06-24 | 补充知识文档 MemoryStore fallback 写入收口验收：`clear_knowledge_chunks`、`apply_knowledge_document_to_memory` 和知识文档删除 fallback 不得直接写 `current_store.knowledge_documents` / `current_store.knowledge_chunks` / `current_store.knowledge_deposits`；MemoryStore 测试集合由 `_memory_collection` helper 操作并保持 chunk 替换语义；`test_knowledge_audit_persistence.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.660 | 2026-06-24 | 补充知识域审计 helper DB-first 收口验收：`record_audit_event` 不得调用 `current_store.audit()`；repository 运行态只生成待写审计事件，MemoryStore 测试 fallback 必须通过显式审计列表 helper 追加事件且避免重复；`test_knowledge_audit_persistence.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.659 | 2026-06-24 | 补充知识沉淀决策 DB-first 写路径收口验收：知识沉淀采纳/拒绝不得在决策服务层直接写 `current_store.knowledge_deposits`；MemoryStore fallback 由 `save_knowledge_deposit_records` 承接，PostgreSQL 运行态沉淀、可选知识文档、chunks、模型日志和审计必须使用同一数据库事务；`test_knowledge_audit_persistence.py`、`test_knowledge_governance.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.658 | 2026-06-24 | 补充首页看板快照 DB-first fallback 收口验收：`sync_dashboard_metric_snapshot` 不得直接写 `current_store.dashboard_metric_snapshots`；repository 可用时必须调用 `save_dashboard_metric_snapshot_record`，MemoryStore 测试 fallback 仍需保留既有 `created_at` 和稳定快照 ID；`test_dashboard_metrics_service.py`、`test_lifecycle_dashboard_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |

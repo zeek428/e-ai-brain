@@ -332,11 +332,13 @@ def delete_knowledge_document_records(
 
 
 def clear_knowledge_chunks(current_store: Any, document_id: str) -> None:
-    current_store.knowledge_chunks = {
-        chunk_id: chunk
-        for chunk_id, chunk in current_store.knowledge_chunks.items()
-        if chunk.get("document_id") != document_id
-    }
+    chunks = _memory_collection(current_store, "knowledge_chunks")
+    for chunk_id in [
+        chunk_id
+        for chunk_id, chunk in chunks.items()
+        if chunk.get("document_id") == document_id
+    ]:
+        chunks.pop(chunk_id, None)
 
 
 def apply_knowledge_document_to_memory(
@@ -344,10 +346,24 @@ def apply_knowledge_document_to_memory(
     document: dict[str, Any],
     chunks: list[dict[str, Any]],
 ) -> None:
-    current_store.knowledge_documents[document["id"]] = document
+    _memory_collection(current_store, "knowledge_documents")[str(document["id"])] = document
     clear_knowledge_chunks(current_store, document["id"])
+    stored_chunks = _memory_collection(current_store, "knowledge_chunks")
     for chunk in chunks:
-        current_store.knowledge_chunks[chunk["id"]] = chunk
+        stored_chunks[str(chunk["id"])] = chunk
+
+
+def remove_knowledge_document_from_memory(
+    current_store: Any,
+    *,
+    affected_deposits: list[dict[str, Any]],
+    document_id: str,
+) -> None:
+    _memory_collection(current_store, "knowledge_documents").pop(document_id, None)
+    clear_knowledge_chunks(current_store, document_id)
+    deposits = _memory_collection(current_store, "knowledge_deposits")
+    for deposit in affected_deposits:
+        deposits[str(deposit["id"])] = deposit
 
 
 def ensure_non_blank(value: str | None, field: str) -> str:
@@ -681,14 +697,11 @@ def delete_knowledge_document_result(
             }
             affected_deposits.append(affected_deposit)
     if not uses_repository_context(current_store):
-        del current_store.knowledge_documents[document_id]
-        current_store.knowledge_chunks = {
-            chunk_id: chunk
-            for chunk_id, chunk in current_store.knowledge_chunks.items()
-            if chunk.get("document_id") != document_id
-        }
-        for deposit in affected_deposits:
-            current_store.knowledge_deposits[deposit["id"]] = deposit
+        remove_knowledge_document_from_memory(
+            current_store,
+            affected_deposits=affected_deposits,
+            document_id=document_id,
+        )
     audit_event = record_audit_event(
         current_store,
         event_type="knowledge_document.deleted",

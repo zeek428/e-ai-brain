@@ -3,7 +3,7 @@ from test_database_persistence import FakeSnapshotRepository, app, auth_headers,
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.store import MemoryStore
 from app.core.users import MemoryUserRepository
-from app.services.knowledge_deposits import record_audit_event
+from app.services.knowledge_deposits import apply_knowledge_document_to_memory, record_audit_event
 
 
 def test_knowledge_record_audit_event_appends_memory_fallback_event():
@@ -20,6 +20,35 @@ def test_knowledge_record_audit_event_appends_memory_fallback_event():
     assert event["id"] == "audit_001"
     assert event["sequence"] == 1
     assert current_store.audit_events == [event]
+
+
+def test_apply_knowledge_document_to_memory_replaces_document_chunks():
+    current_store = MemoryStore()
+    current_store.knowledge_chunks["knowledge_001_chunk_old"] = {
+        "document_id": "knowledge_001",
+        "id": "knowledge_001_chunk_old",
+    }
+    current_store.knowledge_chunks["knowledge_other_chunk_001"] = {
+        "document_id": "knowledge_other",
+        "id": "knowledge_other_chunk_001",
+    }
+
+    apply_knowledge_document_to_memory(
+        current_store,
+        {"id": "knowledge_001", "title": "知识"},
+        [
+            {
+                "document_id": "knowledge_001",
+                "id": "knowledge_001_chunk_001",
+            }
+        ],
+    )
+
+    assert current_store.knowledge_documents["knowledge_001"]["title"] == "知识"
+    assert set(current_store.knowledge_chunks) == {
+        "knowledge_001_chunk_001",
+        "knowledge_other_chunk_001",
+    }
 
 
 def test_knowledge_and_audit_are_persisted_through_fine_grained_repository_payload():

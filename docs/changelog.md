@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 知识文档 MemoryStore fallback 写入收口：`clear_knowledge_chunks`、`apply_knowledge_document_to_memory` 和知识文档删除 fallback 不再直接写知识文档、chunk 或沉淀集合，统一通过 `_memory_collection` helper 操作测试集合。
 - 知识域审计 helper DB-first 收口：`record_audit_event` 不再调用 `current_store.audit()`，repository 运行态只生成待写审计事件，MemoryStore 测试 fallback 通过显式审计列表 helper 追加并去重。
 - 知识沉淀决策 DB-first 收口：知识沉淀采纳/拒绝不再直接写 `current_store.knowledge_deposits`，统一通过 `save_knowledge_deposit_records` 写入 MemoryStore 测试 fallback 或 repository；PostgreSQL 运行态沉淀、可选知识文档、chunks、模型日志和审计使用同一数据库事务。
 - 首页看板快照 DB-first fallback 收口：`sync_dashboard_metric_snapshot` 不再直接写 `current_store.dashboard_metric_snapshots`，repository 可用时优先调用 `save_dashboard_metric_snapshot_record`，MemoryStore 测试 fallback 仍保留稳定快照 ID 与首次创建时间。
