@@ -319,6 +319,40 @@
 
 ---
 
+### TC-AIBRAIN-CODEINSPECTION-FUNC-033: 代码巡检 finding 误报忽略审批
+
+| 项目 | 内容 |
+|------|------|
+| 用例编号 | TC-AIBRAIN-CODEINSPECTION-FUNC-033 |
+| 用例名称 | 代码巡检 finding 误报忽略审批 |
+| 优先级 | P0 |
+| 模块 | CODE_INSPECTION |
+| 创建人 | Codex |
+| 创建日期 | 2026-06-24 |
+
+**前置条件**:
+1. 已存在一次 `code_repository_inspection` 定时作业运行，写入 `code_inspection_reports` 和至少一条 `code_inspection_findings`。
+2. 管理员具备代码巡检读取与治理权限；另准备可查看页面的普通角色用于只读边界验证。
+
+**测试步骤**:
+| 步骤 | 操作 | 预期结果 |
+|------|------|----------|
+| 1 | GET `/api/governance/code-inspections/{report_id}` | `findings[]` 返回 `suppression_status=none` 以及 suppression 申请/审批字段；详情页展示“忽略审批”和“治理操作”列。 |
+| 2 | POST `/api/governance/code-inspections/{report_id}/findings/{finding_id}/suppression-request`，reason=`false_positive` | finding 进入 `pending`，记录申请人、申请时间和申请说明；写入 `code_inspection_finding_suppression.requested` 审计事件。 |
+| 3 | POST `/api/governance/code-inspections/{report_id}/findings/{finding_id}/suppression-review`，decision=`approve` | finding 进入 `approved`，记录审批人和审批时间；报告 `suppressed_finding_count` 加 1，`suppression_summary.false_positive` 加 1；写入 `code_inspection_finding_suppression.approved` 审计事件。 |
+| 4 | 对同一 finding 再次提交审批 | 返回 409，不重复增加 suppression 统计，也不重复写成功审批。 |
+| 5 | GET `/api/governance/code-inspections/dashboard?product_id=...` | `rule_governance.suppression_distribution` 包含 `false_positive=1`，页面“规则包与误报治理”同步显示。 |
+| 6 | 在 `/governance/code-inspections` 打开报告详情，点击“申请忽略”再点击“批准忽略” | 页面调用真实 suppression API，按钮 loading 不影响其它行操作，审批状态从“未申请”更新为“待审批”再更新为“已忽略”，长问题/建议/位置不撑坏表格。 |
+
+**预期结果**:
+1. 逐条 finding 的误报/忽略必须经过服务端状态机和审计，不得只靠前端隐藏或静态配置过滤。
+2. 审批通过后的统计必须同时影响报告详情和治理概览，便于后续治理误报率和规则质量。
+3. 重复审批、无效 reason 或非 pending 审批必须返回明确错误，避免统计重复累加。
+
+**状态**: 后端和前端自动化覆盖见 `apps/api/tests/test_code_inspection_governance.py::test_code_inspection_finding_suppression_approval_updates_report_governance` 与 `apps/web/tests/CodeInspectionsPage.test.tsx::requests and approves a finding suppression from the detail dialog`；真实页面 smoke 按 `/governance/code-inspections` 验证。
+
+---
+
 ### TC-AIBRAIN-DASHBOARD-FUNC-017: 首页 IT 团队看板
 
 | 项目 | 内容 |

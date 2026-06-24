@@ -6374,6 +6374,13 @@ export type CodeInspectionFindingRecord = {
   report_id: string;
   rule_id?: string;
   severity: string;
+  suppression_note?: string | null;
+  suppression_reason?: string | null;
+  suppression_requested_at?: string | null;
+  suppression_requested_by?: string | null;
+  suppression_reviewed_at?: string | null;
+  suppression_reviewed_by?: string | null;
+  suppression_status?: 'approved' | 'none' | 'pending' | 'rejected' | string;
   title: string;
 };
 
@@ -6547,6 +6554,41 @@ export async function fetchCodeInspectionDetail(reportId: string): Promise<CodeI
   return apiRequest<CodeInspectionDetailRecord>(`/api/governance/code-inspections/${reportId}`, {
     token,
   });
+}
+
+export async function requestCodeInspectionFindingSuppression(
+  reportId: string,
+  findingId: string,
+  payload: { note?: string; reason?: string } = {},
+): Promise<CodeInspectionDetailRecord> {
+  const token = requireAccessToken();
+  return apiRequest<CodeInspectionDetailRecord>(
+    `/api/governance/code-inspections/${reportId}/findings/${findingId}/suppression-request`,
+    {
+      body: JSON.stringify({
+        note: payload.note,
+        reason: payload.reason ?? 'false_positive',
+      }),
+      method: 'POST',
+      token,
+    },
+  );
+}
+
+export async function reviewCodeInspectionFindingSuppression(
+  reportId: string,
+  findingId: string,
+  payload: { decision: 'approve' | 'reject'; note?: string },
+): Promise<CodeInspectionDetailRecord> {
+  const token = requireAccessToken();
+  return apiRequest<CodeInspectionDetailRecord>(
+    `/api/governance/code-inspections/${reportId}/findings/${findingId}/suppression-review`,
+    {
+      body: JSON.stringify(payload),
+      method: 'POST',
+      token,
+    },
+  );
 }
 
 function mapRequirementRecord(requirement: RequirementListItem): RequirementRecord {

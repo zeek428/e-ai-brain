@@ -29,6 +29,13 @@ CODE_INSPECTION_ACTION_TYPES = {
 CODE_INSPECTION_SEVERITIES = {"info", "low", "medium", "high", "critical"}
 CODE_INSPECTION_RISK_LEVELS = {"low", "medium", "high", "critical"}
 CODE_INSPECTION_NOTIFICATION_CHANNELS = {"dingtalk", "email", "webhook"}
+CODE_INSPECTION_SUPPRESSION_REASONS = {
+    "accepted_risk",
+    "baseline",
+    "false_positive",
+    "ignored",
+    "other",
+}
 CODE_INSPECTION_SORT_FIELDS = {
     "created_at",
     "committer_count",
@@ -48,6 +55,10 @@ DEFAULT_SEVERITY_MAPPING = {
     "minor": "low",
 }
 OPEN_BUG_STATUSES = {"assigned", "fixed", "needs_info", "open", "reopened", "triaged"}
+
+
+def now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def ensure_non_blank(value: str | None, field: str) -> str:
@@ -1844,6 +1855,188 @@ def code_inspection_detail_response(
         "report": public_code_inspection_report(report, current_store),
         "scan_summary": code_inspection_scan_summary(report, findings),
     }
+
+
+def _code_inspection_detail_raw(current_store: Any, report_id: str) -> dict[str, Any]:
+    repository = code_inspection_query_repository(current_store)
+    if repository is not None and callable(getattr(repository, "get_code_inspection_detail", None)):
+        detail = repository.get_code_inspection_detail(report_id)
+        if detail is None:
+            raise api_error(404, "NOT_FOUND", "Code inspection report not found")
+        return detail
+    report = current_store.code_inspection_reports.get(report_id)
+    if report is None:
+        raise api_error(404, "NOT_FOUND", "Code inspection report not found")
+    findings = [
+        finding
+        for finding in current_store.code_inspection_findings.values()
+        if finding.get("report_id") == report_id
+    ]
+    notifications = [
+        notification
+        for notification in current_store.code_inspection_notifications.values()
+        if notification.get("report_id") == report_id
+    ]
+    return {"findings": findings, "notifications": notifications, "report": report}
+
+
+def _code_inspection_finding_from_detail(
+    detail: dict[str, Any],
+    finding_id: str,
+) -> dict[str, Any]:
+    for finding in detail.get("findings") or []:
+        if finding.get("id") == finding_id:
+            return finding
+    raise api_error(404, "NOT_FOUND", "Code inspection finding not found")
+
+
+def _persist_code_inspection_suppression_change(
+    current_store: Any,
+    *,
+    audit_event: dict[str, Any],
+    finding: dict[str, Any],
+    notifications: list[dict[str, Any]],
+    report: dict[str, Any],
+) -> None:
+    if hasattr(current_store, "code_inspection_reports"):
+        current_store.code_inspection_reports[report["id"]] = report
+    if hasattr(current_store, "code_inspection_findings"):
+        current_store.code_inspection_findings[finding["id"]] = finding
+    persist_code_inspection_records(
+        current_store,
+        audit_event=audit_event,
+        findings=[finding],
+        notifications=notifications,
+        report=report,
+    )
+
+
+def request_code_inspection_finding_suppression_response(
+    *,
+    current_store: Any,
+    finding_id: str,
+    payload: Any,
+    report_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_code_inspection_read(user)
+    detail = _code_inspection_detail_raw(current_store, report_id)
+    report = detail["report"]
+    if not user_can_read_product(user, report.get("product_id")):
+        raise api_error(404, "NOT_FOUND", "Code inspection report not found")
+    finding = _code_inspection_finding_from_detail(detail, finding_id)
+    if finding.get("suppression_status") == "approved":
+        raise api_error(
+            409,
+            "CODE_INSPECTION_SUPPRESSION_ALREADY_APPROVED",
+            "Code inspection finding suppression is already approved",
+        )
+    reason = str(getattr(payload, "reason", None) or "false_positive").strip() or "false_positive"
+    ensure_enum(reason, CODE_INSPECTION_SUPPRESSION_REASONS, "reason")
+    timestamp = now_iso()
+    finding["suppression_status"] = "pending"
+    finding["suppression_reason"] = reason
+    finding["suppression_note"] = str(getattr(payload, "note", None) or "").strip() or None
+    finding["suppression_requested_by"] = user["id"]
+    finding["suppression_requested_at"] = timestamp
+    finding["suppression_reviewed_by"] = None
+    finding["suppression_reviewed_at"] = None
+    finding["updated_at"] = timestamp
+    report["updated_at"] = timestamp
+    audit_event = current_store.audit(
+        actor_id=user["id"],
+        event_type="code_inspection_finding_suppression.requested",
+        payload={
+            "finding_id": finding_id,
+            "reason": reason,
+            "report_id": report_id,
+            "rule_id": finding.get("rule_id"),
+        },
+        subject_id=finding_id,
+        subject_type="code_inspection_finding",
+    )
+    _persist_code_inspection_suppression_change(
+        current_store,
+        audit_event=audit_event,
+        finding=finding,
+        notifications=detail.get("notifications") or [],
+        report=report,
+    )
+    return code_inspection_detail_response(
+        current_store=current_store,
+        report_id=report_id,
+        user=user,
+    )
+
+
+def review_code_inspection_finding_suppression_response(
+    *,
+    current_store: Any,
+    finding_id: str,
+    payload: Any,
+    report_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    require_code_inspection_read(user)
+    detail = _code_inspection_detail_raw(current_store, report_id)
+    report = detail["report"]
+    if not user_can_read_product(user, report.get("product_id")):
+        raise api_error(404, "NOT_FOUND", "Code inspection report not found")
+    finding = _code_inspection_finding_from_detail(detail, finding_id)
+    if finding.get("suppression_status") != "pending":
+        raise api_error(
+            409,
+            "CODE_INSPECTION_SUPPRESSION_REVIEW_INVALID",
+            "Only pending suppression requests can be reviewed",
+        )
+    decision = str(getattr(payload, "decision", None) or "").strip().lower()
+    ensure_enum(decision, {"approve", "reject"}, "decision")
+    timestamp = now_iso()
+    reason = str(finding.get("suppression_reason") or "false_positive")
+    if decision == "approve":
+        finding["suppression_status"] = "approved"
+        summary = dict(report.get("suppression_summary") or {})
+        summary[reason] = int(summary.get(reason) or 0) + 1
+        report["suppression_summary"] = summary
+        report["suppressed_finding_count"] = int(report.get("suppressed_finding_count") or 0) + 1
+    else:
+        finding["suppression_status"] = "rejected"
+    finding["suppression_note"] = str(getattr(payload, "note", None) or "").strip() or finding.get(
+        "suppression_note"
+    )
+    finding["suppression_reviewed_by"] = user["id"]
+    finding["suppression_reviewed_at"] = timestamp
+    finding["updated_at"] = timestamp
+    report["updated_at"] = timestamp
+    audit_event = current_store.audit(
+        actor_id=user["id"],
+        event_type=(
+            "code_inspection_finding_suppression.approved"
+            if decision == "approve"
+            else "code_inspection_finding_suppression.rejected"
+        ),
+        payload={
+            "decision": decision,
+            "finding_id": finding_id,
+            "reason": reason,
+            "report_id": report_id,
+            "rule_id": finding.get("rule_id"),
+        },
+        subject_id=finding_id,
+        subject_type="code_inspection_finding",
+    )
+    _persist_code_inspection_suppression_change(
+        current_store,
+        audit_event=audit_event,
+        finding=finding,
+        notifications=detail.get("notifications") or [],
+        report=report,
+    )
+    return code_inspection_detail_response(
+        current_store=current_store,
+        report_id=report_id,
+        user=user,
+    )
 
 
 def persist_code_inspection_records(

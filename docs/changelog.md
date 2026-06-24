@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 代码巡检 finding 误报忽略审批：报告详情支持对单条问题提交忽略申请，管理员可批准或驳回，审批通过后同步报告 suppression 统计、治理概览分布和审计事件。
 - 用户权限诊断：新增 `GET /api/system/permissions/diagnostics`，按用户、菜单路径、权限点和数据范围解释允许/阻断原因；角色管理页新增“用户权限诊断”工具用于排查某用户为什么能看或不能看。
 - 定时作业服务端 catalog/注册中心：新增 `/api/system/scheduled-job-catalog`，统一返回作业类型、必填规则、执行/调度模式、连接环境和代码巡检选项，前端新增/编辑弹窗优先使用服务端配置并保留静态降级。
 - 插件管理表单转换继续减重：连接/动作/Runner payload、请求预览、结果映射、schema 回填和助手草案回填抽到 `pluginFormTransformHelpers`，主页面只保留插件、连接、动作和 Runner 编排。
@@ -23,6 +24,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 代码巡检详情页增强：finding 列表新增忽略审批状态与治理操作列，表格横向滚动宽度扩展，避免问题、位置、建议和审批操作互相挤压。
 - 代码巡检治理概览增强：`/api/governance/code-inspections/dashboard` 新增 `rule_governance`，页面展示规则包版本、扫描器版本、版本不一致提示和 suppression 过滤原因分布。
 - AI 助手草案任务台继续编辑入口收敛：列表与详情弹窗统一根据草案 ID 生成 `/assistant?draft_id=...` 深链，助手页继续按 `draft_id` 加载草案卡，来源链路保留独立执行诊断入口。
 - 执行诊断入口统一：新增前端 `ExecutionTraceLink`，AI 助手草案、定时作业运行详情和代码巡检报告详情共用 `/governance/execution-traces?source_id=...&source_type=...` 深链；代码巡检详情新增巡检报告、来源运行和插件调用诊断入口。

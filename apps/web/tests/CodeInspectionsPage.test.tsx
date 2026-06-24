@@ -213,6 +213,7 @@ function installCodeInspectionsFetchMock() {
               report_id: report.id,
               rule_id: 'inspection.incomplete_source_data',
               severity: 'critical',
+              suppression_status: 'none',
               title: '扫描输入数据不完整，无法进行文件级代码审计',
             },
           ],
@@ -263,6 +264,75 @@ function installCodeInspectionsFetchMock() {
             scan_profile: report.scan_profile,
             suppression_summary: report.suppression_summary,
           },
+        },
+      });
+    }
+    if (
+      input ===
+        '/api/governance/code-inspections/code_inspection_report_001/findings/code_inspection_finding_001/suppression-request' &&
+      init?.method === 'POST'
+    ) {
+      return jsonResponse({
+        data: {
+          findings: [
+            {
+              category: 'security',
+              committer_email: 'alice@example.com',
+              committer_name: 'Alice Chen',
+              created_bug_id: 'bug_code_001',
+              file_path: 'src/config.py',
+              id: 'code_inspection_finding_001',
+              line_number: 12,
+              recommendation: '补充结构化仓库扫描数据。',
+              report_id: report.id,
+              rule_id: 'inspection.incomplete_source_data',
+              severity: 'critical',
+              suppression_reason: 'false_positive',
+              suppression_status: 'pending',
+              title: '扫描输入数据不完整，无法进行文件级代码审计',
+            },
+          ],
+          notifications: [],
+          report,
+          scan_summary: {},
+        },
+      });
+    }
+    if (
+      input ===
+        '/api/governance/code-inspections/code_inspection_report_001/findings/code_inspection_finding_001/suppression-review' &&
+      init?.method === 'POST'
+    ) {
+      return jsonResponse({
+        data: {
+          findings: [
+            {
+              category: 'security',
+              committer_email: 'alice@example.com',
+              committer_name: 'Alice Chen',
+              created_bug_id: 'bug_code_001',
+              file_path: 'src/config.py',
+              id: 'code_inspection_finding_001',
+              line_number: 12,
+              recommendation: '补充结构化仓库扫描数据。',
+              report_id: report.id,
+              rule_id: 'inspection.incomplete_source_data',
+              severity: 'critical',
+              suppression_reason: 'false_positive',
+              suppression_status: 'approved',
+              title: '扫描输入数据不完整，无法进行文件级代码审计',
+            },
+          ],
+          notifications: [],
+          report: {
+            ...report,
+            suppressed_finding_count: 3,
+            suppression_summary: {
+              ...report.suppression_summary,
+              false_positive: 1,
+            },
+          },
+          scan_summary: {},
         },
       });
     }
@@ -391,5 +461,40 @@ describe('CodeInspectionsPage', () => {
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap',
     });
+  });
+
+  it('requests and approves a finding suppression from the detail dialog', async () => {
+    const { fetchMock } = installCodeInspectionsFetchMock();
+
+    render(<CodeInspectionsPage />);
+
+    await screen.findByText('code_inspection_report_001');
+    fireEvent.click(screen.getByRole('button', { name: '详情' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
+    const requestButton = await within(dialog).findByRole('button', { name: '申请忽略' });
+    fireEvent.click(requestButton);
+
+    await waitFor(() => expect(within(dialog).getByText('待审批')).toBeInTheDocument());
+    expect(
+      fetchMock,
+    ).toHaveBeenCalledWith(
+      '/api/governance/code-inspections/code_inspection_report_001/findings/code_inspection_finding_001/suppression-request',
+      expect.objectContaining({
+        method: 'POST',
+      }),
+    );
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '批准忽略' }));
+
+    await waitFor(() => expect(within(dialog).getAllByText('已忽略').length).toBeGreaterThan(0));
+    expect(
+      fetchMock,
+    ).toHaveBeenCalledWith(
+      '/api/governance/code-inspections/code_inspection_report_001/findings/code_inspection_finding_001/suppression-review',
+      expect.objectContaining({
+        method: 'POST',
+      }),
+    );
   });
 });

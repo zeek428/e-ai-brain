@@ -9,6 +9,8 @@ import {
   fetchCodeInspectionDashboard,
   type CodeInspectionDashboardRecord,
   fetchCodeInspectionReports,
+  requestCodeInspectionFindingSuppression,
+  reviewCodeInspectionFindingSuppression,
   type CodeInspectionDetailRecord,
   type CodeInspectionFindingRecord,
   type CodeInspectionListQuery,
@@ -31,6 +33,21 @@ const severityColorByValue = new Map([
   ['medium', 'gold'],
   ['low', 'green'],
   ['info', 'blue'],
+]);
+
+const suppressionStatusConfig = new Map([
+  ['approved', { color: 'green', label: '已忽略' }],
+  ['none', { color: 'default', label: '未申请' }],
+  ['pending', { color: 'gold', label: '待审批' }],
+  ['rejected', { color: 'red', label: '已驳回' }],
+]);
+
+const suppressionReasonLabels = new Map([
+  ['accepted_risk', '已接受风险'],
+  ['baseline', '基线忽略'],
+  ['false_positive', '误报'],
+  ['ignored', '忽略项'],
+  ['other', '其他'],
 ]);
 
 const sortFieldMap: Record<string, string> = {
@@ -67,6 +84,21 @@ function compactText(value?: string | null) {
       {text}
     </Typography.Text>
   );
+}
+
+function suppressionStatusTag(status?: string | null) {
+  const config = suppressionStatusConfig.get(status || 'none') ?? {
+    color: 'default',
+    label: status || '未申请',
+  };
+  return <Tag color={config.color}>{config.label}</Tag>;
+}
+
+function suppressionReasonText(reason?: string | null) {
+  if (!reason) {
+    return '-';
+  }
+  return suppressionReasonLabels.get(reason) ?? reason;
 }
 
 const detailSingleLineTextStyle: CSSProperties = {
@@ -630,6 +662,7 @@ export default function CodeInspectionsPage() {
     loading: boolean;
     report?: CodeInspectionReportRecord;
   }>();
+  const [suppressionActionLoading, setSuppressionActionLoading] = useState<string>();
   const [listQuery, setListQuery] = useState<ManagementListQuery>({
     filters: {},
     page: 1,
@@ -695,6 +728,39 @@ export default function CodeInspectionsPage() {
       message.error(formatMutationError(error));
     }
   }, []);
+
+  const handleSuppressionAction = useCallback(
+    async (finding: CodeInspectionFindingRecord, action: 'approve' | 'reject' | 'request') => {
+      const reportId = detailState?.report?.id ?? detailState?.detail?.report.id;
+      if (!reportId) {
+        return;
+      }
+      const loadingKey = `${action}:${finding.id}`;
+      setSuppressionActionLoading(loadingKey);
+      try {
+        const detail =
+          action === 'request'
+            ? await requestCodeInspectionFindingSuppression(reportId, finding.id, {
+                note: '从代码巡检详情申请误报忽略',
+                reason: 'false_positive',
+              })
+            : await reviewCodeInspectionFindingSuppression(reportId, finding.id, {
+                decision: action,
+                note: action === 'approve' ? '确认误报，批准忽略' : '不符合忽略条件',
+              });
+        setDetailState({ detail, loading: false, report: detail.report });
+        message.success(
+          action === 'request' ? '已提交忽略审批' : action === 'approve' ? '已批准忽略' : '已驳回忽略申请',
+        );
+        void reload();
+      } catch (error) {
+        message.error(formatMutationError(error));
+      } finally {
+        setSuppressionActionLoading(undefined);
+      }
+    },
+    [detailState?.detail?.report.id, detailState?.report?.id, reload],
+  );
 
   const columns = useMemo<ProColumns<CodeInspectionReportRecord>[]>(
     () => [
@@ -984,11 +1050,70 @@ export default function CodeInspectionsPage() {
                     detailSingleLineText(`${row.file_path || '-'}${row.line_number ? `:${row.line_number}` : ''}`),
                 },
                 { dataIndex: 'created_bug_id', title: 'Bug', width: 140, render: (value) => bugLink(String(value ?? '')) },
+                {
+                  dataIndex: 'suppression_status',
+                  title: '忽略审批',
+                  width: 150,
+                  render: (_, row) => (
+                    <Space orientation="vertical" size={2}>
+                      {suppressionStatusTag(row.suppression_status)}
+                      {row.suppression_reason ? (
+                        <Typography.Text type="secondary">
+                          {suppressionReasonText(row.suppression_reason)}
+                        </Typography.Text>
+                      ) : null}
+                    </Space>
+                  ),
+                },
+                {
+                  key: 'suppression_actions',
+                  title: '治理操作',
+                  width: 220,
+                  render: (_, row) => {
+                    const status = row.suppression_status || 'none';
+                    if (status === 'approved') {
+                      return <Typography.Text type="secondary">已忽略</Typography.Text>;
+                    }
+                    if (status === 'pending') {
+                      return (
+                        <Space size={4}>
+                          <Button
+                            loading={suppressionActionLoading === `approve:${row.id}`}
+                            size="small"
+                            type="link"
+                            onClick={() => void handleSuppressionAction(row, 'approve')}
+                          >
+                            批准忽略
+                          </Button>
+                          <Button
+                            danger
+                            loading={suppressionActionLoading === `reject:${row.id}`}
+                            size="small"
+                            type="link"
+                            onClick={() => void handleSuppressionAction(row, 'reject')}
+                          >
+                            驳回
+                          </Button>
+                        </Space>
+                      );
+                    }
+                    return (
+                      <Button
+                        loading={suppressionActionLoading === `request:${row.id}`}
+                        size="small"
+                        type="link"
+                        onClick={() => void handleSuppressionAction(row, 'request')}
+                      >
+                        {status === 'rejected' ? '重新申请' : '申请忽略'}
+                      </Button>
+                    );
+                  },
+                },
               ]}
               dataSource={detailState.detail.findings}
               pagination={false}
               rowKey="id"
-              scroll={{ x: 1600 }}
+              scroll={{ x: 1900 }}
               size="small"
               tableLayout="fixed"
             />

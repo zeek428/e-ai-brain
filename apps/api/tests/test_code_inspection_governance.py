@@ -151,6 +151,44 @@ def test_code_inspection_report_upsert_accepts_native_scan_metadata():
     )
 
 
+def test_code_inspection_finding_upsert_accepts_suppression_metadata():
+    class CountingCursor:
+        def execute(self, query: str, params: tuple | None = None) -> None:
+            if "INSERT INTO code_inspection_findings" not in query:
+                return
+            assert params is not None
+            assert query.count("%s") == len(params)
+
+    repository = CodeInspectionReadRepository(None)
+    repository.upsert_code_inspection_findings(
+        CountingCursor(),
+        {
+            "code_inspection_finding_suppression": {
+                "category": "security",
+                "created_at": "2026-06-24T00:00:00+00:00",
+                "description": "False positive candidate",
+                "file_path": "src/config.py",
+                "id": "code_inspection_finding_suppression",
+                "line_number": 12,
+                "raw": {"fingerprint": "finding-fingerprint"},
+                "recommendation": "确认误报后审批忽略。",
+                "report_id": "code_inspection_report_native",
+                "rule_id": "metadata.internal_address_exposure",
+                "severity": "medium",
+                "suppression_note": "确认误报，批准忽略",
+                "suppression_reason": "false_positive",
+                "suppression_requested_at": "2026-06-24T00:01:00+00:00",
+                "suppression_requested_by": "user_admin",
+                "suppression_reviewed_at": "2026-06-24T00:02:00+00:00",
+                "suppression_reviewed_by": "user_admin",
+                "suppression_status": "approved",
+                "title": "内部地址暴露于页面元数据",
+                "updated_at": "2026-06-24T00:02:00+00:00",
+            }
+        },
+    )
+
+
 def create_model_gateway(headers: dict[str, str]) -> dict:
     return client.post(
         "/api/system/model-gateway-configs",
@@ -433,6 +471,109 @@ def test_scheduled_repository_inspection_runs_multiple_result_actions():
     task_detail = client.get(f"/api/ai-tasks/{task_items[0]['id']}", headers=headers)
     assert task_detail.status_code == 200
     assert task_detail.json()["data"]["input"]["code_inspection_report_id"] == report_id
+
+
+def test_code_inspection_finding_suppression_approval_updates_report_governance():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(
+        headers,
+        code="repo-suppression-product",
+        name="Repository Suppression Product",
+    )
+    repository = create_repository(headers, product["id"])
+    _, connection, action = create_scanner_plugin(headers, repository["id"])
+
+    job = client.post(
+        "/api/system/scheduled-jobs",
+        json={
+            "config_json": {
+                "branch": "main",
+                "repository_id": repository["id"],
+                "scan_scope": "quality_security_convention",
+            },
+            "enabled": True,
+            "execution_mode": "deterministic",
+            "job_type": "code_repository_inspection",
+            "name": "Repository suppression inspection",
+            "plugin_action_id": action["id"],
+            "plugin_connection_id": connection["id"],
+            "product_id": product["id"],
+            "result_actions": [{"type": "write_code_inspection_report"}],
+            "schedule_type": "manual",
+            "source_system": "repo-quality-scanner",
+        },
+        headers=headers,
+    ).json()["data"]
+    run = client.post(
+        f"/api/system/scheduled-jobs/{job['id']}/run",
+        headers=headers,
+    ).json()["data"]
+    report_id = run["result_summary"]["report_id"]
+    detail = client.get(
+        f"/api/governance/code-inspections/{report_id}",
+        headers=headers,
+    ).json()["data"]
+    finding_id = detail["findings"][0]["id"]
+
+    requested = client.post(
+        f"/api/governance/code-inspections/{report_id}/findings/{finding_id}/suppression-request",
+        headers=headers,
+        json={
+            "note": "自动化验收申请误报忽略",
+            "reason": "false_positive",
+        },
+    )
+
+    assert requested.status_code == 200
+    requested_detail = requested.json()["data"]
+    requested_finding = next(
+        item for item in requested_detail["findings"] if item["id"] == finding_id
+    )
+    assert requested_finding["suppression_status"] == "pending"
+    assert requested_finding["suppression_reason"] == "false_positive"
+    assert requested_finding["suppression_requested_by"] == "user_admin"
+
+    approved = client.post(
+        f"/api/governance/code-inspections/{report_id}/findings/{finding_id}/suppression-review",
+        headers=headers,
+        json={
+            "decision": "approve",
+            "note": "确认误报，批准忽略",
+        },
+    )
+
+    assert approved.status_code == 200
+    approved_detail = approved.json()["data"]
+    approved_finding = next(
+        item for item in approved_detail["findings"] if item["id"] == finding_id
+    )
+    assert approved_finding["suppression_status"] == "approved"
+    assert approved_finding["suppression_reviewed_by"] == "user_admin"
+    assert approved_detail["report"]["suppressed_finding_count"] == 1
+    assert approved_detail["report"]["suppression_summary"]["false_positive"] == 1
+
+    duplicate_review = client.post(
+        f"/api/governance/code-inspections/{report_id}/findings/{finding_id}/suppression-review",
+        headers=headers,
+        json={"decision": "approve"},
+    )
+    assert duplicate_review.status_code == 409
+
+    dashboard = client.get(
+        f"/api/governance/code-inspections/dashboard?product_id={product['id']}",
+        headers=headers,
+    ).json()["data"]
+    suppression_distribution = {
+        item["reason"]: item["count"]
+        for item in dashboard["rule_governance"]["suppression_distribution"]
+    }
+    assert suppression_distribution["false_positive"] == 1
+    assert dashboard["rule_governance"]["suppressed_finding_count"] == 1
+
+    audit_events = [event["event_type"] for event in app.state.store.audit_events]
+    assert "code_inspection_finding_suppression.requested" in audit_events
+    assert "code_inspection_finding_suppression.approved" in audit_events
 
 
 def test_code_inspection_uses_configured_repository_when_scanner_returns_project_path():
