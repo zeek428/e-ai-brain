@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 生命周期上下文与风险信号 DB-first fallback 收口：上下文边和风险信号刷新不再直接写 `current_store.lifecycle_context_edges` / `current_store.lifecycle_risk_signals`，统一通过锚点替换和风险范围替换 helper 操作测试集合。
 - 知识空间配置 DB-first fallback 收口：知识空间、空间成员和文件夹新增/更新不再直接写 `current_store.knowledge_spaces` / `current_store.knowledge_space_members` / `current_store.knowledge_folders`，统一通过空间、成员替换和文件夹 helper 操作测试集合。
 - 知识导入结构化产物 DB-first fallback 收口：导入解析生成的知识资产、chunk set 和 chunks 不再直接写 `current_store.knowledge_assets` / `current_store.knowledge_chunk_sets` / `current_store.knowledge_chunks`，统一通过资产、chunk set 和 chunk helper 操作测试集合。
 - 知识文档主流程 DB-first fallback 收口：上传、导入运行、失败标记、索引完成、重试、取消、chunk set 激活、重新解析和批量移动链路不再直接写 `current_store.knowledge_documents`，统一通过只写文档的 MemoryStore helper 操作测试集合，避免误清理 chunks。

@@ -147,6 +147,70 @@ def first_lifecycle_task(tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
     return min(tasks, key=lambda task: task["id"]) if tasks else None
 
 
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def replace_lifecycle_context_edges_to_memory(
+    current_store: Any,
+    *,
+    anchor_id: str,
+    anchor_type: str,
+) -> None:
+    collection = _memory_collection(current_store, "lifecycle_context_edges")
+    for edge_id in [
+        edge_id
+        for edge_id, edge in collection.items()
+        if (
+            edge.get("source_subject_type") == anchor_type
+            and edge.get("source_subject_id") == anchor_id
+        )
+        or (
+            edge.get("target_subject_type") == anchor_type
+            and edge.get("target_subject_id") == anchor_id
+        )
+    ]:
+        collection.pop(edge_id, None)
+
+
+def put_lifecycle_context_edge_to_memory(current_store: Any, edge: dict[str, Any]) -> None:
+    edge_id = edge.get("id")
+    if edge_id is None:
+        return
+    _memory_collection(current_store, "lifecycle_context_edges")[str(edge_id)] = edge
+
+
+def replace_lifecycle_risk_signals_to_memory(
+    current_store: Any,
+    *,
+    risk_source_keys: set[tuple[str, str]],
+    task_scope: dict[str, set[str]],
+) -> None:
+    collection = _memory_collection(current_store, "lifecycle_risk_signals")
+    for risk_id in [
+        risk_id
+        for risk_id, risk in collection.items()
+        if (
+            risk.get("task_id") in task_scope["task_ids"]
+            or risk.get("requirement_id") in task_scope["requirement_ids"]
+            or (risk.get("source_subject_type"), risk.get("source_subject_id"))
+            in risk_source_keys
+        )
+    ]:
+        collection.pop(risk_id, None)
+
+
+def put_lifecycle_risk_signal_to_memory(current_store: Any, risk: dict[str, Any]) -> None:
+    risk_id = risk.get("id")
+    if risk_id is None:
+        return
+    _memory_collection(current_store, "lifecycle_risk_signals")[str(risk_id)] = risk
+
+
 def lifecycle_risk_context(
     current_store: Any,
     signal: dict[str, Any],
@@ -262,20 +326,11 @@ def sync_lifecycle_context_records(
     anchor_id = subject.get("id")
     if not anchor_type or not anchor_id:
         return
-    current_store.lifecycle_context_edges = {
-        edge_id: edge
-        for edge_id, edge in current_store.lifecycle_context_edges.items()
-        if not (
-            (
-                edge.get("source_subject_type") == anchor_type
-                and edge.get("source_subject_id") == anchor_id
-            )
-            or (
-                edge.get("target_subject_type") == anchor_type
-                and edge.get("target_subject_id") == anchor_id
-            )
-        )
-    }
+    replace_lifecycle_context_edges_to_memory(
+        current_store,
+        anchor_id=anchor_id,
+        anchor_type=anchor_type,
+    )
     now = datetime.now(UTC).isoformat()
 
     def upsert_edge(
@@ -296,22 +351,25 @@ def sync_lifecycle_context_records(
                 "target_subject_type": target_subject_type,
             },
         )
-        current_store.lifecycle_context_edges[edge_id] = {
-            "confidence": relation.get("confidence", 1.0),
-            "id": edge_id,
-            "metadata": current_store.snapshot(relation.get("metadata", {})),
-            "module_code": relation.get("module_code"),
-            "observed_at": relation.get("observed_at") or now,
-            "product_id": relation.get("product_id") or subject.get("product_id"),
-            "relation_type": relation["relation_type"],
-            "source_module": relation.get("source_module", "lifecycle_context"),
-            "source_subject_id": source_subject_id,
-            "source_subject_type": source_subject_type,
-            "summary": relation.get("summary"),
-            "target_subject_id": target_subject_id,
-            "target_subject_type": target_subject_type,
-            "version_id": relation.get("version_id"),
-        }
+        put_lifecycle_context_edge_to_memory(
+            current_store,
+            {
+                "confidence": relation.get("confidence", 1.0),
+                "id": edge_id,
+                "metadata": current_store.snapshot(relation.get("metadata", {})),
+                "module_code": relation.get("module_code"),
+                "observed_at": relation.get("observed_at") or now,
+                "product_id": relation.get("product_id") or subject.get("product_id"),
+                "relation_type": relation["relation_type"],
+                "source_module": relation.get("source_module", "lifecycle_context"),
+                "source_subject_id": source_subject_id,
+                "source_subject_type": source_subject_type,
+                "summary": relation.get("summary"),
+                "target_subject_id": target_subject_id,
+                "target_subject_type": target_subject_type,
+                "version_id": relation.get("version_id"),
+            },
+        )
 
     for relation in upstream:
         upsert_edge(
@@ -334,16 +392,11 @@ def sync_lifecycle_context_records(
         (signal["source_subject_type"], signal["source_subject_id"])
         for signal in risk_signals
     }
-    current_store.lifecycle_risk_signals = {
-        risk_id: risk
-        for risk_id, risk in current_store.lifecycle_risk_signals.items()
-        if not (
-            risk.get("task_id") in task_scope["task_ids"]
-            or risk.get("requirement_id") in task_scope["requirement_ids"]
-            or (risk.get("source_subject_type"), risk.get("source_subject_id"))
-            in risk_source_keys
-        )
-    }
+    replace_lifecycle_risk_signals_to_memory(
+        current_store,
+        risk_source_keys=risk_source_keys,
+        task_scope=task_scope,
+    )
     for signal in risk_signals:
         context = lifecycle_risk_context(current_store, signal, tasks)
         risk_id = stable_record_id(
@@ -355,13 +408,16 @@ def sync_lifecycle_context_records(
                 "task_id": context.get("task_id"),
             },
         )
-        current_store.lifecycle_risk_signals[risk_id] = {
-            **context,
-            "id": risk_id,
-            "impact_summary": signal["impact_summary"],
-            "recommendation": signal["recommendation"],
-            "risk_type": signal["risk_type"],
-            "severity": signal["severity"],
-            "source_subject_id": signal["source_subject_id"],
-            "source_subject_type": signal["source_subject_type"],
-        }
+        put_lifecycle_risk_signal_to_memory(
+            current_store,
+            {
+                **context,
+                "id": risk_id,
+                "impact_summary": signal["impact_summary"],
+                "recommendation": signal["recommendation"],
+                "risk_type": signal["risk_type"],
+                "severity": signal["severity"],
+                "source_subject_id": signal["source_subject_id"],
+                "source_subject_type": signal["source_subject_type"],
+            },
+        )

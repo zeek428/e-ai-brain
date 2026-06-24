@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 from gitlab_fakes import install_real_gitlab_api_stub
 
 from app.main import app
+from app.services.lifecycle_risks import sync_lifecycle_context_records
 
 client = TestClient(app)
 
@@ -375,6 +378,103 @@ def test_lifecycle_context_and_dashboard_queries_materialize_persistent_records(
     assert snapshot["time_range"] == "7d"
     assert snapshot["metrics"]["summary"] == dashboard["summary"]
     assert snapshot["metrics"]["online_log_summary"] == dashboard["online_log_summary"]
+
+
+def test_sync_lifecycle_context_records_replaces_stale_anchor_edges_and_risks():
+    store = SimpleNamespace(
+        lifecycle_context_edges={
+            "stale_edge": {
+                "id": "stale_edge",
+                "source_subject_id": "requirement_001",
+                "source_subject_type": "requirement",
+                "target_subject_id": "old_task",
+                "target_subject_type": "ai_task",
+            },
+            "unrelated_edge": {
+                "id": "unrelated_edge",
+                "source_subject_id": "requirement_other",
+                "source_subject_type": "requirement",
+                "target_subject_id": "task_other",
+                "target_subject_type": "ai_task",
+            },
+        },
+        lifecycle_risk_signals={
+            "stale_risk": {
+                "id": "stale_risk",
+                "requirement_id": "requirement_001",
+                "source_subject_id": "bug_old",
+                "source_subject_type": "bug",
+                "task_id": "task_001",
+            },
+            "unrelated_risk": {
+                "id": "unrelated_risk",
+                "requirement_id": "requirement_other",
+                "source_subject_id": "bug_other",
+                "source_subject_type": "bug",
+                "task_id": "task_other",
+            },
+        },
+        ai_tasks={},
+        bugs={},
+        code_review_reports={},
+        gitlab_daily_code_metrics={},
+        iteration_plan_suggestions={},
+        jenkins_release_records={},
+        online_log_metrics={},
+        user_feedback={},
+    )
+    store.snapshot = lambda value: dict(value)
+
+    sync_lifecycle_context_records(
+        store,
+        subject={
+            "id": "requirement_001",
+            "product_id": "product_001",
+            "type": "requirement",
+        },
+        upstream=[],
+        downstream=[
+            {
+                "metadata": {"task_type": "technical_solution"},
+                "relation_type": "generates_technical_solution",
+                "subject_id": "task_002",
+                "subject_type": "ai_task",
+                "summary": "技术方案",
+            }
+        ],
+        risk_signals=[
+            {
+                "impact_summary": "Review 高风险",
+                "recommendation": "补充测试",
+                "risk_type": "code_review_high_risk",
+                "severity": "high",
+                "source_subject_id": "report_001",
+                "source_subject_type": "code_review_report",
+            }
+        ],
+        tasks=[
+            {
+                "id": "task_001",
+                "module_code": "core",
+                "product_id": "product_001",
+                "requirement_id": "requirement_001",
+                "version_id": "version_001",
+            }
+        ],
+    )
+
+    assert "stale_edge" not in store.lifecycle_context_edges
+    assert "unrelated_edge" in store.lifecycle_context_edges
+    assert any(
+        edge["target_subject_id"] == "task_002"
+        for edge in store.lifecycle_context_edges.values()
+    )
+    assert "stale_risk" not in store.lifecycle_risk_signals
+    assert "unrelated_risk" in store.lifecycle_risk_signals
+    assert any(
+        risk["source_subject_id"] == "report_001"
+        for risk in store.lifecycle_risk_signals.values()
+    )
 
 
 def test_requirement_full_chain_returns_requirement_timeline_and_related_subjects(monkeypatch):

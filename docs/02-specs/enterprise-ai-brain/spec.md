@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.558 |
+| 功能版本 | v1.1.559 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.559 | 2026-06-24 | 生命周期上下文与风险信号 MemoryStore fallback 写入收口：上下文边和风险信号刷新不再直接写 `current_store.lifecycle_context_edges` / `current_store.lifecycle_risk_signals`，统一通过锚点替换和风险范围替换 helper 操作测试集合；PostgreSQL 运行态继续由 lifecycle_context repository 持久化刷新结果 | Codex |
 | v1.1.558 | 2026-06-24 | 知识空间配置 MemoryStore fallback 写入收口：知识空间、空间成员和文件夹新增/更新不再直接写 `current_store.knowledge_spaces` / `current_store.knowledge_space_members` / `current_store.knowledge_folders`，统一通过空间、成员替换和文件夹 helper 操作测试集合；PostgreSQL 运行态继续由知识 payload repository 持久化空间配置 | Codex |
 | v1.1.557 | 2026-06-24 | 知识导入结构化产物 MemoryStore fallback 写入收口：导入解析生成的知识资产、chunk set 和 chunks 不再直接写 `current_store.knowledge_assets` / `current_store.knowledge_chunk_sets` / `current_store.knowledge_chunks`，统一通过资产、chunk set 和 chunk helper 操作测试集合；PostgreSQL 运行态继续由知识 payload repository 持久化结构化产物 | Codex |
 | v1.1.556 | 2026-06-24 | 知识文档主流程 MemoryStore fallback 写入收口：上传、导入运行、失败标记、索引完成、重试、取消、chunk set 激活、重新解析和批量移动链路不再直接写 `current_store.knowledge_documents`，统一通过只写文档的 `put_knowledge_document_to_memory` helper 操作测试集合，避免误用会清理 chunks 的文档应用 helper | Codex |

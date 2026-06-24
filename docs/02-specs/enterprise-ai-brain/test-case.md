@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.667 |
+| 功能版本 | v1.1.668 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.668 | 2026-06-24 | 补充生命周期上下文刷新 fallback 收口验收：上下文边和风险信号刷新不得直接写 `current_store.lifecycle_context_edges` / `current_store.lifecycle_risk_signals`；刷新必须移除当前锚点/任务范围旧记录、保留无关记录并 upsert 新边和新风险；`test_lifecycle_context.py`、`test_lifecycle_dashboard_persistence.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.667 | 2026-06-24 | 补充知识空间配置 fallback 收口验收：知识空间、空间成员和文件夹新增/更新不得直接写 `current_store.knowledge_spaces` / `current_store.knowledge_space_members` / `current_store.knowledge_folders`；成员更新必须保留按空间替换语义，文件夹更新必须保持路径与归档校验；`test_knowledge_space_assets.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.666 | 2026-06-24 | 补充知识导入结构化产物 fallback 收口验收：导入解析生成的知识资产、chunk set 和 chunks 不得直接写 `current_store.knowledge_assets` / `current_store.knowledge_chunk_sets` / `current_store.knowledge_chunks`；MemoryStore 测试 fallback 必须通过资产、chunk set 和 chunk helper 保持解析、归档、激活与索引语义；`test_knowledge_import_operations.py`、知识审计测试与 DB-first 扫描必须通过 | Codex |
 | v1.1.665 | 2026-06-24 | 补充知识文档主流程 fallback 收口验收：上传、导入运行、失败标记、索引完成、重试、取消、chunk set 激活、重新解析和批量移动不得直接写 `current_store.knowledge_documents`；文档状态/目录更新必须通过只写文档的 `put_knowledge_document_to_memory`，不得清理已有 chunks；`test_knowledge_import_operations.py`、知识审计测试与 DB-first 扫描必须通过 | Codex |
