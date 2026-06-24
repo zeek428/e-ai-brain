@@ -515,6 +515,29 @@ def test_execution_trace_list_filters_by_result_write_record_source():
     ]
 
 
+def test_execution_trace_list_filters_by_scheduled_job_stage_source():
+    app.state.store.reset()
+    seed_execution_trace_records()
+    headers = auth_headers()
+
+    response = client.get(
+        "/api/governance/execution-traces"
+        "?source_type=scheduled_job_stage"
+        "&source_id=scheduled_job_run_trace:runner_execution"
+        "&page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == "scheduled_job_run_trace"
+    assert body["items"][0]["root_type"] == "scheduled_job_run"
+    assert "scheduled_job_run_trace:runner_execution" in body["items"][0]["related_ids"][
+        "scheduled_job_stage"
+    ]
+
+
 def test_execution_trace_requires_admin_diagnostics_permission():
     app.state.store.reset()
     seed_execution_trace_records()

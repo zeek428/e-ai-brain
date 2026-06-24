@@ -4220,8 +4220,8 @@ GET /api/governance/execution-traces/{trace_id}
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | keyword | string | 按链路 ID、根 ID、根类型、标题、摘要或关联 ID 搜索。 |
-| source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`result_write_record` 或 `audit_event` 的 ID；前端深链命中唯一记录时自动打开详情。 |
-| source_type | enum | 根类型或节点类型：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`result_write_record`、`audit_event`。 |
+| source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`result_write_record` 或 `audit_event` 的 ID；前端深链命中唯一记录时自动打开详情。 |
+| source_type | enum | 根类型或节点类型：`scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`result_write_record`、`audit_event`。 |
 | status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
 | created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |
 | sort_by | enum | `started_at`、`updated_at`、`duration_ms`、`node_count`、`failed_node_count`、`root_type`、`status`、`id`。 |

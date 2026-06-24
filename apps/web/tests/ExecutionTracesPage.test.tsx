@@ -20,6 +20,7 @@ function installExecutionTracesFetchMock() {
       plugin_invocation_log: ['plugin_invocation_log_trace'],
       result_write_record: ['result_write_record_scheduled_job_run_trace'],
       scheduled_job_run: ['scheduled_job_run_trace'],
+      scheduled_job_stage: ['scheduled_job_run_trace:runner_execution'],
     },
     root_id: 'scheduled_job_run_trace',
     root_type: 'scheduled_job_run',
@@ -114,6 +115,20 @@ function installExecutionTracesFetchMock() {
         started_at: '2026-06-20T01:00:03Z',
         status: 'succeeded',
         summary: 'openai_compatible/gpt-5.5',
+      },
+      {
+        duration_ms: 4600,
+        error_code: null,
+        error_message: null,
+        finished_at: '2026-06-20T01:00:07Z',
+        id: 'scheduled_job_stage:scheduled_job_run_trace:runner_execution',
+        label: 'Runner 执行',
+        metadata: { model_gateway_log_id: 'model_gateway_log_trace' },
+        source_id: 'scheduled_job_run_trace:runner_execution',
+        source_type: 'scheduled_job_stage',
+        started_at: '2026-06-20T01:00:02Z',
+        status: 'succeeded',
+        summary: '本地执行器完成扫描。',
       },
       {
         duration_ms: null,
@@ -250,6 +265,8 @@ describe('ExecutionTracesPage', () => {
     expect(within(dialog).getByText(/当前链路没有失败或运行中节点/)).toBeInTheDocument();
     expect(within(dialog).getByText('节点关系')).toBeInTheDocument();
     expect(within(dialog).getAllByText('插件调用').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('定时作业阶段').length).toBeGreaterThan(0);
+    expect(within(dialog).getByText('Runner 执行')).toBeInTheDocument();
     expect(within(dialog).getAllByText('模型网关调用').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('结果写入记录').length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText('plugin_invocation_log_trace').length).toBeGreaterThan(0);

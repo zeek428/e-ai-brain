@@ -17,6 +17,7 @@ import { ExecutionTraceDetailContent } from './components/ExecutionTraceDetailCo
 
 const sourceTypeOptions = [
   { label: '定时作业运行', value: 'scheduled_job_run' },
+  { label: '定时作业阶段', value: 'scheduled_job_stage' },
   { label: '插件调用', value: 'plugin_invocation_log' },
   { label: 'AI 执行器任务', value: 'ai_executor_task' },
   { label: 'AI 助手运行', value: 'assistant_chat_run' },

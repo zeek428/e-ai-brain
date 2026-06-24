@@ -38,6 +38,7 @@ EXECUTION_TRACE_SOURCE_TYPES = {
     "model_gateway_log",
     "plugin_invocation_log",
     "result_write_record",
+    "scheduled_job_stage",
     "scheduled_job_run",
 }
 
