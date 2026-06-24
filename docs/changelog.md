@@ -23,6 +23,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 插件管理连接/Runner 测试诊断继续减重：连接测试诊断弹窗和 Runner 测试诊断弹窗收口到 `PluginDiagnostics`，主页面只保留测试触发、状态更新和提示消息编排。
 - 定时作业 Catalog 派生逻辑继续减重：服务端 catalog 的选项映射、必填校验、默认结果动作和标签格式化抽到 `useScheduledJobCatalogOptions`，主页面只保留 catalog 状态和业务编排。
 - 定时作业表单转换继续减重：作业类型/扫描配置选项、模板 payload 解析、助手草案回填、配置归一化和路由参数解析抽到 `scheduledJobFormTransformHelpers`，主页面继续收敛为作业配置、运行列表和详情编排。
 - 定时作业运行详情弹窗继续减重：运行结果详情 footer、基础信息、运行链路、Trace DAG、结果写入记录和 JSON 预览收口到 `ScheduledJobRunDetailModal`，主页面只保留选中运行、关闭、复制配置和模板生成编排。

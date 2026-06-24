@@ -1,5 +1,5 @@
 import { PageContainer } from '@ant-design/pro-components';
-import { Alert, Button, Form, Modal, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Form, Modal, Space, Tabs, Tag, Typography, message } from 'antd';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
@@ -72,8 +72,7 @@ import { PluginRunnerTable } from './components/PluginRunnerTable';
 import { PluginRunnerModal } from './components/PluginRunnerModal';
 import { PluginTable } from './components/PluginTable';
 import {
-  ConnectionRequestDebugPanel,
-  JsonDiagnosticsBlock,
+  PluginConnectionTestDiagnosticsContent,
   RunnerTestDiagnosticsContent,
 } from './components/PluginDiagnostics';
 import {
@@ -1478,6 +1477,23 @@ export default function PluginsPage() {
     );
   };
 
+  const openConnectionTestDiagnostics = (
+    connection: PluginConnectionRecord,
+    result: PluginConnectionTestResult,
+  ) => {
+    Modal.info({
+      content: (
+        <PluginConnectionTestDiagnosticsContent
+          connection={connection}
+          result={result}
+          onCopyAsActionTemplate={() => openActionFromConnectionTest(connection, result)}
+        />
+      ),
+      title: '连接测试诊断',
+      width: 980,
+    });
+  };
+
   const runConnectionTest = async (connection: PluginConnectionRecord) => {
     if (testingConnectionId) {
       return;
@@ -1492,58 +1508,7 @@ export default function PluginsPage() {
     try {
       const result = await testPluginConnection(connection.id);
       updateConnectionAfterTest(connection, result);
-      const requestSummary = result.request_summary ?? {};
-      const placeholderHeaders = Array.isArray(requestSummary.masked_placeholder_headers)
-        ? requestSummary.masked_placeholder_headers.map(String)
-        : [];
-      Modal.info({
-        content: (
-          <Space orientation="vertical" size={10} style={{ width: '100%' }}>
-            <div>状态：<Tag color={result.status === 'succeeded' ? 'green' : 'red'}>{result.status}</Tag>耗时：{result.latency_ms}ms</div>
-            {placeholderHeaders.length > 0 ? (
-              <Alert
-                description={`最终请求仍包含脱敏占位：${placeholderHeaders.join('、')}。请重新填写真实 Header 值，或改用认证配置字段维护 Authorization。`}
-                showIcon
-                title="Authorization 等敏感 Header 不能使用 *** 占位发起请求"
-                type="error"
-              />
-            ) : null}
-            {result.error_message ? (
-              <Alert description={result.error_message} showIcon title="错误信息" type="error" />
-            ) : null}
-            <Table
-              columns={[
-                { dataIndex: 'name', title: '检查项', width: 190 },
-                { dataIndex: 'status', title: '状态', width: 130, render: (value: string) => <Tag>{value}</Tag> },
-                {
-                  dataIndex: 'detail',
-                  title: '说明',
-                  render: (value?: string) => (
-                    <Typography.Text style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      {value ?? '-'}
-                    </Typography.Text>
-                  ),
-                },
-                { dataIndex: 'latency_ms', title: '耗时 ms', width: 100, render: (value?: number) => value ?? '-' },
-              ]}
-              dataSource={result.diagnostics ?? []}
-              pagination={false}
-              rowKey="name"
-              scroll={{ x: 920 }}
-              size="small"
-            />
-            <ConnectionRequestDebugPanel
-              repairSuggestions={result.repair_suggestions}
-              requestSummary={requestSummary}
-              testHistory={result.test_history}
-              onCopyAsActionTemplate={() => openActionFromConnectionTest(connection, result)}
-            />
-            <JsonDiagnosticsBlock title="远端响应信息" value={result.response_summary} />
-          </Space>
-        ),
-        title: '连接测试诊断',
-        width: 980,
-      });
+      openConnectionTestDiagnostics(connection, result);
       if (result.status === 'succeeded') {
         message.success({
           content: `连接测试成功，耗时 ${result.latency_ms}ms`,
