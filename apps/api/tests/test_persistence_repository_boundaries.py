@@ -850,6 +850,75 @@ def test_collector_run_record_writes_use_single_transaction(monkeypatch):
     assert audit_calls == [[audit_event]]
 
 
+def test_assistant_action_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    upsert_calls: list[tuple[str, dict]] = []
+    audit_calls: list[list[dict]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def record_upsert(name: str):
+        def _call(self, cursor, items):  # type: ignore[no-untyped-def]
+            upsert_calls.append((name, items))
+
+        return _call
+
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
+        "upsert_assistant_action_drafts",
+        record_upsert("draft"),
+    )
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
+        "upsert_assistant_action_runs",
+        record_upsert("run"),
+    )
+
+    repository = AssistantChatReadRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+    )
+    draft = {"id": "assistant_action_draft_atomic"}
+    run = {"id": "assistant_action_run_atomic"}
+    audit_event = {"id": "audit_assistant_action_atomic"}
+
+    repository.save_assistant_action_records(
+        draft=draft,
+        run=run,
+        audit_events=[audit_event],
+    )
+
+    assert connect_calls == [{"autocommit": False}]
+    assert upsert_calls == [
+        ("draft", {"assistant_action_draft_atomic": draft}),
+        ("run", {"assistant_action_run_atomic": run}),
+    ]
+    assert audit_calls == [[audit_event]]
+
+
 def test_postgres_requirement_read_models_delegate_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []

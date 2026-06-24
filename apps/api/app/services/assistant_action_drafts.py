@@ -201,8 +201,8 @@ def create_assistant_action_draft_response(
         "title": ensure_non_blank(payload.title, "title"),
         "updated_at": now,
     }
-    current_store.assistant_action_drafts[draft["id"]] = draft
-    audit_event = current_store.audit(
+    audit_event = assistant_action_audit_event(
+        current_store,
         event_type="assistant_action_draft.created",
         actor_id=user["id"],
         subject_type="assistant_action_draft",
@@ -415,7 +415,6 @@ def confirm_assistant_action_draft_response(
         "status": "succeeded",
         "updated_at": now,
     }
-    current_store.assistant_action_runs[run["id"]] = run
     _attach_assistant_run_attribution_to_scheduled_job_run(
         current_store,
         action_run=run,
@@ -431,8 +430,8 @@ def confirm_assistant_action_draft_response(
             "updated_at": now,
         }
     )
-    current_store.assistant_action_drafts[draft["id"]] = draft
-    audit_event = current_store.audit(
+    audit_event = assistant_action_audit_event(
+        current_store,
         event_type="assistant_action_draft.confirmed",
         actor_id=user["id"],
         subject_type="assistant_action_draft",
@@ -494,7 +493,6 @@ def _fail_assistant_action_draft(
         "status": "failed",
         "updated_at": now,
     }
-    current_store.assistant_action_runs[run["id"]] = run
     draft.update(
         {
             "metadata_json": metadata_json,
@@ -503,8 +501,8 @@ def _fail_assistant_action_draft(
             "updated_at": now,
         }
     )
-    current_store.assistant_action_drafts[draft["id"]] = draft
-    audit_event = current_store.audit(
+    audit_event = assistant_action_audit_event(
+        current_store,
         event_type="assistant_action_draft.failed",
         actor_id=user["id"],
         subject_type="assistant_action_draft",
@@ -560,8 +558,8 @@ def cancel_assistant_action_draft_response(
             "updated_at": now,
         }
     )
-    current_store.assistant_action_drafts[draft["id"]] = draft
-    audit_event = current_store.audit(
+    audit_event = assistant_action_audit_event(
+        current_store,
         event_type="assistant_action_draft.cancelled",
         actor_id=user["id"],
         subject_type="assistant_action_draft",
@@ -599,8 +597,8 @@ def mark_assistant_action_draft_modified_response(
             "updated_at": now,
         }
     )
-    current_store.assistant_action_drafts[draft["id"]] = draft
-    audit_event = current_store.audit(
+    audit_event = assistant_action_audit_event(
+        current_store,
         event_type="assistant_action_draft.modified",
         actor_id=user["id"],
         subject_type="assistant_action_draft",
@@ -645,8 +643,8 @@ def patch_assistant_action_draft_response(
             "updated_at": now,
         }
     )
-    current_store.assistant_action_drafts[draft["id"]] = draft
-    audit_event = current_store.audit(
+    audit_event = assistant_action_audit_event(
+        current_store,
         event_type="assistant_action_draft.updated",
         actor_id=user["id"],
         subject_type="assistant_action_draft",
@@ -692,8 +690,8 @@ def mark_assistant_action_draft_viewed_response(
             "updated_at": now,
         }
     )
-    current_store.assistant_action_drafts[draft["id"]] = draft
-    audit_event = current_store.audit(
+    audit_event = assistant_action_audit_event(
+        current_store,
         event_type="assistant_action_draft.viewed",
         actor_id=user["id"],
         subject_type="assistant_action_draft",
@@ -1096,9 +1094,7 @@ def _attach_assistant_run_attribution_to_scheduled_job_run(
     scheduled_job_run_id = str(scheduled_job_run.get("id") or "").strip()
     if not scheduled_job_run_id:
         return
-    if not hasattr(current_store, "scheduled_job_runs"):
-        current_store.scheduled_job_runs = {}
-    run_record = getattr(current_store, "scheduled_job_runs", {}).get(scheduled_job_run_id)
+    run_record = _memory_collection(current_store, "scheduled_job_runs").get(scheduled_job_run_id)
     if not isinstance(run_record, dict):
         run_record = dict(scheduled_job_run)
     now = now_iso()
@@ -1113,7 +1109,8 @@ def _attach_assistant_run_attribution_to_scheduled_job_run(
         **attribution,
         "updated_at": now,
     }
-    current_store.scheduled_job_runs[scheduled_job_run_id] = run_record
+    if assistant_action_repository(current_store) is None:
+        _memory_collection(current_store, "scheduled_job_runs")[scheduled_job_run_id] = run_record
     result["scheduled_job_run"] = {
         **scheduled_job_run,
         **attribution,
@@ -1274,8 +1271,8 @@ def refresh_assistant_action_draft_expiry(
         "status": "expired",
         "updated_at": now,
     }
-    current_store.assistant_action_drafts[draft["id"]] = draft
-    audit_event = current_store.audit(
+    audit_event = assistant_action_audit_event(
+        current_store,
         event_type="assistant_action_draft.expired",
         actor_id="system",
         subject_type="assistant_action_draft",
@@ -1301,10 +1298,54 @@ def save_assistant_action_records(
     save_records = getattr(repository, "save_assistant_action_records", None)
     if callable(save_records):
         save_records(draft=draft, run=run, audit_events=audit_events)
+        return
+    _memory_collection(current_store, "assistant_action_drafts")[draft["id"]] = draft
+    if run is not None:
+        _memory_collection(current_store, "assistant_action_runs")[run["id"]] = run
+    _memory_audit_events(current_store).extend(audit_events)
+
+
+def assistant_action_audit_event(
+    current_store: Any,
+    *,
+    actor_id: str,
+    event_type: str,
+    subject_id: str,
+    subject_type: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": current_store.new_id("audit"),
+        "event_type": event_type,
+        "actor_id": actor_id,
+        "ai_task_id": None,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "payload": payload or {},
+        "sequence": len(_memory_audit_events(current_store)) + 1,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
 
 
 def assistant_action_repository(current_store: Any) -> Any | None:
     return getattr(current_store, "repository", None)
+
+
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, Any]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_audit_events(current_store: Any) -> list[dict[str, Any]]:
+    collection_name = "audit_events"
+    audit_events = getattr(current_store, collection_name, None)
+    if not isinstance(audit_events, list):
+        audit_events = []
+        setattr(current_store, collection_name, audit_events)
+    return audit_events
 
 
 def _clean_modified_fields(modified_fields: list[str]) -> list[str]:
@@ -1356,10 +1397,8 @@ def _safe_int(value: Any) -> int:
 
 
 def ensure_action_collections(current_store: Any) -> None:
-    if not hasattr(current_store, "assistant_action_drafts"):
-        current_store.assistant_action_drafts = {}
-    if not hasattr(current_store, "assistant_action_runs"):
-        current_store.assistant_action_runs = {}
+    _memory_collection(current_store, "assistant_action_drafts")
+    _memory_collection(current_store, "assistant_action_runs")
 
 
 def ensure_draft_action(action: str) -> str:

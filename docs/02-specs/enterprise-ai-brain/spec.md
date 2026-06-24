@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.541 |
+| 功能版本 | v1.1.542 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.542 | 2026-06-24 | AI 助手草案 DB-first 收口：`assistant_action_drafts` 服务移除草案、动作运行和助手触发定时作业运行归因链路中的直接 `current_store` 写入，不再调用 `current_store.audit()` 生成草案审计；草案、动作运行和审计统一通过 `save_assistant_action_records` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态使用数据库事务提交 | Codex |
 | v1.1.541 | 2026-06-24 | DB-first 兼容层继续收口：AI 执行器 Runner 服务移除 Runner、任务、插件调用、定时作业运行、采集运行和 AI 任务状态同步中的直接 `current_store` 写入，统一通过单记录 helper 写入 MemoryStore 测试 fallback 或 repository；相关单记录写入与审计事件使用数据库事务 | Codex |
 | v1.1.540 | 2026-06-24 | 产品配置 DB-first 收口继续推进：迭代版本和版本代码分支配置路由移除直接 `current_store` 写入，统一通过单记录 helper 写入 MemoryStore 测试 fallback 或 repository；需求单记录写入/删除与审计事件开始使用数据库事务 | Codex |
 | v1.1.539 | 2026-06-24 | 产品配置 DB-first 收口继续推进：产品、产品模块、产品 Git 仓库和相关系统路由移除直接 `current_store` 写入，统一通过产品配置单记录 helper 写入 MemoryStore 测试 fallback 或 repository，并把产品配置单记录写入/删除与审计收口为数据库事务 | Codex |

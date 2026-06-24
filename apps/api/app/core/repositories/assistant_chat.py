@@ -588,7 +588,7 @@ class AssistantChatReadRepository:
         audit_events: list[dict[str, Any]],
         run: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_assistant_action_drafts(cursor, {draft["id"]: draft})
                 if run is not None:
