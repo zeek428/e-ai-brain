@@ -11,13 +11,11 @@ from app.services.product_config_context import (
     delete_product_config_record,
     ensure_enum,
     ensure_non_blank,
-    ensure_unique_value,
     get_product_record,
     get_related_system_by_code,
     get_related_system_record,
     payload_updates,
     product_config_record_write_store,
-    product_config_write_store,
     record_audit_event,
     save_product_config_record,
     uses_repository_context,
@@ -72,20 +70,18 @@ def create_related_system(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
+    current_store = product_config_record_write_store(store(request))
     name = ensure_non_blank(payload.name, "name")
     ensure_enum(payload.status, RELATED_SYSTEM_STATUSES, "related system status")
-    if payload.product_id is not None and payload.product_id not in current_store.products:
+    if (
+        payload.product_id is not None
+        and get_product_record(current_store, payload.product_id) is None
+    ):
         raise api_error(404, "NOT_FOUND", "Product not found")
     system_id = current_store.new_id("system")
     code = ensure_non_blank(payload.code or system_id, "code")
-    ensure_unique_value(
-        current_store.related_systems,
-        field="code",
-        value=code,
-        conflict_code="RELATED_SYSTEM_CODE_EXISTS",
-        message="Related system code already exists",
-    )
+    if get_related_system_by_code(current_store, code) is not None:
+        raise api_error(409, "RELATED_SYSTEM_CODE_EXISTS", "Related system code already exists")
     related_system = {
         "id": system_id,
         "code": code,

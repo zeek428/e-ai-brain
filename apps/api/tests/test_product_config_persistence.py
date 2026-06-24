@@ -587,6 +587,134 @@ def test_product_config_get_routes_use_repository_when_runtime_store_is_stale():
         app.state.user_repository = original_users
 
 
+def test_product_config_subresource_creates_read_repository_product_when_runtime_store_is_stale():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    repository.product_config_payload = {
+        "products": {
+            "product_create_read": {
+                "code": "CREATE-READ",
+                "description": None,
+                "display_order": 1,
+                "id": "product_create_read",
+                "name": "创建读取产品",
+                "owner_team": "platform",
+                "status": "active",
+            },
+        },
+        "product_versions": {
+            "version_existing": {
+                "code": "v0",
+                "description": None,
+                "id": "version_existing",
+                "name": "已有版本",
+                "product_id": "product_create_read",
+                "release_date": None,
+                "start_date": None,
+                "status": "planning",
+            },
+        },
+        "product_modules": {
+            "module_existing": {
+                "code": "core",
+                "description": None,
+                "display_order": 1,
+                "id": "module_existing",
+                "name": "已有模块",
+                "owner_team": "platform",
+                "product_id": "product_create_read",
+                "status": "active",
+            },
+        },
+        "product_git_repositories": {},
+        "product_version_branch_configs": {},
+        "related_systems": {
+            "system_existing": {
+                "code": "REL-EXISTING",
+                "description": None,
+                "display_order": 1,
+                "id": "system_existing",
+                "name": "已有相关系统",
+                "owner_team": "ops",
+                "product_id": "product_create_read",
+                "status": "active",
+            },
+        },
+    }
+    app.state.store = PostgresRuntimeStore(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        created_version = client.post(
+            "/api/products/product_create_read/versions",
+            json={"code": "v2", "name": "创建版本"},
+            headers=headers,
+        )
+        created_module = client.post(
+            "/api/products/product_create_read/modules",
+            json={"code": "docs", "name": "文档模块"},
+            headers=headers,
+        )
+        created_repository = client.post(
+            "/api/products/product_create_read/git-repositories",
+            json={
+                "git_provider": "github",
+                "name": "创建仓库",
+                "project_path": "org/create-read",
+                "remote_url": "git@github.com:org/create-read.git",
+            },
+            headers=headers,
+        )
+        created_system = client.post(
+            "/api/system/related-systems",
+            json={
+                "code": "REL-CREATE",
+                "name": "创建相关系统",
+                "product_id": "product_create_read",
+            },
+            headers=headers,
+        )
+
+        assert created_version.status_code == 200
+        assert created_module.status_code == 200
+        assert created_repository.status_code == 200
+        assert created_system.status_code == 200
+        assert repository.product_config_single_reads == [
+            "get_product:product_create_read",
+            "list_product_versions:product_create_read:False",
+            "get_product:product_create_read",
+            "list_product_modules:product_create_read:False",
+            "get_product:product_create_read",
+            "get_product:product_create_read",
+            "get_related_system_by_code:REL-CREATE",
+        ]
+
+        version_id = created_version.json()["data"]["id"]
+        module_id = created_module.json()["data"]["id"]
+        repository_id = created_repository.json()["data"]["id"]
+        system_id = created_system.json()["data"]["id"]
+        assert repository.product_config_payload["product_versions"][version_id]["code"] == "v2"
+        assert repository.product_config_payload["product_modules"][module_id]["code"] == "docs"
+        assert repository.product_config_payload["product_git_repositories"][repository_id][
+            "project_path"
+        ] == "org/create-read"
+        assert repository.product_config_payload["related_systems"][system_id]["code"] == (
+            "REL-CREATE"
+        )
+        assert f"save:product_versions:{version_id}" in repository.product_config_direct_writes
+        assert f"save:product_modules:{module_id}" in repository.product_config_direct_writes
+        assert (
+            f"save:product_git_repositories:{repository_id}"
+            in repository.product_config_direct_writes
+        )
+        assert f"save:related_systems:{system_id}" in repository.product_config_direct_writes
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
 def test_product_config_subresource_writes_read_repository_records_when_runtime_store_is_stale():
     original_store = app.state.store
     original_users = app.state.user_repository
@@ -723,7 +851,9 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
 
         assert repository.product_config_single_reads == [
             "get_product_version:version_single_read",
+            "list_product_versions:product_single_read:False",
             "get_product_module:module_single_read",
+            "list_product_modules:product_single_read:False",
             "get_product_git_repository:repo_single_read",
             "get_related_system:related_single_read",
             "get_related_system_by_code:REL-SINGLE-2",

@@ -240,7 +240,7 @@ def product_module_has_related_records(
     if callable(has_related_records):
         return bool(has_related_records(product_id, module_code))
     return any(
-        item["product_id"] == product_id and item.get("module_code") == module_code
+        item.get("product_id") == product_id and item.get("module_code") == module_code
         for item in [
             *current_store.requirements.values(),
             *current_store.ai_tasks.values(),

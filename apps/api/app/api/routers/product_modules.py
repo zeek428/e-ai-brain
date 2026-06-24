@@ -13,10 +13,10 @@ from app.services.product_config_context import (
     ensure_non_blank,
     ensure_unique_value,
     get_product_module_record,
+    get_product_record,
     list_product_module_records,
     payload_updates,
     product_config_record_write_store,
-    product_config_write_store,
     product_module_has_related_records,
     record_audit_event,
     save_product_config_record,
@@ -70,15 +70,24 @@ def create_product_module(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
-    if product_id not in current_store.products:
+    current_store = product_config_record_write_store(store(request))
+    if get_product_record(current_store, product_id) is None:
         raise api_error(404, "NOT_FOUND", "Product not found")
     name = ensure_non_blank(payload.name, "name")
     ensure_enum(payload.status, MODULE_STATUSES, "product module status")
     module_id = current_store.new_id("module")
     code = ensure_non_blank(payload.code or module_id, "code")
+    modules_for_product = {
+        str(item["id"]): dict(item)
+        for item in list_product_module_records(
+            current_store,
+            product_id,
+            active_only=False,
+        )
+        if item.get("id") is not None
+    }
     ensure_unique_value(
-        current_store.product_modules,
+        modules_for_product,
         field="code",
         value=code,
         conflict_code="PRODUCT_MODULE_CODE_EXISTS",

@@ -193,6 +193,9 @@ class FakeSnapshotRepository:
         *,
         active_only: bool = False,
     ) -> list[dict]:
+        self.product_config_single_reads.append(
+            f"list_product_versions:{product_id}:{active_only}",
+        )
         versions = sorted(
             (
                 dict(item)
@@ -209,6 +212,9 @@ class FakeSnapshotRepository:
         *,
         active_only: bool = False,
     ) -> list[dict]:
+        self.product_config_single_reads.append(
+            f"list_product_modules:{product_id}:{active_only}",
+        )
         modules = sorted(
             (
                 dict(item)
