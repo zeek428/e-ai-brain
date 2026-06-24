@@ -86,6 +86,38 @@ def put_knowledge_import_job_to_memory(
     _memory_collection(current_store, "knowledge_import_jobs")[str(job_id)] = import_job
 
 
+def put_knowledge_space_to_memory(current_store: Any, space: dict[str, Any]) -> None:
+    space_id = space.get("id")
+    if space_id is None:
+        return
+    _memory_collection(current_store, "knowledge_spaces")[str(space_id)] = space
+
+
+def replace_knowledge_space_members_to_memory(
+    current_store: Any,
+    *,
+    members: list[dict[str, Any]],
+    space_id: str,
+) -> None:
+    collection = _memory_collection(current_store, "knowledge_space_members")
+    for member_key in [
+        key
+        for key, value in collection.items()
+        if value.get("knowledge_space_id") == space_id
+    ]:
+        collection.pop(member_key, None)
+    for member in members:
+        member_key = f"{space_id}:{member['user_id']}:{member['space_role']}"
+        collection[member_key] = member
+
+
+def put_knowledge_folder_to_memory(current_store: Any, folder: dict[str, Any]) -> None:
+    folder_id = folder.get("id")
+    if folder_id is None:
+        return
+    _memory_collection(current_store, "knowledge_folders")[str(folder_id)] = folder
+
+
 def non_blank(value: str | None, field: str) -> str:
     if value is None or not value.strip():
         raise api_error(400, "VALIDATION_ERROR", f"{field} is required")
@@ -209,7 +241,7 @@ def create_knowledge_space_result(
         "created_at": timestamp,
         "updated_at": timestamp,
     }
-    current_store.knowledge_spaces[space["id"]] = space
+    put_knowledge_space_to_memory(current_store, space)
     audit_event = record_audit_event(
         current_store,
         actor_id=user["id"],
@@ -261,14 +293,11 @@ def update_knowledge_space_members_result(
                 "updated_at": now_iso(),
             }
         )
-    current_store.knowledge_space_members = {
-        key: value
-        for key, value in current_store.knowledge_space_members.items()
-        if value.get("knowledge_space_id") != space_id
-    }
-    for member in normalized_members:
-        member_key = f"{space_id}:{member['user_id']}:{member['space_role']}"
-        current_store.knowledge_space_members[member_key] = member
+    replace_knowledge_space_members_to_memory(
+        current_store,
+        members=normalized_members,
+        space_id=space_id,
+    )
     audit_event = record_audit_event(
         current_store,
         actor_id=user["id"],
@@ -320,7 +349,7 @@ def create_knowledge_folder_result(
         "updated_at": timestamp,
     }
     folder["path"] = folder_path(current_store, folder)
-    current_store.knowledge_folders[folder["id"]] = folder
+    put_knowledge_folder_to_memory(current_store, folder)
     audit_event = record_audit_event(
         current_store,
         actor_id=user["id"],
@@ -404,7 +433,7 @@ def patch_knowledge_folder_result(
     if status is not None:
         updated["status"] = status
     updated["path"] = folder_path(current_store, updated)
-    current_store.knowledge_folders[folder_id] = updated
+    put_knowledge_folder_to_memory(current_store, updated)
     audit_event = record_audit_event(
         current_store,
         actor_id=user["id"],
