@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.393 |
+| 功能版本 | v1.1.394 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.394 | 2026-06-24 | 执行诊断快照刷新收口为单事务：`execution_trace_snapshots` 的 upsert 与过期快照删除必须原子提交，避免列表/详情读到半刷新诊断链路 | Codex |
 | v1.1.393 | 2026-06-24 | 执行诊断 `source_type` 新增 `ai_executor_runner`，Runner 节点会随 AI 执行器任务进入同一 Trace，可按 Runner ID 过滤或下钻排查接单、心跳和工作区配置 | Codex |
 | v1.1.392 | 2026-06-24 | 执行诊断模型网关日志链路补齐审计吸附：`model_gateway_log` Trace 会关联 subject、payload 或 ai_task 指向的审计事件，`source_id=audit_event_id` 可反查同一模型调用链路 | Codex |
 | v1.1.391 | 2026-06-24 | 插件连接和插件动作列表新增可选远程分页契约：带 `page/page_size` 时支持关键字、插件、状态、环境筛选和白名单排序，并返回 query/performance 观测信息 | Codex |
@@ -4281,7 +4282,7 @@ Runner 聚合规则：`ai_executor_task.runner_id` 必须解析为 `ai_executor_
 - 详情 `trace_id` 可传链路根 ID，也可传任一关联对象 ID 或节点 `source_id`；服务端会返回同一条聚合链路。
 - `assistant_chat_run` 链路根来自 `assistant_chat_runs`，详情节点只展示运行状态、会话/消息 ID、用户、产品和引用数量等排障元数据，不返回完整用户提问、助手回复、Prompt 或知识正文。
 - `result_write_record` 是从定时作业运行或独立插件调用派生的可重建写入记录节点，不是新的事实源；详情元数据仅展示写入目标、状态、导入数、预览摘要和安全反馈，用于判断运行是否真正写入报告、用户反馈、通知等产物。
-- 聚合来源是现有结构表或 repository source rows；PostgreSQL 运行时会刷新可重建的 `execution_trace_snapshots` 只读快照并优先从该表分页/过滤/排序读取。列表和已命中详情可在短 TTL 内复用快照；详情未命中时必须强制重建一次快照再判定 404。该表不是新的业务事实源，也不在查询时写审计。
+- 聚合来源是现有结构表或 repository source rows；PostgreSQL 运行时会在单个数据库事务中刷新可重建的 `execution_trace_snapshots` 只读快照并优先从该表分页/过滤/排序读取。列表和已命中详情可在短 TTL 内复用快照；详情未命中时必须强制重建一次快照再判定 404。该表不是新的业务事实源，也不在查询时写审计。
 - 元数据返回前必须按敏感键脱敏，包含但不限于 `token`、`api_key`、`authorization`、`password`、`secret`、`cookie`；敏感值统一替换为 `<redacted>`。
 - 无匹配链路返回 `404 EXECUTION_TRACE_NOT_FOUND`；非法枚举或时间格式返回 `400 VALIDATION_ERROR`。
 

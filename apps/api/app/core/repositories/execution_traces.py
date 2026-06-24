@@ -20,7 +20,7 @@ class ExecutionTraceReadRepository:
         self._connect = connect
 
     def refresh_execution_trace_snapshots(self, traces: list[dict[str, Any]]) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_execution_trace_snapshots(cursor, traces)
                 trace_ids = [str(trace["id"]) for trace in traces if trace.get("id")]

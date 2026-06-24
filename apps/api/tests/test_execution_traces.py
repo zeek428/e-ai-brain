@@ -2,6 +2,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from app.core.repositories.execution_traces import ExecutionTraceReadRepository
 from app.main import app
 from app.services.execution_traces import (
     EXECUTION_TRACE_SNAPSHOT_REFRESH_STATE_ATTR,
@@ -10,6 +11,73 @@ from app.services.execution_traces import (
 )
 
 client = TestClient(app)
+
+
+def _minimal_execution_trace(trace_id: str = "execution_trace_atomic") -> dict[str, Any]:
+    return {
+        "duration_ms": 1000,
+        "edges": [],
+        "failed_node_count": 0,
+        "id": trace_id,
+        "node_count": 1,
+        "nodes": [
+            {
+                "id": f"scheduled_job_run:{trace_id}",
+                "label": "定时作业运行",
+                "source_id": trace_id,
+                "source_type": "scheduled_job_run",
+                "status": "succeeded",
+            }
+        ],
+        "related_ids": {"scheduled_job_run": [trace_id]},
+        "root_id": trace_id,
+        "root_type": "scheduled_job_run",
+        "running_node_count": 0,
+        "started_at": "2026-06-20T01:00:00+00:00",
+        "status": "succeeded",
+        "summary": "执行诊断快照事务测试",
+        "title": "执行诊断快照事务测试",
+        "updated_at": "2026-06-20T01:00:01+00:00",
+    }
+
+
+def test_execution_trace_snapshot_refresh_uses_single_transaction():
+    connect_calls: list[dict[str, Any]] = []
+    executed_sql: list[str] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql: str, params: Any = None) -> None:
+            executed_sql.append(sql)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    repository = ExecutionTraceReadRepository(FakeConnect())
+
+    repository.refresh_execution_trace_snapshots([_minimal_execution_trace()])
+
+    assert connect_calls == [{"autocommit": False}]
+    assert len(executed_sql) == 2
+    assert "INSERT INTO execution_trace_snapshots" in executed_sql[0]
+    assert "DELETE FROM execution_trace_snapshots" in executed_sql[1]
 
 
 class FakeExecutionTraceRepository:

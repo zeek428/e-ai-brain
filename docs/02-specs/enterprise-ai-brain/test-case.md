@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.646 |
+| 功能版本 | v1.1.647 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.647 | 2026-06-24 | 补充执行诊断快照事务验收：`execution_trace_snapshots` 刷新必须通过单个数据库事务完成 upsert 和过期快照删除，避免读模型半刷新；`test_execution_traces.py` 必须覆盖连接 `autocommit=False` | Codex |
 | v1.1.646 | 2026-06-24 | 补充模型网关配置 DB-first 单记录写入验收：PostgreSQL/repository 运行态即使 runtime store 为空，模型网关配置 create/patch/delete 也必须按配置 ID 读取源记录，并通过 repository 单记录 upsert/delete 写回配置和审计；`test_model_gateway_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.645 | 2026-06-24 | 补充 DB-first 兼容层扫描验收：`scripts/audit_memory_store_usage.py` 必须能识别 `current_store.*` 读、写和 helper 残留并输出 P0/P1/P2 分级，`test_memory_store_usage_audit.py` 必须通过 | Codex |
 | v1.1.644 | 2026-06-24 | 补充产品配置子资源创建 DB-first 验收：PostgreSQL/repository 运行态即使 runtime store 为空，迭代版本、产品模块、产品 Git 仓库和相关系统 create 也必须按产品 ID 读取产品存在性，同产品版本/模块 code 冲突使用列表读模型，相关系统 code 冲突使用单查，并直接写回记录和审计；`test_product_config_persistence.py` 必须通过 | Codex |

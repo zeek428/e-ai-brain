@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 执行诊断快照刷新收口为数据库事务：`execution_trace_snapshots` 的 upsert 与过期快照删除原子提交，避免诊断中心列表/详情读到半刷新链路。
 - 模型网关配置 DB-first 收口：配置新增、编辑和删除改为 repository 单记录读取与 upsert/delete，默认配置切换和审计随单条记录写入，避免生产路径继续通过完整 `model_gateway_configs/model_gateway_logs` payload 同步配置变更。
 - 产品配置 DB-first 收口继续推进：迭代版本、产品模块、产品 Git 仓库和相关系统 create 使用 repository 单记录产品存在性校验、同产品版本/模块列表或相关系统 code 单查冲突校验，不再为子资源创建预加载全量产品配置集合。
 - 产品配置 DB-first 收口继续推进：迭代版本 patch/delete 使用 repository 单记录读取；版本编码冲突校验只读取同产品版本列表，删除引用检查通过需求/任务/Bug/分支配置 `EXISTS` 完成，不再为单条版本操作预加载全量产品配置及业务集合。
