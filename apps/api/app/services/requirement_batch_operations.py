@@ -12,7 +12,6 @@ from app.services.requirements import (
     requirement_summary_projection,
     save_audit_event,
     save_requirement_record,
-    uses_repository_context,
 )
 from app.services.version_status import (
     can_batch_advance_requirement_status,
@@ -179,8 +178,6 @@ def batch_assign_requirement_owner_result(
             "assignee": assignee,
             "updated_at": now,
         }
-        if not uses_repository_context(current_store):
-            current_store.requirements[requirement_id] = assigned_requirement
         audit_event = record_audit_event(
             current_store,
             event_type="requirement.updated",
@@ -304,8 +301,6 @@ def batch_schedule_requirements_result(
             "updated_at": now,
             "version_id": payload.version_id,
         }
-        if not uses_repository_context(current_store):
-            current_store.requirements[requirement_id] = scheduled_requirement
         audit_event = record_audit_event(
             current_store,
             event_type="requirement.updated",
@@ -427,8 +422,6 @@ def batch_advance_requirement_status_result(
             "status": target_status,
             "updated_at": now,
         }
-        if not uses_repository_context(current_store):
-            current_store.requirements[requirement_id] = advanced_requirement
         audit_event = record_audit_event(
             current_store,
             event_type="requirement.updated",

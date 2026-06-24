@@ -8,7 +8,6 @@ from app.services.requirements import (
     REQUIREMENT_CLOSABLE_STATUSES,
     record_audit_event,
     save_requirement_record,
-    uses_repository_context,
 )
 from app.services.version_status import canonical_requirement_status
 
@@ -33,8 +32,6 @@ def approve_requirement_result(
         "status": "planned" if requirement.get("version_id") else "approved",
         "updated_at": datetime.now(UTC).isoformat(),
     }
-    if not uses_repository_context(current_store):
-        current_store.requirements[requirement_id] = requirement
     audit_event = record_audit_event(
         current_store,
         event_type="requirement.approved",
@@ -69,8 +66,6 @@ def reject_requirement_result(
         "status": "rejected",
         "updated_at": datetime.now(UTC).isoformat(),
     }
-    if not uses_repository_context(current_store):
-        current_store.requirements[requirement_id] = requirement
     audit_event = record_audit_event(
         current_store,
         event_type="requirement.rejected",
@@ -109,8 +104,6 @@ def close_requirement_result(
         "status": "closed",
         "updated_at": datetime.now(UTC).isoformat(),
     }
-    if not uses_repository_context(current_store):
-        current_store.requirements[requirement_id] = requirement
     audit_event = record_audit_event(
         current_store,
         event_type="requirement.closed",

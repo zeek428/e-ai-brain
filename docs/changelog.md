@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 需求主流程 DB-first fallback 收口：需求创建、编辑、删除、审批、拒绝、关闭、批量分配、批量排期、批量推进和产品详细设计任务生成不再在调用方直接写 `current_store.requirements` / `current_store.ai_tasks` 或调用 `current_store.audit()`，统一由需求保存、删除、任务联动和审计 helper 写入。
 - 生命周期上下文与风险信号 DB-first fallback 收口：上下文边和风险信号刷新不再直接写 `current_store.lifecycle_context_edges` / `current_store.lifecycle_risk_signals`，统一通过锚点替换和风险范围替换 helper 操作测试集合。
 - 知识空间配置 DB-first fallback 收口：知识空间、空间成员和文件夹新增/更新不再直接写 `current_store.knowledge_spaces` / `current_store.knowledge_space_members` / `current_store.knowledge_folders`，统一通过空间、成员替换和文件夹 helper 操作测试集合。
 - 知识导入结构化产物 DB-first fallback 收口：导入解析生成的知识资产、chunk set 和 chunks 不再直接写 `current_store.knowledge_assets` / `current_store.knowledge_chunk_sets` / `current_store.knowledge_chunks`，统一通过资产、chunk set 和 chunk helper 操作测试集合。

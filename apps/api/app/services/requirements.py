@@ -65,6 +65,7 @@ __all__ = [
     "save_audit_event",
     "save_requirement_and_ai_task_records",
     "save_requirement_record",
+    "delete_requirement_record",
     "set_requirement_status",
     "uses_repository_context",
 ]
@@ -72,6 +73,29 @@ __all__ = [
 
 def uses_repository_context(current_store: Any) -> bool:
     return getattr(current_store, "repository", None) is not None
+
+
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def append_audit_event_to_memory(current_store: Any, audit_event: dict[str, Any]) -> None:
+    audit_events = _memory_list(current_store, "audit_events")
+    if any(event.get("id") == audit_event.get("id") for event in audit_events):
+        return
+    audit_events.append(audit_event)
 
 
 def ensure_non_blank(value: str | None, field: str) -> str:
@@ -90,15 +114,7 @@ def record_audit_event(
     subject_id: str | None = None,
     subject_type: str | None = None,
 ) -> dict[str, Any]:
-    if not uses_repository_context(current_store):
-        return current_store.audit(
-            event_type=event_type,
-            actor_id=actor_id,
-            ai_task_id=ai_task_id,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            payload=payload,
-        )
+    audit_events = _memory_list(current_store, "audit_events")
     return {
         "actor_id": actor_id,
         "ai_task_id": ai_task_id,
@@ -106,7 +122,7 @@ def record_audit_event(
         "event_type": event_type,
         "id": current_store.new_id("audit"),
         "payload": payload or {},
-        "sequence": len(getattr(current_store, "audit_events", [])) + 1,
+        "sequence": len(audit_events) + 1,
         "subject_id": subject_id,
         "subject_type": subject_type,
     }
@@ -122,6 +138,10 @@ def save_requirement_record(
     save_record = getattr(repository, "save_requirement_record", None)
     if callable(save_record):
         save_record(record, audit_event=audit_event)
+        return
+    _memory_dict(current_store, "requirements")[record["id"]] = record
+    if audit_event is not None:
+        append_audit_event_to_memory(current_store, audit_event)
 
 
 def save_requirement_and_ai_task_records(
@@ -135,6 +155,11 @@ def save_requirement_and_ai_task_records(
     save_records = getattr(repository, "save_requirement_and_ai_task_records", None)
     if callable(save_records):
         save_records(requirement=requirement, task=task, audit_event=audit_event)
+        return
+    _memory_dict(current_store, "requirements")[requirement["id"]] = requirement
+    _memory_dict(current_store, "ai_tasks")[task["id"]] = task
+    if audit_event is not None:
+        append_audit_event_to_memory(current_store, audit_event)
 
 
 def delete_requirement_record(
@@ -147,6 +172,10 @@ def delete_requirement_record(
     delete_record = getattr(repository, "delete_requirement_record", None)
     if callable(delete_record):
         delete_record(record_id, audit_event=audit_event)
+        return
+    _memory_dict(current_store, "requirements").pop(record_id, None)
+    if audit_event is not None:
+        append_audit_event_to_memory(current_store, audit_event)
 
 
 def save_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
@@ -158,6 +187,8 @@ def save_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
     save_events = getattr(repository, "save_audit_events", None)
     if callable(save_events):
         save_events({"audit_events": [audit_event]})
+        return
+    append_audit_event_to_memory(current_store, audit_event)
 
 
 def requirement_write_store(current_store: Any) -> Any:
@@ -263,8 +294,6 @@ def create_requirement_result(
         "title": title,
         "version_id": payload.version_id,
     }
-    if not uses_repository_context(current_store):
-        current_store.requirements[requirement_id] = requirement
     audit_event = record_audit_event(
         current_store,
         event_type="requirement.created",
@@ -323,8 +352,6 @@ def patch_requirement_result(
     if current_status in {"approved", "planned"} and "version_id" in updates:
         requirement["status"] = "planned" if updates["version_id"] else "approved"
     requirement["updated_at"] = datetime.now(UTC).isoformat()
-    if not uses_repository_context(current_store):
-        current_store.requirements[requirement_id] = requirement
     audit_event = record_audit_event(
         current_store,
         event_type="requirement.updated",
@@ -348,8 +375,6 @@ def delete_requirement_result(
         raise api_error(404, "NOT_FOUND", "Requirement not found")
     if requirement.get("task_ids"):
         raise api_error(409, "RESOURCE_IN_USE", "Requirement already has tasks")
-    if not uses_repository_context(current_store):
-        del current_store.requirements[requirement_id]
     audit_event = record_audit_event(
         current_store,
         event_type="requirement.deleted",
@@ -399,9 +424,6 @@ def generate_product_detail_design_task(
     next_status = REQUIREMENT_STATUS_AFTER_TASK_CREATED.get(task["task_type"])
     if next_status:
         set_requirement_status(updated_requirement, next_status)
-    if not uses_repository_context(current_store):
-        current_store.ai_tasks[task_id] = task
-        current_store.requirements[requirement_id] = updated_requirement
     audit_payload_value = {
         "brain_app_code": task["brain_app_id"],
         "task_type": "product_detail_design",
