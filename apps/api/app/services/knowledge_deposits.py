@@ -44,7 +44,10 @@ __all__ = [
     "knowledge_vector_indexed_result",
     "knowledge_write_store",
     "patch_knowledge_document_result",
+    "put_knowledge_asset_to_memory",
+    "put_knowledge_chunk_to_memory",
     "put_knowledge_chunk_set_to_memory",
+    "put_knowledge_document_to_memory",
     "replace_knowledge_chunks_result",
     "retry_knowledge_document_index_result",
     "save_knowledge_deposit_records",
@@ -277,6 +280,26 @@ def put_knowledge_chunk_set_to_memory(
     chunk_set: dict[str, Any],
 ) -> None:
     _memory_collection(current_store, "knowledge_chunk_sets")[str(chunk_set_id)] = chunk_set
+
+
+def put_knowledge_asset_to_memory(
+    current_store: Any,
+    asset: dict[str, Any],
+) -> None:
+    asset_id = asset.get("id")
+    if asset_id is None:
+        return
+    _memory_collection(current_store, "knowledge_assets")[str(asset_id)] = asset
+
+
+def put_knowledge_chunk_to_memory(
+    current_store: Any,
+    chunk: dict[str, Any],
+) -> None:
+    chunk_id = chunk.get("id")
+    if chunk_id is None:
+        return
+    _memory_collection(current_store, "knowledge_chunks")[str(chunk_id)] = chunk
 
 
 def merge_knowledge_chunk_set_to_memory(

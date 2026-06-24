@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.556 |
+| 功能版本 | v1.1.557 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.557 | 2026-06-24 | 知识导入结构化产物 MemoryStore fallback 写入收口：导入解析生成的知识资产、chunk set 和 chunks 不再直接写 `current_store.knowledge_assets` / `current_store.knowledge_chunk_sets` / `current_store.knowledge_chunks`，统一通过资产、chunk set 和 chunk helper 操作测试集合；PostgreSQL 运行态继续由知识 payload repository 持久化结构化产物 | Codex |
 | v1.1.556 | 2026-06-24 | 知识文档主流程 MemoryStore fallback 写入收口：上传、导入运行、失败标记、索引完成、重试、取消、chunk set 激活、重新解析和批量移动链路不再直接写 `current_store.knowledge_documents`，统一通过只写文档的 `put_knowledge_document_to_memory` helper 操作测试集合，避免误用会清理 chunks 的文档应用 helper | Codex |
 | v1.1.555 | 2026-06-24 | 知识导入任务主流程 MemoryStore fallback 写入收口：上传、运行、失败标记、完成、重试、取消和重新解析链路不再直接写 `current_store.knowledge_import_jobs`，统一通过 import job helper 操作测试集合；PostgreSQL 运行态继续由知识 payload repository 持久化导入任务状态 | Codex |
 | v1.1.554 | 2026-06-24 | 知识导入 worker claim MemoryStore fallback 写入收口：worker 本地 claim 不再直接写 `current_store.knowledge_import_jobs`，统一通过 import job helper 操作测试集合；repository 运行态继续优先使用 `claim_knowledge_import_job` 租约 | Codex |

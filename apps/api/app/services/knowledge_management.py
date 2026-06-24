@@ -10,6 +10,10 @@ from app.api.deps import api_error
 from app.core.config import get_settings
 from app.services.knowledge_deposits import (
     apply_knowledge_document_to_memory,
+    get_knowledge_chunk_set_from_memory,
+    put_knowledge_asset_to_memory,
+    put_knowledge_chunk_set_to_memory,
+    put_knowledge_chunk_to_memory,
     put_knowledge_document_to_memory,
     record_audit_event,
     uses_repository_context,
@@ -576,7 +580,7 @@ def create_asset_record(
                 },
                 "updated_at": now_iso(),
             }
-            current_store.knowledge_assets[updated_asset["id"]] = updated_asset
+            put_knowledge_asset_to_memory(current_store, updated_asset)
             return dict(updated_asset)
         return dict(existing_asset)
     asset_id = current_store.new_id("knowledge_asset")
@@ -605,7 +609,7 @@ def create_asset_record(
         "created_at": timestamp,
         "updated_at": timestamp,
     }
-    current_store.knowledge_assets[asset_id] = asset
+    put_knowledge_asset_to_memory(current_store, asset)
     return asset
 
 
@@ -1169,7 +1173,7 @@ def run_knowledge_import_job_result(
                 space_id=space_id or source_asset["knowledge_space_id"],
                 user=user,
             )
-            current_store.knowledge_assets[structured_asset["id"]] = structured_asset
+            put_knowledge_asset_to_memory(current_store, structured_asset)
             structured_assets.append(structured_asset)
             structured_asset_by_type[structured_asset["asset_type"]] = structured_asset
         parsed_metadata = dict(parsed.get("metadata") or {})
@@ -1188,7 +1192,7 @@ def run_knowledge_import_job_result(
             space_id=space_id or source_asset["knowledge_space_id"],
             user=user,
         )
-        current_store.knowledge_assets[parsed_asset["id"]] = parsed_asset
+        put_knowledge_asset_to_memory(current_store, parsed_asset)
         chunk_set_id = current_store.new_id("knowledge_chunk_set")
         chunk_set = {
             "id": chunk_set_id,
@@ -1208,7 +1212,7 @@ def run_knowledge_import_job_result(
             "updated_at": timestamp,
             "activated_at": None,
         }
-        current_store.knowledge_chunk_sets[chunk_set_id] = chunk_set
+        put_knowledge_chunk_set_to_memory(current_store, chunk_set_id, chunk_set)
         indexing_document = {
             **document,
             "content": parsed["content"],
@@ -1256,14 +1260,18 @@ def run_knowledge_import_job_result(
         if (
             next_index_status != "index_failed"
             and previous_active_id
-            and previous_active_id in current_store.knowledge_chunk_sets
+            and get_knowledge_chunk_set_from_memory(current_store, previous_active_id)
+            is not None
         ):
-            previous_active = current_store.knowledge_chunk_sets[previous_active_id]
-            current_store.knowledge_chunk_sets[previous_active_id] = {
+            previous_active = get_knowledge_chunk_set_from_memory(
+                current_store,
+                previous_active_id,
+            )
+            put_knowledge_chunk_set_to_memory(current_store, previous_active_id, {
                 **previous_active,
                 "status": "archived",
                 "updated_at": now_iso(),
-            }
+            })
         chunk_set = {
             **chunk_set,
             "status": "active" if next_index_status != "index_failed" else "failed",
@@ -1280,7 +1288,7 @@ def run_knowledge_import_job_result(
             else None,
             "updated_at": now_iso(),
         }
-        current_store.knowledge_chunk_sets[chunk_set_id] = chunk_set
+        put_knowledge_chunk_set_to_memory(current_store, chunk_set_id, chunk_set)
         indexed_document = {
             **indexed_document,
             "active_chunk_set_id": chunk_set_id
@@ -1292,7 +1300,7 @@ def run_knowledge_import_job_result(
         }
         put_knowledge_document_to_memory(current_store, indexed_document)
         for chunk in chunks:
-            current_store.knowledge_chunks[chunk["id"]] = chunk
+            put_knowledge_chunk_to_memory(current_store, chunk)
         completed_job = {
             **running_job,
             "status": "completed"
@@ -1546,14 +1554,14 @@ def activate_knowledge_chunk_set_result(
     for existing_id, existing in list(current_store.knowledge_chunk_sets.items()):
         if existing.get("document_id") != document_id:
             continue
-        current_store.knowledge_chunk_sets[existing_id] = {
+        put_knowledge_chunk_set_to_memory(current_store, existing_id, {
             **existing,
             "status": "active" if existing_id == chunk_set_id else "archived",
             "activated_at": (
                 now_iso() if existing_id == chunk_set_id else existing.get("activated_at")
             ),
             "updated_at": now_iso(),
-        }
+        })
     restored_index_status = chunk_set.get("index_status") or (
         "vector_indexed" if chunk_set.get("embedding_model") else "text_indexed"
     )

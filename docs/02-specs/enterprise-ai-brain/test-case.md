@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.665 |
+| 功能版本 | v1.1.666 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.666 | 2026-06-24 | 补充知识导入结构化产物 fallback 收口验收：导入解析生成的知识资产、chunk set 和 chunks 不得直接写 `current_store.knowledge_assets` / `current_store.knowledge_chunk_sets` / `current_store.knowledge_chunks`；MemoryStore 测试 fallback 必须通过资产、chunk set 和 chunk helper 保持解析、归档、激活与索引语义；`test_knowledge_import_operations.py`、知识审计测试与 DB-first 扫描必须通过 | Codex |
 | v1.1.665 | 2026-06-24 | 补充知识文档主流程 fallback 收口验收：上传、导入运行、失败标记、索引完成、重试、取消、chunk set 激活、重新解析和批量移动不得直接写 `current_store.knowledge_documents`；文档状态/目录更新必须通过只写文档的 `put_knowledge_document_to_memory`，不得清理已有 chunks；`test_knowledge_import_operations.py`、知识审计测试与 DB-first 扫描必须通过 | Codex |
 | v1.1.664 | 2026-06-24 | 补充知识导入任务主流程 fallback 收口验收：上传、运行、失败标记、完成、重试、取消和重新解析不得直接写 `current_store.knowledge_import_jobs`；MemoryStore 测试 fallback 必须通过 import job helper 保持状态变更语义，`test_knowledge_import_operations.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.663 | 2026-06-24 | 补充知识导入 worker claim fallback 收口验收：worker 在无 repository claim 时必须通过 import job helper 标记 `locked_by` / `locked_until` / `attempt_count`，不得直接写 `current_store.knowledge_import_jobs`；repository 运行态仍优先调用 `claim_knowledge_import_job`；`test_knowledge_import_operations.py` 与 DB-first 扫描必须通过 | Codex |
