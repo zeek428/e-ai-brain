@@ -305,6 +305,9 @@ class PostgresSnapshotRepository:
     def get_product_git_repository(self, repository_id: str) -> dict[str, Any] | None:
         return self._product_config_read_repository.get_product_git_repository(repository_id)
 
+    def get_product_module(self, module_id: str) -> dict[str, Any] | None:
+        return self._product_config_read_repository.get_product_module(module_id)
+
     def get_related_system(self, system_id: str) -> dict[str, Any] | None:
         return self._product_config_read_repository.get_related_system(system_id)
 

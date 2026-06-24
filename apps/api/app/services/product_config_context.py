@@ -178,6 +178,30 @@ def get_product_git_repository_record(
     return current_store.product_git_repositories.get(repository_id)
 
 
+def get_product_module_record(current_store: Any, module_id: str) -> dict[str, Any] | None:
+    get_module = getattr(runtime_repository(current_store), "get_product_module", None)
+    if callable(get_module):
+        return get_module(module_id)
+    return current_store.product_modules.get(module_id)
+
+
+def list_product_module_records(
+    current_store: Any,
+    product_id: str,
+    *,
+    active_only: bool = False,
+) -> list[dict[str, Any]]:
+    list_modules = getattr(runtime_repository(current_store), "list_product_modules", None)
+    if callable(list_modules):
+        return list_modules(product_id, active_only=active_only)
+    return [
+        dict(module)
+        for module in current_store.product_modules.values()
+        if module.get("product_id") == product_id
+        and (not active_only or module.get("status") == "active")
+    ]
+
+
 def get_related_system_record(current_store: Any, system_id: str) -> dict[str, Any] | None:
     get_system = getattr(runtime_repository(current_store), "get_related_system", None)
     if callable(get_system):

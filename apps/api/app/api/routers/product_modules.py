@@ -12,7 +12,10 @@ from app.services.product_config_context import (
     ensure_enum,
     ensure_non_blank,
     ensure_unique_value,
+    get_product_module_record,
+    list_product_module_records,
     payload_updates,
+    product_config_record_write_store,
     product_config_write_store,
     record_audit_event,
     save_product_config_record,
@@ -117,8 +120,8 @@ def patch_product_module(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     require_roles(user, {"product_owner"})
-    current_store = product_config_write_store(store(request))
-    module = current_store.product_modules.get(module_id)
+    current_store = product_config_record_write_store(store(request))
+    module = get_product_module_record(current_store, module_id)
     if module is None:
         raise api_error(404, "NOT_FOUND", "Product module not found")
     updates = payload_updates(payload)
@@ -126,8 +129,17 @@ def patch_product_module(
         updates["name"] = ensure_non_blank(updates["name"], "name")
     if "code" in updates:
         updates["code"] = ensure_non_blank(updates["code"], "code")
+        modules_for_product = {
+            str(item["id"]): dict(item)
+            for item in list_product_module_records(
+                current_store,
+                str(module["product_id"]),
+                active_only=False,
+            )
+            if item.get("id") is not None
+        }
         ensure_unique_value(
-            current_store.product_modules,
+            modules_for_product,
             field="code",
             value=updates["code"],
             conflict_code="PRODUCT_MODULE_CODE_EXISTS",

@@ -615,7 +615,18 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
             },
         },
         "product_versions": {},
-        "product_modules": {},
+        "product_modules": {
+            "module_single_read": {
+                "code": "core",
+                "description": "repository module",
+                "display_order": 2,
+                "id": "module_single_read",
+                "name": "单记录模块",
+                "owner_team": "platform",
+                "product_id": "product_single_read",
+                "status": "active",
+            },
+        },
         "product_git_repositories": {
             "repo_single_read": {
                 "credential_ref": "secret://github/single",
@@ -663,6 +674,15 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
 
     try:
         headers = auth_headers()
+        patched_module = client.patch(
+            "/api/product-modules/module_single_read",
+            json={"code": "core-updated", "status": "inactive"},
+            headers=headers,
+        )
+        assert patched_module.status_code == 200
+        assert patched_module.json()["data"]["code"] == "core-updated"
+        assert patched_module.json()["data"]["status"] == "inactive"
+
         patched_repository = client.patch(
             "/api/product-git-repositories/repo_single_read",
             json={"status": "inactive"},
@@ -693,12 +713,17 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
         assert patched_branch_config.json()["data"]["repository_name"] == "单记录仓库"
 
         assert repository.product_config_single_reads == [
+            "get_product_module:module_single_read",
             "get_product_git_repository:repo_single_read",
             "get_related_system:related_single_read",
             "get_related_system_by_code:REL-SINGLE-2",
             "get_product:product_single_read",
             "get_product_version_branch_config:version_branch_single_read",
         ]
+        assert (
+            repository.product_config_payload["product_modules"]["module_single_read"]["status"]
+            == "inactive"
+        )
         assert (
             repository.product_config_payload["product_git_repositories"]["repo_single_read"][
                 "status"
@@ -714,6 +739,10 @@ def test_product_config_subresource_writes_read_repository_records_when_runtime_
                 "version_branch_single_read"
             ]["branch_status"]
             == "testing"
+        )
+        assert (
+            "save:product_modules:module_single_read"
+            in repository.product_config_direct_writes
         )
         assert (
             "save:product_git_repositories:repo_single_read"

@@ -15,6 +15,7 @@
 - `requirements`、`ai_tasks`、`human_reviews`、`graph_runs`、`graph_checkpoints`
 - `gitlab_mr_snapshots`、`code_review_reports`、`mock_issues`、`knowledge_deposits`
 - `product_version_branch_configs` 维护迭代版本关联代码分支。
+- 产品模块编辑属于产品配置单记录写入，PostgreSQL/repository 运行态必须按模块 ID 读取源记录；模块编码冲突校验只读取同产品模块列表。
 
 ## 关键 API 与页面
 

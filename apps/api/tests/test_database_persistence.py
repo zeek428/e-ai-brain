@@ -108,6 +108,11 @@ class FakeSnapshotRepository:
         )
         return dict(repository) if repository is not None else None
 
+    def get_product_module(self, module_id: str) -> dict | None:
+        self.product_config_single_reads.append(f"get_product_module:{module_id}")
+        module = self._product_config_collection("product_modules").get(module_id)
+        return dict(module) if module is not None else None
+
     def get_related_system(self, system_id: str) -> dict | None:
         self.product_config_single_reads.append(f"get_related_system:{system_id}")
         system = self._product_config_collection("related_systems").get(system_id)

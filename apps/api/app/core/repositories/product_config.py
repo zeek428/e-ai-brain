@@ -84,6 +84,21 @@ class ProductConfigReadRepository:
                 row = cursor.fetchone()
         return _row_to_product_git_repository(row) if row is not None else None
 
+    def get_product_module(self, module_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, product_id, code, name, description, owner_team,
+                           status, display_order
+                    FROM product_modules
+                    WHERE id = %s
+                    """,
+                    (module_id,),
+                )
+                row = cursor.fetchone()
+        return _row_to_product_module(row) if row is not None else None
+
     def get_related_system(self, system_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -191,19 +206,7 @@ class ProductConfigReadRepository:
                     """,
                     tuple(params),
                 )
-                return [
-                    {
-                        "code": row[2],
-                        "description": row[4],
-                        "display_order": row[7],
-                        "id": row[0],
-                        "name": row[3],
-                        "owner_team": row[5],
-                        "product_id": row[1],
-                        "status": row[6],
-                    }
-                    for row in cursor.fetchall()
-                ]
+                return [_row_to_product_module(row) for row in cursor.fetchall()]
 
     def list_product_git_repositories(
         self,
@@ -394,16 +397,7 @@ class ProductConfigReadRepository:
             """
         )
         return {
-            row[0]: {
-                "code": row[2],
-                "description": row[4],
-                "display_order": row[7],
-                "id": row[0],
-                "name": row[3],
-                "owner_team": row[5],
-                "product_id": row[1],
-                "status": row[6],
-            }
+            row[0]: _row_to_product_module(row)
             for row in cursor.fetchall()
         }
 
@@ -571,6 +565,19 @@ class ProductConfigReadRepository:
             sort_by=sort_by,
             sort_order=sort_order,
         )
+
+
+def _row_to_product_module(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "code": row[2],
+        "description": row[4],
+        "display_order": row[7],
+        "id": row[0],
+        "name": row[3],
+        "owner_team": row[5],
+        "product_id": row[1],
+        "status": row[6],
+    }
 
 
 def _row_to_product_version_branch_config(row: tuple[Any, ...]) -> dict[str, Any]:
