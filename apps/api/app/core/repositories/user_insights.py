@@ -167,6 +167,23 @@ class UserInsightReadRepository:
                 )
                 return [self._user_feedback_from_row(row) for row in cursor.fetchall()]
 
+    def get_user_feedback(self, feedback_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, product_id, module_code, feature_code, source_channel,
+                           feedback_type, sentiment, satisfaction_score, content, tags,
+                           related_requirement_id, status, triage_note, created_by,
+                           created_at, updated_at
+                    FROM user_feedback
+                    WHERE id = %s
+                    """,
+                    (feedback_id,),
+                )
+                row = cursor.fetchone()
+        return self._user_feedback_from_row(row) if row is not None else None
+
     def load_user_usage_metrics(self) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:

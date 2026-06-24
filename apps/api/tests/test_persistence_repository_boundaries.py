@@ -808,6 +808,10 @@ def test_postgres_user_insight_read_models_delegate_to_domain_repository(monkeyp
 
         return _call
 
+    def record_get_user_feedback(self, feedback_id):  # type: ignore[no-untyped-def]
+        calls.append(("get_user_feedback", {"feedback_id": feedback_id}))
+        return {"id": feedback_id, "source": "get_user_feedback"}
+
     monkeypatch.setattr(
         UserInsightReadRepository,
         "load_user_feedback",
@@ -817,6 +821,11 @@ def test_postgres_user_insight_read_models_delegate_to_domain_repository(monkeyp
         UserInsightReadRepository,
         "list_user_feedback",
         record_call("list_user_feedback", [{"source": "list_user_feedback"}]),
+    )
+    monkeypatch.setattr(
+        UserInsightReadRepository,
+        "get_user_feedback",
+        record_get_user_feedback,
     )
     monkeypatch.setattr(
         UserInsightReadRepository,
@@ -858,6 +867,10 @@ def test_postgres_user_insight_read_models_delegate_to_domain_repository(monkeyp
         product_id="product_001",
         status="resolved",
     )[0]["source"] == "list_user_feedback"
+    assert repository.get_user_feedback("feedback_001") == {
+        "id": "feedback_001",
+        "source": "get_user_feedback",
+    }
     assert repository.load_user_usage_metrics() == {"user_usage_metrics": {}}
     assert repository.list_user_usage_metrics(
         feature_code="search",
@@ -899,6 +912,7 @@ def test_postgres_user_insight_read_models_delegate_to_domain_repository(monkeyp
                 "status": "resolved",
             },
         ),
+        ("get_user_feedback", {"feedback_id": "feedback_001"}),
         ("load_user_usage_metrics", {}),
         (
             "list_user_usage_metrics",

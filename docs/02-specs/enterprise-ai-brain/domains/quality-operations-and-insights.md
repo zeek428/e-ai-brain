@@ -37,6 +37,7 @@
 - 代码巡检严重问题 SLA 必须同时展示 Bug 覆盖率和整改任务覆盖率，未关联 Bug 或未派生整改任务的严重 finding 要暴露数量和最早时间。
 - 严重代码巡检 finding 可派生 Bug 或整改任务，并通过 fingerprint 去重。
 - 用户洞察列表固定列宽、服务端筛选和详情查看保持稳定，优质反馈可转需求。
+- 用户反馈更新和转需求必须在 repository/SQL 路径按反馈 ID 读取源记录；PostgreSQL 运行态不得依赖运行时 `MemoryStore.user_feedback` 全量集合，转需求需把反馈 linked 状态、需求记录和审计事件一次性写回仓储。
 
 ## 验收映射
 

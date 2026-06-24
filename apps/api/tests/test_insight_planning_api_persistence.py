@@ -168,6 +168,105 @@ def test_insight_planning_routes_write_repository_without_request_persist():
         app.state.user_repository = original_users
 
 
+def test_user_feedback_update_and_conversion_read_repository_when_runtime_store_is_stale():
+    original_store = app.state.store
+    original_users = app.state.user_repository
+    repository = FakeSnapshotRepository()
+    repository.product_config_payload = {
+        "product_git_repositories": {},
+        "product_modules": {
+            "module_repo_001": {
+                "code": "assistant",
+                "created_at": "2026-06-03T08:00:00+00:00",
+                "description": "",
+                "display_order": 1,
+                "id": "module_repo_001",
+                "name": "AI 助手",
+                "owner_id": "user_admin",
+                "product_id": "product_repo_001",
+                "status": "active",
+                "updated_at": "2026-06-03T08:00:00+00:00",
+            }
+        },
+        "product_versions": {},
+        "products": {
+            "product_repo_001": {
+                "code": "AIBRAIN-REPO",
+                "created_at": "2026-06-03T08:00:00+00:00",
+                "description": "",
+                "display_order": 1,
+                "id": "product_repo_001",
+                "name": "AI Brain Repository Product",
+                "owner_id": "user_admin",
+                "status": "active",
+                "updated_at": "2026-06-03T08:00:00+00:00",
+            }
+        },
+        "related_systems": {},
+    }
+    repository.user_feedback_payload = {
+        "user_feedback": {
+            "feedback_repo_001": {
+                "content": "希望 AI 助手草案能直接转需求。",
+                "created_at": "2026-06-03T08:10:00+00:00",
+                "created_by": "user_admin",
+                "feedback_type": "improvement",
+                "id": "feedback_repo_001",
+                "module_code": "assistant",
+                "product_id": "product_repo_001",
+                "satisfaction_score": 3,
+                "sentiment": "neutral",
+                "source_channel": "manual",
+                "status": "open",
+                "tags": ["assistant"],
+                "updated_at": "2026-06-03T08:10:00+00:00",
+            }
+        }
+    }
+    app.state.store = PostgresRuntimeStore(repository)
+    app.state.user_repository = MemoryUserRepository.seeded()
+
+    try:
+        headers = auth_headers()
+        patched = client.patch(
+            "/api/insights/user-feedback/feedback_repo_001",
+            json={"status": "triaged", "triage_note": "纳入需求池。"},
+            headers=headers,
+        ).json()["data"]
+        assert patched["status"] == "triaged"
+        assert patched["triage_note"] == "纳入需求池。"
+        assert repository.user_feedback_payload["user_feedback"]["feedback_repo_001"][
+            "status"
+        ] == "triaged"
+
+        app.state.store = PostgresRuntimeStore(repository)
+        converted = client.post(
+            "/api/insights/user-feedback/feedback_repo_001/convert-requirement",
+            json={
+                "priority": "P1",
+                "title": "AI 助手草案转需求",
+                "triage_note": "已经转入需求管理。",
+            },
+            headers=headers,
+        ).json()["data"]
+        requirement = converted["requirement"]
+        feedback = converted["feedback"]
+        assert requirement["source"] == "user_feedback"
+        assert requirement["product_id"] == "product_repo_001"
+        assert requirement["module_code"] == "assistant"
+        assert feedback["status"] == "linked"
+        assert feedback["related_requirement_id"] == requirement["id"]
+        assert repository.requirements_payload["requirements"][requirement["id"]][
+            "title"
+        ] == "AI 助手草案转需求"
+        assert repository.user_feedback_payload["user_feedback"]["feedback_repo_001"][
+            "related_requirement_id"
+        ] == requirement["id"]
+    finally:
+        app.state.store = original_store
+        app.state.user_repository = original_users
+
+
 def test_insight_planning_lists_use_repository_when_runtime_store_is_stale():
     original_store = app.state.store
     original_users = app.state.user_repository

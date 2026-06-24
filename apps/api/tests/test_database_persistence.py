@@ -1220,6 +1220,11 @@ class FakeSnapshotRepository:
             reverse=True,
         )
 
+    def get_user_feedback(self, feedback_id: str) -> dict | None:
+        payload = self.user_feedback_payload or {"user_feedback": {}}
+        feedback = payload.get("user_feedback", {}).get(feedback_id)
+        return dict(feedback) if feedback is not None else None
+
     def save_user_feedback(self, payload: dict) -> None:
         self.user_feedback_payload = payload
 
@@ -1233,6 +1238,22 @@ class FakeSnapshotRepository:
         payload.setdefault("user_feedback", {})[record["id"]] = dict(record)
         self.user_feedback_payload = payload
         if audit_event is not None:
+            self._append_direct_audit_event(audit_event)
+
+    def save_user_feedback_requirement_conversion(
+        self,
+        *,
+        audit_events: list[dict],
+        feedback: dict,
+        requirement: dict,
+    ) -> None:
+        feedback_payload = self.user_feedback_payload or {"user_feedback": {}}
+        feedback_payload.setdefault("user_feedback", {})[feedback["id"]] = dict(feedback)
+        self.user_feedback_payload = feedback_payload
+        requirements_payload = self.requirements_payload or {"requirements": {}}
+        requirements_payload.setdefault("requirements", {})[requirement["id"]] = dict(requirement)
+        self.requirements_payload = requirements_payload
+        for audit_event in audit_events:
             self._append_direct_audit_event(audit_event)
 
     def load_user_usage_metrics(self) -> dict | None:

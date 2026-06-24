@@ -25,6 +25,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 用户洞察 DB-first 收口：用户反馈更新和转需求链路新增 repository 按 ID 读取，服务层使用反馈专用写上下文，不再为单条反馈操作预加载所有用户指标、反馈和迭代建议；PostgreSQL 运行态即使 runtime store 为空也可把反馈状态、需求和审计写回仓储。
 - 管理列表体验统一：`ManagementListPage` 新增本地筛选视图保存、应用和删除能力，需求、任务、迭代版本、Bug、用户洞察、代码巡检、执行诊断、草案任务台、产品资产和系统管理列表统一接入页面级 `viewStorageKey`；筛选视图仅保存当前浏览器偏好，不作为业务事实源。
 - 执行诊断 Runner 链路增强：`ai_executor_task.runner_id` 解析为 `ai_executor_runner` 节点，支持按 Runner source_type/source_id 下钻，节点展示心跳、协议、工作区和健康状态且不暴露 `token_hash`。
 - 执行诊断模型网关日志链路增强：独立 `model_gateway_log` Trace 会吸附通过 subject、payload 或 `ai_task_id` 指向它的审计事件，按审计 ID 下钻回到同一模型调用链路并避免重复孤立审计 Trace。

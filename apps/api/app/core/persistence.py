@@ -956,6 +956,9 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def get_user_feedback(self, feedback_id: str) -> dict[str, Any] | None:
+        return self._user_insight_read_repository.get_user_feedback(feedback_id)
+
     def load_user_usage_metrics(self) -> dict[str, Any]:
         return self._user_insight_read_repository.load_user_usage_metrics()
 

@@ -5,6 +5,7 @@ from typing import Any
 
 from app.api.deps import api_error, require_roles
 from app.core.store import DEFAULT_BRAIN_APP_ID
+from app.services.product_config_context import product_config_source_store
 from app.services.user_insights import (
     ensure_enum,
     ensure_non_blank,
@@ -12,7 +13,6 @@ from app.services.user_insights import (
     record_audit_event,
     save_single_repository_record,
     user_insight_query_repository,
-    user_insight_write_store,
     uses_repository_context,
 )
 from app.services.version_status import validate_requirement_version
@@ -57,6 +57,40 @@ def validate_user_feedback_context(
         requirement = current_store.requirements.get(related_requirement_id)
         if requirement is None or requirement["product_id"] != product_id:
             raise api_error(404, "NOT_FOUND", "Requirement not found")
+
+
+def user_feedback_write_store(current_store: Any, *, feedback_id: str | None = None) -> Any:
+    repository = user_insight_query_repository(current_store)
+    if repository is None:
+        return current_store
+    source_store = product_config_source_store(repository)
+    source_store.user_feedback = {}
+    if feedback_id is None:
+        return source_store
+    get_feedback = getattr(repository, "get_user_feedback", None)
+    if callable(get_feedback):
+        feedback = get_feedback(feedback_id)
+        if feedback is not None:
+            source_store.user_feedback[str(feedback["id"])] = dict(feedback)
+        return source_store
+    source_store.user_feedback = {
+        str(item["id"]): dict(item)
+        for item in repository.list_user_feedback()
+        if item.get("id") is not None
+    }
+    return source_store
+
+
+def user_feedback_by_id(current_store: Any, feedback_id: str) -> dict[str, Any] | None:
+    feedback = getattr(current_store, "user_feedback", {}).get(feedback_id)
+    if feedback is not None:
+        return dict(feedback)
+    repository = getattr(current_store, "repository", None)
+    get_feedback = getattr(repository, "get_user_feedback", None)
+    if callable(get_feedback):
+        feedback = get_feedback(feedback_id)
+        return dict(feedback) if feedback is not None else None
+    return None
 
 
 def normalized_tags(tags: list[str]) -> list[str]:
@@ -118,7 +152,7 @@ def create_user_feedback_response(
     payload: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    current_store = user_insight_write_store(current_store)
+    current_store = user_feedback_write_store(current_store)
     validate_user_feedback_enums(
         feedback_type=payload.feedback_type,
         sentiment=payload.sentiment,
@@ -179,8 +213,8 @@ def patch_user_feedback_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_user_feedback_triage_role(user)
-    current_store = user_insight_write_store(current_store)
-    feedback = current_store.user_feedback.get(feedback_id)
+    current_store = user_feedback_write_store(current_store, feedback_id=feedback_id)
+    feedback = user_feedback_by_id(current_store, feedback_id)
     if feedback is None:
         raise api_error(404, "NOT_FOUND", "User feedback not found")
     updates = payload_updates(payload)
@@ -241,8 +275,8 @@ def convert_user_feedback_to_requirement_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     require_user_feedback_triage_role(user)
-    current_store = user_insight_write_store(current_store)
-    feedback = current_store.user_feedback.get(feedback_id)
+    current_store = user_feedback_write_store(current_store, feedback_id=feedback_id)
+    feedback = user_feedback_by_id(current_store, feedback_id)
     if feedback is None:
         raise api_error(404, "NOT_FOUND", "User feedback not found")
     if feedback.get("related_requirement_id"):

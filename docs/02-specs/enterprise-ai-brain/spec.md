@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.528 |
+| 功能版本 | v1.1.529 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.529 | 2026-06-24 | 用户洞察 DB-first 收口：用户反馈更新和转需求链路新增 repository 按 ID 读取，服务层使用反馈专用写上下文，避免依赖运行时 MemoryStore 全量反馈集合 | Codex |
 | v1.1.528 | 2026-06-24 | 管理主列表统一支持本地筛选视图：`ManagementListPage` 通过页面级 `viewStorageKey` 保存、应用、删除当前筛选与排序组合，需求、任务、迭代版本、Bug、用户洞察、代码巡检、执行诊断、草案任务台、产品资产和系统管理列表统一接入 | Codex |
 | v1.1.527 | 2026-06-24 | 执行诊断中心补齐 Runner 节点：`ai_executor_task.runner_id` 解析为 `ai_executor_runner` 节点并支持按 Runner source_type/source_id 过滤，节点展示心跳、协议、工作区和健康状态且不暴露 token hash | Codex |
 | v1.1.526 | 2026-06-24 | 执行诊断中心补齐模型网关日志审计吸附：独立 `model_gateway_log` Trace 会关联 subject、payload 或 ai_task 指向的审计事件，按审计 ID 下钻回到同一模型调用链路并避免重复孤立审计 Trace | Codex |
