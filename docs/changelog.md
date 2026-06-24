@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- DB-first 兼容层继续收口：AI 执行器 Runner 服务移除 Runner、Runner 任务、插件调用、定时作业运行、定时作业、采集运行和 AI 任务状态同步中的直接 `current_store` 写入，统一通过单记录 helper 写入 MemoryStore 测试 fallback 或 repository；相关单记录写入和审计在同一数据库事务提交。
 - 产品配置 DB-first 收口继续推进：迭代版本和版本代码分支配置路由移除直接 `current_store` 集合写入，新增、编辑、删除和状态推进统一通过单记录 helper 写入 MemoryStore 测试 fallback 或 repository；需求单记录写入/删除和审计在同一数据库事务提交。
 - 产品配置 DB-first 收口继续推进：产品、产品模块、产品 Git 仓库和相关系统路由移除直接 `current_store` 集合写入，统一通过产品配置单记录 helper 进入 MemoryStore 测试 fallback 或 repository；单记录写入/删除和审计在同一数据库事务提交。
 - 执行诊断快照刷新收口为数据库事务：`execution_trace_snapshots` 的 upsert 与过期快照删除原子提交，避免诊断中心列表/详情读到半刷新链路。

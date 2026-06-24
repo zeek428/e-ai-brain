@@ -991,6 +991,36 @@ def _repository(current_store: Any) -> Any | None:
     return None
 
 
+RUNNER_RECORD_METHOD_COLLECTIONS = {
+    "save_ai_executor_runner_record": "ai_executor_runners",
+    "save_ai_executor_task_record": "ai_executor_tasks",
+    "save_collector_run_record": "collector_runs",
+    "save_plugin_invocation_log_record": "plugin_invocation_logs",
+    "save_scheduled_job_record": "scheduled_jobs",
+    "save_scheduled_job_run_record": "scheduled_job_runs",
+}
+
+
+def _memory_collection(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name)
+    if not isinstance(collection, dict):
+        raise TypeError(f"Runner record collection is not mutable: {collection_name}")
+    return collection
+
+
+def _memory_collection_for_method(
+    current_store: Any,
+    method_name: str,
+) -> dict[str, dict[str, Any]]:
+    collection_name = RUNNER_RECORD_METHOD_COLLECTIONS.get(method_name)
+    if collection_name is None:
+        raise ValueError(f"Unsupported runner record save method: {method_name}")
+    return _memory_collection(current_store, collection_name)
+
+
 def _replace_collection(
     current_store: Any,
     collection_name: str,
@@ -1044,7 +1074,32 @@ def _persist_record(
     *,
     audit_event: dict[str, Any] | None = None,
 ) -> None:
-    save_single_repository_record(current_store, method_name, record, audit_event=audit_event)
+    repository = getattr(current_store, "repository", None)
+    save_record = getattr(repository, method_name, None)
+    if callable(save_record):
+        save_single_repository_record(current_store, method_name, record, audit_event=audit_event)
+        return
+    if repository is None:
+        _memory_collection_for_method(current_store, method_name)[record["id"]] = record
+
+
+def _delete_runner_record(
+    current_store: Any,
+    *,
+    audit_event: dict[str, Any] | None = None,
+    collection_name: str,
+    method_name: str,
+    record_id: str,
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    delete_record = getattr(repository, method_name, None)
+    if callable(delete_record):
+        delete_record(record_id, audit_event=audit_event)
+        return
+    if repository is None:
+        collection = getattr(current_store, collection_name)
+        if isinstance(collection, dict):
+            collection.pop(record_id, None)
 
 
 def _load_scheduled_job_run(current_store: Any, task: dict[str, Any]) -> dict[str, Any] | None:
@@ -1059,7 +1114,6 @@ def _load_scheduled_job_run(current_store: Any, task: dict[str, Any]) -> dict[st
     if callable(list_runs):
         for candidate in list_runs(scheduled_job_id=task.get("scheduled_job_id")):
             if candidate.get("id") == run_id:
-                current_store.scheduled_job_runs[run_id] = candidate
                 return candidate
     return None
 
@@ -1076,7 +1130,6 @@ def _load_plugin_invocation_log(current_store: Any, task: dict[str, Any]) -> dic
     if callable(list_logs):
         for candidate in list_logs(scheduled_job_run_id=task.get("scheduled_job_run_id")):
             if candidate.get("id") == log_id:
-                current_store.plugin_invocation_logs[log_id] = candidate
                 return candidate
     return None
 
@@ -1092,7 +1145,6 @@ def _load_collector_run(current_store: Any, collector_run_id: str | None) -> dic
     if callable(list_collector_runs):
         for candidate in list_collector_runs():
             if candidate.get("id") == collector_run_id:
-                current_store.collector_runs[collector_run_id] = candidate
                 return candidate
     return None
 
@@ -1108,7 +1160,6 @@ def _load_scheduled_job(current_store: Any, scheduled_job_id: str | None) -> dic
     if callable(list_jobs):
         for candidate in list_jobs():
             if candidate.get("id") == scheduled_job_id:
-                current_store.scheduled_jobs[scheduled_job_id] = candidate
                 return candidate
     return None
 
@@ -1124,7 +1175,8 @@ def _load_ai_task(current_store: Any, ai_task_id: str | None) -> dict[str, Any] 
     if callable(load_ai_tasks):
         payload = load_ai_tasks()
         for candidate in payload.get("ai_tasks", {}).values():
-            current_store.ai_tasks[candidate["id"]] = candidate
+            if candidate.get("id") == ai_task_id:
+                return candidate
         return current_store.ai_tasks.get(ai_task_id)
     return None
 
@@ -1156,6 +1208,11 @@ def _persist_task_state_records(
     save_records = getattr(repository, "save_task_state_records", None)
     if callable(save_records):
         save_records(task=task, audit_events=audit_events, reviews=reviews)
+        return
+    if repository is None:
+        _memory_collection(current_store, "ai_tasks")[task["id"]] = task
+        for review in reviews or []:
+            _memory_collection(current_store, "human_reviews")[review["id"]] = review
 
 
 def _existing_pending_review(
@@ -1168,7 +1225,12 @@ def _existing_pending_review(
     if callable(load_workflow_runtime):
         payload = load_workflow_runtime()
         for review in payload.get("human_reviews", {}).values():
-            current_store.human_reviews[review["id"]] = review
+            if (
+                review.get("ai_task_id") == ai_task_id
+                and review.get("stage") == stage
+                and review.get("status") == "pending"
+            ):
+                return review
     for review in current_store.human_reviews.values():
         if (
             review.get("ai_task_id") == ai_task_id
@@ -1208,7 +1270,6 @@ def _sync_runner_completion_to_ai_task(
             "status": "running",
             "updated_at": now,
         }
-        current_store.ai_tasks[updated_task["id"]] = updated_task
         audit_event = record_audit_event(
             current_store,
             event_type="ai_task.executor_waiting",
@@ -1240,7 +1301,6 @@ def _sync_runner_completion_to_ai_task(
             "status": "waiting_review",
             "updated_at": now,
         }
-        current_store.ai_tasks[updated_task["id"]] = updated_task
         reviews: list[dict[str, Any]] = []
         existing_review = _existing_pending_review(
             current_store,
@@ -1263,7 +1323,6 @@ def _sync_runner_completion_to_ai_task(
                 "updated_at": now,
                 "version": 1,
             }
-            current_store.human_reviews[review_id] = review
             reviews.append(review)
         review_ids = list(updated_task.get("review_ids") or [])
         for review in reviews or ([existing_review] if existing_review else []):
@@ -1273,7 +1332,6 @@ def _sync_runner_completion_to_ai_task(
             **updated_task,
             "review_ids": review_ids,
         }
-        current_store.ai_tasks[updated_task["id"]] = updated_task
         audit_event = record_audit_event(
             current_store,
             event_type="ai_task.executor_completed",
@@ -1303,7 +1361,6 @@ def _sync_runner_completion_to_ai_task(
         "status": next_status,
         "updated_at": now,
     }
-    current_store.ai_tasks[updated_task["id"]] = updated_task
     audit_event = record_audit_event(
         current_store,
         event_type="ai_task.executor_failed",
@@ -1395,7 +1452,6 @@ def _sync_runner_completion_to_scheduled_run(
             "status": log_status,
             "updated_at": now,
         }
-        current_store.plugin_invocation_logs[updated_log["id"]] = updated_log
         _persist_record(current_store, "save_plugin_invocation_log_record", updated_log)
         plugin_summary = dict(result_summary.get("plugin") or {})
         if plugin_summary:
@@ -1424,7 +1480,6 @@ def _sync_runner_completion_to_scheduled_run(
         "status": run_status,
         "updated_at": now,
     }
-    current_store.scheduled_job_runs[updated_run["id"]] = updated_run
     audit_event = record_audit_event(
         current_store,
         event_type=f"scheduled_job_run.{run_status}",
@@ -1459,7 +1514,6 @@ def _sync_runner_completion_to_scheduled_run(
             "status": collector_status,
             "updated_at": now,
         }
-        current_store.collector_runs[updated_collector["id"]] = updated_collector
         _persist_record(current_store, "save_collector_run_record", updated_collector)
     job = _load_scheduled_job(current_store, task.get("scheduled_job_id"))
     if job is not None:
@@ -1471,7 +1525,6 @@ def _sync_runner_completion_to_scheduled_run(
             "last_success_at": now if run_status == "succeeded" else job.get("last_success_at"),
             "updated_at": now,
         }
-        current_store.scheduled_jobs[updated_job["id"]] = updated_job
         _persist_record(current_store, "save_scheduled_job_record", updated_job)
 
 
@@ -1520,7 +1573,6 @@ def create_ai_executor_runner_response(
             "workspace_roots",
         ),
     }
-    current_store.ai_executor_runners[runner_id] = runner
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_runner.created",
@@ -1828,7 +1880,6 @@ def patch_ai_executor_runner_response(
     if "metadata" in updates:
         updates["metadata"] = dict(updates["metadata"] or {})
     runner = {**runner, **updates, "updated_at": datetime.now(UTC).isoformat()}
-    current_store.ai_executor_runners[runner_id] = runner
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_runner.updated",
@@ -1877,7 +1928,6 @@ def rotate_ai_executor_runner_token_response(
         "token_version": int(runner.get("token_version") or 1) + 1,
         "updated_at": now,
     }
-    current_store.ai_executor_runners[runner_id] = runner
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_runner.token_rotated",
@@ -1925,7 +1975,6 @@ def delete_ai_executor_runner_response(
             "AI_EXECUTOR_RUNNER_IN_USE",
             "AI executor runner has active tasks: " + ", ".join(active_tasks),
         )
-    current_store.ai_executor_runners.pop(runner_id, None)
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_runner.deleted",
@@ -1934,10 +1983,13 @@ def delete_ai_executor_runner_response(
         subject_id=runner_id,
         payload={"name": runner["name"], "protocol": runner["protocol"]},
     )
-    repository = getattr(current_store, "repository", None)
-    delete_record = getattr(repository, "delete_ai_executor_runner_record", None)
-    if callable(delete_record):
-        delete_record(runner_id, audit_event=audit_event)
+    _delete_runner_record(
+        current_store,
+        collection_name="ai_executor_runners",
+        method_name="delete_ai_executor_runner_record",
+        record_id=runner_id,
+        audit_event=audit_event,
+    )
     return {"deleted": True, "id": runner_id}
 
 
@@ -1992,7 +2044,6 @@ def runner_heartbeat_response(
         "status": "active" if runner.get("status") != "disabled" else "disabled",
         "updated_at": now,
     }
-    current_store.ai_executor_runners[runner_id] = runner
     _persist_record(current_store, "save_ai_executor_runner_record", runner)
     return _runner_public(runner)
 
@@ -2090,7 +2141,6 @@ def create_ai_executor_task(
         "updated_at": now,
         "workspace_root": workspace_root,
     }
-    current_store.ai_executor_tasks[task_id] = task
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_task.queued",
@@ -2146,7 +2196,6 @@ def claim_ai_executor_task_response(
         )
     now = datetime.now(UTC).isoformat()
     task = {**task, "claimed_at": now, "status": "claimed", "updated_at": now}
-    current_store.ai_executor_tasks[task["id"]] = task
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_task.claimed",
@@ -2241,7 +2290,6 @@ def append_ai_executor_task_logs_response(
         "status": status,
         "updated_at": now,
     }
-    current_store.ai_executor_tasks[task_id] = task
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_task.logs_appended",
@@ -2286,7 +2334,6 @@ def cancel_ai_executor_task_response(
         "status": "cancelled",
         "updated_at": now,
     }
-    current_store.ai_executor_tasks[task_id] = task
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_task.cancelled",
@@ -2367,7 +2414,6 @@ def timeout_ai_executor_tasks_response(
             "status": "timed_out",
             "updated_at": now_iso,
         }
-        current_store.ai_executor_tasks[updated_task["id"]] = updated_task
         audit_event = record_audit_event(
             current_store,
             event_type="ai_executor_task.timed_out",
@@ -2429,7 +2475,6 @@ def complete_ai_executor_task_response(
         "status": status,
         "updated_at": now,
     }
-    current_store.ai_executor_tasks[task_id] = task
     audit_event = record_audit_event(
         current_store,
         event_type=f"ai_executor_task.{status}",

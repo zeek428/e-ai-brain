@@ -32,7 +32,7 @@ class OperationalCollectionReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_collector_runs(cursor, {record["id"]: record})
                 if audit_event is not None and self._upsert_audit_events is not None:

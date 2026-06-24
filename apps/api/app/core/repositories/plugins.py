@@ -357,7 +357,7 @@ class PluginReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_ai_executor_runners(cursor, {runner["id"]: runner})
                 self._upsert_audit(cursor, audit_event)
@@ -368,7 +368,7 @@ class PluginReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("DELETE FROM ai_executor_runners WHERE id = %s", (runner_id,))
                 self._upsert_audit(cursor, audit_event)
@@ -412,7 +412,7 @@ class PluginReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_ai_executor_tasks(cursor, {task["id"]: task})
                 self._upsert_audit(cursor, audit_event)
@@ -423,7 +423,7 @@ class PluginReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_plugin_invocation_logs(cursor, {log["id"]: log})
                 self._upsert_audit(cursor, audit_event)

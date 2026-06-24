@@ -12,6 +12,7 @@ from app.core.repositories.lifecycle_dashboard import LifecycleDashboardReadRepo
 from app.core.repositories.mock_writeback import MockWritebackReadRepository
 from app.core.repositories.model_gateway import ModelGatewayReadRepository
 from app.core.repositories.operational_collection import OperationalCollectionReadRepository
+from app.core.repositories.plugins import PluginReadRepository
 from app.core.repositories.product_config import ProductConfigReadRepository
 from app.core.repositories.product_config_writes import ProductConfigWriteRepository
 from app.core.repositories.requirements import RequirementReadRepository
@@ -624,6 +625,229 @@ def test_requirement_record_writes_use_single_transaction():
     assert audit_calls == [[audit_event], [audit_event]]
     assert any("INSERT INTO requirements" in sql for sql in executed_sql)
     assert "DELETE FROM requirements WHERE id = %s" in executed_sql[-1]
+
+
+def test_runner_related_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    executed_sql: list[str] = []
+    upsert_calls: list[tuple[str, dict]] = []
+    audit_calls: list[list[dict]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql: str, params=None):  # type: ignore[no-untyped-def]
+            executed_sql.append(sql)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def record_upsert(name: str):
+        def _call(self, cursor, items):  # type: ignore[no-untyped-def]
+            upsert_calls.append((name, items))
+
+        return _call
+
+    monkeypatch.setattr(
+        PluginReadRepository,
+        "upsert_ai_executor_runners",
+        record_upsert("runner"),
+    )
+    monkeypatch.setattr(
+        PluginReadRepository,
+        "upsert_ai_executor_tasks",
+        record_upsert("task"),
+    )
+    monkeypatch.setattr(
+        PluginReadRepository,
+        "upsert_plugin_invocation_logs",
+        record_upsert("plugin_log"),
+    )
+
+    repository = PluginReadRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+    )
+    audit_event = {"id": "audit_runner_atomic", "event_type": "ai_executor_task.updated"}
+
+    repository.save_ai_executor_runner_record(
+        {"id": "runner_atomic"},
+        audit_event=audit_event,
+    )
+    repository.save_ai_executor_task_record(
+        {"id": "runner_task_atomic"},
+        audit_event=audit_event,
+    )
+    repository.save_plugin_invocation_log_record(
+        {"id": "plugin_log_atomic"},
+        audit_event=audit_event,
+    )
+    repository.delete_ai_executor_runner_record(
+        "runner_atomic",
+        audit_event=audit_event,
+    )
+
+    assert connect_calls == [
+        {"autocommit": False},
+        {"autocommit": False},
+        {"autocommit": False},
+        {"autocommit": False},
+    ]
+    assert upsert_calls == [
+        ("runner", {"runner_atomic": {"id": "runner_atomic"}}),
+        ("task", {"runner_task_atomic": {"id": "runner_task_atomic"}}),
+        ("plugin_log", {"plugin_log_atomic": {"id": "plugin_log_atomic"}}),
+    ]
+    assert audit_calls == [[audit_event], [audit_event], [audit_event], [audit_event]]
+    assert "DELETE FROM ai_executor_runners WHERE id = %s" in executed_sql[-1]
+
+
+def test_scheduled_job_runner_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    executed_sql: list[str] = []
+    upsert_calls: list[tuple[str, dict]] = []
+    audit_calls: list[list[dict]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql: str, params=None):  # type: ignore[no-untyped-def]
+            executed_sql.append(sql)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def record_upsert(name: str):
+        def _call(self, cursor, items):  # type: ignore[no-untyped-def]
+            upsert_calls.append((name, items))
+
+        return _call
+
+    monkeypatch.setattr(
+        ScheduledAiJobReadRepository,
+        "upsert_scheduled_jobs",
+        record_upsert("job"),
+    )
+    monkeypatch.setattr(
+        ScheduledAiJobReadRepository,
+        "upsert_scheduled_job_runs",
+        record_upsert("run"),
+    )
+
+    repository = ScheduledAiJobReadRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+    )
+    audit_event = {"id": "audit_scheduled_atomic", "event_type": "scheduled_job_run.updated"}
+
+    repository.save_scheduled_job_record({"id": "job_atomic"}, audit_event=audit_event)
+    repository.save_scheduled_job_run_record({"id": "run_atomic"}, audit_event=audit_event)
+    repository.delete_scheduled_job_record("job_atomic", audit_event=audit_event)
+
+    assert connect_calls == [
+        {"autocommit": False},
+        {"autocommit": False},
+        {"autocommit": False},
+    ]
+    assert upsert_calls == [
+        ("job", {"job_atomic": {"id": "job_atomic"}}),
+        ("run", {"run_atomic": {"id": "run_atomic"}}),
+    ]
+    assert audit_calls == [[audit_event], [audit_event], [audit_event]]
+    assert "DELETE FROM scheduled_jobs WHERE id = %s" in executed_sql[-1]
+
+
+def test_collector_run_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    upsert_calls: list[dict] = []
+    audit_calls: list[list[dict]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def record_upsert(self, cursor, items):  # type: ignore[no-untyped-def]
+        upsert_calls.append(items)
+
+    monkeypatch.setattr(
+        OperationalCollectionReadRepository,
+        "upsert_collector_runs",
+        record_upsert,
+    )
+
+    repository = OperationalCollectionReadRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+    )
+    audit_event = {"id": "audit_collector_atomic", "event_type": "collector_run.updated"}
+
+    repository.save_collector_run_record(
+        {"id": "collector_atomic"},
+        audit_event=audit_event,
+    )
+
+    assert connect_calls == [{"autocommit": False}]
+    assert upsert_calls == [{"collector_atomic": {"id": "collector_atomic"}}]
+    assert audit_calls == [[audit_event]]
 
 
 def test_postgres_requirement_read_models_delegate_to_domain_repository(monkeypatch):

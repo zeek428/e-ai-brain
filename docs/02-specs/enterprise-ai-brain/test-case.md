@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.649 |
+| 功能版本 | v1.1.650 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.650 | 2026-06-24 | 补充 AI 执行器 Runner DB-first 写路径收口验收：Runner 服务不得在状态同步和回写链路中直接写 `current_store` 的 Runner、任务、插件调用、定时作业运行、采集运行或 AI 任务集合，MemoryStore 测试路径由 helper fallback 写入，PostgreSQL 运行态通过 repository 单记录写入；Runner/任务/插件调用/定时作业/采集运行单记录写入和审计必须使用同一数据库事务；`test_plugin_management.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.649 | 2026-06-24 | 补充迭代版本 DB-first 写路径收口验收：迭代版本和版本代码分支配置 create/patch/delete/status advance 不得在路由中直接写 `current_store` 集合，MemoryStore 测试路径由 helper fallback 写入，PostgreSQL 运行态通过 repository 单记录写入；需求单记录写入/删除和审计必须使用同一数据库事务；`test_product_config_persistence.py`、`test_product_system_config.py`、`test_iteration_version_status_flow.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.648 | 2026-06-24 | 补充产品配置路由 DB-first 收口验收：产品、产品模块、产品 Git 仓库和相关系统 create/patch/delete 不得在路由中直接写 `current_store` 集合，必须通过产品配置单记录 helper 进入 MemoryStore 测试 fallback 或 repository；单记录写入/删除和审计必须使用同一数据库事务；`test_product_config_persistence.py`、`test_product_system_config.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.647 | 2026-06-24 | 补充执行诊断快照事务验收：`execution_trace_snapshots` 刷新必须通过单个数据库事务完成 upsert 和过期快照删除，避免读模型半刷新；`test_execution_traces.py` 必须覆盖连接 `autocommit=False` | Codex |

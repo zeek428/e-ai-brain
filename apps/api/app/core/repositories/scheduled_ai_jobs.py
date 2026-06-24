@@ -213,7 +213,7 @@ class ScheduledAiJobReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_scheduled_jobs(cursor, {job["id"]: job})
                 self._upsert_audit(cursor, audit_event)
@@ -224,7 +224,7 @@ class ScheduledAiJobReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("DELETE FROM scheduled_jobs WHERE id = %s", (job_id,))
                 self._upsert_audit(cursor, audit_event)
@@ -385,7 +385,7 @@ class ScheduledAiJobReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_scheduled_job_runs(cursor, {run["id"]: run})
                 self._upsert_audit(cursor, audit_event)
