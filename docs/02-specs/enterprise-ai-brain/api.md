@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.387 |
+| 功能版本 | v1.1.388 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.388 | 2026-06-24 | 代码巡检治理概览新增 `rule_governance`，聚合最近报告规则/扫描器版本、版本分布、suppression 总量和过滤原因分布，用于页面展示规则包漂移与误报/已接受风险治理状态 | Codex |
 | v1.1.387 | 2026-06-24 | 执行诊断 `source_type` 新增 `assistant_message` 节点类型，AI 助手运行链路可按用户消息或助手消息 ID 通过 `source_id` 精准定位，供草案任务台来源链路跳转使用 | Codex |
 | v1.1.386 | 2026-06-24 | 新增 `GET /api/system/permissions/diagnostics`，按用户、菜单路径、权限点和数据范围返回允许/阻断解释，用于角色管理页用户权限排障 | Codex |
 | v1.1.385 | 2026-06-24 | 新增 `GET /api/system/scheduled-job-catalog`，返回服务端作业类型、必填规则、调度/执行模式、连接环境和代码巡检选项，供定时作业页面和助手草案复用 | Codex |
@@ -769,7 +770,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Scheduler | GET | `/api/system/scheduled-job-runs/observability` | 查询定时作业运行健康概览；响应包含 `summary={total_runs,succeeded_runs,failed_runs,running_runs,cancelled_runs,success_rate,failure_rate,average_latency_ms,average_records_imported,model_gateway_called_runs,model_gateway_token_total,plugin_invocation_runs,action_write_runs,action_write_success_runs,action_write_success_rate}`，以及 `status_distribution/job_type_distribution/trigger_type_distribution/write_target_distribution/error_distribution/recent_failures/slow_runs`。Token 汇总仅读取模型日志 `tokens.total` 等元数据；最近失败和慢运行只返回运行 ID、作业 ID/名称、状态、耗时、错误码/错误信息和导入数，不返回完整请求响应、Prompt、模型输出或密钥。 |
 | Scheduler | POST | `/api/system/scheduled-job-runs/{run_id}/cancel` | 取消仍处于 queued/running 的运行实例。 |
 | Scheduler | POST | `/api/system/scheduled-job-runs/{run_id}/template` | 从一次成功运行反向生成定时作业模板草稿。仅管理员可用，非 succeeded 运行返回 `409 SCHEDULED_JOB_RUN_TEMPLATE_SOURCE_INVALID`；响应包含 `code/name/template_version/wizard_steps/payload_defaults/source_run_id`，其中 `payload_defaults` 来自运行 `config_snapshot` 并写入 `config_json.template_source={source_type: scheduled_job_run, source_id, title}`，前端可直接打开新增作业弹窗供用户确认保存。 |
-| Governance | GET | `/api/governance/code-inspections/dashboard` | 查询代码巡检治理概览，支持与列表一致的产品、仓库、提交人、风险级别、状态和标题筛选，并按当前用户产品 scope 过滤；响应返回 `summary`、`trend`、`rule_distribution`、`repository_ranking`、`branch_ranking`、`committer_ranking`、`severity_distribution`、`risk_distribution` 和 `sla`。`trend[]` 按日期返回报告数、问题数、严重问题数、Bug 数以及 `quality_gate_passed_count/failed_count/skipped_count/unknown_count`，用于展示质量门禁趋势、规则维度统计、仓库/分支/提交人排行和严重问题 SLA；`sla` 同时返回 `bug_coverage_rate/covered_by_bug_count/uncovered_severe_finding_count/oldest_uncovered_at` 与 `task_coverage_rate/covered_by_task_count/uncovered_task_finding_count/oldest_without_task_at`，整体 `status` 需同时满足 Bug 和整改任务覆盖阈值才为 healthy。 |
+| Governance | GET | `/api/governance/code-inspections/dashboard` | 查询代码巡检治理概览，支持与列表一致的产品、仓库、提交人、风险级别、状态和标题筛选，并按当前用户产品 scope 过滤；响应返回 `summary`、`trend`、`rule_distribution`、`rule_governance`、`repository_ranking`、`branch_ranking`、`committer_ranking`、`severity_distribution`、`risk_distribution` 和 `sla`。`trend[]` 按日期返回报告数、问题数、严重问题数、Bug 数以及 `quality_gate_passed_count/failed_count/skipped_count/unknown_count`，用于展示质量门禁趋势、规则维度统计、仓库/分支/提交人排行和严重问题 SLA；`rule_governance` 返回 `latest_report_rules_version/latest_report_scanner_version/mixed_rules_version/mixed_scanner_version/rule_version_distribution/scanner_version_distribution/suppressed_finding_count/report_with_suppression_count/suppression_distribution`，用于识别规则包版本漂移和 baseline、已接受风险、忽略项、严重级别阈值等过滤原因；`sla` 同时返回 `bug_coverage_rate/covered_by_bug_count/uncovered_severe_finding_count/oldest_uncovered_at` 与 `task_coverage_rate/covered_by_task_count/uncovered_task_finding_count/oldest_without_task_at`，整体 `status` 需同时满足 Bug 和整改任务覆盖阈值才为 healthy。 |
 | Governance | GET | `/api/governance/code-inspections` | 查询定期代码仓库巡检报告列表，支持产品、仓库、提交人、风险级别、状态、分页和排序，并按当前用户产品 scope 过滤；报告项返回 `scheduled_job_id`、`scheduled_job_run_id`、`plugin_connection_id`、`plugin_action_id` 和 `plugin_invocation_log_id`，用于定位来源作业、运行、连接、动作和插件调用。 |
 | Governance | GET | `/api/governance/code-inspections/{report_id}` | 查询单次代码巡检报告详情，返回报告、finding 列表和通知记录；详情报告必须包含来源链路字段，前端在详情弹窗固定展示，并把 `scheduled_job_id`、`scheduled_job_run_id` 渲染为跳转到任务中心 / 定时作业的链接。本地扫描报告还必须返回并展示 `remote_url_summary`、`remote_url_hash`、`artifact_ref`、`checkout_path`、`checkout_path_retained`、`scan_started_at`、`scan_finished_at`、`scanner_version` 和 `rules_version`，用于审计本次扫描实际代码快照。 |
 | Attribution | GET | `/api/attribution/pending-items` | 查询待归属数据队列。 |

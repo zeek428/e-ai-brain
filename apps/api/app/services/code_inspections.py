@@ -1294,6 +1294,9 @@ def code_inspection_dashboard_response(
     repository_stats: dict[str, dict[str, Any]] = {}
     branch_stats: dict[str, dict[str, Any]] = {}
     committer_stats: dict[str, dict[str, Any]] = {}
+    rule_version_counts: Counter[str] = Counter()
+    scanner_version_counts: Counter[str] = Counter()
+    suppression_counts: Counter[str] = Counter()
     trend_stats: dict[str, dict[str, Any]] = {}
     severe_finding_count = 0
     covered_by_bug_count = 0
@@ -1306,6 +1309,17 @@ def code_inspection_dashboard_response(
         report_findings = findings_by_report.get(report_id, [])
         risk_level_value = str(report.get("risk_level") or "low")
         risk_counts[risk_level_value] += 1
+        rules_version = str(report.get("rules_version") or "unknown")
+        scanner_version = str(report.get("scanner_version") or "unknown")
+        rule_version_counts[rules_version] += 1
+        scanner_version_counts[scanner_version] += 1
+        suppression_summary = report.get("suppression_summary")
+        if isinstance(suppression_summary, dict):
+            for key, value in suppression_summary.items():
+                try:
+                    suppression_counts[str(key)] += int(value or 0)
+                except (TypeError, ValueError):
+                    continue
         bucket = report_date_bucket(report)
         trend = trend_stats.setdefault(
             bucket,
@@ -1481,6 +1495,19 @@ def code_inspection_dashboard_response(
     trend = sorted(trend_stats.values(), key=lambda item: str(item["date"]))[
         -DEFAULT_DASHBOARD_TREND_DAYS:
     ]
+    rule_version_distribution = counter_rows(
+        rule_version_counts,
+        key_name="rules_version",
+    )
+    scanner_version_distribution = counter_rows(
+        scanner_version_counts,
+        key_name="scanner_version",
+    )
+    latest_report = max(
+        reports,
+        key=lambda item: str(item.get("scan_finished_at") or item.get("created_at") or ""),
+        default=None,
+    )
     bug_coverage_rate = (
         round(covered_by_bug_count / severe_finding_count, 4)
         if severe_finding_count
@@ -1507,6 +1534,28 @@ def code_inspection_dashboard_response(
         "repository_ranking": repository_ranking,
         "risk_distribution": counter_rows(risk_counts, key_name="risk_level"),
         "rule_distribution": rule_distribution,
+        "rule_governance": {
+            "latest_report_rules_version": (
+                latest_report.get("rules_version") if latest_report else None
+            ),
+            "latest_report_scanner_version": (
+                latest_report.get("scanner_version") if latest_report else None
+            ),
+            "mixed_rules_version": len(rule_version_counts) > 1,
+            "mixed_scanner_version": len(scanner_version_counts) > 1,
+            "report_with_suppression_count": sum(
+                1 for report in reports if int(report.get("suppressed_finding_count") or 0) > 0
+            ),
+            "rule_version_distribution": rule_version_distribution[:10],
+            "scanner_version_distribution": scanner_version_distribution[:10],
+            "suppressed_finding_count": sum(
+                int(report.get("suppressed_finding_count") or 0) for report in reports
+            ),
+            "suppression_distribution": counter_rows(
+                suppression_counts,
+                key_name="reason",
+            ),
+        },
         "severity_distribution": counter_rows(severity_counts, key_name="severity"),
         "sla": {
             "bug_coverage_rate": bug_coverage_rate,

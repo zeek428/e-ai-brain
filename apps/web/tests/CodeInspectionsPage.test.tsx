@@ -140,6 +140,23 @@ function installCodeInspectionsFetchMock() {
               severe_finding_count: 1,
             },
           ],
+          rule_governance: {
+            latest_report_rules_version: 'builtin-2026.06.16',
+            latest_report_scanner_version: '2026.06.16',
+            mixed_rules_version: true,
+            mixed_scanner_version: false,
+            report_with_suppression_count: 1,
+            rule_version_distribution: [
+              { count: 1, rules_version: 'builtin-2026.06.16' },
+              { count: 1, rules_version: 'builtin-2026.06.01' },
+            ],
+            scanner_version_distribution: [{ count: 1, scanner_version: '2026.06.16' }],
+            suppressed_finding_count: 2,
+            suppression_distribution: [
+              { count: 1, reason: 'accepted_risk' },
+              { count: 1, reason: 'baseline' },
+            ],
+          },
           severity_distribution: [{ count: 1, severity: 'critical' }],
           sla: {
             bug_coverage_rate: 1,
@@ -274,6 +291,12 @@ describe('CodeInspectionsPage', () => {
     await screen.findByText('code_inspection_report_001');
     expect(screen.getAllByText('2026-06-12 17:00').length).toBeGreaterThan(0);
     expect(screen.getByText('规则维度统计')).toBeInTheDocument();
+    expect(screen.getByText('规则包与误报治理')).toBeInTheDocument();
+    expect(screen.getByText('最近规则版本')).toBeInTheDocument();
+    expect(screen.getByText('版本不一致')).toBeInTheDocument();
+    expect(screen.getByText('已过滤问题')).toBeInTheDocument();
+    expect(screen.getAllByText('过滤原因').length).toBeGreaterThan(0);
+    expect(screen.getByText('accepted_risk')).toBeInTheDocument();
     expect(screen.getByText('仓库风险排行')).toBeInTheDocument();
     expect(screen.getByText('提交人风险排行')).toBeInTheDocument();
     expect(screen.getByText('质量门禁趋势')).toBeInTheDocument();

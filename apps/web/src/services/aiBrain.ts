@@ -6439,6 +6439,17 @@ export type CodeInspectionDashboardRecord = {
     severity: string;
     severe_finding_count: number;
   }>;
+  rule_governance?: {
+    latest_report_rules_version?: string | null;
+    latest_report_scanner_version?: string | null;
+    mixed_rules_version?: boolean;
+    mixed_scanner_version?: boolean;
+    report_with_suppression_count?: number;
+    rule_version_distribution?: Array<{ count: number; rules_version: string }>;
+    scanner_version_distribution?: Array<{ count: number; scanner_version: string }>;
+    suppressed_finding_count?: number;
+    suppression_distribution?: Array<{ count: number; reason: string }>;
+  };
   severity_distribution: Array<{ count: number; severity: string }>;
   sla: {
     bug_coverage_rate: number;

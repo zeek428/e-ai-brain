@@ -219,6 +219,7 @@ function CodeInspectionGovernanceOverview({
   loading: boolean;
 }) {
   const summary = dashboard?.summary;
+  const ruleGovernance = dashboard?.rule_governance;
   const sla = dashboard?.sla;
   return (
     <Space orientation="vertical" size={12} style={{ width: '100%', marginBottom: 16 }}>
@@ -261,6 +262,78 @@ function CodeInspectionGovernanceOverview({
           </Card>
         </Col>
       </Row>
+      <Card loading={loading} size="small" title="规则包与误报治理">
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+          <Descriptions
+            column={{ lg: 4, md: 2, xs: 1 }}
+            items={[
+              {
+                key: 'rules_version',
+                label: '最近规则版本',
+                children: (
+                  <Space wrap>
+                    <span>{ruleGovernance?.latest_report_rules_version ?? '-'}</span>
+                    {ruleGovernance?.mixed_rules_version ? <Tag color="orange">版本不一致</Tag> : null}
+                  </Space>
+                ),
+              },
+              {
+                key: 'scanner_version',
+                label: '最近扫描器版本',
+                children: (
+                  <Space wrap>
+                    <span>{ruleGovernance?.latest_report_scanner_version ?? '-'}</span>
+                    {ruleGovernance?.mixed_scanner_version ? <Tag color="orange">版本不一致</Tag> : null}
+                  </Space>
+                ),
+              },
+              {
+                key: 'suppressed_count',
+                label: '已过滤问题',
+                children: ruleGovernance?.suppressed_finding_count ?? 0,
+              },
+              {
+                key: 'suppressed_reports',
+                label: '涉及报告',
+                children: ruleGovernance?.report_with_suppression_count ?? 0,
+              },
+            ]}
+            size="small"
+          />
+          <Row gutter={[12, 12]}>
+            <Col lg={8} xs={24}>
+              {compactMetricTable({
+                columns: [
+                  { dataIndex: 'rules_version', title: '规则版本', width: 180 },
+                  { dataIndex: 'count', title: '报告数', width: 90 },
+                ],
+                dataSource: ruleGovernance?.rule_version_distribution ?? [],
+                rowKey: 'rules_version',
+              })}
+            </Col>
+            <Col lg={8} xs={24}>
+              {compactMetricTable({
+                columns: [
+                  { dataIndex: 'scanner_version', title: '扫描器版本', width: 180 },
+                  { dataIndex: 'count', title: '报告数', width: 90 },
+                ],
+                dataSource: ruleGovernance?.scanner_version_distribution ?? [],
+                rowKey: 'scanner_version',
+              })}
+            </Col>
+            <Col lg={8} xs={24}>
+              {compactMetricTable({
+                columns: [
+                  { dataIndex: 'reason', title: '过滤原因', width: 160 },
+                  { dataIndex: 'count', title: '数量', width: 90 },
+                ],
+                dataSource: ruleGovernance?.suppression_distribution ?? [],
+                rowKey: 'reason',
+              })}
+            </Col>
+          </Row>
+        </Space>
+      </Card>
       <Row gutter={[12, 12]}>
         <Col lg={12} xs={24}>
           <Card loading={loading} size="small" title="规则维度统计">

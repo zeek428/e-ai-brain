@@ -1382,6 +1382,15 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
         "status": "failed",
         "violations": [{"metric": "critical", "actual": 1, "limit": 0}],
     }
+    app.state.store.code_inspection_reports[report_id]["rules_version"] = "builtin-2026.06.16"
+    app.state.store.code_inspection_reports[report_id]["scanner_version"] = "2026.06.16"
+    app.state.store.code_inspection_reports[report_id]["suppressed_finding_count"] = 2
+    app.state.store.code_inspection_reports[report_id]["suppression_summary"] = {
+        "accepted_risk": 1,
+        "baseline": 1,
+        "ignored": 0,
+        "severity_threshold": 0,
+    }
 
     dashboard = client.get(
         f"/api/governance/code-inspections/dashboard?product_id={product['id']}",
@@ -1412,6 +1421,20 @@ def test_code_inspection_dashboard_summarizes_reports_rules_rankings_and_sla():
     assert payload["trend"][0]["quality_gate_failed_count"] == 1
     assert payload["trend"][0]["quality_gate_skipped_count"] == 0
     assert payload["trend"][0]["quality_gate_unknown_count"] == 0
+    assert payload["rule_governance"]["latest_report_rules_version"] == "builtin-2026.06.16"
+    assert payload["rule_governance"]["latest_report_scanner_version"] == "2026.06.16"
+    assert payload["rule_governance"]["mixed_rules_version"] is False
+    assert payload["rule_governance"]["suppressed_finding_count"] == 2
+    assert payload["rule_governance"]["report_with_suppression_count"] == 1
+    assert payload["rule_governance"]["rule_version_distribution"] == [
+        {"count": 1, "rules_version": "builtin-2026.06.16"}
+    ]
+    assert {"count": 1, "reason": "accepted_risk"} in payload["rule_governance"][
+        "suppression_distribution"
+    ]
+    assert {"count": 1, "reason": "baseline"} in payload["rule_governance"][
+        "suppression_distribution"
+    ]
 
     filtered = client.get(
         "/api/governance/code-inspections/dashboard?committer=carol@example.com",
