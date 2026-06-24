@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- AI 助手历史与配置 DB-first 收口：会话和消息的测试 fallback 写入改为 helper 访问，动作引用配置和角色快捷任务配置创建、更新、启停、灰度与删除不再直接调用 `current_store.audit()` 或写配置集合，统一通过 repository 单记录写入或 MemoryStore fallback 同步审计。
 - AI 助手聊天 DB-first 收口：聊天运行开始、完成、取消、失败和模型网关调用审计不再直接写 `current_store.assistant_chat_runs` 或调用 `current_store.audit()`，统一通过 `save_assistant_chat_records` 和 repository 事务写入聊天运行、会话、消息、模型日志和审计；助手触发定时作业运行归因同步写回 repository。
 - AI 助手草案 DB-first 收口：草案创建、确认、失败、取消、修改、查看和过期链路不再直接写 `current_store.assistant_action_drafts` / `assistant_action_runs` 或调用 `current_store.audit()`；助手触发定时作业运行归因不再直接写 `current_store.scheduled_job_runs`，统一通过 `save_assistant_action_records` 和 repository 事务写入草案、动作运行和审计。
 - DB-first 兼容层继续收口：AI 执行器 Runner 服务移除 Runner、Runner 任务、插件调用、定时作业运行、定时作业、采集运行和 AI 任务状态同步中的直接 `current_store` 写入，统一通过单记录 helper 写入 MemoryStore 测试 fallback 或 repository；相关单记录写入和审计在同一数据库事务提交。

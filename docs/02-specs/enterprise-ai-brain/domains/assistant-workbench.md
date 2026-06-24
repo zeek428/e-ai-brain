@@ -28,6 +28,7 @@
 - 聊天运行开始、完成、取消、失败和模型网关调用审计属于 DB-first 写路径：服务层不得直接写 `current_store.assistant_chat_runs` 或调用 `current_store.audit()`，也不得通过 `current_store.audit_events` 切片收集本次审计。聊天运行、会话、消息、模型日志和审计必须通过 `save_assistant_chat_records` 统一写入，MemoryStore 仅作为测试 fallback，PostgreSQL 运行态使用 repository 事务提交。
 - 草案卡片必须展示风险、差异、前置依赖、预检状态和确认/取消入口。
 - 草案创建、确认、失败、取消、修改、查看和过期属于 DB-first 写路径：服务层不得直接写 `current_store.assistant_action_drafts`、`current_store.assistant_action_runs` 或调用 `current_store.audit()`；助手触发定时作业运行归因不得直接写 `current_store.scheduled_job_runs`。草案、动作运行和审计必须通过 `save_assistant_action_records` 统一写入，MemoryStore 仅作为测试 fallback，PostgreSQL 运行态使用 repository 事务提交。
+- 助手历史、动作引用配置和角色快捷任务配置同属 DB-first 收口范围：会话/消息测试 fallback 通过 helper 写入，动作引用配置和快捷任务配置的创建、更新、启停、灰度和删除不得直接调用 `current_store.audit()` 或写配置集合，必须通过 repository 单记录写入或 MemoryStore fallback 同步审计。
 - 草案任务台必须支持待确认、失败、已采纳、已修改筛选，并展示采纳率、处理率、用户修改率、继续编辑入口和来源链路入口；列表与详情弹窗的“继续编辑”统一按草案 ID 生成 `/assistant?draft_id=...`，助手页按 `draft_id` 加载草案卡，来源链路继续独立跳转执行诊断。
 - 前端主页面按 hooks 和组件拆分，消息气泡、草案卡、引用选择、运行状态和 Composer 保持独立边界。
 

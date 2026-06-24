@@ -271,6 +271,28 @@ class AssistantReferenceError(Exception):
         self.message = message
 
 
+def assistant_reference_audit_event(
+    current_store: Any,
+    *,
+    event_type: str,
+    actor_id: str,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": current_store.new_id("audit"),
+        "event_type": event_type,
+        "actor_id": actor_id,
+        "ai_task_id": None,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "payload": payload or {},
+        "sequence": len(_memory_list(current_store, "audit_events")) + 1,
+        "created_at": _now_iso(),
+    }
+
+
 def list_assistant_action_reference_configs_response(
     *,
     current_store: Any | None = None,
@@ -307,7 +329,8 @@ def create_assistant_action_reference_config_response(
         }
     )
     _ensure_assistant_action_config_scope_unique(current_store, record)
-    audit_event = current_store.audit(
+    audit_event = assistant_reference_audit_event(
+        current_store,
         event_type="assistant_action_reference_config.created",
         actor_id=user["id"],
         subject_type="assistant_action_reference_config",
@@ -345,7 +368,8 @@ def patch_assistant_action_reference_config_response(
         }
     )
     _ensure_assistant_action_config_scope_unique(current_store, record)
-    audit_event = current_store.audit(
+    audit_event = assistant_reference_audit_event(
+        current_store,
         event_type="assistant_action_reference_config.updated",
         actor_id=user["id"],
         subject_type="assistant_action_reference_config",
@@ -372,7 +396,8 @@ def set_assistant_action_reference_config_status_response(
         payload={"enabled": enabled},
         user=user,
     )
-    audit_event = current_store.audit(
+    audit_event = assistant_reference_audit_event(
+        current_store,
         event_type="assistant_action_reference_config.status_changed",
         actor_id=user["id"],
         subject_type="assistant_action_reference_config",
@@ -402,7 +427,8 @@ def update_assistant_action_reference_config_rollout_response(
         },
         user=user,
     )
-    audit_event = current_store.audit(
+    audit_event = assistant_reference_audit_event(
+        current_store,
         event_type="assistant_action_reference_config.rollout_changed",
         actor_id=user["id"],
         subject_type="assistant_action_reference_config",
@@ -424,7 +450,8 @@ def delete_assistant_action_reference_config_response(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     existing = _require_assistant_action_config(current_store, config_id=config_id)
-    audit_event = current_store.audit(
+    audit_event = assistant_reference_audit_event(
+        current_store,
         event_type="assistant_action_reference_config.deleted",
         actor_id=user["id"],
         subject_type="assistant_action_reference_config",
@@ -436,7 +463,11 @@ def delete_assistant_action_reference_config_response(
     if callable(delete_record):
         delete_record(config_id, audit_event=audit_event)
     else:
-        getattr(current_store, "assistant_action_reference_configs", {}).pop(config_id, None)
+        _memory_collection(current_store, "assistant_action_reference_configs").pop(
+            config_id,
+            None,
+        )
+        _persist_audit_event(current_store, audit_event)
     return _public_assistant_action_config(existing)
 
 
@@ -1373,7 +1404,10 @@ def _save_assistant_action_config(
     if callable(save_record):
         save_record(record, audit_event=audit_event)
         return
-    current_store.assistant_action_reference_configs[record["id"]] = record
+    _memory_collection(current_store, "assistant_action_reference_configs")[
+        str(record["id"])
+    ] = record
+    _persist_audit_event(current_store, audit_event)
 
 
 def _persist_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
@@ -1381,6 +1415,24 @@ def _persist_audit_event(current_store: Any, audit_event: dict[str, Any]) -> Non
     save_events = getattr(repository, "save_audit_events", None)
     if callable(save_events):
         save_events({"audit_events": [audit_event]})
+        return
+    _memory_list(current_store, "audit_events").append(audit_event)
+
+
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
 
 
 def _assistant_action_config_audit_payload(

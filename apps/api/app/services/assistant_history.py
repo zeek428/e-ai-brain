@@ -30,6 +30,14 @@ def assistant_uses_repository_context(current_store: Any) -> bool:
     return getattr(current_store, "repository", None) is not None
 
 
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
 def assistant_conversations_response(
     current_store: MemoryStore,
     *,
@@ -355,7 +363,9 @@ def ensure_assistant_conversation(
                 conversation.setdefault(key, value)
             conversation["updated_at"] = now
             if not assistant_uses_repository_context(current_store):
-                current_store.assistant_conversations[conversation_id] = conversation
+                _memory_collection(current_store, "assistant_conversations")[
+                    conversation_id
+                ] = conversation
             return conversation
         resolved_id = conversation_id
     else:
@@ -373,7 +383,9 @@ def ensure_assistant_conversation(
             for key, value in signature_fields.items():
                 conversation.setdefault(key, value)
             if not assistant_uses_repository_context(current_store):
-                current_store.assistant_conversations[conversation["id"]] = conversation
+                _memory_collection(current_store, "assistant_conversations")[
+                    str(conversation["id"])
+                ] = conversation
             return conversation
         resolved_id = current_store.new_id("conversation")
     conversation = {
@@ -388,7 +400,7 @@ def ensure_assistant_conversation(
         **signature_fields,
     }
     if not assistant_uses_repository_context(current_store):
-        current_store.assistant_conversations[resolved_id] = conversation
+        _memory_collection(current_store, "assistant_conversations")[resolved_id] = conversation
     return conversation
 
 
@@ -560,7 +572,7 @@ def append_assistant_message(
         if message[optional_key] is None:
             message.pop(optional_key)
     if not assistant_uses_repository_context(current_store):
-        current_store.assistant_messages[message["id"]] = message
+        _memory_collection(current_store, "assistant_messages")[str(message["id"])] = message
     conversation["last_message_at"] = now
     conversation["message_count"] = int(conversation.get("message_count") or 0) + 1
     conversation["updated_at"] = now
