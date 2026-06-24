@@ -38,6 +38,7 @@ import {
   fetchPluginConnections,
   fetchResultWriteRecords,
   fetchProductGitRepositories,
+  fetchScheduledJobCatalog,
   fetchScheduledJobTemplates,
   fetchScheduledJobRunObservability,
   fetchScheduledJobRuns,
@@ -59,6 +60,7 @@ import {
   type ResultWriteRecord,
   type ScheduledJobRecord,
   type ScheduledJobDryRunResult,
+  type ScheduledJobCatalogRecord,
   type ScheduledJobResultAction,
   type ScheduledJobRunObservability,
   type ScheduledJobRunRecord,
@@ -88,6 +90,7 @@ import {
 } from './components/scheduledJobRunTraceHelpers';
 import {
   cloneResultActions,
+  aiProcessingRequiredJobTypes,
   codeInspectionBuiltinRuleOptions,
   codeInspectionIgnoreRuleOptions,
   codeInspectionResultActionOptions,
@@ -96,12 +99,10 @@ import {
   codeInspectionUsesNativeScan,
   connectionEnvironmentOptions,
   defaultCodeInspectionResultActions,
-  executionModeLabelByValue,
   executionModeOptions,
   hasRequiredFormValue,
   initialScheduledJobPageTab,
   isCodeInspectionPluginAction,
-  jobTypeLabelByValue,
   jobTypeOptions,
   multiIdsFromScheduledJob,
   nativeCodeInspectionScanMode,
@@ -114,7 +115,6 @@ import {
   requiresAiAssembly,
   resultActionLabelByValue,
   runTriggerTypeLabelByValue,
-  scheduleTypeLabelByValue,
   scheduleTypeOptions,
   scheduledJobAssistantDraftModifiedFields,
   scheduledJobConfigWithOrchestration,
@@ -151,12 +151,12 @@ function requiredForJobTypes(jobTypes: string[], message: string) {
   });
 }
 
-function requiredForPluginResource(message: string) {
+function requiredForPluginResource(jobTypes: string[], message: string) {
   return ({ getFieldValue }: { getFieldValue: (field: string) => unknown }) => ({
     validator(_: unknown, value: unknown) {
       const jobType = String(getFieldValue('job_type') ?? '');
       if (
-        pluginRequiredJobTypes.includes(jobType)
+        jobTypes.includes(jobType)
         && !codeInspectionUsesNativeScan(jobType, getFieldValue('config_json'))
         && !hasRequiredFormValue(value)
       ) {
@@ -167,11 +167,11 @@ function requiredForPluginResource(message: string) {
   });
 }
 
-function requiredForAiAssembly(message: string) {
+function requiredForAiAssembly(aiRequiredJobTypes: string[], message: string) {
   return ({ getFieldValue }: { getFieldValue: (field: string) => unknown }) => ({
     validator(_: unknown, value: unknown) {
       if (
-        requiresAiAssembly(getFieldValue('job_type'), getFieldValue('execution_mode'))
+        requiresAiAssembly(getFieldValue('job_type'), getFieldValue('execution_mode'), aiRequiredJobTypes)
         && !hasRequiredFormValue(value)
       ) {
         return Promise.reject(new Error(message));
@@ -181,8 +181,11 @@ function requiredForAiAssembly(message: string) {
   });
 }
 
-function resultActionLabels(actions?: ScheduledJobResultAction[]) {
-  const labels = (actions ?? []).map((action) => resultActionLabelByValue.get(action.type) ?? action.type);
+function resultActionLabels(
+  actions?: ScheduledJobResultAction[],
+  labelMap: Map<string, string> = resultActionLabelByValue,
+) {
+  const labels = (actions ?? []).map((action) => labelMap.get(action.type) ?? action.type);
   return labels.join('、');
 }
 
@@ -241,6 +244,7 @@ export default function ScheduledJobsPage() {
   const [testingConnectionId, setTestingConnectionId] = useState<string | undefined>();
   const [dryRunResult, setDryRunResult] = useState<ScheduledJobDryRunResult | undefined>();
   const [dryRunning, setDryRunning] = useState(false);
+  const [jobCatalog, setJobCatalog] = useState<ScheduledJobCatalogRecord | undefined>();
   const selectedConnectionEnvironment = Form.useWatch('connection_environment', form);
   const selectedPluginConnectionIds = Form.useWatch('plugin_connection_ids', form);
   const selectedPluginActionIds = Form.useWatch('plugin_action_ids', form);
@@ -257,6 +261,110 @@ export default function ScheduledJobsPage() {
   const selectedConfigJsonRecord = useMemo(
     () => recordValue(selectedConfigJson) ?? {},
     [selectedConfigJson],
+  );
+  const jobTypeSelectOptions = useMemo(
+    () => (jobCatalog?.job_types?.length
+      ? jobCatalog.job_types.map((option) => ({ label: option.label, value: option.value }))
+      : jobTypeOptions),
+    [jobCatalog],
+  );
+  const jobTypeLabelMap = useMemo(
+    () => new Map(jobTypeSelectOptions.map((option) => [option.value, option.label])),
+    [jobTypeSelectOptions],
+  );
+  const executionModeSelectOptions = useMemo(
+    () => (jobCatalog?.execution_modes?.length ? jobCatalog.execution_modes : executionModeOptions),
+    [jobCatalog],
+  );
+  const executionModeLabelMap = useMemo(
+    () => new Map(executionModeSelectOptions.map((option) => [option.value, option.label])),
+    [executionModeSelectOptions],
+  );
+  const scheduleTypeSelectOptions = useMemo(
+    () => (jobCatalog?.schedule_types?.length ? jobCatalog.schedule_types : scheduleTypeOptions),
+    [jobCatalog],
+  );
+  const scheduleTypeLabelMap = useMemo(
+    () => new Map(scheduleTypeSelectOptions.map((option) => [option.value, option.label])),
+    [scheduleTypeSelectOptions],
+  );
+  const connectionEnvironmentSelectOptions = useMemo(
+    () => (jobCatalog?.connection_environments?.length
+      ? jobCatalog.connection_environments
+      : connectionEnvironmentOptions),
+    [jobCatalog],
+  );
+  const productRequiredTypes = useMemo(
+    () => (jobCatalog?.required_job_types?.product?.length
+      ? jobCatalog.required_job_types.product
+      : productRequiredJobTypes),
+    [jobCatalog],
+  );
+  const pluginRequiredTypes = useMemo(
+    () => (jobCatalog?.required_job_types?.plugin_resource?.length
+      ? jobCatalog.required_job_types.plugin_resource
+      : pluginRequiredJobTypes),
+    [jobCatalog],
+  );
+  const aiProcessingRequiredTypes = useMemo(
+    () => (jobCatalog?.required_job_types?.ai_processing?.length
+      ? jobCatalog.required_job_types.ai_processing
+      : aiProcessingRequiredJobTypes),
+    [jobCatalog],
+  );
+  const codeInspectionScanModeSelectOptions = useMemo(
+    () => (jobCatalog?.code_inspection?.scan_modes?.length
+      ? jobCatalog.code_inspection.scan_modes
+      : codeInspectionScanModeOptions),
+    [jobCatalog],
+  );
+  const codeInspectionScannerEngineSelectOptions = useMemo(
+    () => (jobCatalog?.code_inspection?.scanner_engines?.length
+      ? jobCatalog.code_inspection.scanner_engines
+      : codeInspectionScannerEngineOptions),
+    [jobCatalog],
+  );
+  const codeInspectionBuiltinRuleSelectOptions = useMemo(
+    () => (jobCatalog?.code_inspection?.builtin_rules?.length
+      ? jobCatalog.code_inspection.builtin_rules
+      : codeInspectionBuiltinRuleOptions),
+    [jobCatalog],
+  );
+  const codeInspectionIgnoreRuleSelectOptions = useMemo(
+    () => (jobCatalog?.code_inspection?.ignore_rules?.length
+      ? jobCatalog.code_inspection.ignore_rules
+      : codeInspectionIgnoreRuleOptions),
+    [jobCatalog],
+  );
+  const codeInspectionResultActionSelectOptions = useMemo(
+    () => (jobCatalog?.code_inspection?.result_actions?.length
+      ? jobCatalog.code_inspection.result_actions
+      : codeInspectionResultActionOptions),
+    [jobCatalog],
+  );
+  const severityThresholdSelectOptions = useMemo(
+    () => (jobCatalog?.code_inspection?.severity_thresholds?.length
+      ? jobCatalog.code_inspection.severity_thresholds
+      : severityThresholdOptions),
+    [jobCatalog],
+  );
+  const defaultCodeInspectionActions = useMemo(
+    () => (jobCatalog?.code_inspection?.default_result_actions?.length
+      ? cloneResultActions(jobCatalog.code_inspection.default_result_actions)
+      : cloneResultActions(defaultCodeInspectionResultActions)),
+    [jobCatalog],
+  );
+  const codeInspectionResultActionLabelMap = useMemo(
+    () => new Map(codeInspectionResultActionSelectOptions.map((option) => [option.value, option.label])),
+    [codeInspectionResultActionSelectOptions],
+  );
+  const pluginResourceRuleFactory = useCallback(
+    (message: string) => requiredForPluginResource(pluginRequiredTypes, message),
+    [pluginRequiredTypes],
+  );
+  const aiAssemblyRuleFactory = useCallback(
+    (message: string) => requiredForAiAssembly(aiProcessingRequiredTypes, message),
+    [aiProcessingRequiredTypes],
   );
   const selectedRepositoryId = recordStringValue(selectedConfigJsonRecord, 'repository_id');
   const selectedCodeInspectionUsesNativeScan = codeInspectionUsesNativeScan(
@@ -397,10 +505,10 @@ export default function ScheduledJobsPage() {
   const selectedRunJobType = snapshotStringValue(selectedRunConfigSnapshot, 'job_type');
   const selectedRunExecutionMode = snapshotStringValue(selectedRunConfigSnapshot, 'execution_mode');
   const selectedRunJobTypeLabel = selectedRunJobType
-    ? jobTypeLabelByValue.get(selectedRunJobType) ?? selectedRunJobType
+    ? jobTypeLabelMap.get(selectedRunJobType) ?? selectedRunJobType
     : '-';
   const selectedRunExecutionModeLabel = selectedRunExecutionMode
-    ? executionModeLabelByValue.get(selectedRunExecutionMode) ?? selectedRunExecutionMode
+    ? executionModeLabelMap.get(selectedRunExecutionMode) ?? selectedRunExecutionMode
     : '-';
   const selectedRunAgentLabel =
     snapshotStringValue(selectedRun?.resolved_agent_snapshot, 'name')
@@ -614,9 +722,9 @@ export default function ScheduledJobsPage() {
       .filter(Boolean);
     const jobType = String(selectedJobType ?? '');
     const nativeCodeScan = codeInspectionUsesNativeScan(jobType, selectedConfigJsonRecord);
-    const connectionRequired = pluginRequiredJobTypes.includes(jobType) && !nativeCodeScan;
-    const actionRequired = pluginRequiredJobTypes.includes(jobType) && !nativeCodeScan;
-    const aiRequired = requiresAiAssembly(selectedJobType, selectedExecutionMode);
+    const connectionRequired = pluginRequiredTypes.includes(jobType) && !nativeCodeScan;
+    const actionRequired = pluginRequiredTypes.includes(jobType) && !nativeCodeScan;
+    const aiRequired = requiresAiAssembly(selectedJobType, selectedExecutionMode, aiProcessingRequiredTypes);
     const dataStatus = nativeCodeScan
       ? '本地扫描'
       : selectedConnections.length > 0
@@ -640,7 +748,9 @@ export default function ScheduledJobsPage() {
     ]);
     const actionDetails = [
       ...selectedActions.map((action, index) => `${index + 1}. ${action.name}`),
-      normalizedResultActions.length ? resultActionLabels(normalizedResultActions) : undefined,
+      normalizedResultActions.length
+        ? resultActionLabels(normalizedResultActions, codeInspectionResultActionLabelMap)
+        : undefined,
     ].filter((detail): detail is string => Boolean(detail));
 
     return [
@@ -700,6 +810,8 @@ export default function ScheduledJobsPage() {
     ];
   }, [
     agentById,
+    aiProcessingRequiredTypes,
+    codeInspectionResultActionLabelMap,
     connectionTestResult,
     knowledgeDocumentById,
     modelGatewayConfigById,
@@ -707,6 +819,7 @@ export default function ScheduledJobsPage() {
     normalizedSelectedPluginConnectionIds,
     pluginActionById,
     pluginConnectionById,
+    pluginRequiredTypes,
     selectedAgentId,
     selectedConfigJsonRecord,
     selectedExecutionMode,
@@ -794,7 +907,7 @@ export default function ScheduledJobsPage() {
       const templateConfigJson = templatePayloadRecordValue(template, 'config_json') ?? {};
       const nativeCodeScan = codeInspectionUsesNativeScan(jobType, templateConfigJson);
       const executionMode = templatePayloadString(template, 'execution_mode') ?? 'deterministic';
-      const aiRequired = requiresAiAssembly(jobType, executionMode);
+      const aiRequired = requiresAiAssembly(jobType, executionMode, aiProcessingRequiredTypes);
       form.setFieldsValue({
         agent_id: aiRequired ? agentId : undefined,
         config_json: templateConfigJson,
@@ -825,6 +938,7 @@ export default function ScheduledJobsPage() {
     },
     [
       agents,
+      aiProcessingRequiredTypes,
       findActionForTemplate,
       findConnectionForAction,
       form,
@@ -846,6 +960,7 @@ export default function ScheduledJobsPage() {
         nextRuns,
         nextRunObservability,
         nextJobTemplates,
+        nextJobCatalog,
         nextPluginActions,
         nextPluginConnections,
         nextProducts,
@@ -859,6 +974,7 @@ export default function ScheduledJobsPage() {
           fetchScheduledJobRuns(),
           fetchScheduledJobRunObservability(),
           fetchScheduledJobTemplates(),
+          fetchScheduledJobCatalog().catch(() => undefined),
           fetchPluginActions(),
           fetchPluginConnections(),
           fetchActiveProductOptions(),
@@ -871,6 +987,9 @@ export default function ScheduledJobsPage() {
       setRuns(nextRuns);
       setRunObservability(nextRunObservability);
       setJobTemplates(nextJobTemplates);
+      if (nextJobCatalog) {
+        setJobCatalog(nextJobCatalog);
+      }
       setPluginActions(nextPluginActions);
       setPluginConnections(nextPluginConnections);
       setProducts(nextProducts);
@@ -1077,7 +1196,7 @@ export default function ScheduledJobsPage() {
       });
       const jobType = values.job_type ?? 'user_feedback_insight_extract';
       const executionMode = values.execution_mode ?? 'ai_generated';
-      const aiRequired = requiresAiAssembly(jobType, executionMode);
+      const aiRequired = requiresAiAssembly(jobType, executionMode, aiProcessingRequiredTypes);
       const enrichedValues = {
         ...values,
         agent_id: aiRequired ? values.agent_id ?? agents[0]?.id : values.agent_id,
@@ -1156,7 +1275,7 @@ export default function ScheduledJobsPage() {
       plugin_connection_id: nativeCodeScan ? undefined : primaryConnectionId,
       plugin_connection_ids: nativeCodeScan ? [] : pluginConnectionIds,
       product_id: job.product_id ?? undefined,
-      result_actions: job.result_actions?.length ? job.result_actions : defaultCodeInspectionResultActions,
+      result_actions: job.result_actions?.length ? job.result_actions : defaultCodeInspectionActions,
       schedule_type: job.schedule_type ?? 'manual',
       skill_ids: job.skill_ids ?? [],
       source_system: job.source_system ?? 'ai-brain',
@@ -1252,7 +1371,7 @@ export default function ScheduledJobsPage() {
         values.job_type === 'code_repository_inspection'
           ? values.result_actions?.length
             ? values.result_actions
-            : templatePayloadResultActions(selectedTemplate) ?? cloneResultActions(defaultCodeInspectionResultActions)
+            : templatePayloadResultActions(selectedTemplate) ?? cloneResultActions(defaultCodeInspectionActions)
           : [],
       skill_ids: values.skill_ids ?? [],
     };
@@ -1438,7 +1557,7 @@ export default function ScheduledJobsPage() {
                     dataIndex: 'job_type',
                     title: '类型',
                     width: 190,
-                    render: (value) => ellipsisText(jobTypeLabelByValue.get(String(value)) ?? String(value ?? '')),
+                    render: (value) => ellipsisText(jobTypeLabelMap.get(String(value)) ?? String(value ?? '')),
                   },
                   {
                     dataIndex: 'plugin_connection_id',
@@ -1463,7 +1582,7 @@ export default function ScheduledJobsPage() {
                     title: 'AI执行',
                     width: 300,
                     render: (_, row) => {
-                      const modeLabel = executionModeLabelByValue.get(String(row.execution_mode)) ?? String(row.execution_mode ?? '-');
+                      const modeLabel = executionModeLabelMap.get(String(row.execution_mode)) ?? String(row.execution_mode ?? '-');
                       const config = row.model_gateway_config_id
                         ? modelGatewayConfigById.get(String(row.model_gateway_config_id))
                         : undefined;
@@ -1486,7 +1605,10 @@ export default function ScheduledJobsPage() {
                       const actionLabels = multiIdsFromScheduledJob(row, 'plugin_action_ids', 'plugin_action_id').map(
                         (actionId) => pluginActionById.get(actionId)?.name ?? actionId,
                       );
-                      const resultActions = resultActionLabels(row.result_actions as ScheduledJobResultAction[]);
+                      const resultActions = resultActionLabels(
+                        row.result_actions as ScheduledJobResultAction[],
+                        codeInspectionResultActionLabelMap,
+                      );
                       return ellipsisText([...actionLabels, resultActions].filter(Boolean).join(' / '));
                     },
                   },
@@ -1495,7 +1617,7 @@ export default function ScheduledJobsPage() {
                     title: '调度',
                     width: 180,
                     render: (value, row) => {
-                      const scheduleLabel = scheduleTypeLabelByValue.get(String(value)) ?? String(value ?? '-');
+                      const scheduleLabel = scheduleTypeLabelMap.get(String(value)) ?? String(value ?? '-');
                       const scheduleValue = row.cron_expression || (row.interval_seconds ? `${row.interval_seconds}s` : undefined);
                       return ellipsisText([scheduleLabel, scheduleValue].filter(Boolean).join(' · '));
                     },
@@ -1733,7 +1855,7 @@ export default function ScheduledJobsPage() {
             <Input />
           </Form.Item>
           <ScheduledJobBasicInfoSection
-            jobTypeOptions={jobTypeOptions}
+            jobTypeOptions={jobTypeSelectOptions}
             onJobTypeChange={(value) => {
               if (value === 'code_repository_inspection') {
                 form.setFieldsValue({
@@ -1748,7 +1870,7 @@ export default function ScheduledJobsPage() {
                   plugin_connection_ids: [],
                   result_actions: form.getFieldValue('result_actions')?.length
                     ? form.getFieldValue('result_actions')
-                    : cloneResultActions(defaultCodeInspectionResultActions),
+                    : cloneResultActions(defaultCodeInspectionActions),
                 });
               }
             }}
@@ -1762,20 +1884,20 @@ export default function ScheduledJobsPage() {
               label: `${product.name} (${product.code})`,
               value: product.id,
             }))}
-            productRequiredRule={requiredForJobTypes(productRequiredJobTypes, '请选择产品')}
+            productRequiredRule={requiredForJobTypes(productRequiredTypes, '请选择产品')}
           />
           <ScheduledJobDataConnectionSection
-            connectionEnvironmentOptions={connectionEnvironmentOptions}
+            connectionEnvironmentOptions={connectionEnvironmentSelectOptions}
             filteredPluginConnections={filteredPluginConnections}
             onConnectionEnvironmentChange={handleConnectionEnvironmentChange}
             onPluginConnectionChange={handlePluginConnectionChange}
-            requiredForPluginResource={requiredForPluginResource}
+            requiredForPluginResource={pluginResourceRuleFactory}
             usesNativeScan={selectedCodeInspectionUsesNativeScan}
           />
           {selectedJobType === 'code_repository_inspection' ? (
             <ScheduledJobCodeRepositorySection
-              builtinRuleOptions={codeInspectionBuiltinRuleOptions}
-              ignoreRuleOptions={codeInspectionIgnoreRuleOptions}
+              builtinRuleOptions={codeInspectionBuiltinRuleSelectOptions}
+              ignoreRuleOptions={codeInspectionIgnoreRuleSelectOptions}
               loadingRepositories={productRepositoriesLoading}
               onRepositoryChange={handleCodeInspectionRepositoryChange}
               onScanModeChange={(value) => {
@@ -1790,30 +1912,30 @@ export default function ScheduledJobsPage() {
                 }
               }}
               repositories={productRepositories}
-              scanModeOptions={codeInspectionScanModeOptions}
-              scannerEngineOptions={codeInspectionScannerEngineOptions}
+              scanModeOptions={codeInspectionScanModeSelectOptions}
+              scannerEngineOptions={codeInspectionScannerEngineSelectOptions}
               selectedRepositoryDefaultBranch={selectedRepositoryDefaultBranch}
-              severityThresholdOptions={severityThresholdOptions}
+              severityThresholdOptions={severityThresholdSelectOptions}
             />
           ) : null}
           <ScheduledJobAiExecutionSection
             agents={agents}
-            executionModeOptions={executionModeOptions}
+            executionModeOptions={executionModeSelectOptions}
             knowledgeDocuments={knowledgeDocuments}
             modelGatewayConfigs={modelGatewayConfigs}
-            requiredForAiAssembly={requiredForAiAssembly}
+            requiredForAiAssembly={aiAssemblyRuleFactory}
             skills={skills}
           />
           <ScheduledJobActionConfigSection
-            codeInspectionResultActionOptions={codeInspectionResultActionOptions}
+            codeInspectionResultActionOptions={codeInspectionResultActionSelectOptions}
             isCodeInspectionJob={selectedJobType === 'code_repository_inspection'}
             pluginActions={pluginActions}
-            requiredForPluginResource={requiredForPluginResource}
-            severityThresholdOptions={severityThresholdOptions}
+            requiredForPluginResource={pluginResourceRuleFactory}
+            severityThresholdOptions={severityThresholdSelectOptions}
             usesNativeScan={selectedCodeInspectionUsesNativeScan}
             writeStrategyLabelFromAction={writeStrategyLabelFromAction}
           />
-          <ScheduledJobScheduleConfigSection scheduleTypeOptions={scheduleTypeOptions} />
+          <ScheduledJobScheduleConfigSection scheduleTypeOptions={scheduleTypeSelectOptions} />
           {dryRunResult ? <ScheduledJobDryRunResultPanel result={dryRunResult} /> : null}
         </Form>
       </Modal>

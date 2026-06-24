@@ -71,6 +71,103 @@ function installScheduledJobsFetchMock(
     if (input === '/api/system/scheduled-jobs' && init?.method === 'GET') {
       return jsonResponse({ data: { items: jobs, total: jobs.length } });
     }
+    if (input === '/api/system/scheduled-job-catalog' && init?.method === 'GET') {
+      return jsonResponse({
+        data: {
+          code_inspection: {
+            builtin_rules: [
+              { label: '硬编码凭据', value: 'secrets' },
+              { label: '内部地址暴露', value: 'internal_addresses' },
+            ],
+            default_result_actions: [
+              { type: 'write_code_inspection_report' },
+              { severity_threshold: 'critical', type: 'create_bug_for_severe_findings' },
+              { severity_threshold: 'high', type: 'create_task_for_severe_findings' },
+              { channels: ['email'], recipients: [], type: 'send_notification' },
+            ],
+            default_scan_mode: 'sync_existing_alerts',
+            ignore_rules: [
+              { label: 'secrets.hardcoded_credential', value: 'secrets.hardcoded_credential' },
+              { label: 'metadata.internal_address_exposure', value: 'metadata.internal_address_exposure' },
+            ],
+            native_scan_mode: 'native_full_scan',
+            result_actions: [
+              { label: '写入代码巡检报告', value: 'write_code_inspection_report' },
+              { label: '严重问题自动创建 Bug', value: 'create_bug_for_severe_findings' },
+              { label: '严重问题自动创建整改任务', value: 'create_task_for_severe_findings' },
+              { label: '发送问题消息通知', value: 'send_notification' },
+            ],
+            scan_modes: [
+              { label: '本地完整扫描（clone 仓库）', value: 'native_full_scan' },
+              { label: '同步已有告警', value: 'sync_existing_alerts' },
+              { label: '触发平台扫描', value: 'trigger_platform_scan' },
+            ],
+            scanner_engines: [
+              { label: '内置规则', value: 'builtin' },
+              { label: 'gitleaks 密钥扫描', value: 'gitleaks' },
+            ],
+            severity_thresholds: [
+              { label: 'critical', value: 'critical' },
+              { label: 'high', value: 'high' },
+              { label: 'medium', value: 'medium' },
+            ],
+          },
+          connection_environments: [
+            { label: '默认', value: 'default' },
+            { label: '开发', value: 'dev' },
+            { label: '测试', value: 'test' },
+            { label: '预发', value: 'staging' },
+            { label: '生产', value: 'prod' },
+            { label: '沙箱', value: 'sandbox' },
+          ],
+          execution_modes: [
+            { label: '不调用 AI', value: 'deterministic' },
+            { label: 'AI 辅助', value: 'ai_assisted' },
+            { label: 'AI 生成', value: 'ai_generated' },
+          ],
+          job_types: [
+            {
+              label: '代码仓库巡检（质量 / 安全 / 规范）',
+              requires_plugin_resource: true,
+              requires_product: true,
+              value: 'code_repository_inspection',
+            },
+            {
+              label: '用户反馈洞察抽取（取数 + AI 分析 + 写入）',
+              requires_ai_assembly: true,
+              requires_plugin_resource: true,
+              requires_product: true,
+              value: 'user_feedback_insight_extract',
+            },
+            {
+              label: '迭代规划建议生成',
+              requires_ai_assembly: true,
+              value: 'iteration_plan_suggestion_generate',
+            },
+            {
+              label: '线上日志 AI 分析',
+              requires_ai_assembly: true,
+              value: 'online_log_ai_analysis',
+            },
+            { label: '插件执行调用', requires_plugin_resource: true, value: 'plugin_action_invoke' },
+          ],
+          required_job_types: {
+            ai_processing: [
+              'iteration_plan_suggestion_generate',
+              'online_log_ai_analysis',
+              'user_feedback_insight_extract',
+            ],
+            plugin_resource: ['code_repository_inspection', 'plugin_action_invoke', 'user_feedback_insight_extract'],
+            product: ['code_repository_inspection', 'user_feedback_insight_extract'],
+          },
+          schedule_types: [
+            { label: '手动触发', value: 'manual' },
+            { label: 'Cron 定时', value: 'cron' },
+            { label: '固定间隔', value: 'interval' },
+          ],
+        },
+      });
+    }
     if (input === '/api/system/scheduled-job-templates' && init?.method === 'GET') {
       return jsonResponse({
         data: {

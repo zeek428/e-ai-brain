@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Added
+- 定时作业服务端 catalog/注册中心：新增 `/api/system/scheduled-job-catalog`，统一返回作业类型、必填规则、执行/调度模式、连接环境和代码巡检选项，前端新增/编辑弹窗优先使用服务端配置并保留静态降级。
 - 插件管理表单转换继续减重：连接/动作/Runner payload、请求预览、结果映射、schema 回填和助手草案回填抽到 `pluginFormTransformHelpers`，主页面只保留插件、连接、动作和 Runner 编排。
 - 执行诊断详情排障建议：详情页自动汇总失败、取消、运行中或排队节点，提供来源 ID 深链和“问 AI”入口，成功链路展示无失败节点提示。
 - 执行诊断来源 ID 深链：`GET /api/governance/execution-traces` 支持 `source_id` 按任一节点来源 ID 精准定位，前端 `/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情。

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.384 |
+| 功能版本 | v1.1.385 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.385 | 2026-06-24 | 新增 `GET /api/system/scheduled-job-catalog`，返回服务端作业类型、必填规则、调度/执行模式、连接环境和代码巡检选项，供定时作业页面和助手草案复用 | Codex |
 | v1.1.384 | 2026-06-24 | 执行诊断列表新增 `source_id` 查询参数，支持按任一链路节点来源 ID 精准定位；前端 `/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情 | Codex |
 | v1.1.383 | 2026-06-23 | 执行诊断 API 的 `source_type` 新增 `assistant_chat_run`，AI 助手聊天运行可作为链路根节点关联模型网关日志与审计事件 | Codex |
 | v1.1.382 | 2026-06-23 | 代码巡检治理概览 `sla` 补充整改任务覆盖率、已派生任务数、未派生任务数和最早未派生时间，页面展示整改任务覆盖率 | Codex |
@@ -729,6 +730,7 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | Plugins | GET | `/api/system/plugin-action-templates` | 查询官方动作场景模板目录；返回 GitHub 代码巡检、GitLab 代码巡检、邮箱通知发送、邮件收取、AI 执行器下达指令和执行器结果同步等模板，每个模板包含 `code/name/plugin_code/plugin_id/action_type/default_code/default_name/request_config/result_mapping/form_defaults/template_version`。MaxCompute 当前通过普通 HTTP 插件/连接和自定义动作维护，不作为官方动作模板返回。前端新增动作表单必须使用该目录动态生成场景选项，并按模板回填请求配置、Params/Headers、结果写入目标和 JSONPath 映射；AI 助手生成动作草案时必须携带 `template_code/template_version`；若服务端模板缺失，前端和 AI 助手只能提示模板缺失或要求刷新模板目录，不得硬编码生成官方动作兜底。 |
 | Plugins | GET | `/api/system/result-write-targets` | 查询结果写入目标注册表；返回 `items[]`，每项包含 `code/label/form_label/description/default_result_mapping/mapping_fields/supported_job_types`。首批目标为 `scheduled_job_result`、`user_feedback_insights`、`code_inspection_reports`、`email_notifications`；前端动作表单必须使用 `form_label` 生成下拉选项，使用 `default_result_mapping` 生成目标切换默认 JSON，使用 `mapping_fields[]` 动态渲染 JSONPath 字段；动作模板、试运行 `write_preview` 和运行详情目标标签应复用同一注册表定义。 |
 | Scheduler | GET | `/api/system/result-write-records` | 查询通用结果写入记录读模型；支持 `scheduled_job_run_id`、`scheduled_job_id`、`write_target`、`status`、`plugin_action_id` 查询参数。定时作业运行详情必须使用 `scheduled_job_run_id` 精确查询当前运行的最终写入反馈，避免同一作业多次运行混在一起。响应 `items[]` 由正式定时作业运行 `result_summary.execution_nodes.result_action` 以及未归属定时运行的动作调用日志聚合生成，每条包含 `id/write_target/write_target_label/status/source_type/scheduled_job_id/scheduled_job_name/scheduled_job_run_id/plugin_action_id/plugin_connection_id/plugin_invocation_log_id/records_imported/summary_fields/preview/feedback/created_at/updated_at`。`email_notifications` 的 `summary_fields` 返回 `subject/delivery_status/delivery_id/sample_records` 便于页面直接展示邮件主题、投递状态、消息 ID 和收件人摘要；未知未来写入目标允许按目标 code 查询并保留通用 `preview/feedback` JSON，不要求新增目标专属页面。 |
+| Scheduler | GET | `/api/system/scheduled-job-catalog` | 查询定时作业配置注册中心。需要 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`；响应返回 `job_types[]`、`required_job_types`、`execution_modes[]`、`schedule_types[]`、`connection_environments[]` 和 `code_inspection` 扫描/规则/结果动作选项。定时作业新增/编辑页、助手定时作业草案和相关测试必须优先使用该接口，静态前端常量仅作为接口不可用时的降级。 |
 | Plugins | GET | `/api/system/plugins` | 查询集成插件定义；系统会确保 `gitlab`、`github`、`email`、`ai_executor` 官方标准插件存在并返回 `is_system=true`。 |
 | Plugins | POST | `/api/system/plugins` | 创建自定义 HTTP/MCP 插件定义；`category` 必须使用约定枚举 `general/data_warehouse/devops/issue_tracking/observability/knowledge_base/collaboration/ai_service/business_system`，新建插件默认 `is_system=false`。 |
 | Plugins | PATCH | `/api/system/plugins/{plugin_id}` | 更新自定义插件名称、分类、协议、风险等级或状态；分类必须使用插件分类枚举，不允许自由文本；官方标准插件返回 `409 PLUGIN_STANDARD_PLUGIN_LOCKED`。 |
@@ -3476,6 +3478,7 @@ Skill 配置至少包含 `code`、`name`、`version`、`input_schema`、`output_
 定时系统作业：
 
 ```http
+GET /api/system/scheduled-job-catalog
 GET /api/system/scheduled-jobs?job_type=iteration_plan_suggestion_generate&enabled=true
 POST /api/system/scheduled-jobs
 PATCH /api/system/scheduled-jobs/scheduled_job_001
@@ -3483,6 +3486,8 @@ POST /api/system/scheduled-jobs/scheduled_job_001/run
 GET /api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_001&status=failed
 POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 ```
+
+`GET /api/system/scheduled-job-catalog` 是定时作业配置的服务端注册中心，要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`。响应字段包括：`job_types[]`（`value/label/category/default_execution_mode/requires_product/requires_plugin_resource/requires_ai_assembly`）、`required_job_types.product/plugin_resource/ai_processing`、`execution_modes[]`、`schedule_types[]`、`connection_environments[]`，以及 `code_inspection.native_scan_mode/default_scan_mode/scan_modes/scanner_engines/builtin_rules/ignore_rules/result_actions/severity_thresholds/default_result_actions`。前端新增/编辑弹窗、AI 助手定时作业草案和测试 mock 必须以该响应为首选来源；只有接口不可用时才允许使用本地静态选项降级，且降级不得覆盖服务端校验。
 
 创建定时作业示例：
 

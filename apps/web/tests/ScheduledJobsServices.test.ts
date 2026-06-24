@@ -8,6 +8,7 @@ import {
   fetchAiSkills,
   fetchCodeInspectionDetail,
   fetchCodeInspectionReports,
+  fetchScheduledJobCatalog,
   fetchScheduledJobRuns,
   fetchScheduledJobs,
   runScheduledJob,
@@ -97,6 +98,29 @@ describe('scheduled AI job service mappings', () => {
           },
         });
       }
+      if (input === '/api/system/scheduled-job-catalog' && init?.method === 'GET') {
+        return jsonResponse({
+          data: {
+            code_inspection: {
+              default_result_actions: [{ type: 'write_code_inspection_report' }],
+              native_scan_mode: 'native_full_scan',
+              scan_modes: [{ label: '本地完整扫描（clone 仓库）', value: 'native_full_scan' }],
+            },
+            job_types: [
+              {
+                label: '迭代规划建议生成',
+                requires_ai_assembly: true,
+                value: 'iteration_plan_suggestion_generate',
+              },
+            ],
+            required_job_types: {
+              ai_processing: ['iteration_plan_suggestion_generate'],
+              plugin_resource: [],
+              product: [],
+            },
+          },
+        });
+      }
       if (input === '/api/system/scheduled-jobs' && init?.method === 'POST') {
         return jsonResponse({ data: { id: 'scheduled_job_001', status: 'active' } });
       }
@@ -162,6 +186,15 @@ describe('scheduled AI job service mappings', () => {
       status: 'disabled',
     });
     await expect(fetchScheduledJobs()).resolves.toEqual([expect.objectContaining({ id: 'scheduled_job_001' })]);
+    await expect(fetchScheduledJobCatalog()).resolves.toMatchObject({
+      code_inspection: {
+        native_scan_mode: 'native_full_scan',
+      },
+      job_types: [expect.objectContaining({ value: 'iteration_plan_suggestion_generate' })],
+      required_job_types: {
+        ai_processing: ['iteration_plan_suggestion_generate'],
+      },
+    });
     await expect(
       createScheduledJob({
         job_type: 'iteration_plan_suggestion_generate',

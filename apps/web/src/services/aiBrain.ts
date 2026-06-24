@@ -5081,6 +5081,42 @@ export type ScheduledJobResultAction = {
   webhook_url?: string;
 };
 
+export type ScheduledJobCatalogOption = {
+  label: string;
+  value: string;
+};
+
+export type ScheduledJobCatalogJobType = ScheduledJobCatalogOption & {
+  category?: string;
+  default_execution_mode?: string;
+  requires_ai_assembly?: boolean;
+  requires_plugin_resource?: boolean;
+  requires_product?: boolean;
+};
+
+export type ScheduledJobCatalogRecord = {
+  code_inspection?: {
+    builtin_rules?: ScheduledJobCatalogOption[];
+    default_result_actions?: ScheduledJobResultAction[];
+    default_scan_mode?: string;
+    ignore_rules?: ScheduledJobCatalogOption[];
+    native_scan_mode?: string;
+    result_actions?: ScheduledJobCatalogOption[];
+    scan_modes?: ScheduledJobCatalogOption[];
+    scanner_engines?: ScheduledJobCatalogOption[];
+    severity_thresholds?: ScheduledJobCatalogOption[];
+  };
+  connection_environments?: ScheduledJobCatalogOption[];
+  execution_modes?: ScheduledJobCatalogOption[];
+  job_types?: ScheduledJobCatalogJobType[];
+  required_job_types?: {
+    ai_processing?: string[];
+    plugin_resource?: string[];
+    product?: string[];
+  };
+  schedule_types?: ScheduledJobCatalogOption[];
+};
+
 export type ScheduledJobTemplateWizardStepRecord = {
   description?: string;
   key: string;
@@ -6115,6 +6151,11 @@ export async function fetchScheduledJobTemplates(): Promise<ScheduledJobTemplate
     { token },
   );
   return response.items;
+}
+
+export async function fetchScheduledJobCatalog(): Promise<ScheduledJobCatalogRecord> {
+  const token = requireAccessToken();
+  return apiRequest<ScheduledJobCatalogRecord>('/api/system/scheduled-job-catalog', { token });
 }
 
 export async function generateScheduledJobTemplateFromRun(runId: string): Promise<ScheduledJobTemplateRecord> {

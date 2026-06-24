@@ -338,9 +338,13 @@ export function codeInspectionUsesNativeScan(jobType: unknown, configJson: unkno
   );
 }
 
-export function requiresAiAssembly(jobType: unknown, executionMode: unknown): boolean {
+export function requiresAiAssembly(
+  jobType: unknown,
+  executionMode: unknown,
+  requiredJobTypes: string[] = aiProcessingRequiredJobTypes,
+): boolean {
   return (
-    aiProcessingRequiredJobTypes.includes(String(jobType ?? ''))
+    requiredJobTypes.includes(String(jobType ?? ''))
     || ['ai_assisted', 'ai_generated'].includes(String(executionMode ?? ''))
   );
 }

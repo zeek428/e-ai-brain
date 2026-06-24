@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.512 |
+| 功能版本 | v1.1.513 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.513 | 2026-06-24 | 定时作业新增服务端 catalog/注册中心：作业类型、执行方式、调度方式、连接环境、代码巡检扫描/规则/结果动作和必填规则由 `/api/system/scheduled-job-catalog` 返回，前端新增/编辑弹窗优先使用服务端配置并保留静态降级 | Codex |
 | v1.1.512 | 2026-06-24 | 定时作业前端表单转换继续组件化：作业类型选项、扫描配置选项、模板 payload 解析、助手草案回填、配置归一化和路由参数解析抽到 `scheduledJobFormTransformHelpers`，主页面继续收敛为作业配置、运行列表和详情编排 | Codex |
 | v1.1.511 | 2026-06-24 | 插件管理前端表单转换继续组件化：连接/动作/Runner 表单 payload、请求预览、结果映射、schema 回填和助手草案回填抽到 `pluginFormTransformHelpers`，主页面只保留插件、连接、动作和 Runner 编排 | Codex |
 | v1.1.510 | 2026-06-24 | 执行诊断详情补齐排障建议：详情顶部汇总失败、取消、运行中或排队节点，提供来源 ID 深链和“问 AI”入口，帮助从统一 Trace 直接进入后续诊断 | Codex |
@@ -1451,6 +1452,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 **核心规则**:
 - `scheduled_jobs` 是调度定义，`scheduled_job_runs` 是每次执行实例，`collector_runs` 是采集/导入台账；定时作业不得直接绕过现有业务 service 写表。
 - `job_type` 首批支持 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。
+- 作业类型、执行方式、调度方式、连接环境、代码巡检扫描方式、扫描引擎、内置规则、忽略规则、结果动作、严重级别阈值和作业必填规则以 `ScheduledJobCatalog` 服务端注册中心为准，通过 `GET /api/system/scheduled-job-catalog` 输出给任务中心页面和 AI 助手草案；前端 `scheduledJobFormTransformHelpers` 中的静态常量只能作为接口不可用时的降级，不得作为新增作业类型或规则扩展的权威来源。
 - `execution_mode` 分为 `deterministic`、`ai_assisted`、`ai_generated`：确定性作业可写真实指标；AI 辅助作业可写摘要、风险信号或看板派生结果；AI 生成作业只能写候选建议或待确认结果。前端和服务端都必须按执行模式识别 AI 装配要求，任一作业选择 `ai_assisted` 或 `ai_generated` 时均需 active AI 模型、AI角色和 Skill。
 - `iteration_plan_suggestion_generate`、`online_log_ai_analysis` 和 `user_feedback_insight_extract` 属于 AI 必选链路作业，服务端创建/修改时必须把有效执行模式归一为 `ai_generated`，并要求 active AI角色（Agent）、active Skill（可来自 AI角色默认 Skill）和 active 模型网关（可来自 AI角色默认模型网关或作业覆盖项）。
 - 调度 worker 每分钟或按配置 tick，查询 `enabled=true AND next_run_at <= now()` 的作业，并通过数据库行级更新设置 `lease_owner` / `lease_expires_at` 抢占执行权；锁过期后其他 worker 可接管，已创建的运行实例不得被覆盖。
@@ -1470,6 +1472,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 | `ScheduledJobRunner` | 装配运行上下文、创建/更新 collector run、调用 handler、处理重试和超时。 |
 | `ScheduledJobHandler` | 每类 job 的业务执行器，复用现有 DevOps、用户洞察、迭代规划、看板和生命周期 service。 |
 | `ScheduledJobTemplateCatalog` | 提供官方定时作业模板目录，声明模板版本、默认 payload、推荐场景和资源选择规则；任务中心页面与 AI 助手草案共用该目录生成周反馈洞察、代码巡检和邮件摘要作业配置。 |
+| `ScheduledJobCatalog` | 提供作业配置注册中心，声明作业类型、必填资源规则、执行/调度枚举、连接环境和代码巡检扫描/规则/结果动作选项；定时作业 service 复用该 catalog 做后端校验，前端仅消费 catalog 渲染选项和校验提示。 |
 | `ScheduledJobExecutionEngine` | 构造执行期节点追踪和摘要，包括数据连接、Skill/AI 处理、结果动作、代码巡检报告写入、插件写入预览和是否需要 AI 处理判断；作业运行事务、审计和持久化仍由定时作业服务编排。 |
 | `AiExecutorRunnerService` | 管理系统默认执行器与隔离 Runner：系统默认执行器 `ai_executor_runner_system_default` 使用 `model_gateway` 执行类型，直接调用平台默认 AI 大模型并返回结构化执行结果，不参与 Runner Token、心跳或任务认领；本地 Runner 负责注册、心跳、Token 校验和轮换、任务队列、OpenClaw/Codex/Claude/Hermes 执行类型校验、任务认领、日志追加、管理员取消、超时熔断和完成回写；管理员侧测试接口只读取 Runner 配置与健康投影，返回诊断项并写轻量审计，不下发真实任务；完成回写不得执行外部命令，只更新任务状态、插件日志、定时作业运行、collector run 和作业最近运行字段。 |
 | `ScheduledJobObservabilityService` | 聚合运行健康概览、失败原因、慢运行和 AI/插件/动作写入指标；只读取运行实例、作业定义和模型日志元数据，不参与作业执行。 |

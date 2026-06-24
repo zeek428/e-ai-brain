@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, store
 from app.core.trace import envelope, get_trace_id
+from app.services.scheduled_job_catalog import list_scheduled_job_catalog_response
 from app.services.scheduled_job_observability import scheduled_job_run_observability_response
 from app.services.scheduled_job_templates import list_scheduled_job_templates_response
 from app.services.scheduled_jobs import (
@@ -292,6 +293,17 @@ def list_scheduled_job_templates(
 ) -> dict[str, Any]:
     return envelope(
         list_scheduled_job_templates_response(current_store=store(request), user=user),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/scheduled-job-catalog")
+def list_scheduled_job_catalog(
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    return envelope(
+        list_scheduled_job_catalog_response(user=user),
         get_trace_id(request),
     )
 

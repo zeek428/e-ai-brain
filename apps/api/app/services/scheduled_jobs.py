@@ -54,6 +54,16 @@ from app.services.plugins import (
     resolve_plugin_snapshot,
     result_write_preview,
 )
+from app.services.scheduled_job_catalog import (
+    AI_REQUIRED_SCHEDULED_JOB_TYPES,
+    CODE_INSPECTION_SCAN_MODES,
+    DEFAULT_CODE_INSPECTION_SCAN_MODE,
+    SCHEDULED_JOB_EXECUTION_MODES,
+    SCHEDULED_JOB_MANAGE_PERMISSION,
+    SCHEDULED_JOB_RUN_PERMISSION,
+    SCHEDULED_JOB_SCHEDULE_TYPES,
+    SCHEDULED_JOB_TYPES,
+)
 from app.services.scheduled_job_execution_engine import (
     ScheduledJobExecutionEngine as JobExecutionEngine,
 )
@@ -67,38 +77,10 @@ from app.services.user_feedback import (
 
 AI_SKILL_STATUSES = {"active", "draft", "disabled"}
 AI_AGENT_STATUSES = {"active", "disabled"}
-SCHEDULED_JOB_TYPES = {
-    "dashboard_snapshot_refresh",
-    "code_repository_inspection",
-    "gitlab_daily_code_metric_collect",
-    "iteration_plan_suggestion_generate",
-    "jenkins_release_collect",
-    "lifecycle_context_refresh",
-    "online_log_ai_analysis",
-    "online_log_metric_collect",
-    "pending_attribution_retry",
-    "plugin_action_invoke",
-    "user_feedback_collect",
-    "user_feedback_insight_extract",
-    "user_usage_metric_collect",
-}
-AI_REQUIRED_SCHEDULED_JOB_TYPES = {
-    "iteration_plan_suggestion_generate",
-    "online_log_ai_analysis",
-    "user_feedback_insight_extract",
-}
-SCHEDULED_JOB_EXECUTION_MODES = {"ai_assisted", "ai_generated", "deterministic"}
-SCHEDULED_JOB_SCHEDULE_TYPES = {"cron", "interval", "manual"}
 SCHEDULED_JOB_RUN_STATUSES = {"cancelled", "failed", "queued", "running", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TERMINAL_STATUSES = {"cancelled", "failed", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TRIGGER_TYPES = {"manual", "manual_rerun", "scheduler"}
 USER_FEEDBACK_INSIGHT_WRITE_TARGETS = {"scheduled_job_result", "user_feedback_insights"}
-CODE_INSPECTION_SCAN_MODES = {
-    "native_full_scan",
-    "sync_existing_alerts",
-    "trigger_platform_scan",
-}
-DEFAULT_CODE_INSPECTION_SCAN_MODE = "sync_existing_alerts"
 DEFAULT_DATA_CONNECTION_POLICY = {
     "failure_policy": "fail_fast",
     "merge_strategy": "append_json_arrays",
@@ -119,10 +101,6 @@ def ensure_non_blank(value: str | None, field: str) -> str:
 def ensure_enum(value: str | None, allowed_values: set[str], field: str) -> None:
     if value is None or value not in allowed_values:
         raise api_error(400, "VALIDATION_ERROR", f"Unsupported {field}")
-
-
-SCHEDULED_JOB_MANAGE_PERMISSION = "system.scheduled_jobs.manage"
-SCHEDULED_JOB_RUN_PERMISSION = "system.scheduled_jobs.run"
 
 
 def require_admin(user: dict[str, Any]) -> None:

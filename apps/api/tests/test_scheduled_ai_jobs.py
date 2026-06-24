@@ -164,6 +164,48 @@ def test_scheduled_job_templates_are_admin_managed_and_versioned():
     ]
 
 
+def test_scheduled_job_catalog_exposes_server_owned_job_type_rules():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    reviewer_headers = auth_headers("reviewer@example.com", "reviewer123")
+
+    forbidden = client.get("/api/system/scheduled-job-catalog", headers=reviewer_headers)
+    assert forbidden.status_code == 403
+
+    response = client.get("/api/system/scheduled-job-catalog", headers=admin_headers)
+    assert response.status_code == 200
+    catalog = response.json()["data"]
+    by_type = {item["value"]: item for item in catalog["job_types"]}
+
+    assert by_type["code_repository_inspection"]["label"] == "代码仓库巡检（质量 / 安全 / 规范）"
+    assert by_type["code_repository_inspection"]["requires_product"] is True
+    assert by_type["code_repository_inspection"]["requires_plugin_resource"] is True
+    assert by_type["user_feedback_insight_extract"]["requires_ai_assembly"] is True
+    assert catalog["required_job_types"] == {
+        "ai_processing": [
+            "iteration_plan_suggestion_generate",
+            "online_log_ai_analysis",
+            "user_feedback_insight_extract",
+        ],
+        "plugin_resource": [
+            "code_repository_inspection",
+            "plugin_action_invoke",
+            "user_feedback_insight_extract",
+        ],
+        "product": ["code_repository_inspection", "user_feedback_insight_extract"],
+    }
+    assert catalog["code_inspection"]["native_scan_mode"] == "native_full_scan"
+    assert catalog["code_inspection"]["default_scan_mode"] == "sync_existing_alerts"
+    assert catalog["code_inspection"]["default_result_actions"][0] == {
+        "type": "write_code_inspection_report",
+    }
+    assert {item["value"] for item in catalog["execution_modes"]} == {
+        "ai_assisted",
+        "ai_generated",
+        "deterministic",
+    }
+
+
 def test_successful_scheduled_job_run_can_generate_template_and_trace_graph():
     app.state.store.reset()
     admin_headers = auth_headers()
