@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.522 |
+| 功能版本 | v1.1.523 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.523 | 2026-06-24 | 定时作业配置列表接入 PostgreSQL read model 分页：`GET /api/system/scheduled-jobs` 支持名称、关键字、产品、来源、类型、启停、状态筛选和服务端排序，旧全量返回仅作为兼容路径 | Codex |
 | v1.1.522 | 2026-06-24 | 执行诊断中心纳入结果写入记录节点：定时作业运行和插件调用链路自动派生 `result_write_record`，可按写入记录 ID 反查同一条 Trace 并确认产物写入状态 | Codex |
 | v1.1.521 | 2026-06-24 | 代码巡检 finding 新增误报忽略审批闭环：报告详情展示逐条审批状态，支持提交忽略申请和批准/驳回，审批通过同步 suppression 统计与审计事件 | Codex |
 | v1.1.520 | 2026-06-24 | 代码巡检治理概览新增规则包与误报治理聚合：dashboard 返回 `rule_governance`，页面展示最近报告规则/扫描器版本、版本不一致提示、规则/扫描器版本分布、suppression 总量和过滤原因分布 | Codex |
@@ -1462,6 +1463,7 @@ LongMemoryGraph.query(entity_or_relation, user_id, filters)
 
 **核心规则**:
 - `scheduled_jobs` 是调度定义，`scheduled_job_runs` 是每次执行实例，`collector_runs` 是采集/导入台账；定时作业不得直接绕过现有业务 service 写表。
+- 定时作业配置列表属于管理型列表，`GET /api/system/scheduled-jobs` 必须优先走 PostgreSQL read model 完成名称/关键字、产品、来源系统、作业类型、启停和状态筛选，以及 `next_run_at/created_at/updated_at/name/job_type/status/enabled/last_*` 服务端排序与分页；未带分页参数的全量返回仅作为旧客户端和测试 helper 兼容，不能作为新增页面默认读路径。
 - `job_type` 首批支持 `gitlab_daily_code_metric_collect`、`jenkins_release_collect`、`online_log_metric_collect`、`user_usage_metric_collect`、`user_feedback_collect`、`user_feedback_insight_extract`、`code_repository_inspection`、`online_log_ai_analysis`、`iteration_plan_suggestion_generate`、`dashboard_snapshot_refresh`、`lifecycle_context_refresh`、`plugin_action_invoke` 和 `pending_attribution_retry`。
 - 作业类型、执行方式、调度方式、连接环境、代码巡检扫描方式、扫描引擎、内置规则、忽略规则、结果动作、严重级别阈值和作业必填规则以 `ScheduledJobCatalog` 服务端注册中心为准，通过 `GET /api/system/scheduled-job-catalog` 输出给任务中心页面和 AI 助手草案；前端 `scheduledJobFormTransformHelpers` 中的静态常量只能作为接口不可用时的降级，不得作为新增作业类型或规则扩展的权威来源。
 - `execution_mode` 分为 `deterministic`、`ai_assisted`、`ai_generated`：确定性作业可写真实指标；AI 辅助作业可写摘要、风险信号或看板派生结果；AI 生成作业只能写候选建议或待确认结果。前端和服务端都必须按执行模式识别 AI 装配要求，任一作业选择 `ai_assisted` 或 `ai_generated` 时均需 active AI 模型、AI角色和 Skill。

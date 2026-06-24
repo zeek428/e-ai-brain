@@ -33,15 +33,18 @@ def test_management_list_p95_targets_are_explicit():
     expected_targets = {
         "ai_tasks": 300,
         "audit_events": 500,
+        "assistant_action_drafts": 400,
         "bugs": 300,
         "code_inspections": 400,
         "devops_operational_metrics": 500,
+        "execution_traces": 500,
         "knowledge_documents": 400,
         "model_gateway_configs": 300,
         "product_versions": 300,
         "products": 300,
         "requirements": 300,
         "roles": 300,
+        "scheduled_jobs": 400,
         "users": 300,
         "user_insights": 400,
     }

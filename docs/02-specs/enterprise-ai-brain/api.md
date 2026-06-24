@@ -3496,6 +3496,8 @@ POST /api/system/scheduled-job-runs/scheduled_job_run_001/cancel
 
 `GET /api/system/scheduled-job-catalog` 是定时作业配置的服务端注册中心，要求 `system.scheduled_jobs.manage` 或 `system.scheduled_jobs.run`。响应字段包括：`job_types[]`（`value/label/category/default_execution_mode/requires_product/requires_plugin_resource/requires_ai_assembly`）、`required_job_types.product/plugin_resource/ai_processing`、`execution_modes[]`、`schedule_types[]`、`connection_environments[]`，以及 `code_inspection.native_scan_mode/default_scan_mode/scan_modes/scanner_engines/builtin_rules/ignore_rules/result_actions/severity_thresholds/default_result_actions`。前端新增/编辑弹窗、AI 助手定时作业草案和测试 mock 必须以该响应为首选来源；只有接口不可用时才允许使用本地静态选项降级，且降级不得覆盖服务端校验。
 
+`GET /api/system/scheduled-jobs` 支持 `page/page_size/sort_by/sort_order` 服务端分页排序，`page_size` 最大 100，`sort_order` 为 `asc|desc`，`sort_by` 允许 `next_run_at/created_at/updated_at/name/job_type/status/enabled/last_run_at/last_success_at/last_failure_at`；筛选参数包括 `enabled`、`job_type`、`status`、`product_id`、`source_system`、`name` 和 `keyword`。传入分页参数时生产路径必须通过 PostgreSQL read model 返回 `items/page/page_size/total/query/performance`，避免前端全量拉取后本地过滤；未传分页参数时保留旧 `items/total` 全量返回兼容，但不作为新增管理页面默认读路径。
+
 创建定时作业示例：
 
 ```json

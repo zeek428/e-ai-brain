@@ -1,10 +1,12 @@
 from io import BytesIO
+from types import SimpleNamespace
 from zipfile import ZipFile
 from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
 import app.services.scheduled_jobs as scheduled_jobs_service
+from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.security import hash_password
 from app.core.users import MemoryUserRepository
 from app.main import app
@@ -56,6 +58,180 @@ def create_feedback(headers: dict[str, str], product_id: str) -> dict:
         },
         headers=headers,
     ).json()["data"]
+
+
+def test_scheduled_job_repository_supports_paged_filtered_queries():
+    class CapturingCursor:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple | None]] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple | None = None) -> None:
+            self.calls.append((query, params))
+
+        def fetchone(self):
+            return (4,)
+
+        def fetchall(self):
+            return []
+
+    class CapturingConnection:
+        def __init__(self, cursor: CapturingCursor) -> None:
+            self._cursor = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def cursor(self):
+            return self._cursor
+
+    cursor = CapturingCursor()
+    repository = ScheduledAiJobReadRepository(lambda: CapturingConnection(cursor))
+
+    total = repository.count_scheduled_jobs(
+        enabled=True,
+        job_type="code_repository_inspection",
+        keyword="quality",
+        name="巡检",
+        product_id="product_ai_brain",
+        source_system="ai-brain",
+        status="active",
+    )
+    page_items = repository.list_scheduled_jobs_page(
+        enabled=True,
+        job_type="code_repository_inspection",
+        keyword="quality",
+        limit=10,
+        name="巡检",
+        offset=20,
+        product_id="product_ai_brain",
+        sort_by="created_at",
+        sort_order="asc",
+        source_system="ai-brain",
+        status="active",
+    )
+
+    assert total == 4
+    assert page_items == []
+    count_query, count_params = cursor.calls[0]
+    page_query, page_params = cursor.calls[1]
+    assert "SELECT count(*) FROM scheduled_jobs" in count_query
+    assert "enabled = %s" in count_query
+    assert "job_type = %s" in count_query
+    assert "product_id = %s" in count_query
+    assert "source_system = %s" in count_query
+    assert "status = %s" in count_query
+    assert "lower(name) LIKE %s" in count_query
+    assert "lower(id) LIKE %s" in count_query
+    assert count_params == (
+        True,
+        "code_repository_inspection",
+        "product_ai_brain",
+        "ai-brain",
+        "active",
+        "%巡检%",
+        "%quality%",
+        "%quality%",
+        "%quality%",
+        "%quality%",
+        "%quality%",
+    )
+    assert "ORDER BY created_at ASC NULLS FIRST, id ASC" in page_query
+    assert "LIMIT %s OFFSET %s" in page_query
+    assert page_params[-2:] == (10, 20)
+
+
+def test_scheduled_job_list_uses_repository_pagination_when_requested():
+    class PagedRepository:
+        def __init__(self) -> None:
+            self.count_filters: dict | None = None
+            self.page_filters: dict | None = None
+
+        def list_ai_agents(self, **_kwargs):
+            return []
+
+        def list_ai_skills(self, **_kwargs):
+            return []
+
+        def list_scheduled_job_runs(self, **_kwargs):
+            return []
+
+        def list_scheduled_jobs(self, **_kwargs):
+            raise AssertionError("full scheduled job list fallback should not be used")
+
+        def count_scheduled_jobs(self, **kwargs):
+            self.count_filters = kwargs
+            return 1
+
+        def list_scheduled_jobs_page(self, **kwargs):
+            self.page_filters = kwargs
+            return [
+                {
+                    "config_json": {},
+                    "created_at": "2026-06-24T00:00:00+00:00",
+                    "enabled": True,
+                    "execution_mode": "deterministic",
+                    "id": "scheduled_job_paged",
+                    "job_type": "code_repository_inspection",
+                    "name": "代码质量巡检",
+                    "next_run_at": "2026-06-25T02:00:00+00:00",
+                    "product_id": "product_ai_brain",
+                    "schedule_type": "cron",
+                    "source_system": "ai-brain",
+                    "status": "active",
+                    "updated_at": "2026-06-24T00:00:00+00:00",
+                }
+            ]
+
+    repository = PagedRepository()
+    current_store = SimpleNamespace(repository=repository, scheduled_jobs={})
+
+    payload = scheduled_jobs_service.list_scheduled_jobs_response(
+        current_store=current_store,
+        enabled=True,
+        job_type="code_repository_inspection",
+        keyword="quality",
+        name="巡检",
+        page=3,
+        page_size=10,
+        product_id="product_ai_brain",
+        sort_by="created_at",
+        sort_order="asc",
+        source_system="ai-brain",
+        started_at=None,
+        status="active",
+    )
+
+    assert payload["total"] == 1
+    assert payload["page"] == 3
+    assert payload["page_size"] == 10
+    assert payload["items"][0]["id"] == "scheduled_job_paged"
+    assert payload["query"]["name"] == "scheduled_jobs"
+    assert payload["performance"]["p95_target_ms"] == 400
+    assert repository.count_filters == {
+        "enabled": True,
+        "job_type": "code_repository_inspection",
+        "keyword": "quality",
+        "name": "巡检",
+        "product_id": "product_ai_brain",
+        "source_system": "ai-brain",
+        "status": "active",
+    }
+    assert repository.page_filters == {
+        **repository.count_filters,
+        "limit": 10,
+        "offset": 20,
+        "sort_by": "created_at",
+        "sort_order": "asc",
+    }
 
 
 def test_scheduled_job_runner_execution_node_keeps_system_executor_model_metadata():

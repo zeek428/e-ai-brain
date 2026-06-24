@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Query, Request
@@ -272,6 +273,14 @@ def list_scheduled_jobs(
     request: Request,
     enabled: bool | None = None,
     job_type: str | None = None,
+    keyword: str | None = None,
+    name: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    product_id: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    source_system: str | None = None,
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
@@ -280,6 +289,15 @@ def list_scheduled_jobs(
             current_store=store(request),
             enabled=enabled,
             job_type=job_type,
+            keyword=keyword,
+            name=name,
+            page=page,
+            page_size=page_size,
+            product_id=product_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            source_system=source_system,
+            started_at=perf_counter(),
             status=status,
         ),
         get_trace_id(request),

@@ -13,6 +13,7 @@ from urllib.request import urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.api.deps import api_error, require_any_permission, require_permissions
+from app.core.listing import add_list_observability, sort_list_items
 from app.services.code_inspections import (
     execute_code_inspection_result_actions,
     sync_product_git_repository_store,
@@ -80,6 +81,18 @@ AI_AGENT_STATUSES = {"active", "disabled"}
 SCHEDULED_JOB_RUN_STATUSES = {"cancelled", "failed", "queued", "running", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TERMINAL_STATUSES = {"cancelled", "failed", "skipped", "succeeded"}
 SCHEDULED_JOB_RUN_TRIGGER_TYPES = {"manual", "manual_rerun", "scheduler"}
+SCHEDULED_JOB_SORT_FIELDS = {
+    "created_at",
+    "enabled",
+    "job_type",
+    "last_failure_at",
+    "last_run_at",
+    "last_success_at",
+    "name",
+    "next_run_at",
+    "status",
+    "updated_at",
+}
 USER_FEEDBACK_INSIGHT_WRITE_TARGETS = {"scheduled_job_result", "user_feedback_insights"}
 DEFAULT_DATA_CONNECTION_POLICY = {
     "failure_policy": "fail_fast",
@@ -1026,27 +1039,139 @@ def list_scheduled_jobs_response(
     current_store: Any,
     enabled: bool | None,
     job_type: str | None,
-    status: str | None,
+    keyword: str | None = None,
+    name: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    product_id: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    source_system: str | None = None,
+    started_at: float | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     if job_type is not None:
         ensure_enum(job_type, SCHEDULED_JOB_TYPES, "job_type")
+    if status is not None:
+        ensure_enum(status, {"active", "disabled"}, "status")
+    if sort_order not in {"asc", "desc"}:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_order")
+    resolved_sort_by = sort_by or "next_run_at"
+    if resolved_sort_by not in SCHEDULED_JOB_SORT_FIELDS:
+        raise api_error(400, "VALIDATION_ERROR", "Unsupported sort_by")
+    resolved_started_at = started_at or perf_counter()
+    with_pagination = page is not None or page_size is not None
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    filters = {
+        "enabled": enabled,
+        "job_type": job_type,
+        "keyword": keyword,
+        "name": name,
+        "product_id": product_id,
+        "source_system": source_system,
+        "status": status,
+    }
+    query_filters = {
+        "enabled": enabled,
+        "job_type": job_type,
+        "keyword": keyword,
+        "name": name,
+        "product_id": product_id,
+        "source_system": source_system,
+        "status": status,
+    }
+    repository = scheduled_jobs_query_repository(current_store)
+    if (
+        repository is not None
+        and with_pagination
+        and callable(getattr(repository, "count_scheduled_jobs", None))
+        and callable(getattr(repository, "list_scheduled_jobs_page", None))
+    ):
+        total = repository.count_scheduled_jobs(**query_filters)
+        items = [
+            scheduled_job_with_multi_refs(job)
+            for job in repository.list_scheduled_jobs_page(
+                **query_filters,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters=filters,
+            list_name="scheduled_jobs",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=resolved_started_at,
+        )
     sync_scheduled_job_store(
         current_store,
         enabled=enabled,
         job_type=job_type,
         status=status,
     )
+    normalized_keyword = str(keyword or "").strip().lower()
+    normalized_name = str(name or "").strip().lower()
     items = []
     for job in current_store.scheduled_jobs.values():
         if enabled is not None and job.get("enabled") is not enabled:
             continue
         if job_type is not None and job.get("job_type") != job_type:
             continue
+        if product_id is not None and job.get("product_id") != product_id:
+            continue
+        if source_system is not None and job.get("source_system") != source_system:
+            continue
         if status is not None and job.get("status") != status:
             continue
+        if normalized_name and normalized_name not in str(job.get("name") or "").lower():
+            continue
+        if normalized_keyword:
+            searchable = " ".join(
+                str(job.get(field) or "")
+                for field in ("id", "name", "job_type", "source_system", "product_id")
+            ).lower()
+            if normalized_keyword not in searchable:
+                continue
         items.append(scheduled_job_with_multi_refs(job))
-    items.sort(key=lambda item: (item.get("next_run_at") or "", item["id"]), reverse=True)
-    return {"items": items, "total": len(items)}
+    items = sort_list_items(
+        items,
+        allowed_fields=SCHEDULED_JOB_SORT_FIELDS,
+        default_sort_by="next_run_at",
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+    )
+    total = len(items)
+    payload: dict[str, Any] = {"items": items, "total": total}
+    if with_pagination:
+        payload = {
+            "items": items[
+                (resolved_page - 1) * resolved_page_size : resolved_page * resolved_page_size
+            ],
+            "page": resolved_page,
+            "page_size": resolved_page_size,
+            "total": total,
+        }
+    return add_list_observability(
+        payload,
+        filters=filters,
+        list_name="scheduled_jobs",
+        page=resolved_page if with_pagination else None,
+        page_size=resolved_page_size if with_pagination else None,
+        sort_by=resolved_sort_by,
+        sort_order=sort_order,
+        started_at=resolved_started_at,
+    )
 
 
 def scheduled_job_audit_payload(job: dict[str, Any]) -> dict[str, Any]:

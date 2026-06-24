@@ -1256,6 +1256,16 @@ export type ModelGatewayConfigListQuery = RemoteListQuery & {
   status?: string;
 };
 
+export type ScheduledJobListQuery = RemoteListQuery & {
+  enabled?: boolean;
+  jobType?: string;
+  keyword?: string;
+  name?: string;
+  productId?: string;
+  sourceSystem?: string;
+  status?: string;
+};
+
 export type RemoteListResult<Row> = {
   page: number;
   pageSize: number;
@@ -6204,11 +6214,40 @@ export async function updateAiAgent(agentId: string, payload: Partial<AiAgentRec
   });
 }
 
-export async function fetchScheduledJobs(): Promise<ScheduledJobRecord[]> {
+export async function fetchScheduledJobs(): Promise<ScheduledJobRecord[]>;
+export async function fetchScheduledJobs(
+  query: ScheduledJobListQuery,
+): Promise<RemoteListResult<ScheduledJobRecord>>;
+export async function fetchScheduledJobs(
+  query?: ScheduledJobListQuery,
+): Promise<ScheduledJobRecord[] | RemoteListResult<ScheduledJobRecord>> {
   const token = requireAccessToken();
-  const response = await apiRequest<ListResponse<ScheduledJobRecord>>('/api/system/scheduled-jobs', {
-    token,
-  });
+  const params = new URLSearchParams();
+  if (query) {
+    appendQueryParam(params, 'enabled', query.enabled);
+    appendQueryParam(params, 'job_type', query.jobType);
+    appendQueryParam(params, 'keyword', query.keyword);
+    appendQueryParam(params, 'name', query.name);
+    appendQueryParam(params, 'product_id', query.productId);
+    appendQueryParam(params, 'source_system', query.sourceSystem);
+    appendQueryParam(params, 'status', query.status);
+    appendRemoteListParams(params, query);
+  }
+  const queryString = params.toString();
+  const response = await apiRequest<ListResponse<ScheduledJobRecord>>(
+    queryString ? `/api/system/scheduled-jobs?${queryString}` : '/api/system/scheduled-jobs',
+    {
+      token,
+    },
+  );
+  if (query) {
+    return {
+      page: response.page ?? query.page ?? 1,
+      pageSize: response.page_size ?? query.pageSize ?? 10,
+      rows: response.items,
+      total: response.total,
+    };
+  }
   return response.items;
 }
 
@@ -7555,7 +7594,7 @@ export async function deleteManagementBug(bugId: string) {
   });
 }
 
-function appendQueryParam(params: URLSearchParams, key: string, value?: string | number) {
+function appendQueryParam(params: URLSearchParams, key: string, value?: boolean | number | string) {
   if (value === undefined || value === null || value === '') {
     return;
   }

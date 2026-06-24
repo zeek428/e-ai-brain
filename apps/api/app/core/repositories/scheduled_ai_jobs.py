@@ -5,6 +5,30 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Any
 
+SCHEDULED_JOB_SELECT = """
+id, name, job_type, source_system, product_id, schedule_type,
+cron_expression, interval_seconds, timezone, enabled,
+execution_mode, agent_id, skill_ids, model_gateway_config_id,
+config_json, max_retry_count, timeout_seconds, lock_ttl_seconds,
+status, next_run_at, last_run_at, last_success_at, last_failure_at,
+last_error_message, created_by, created_at, updated_at,
+plugin_action_id, plugin_connection_id, plugin_input_mapping,
+plugin_output_mapping, knowledge_document_ids, result_actions
+"""
+
+SCHEDULED_JOB_SORT_COLUMNS = {
+    "created_at": "created_at",
+    "enabled": "enabled",
+    "job_type": "job_type",
+    "last_failure_at": "last_failure_at",
+    "last_run_at": "last_run_at",
+    "last_success_at": "last_success_at",
+    "name": "lower(name)",
+    "next_run_at": "next_run_at",
+    "status": "status",
+    "updated_at": "updated_at",
+}
+
 
 def _json(value: Any, default: Any) -> str:
     if value is None:
@@ -102,17 +126,82 @@ class ScheduledAiJobReadRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
-                    SELECT id, name, job_type, source_system, product_id, schedule_type,
-                           cron_expression, interval_seconds, timezone, enabled,
-                           execution_mode, agent_id, skill_ids, model_gateway_config_id,
-                           config_json, max_retry_count, timeout_seconds, lock_ttl_seconds,
-                           status, next_run_at, last_run_at, last_success_at, last_failure_at,
-                           last_error_message, created_by, created_at, updated_at,
-                           plugin_action_id, plugin_connection_id, plugin_input_mapping,
-                           plugin_output_mapping, knowledge_document_ids, result_actions
+                    SELECT {SCHEDULED_JOB_SELECT}
                     FROM scheduled_jobs
                     {where}
                     ORDER BY next_run_at DESC NULLS LAST, id DESC
+                    """,
+                    tuple(params),
+                )
+                return [self._job_from_row(row) for row in cursor.fetchall()]
+
+    def count_scheduled_jobs(
+        self,
+        *,
+        enabled: bool | None = None,
+        job_type: str | None = None,
+        keyword: str | None = None,
+        name: str | None = None,
+        product_id: str | None = None,
+        source_system: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._job_where(
+            {
+                "enabled": enabled,
+                "job_type": job_type,
+                "product_id": product_id,
+                "source_system": source_system,
+                "status": status,
+            },
+            keyword=keyword,
+            name=name,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(f"SELECT count(*) FROM scheduled_jobs {where}", tuple(params))
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_scheduled_jobs_page(
+        self,
+        *,
+        enabled: bool | None = None,
+        job_type: str | None = None,
+        keyword: str | None = None,
+        limit: int,
+        name: str | None = None,
+        offset: int,
+        product_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        source_system: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._job_where(
+            {
+                "enabled": enabled,
+                "job_type": job_type,
+                "product_id": product_id,
+                "source_system": source_system,
+                "status": status,
+            },
+            keyword=keyword,
+            name=name,
+        )
+        sort_column = SCHEDULED_JOB_SORT_COLUMNS.get(sort_by, "next_run_at")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT {SCHEDULED_JOB_SELECT}
+                    FROM scheduled_jobs
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
                     """,
                     tuple(params),
                 )
@@ -597,6 +686,36 @@ class ScheduledAiJobReadRepository:
                 continue
             clauses.append(f"{field} = %s")
             params.append(value)
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _job_where(
+        self,
+        values: dict[str, Any],
+        *,
+        keyword: str | None,
+        name: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for field, value in values.items():
+            if value is None:
+                continue
+            clauses.append(f"{field} = %s")
+            params.append(value)
+        normalized_name = str(name or "").strip().lower()
+        if normalized_name:
+            clauses.append("lower(name) LIKE %s")
+            params.append(f"%{normalized_name}%")
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            probe = f"%{normalized_keyword}%"
+            clauses.append(
+                "("
+                "lower(id) LIKE %s OR lower(name) LIKE %s OR lower(job_type) LIKE %s "
+                "OR lower(source_system) LIKE %s OR lower(COALESCE(product_id, '')) LIKE %s"
+                ")"
+            )
+            params.extend([probe, probe, probe, probe, probe])
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
 
     def _skill_from_row(self, row: Any) -> dict[str, Any]:

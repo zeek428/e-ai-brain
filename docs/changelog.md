@@ -25,6 +25,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 定时作业配置列表接入 PostgreSQL read model 分页：`GET /api/system/scheduled-jobs` 支持名称、关键字、产品、来源、类型、启停、状态筛选和服务端排序，响应补充 `query/performance` 观测信息，旧全量返回仅作为兼容路径。
 - 代码巡检报告列表接入 PostgreSQL read model 分页：`GET /api/governance/code-inspections` 在生产路径按产品 scope、仓库、风险、状态、摘要和提交人完成数据库筛选、排序与分页，保留 MemoryStore 测试降级。
 - 代码巡检详情页增强：finding 列表新增忽略审批状态与治理操作列，表格横向滚动宽度扩展，避免问题、位置、建议和审批操作互相挤压。
 - 代码巡检治理概览增强：`/api/governance/code-inspections/dashboard` 新增 `rule_governance`，页面展示规则包版本、扫描器版本、版本不一致提示和 suppression 过滤原因分布。

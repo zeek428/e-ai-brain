@@ -26,6 +26,7 @@ LIST_P95_TARGETS_MS = {
     "products": 300,
     "roles": 300,
     "requirements": 300,
+    "scheduled_jobs": 400,
     "users": 300,
     "user_insights": 400,
 }

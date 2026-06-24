@@ -1123,6 +1123,56 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def count_scheduled_jobs(
+        self,
+        *,
+        enabled: bool | None = None,
+        job_type: str | None = None,
+        keyword: str | None = None,
+        name: str | None = None,
+        product_id: str | None = None,
+        source_system: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return self._scheduled_ai_job_read_repository.count_scheduled_jobs(
+            enabled=enabled,
+            job_type=job_type,
+            keyword=keyword,
+            name=name,
+            product_id=product_id,
+            source_system=source_system,
+            status=status,
+        )
+
+    def list_scheduled_jobs_page(
+        self,
+        *,
+        enabled: bool | None = None,
+        job_type: str | None = None,
+        keyword: str | None = None,
+        limit: int,
+        name: str | None = None,
+        offset: int,
+        product_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        source_system: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._scheduled_ai_job_read_repository.list_scheduled_jobs_page(
+            enabled=enabled,
+            job_type=job_type,
+            keyword=keyword,
+            limit=limit,
+            name=name,
+            offset=offset,
+            product_id=product_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            source_system=source_system,
+            status=status,
+        )
+
     def list_scheduled_job_runs(
         self,
         *,
