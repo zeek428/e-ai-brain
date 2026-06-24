@@ -5,6 +5,7 @@ from app.core.repositories.assistant_chat import AssistantChatReadRepository
 from app.core.repositories.audit import AuditReadRepository
 from app.core.repositories.brain_apps import BrainAppReadRepository
 from app.core.repositories.bugs import BugReadRepository
+from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.core.repositories.devops import DevopsReadRepository
 from app.core.repositories.git_review import GitReviewReadRepository
 from app.core.repositories.knowledge import KnowledgeReadRepository
@@ -1001,6 +1002,83 @@ def test_assistant_chat_record_writes_use_single_transaction(monkeypatch):
         ("message", {"assistant_message_atomic": message}),
     ]
     assert model_log_calls == [[model_log]]
+    assert audit_calls == [[audit_event]]
+
+
+def test_code_inspection_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    upsert_calls: list[tuple[str, dict]] = []
+    audit_calls: list[list[dict]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def record_upsert(name: str):
+        def _call(self, cursor, items):  # type: ignore[no-untyped-def]
+            upsert_calls.append((name, items))
+
+        return _call
+
+    monkeypatch.setattr(
+        CodeInspectionReadRepository,
+        "upsert_code_inspection_reports",
+        record_upsert("report"),
+    )
+    monkeypatch.setattr(
+        CodeInspectionReadRepository,
+        "upsert_code_inspection_findings",
+        record_upsert("finding"),
+    )
+    monkeypatch.setattr(
+        CodeInspectionReadRepository,
+        "upsert_code_inspection_notifications",
+        record_upsert("notification"),
+    )
+
+    repository = CodeInspectionReadRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+    )
+    report = {"id": "code_inspection_report_atomic"}
+    finding = {"id": "code_inspection_finding_atomic"}
+    notification = {"id": "code_inspection_notification_atomic"}
+    audit_event = {"id": "audit_code_inspection_atomic"}
+
+    repository.save_code_inspection_records(
+        report=report,
+        findings=[finding],
+        notifications=[notification],
+        audit_event=audit_event,
+    )
+
+    assert connect_calls == [{"autocommit": False}]
+    assert upsert_calls == [
+        ("report", {"code_inspection_report_atomic": report}),
+        ("finding", {"code_inspection_finding_atomic": finding}),
+        ("notification", {"code_inspection_notification_atomic": notification}),
+    ]
     assert audit_calls == [[audit_event]]
 
 

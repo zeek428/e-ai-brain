@@ -57,7 +57,7 @@ class CodeInspectionReadRepository:
         notifications: list[dict[str, Any]],
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_code_inspection_reports(cursor, {report["id"]: report})
                 self.upsert_code_inspection_findings(

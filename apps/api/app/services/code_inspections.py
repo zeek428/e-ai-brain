@@ -17,7 +17,6 @@ from app.core.listing import (
 )
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.bugs import create_bug_result
-from app.services.operational_records import record_audit_event, save_single_repository_record
 from app.services.plugins import json_path_value
 
 CODE_INSPECTION_ACTION_TYPES = {
@@ -59,6 +58,46 @@ OPEN_BUG_STATUSES = {"assigned", "fixed", "needs_info", "open", "reopened", "tri
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def record_audit_event(
+    current_store: Any,
+    *,
+    event_type: str,
+    actor_id: str,
+    subject_type: str,
+    subject_id: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    audit_events = getattr(current_store, "audit_events", None)
+    sequence = len(audit_events) + 1 if isinstance(audit_events, list) else 1
+    return {
+        "id": current_store.new_id("audit"),
+        "event_type": event_type,
+        "actor_id": actor_id,
+        "ai_task_id": None,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "payload": payload or {},
+        "sequence": sequence,
+        "created_at": now_iso(),
+    }
+
+
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
 
 
 def ensure_non_blank(value: str | None, field: str) -> str:
@@ -450,9 +489,9 @@ def sync_product_git_repository_store(current_store: Any, product_id: str | None
         return
     for git_repository in list_repositories(product_id, active_only=False):
         if git_repository.get("id") is not None:
-            current_store.product_git_repositories[str(git_repository["id"])] = dict(
-                git_repository
-            )
+            _memory_collection(current_store, "product_git_repositories")[
+                str(git_repository["id"])
+            ] = dict(git_repository)
 
 
 def previous_code_inspection_report(
@@ -634,9 +673,6 @@ def create_code_inspection_report_records(
         ),
         "updated_at": now,
     }
-    current_store.code_inspection_reports[report_id] = report
-    for finding in findings:
-        current_store.code_inspection_findings[finding["id"]] = finding
     audit_event = record_audit_event(
         current_store,
         event_type="code_inspection_report.created",
@@ -739,7 +775,6 @@ def create_bugs_for_findings(
         )
         if existing_bug_id is not None:
             finding["created_bug_id"] = existing_bug_id
-            current_store.code_inspection_findings[finding["id"]] = finding
             deduplicated_ids.append(existing_bug_id)
             continue
         payload = SimpleNamespace(
@@ -779,7 +814,6 @@ def create_bugs_for_findings(
         )
         created_ids.append(created["id"])
         finding["created_bug_id"] = created["id"]
-        current_store.code_inspection_findings[finding["id"]] = finding
     report["created_bug_ids"] = [
         *report.get("created_bug_ids", []),
         *created_ids,
@@ -788,7 +822,6 @@ def create_bugs_for_findings(
     report["committer_count"] = committer_count(findings)
     report["committer_summary"] = committer_summary(findings)
     report["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.code_inspection_reports[report["id"]] = report
     persist_code_inspection_records(
         current_store,
         report=report,
@@ -804,12 +837,13 @@ def persist_ai_task_record(
     audit_event: dict[str, Any],
     task: dict[str, Any],
 ) -> None:
-    save_single_repository_record(
-        current_store,
-        "save_ai_task_record",
-        task,
-        audit_event=audit_event,
-    )
+    repository = getattr(current_store, "repository", None)
+    save_record = getattr(repository, "save_ai_task_record", None)
+    if callable(save_record):
+        save_record(task, audit_event=audit_event)
+        return
+    _memory_collection(current_store, "ai_tasks")[str(task["id"])] = task
+    _memory_list(current_store, "audit_events").append(audit_event)
 
 
 def finding_task_input(finding: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
@@ -877,9 +911,7 @@ def create_tasks_for_findings(
             "updated_at": now,
             "version_id": None,
         }
-        current_store.ai_tasks[task_id] = task
         finding["created_task_id"] = task_id
-        current_store.code_inspection_findings[finding["id"]] = finding
         created_ids.append(task_id)
         audit_event = record_audit_event(
             current_store,
@@ -896,7 +928,6 @@ def create_tasks_for_findings(
         persist_ai_task_record(current_store, task=task, audit_event=audit_event)
     report["created_task_ids"] = [*report.get("created_task_ids", []), *created_ids]
     report["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.code_inspection_reports[report["id"]] = report
     persist_code_inspection_records(
         current_store,
         report=report,
@@ -943,12 +974,10 @@ def create_code_inspection_notifications(
             "target": target,
             "updated_at": now,
         }
-        current_store.code_inspection_notifications[notification_id] = notification
         notifications.append(notification)
         created_ids.append(notification_id)
     report["notification_ids"] = [*report.get("notification_ids", []), *created_ids]
     report["updated_at"] = datetime.now(UTC).isoformat()
-    current_store.code_inspection_reports[report["id"]] = report
     persist_code_inspection_records(
         current_store,
         report=report,
@@ -1942,10 +1971,6 @@ def _persist_code_inspection_suppression_change(
     notifications: list[dict[str, Any]],
     report: dict[str, Any],
 ) -> None:
-    if hasattr(current_store, "code_inspection_reports"):
-        current_store.code_inspection_reports[report["id"]] = report
-    if hasattr(current_store, "code_inspection_findings"):
-        current_store.code_inspection_findings[finding["id"]] = finding
     persist_code_inspection_records(
         current_store,
         audit_event=audit_event,
@@ -1987,7 +2012,8 @@ def request_code_inspection_finding_suppression_response(
     finding["suppression_reviewed_at"] = None
     finding["updated_at"] = timestamp
     report["updated_at"] = timestamp
-    audit_event = current_store.audit(
+    audit_event = record_audit_event(
+        current_store,
         actor_id=user["id"],
         event_type="code_inspection_finding_suppression.requested",
         payload={
@@ -2052,7 +2078,8 @@ def review_code_inspection_finding_suppression_response(
     finding["suppression_reviewed_at"] = timestamp
     finding["updated_at"] = timestamp
     report["updated_at"] = timestamp
-    audit_event = current_store.audit(
+    audit_event = record_audit_event(
+        current_store,
         actor_id=user["id"],
         event_type=(
             "code_inspection_finding_suppression.approved"
@@ -2101,3 +2128,12 @@ def persist_code_inspection_records(
             audit_event=audit_event,
         )
         return
+    _memory_collection(current_store, "code_inspection_reports")[str(report["id"])] = report
+    finding_collection = _memory_collection(current_store, "code_inspection_findings")
+    for finding in findings:
+        finding_collection[str(finding["id"])] = finding
+    notification_collection = _memory_collection(current_store, "code_inspection_notifications")
+    for notification in notifications:
+        notification_collection[str(notification["id"])] = notification
+    if audit_event is not None:
+        _memory_list(current_store, "audit_events").append(audit_event)

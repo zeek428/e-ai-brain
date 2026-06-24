@@ -30,6 +30,7 @@
 - 执行诊断列表和详情优先读取 `execution_trace_snapshots`，快照刷新必须在单个数据库事务中完成 upsert 与过期快照删除，短 TTL 内可复用快照降低重复查询开销；详情未命中关联 ID 时必须强制刷新后再返回 404，节点元数据必须脱敏；列表支持 `source_id` 按任一节点来源 ID 精准定位，前端深链命中唯一链路时自动打开详情；AI 助手草案、定时作业运行详情和代码巡检报告详情通过统一 `ExecutionTraceLink` 生成深链，代码巡检详情需提供巡检报告、来源运行和插件调用三个诊断入口；Runner 节点支持按 `source_type=ai_executor_runner` 和 Runner ID 下钻，任务节点通过 `assigned_runner` 边关联 Runner，节点只展示心跳、协议、工作区、健康状态和 token 是否配置，不暴露 `token_hash`；模型网关日志需吸附通过 subject、payload 或 `ai_task_id` 指向它的审计事件，按审计 ID 下钻应回到同一条模型调用链路；详情需汇总失败/运行中节点，提供来源 ID 深链和“问 AI”入口。
 - AI 助手聊天运行可作为执行诊断根节点，关联用户消息、助手消息、模型网关日志和审计事件；`source_id` 支持按 `assistant_message_id` 反查整条助手运行链路，详情只展示排障元数据，不展示完整对话、Prompt 或知识正文。
 - 代码巡检报告列表必须优先走 PostgreSQL read model，在数据库层完成产品 scope、仓库、风险、状态、摘要、提交人、排序和分页；MemoryStore 仅作为测试和降级路径。
+- 代码巡检报告、finding、通知、误报忽略审批和整改任务派生属于 DB-first 写路径：服务层不得直接写 `current_store.code_inspection_*` 或 `current_store.ai_tasks`；MemoryStore fallback 由 `persist_code_inspection_records` / `persist_ai_task_record` 承接，PostgreSQL 运行态的报告、finding、通知和审计必须在同一数据库事务中提交。
 - 代码巡检本地完整扫描需记录仓库、分支、提交、提交人、规则版本、扫描覆盖、质量门禁和 suppression 摘要。
 - 代码巡检报告详情中的 finding 可提交误报/忽略申请，审批状态按 `none/pending/approved/rejected` 流转；审批通过后同步报告 suppression 统计、规则治理概览和审计事件，不能只在前端隐藏问题。
 - 代码巡检治理概览必须展示规则包与误报治理，包含最近报告规则/扫描器版本、版本不一致提示、规则/扫描器版本分布、suppression 总量和 baseline/已接受风险/忽略项/严重级别阈值等过滤原因分布。
