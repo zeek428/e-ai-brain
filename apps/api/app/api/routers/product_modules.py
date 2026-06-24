@@ -20,7 +20,6 @@ from app.services.product_config_context import (
     product_module_has_related_records,
     record_audit_event,
     save_product_config_record,
-    uses_repository_context,
 )
 from app.services.product_module_listing import list_product_modules_response
 
@@ -104,8 +103,6 @@ def create_product_module(
         "status": payload.status,
         "display_order": payload.display_order,
     }
-    if not uses_repository_context(current_store):
-        current_store.product_modules[module_id] = module
     audit_event = record_audit_event(
         current_store,
         event_type="product_module.created",
@@ -160,8 +157,6 @@ def patch_product_module(
     if "status" in updates:
         ensure_enum(updates["status"], MODULE_STATUSES, "product module status")
     module = {**module, **updates}
-    if not uses_repository_context(current_store):
-        current_store.product_modules[module_id] = module
     audit_event = record_audit_event(
         current_store,
         event_type="product_module.updated",
@@ -195,8 +190,6 @@ def delete_product_module(
         module_code=str(module["code"]),
     ):
         raise api_error(409, "RESOURCE_IN_USE", "Product module still has related records")
-    if not uses_repository_context(current_store):
-        del current_store.product_modules[module_id]
     audit_event = record_audit_event(
         current_store,
         event_type="product_module.deleted",

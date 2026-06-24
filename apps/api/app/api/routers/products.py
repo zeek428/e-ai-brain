@@ -17,7 +17,6 @@ from app.services.product_config_context import (
     product_config_write_store,
     record_audit_event,
     save_product_config_record,
-    uses_repository_context,
 )
 from app.services.product_listing import PRODUCT_STATUSES, list_products_response
 
@@ -99,8 +98,6 @@ def create_product(
         "status": payload.status,
         "display_order": payload.display_order,
     }
-    if not uses_repository_context(current_store):
-        current_store.products[product_id] = product
     audit_event = record_audit_event(
         current_store,
         event_type="product.created",
@@ -164,8 +161,6 @@ def patch_product(
     if "status" in updates:
         ensure_enum(updates["status"], PRODUCT_STATUSES, "product status")
     product = {**product, **updates}
-    if not uses_repository_context(current_store):
-        current_store.products[product_id] = product
     audit_event = record_audit_event(
         current_store,
         event_type="product.updated",
@@ -211,11 +206,7 @@ def delete_product(
     ]:
         for item_id, item in list(collection.items()):
             if item.get("product_id") == product_id:
-                if not uses_repository_context(current_store):
-                    del collection[item_id]
                 delete_product_config_record(current_store, collection_name, item_id)
-    if not uses_repository_context(current_store):
-        del current_store.products[product_id]
     audit_event = record_audit_event(
         current_store,
         event_type="product.deleted",

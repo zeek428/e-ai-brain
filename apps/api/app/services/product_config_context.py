@@ -10,6 +10,15 @@ from app.api.deps import api_error
 from app.core.listing import list_datetime_timestamp, normalize_list_text
 from app.core.store import MemoryStore
 
+PRODUCT_CONFIG_COLLECTION_ATTRS = {
+    "product_git_repositories": "product_git_repositories",
+    "product_modules": "product_modules",
+    "product_version_branch_configs": "product_version_branch_configs",
+    "product_versions": "product_versions",
+    "products": "products",
+    "related_systems": "related_systems",
+}
+
 
 class ProductConfigRequestContext:
     def __init__(self, repository: Any) -> None:
@@ -299,17 +308,34 @@ def get_product_version_branch_config_record(
     return current_store.product_version_branch_configs.get(branch_config_id)
 
 
+def _memory_product_config_collection(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    attr_name = PRODUCT_CONFIG_COLLECTION_ATTRS.get(collection_name)
+    if attr_name is None:
+        raise ValueError(f"Unsupported product config collection: {collection_name}")
+    collection = getattr(current_store, attr_name)
+    if not isinstance(collection, dict):
+        raise TypeError(f"Product config collection is not mutable: {collection_name}")
+    return collection
+
+
 def save_product_config_record(
     current_store: Any,
     collection_name: str,
     record: dict[str, Any],
     *,
     audit_event: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     repository = runtime_repository(current_store)
     save_record = getattr(repository, "save_product_config_record", None)
-    if save_record is not None:
+    if callable(save_record):
         save_record(collection_name, record, audit_event=audit_event)
+        return True
+    if repository is None:
+        _memory_product_config_collection(current_store, collection_name)[record["id"]] = record
+    return False
 
 
 def delete_product_config_record(
@@ -318,11 +344,15 @@ def delete_product_config_record(
     record_id: str,
     *,
     audit_event: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     repository = runtime_repository(current_store)
     delete_record = getattr(repository, "delete_product_config_record", None)
-    if delete_record is not None:
+    if callable(delete_record):
         delete_record(collection_name, record_id, audit_event=audit_event)
+        return True
+    if repository is None:
+        _memory_product_config_collection(current_store, collection_name).pop(record_id, None)
+    return False
 
 
 def save_requirement_record(

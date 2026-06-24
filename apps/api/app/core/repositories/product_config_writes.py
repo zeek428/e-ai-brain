@@ -33,7 +33,7 @@ class ProductConfigWriteRepository:
         modules = payload.get("product_modules", {})
         repositories = payload.get("product_git_repositories", {})
         related_systems = payload.get("related_systems", {})
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 if self._delete_missing is not None:
                     self._delete_missing(cursor, "related_systems", related_systems)
@@ -71,7 +71,7 @@ class ProductConfigWriteRepository:
         upsert = upsert_by_collection.get(collection_name)
         if upsert is None:
             raise ValueError(f"Unsupported product config collection: {collection_name}")
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 upsert(cursor, {record["id"]: record})
                 if audit_event is not None and self._upsert_audit_events is not None:
@@ -87,7 +87,7 @@ class ProductConfigWriteRepository:
         table_name = PRODUCT_CONFIG_TABLES.get(collection_name)
         if table_name is None:
             raise ValueError(f"Unsupported product config collection: {collection_name}")
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"DELETE FROM {table_name} WHERE id = %s",  # noqa: S608

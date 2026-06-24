@@ -17,7 +17,6 @@ from app.services.product_config_context import (
     product_config_record_write_store,
     record_audit_event,
     save_product_config_record,
-    uses_repository_context,
 )
 from app.services.product_git_repository_listing import (
     list_product_git_repositories_response,
@@ -121,8 +120,6 @@ def create_product_git_repository(
         "root_path": payload.root_path,
         "status": payload.status,
     }
-    if not uses_repository_context(current_store):
-        current_store.product_git_repositories[repository_id] = repository
     audit_event = record_audit_event(
         current_store,
         event_type="product_git_repository.created",
@@ -167,8 +164,6 @@ def patch_product_git_repository(
         remote_url=next_remote_url,
     )
     repository = {**repository, **updates}
-    if not uses_repository_context(current_store):
-        current_store.product_git_repositories[repo_id] = repository
     audit_event = record_audit_event(
         current_store,
         event_type="product_git_repository.updated",
@@ -195,8 +190,6 @@ def delete_product_git_repository(
     current_store = product_config_record_write_store(store(request))
     if get_product_git_repository_record(current_store, repo_id) is None:
         raise api_error(404, "NOT_FOUND", "Product Git repository not found")
-    if not uses_repository_context(current_store):
-        del current_store.product_git_repositories[repo_id]
     audit_event = record_audit_event(
         current_store,
         event_type="product_git_repository.deleted",

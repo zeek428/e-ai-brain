@@ -18,7 +18,6 @@ from app.services.product_config_context import (
     product_config_record_write_store,
     record_audit_event,
     save_product_config_record,
-    uses_repository_context,
 )
 from app.services.related_system_listing import list_related_systems_response
 
@@ -92,8 +91,6 @@ def create_related_system(
         "status": payload.status,
         "display_order": payload.display_order,
     }
-    if not uses_repository_context(current_store):
-        current_store.related_systems[system_id] = related_system
     audit_event = record_audit_event(
         current_store,
         event_type="related_system.created",
@@ -136,8 +133,6 @@ def patch_related_system(
         if get_product_record(current_store, updates["product_id"]) is None:
             raise api_error(404, "NOT_FOUND", "Product not found")
     related_system = {**related_system, **updates}
-    if not uses_repository_context(current_store):
-        current_store.related_systems[system_id] = related_system
     audit_event = record_audit_event(
         current_store,
         event_type="related_system.updated",
@@ -164,8 +159,6 @@ def delete_related_system(
     current_store = product_config_record_write_store(store(request))
     if get_related_system_record(current_store, system_id) is None:
         raise api_error(404, "NOT_FOUND", "Related system not found")
-    if not uses_repository_context(current_store):
-        del current_store.related_systems[system_id]
     audit_event = record_audit_event(
         current_store,
         event_type="related_system.deleted",

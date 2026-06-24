@@ -13,6 +13,7 @@ from app.core.repositories.mock_writeback import MockWritebackReadRepository
 from app.core.repositories.model_gateway import ModelGatewayReadRepository
 from app.core.repositories.operational_collection import OperationalCollectionReadRepository
 from app.core.repositories.product_config import ProductConfigReadRepository
+from app.core.repositories.product_config_writes import ProductConfigWriteRepository
 from app.core.repositories.requirements import RequirementReadRepository
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
 from app.core.repositories.system_state import SystemStateRepository
@@ -494,6 +495,74 @@ def test_postgres_product_config_writes_delegate_to_domain_repository(monkeypatc
             {"args": ("products", "product_001"), "kwargs": {"audit_event": audit_event}},
         ),
     ]
+
+
+def test_product_config_record_writes_use_single_transaction():
+    connect_calls: list[dict] = []
+    executed_sql: list[str] = []
+    audit_calls: list[list[dict]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql: str, params=None):  # type: ignore[no-untyped-def]
+            executed_sql.append(sql)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    repository = ProductConfigWriteRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+    )
+    record = {
+        "default_branch": "main",
+        "git_provider": "github",
+        "id": "repo_atomic",
+        "name": "事务仓库",
+        "product_id": "product_atomic",
+        "project_path": "org/repo",
+        "repo_type": "code",
+        "root_path": "/",
+        "status": "active",
+    }
+    audit_event = {"id": "audit_atomic", "event_type": "product_git_repository.updated"}
+
+    repository.save_product_config_record(
+        "product_git_repositories",
+        record,
+        audit_event=audit_event,
+    )
+    repository.delete_product_config_record(
+        "product_git_repositories",
+        "repo_atomic",
+        audit_event=audit_event,
+    )
+
+    assert connect_calls == [{"autocommit": False}, {"autocommit": False}]
+    assert len(audit_calls) == 2
+    assert audit_calls == [[audit_event], [audit_event]]
+    assert "INSERT INTO product_git_repositories" in executed_sql[0]
+    assert "DELETE FROM product_git_repositories WHERE id = %s" in executed_sql[1]
 
 
 def test_postgres_requirement_read_models_delegate_to_domain_repository(monkeypatch):
