@@ -35,6 +35,7 @@ __all__ = [
     "build_knowledge_chunks",
     "create_knowledge_document_result",
     "delete_knowledge_document_result",
+    "get_knowledge_chunk_set_from_memory",
     "get_knowledge_deposit",
     "get_knowledge_document",
     "knowledge_deposit_list_response",
@@ -43,6 +44,7 @@ __all__ = [
     "knowledge_vector_indexed_result",
     "knowledge_write_store",
     "patch_knowledge_document_result",
+    "put_knowledge_chunk_set_to_memory",
     "replace_knowledge_chunks_result",
     "retry_knowledge_document_index_result",
     "save_knowledge_deposit_records",
@@ -260,6 +262,36 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
     return collection
 
 
+def get_knowledge_chunk_set_from_memory(
+    current_store: Any,
+    chunk_set_id: str | None,
+) -> dict[str, Any] | None:
+    if not chunk_set_id:
+        return None
+    return _memory_collection(current_store, "knowledge_chunk_sets").get(str(chunk_set_id))
+
+
+def put_knowledge_chunk_set_to_memory(
+    current_store: Any,
+    chunk_set_id: str,
+    chunk_set: dict[str, Any],
+) -> None:
+    _memory_collection(current_store, "knowledge_chunk_sets")[str(chunk_set_id)] = chunk_set
+
+
+def merge_knowledge_chunk_set_to_memory(
+    current_store: Any,
+    chunk_set_id: str,
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    chunk_set = {
+        **(get_knowledge_chunk_set_from_memory(current_store, chunk_set_id) or {}),
+        **updates,
+    }
+    put_knowledge_chunk_set_to_memory(current_store, chunk_set_id, chunk_set)
+    return chunk_set
+
+
 def _append_memory_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
     audit_events = _memory_audit_events(current_store)
     if not any(event.get("id") == audit_event.get("id") for event in audit_events):
@@ -433,22 +465,27 @@ def create_knowledge_document_result(
         document["active_chunk_set_id"] = chunk_set_id
         document["document_version"] = 1
         document["permission_scope"] = {"knowledge_space_id": knowledge_space_id}
-        current_store.knowledge_chunk_sets[chunk_set_id] = {
-            "id": chunk_set_id,
-            "document_id": document_id,
-            "source_asset_id": None,
-            "parsed_asset_id": None,
-            "parser_engine": "manual_text",
-            "parser_version": "v1",
-            "chunk_strategy": "simple_text",
-            "embedding_model": None,
-            "embedding_dimension": None,
-            "status": "building",
-            "created_by": user["id"],
-            "created_at": now,
-            "updated_at": now,
-            "activated_at": None,
-        }
+        if chunk_set_id is not None:
+            put_knowledge_chunk_set_to_memory(
+                current_store,
+                chunk_set_id,
+                {
+                    "id": chunk_set_id,
+                    "document_id": document_id,
+                    "source_asset_id": None,
+                    "parsed_asset_id": None,
+                    "parser_engine": "manual_text",
+                    "parser_version": "v1",
+                    "chunk_strategy": "simple_text",
+                    "embedding_model": None,
+                    "embedding_dimension": None,
+                    "status": "building",
+                    "created_by": user["id"],
+                    "created_at": now,
+                    "updated_at": now,
+                    "activated_at": None,
+                },
+            )
     model_log_start_index = len(current_store.model_gateway_logs)
     document, chunks = replace_knowledge_chunks_result(current_store, document)
     if chunk_set_id is not None:
@@ -457,18 +494,21 @@ def create_knowledge_document_result(
             chunk.setdefault("metadata", {})["knowledge_space_id"] = knowledge_space_id
             chunk["metadata"]["folder_id"] = folder_id
             chunk["metadata"]["chunk_set_id"] = chunk_set_id
-        current_store.knowledge_chunk_sets[chunk_set_id] = {
-            **current_store.knowledge_chunk_sets[chunk_set_id],
-            "status": "active",
-            "embedding_model": chunks[0].get("metadata", {}).get("embedding_model")
-            if chunks
-            else None,
-            "embedding_dimension": chunks[0].get("metadata", {}).get("embedding_dimension")
-            if chunks
-            else None,
-            "activated_at": datetime.now(UTC).isoformat(),
-            "updated_at": datetime.now(UTC).isoformat(),
-        }
+        merge_knowledge_chunk_set_to_memory(
+            current_store,
+            chunk_set_id,
+            {
+                "status": "active",
+                "embedding_model": chunks[0].get("metadata", {}).get("embedding_model")
+                if chunks
+                else None,
+                "embedding_dimension": chunks[0].get("metadata", {}).get("embedding_dimension")
+                if chunks
+                else None,
+                "activated_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
+        )
     if not uses_repository_context(current_store):
         apply_knowledge_document_to_memory(current_store, document, chunks)
     audit_event = record_audit_event(
@@ -554,23 +594,30 @@ def patch_knowledge_document_result(
         if document.get("knowledge_space_id") and not document.get("active_chunk_set_id"):
             document["active_chunk_set_id"] = current_store.new_id("knowledge_chunk_set")
         chunk_set_id = document.get("active_chunk_set_id")
-        if chunk_set_id and chunk_set_id not in current_store.knowledge_chunk_sets:
-            current_store.knowledge_chunk_sets[chunk_set_id] = {
-                "id": chunk_set_id,
-                "document_id": document_id,
-                "source_asset_id": document.get("source_asset_id"),
-                "parsed_asset_id": document.get("parsed_asset_id"),
-                "parser_engine": document.get("parser_engine") or "manual_text",
-                "parser_version": "v1",
-                "chunk_strategy": document.get("chunk_strategy") or "simple_text",
-                "embedding_model": None,
-                "embedding_dimension": None,
-                "status": "building",
-                "created_by": user["id"],
-                "created_at": datetime.now(UTC).isoformat(),
-                "updated_at": datetime.now(UTC).isoformat(),
-                "activated_at": None,
-            }
+        if (
+            chunk_set_id
+            and get_knowledge_chunk_set_from_memory(current_store, chunk_set_id) is None
+        ):
+            put_knowledge_chunk_set_to_memory(
+                current_store,
+                chunk_set_id,
+                {
+                    "id": chunk_set_id,
+                    "document_id": document_id,
+                    "source_asset_id": document.get("source_asset_id"),
+                    "parsed_asset_id": document.get("parsed_asset_id"),
+                    "parser_engine": document.get("parser_engine") or "manual_text",
+                    "parser_version": "v1",
+                    "chunk_strategy": document.get("chunk_strategy") or "simple_text",
+                    "embedding_model": None,
+                    "embedding_dimension": None,
+                    "status": "building",
+                    "created_by": user["id"],
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
+                    "activated_at": None,
+                },
+            )
         document, chunks = replace_knowledge_chunks_result(current_store, document)
         if chunk_set_id:
             for chunk in chunks:
@@ -580,20 +627,23 @@ def patch_knowledge_document_result(
                 )
                 chunk["metadata"]["folder_id"] = document.get("folder_id")
                 chunk["metadata"]["chunk_set_id"] = chunk_set_id
-            current_store.knowledge_chunk_sets[chunk_set_id] = {
-                **current_store.knowledge_chunk_sets[chunk_set_id],
-                "status": "active",
-                "embedding_model": chunks[0].get("metadata", {}).get("embedding_model")
-                if chunks
-                else None,
-                "embedding_dimension": chunks[0].get("metadata", {}).get(
-                    "embedding_dimension"
-                )
-                if chunks
-                else None,
-                "activated_at": datetime.now(UTC).isoformat(),
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
+            merge_knowledge_chunk_set_to_memory(
+                current_store,
+                chunk_set_id,
+                {
+                    "status": "active",
+                    "embedding_model": chunks[0].get("metadata", {}).get("embedding_model")
+                    if chunks
+                    else None,
+                    "embedding_dimension": chunks[0].get("metadata", {}).get(
+                        "embedding_dimension"
+                    )
+                    if chunks
+                    else None,
+                    "activated_at": datetime.now(UTC).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
+                },
+            )
     else:
         chunks = knowledge_document_chunks(current_store, document_id)
     if not uses_repository_context(current_store):
@@ -643,21 +693,24 @@ def retry_knowledge_document_index_result(
             )
             chunk["metadata"]["folder_id"] = document.get("folder_id")
             chunk["metadata"]["chunk_set_id"] = chunk_set_id
-        if chunk_set_id in current_store.knowledge_chunk_sets:
-            current_store.knowledge_chunk_sets[chunk_set_id] = {
-                **current_store.knowledge_chunk_sets[chunk_set_id],
-                "status": "active",
-                "embedding_model": chunks[0].get("metadata", {}).get("embedding_model")
-                if chunks
-                else None,
-                "embedding_dimension": chunks[0].get("metadata", {}).get(
-                    "embedding_dimension"
-                )
-                if chunks
-                else None,
-                "activated_at": datetime.now(UTC).isoformat(),
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
+        if get_knowledge_chunk_set_from_memory(current_store, chunk_set_id) is not None:
+            merge_knowledge_chunk_set_to_memory(
+                current_store,
+                chunk_set_id,
+                {
+                    "status": "active",
+                    "embedding_model": chunks[0].get("metadata", {}).get("embedding_model")
+                    if chunks
+                    else None,
+                    "embedding_dimension": chunks[0].get("metadata", {}).get(
+                        "embedding_dimension"
+                    )
+                    if chunks
+                    else None,
+                    "activated_at": datetime.now(UTC).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
+                },
+            )
     if not uses_repository_context(current_store):
         apply_knowledge_document_to_memory(current_store, document, chunks)
     audit_event = record_audit_event(

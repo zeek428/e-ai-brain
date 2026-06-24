@@ -3,7 +3,12 @@ from test_database_persistence import FakeSnapshotRepository, app, auth_headers,
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.store import MemoryStore
 from app.core.users import MemoryUserRepository
-from app.services.knowledge_deposits import apply_knowledge_document_to_memory, record_audit_event
+from app.services.knowledge_deposits import (
+    apply_knowledge_document_to_memory,
+    get_knowledge_chunk_set_from_memory,
+    put_knowledge_chunk_set_to_memory,
+    record_audit_event,
+)
 
 
 def test_knowledge_record_audit_event_appends_memory_fallback_event():
@@ -49,6 +54,29 @@ def test_apply_knowledge_document_to_memory_replaces_document_chunks():
         "knowledge_001_chunk_001",
         "knowledge_other_chunk_001",
     }
+
+
+def test_knowledge_chunk_set_memory_helper_writes_fallback_collection():
+    current_store = MemoryStore()
+
+    put_knowledge_chunk_set_to_memory(
+        current_store,
+        "knowledge_chunk_set_001",
+        {
+            "document_id": "knowledge_001",
+            "id": "knowledge_chunk_set_001",
+            "status": "building",
+        },
+    )
+
+    chunk_set = get_knowledge_chunk_set_from_memory(
+        current_store,
+        "knowledge_chunk_set_001",
+    )
+
+    assert chunk_set is not None
+    assert chunk_set["document_id"] == "knowledge_001"
+    assert chunk_set["status"] == "building"
 
 
 def test_knowledge_and_audit_are_persisted_through_fine_grained_repository_payload():
