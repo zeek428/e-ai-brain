@@ -368,6 +368,11 @@ def _indexed_payload(records: list[dict[str, Any]], field: str) -> dict[str, lis
     return result
 
 
+def _mark_consumed(consumed: dict[str, set[str]], trace: dict[str, Any]) -> None:
+    for source_type, ids in trace.get("related_ids", {}).items():
+        consumed.setdefault(source_type, set()).update(str(item) for item in ids)
+
+
 def _by_id(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {str(record["id"]): record for record in records if record.get("id")}
 
@@ -401,6 +406,11 @@ class ExecutionTraceBuilder:
         self.audit_by_subject_id = _indexed(self.audit_events, "subject_id")
         self.audit_by_ai_task = _indexed(self.audit_events, "ai_task_id")
         self.audit_by_chat_run = _indexed_payload(self.audit_events, "chat_run_id")
+        self.audit_by_model_gateway_log = _indexed_payload(
+            self.audit_events,
+            "model_gateway_log_id",
+        )
+        self.audit_by_model_log = _indexed_payload(self.audit_events, "model_log_id")
 
     def traces(self) -> list[dict[str, Any]]:
         traces: list[dict[str, Any]] = []
@@ -418,42 +428,42 @@ class ExecutionTraceBuilder:
         for run in self.runs:
             trace = self.trace_for_run(run)
             traces.append(trace)
-            for source_type, ids in trace["related_ids"].items():
-                consumed.setdefault(source_type, set()).update(ids)
+            _mark_consumed(consumed, trace)
 
         for plugin in self.plugins:
             plugin_id = str(plugin.get("id") or "")
             if plugin_id and plugin_id not in consumed["plugin_invocation_log"]:
                 trace = self.trace_for_plugin(plugin)
                 traces.append(trace)
-                for source_type, ids in trace["related_ids"].items():
-                    consumed.setdefault(source_type, set()).update(ids)
+                _mark_consumed(consumed, trace)
 
         for task in self.tasks:
             task_id = str(task.get("id") or "")
             if task_id and task_id not in consumed["ai_executor_task"]:
                 trace = self.trace_for_task(task)
                 traces.append(trace)
-                for source_type, ids in trace["related_ids"].items():
-                    consumed.setdefault(source_type, set()).update(ids)
+                _mark_consumed(consumed, trace)
 
         for chat_run in self.assistant_chat_runs:
             chat_run_id = str(chat_run.get("id") or "")
             if chat_run_id and chat_run_id not in consumed["assistant_chat_run"]:
                 trace = self.trace_for_assistant_chat_run(chat_run)
                 traces.append(trace)
-                for source_type, ids in trace["related_ids"].items():
-                    consumed.setdefault(source_type, set()).update(ids)
+                _mark_consumed(consumed, trace)
 
         for report in self.reports:
             report_id = str(report.get("id") or "")
             if report_id and report_id not in consumed["code_inspection_report"]:
-                traces.append(self.trace_for_report(report))
+                trace = self.trace_for_report(report)
+                traces.append(trace)
+                _mark_consumed(consumed, trace)
 
         for model_log in self.model_logs:
             log_id = str(model_log.get("id") or "")
             if log_id and log_id not in consumed["model_gateway_log"]:
-                traces.append(self.trace_for_model_log(model_log))
+                trace = self.trace_for_model_log(model_log)
+                traces.append(trace)
+                _mark_consumed(consumed, trace)
 
         for audit_event in self.audit_events:
             event_id = str(audit_event.get("id") or "")
@@ -726,6 +736,8 @@ class ExecutionTraceBuilder:
             nodes.append(self.model_log_node(model_log))
             edges.append(_edge(root_node_id, f"model_gateway_log:{log_id}", "calls_model"))
             related["model_gateway_log"].add(log_id)
+            audit_events.extend(self.audit_events_for_model_log(model_log))
+        audit_events = _unique_records(audit_events)
         for event in audit_events:
             nodes.append(self.audit_node(event))
             edges.append(_edge(root_node_id, f"audit_event:{event['id']}", "audits"))
@@ -760,11 +772,22 @@ class ExecutionTraceBuilder:
     def trace_for_model_log(self, model_log: dict[str, Any]) -> dict[str, Any]:
         log_id = str(model_log["id"])
         nodes = [self.model_log_node(model_log)]
+        edges: list[dict[str, str]] = []
         related = self._empty_related()
         related["model_gateway_log"].add(log_id)
+        for event in self.audit_events_for_model_log(model_log):
+            nodes.append(self.audit_node(event))
+            edges.append(
+                _edge(
+                    f"model_gateway_log:{log_id}",
+                    f"audit_event:{event['id']}",
+                    "audits",
+                )
+            )
+            related["audit_event"].add(str(event["id"]))
         return self._trace_payload(
             nodes=nodes,
-            edges=[],
+            edges=edges,
             related=related,
             root=model_log,
             root_type="model_gateway_log",
@@ -1109,6 +1132,15 @@ class ExecutionTraceBuilder:
         audit_events = list(self.audit_by_subject_id.get(subject_id, []))
         for node in nodes:
             audit_events.extend(self.audit_by_subject_id.get(node["source_id"], []))
+            if node["source_type"] == "model_gateway_log":
+                audit_events.extend(
+                    self.audit_events_for_model_log(
+                        {
+                            "ai_task_id": node["metadata"].get("ai_task_id"),
+                            "id": node["source_id"],
+                        }
+                    )
+                )
             if node["metadata"].get("ai_task_id"):
                 audit_events.extend(
                     self.audit_by_ai_task.get(str(node["metadata"]["ai_task_id"]), [])
@@ -1117,6 +1149,18 @@ class ExecutionTraceBuilder:
             nodes.append(self.audit_node(event))
             edges.append(_edge(root_node_id, f"audit_event:{event['id']}", "audits"))
             related["audit_event"].add(str(event["id"]))
+
+    def audit_events_for_model_log(self, model_log: dict[str, Any]) -> list[dict[str, Any]]:
+        log_id = str(model_log.get("id") or "").strip()
+        events: list[dict[str, Any]] = []
+        if log_id:
+            events.extend(self.audit_by_subject_id.get(log_id, []))
+            events.extend(self.audit_by_model_gateway_log.get(log_id, []))
+            events.extend(self.audit_by_model_log.get(log_id, []))
+        ai_task_id = str(model_log.get("ai_task_id") or "").strip()
+        if ai_task_id:
+            events.extend(self.audit_by_ai_task.get(ai_task_id, []))
+        return _unique_records(events)
 
     @staticmethod
     def _empty_related() -> dict[str, set[str]]:

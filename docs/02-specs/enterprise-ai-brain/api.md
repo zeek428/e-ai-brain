@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.391 |
+| 功能版本 | v1.1.392 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.392 | 2026-06-24 | 执行诊断模型网关日志链路补齐审计吸附：`model_gateway_log` Trace 会关联 subject、payload 或 ai_task 指向的审计事件，`source_id=audit_event_id` 可反查同一模型调用链路 | Codex |
 | v1.1.391 | 2026-06-24 | 插件连接和插件动作列表新增可选远程分页契约：带 `page/page_size` 时支持关键字、插件、状态、环境筛选和白名单排序，并返回 query/performance 观测信息 | Codex |
 | v1.1.390 | 2026-06-24 | 执行诊断 `source_type` 新增 `result_write_record`，定时作业和插件调用链路聚合结果写入记录，可按写入记录 ID 反查“是否真正写入报告/反馈/通知” | Codex |
 | v1.1.389 | 2026-06-24 | 代码巡检 finding 新增误报忽略审批 API：支持提交 suppression 申请、审批通过或驳回，详情返回审批状态并同步报告 suppression 统计和审计事件 | Codex |
@@ -4215,6 +4216,8 @@ GET /api/governance/execution-traces/{trace_id}
 ```
 
 权限：需要 `diagnostics.execution_traces.read`。当前默认授予 `admin`，用于跨定时作业、插件、AI 执行器、AI 助手运行、模型和审计的管理员级排障。
+
+链路聚合规则：模型网关日志可作为独立根节点，也可作为定时作业、插件调用、Runner 或 AI 助手运行的子节点；审计事件若通过 `subject_id`、payload 中的 `model_gateway_log_id` / `model_log_id`，或相同 `ai_task_id` 指向模型调用，会吸附到同一条模型调用 Trace。按对应审计事件 ID 作为 `source_id` 或详情 `{trace_id}` 查询时，应返回该模型调用链路，避免同一模型失败同时显示为孤立审计 Trace 和孤立模型 Trace。
 
 列表查询参数：
 

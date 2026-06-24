@@ -353,6 +353,44 @@ def seed_assistant_execution_trace_records() -> None:
     )
 
 
+def seed_model_gateway_audit_trace_records() -> None:
+    store = app.state.store
+    store.model_gateway_logs.append(
+        {
+            "ai_task_id": "ai_task_model_audit_trace",
+            "created_at": "2026-06-20T03:00:00+00:00",
+            "error": "upstream quota exceeded",
+            "id": "model_gateway_log_audit_trace",
+            "latency_ms": 2300,
+            "model": "gpt-5.5",
+            "model_gateway_config_id": "model_gateway_config_trace",
+            "provider": "openai_compatible",
+            "purpose": "scheduled_job_ai_processing",
+            "status": "failed",
+            "tokens": {"prompt": 200, "completion": 0},
+            "updated_at": "2026-06-20T03:00:02+00:00",
+        }
+    )
+    store.audit_events.append(
+        {
+            "actor_id": "user_admin",
+            "ai_task_id": "ai_task_model_audit_trace",
+            "created_at": "2026-06-20T03:00:03+00:00",
+            "event_type": "model_gateway.call_failed",
+            "id": "audit_model_gateway_trace",
+            "payload": {
+                "api_key": "sk-model-secret",
+                "model_gateway_log_id": "model_gateway_log_audit_trace",
+                "retryable": False,
+            },
+            "result": "failed",
+            "sequence": 3,
+            "subject_id": "model_gateway_log_audit_trace",
+            "subject_type": "model_gateway_log",
+        }
+    )
+
+
 def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
     app.state.store.reset()
     seed_execution_trace_records()
@@ -406,6 +444,52 @@ def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
     assert "secret-run-token" not in serialized_detail
     assert "runner-secret-token" not in serialized_detail
     assert "sk-test-secret" not in serialized_detail
+    assert "<redacted>" in serialized_detail
+
+
+def test_execution_trace_attaches_audit_to_model_gateway_log_without_duplicate_trace():
+    app.state.store.reset()
+    seed_model_gateway_audit_trace_records()
+    headers = auth_headers()
+
+    response = client.get(
+        "/api/governance/execution-traces?page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == "model_gateway_log_audit_trace"
+    assert body["items"][0]["root_type"] == "model_gateway_log"
+    assert body["items"][0]["related_ids"]["audit_event"] == ["audit_model_gateway_trace"]
+
+    audit_type_response = client.get(
+        "/api/governance/execution-traces?source_type=audit_event&page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert audit_type_response.status_code == 200, audit_type_response.text
+    audit_type_body = audit_type_response.json()["data"]
+    assert audit_type_body["total"] == 1
+    assert audit_type_body["items"][0]["id"] == "model_gateway_log_audit_trace"
+    assert audit_type_body["items"][0]["root_type"] == "model_gateway_log"
+
+    detail_response = client.get(
+        "/api/governance/execution-traces/audit_model_gateway_trace",
+        headers=headers,
+    )
+
+    assert detail_response.status_code == 200, detail_response.text
+    detail = detail_response.json()["data"]
+    assert detail["root_id"] == "model_gateway_log_audit_trace"
+    assert {node["source_type"] for node in detail["nodes"]} == {
+        "audit_event",
+        "model_gateway_log",
+    }
+    assert any(edge["label"] == "audits" for edge in detail["edges"])
+    serialized_detail = str(detail)
+    assert "sk-model-secret" not in serialized_detail
     assert "<redacted>" in serialized_detail
 
 
