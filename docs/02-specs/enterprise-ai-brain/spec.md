@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.563 |
+| 功能版本 | v1.1.564 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.564 | 2026-06-25 | 运营记录审计 helper DB-first fallback 收口：`record_audit_event` 在轻量上下文无 `audit()` 方法时不再直接 append `current_store.audit_events`，统一通过审计事件列表 helper 写入 MemoryStore 测试集合；普通 MemoryStore 继续走 `audit()`，repository 写入仍由调用方事务携带审计事件提交 | Codex |
 | v1.1.563 | 2026-06-25 | 模型网关配置与日志 DB-first fallback 写入收口：测试 fallback 的配置替换不再直接赋值 `current_store.model_gateway_configs`，模型调用日志不再直接 append `current_store.model_gateway_logs`；统一通过模型网关配置集合和日志集合 helper 更新 MemoryStore 测试集合，PostgreSQL 运行态继续由模型网关 repository 和调用方事务持久化配置、日志和审计 | Codex |
 | v1.1.562 | 2026-06-25 | Mock Issue 写回 DB-first fallback 写入收口：写回结果创建不再先直接写 `current_store.mock_writebacks`，审计不再调用 `current_store.audit()`；统一由 `save_mock_writeback_record` 在 repository 事务或 MemoryStore 测试 fallback 中写入写回结果和审计事件，repository 运行态同步刷新本地读缓存以保持幂等重复提交 | Codex |
 | v1.1.561 | 2026-06-25 | 研发执行器策略 DB-first fallback 写入收口：策略列表刷新、策略新增/编辑/删除以及按需补齐产品/代码库资源缓存不再直接写 `current_store.rd_task_executor_policies` / `current_store.products` / `current_store.product_git_repositories`；统一通过策略保存/删除和资源缓存 helper 操作 MemoryStore 测试集合，PostgreSQL 运行态继续通过 rd_task_executor_policy repository 写入策略和审计 | Codex |

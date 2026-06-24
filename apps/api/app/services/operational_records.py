@@ -91,6 +91,18 @@ def save_single_repository_record(
         save_record(record, audit_event=audit_event)
 
 
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _audit_events_collection(current_store: Any) -> list[dict[str, Any]]:
+    return _memory_list(current_store, "audit_events")
+
+
 def record_audit_event(
     current_store: Any,
     *,
@@ -119,7 +131,7 @@ def record_audit_event(
         "payload": payload or {},
         "created_at": now,
     }
-    current_store.audit_events.append(event)
+    _audit_events_collection(current_store).append(event)
     return event
 
 
