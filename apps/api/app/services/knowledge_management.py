@@ -10,6 +10,7 @@ from app.api.deps import api_error
 from app.core.config import get_settings
 from app.services.knowledge_deposits import (
     apply_knowledge_document_to_memory,
+    put_knowledge_document_to_memory,
     record_audit_event,
     uses_repository_context,
 )
@@ -1030,7 +1031,7 @@ def upload_knowledge_document_result(
     put_knowledge_import_job_to_memory(current_store, import_job)
 
     if not uses_repository_context(current_store):
-        current_store.knowledge_documents[document_id] = document
+        put_knowledge_document_to_memory(current_store, document)
     audit_event = record_audit_event(
         current_store,
         actor_id=user["id"],
@@ -1038,7 +1039,7 @@ def upload_knowledge_document_result(
         subject_id=document_id,
         subject_type="knowledge_document",
     )
-    current_store.knowledge_documents[document_id] = document
+    put_knowledge_document_to_memory(current_store, document)
     persist_knowledge_payload(current_store, audit_event=audit_event)
     return {
         "asset": dict(asset),
@@ -1093,7 +1094,7 @@ def _mark_import_job_failed(
         "index_error": error_message,
         "updated_at": timestamp,
     }
-    current_store.knowledge_documents[failed_document["id"]] = failed_document
+    put_knowledge_document_to_memory(current_store, failed_document)
     return failed_job
 
 
@@ -1141,7 +1142,7 @@ def run_knowledge_import_job_result(
         "vector_index_error": None,
         "updated_at": timestamp,
     }
-    current_store.knowledge_documents[document["id"]] = document
+    put_knowledge_document_to_memory(current_store, document)
 
     try:
         source_content = object_storage().get_bytes(
@@ -1289,7 +1290,7 @@ def run_knowledge_import_job_result(
             "parsed_asset_id": parsed_asset["id"],
             "updated_at": now_iso(),
         }
-        current_store.knowledge_documents[indexed_document["id"]] = indexed_document
+        put_knowledge_document_to_memory(current_store, indexed_document)
         for chunk in chunks:
             current_store.knowledge_chunks[chunk["id"]] = chunk
         completed_job = {
@@ -1388,7 +1389,7 @@ def retry_knowledge_import_job_result(
         "vector_index_error": None,
         "updated_at": now_iso(),
     }
-    current_store.knowledge_documents[document["id"]] = document
+    put_knowledge_document_to_memory(current_store, document)
     audit_event = record_audit_event(
         current_store,
         actor_id=user["id"],
@@ -1437,7 +1438,7 @@ def cancel_knowledge_import_job_result(
         ),
         "updated_at": now_iso(),
     }
-    current_store.knowledge_documents[document["id"]] = document
+    put_knowledge_document_to_memory(current_store, document)
     audit_event = record_audit_event(
         current_store,
         actor_id=user["id"],
@@ -1567,7 +1568,7 @@ def activate_knowledge_chunk_set_result(
         "vector_index_error": chunk_set.get("vector_index_error"),
         "updated_at": now_iso(),
     }
-    current_store.knowledge_documents[document_id] = updated_document
+    put_knowledge_document_to_memory(current_store, updated_document)
     chunks = [
         chunk
         for chunk in current_store.knowledge_chunks.values()
@@ -1631,13 +1632,14 @@ def reparse_knowledge_document_result(
         "updated_at": timestamp,
     }
     put_knowledge_import_job_to_memory(current_store, import_job)
-    current_store.knowledge_documents[document_id] = {
+    updated_document = {
         **document,
         "index_status": "importing",
         "parser_engine": normalized_parser,
         "chunk_strategy": normalized_strategy,
         "updated_at": timestamp,
     }
+    put_knowledge_document_to_memory(current_store, updated_document)
     audit_event = record_audit_event(
         current_store,
         actor_id=user["id"],
@@ -1649,7 +1651,7 @@ def reparse_knowledge_document_result(
     return {
         "document": knowledge_document_response(
             current_store,
-            current_store.knowledge_documents[document_id],
+            updated_document,
             [],
         ),
         "import_job": import_job_response(current_store, import_job),
@@ -1691,11 +1693,12 @@ def batch_move_knowledge_documents_result(
             skipped.append({"id": document_id, "reason": "folder_space_mismatch"})
             continue
         ensure_space_access(current_store, user, space_id=space_id, required="write")
-        current_store.knowledge_documents[document_id] = {
+        moved_document = {
             **document,
             "folder_id": folder_id,
             "updated_at": now_iso(),
         }
+        put_knowledge_document_to_memory(current_store, moved_document)
         updated.append(document_id)
     audit_event = record_audit_event(
         current_store,

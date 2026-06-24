@@ -385,6 +385,16 @@ def apply_knowledge_document_to_memory(
         stored_chunks[str(chunk["id"])] = chunk
 
 
+def put_knowledge_document_to_memory(
+    current_store: Any,
+    document: dict[str, Any],
+) -> None:
+    document_id = document.get("id")
+    if document_id is None:
+        return
+    _memory_collection(current_store, "knowledge_documents")[str(document_id)] = document
+
+
 def remove_knowledge_document_from_memory(
     current_store: Any,
     *,
