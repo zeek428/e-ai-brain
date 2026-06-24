@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.658 |
+| 功能版本 | v1.1.659 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.659 | 2026-06-24 | 补充知识沉淀决策 DB-first 写路径收口验收：知识沉淀采纳/拒绝不得在决策服务层直接写 `current_store.knowledge_deposits`；MemoryStore fallback 由 `save_knowledge_deposit_records` 承接，PostgreSQL 运行态沉淀、可选知识文档、chunks、模型日志和审计必须使用同一数据库事务；`test_knowledge_audit_persistence.py`、`test_knowledge_governance.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.658 | 2026-06-24 | 补充首页看板快照 DB-first fallback 收口验收：`sync_dashboard_metric_snapshot` 不得直接写 `current_store.dashboard_metric_snapshots`；repository 可用时必须调用 `save_dashboard_metric_snapshot_record`，MemoryStore 测试 fallback 仍需保留既有 `created_at` 和稳定快照 ID；`test_dashboard_metrics_service.py`、`test_lifecycle_dashboard_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.657 | 2026-06-24 | 补充迭代规划 DB-first 写路径收口验收：迭代建议生成、建议决策和建议转需求不得在服务层直接写 `current_store.requirements`、`current_store.iteration_plan_suggestions`、`current_store.iteration_plan_decisions` 或通过 `audit_events` 切片收集审计；MemoryStore fallback 由 `persist_iteration_suggestion_record` / `persist_iteration_decision_records` 承接，PostgreSQL 运行态建议、决策、转需求和审计必须使用同一数据库事务；`test_iteration_planning.py`、`test_iteration_planning_persistence.py`、`test_insight_planning_api_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.656 | 2026-06-24 | 补充 Git Review 快照 DB-first 写路径收口验收：GitLab MR / GitHub PR 快照成功、复用和失败审计不得在服务层直接写 `current_store.gitlab_mr_snapshots` 或追加 `current_store.audit_events`；MemoryStore fallback 由 `save_git_review_snapshot_record` 承接，PostgreSQL 运行态快照和审计必须使用同一数据库事务；`test_gitlab_snapshot.py`、`test_github_snapshot.py`、`test_git_review_artifacts_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |

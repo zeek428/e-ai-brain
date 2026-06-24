@@ -9,6 +9,7 @@ from app.core.repositories.code_inspections import CodeInspectionReadRepository
 from app.core.repositories.devops import DevopsReadRepository
 from app.core.repositories.git_review import GitReviewReadRepository
 from app.core.repositories.knowledge import KnowledgeReadRepository
+from app.core.repositories.knowledge_writes import KnowledgeWriteRepository
 from app.core.repositories.lifecycle_dashboard import LifecycleDashboardReadRepository
 from app.core.repositories.mock_writeback import MockWritebackReadRepository
 from app.core.repositories.model_gateway import ModelGatewayReadRepository
@@ -2509,6 +2510,98 @@ def test_postgres_knowledge_writes_delegate_to_domain_repository(monkeypatch):
         ("upsert_knowledge_chunks", {"cursor": cursor, "items": {"chunk_001": chunk}}),
         ("upsert_knowledge_deposits", {"cursor": cursor, "items": {"deposit_001": deposit}}),
     ]
+
+
+def test_knowledge_deposit_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    upsert_calls: list[tuple[str, dict]] = []
+    audit_calls: list[list[dict]] = []
+    model_log_calls: list[list[dict]] = []
+    executed_sql: list[tuple[str, tuple]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, params=()):  # type: ignore[no-untyped-def]
+            executed_sql.append((" ".join(str(sql).split()), tuple(params)))
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def record_upsert(name: str):
+        def _call(self, cursor, items):  # type: ignore[no-untyped-def]
+            upsert_calls.append((name, items))
+
+        return _call
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def upsert_model_gateway_logs(cursor, model_logs):  # type: ignore[no-untyped-def]
+        model_log_calls.append(model_logs)
+
+    monkeypatch.setattr(
+        KnowledgeWriteRepository,
+        "upsert_knowledge_documents",
+        record_upsert("document"),
+    )
+    monkeypatch.setattr(
+        KnowledgeWriteRepository,
+        "upsert_knowledge_chunks",
+        record_upsert("chunk"),
+    )
+    monkeypatch.setattr(
+        KnowledgeWriteRepository,
+        "upsert_knowledge_deposits",
+        record_upsert("deposit"),
+    )
+
+    repository = KnowledgeWriteRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+        upsert_model_gateway_logs=upsert_model_gateway_logs,
+    )
+    document = {"id": "knowledge_atomic"}
+    chunk = {"id": "knowledge_atomic_chunk_001", "document_id": "knowledge_atomic"}
+    deposit = {"id": "deposit_atomic"}
+    audit_event = {"id": "audit_atomic"}
+    model_log = {"id": "model_log_atomic"}
+
+    repository.save_knowledge_deposit_records(
+        deposit=deposit,
+        audit_event=audit_event,
+        document=document,
+        chunks=[chunk],
+        model_logs=[model_log],
+    )
+
+    assert connect_calls == [{"autocommit": False}]
+    assert executed_sql == [
+        ("DELETE FROM knowledge_chunks WHERE document_id = %s", ("knowledge_atomic",))
+    ]
+    assert upsert_calls == [
+        ("document", {"knowledge_atomic": document}),
+        ("chunk", {"knowledge_atomic_chunk_001": chunk}),
+        ("deposit", {"deposit_atomic": deposit}),
+    ]
+    assert model_log_calls == [[model_log]]
+    assert audit_calls == [[audit_event]]
 
 
 def test_postgres_assistant_chat_read_models_delegate_to_domain_repository(monkeypatch):

@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.549 |
+| 功能版本 | v1.1.550 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.550 | 2026-06-24 | 知识沉淀决策 DB-first 写路径收口：知识沉淀采纳/拒绝不再在决策服务层直接写 `current_store.knowledge_deposits`；统一通过 `save_knowledge_deposit_records` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态沉淀、可选知识文档、chunks、模型日志和审计使用同一数据库事务提交 | Codex |
 | v1.1.549 | 2026-06-24 | 首页看板快照 DB-first fallback 收口：`sync_dashboard_metric_snapshot` 不再直接写 `current_store.dashboard_metric_snapshots`，统一优先调用 `save_dashboard_metric_snapshot_record`，仅在 MemoryStore 测试 fallback 中通过 helper 写入快照集合，保持 PostgreSQL 运行态看板快照单条 repository 写入和短 TTL 只读缓存语义 | Codex |
 | v1.1.548 | 2026-06-24 | 迭代规划 DB-first 写路径收口：迭代建议生成、建议决策和建议转需求不再在服务层直接写 `current_store.requirements`、`current_store.iteration_plan_suggestions`、`current_store.iteration_plan_decisions` 或通过 `audit_events` 切片收集审计；统一通过 `persist_iteration_suggestion_record` / `persist_iteration_decision_records` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态建议、决策、转需求和审计使用同一数据库事务提交 | Codex |
 | v1.1.547 | 2026-06-24 | Git Review 快照 DB-first 写路径收口：GitLab MR / GitHub PR 快照成功、复用和失败审计不再在服务层直接写 `current_store.gitlab_mr_snapshots` 或追加 `current_store.audit_events`；统一通过 `save_git_review_snapshot_record` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态快照和审计使用同一数据库事务提交 | Codex |

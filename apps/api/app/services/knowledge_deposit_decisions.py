@@ -5,13 +5,11 @@ from typing import Any
 
 from app.api.deps import api_error
 from app.services.knowledge_deposits import (
-    apply_knowledge_document_to_memory,
     ensure_roles,
     get_knowledge_deposit,
     record_audit_event,
     replace_knowledge_chunks_result,
     save_knowledge_deposit_records,
-    uses_repository_context,
 )
 
 
@@ -54,9 +52,6 @@ def approve_knowledge_deposit_result(
         "knowledge_document_id": document_id,
         "updated_at": now,
     }
-    if not uses_repository_context(current_store):
-        apply_knowledge_document_to_memory(current_store, document, chunks)
-        current_store.knowledge_deposits[deposit_id] = deposit
     audit_event = record_audit_event(
         current_store,
         event_type="knowledge_deposit.approved",
@@ -92,8 +87,6 @@ def reject_knowledge_deposit_result(
         "rejection_reason": reason,
         "updated_at": datetime.now(UTC).isoformat(),
     }
-    if not uses_repository_context(current_store):
-        current_store.knowledge_deposits[deposit_id] = deposit
     audit_event = record_audit_event(
         current_store,
         event_type="knowledge_deposit.rejected",

@@ -145,7 +145,7 @@ class KnowledgeWriteRepository:
         chunks: list[dict[str, Any]] | None = None,
         model_logs: list[dict[str, Any]] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 if document is not None:
                     cursor.execute(

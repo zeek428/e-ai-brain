@@ -241,6 +241,35 @@ def save_knowledge_deposit_records(
             audit_event=audit_event,
             model_logs=model_logs,
         )
+        return
+    if document is not None:
+        apply_knowledge_document_to_memory(
+            current_store,
+            document,
+            chunks
+            if chunks is not None
+            else knowledge_document_chunks(current_store, document["id"]),
+        )
+    _memory_collection(current_store, "knowledge_deposits")[str(deposit["id"])] = deposit
+    if audit_event is not None:
+        _append_memory_audit_event(current_store, audit_event)
+
+
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        vars(current_store)[collection_name] = collection
+    return collection
+
+
+def _append_memory_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
+    audit_events = getattr(current_store, "audit_events", None)
+    if not isinstance(audit_events, list):
+        audit_events = []
+        vars(current_store)["audit_events"] = audit_events
+    if not any(event.get("id") == audit_event.get("id") for event in audit_events):
+        audit_events.append(audit_event)
 
 
 def save_knowledge_document_records(
