@@ -672,6 +672,7 @@ export default function IterationVersionsPage() {
         breadcrumbGroup="需求交付"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="delivery.versions"
         filters={[
           { label: '所属产品', name: 'productName', type: 'text' },
           { label: '版本编码', name: 'code', type: 'text' },

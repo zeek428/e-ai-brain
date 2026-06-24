@@ -895,6 +895,7 @@ export default function RequirementsPage() {
         breadcrumbGroup="需求交付"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="delivery.requirements"
         filters={[
           { label: '需求标题', name: 'title', type: 'text' },
           { label: '所属产品', name: 'product', type: 'text' },

@@ -512,6 +512,7 @@ export default function DevopsPage() {
         breadcrumbGroup="运营治理"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="governance.devops"
         filters={[
           {
             label: '指标来源',

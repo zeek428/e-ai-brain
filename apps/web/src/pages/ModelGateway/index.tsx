@@ -418,6 +418,7 @@ export default function ModelGatewayPage() {
         breadcrumbGroup="系统管理"
         columns={columns}
         dataSource={dataSource}
+        viewStorageKey="system.model_gateway"
         filters={[
           { label: '配置名称', name: 'name', type: 'text' },
           { label: 'Provider', name: 'provider', type: 'text' },

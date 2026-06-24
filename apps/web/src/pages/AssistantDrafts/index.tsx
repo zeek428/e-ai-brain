@@ -454,6 +454,7 @@ export default function AssistantDraftsPage() {
         breadcrumbGroup="AI 助手"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="assistant.drafts"
         filters={[
           { label: '关键词', name: 'keyword', type: 'text' },
           { label: '草案类型', name: 'action', options: actionOptions, type: 'select' },

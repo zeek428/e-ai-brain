@@ -946,6 +946,7 @@ export default function RolesPage() {
         breadcrumbGroup="系统管理"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="system.roles"
         filters={[
           { label: '角色', name: 'roleLabel', type: 'text' },
           {

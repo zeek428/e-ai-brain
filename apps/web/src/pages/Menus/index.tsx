@@ -339,6 +339,7 @@ export default function MenusPage() {
         breadcrumbGroup="系统管理"
         columns={columns}
         dataSource={rows}
+        viewStorageKey="system.menus"
         filters={[
           { label: '菜单', name: 'name', type: 'text' },
           { label: '父级菜单', name: 'parentText', type: 'text' },

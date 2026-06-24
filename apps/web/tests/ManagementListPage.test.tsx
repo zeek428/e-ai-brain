@@ -1,9 +1,13 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import './proComponentsMock';
 
 import { ManagementListPage } from '../src/components/ManagementListPage';
+
+afterEach(() => {
+  cleanup();
+});
 
 describe('ManagementListPage', () => {
   it('applies stable defaults to management list tables', () => {
@@ -56,5 +60,59 @@ describe('ManagementListPage', () => {
       'data-width',
       '220',
     );
+  });
+
+  it('saves current filters as a reusable local filter view', async () => {
+    window.localStorage.clear();
+
+    render(
+      <ManagementListPage
+        breadcrumbGroup="系统管理"
+        columns={[
+          { dataIndex: 'name', title: '名称' },
+          { dataIndex: 'status', title: '状态' },
+        ]}
+        dataSource={[{ id: 'row_1', name: '研发任务', status: 'active' }]}
+        filters={[
+          { label: '名称', name: 'name', type: 'text' },
+          {
+            label: '状态',
+            name: 'status',
+            options: [{ label: '启用', value: 'active' }],
+            type: 'select',
+          },
+        ]}
+        rowKey="id"
+        tableTitle="测试列表"
+        title="测试管理"
+        viewStorageKey="test-management-list"
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '研发' } });
+    fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'active' } });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存视图' }));
+    fireEvent.change(screen.getByLabelText('筛选视图名称'), { target: { value: '启用任务' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存筛选视图' }));
+
+    await waitFor(() => {
+      const storedViews = JSON.parse(
+        window.localStorage.getItem(
+          'ai-brain:management-list-filter-views:test-management-list',
+        ) ?? '[]',
+      );
+      expect(storedViews).toMatchObject([
+        {
+          name: '启用任务',
+          query: {
+            filters: {
+              name: '研发',
+              status: 'active',
+            },
+          },
+        },
+      ]);
+    });
   });
 });

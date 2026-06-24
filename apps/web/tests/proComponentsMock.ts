@@ -77,6 +77,7 @@ vi.mock('@ant-design/pro-components', async () => {
       ellipsis?: boolean;
       fixed?: string;
       hideInTable?: boolean;
+      initialValue?: unknown;
       key?: string;
       render?: (value: unknown, row: Row) => React.ReactNode;
       search?: false;
@@ -153,6 +154,9 @@ vi.mock('@ant-design/pro-components', async () => {
                     null,
                     `${column.title} 开始`,
                     React.createElement('input', {
+                      defaultValue: Array.isArray(column.initialValue)
+                        ? String(column.initialValue[0] ?? '')
+                        : undefined,
                       name: `${String(column.dataIndex)}__start`,
                       type: 'date',
                     }),
@@ -162,21 +166,28 @@ vi.mock('@ant-design/pro-components', async () => {
                     null,
                     `${column.title} 结束`,
                     React.createElement('input', {
+                      defaultValue: Array.isArray(column.initialValue)
+                        ? String(column.initialValue[1] ?? '')
+                        : undefined,
                       name: `${String(column.dataIndex)}__end`,
                       type: 'date',
                     }),
                   ),
                 )
               : column.valueType === 'select'
-                ? React.createElement(
+                  ? React.createElement(
                     'select',
-                    { name: String(column.dataIndex) },
+                    { defaultValue: String(column.initialValue ?? ''), name: String(column.dataIndex) },
                     React.createElement('option', { value: '' }, '全部'),
                     Object.entries(column.valueEnum ?? {}).map(([value, option]) =>
                       React.createElement('option', { key: value, value }, option.text),
                     ),
                   )
-                : React.createElement('input', { name: String(column.dataIndex), type: 'text' }),
+                : React.createElement('input', {
+                    defaultValue: String(column.initialValue ?? ''),
+                    name: String(column.dataIndex),
+                    type: 'text',
+                  }),
           ),
         ),
         React.createElement('button', { type: 'submit' }, '查询'),

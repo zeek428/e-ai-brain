@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.636 |
+| 功能版本 | v1.1.637 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.637 | 2026-06-24 | 补充管理列表筛选视图验收：启用 `viewStorageKey` 的 `ManagementListPage` 页面可保存、应用和删除本地筛选/排序视图，需求、任务、迭代版本、Bug、用户洞察、代码巡检、执行诊断、草案任务台、产品资产和系统管理列表均应展示筛选视图入口；`ManagementListPage.test.tsx`、typecheck 和真实管理页面 smoke 必须通过 | Codex |
 | v1.1.636 | 2026-06-24 | 补充执行诊断 Runner 节点验收：`ai_executor_task.runner_id` 必须解析为 `ai_executor_runner` 节点，支持按 `source_type=ai_executor_runner` 和 Runner ID 定位链路，响应不得泄露 `token_hash` | Codex |
 | v1.1.635 | 2026-06-24 | 补充代码巡检 finding 误报忽略审批验收：报告详情支持申请忽略和批准/驳回，审批通过同步报告 suppression 统计、治理概览分布和审计事件；`test_code_inspection_governance.py`、`CodeInspectionsPage.test.tsx`、typecheck、lint 和真实 `/governance/code-inspections` 页面 smoke 必须通过 | Codex |
 | v1.1.634 | 2026-06-24 | 补充代码巡检规则包与误报治理验收：dashboard API 必须返回 `rule_governance` 版本分布和 suppression 分布，代码巡检页展示“规则包与误报治理”；`test_code_inspection_governance.py`、`CodeInspectionsPage.test.tsx`、typecheck、lint 和真实 `/governance/code-inspections` 页面 smoke 必须通过 | Codex |

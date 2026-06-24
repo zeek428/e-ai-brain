@@ -866,6 +866,7 @@ export default function CodeInspectionsPage() {
         breadcrumbGroup="运营治理"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="governance.code_inspections"
         filters={[
           { label: '报告/摘要', name: 'title', type: 'text' },
           { label: '提交人', name: 'committer', placeholder: '姓名 / 邮箱 / 用户名', type: 'text' },

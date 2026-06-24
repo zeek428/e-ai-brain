@@ -357,6 +357,7 @@ export default function ExecutionTracesPage() {
         breadcrumbGroup="运营治理"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="governance.execution_traces"
         filters={[
           { label: '关键词', name: 'keyword', type: 'text' },
           { label: '来源 ID', name: 'sourceId', type: 'text' },

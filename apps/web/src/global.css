@@ -412,6 +412,14 @@ body {
   gap: 8px;
 }
 
+.management-list-filter-views {
+  max-width: 100%;
+}
+
+.management-list-filter-views .ant-select {
+  min-width: 160px;
+}
+
 .management-list-table .ant-table-cell {
   overflow-wrap: anywhere;
 }

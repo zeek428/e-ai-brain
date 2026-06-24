@@ -404,6 +404,7 @@ export default function InsightsPage() {
         breadcrumbGroup="运营治理"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="governance.insights"
         filters={[
           {
             label: '数据类型',

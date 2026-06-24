@@ -1158,6 +1158,7 @@ export default function KnowledgePage() {
         breadcrumbGroup="产品资产"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="assets.knowledge"
         filters={[
           { label: '知识标题', name: 'title', type: 'text' },
           {

@@ -717,6 +717,7 @@ export default function ProductsPage() {
         breadcrumbGroup="产品资产"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="assets.products"
         filters={[
           { label: '产品编码', name: 'code', type: 'text' },
           { label: '产品名称', name: 'name', type: 'text' },

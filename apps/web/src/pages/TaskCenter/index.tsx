@@ -1223,6 +1223,7 @@ export default function TaskCenterPage() {
         breadcrumbGroup="需求交付"
         columns={columns}
         dataSource={taskRowsState.rows}
+        viewStorageKey="delivery.rd_tasks"
         filters={[
           { label: '任务', name: 'label', type: 'text' },
           {

@@ -286,6 +286,7 @@ export default function UsersPage() {
         breadcrumbGroup="系统管理"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="system.users"
         filters={[
           { label: '登录账号', name: 'username', type: 'text' },
           { label: '显示名称', name: 'displayName', type: 'text' },

@@ -249,6 +249,7 @@ export default function AuditPage() {
         breadcrumbGroup="运营治理"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="governance.audit"
         filters={[
           { label: '事件类型', name: 'eventType', type: 'text' },
           { label: '主体', name: 'subject', type: 'text' },

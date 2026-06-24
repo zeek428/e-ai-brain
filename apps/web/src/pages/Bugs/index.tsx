@@ -541,6 +541,7 @@ export default function BugsPage() {
         breadcrumbGroup="需求交付"
         columns={columns}
         dataSource={listState.rows}
+        viewStorageKey="delivery.bugs"
         filters={[
           { label: 'Bug 标题', name: 'title', type: 'text' },
           { label: '所属模块', name: 'module', type: 'text' },
