@@ -222,7 +222,6 @@ def assistant_chat_response(
         if existing_conversation is not None and existing_conversation.get("user_id") != user["id"]:
             raise AssistantServiceError(404, "NOT_FOUND", "Assistant conversation not found")
 
-    audit_start_index = len(current_store.audit_events)
     turn = _start_assistant_chat_run(
         current_store,
         message=message,
@@ -233,7 +232,6 @@ def assistant_chat_response(
         if _assistant_chat_run_is_cancelled(current_store, turn["chat_run"]["id"], user=user):
             return _persist_assistant_chat_cancelled(
                 current_store,
-                audit_start_index=audit_start_index,
                 normalized_payload=normalized_payload,
                 turn=turn,
                 user=user,
@@ -247,14 +245,12 @@ def assistant_chat_response(
             if _assistant_chat_run_is_cancelled(current_store, turn["chat_run"]["id"], user=user):
                 return _persist_assistant_chat_cancelled(
                     current_store,
-                    audit_start_index=audit_start_index,
                     normalized_payload=normalized_payload,
                     turn=turn,
                     user=user,
                 )
             return _persist_assistant_chat_output(
                 current_store,
-                audit_start_index=audit_start_index,
                 model_log=None,
                 normalized_payload=normalized_payload,
                 assistant_output=deterministic_output,
@@ -280,7 +276,6 @@ def assistant_chat_response(
     except AssistantServiceError as exc:
         _persist_assistant_chat_failed(
             current_store,
-            audit_start_index=audit_start_index,
             error_code=exc.code,
             error_message=exc.message,
             model_log=None,
@@ -292,13 +287,13 @@ def assistant_chat_response(
     except _AssistantGatewayRequestCancelled:
         return _persist_assistant_chat_cancelled(
             current_store,
-            audit_start_index=audit_start_index,
             normalized_payload=normalized_payload,
             turn=turn,
             user=user,
         )
     except _AssistantGatewayRequestFailed as exc:
-        current_store.audit(
+        model_gateway_audit_event = assistant_chat_audit_event(
+            current_store,
             event_type="model_gateway.called",
             actor_id="system",
             subject_type="model_gateway_log",
@@ -313,7 +308,7 @@ def assistant_chat_response(
         )
         _persist_assistant_chat_failed(
             current_store,
-            audit_start_index=audit_start_index,
+            audit_events=[model_gateway_audit_event],
             error_code="ASSISTANT_CHAT_FAILED",
             error_message="Assistant model gateway request failed",
             model_log=exc.log,
@@ -327,7 +322,8 @@ def assistant_chat_response(
             "Assistant model gateway request failed",
         ) from exc
 
-    current_store.audit(
+    model_gateway_audit_event = assistant_chat_audit_event(
+        current_store,
         event_type="model_gateway.called",
         actor_id="system",
         subject_type="model_gateway_log",
@@ -343,7 +339,7 @@ def assistant_chat_response(
     if _assistant_chat_run_is_cancelled(current_store, turn["chat_run"]["id"], user=user):
         return _persist_assistant_chat_cancelled(
             current_store,
-            audit_start_index=audit_start_index,
+            audit_events=[model_gateway_audit_event],
             model_log=model_log,
             normalized_payload=normalized_payload,
             turn=turn,
@@ -351,7 +347,7 @@ def assistant_chat_response(
         )
     return _persist_assistant_chat_output(
         current_store,
-        audit_start_index=audit_start_index,
+        audit_events=[model_gateway_audit_event],
         model_log=model_log,
         normalized_payload=normalized_payload,
         assistant_output=assistant_output,
@@ -385,6 +381,46 @@ def _assistant_chat_run_record(
         return dict(run) if run is not None else None
     run = getattr(current_store, "assistant_chat_runs", {}).get(run_id)
     return dict(run) if run is not None else None
+
+
+def assistant_chat_audit_event(
+    current_store: MemoryStore,
+    *,
+    event_type: str,
+    actor_id: str,
+    ai_task_id: str | None = None,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+    sequence_offset: int = 0,
+) -> dict[str, Any]:
+    return {
+        "id": current_store.new_id("audit"),
+        "event_type": event_type,
+        "actor_id": actor_id,
+        "ai_task_id": ai_task_id,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "payload": payload or {},
+        "sequence": len(_memory_list(current_store, "audit_events")) + sequence_offset + 1,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
 
 
 def _start_assistant_chat_run(
@@ -442,7 +478,6 @@ def _start_assistant_chat_run(
     }
     if chat_run["status"] not in {"cancelled", "failed", "succeeded"}:
         chat_run["status"] = "running"
-    current_store.assistant_chat_runs[run_id] = chat_run
     save_assistant_chat_records(
         current_store,
         chat_run=chat_run,
@@ -582,8 +617,8 @@ def cancel_assistant_chat_run_response(
                 "updated_at": now,
             }
         )
-        current_store.assistant_chat_runs[cleaned_run_id] = run
-        audit_event = current_store.audit(
+        audit_event = assistant_chat_audit_event(
+            current_store,
             event_type="assistant.chat_run_cancelled",
             actor_id=user["id"],
             subject_type="assistant_chat_run",
@@ -605,7 +640,7 @@ def _persist_assistant_chat_output(
     current_store: MemoryStore,
     *,
     assistant_output: dict[str, Any],
-    audit_start_index: int,
+    audit_events: list[dict[str, Any]] | None = None,
     model_log: dict[str, Any] | None,
     normalized_payload: AssistantChatRequest,
     turn: dict[str, Any],
@@ -664,7 +699,6 @@ def _persist_assistant_chat_output(
             "updated_at": now,
         }
     )
-    current_store.assistant_chat_runs[run_id] = chat_run
     audit_payload = {
         "chat_run_id": run_id,
         "client_request_id": client_request_id,
@@ -679,12 +713,17 @@ def _persist_assistant_chat_output(
         audit_payload["intent"] = assistant_output["intent"]
     if model_log is not None:
         audit_payload["model_log_id"] = model_log["id"]
-    current_store.audit(
-        event_type="assistant.chat_completed",
-        actor_id=user["id"],
-        subject_type="assistant_conversation",
-        subject_id=conversation["id"],
-        payload=audit_payload,
+    pending_audit_events = list(audit_events or [])
+    pending_audit_events.append(
+        assistant_chat_audit_event(
+            current_store,
+            event_type="assistant.chat_completed",
+            actor_id=user["id"],
+            subject_type="assistant_conversation",
+            subject_id=conversation["id"],
+            payload=audit_payload,
+            sequence_offset=len(pending_audit_events),
+        )
     )
     save_assistant_chat_records(
         current_store,
@@ -692,7 +731,7 @@ def _persist_assistant_chat_output(
         conversation=conversation,
         messages=[user_message, assistant_message],
         model_log=model_log,
-        audit_events=current_store.audit_events[audit_start_index:],
+        audit_events=pending_audit_events,
     )
     return {
         "conversation_id": conversation["id"],
@@ -708,7 +747,7 @@ def _persist_assistant_chat_output(
 def _persist_assistant_chat_cancelled(
     current_store: MemoryStore,
     *,
-    audit_start_index: int,
+    audit_events: list[dict[str, Any]] | None = None,
     normalized_payload: AssistantChatRequest,
     turn: dict[str, Any],
     user: dict[str, Any],
@@ -753,17 +792,21 @@ def _persist_assistant_chat_cancelled(
             "updated_at": now,
         }
     )
-    current_store.assistant_chat_runs[run_id] = chat_run
-    current_store.audit(
-        event_type="assistant.chat_cancelled",
-        actor_id=user["id"],
-        subject_type="assistant_chat_run",
-        subject_id=run_id,
-        payload={
-            "client_request_id": client_request_id,
-            "model_log_id": model_log.get("id") if model_log else None,
-            "product_id": normalized_payload.product_id,
-        },
+    pending_audit_events = list(audit_events or [])
+    pending_audit_events.append(
+        assistant_chat_audit_event(
+            current_store,
+            event_type="assistant.chat_cancelled",
+            actor_id=user["id"],
+            subject_type="assistant_chat_run",
+            subject_id=run_id,
+            payload={
+                "client_request_id": client_request_id,
+                "model_log_id": model_log.get("id") if model_log else None,
+                "product_id": normalized_payload.product_id,
+            },
+            sequence_offset=len(pending_audit_events),
+        )
     )
     save_assistant_chat_records(
         current_store,
@@ -771,7 +814,7 @@ def _persist_assistant_chat_cancelled(
         conversation=conversation,
         messages=[user_message, assistant_message],
         model_log=model_log,
-        audit_events=current_store.audit_events[audit_start_index:],
+        audit_events=pending_audit_events,
     )
     return {
         "conversation_id": conversation["id"],
@@ -787,7 +830,7 @@ def _persist_assistant_chat_cancelled(
 def _persist_assistant_chat_failed(
     current_store: MemoryStore,
     *,
-    audit_start_index: int,
+    audit_events: list[dict[str, Any]] | None = None,
     error_code: str,
     error_message: str,
     model_log: dict[str, Any] | None,
@@ -833,18 +876,22 @@ def _persist_assistant_chat_failed(
             "updated_at": now,
         }
     )
-    current_store.assistant_chat_runs[run_id] = chat_run
-    current_store.audit(
-        event_type="assistant.chat_failed",
-        actor_id=user["id"],
-        subject_type="assistant_chat_run",
-        subject_id=run_id,
-        payload={
-            "client_request_id": client_request_id,
-            "error_code": error_code,
-            "model_log_id": model_log.get("id") if model_log else None,
-            "product_id": normalized_payload.product_id,
-        },
+    pending_audit_events = list(audit_events or [])
+    pending_audit_events.append(
+        assistant_chat_audit_event(
+            current_store,
+            event_type="assistant.chat_failed",
+            actor_id=user["id"],
+            subject_type="assistant_chat_run",
+            subject_id=run_id,
+            payload={
+                "client_request_id": client_request_id,
+                "error_code": error_code,
+                "model_log_id": model_log.get("id") if model_log else None,
+                "product_id": normalized_payload.product_id,
+            },
+            sequence_offset=len(pending_audit_events),
+        )
     )
     save_assistant_chat_records(
         current_store,
@@ -852,7 +899,7 @@ def _persist_assistant_chat_failed(
         conversation=conversation,
         messages=[user_message, assistant_message],
         model_log=model_log,
-        audit_events=current_store.audit_events[audit_start_index:],
+        audit_events=pending_audit_events,
     )
 
 
@@ -864,9 +911,8 @@ def _mark_scheduled_job_run_triggered_by_assistant(
     run_id = str(run.get("id") or "").strip()
     if not run_id:
         return
-    if not hasattr(current_store, "scheduled_job_runs"):
-        current_store.scheduled_job_runs = {}
-    run_record = current_store.scheduled_job_runs.get(run_id)
+    scheduled_job_runs = _memory_collection(current_store, "scheduled_job_runs")
+    run_record = scheduled_job_runs.get(run_id)
     if not isinstance(run_record, dict):
         run_record = dict(run)
     now = datetime.now(UTC).isoformat()
@@ -875,7 +921,8 @@ def _mark_scheduled_job_run_triggered_by_assistant(
         "triggered_by_assistant": True,
         "updated_at": now,
     }
-    current_store.scheduled_job_runs[run_id] = run_record
+    scheduled_job_runs[run_id] = run_record
+    persist_record(current_store, "save_scheduled_job_run_record", run_record)
     run.update(run_record)
 
 
@@ -907,11 +954,10 @@ def _attach_assistant_message_attribution_to_scheduled_job_runs(
     run_ids.discard("")
     if not run_ids:
         return
-    if not hasattr(current_store, "scheduled_job_runs"):
-        return
+    scheduled_job_runs = _memory_collection(current_store, "scheduled_job_runs")
     now = datetime.now(UTC).isoformat()
     for run_id in run_ids:
-        run = current_store.scheduled_job_runs.get(run_id)
+        run = scheduled_job_runs.get(run_id)
         if not isinstance(run, dict) or run.get("triggered_by_assistant") is not True:
             continue
         run = {
@@ -919,7 +965,7 @@ def _attach_assistant_message_attribution_to_scheduled_job_runs(
             "assistant_source_message_id": source_message_id,
             "updated_at": now,
         }
-        current_store.scheduled_job_runs[run_id] = run
+        scheduled_job_runs[run_id] = run
         persist_record(current_store, "save_scheduled_job_run_record", run)
 
 

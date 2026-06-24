@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.651 |
+| 功能版本 | v1.1.652 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.652 | 2026-06-24 | 补充 AI 助手聊天 DB-first 写路径收口验收：`assistant_chat` 服务不得在开始、完成、取消、失败和模型网关调用审计链路中直接写 `current_store.assistant_chat_runs` 或调用 `current_store.audit()`，助手触发定时作业运行归因不得直接写 `current_store.scheduled_job_runs`；聊天运行、会话、消息、模型日志和审计必须通过 `save_assistant_chat_records` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态必须使用同一数据库事务；`test_assistant_chat.py`、`test_assistant_chat_persistence.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.651 | 2026-06-24 | 补充 AI 助手草案 DB-first 写路径收口验收：`assistant_action_drafts` 服务不得在创建、确认、失败、取消、修改、查看和过期链路中直接写 `current_store.assistant_action_drafts`、`current_store.assistant_action_runs` 或调用 `current_store.audit()`；助手触发定时作业运行归因不得直接写 `current_store.scheduled_job_runs`；草案、动作运行和审计必须通过 `save_assistant_action_records` 写入 MemoryStore 测试 fallback 或 repository，PostgreSQL 运行态必须使用同一数据库事务；`test_assistant_chat.py`、`test_assistant_draft_workbench.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.650 | 2026-06-24 | 补充 AI 执行器 Runner DB-first 写路径收口验收：Runner 服务不得在状态同步和回写链路中直接写 `current_store` 的 Runner、任务、插件调用、定时作业运行、采集运行或 AI 任务集合，MemoryStore 测试路径由 helper fallback 写入，PostgreSQL 运行态通过 repository 单记录写入；Runner/任务/插件调用/定时作业/采集运行单记录写入和审计必须使用同一数据库事务；`test_plugin_management.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |
 | v1.1.649 | 2026-06-24 | 补充迭代版本 DB-first 写路径收口验收：迭代版本和版本代码分支配置 create/patch/delete/status advance 不得在路由中直接写 `current_store` 集合，MemoryStore 测试路径由 helper fallback 写入，PostgreSQL 运行态通过 repository 单记录写入；需求单记录写入/删除和审计必须使用同一数据库事务；`test_product_config_persistence.py`、`test_product_system_config.py`、`test_iteration_version_status_flow.py` 与 `test_persistence_repository_boundaries.py` 必须通过 | Codex |

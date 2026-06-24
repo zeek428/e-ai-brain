@@ -250,6 +250,46 @@ def save_assistant_chat_records(
             model_log=model_log,
             audit_events=audit_events,
         )
+        return
+    if chat_run is not None:
+        _memory_collection(current_store, "assistant_chat_runs")[str(chat_run["id"])] = chat_run
+    if conversation is not None:
+        _memory_collection(current_store, "assistant_conversations")[
+            str(conversation["id"])
+        ] = conversation
+    for message in messages:
+        _memory_collection(current_store, "assistant_messages")[str(message["id"])] = message
+    if model_log is not None:
+        _append_unique_memory_record(current_store, "model_gateway_logs", model_log)
+    _memory_list(current_store, "audit_events").extend(audit_events)
+
+
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _append_unique_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record: dict[str, Any],
+) -> None:
+    collection = _memory_list(current_store, collection_name)
+    record_id = str(record.get("id") or "")
+    if record_id and any(str(item.get("id") or "") == record_id for item in collection):
+        return
+    collection.append(record)
 
 
 def runtime_repository(current_store: Any) -> Any | None:

@@ -559,7 +559,7 @@ class AssistantChatReadRepository:
         audit_events: list[dict[str, Any]],
         model_log: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 if chat_run is not None:
                     self.upsert_assistant_chat_runs(cursor, {chat_run["id"]: chat_run})

@@ -919,6 +919,91 @@ def test_assistant_action_record_writes_use_single_transaction(monkeypatch):
     assert audit_calls == [[audit_event]]
 
 
+def test_assistant_chat_record_writes_use_single_transaction(monkeypatch):
+    connect_calls: list[dict] = []
+    upsert_calls: list[tuple[str, dict]] = []
+    audit_calls: list[list[dict]] = []
+    model_log_calls: list[list[dict]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    def upsert_model_gateway_logs(cursor, model_logs):  # type: ignore[no-untyped-def]
+        model_log_calls.append(model_logs)
+
+    def record_upsert(name: str):
+        def _call(self, cursor, items):  # type: ignore[no-untyped-def]
+            upsert_calls.append((name, items))
+
+        return _call
+
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
+        "upsert_assistant_chat_runs",
+        record_upsert("chat_run"),
+    )
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
+        "upsert_assistant_conversations",
+        record_upsert("conversation"),
+    )
+    monkeypatch.setattr(
+        AssistantChatReadRepository,
+        "upsert_assistant_messages",
+        record_upsert("message"),
+    )
+
+    repository = AssistantChatReadRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+        upsert_model_gateway_logs=upsert_model_gateway_logs,
+    )
+    chat_run = {"id": "assistant_chat_run_atomic"}
+    conversation = {"id": "assistant_conversation_atomic"}
+    message = {"id": "assistant_message_atomic"}
+    model_log = {"id": "model_gateway_log_atomic"}
+    audit_event = {"id": "audit_assistant_chat_atomic"}
+
+    repository.save_assistant_chat_records(
+        chat_run=chat_run,
+        conversation=conversation,
+        messages=[message],
+        model_log=model_log,
+        audit_events=[audit_event],
+    )
+
+    assert connect_calls == [{"autocommit": False}]
+    assert upsert_calls == [
+        ("chat_run", {"assistant_chat_run_atomic": chat_run}),
+        ("conversation", {"assistant_conversation_atomic": conversation}),
+        ("message", {"assistant_message_atomic": message}),
+    ]
+    assert model_log_calls == [[model_log]]
+    assert audit_calls == [[audit_event]]
+
+
 def test_postgres_requirement_read_models_delegate_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []
