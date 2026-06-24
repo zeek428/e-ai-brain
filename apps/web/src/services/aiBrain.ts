@@ -1266,6 +1266,19 @@ export type ScheduledJobListQuery = RemoteListQuery & {
   status?: string;
 };
 
+export type PluginConnectionListQuery = RemoteListQuery & {
+  environment?: string;
+  keyword?: string;
+  pluginId?: string;
+  status?: string;
+};
+
+export type PluginActionListQuery = RemoteListQuery & {
+  keyword?: string;
+  pluginId?: string;
+  status?: string;
+};
+
 export type RemoteListResult<Row> = {
   page: number;
   pageSize: number;
@@ -5992,6 +6005,28 @@ export async function fetchPluginConnections(
   return response.items;
 }
 
+export async function fetchPluginConnectionsPage(
+  query: PluginConnectionListQuery,
+): Promise<RemoteListResult<PluginConnectionRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'environment', query.environment);
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'plugin_id', query.pluginId);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const response = await apiRequest<ListResponse<PluginConnectionRecord>>(
+    `/api/system/plugin-connections?${params.toString()}`,
+    { token },
+  );
+  return {
+    page: response.page ?? query.page ?? 1,
+    pageSize: response.page_size ?? query.pageSize ?? 10,
+    rows: response.items,
+    total: response.total,
+  };
+}
+
 export async function createPluginConnection(payload: Partial<PluginConnectionRecord>) {
   const token = requireAccessToken();
   return apiRequest<PluginConnectionRecord>('/api/system/plugin-connections', {
@@ -6052,6 +6087,27 @@ export async function fetchPluginActions(
     { token },
   );
   return response.items;
+}
+
+export async function fetchPluginActionsPage(
+  query: PluginActionListQuery,
+): Promise<RemoteListResult<PluginActionRecord>> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'keyword', query.keyword);
+  appendQueryParam(params, 'plugin_id', query.pluginId);
+  appendQueryParam(params, 'status', query.status);
+  appendRemoteListParams(params, query);
+  const response = await apiRequest<ListResponse<PluginActionRecord>>(
+    `/api/system/plugin-actions?${params.toString()}`,
+    { token },
+  );
+  return {
+    page: response.page ?? query.page ?? 1,
+    pageSize: response.page_size ?? query.pageSize ?? 10,
+    rows: response.items,
+    total: response.total,
+  };
 }
 
 export async function createPluginAction(payload: Partial<PluginActionRecord>) {

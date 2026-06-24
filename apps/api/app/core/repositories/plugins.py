@@ -12,6 +12,29 @@ def _json(value: Any, default: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+PLUGIN_CONNECTION_SORT_COLUMNS = {
+    "created_at": "created_at",
+    "endpoint_url": "lower(endpoint_url)",
+    "environment": "environment",
+    "id": "id",
+    "name": "lower(name)",
+    "plugin_id": "plugin_id",
+    "status": "status",
+    "updated_at": "updated_at",
+}
+
+PLUGIN_ACTION_SORT_COLUMNS = {
+    "action_type": "action_type",
+    "code": "lower(code)",
+    "created_at": "created_at",
+    "id": "id",
+    "name": "lower(name)",
+    "plugin_id": "plugin_id",
+    "status": "status",
+    "updated_at": "updated_at",
+}
+
+
 class PluginReadRepository:
     def __init__(
         self,
@@ -90,6 +113,67 @@ class PluginReadRepository:
                 )
                 return [self._connection_from_row(row) for row in cursor.fetchall()]
 
+    def count_plugin_connections(
+        self,
+        *,
+        environment: str | None = None,
+        keyword: str | None = None,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._plugin_connection_where(
+            environment=environment,
+            keyword=keyword,
+            plugin_id=plugin_id,
+            status=status,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM plugin_connections {where}",
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_plugin_connections_page(
+        self,
+        *,
+        environment: str | None = None,
+        keyword: str | None = None,
+        limit: int,
+        offset: int,
+        plugin_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._plugin_connection_where(
+            environment=environment,
+            keyword=keyword,
+            plugin_id=plugin_id,
+            status=status,
+        )
+        sort_column = PLUGIN_CONNECTION_SORT_COLUMNS.get(sort_by, "plugin_id")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, plugin_id, name, environment, endpoint_url, auth_type,
+                           auth_config, request_config, timeout_seconds, max_retries, status,
+                           created_by, created_at, updated_at, last_test_summary, test_history
+                    FROM plugin_connections
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
+                    """,
+                    tuple(params),
+                )
+                return [self._connection_from_row(row) for row in cursor.fetchall()]
+
     def save_plugin_connection_record(
         self,
         connection: dict[str, Any],
@@ -129,6 +213,63 @@ class PluginReadRepository:
                     FROM plugin_actions
                     {where}
                     ORDER BY plugin_id ASC, code ASC, id ASC
+                    """,
+                    tuple(params),
+                )
+                return [self._action_from_row(row) for row in cursor.fetchall()]
+
+    def count_plugin_actions(
+        self,
+        *,
+        keyword: str | None = None,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._plugin_action_where(
+            keyword=keyword,
+            plugin_id=plugin_id,
+            status=status,
+        )
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM plugin_actions {where}",
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+
+    def list_plugin_actions_page(
+        self,
+        *,
+        keyword: str | None = None,
+        limit: int,
+        offset: int,
+        plugin_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where, params = self._plugin_action_where(
+            keyword=keyword,
+            plugin_id=plugin_id,
+            status=status,
+        )
+        sort_column = PLUGIN_ACTION_SORT_COLUMNS.get(sort_by, "plugin_id")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+        params.extend([limit, offset])
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, plugin_id, connection_id, code, name, description, action_type,
+                           input_schema, output_schema, request_config, result_mapping,
+                           requires_human_review, status, created_by, created_at, updated_at
+                    FROM plugin_actions
+                    {where}
+                    ORDER BY {sort_column} {direction} {nulls}, id {direction}
+                    LIMIT %s OFFSET %s
                     """,
                     tuple(params),
                 )
@@ -614,6 +755,66 @@ class PluginReadRepository:
                 continue
             clauses.append(f"{field} = %s")
             params.append(value)
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _plugin_connection_where(
+        self,
+        *,
+        environment: str | None = None,
+        keyword: str | None = None,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        where, params = self._where(
+            {"environment": environment, "plugin_id": plugin_id, "status": status},
+        )
+        clauses = [where.removeprefix("WHERE ")] if where else []
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            keyword_param = f"%{normalized_keyword}%"
+            clauses.append(
+                """
+                (
+                  lower(id) LIKE %s
+                  OR lower(plugin_id) LIKE %s
+                  OR lower(name) LIKE %s
+                  OR lower(environment) LIKE %s
+                  OR lower(endpoint_url) LIKE %s
+                  OR lower(auth_type) LIKE %s
+                  OR lower(status) LIKE %s
+                )
+                """
+            )
+            params.extend([keyword_param] * 7)
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def _plugin_action_where(
+        self,
+        *,
+        keyword: str | None = None,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        where, params = self._where({"plugin_id": plugin_id, "status": status})
+        clauses = [where.removeprefix("WHERE ")] if where else []
+        normalized_keyword = str(keyword or "").strip().lower()
+        if normalized_keyword:
+            keyword_param = f"%{normalized_keyword}%"
+            clauses.append(
+                """
+                (
+                  lower(id) LIKE %s
+                  OR lower(plugin_id) LIKE %s
+                  OR lower(connection_id) LIKE %s
+                  OR lower(code) LIKE %s
+                  OR lower(name) LIKE %s
+                  OR lower(description) LIKE %s
+                  OR lower(action_type) LIKE %s
+                  OR lower(status) LIKE %s
+                )
+                """
+            )
+            params.extend([keyword_param] * 8)
         return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
 
     def _plugin_from_row(self, row: Any) -> dict[str, Any]:

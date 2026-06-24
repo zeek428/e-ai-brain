@@ -22,6 +22,8 @@ LIST_P95_TARGETS_MS = {
     "execution_traces": 500,
     "knowledge_documents": 400,
     "model_gateway_configs": 300,
+    "plugin_actions": 400,
+    "plugin_connections": 400,
     "product_versions": 300,
     "products": 300,
     "roles": 300,

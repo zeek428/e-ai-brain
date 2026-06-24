@@ -2,6 +2,7 @@ import json
 import zipfile
 from datetime import UTC, datetime
 from io import BytesIO
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -9,6 +10,8 @@ import app.services.plugins as plugin_services
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.main import app
 from app.services.plugins import (
+    list_plugin_actions_response,
+    list_plugin_connections_response,
     records_imported_from_mapping,
     resolve_action_request_config,
     resolve_plugin_request_config,
@@ -16,6 +19,78 @@ from app.services.plugins import (
 from app.services.scheduled_jobs import resolve_plugin_input_mapping
 
 client = TestClient(app)
+
+
+class FakePluginPagingRepository:
+    def __init__(self) -> None:
+        self.connection_count_kwargs: dict | None = None
+        self.connection_page_kwargs: dict | None = None
+        self.action_count_kwargs: dict | None = None
+        self.action_page_kwargs: dict | None = None
+
+    def list_plugins(self, **_kwargs):
+        return []
+
+    def list_plugin_connections(self, **_kwargs):
+        raise AssertionError("full plugin connection list should not be used")
+
+    def list_plugin_actions(self, **_kwargs):
+        raise AssertionError("full plugin action list should not be used")
+
+    def list_plugin_invocation_logs(self, **_kwargs):
+        return []
+
+    def count_plugin_connections(self, **kwargs):
+        self.connection_count_kwargs = kwargs
+        return 2
+
+    def list_plugin_connections_page(self, **kwargs):
+        self.connection_page_kwargs = kwargs
+        return [
+            {
+                "auth_config": {"token": "secret"},
+                "auth_type": "bearer",
+                "created_at": "2026-06-24T01:00:00+00:00",
+                "created_by": "user_admin",
+                "endpoint_url": "https://gitlab.example.com",
+                "environment": "prod",
+                "id": "plugin_connection_sql",
+                "max_retries": 1,
+                "name": "GitLab Prod",
+                "plugin_id": "plugin_gitlab",
+                "request_config": {},
+                "status": "active",
+                "timeout_seconds": 30,
+                "updated_at": "2026-06-24T01:00:00+00:00",
+            }
+        ]
+
+    def count_plugin_actions(self, **kwargs):
+        self.action_count_kwargs = kwargs
+        return 3
+
+    def list_plugin_actions_page(self, **kwargs):
+        self.action_page_kwargs = kwargs
+        return [
+            {
+                "action_type": "http_request",
+                "code": "fetch_repo",
+                "connection_id": "plugin_connection_sql",
+                "created_at": "2026-06-24T01:00:00+00:00",
+                "created_by": "user_admin",
+                "description": "Fetch repository metadata",
+                "id": "plugin_action_sql",
+                "input_schema": {},
+                "name": "Fetch Repo",
+                "output_schema": {},
+                "plugin_id": "plugin_gitlab",
+                "request_config": {},
+                "requires_human_review": False,
+                "result_mapping": {},
+                "status": "active",
+                "updated_at": "2026-06-24T01:00:00+00:00",
+            }
+        ]
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:
@@ -1603,6 +1678,113 @@ def test_plugin_connections_can_be_filtered_by_environment():
     )
     assert invalid.status_code == 400
     assert "Unsupported environment" in invalid.text
+
+
+def test_plugin_connection_and_action_lists_use_repository_pagination_when_requested():
+    repository = FakePluginPagingRepository()
+    store = SimpleNamespace(repository=repository)
+
+    connection_response = list_plugin_connections_response(
+        current_store=store,
+        environment="prod",
+        keyword="gitlab",
+        page=2,
+        page_size=1,
+        plugin_id="plugin_gitlab",
+        sort_by="name",
+        sort_order="asc",
+        started_at=None,
+        status="active",
+    )
+
+    assert connection_response["total"] == 2
+    assert connection_response["page"] == 2
+    assert connection_response["page_size"] == 1
+    assert connection_response["items"][0]["id"] == "plugin_connection_sql"
+    assert connection_response["items"][0]["auth_config"] == {"token": "secret"}
+    assert connection_response["query"]["name"] == "plugin_connections"
+    assert connection_response["performance"]["p95_target_ms"] == 400
+    assert repository.connection_count_kwargs == {
+        "environment": "prod",
+        "keyword": "gitlab",
+        "plugin_id": "plugin_gitlab",
+        "status": "active",
+    }
+    assert repository.connection_page_kwargs == {
+        "environment": "prod",
+        "keyword": "gitlab",
+        "limit": 1,
+        "offset": 1,
+        "plugin_id": "plugin_gitlab",
+        "sort_by": "name",
+        "sort_order": "asc",
+        "status": "active",
+    }
+
+    action_response = list_plugin_actions_response(
+        current_store=store,
+        keyword="repo",
+        page=1,
+        page_size=2,
+        plugin_id="plugin_gitlab",
+        sort_by="code",
+        sort_order="desc",
+        started_at=None,
+        status="active",
+    )
+
+    assert action_response["total"] == 3
+    assert action_response["items"][0]["id"] == "plugin_action_sql"
+    assert action_response["query"]["name"] == "plugin_actions"
+    assert action_response["performance"]["p95_target_ms"] == 400
+    assert repository.action_count_kwargs == {
+        "keyword": "repo",
+        "plugin_id": "plugin_gitlab",
+        "status": "active",
+    }
+    assert repository.action_page_kwargs == {
+        "keyword": "repo",
+        "limit": 2,
+        "offset": 0,
+        "plugin_id": "plugin_gitlab",
+        "sort_by": "code",
+        "sort_order": "desc",
+        "status": "active",
+    }
+
+
+def test_plugin_lists_return_observability_metadata_when_paginated():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    plugin, connection, action = create_plugin_bundle(admin_headers)
+
+    connection_response = client.get(
+        "/api/system/plugin-connections"
+        f"?plugin_id={plugin['id']}&keyword=gitlab&page=1&page_size=1"
+        "&sort_by=name&sort_order=asc",
+        headers=admin_headers,
+    )
+    connection_payload = connection_response.json()["data"]
+
+    assert connection_response.status_code == 200
+    assert connection_payload["total"] == 1
+    assert connection_payload["items"][0]["id"] == connection["id"]
+    assert connection_payload["query"]["name"] == "plugin_connections"
+    assert connection_payload["performance"]["p95_target_ms"] == 400
+
+    action_response = client.get(
+        "/api/system/plugin-actions"
+        f"?plugin_id={plugin['id']}&keyword=daily&page=1&page_size=1"
+        "&sort_by=code&sort_order=asc",
+        headers=admin_headers,
+    )
+    action_payload = action_response.json()["data"]
+
+    assert action_response.status_code == 200
+    assert action_payload["total"] == 1
+    assert action_payload["items"][0]["id"] == action["id"]
+    assert action_payload["query"]["name"] == "plugin_actions"
+    assert action_payload["performance"]["p95_target_ms"] == 400
 
 
 def test_plugin_connection_can_be_tested_with_structured_result_and_audit():

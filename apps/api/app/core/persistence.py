@@ -1307,6 +1307,44 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def count_plugin_connections(
+        self,
+        *,
+        environment: str | None = None,
+        keyword: str | None = None,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return self._plugin_read_repository.count_plugin_connections(
+            environment=environment,
+            keyword=keyword,
+            plugin_id=plugin_id,
+            status=status,
+        )
+
+    def list_plugin_connections_page(
+        self,
+        *,
+        environment: str | None = None,
+        keyword: str | None = None,
+        limit: int,
+        offset: int,
+        plugin_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_plugin_connections_page(
+            environment=environment,
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+            plugin_id=plugin_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            status=status,
+        )
+
     def list_plugin_actions(
         self,
         *,
@@ -1315,6 +1353,40 @@ class PostgresSnapshotRepository:
     ) -> list[dict[str, Any]]:
         return self._plugin_read_repository.list_plugin_actions(
             plugin_id=plugin_id,
+            status=status,
+        )
+
+    def count_plugin_actions(
+        self,
+        *,
+        keyword: str | None = None,
+        plugin_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        return self._plugin_read_repository.count_plugin_actions(
+            keyword=keyword,
+            plugin_id=plugin_id,
+            status=status,
+        )
+
+    def list_plugin_actions_page(
+        self,
+        *,
+        keyword: str | None = None,
+        limit: int,
+        offset: int,
+        plugin_id: str | None = None,
+        sort_by: str,
+        sort_order: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_plugin_actions_page(
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+            plugin_id=plugin_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
             status=status,
         )
 

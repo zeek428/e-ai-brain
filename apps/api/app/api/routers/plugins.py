@@ -52,6 +52,11 @@ from app.services.plugins import (
 router = APIRouter(tags=["plugins"])
 
 
+def _request_started_at(request: Request) -> float | None:
+    started_at = getattr(request.state, "started_at", None)
+    return started_at if isinstance(started_at, float) else None
+
+
 class PluginRequest(BaseModel):
     category: str = "general"
     code: str
@@ -612,7 +617,12 @@ def delete_plugin(
 def list_plugin_connections(
     request: Request,
     environment: str | None = None,
+    keyword: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
     plugin_id: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "asc",
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
@@ -620,7 +630,13 @@ def list_plugin_connections(
         list_plugin_connections_response(
             current_store=store(request),
             environment=environment,
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
             plugin_id=plugin_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=_request_started_at(request),
             status=status,
         ),
         get_trace_id(request),
@@ -696,14 +712,25 @@ def test_plugin_connection(
 @router.get("/api/system/plugin-actions")
 def list_plugin_actions(
     request: Request,
+    keyword: str | None = None,
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
     plugin_id: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "asc",
     status: str | None = None,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     return envelope(
         list_plugin_actions_response(
             current_store=store(request),
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
             plugin_id=plugin_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            started_at=_request_started_at(request),
             status=status,
         ),
         get_trace_id(request),

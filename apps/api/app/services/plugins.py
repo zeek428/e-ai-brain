@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.api.deps import api_error, require_permissions
+from app.core.listing import add_list_observability, sort_list_items
 from app.services.ai_executor_runners import (
     AI_EXECUTOR_TYPES,
     SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
@@ -66,6 +67,26 @@ AI_EXECUTOR_RUNNER_PROTOCOLS = {"runner_polling", "runner_websocket"}
 RESULT_WRITE_RECORD_STATUSES = {"cancelled", "failed", "not_run", "running", "succeeded"}
 MASKED_SECRET_PLACEHOLDER = "***"
 DEPRECATED_STANDARD_PLUGIN_CODES = {"aliyun_maxcompute"}
+PLUGIN_CONNECTION_SORT_FIELDS = {
+    "created_at",
+    "endpoint_url",
+    "environment",
+    "id",
+    "name",
+    "plugin_id",
+    "status",
+    "updated_at",
+}
+PLUGIN_ACTION_SORT_FIELDS = {
+    "action_type",
+    "code",
+    "created_at",
+    "id",
+    "name",
+    "plugin_id",
+    "status",
+    "updated_at",
+}
 
 
 def require_admin(user: dict[str, Any]) -> None:
@@ -1195,13 +1216,69 @@ def list_plugin_connections_response(
     *,
     current_store: Any,
     environment: str | None,
+    keyword: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
     plugin_id: str | None,
+    sort_by: str | None = None,
+    sort_order: str = "asc",
+    started_at: float | None = None,
     status: str | None,
 ) -> dict[str, Any]:
     if environment is not None:
         ensure_enum(environment, PLUGIN_CONNECTION_ENVIRONMENTS, "environment")
     if status is not None:
         ensure_enum(status, PLUGIN_STATUSES, "status")
+    ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        ensure_enum(sort_by, PLUGIN_CONNECTION_SORT_FIELDS, "sort_by")
+    repository = plugin_query_repository(current_store)
+    with_pagination = page is not None or page_size is not None
+    count_page = getattr(repository, "count_plugin_connections", None)
+    list_page = getattr(repository, "list_plugin_connections_page", None)
+    resolved_sort_by = sort_by or "plugin_id"
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    if with_pagination and callable(count_page) and callable(list_page):
+        total = count_page(
+            environment=environment,
+            keyword=keyword,
+            plugin_id=plugin_id,
+            status=status,
+        )
+        items = [
+            public_connection(connection)
+            for connection in list_page(
+                environment=environment,
+                keyword=keyword,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                plugin_id=plugin_id,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                status=status,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters={
+                "environment": environment,
+                "keyword": keyword,
+                "plugin_id": plugin_id,
+                "status": status,
+            },
+            list_name="plugin_connections",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
     sync_plugin_connection_store(
         current_store,
         environment=environment,
@@ -1216,11 +1293,63 @@ def list_plugin_connections_response(
             continue
         if status is not None and connection.get("status") != status:
             continue
+        if keyword is not None:
+            keyword_text = str(keyword).strip().lower()
+            if keyword_text and keyword_text not in " ".join(
+                str(connection.get(field) or "").lower()
+                for field in (
+                    "id",
+                    "plugin_id",
+                    "name",
+                    "environment",
+                    "endpoint_url",
+                    "auth_type",
+                    "status",
+                )
+            ):
+                continue
         items.append(public_connection(connection))
-    items.sort(
-        key=lambda item: (item.get("plugin_id") or "", item.get("environment") or "", item["id"]),
-    )
-    return {"items": items, "total": len(items)}
+    if sort_by is None and not with_pagination:
+        items.sort(
+            key=lambda item: (
+                item.get("plugin_id") or "",
+                item.get("environment") or "",
+                item["id"],
+            ),
+        )
+    else:
+        items = sort_list_items(
+            items,
+            allowed_fields=PLUGIN_CONNECTION_SORT_FIELDS,
+            default_sort_by=resolved_sort_by,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+    total = len(items)
+    if with_pagination:
+        start_index = (resolved_page - 1) * resolved_page_size
+        items = items[start_index : start_index + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters={
+                "environment": environment,
+                "keyword": keyword,
+                "plugin_id": plugin_id,
+                "status": status,
+            },
+            list_name="plugin_connections",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+    return {"items": items, "total": total}
 
 
 def create_plugin_connection_response(
@@ -1652,11 +1781,56 @@ def ensure_active_connection(
 def list_plugin_actions_response(
     *,
     current_store: Any,
+    keyword: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
     plugin_id: str | None,
+    sort_by: str | None = None,
+    sort_order: str = "asc",
+    started_at: float | None = None,
     status: str | None,
 ) -> dict[str, Any]:
     if status is not None:
         ensure_enum(status, PLUGIN_STATUSES, "status")
+    ensure_enum(sort_order, {"asc", "desc"}, "sort_order")
+    if sort_by is not None:
+        ensure_enum(sort_by, PLUGIN_ACTION_SORT_FIELDS, "sort_by")
+    repository = plugin_query_repository(current_store)
+    with_pagination = page is not None or page_size is not None
+    count_page = getattr(repository, "count_plugin_actions", None)
+    list_page = getattr(repository, "list_plugin_actions_page", None)
+    resolved_sort_by = sort_by or "plugin_id"
+    resolved_page = page or 1
+    resolved_page_size = page_size or 10
+    if with_pagination and callable(count_page) and callable(list_page):
+        total = count_page(keyword=keyword, plugin_id=plugin_id, status=status)
+        items = [
+            public_action(action)
+            for action in list_page(
+                keyword=keyword,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                plugin_id=plugin_id,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+                status=status,
+            )
+        ]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters={"keyword": keyword, "plugin_id": plugin_id, "status": status},
+            list_name="plugin_actions",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
     sync_plugin_action_store(current_store, plugin_id=plugin_id, status=status)
     items = []
     for action in current_store.plugin_actions.values():
@@ -1664,9 +1838,59 @@ def list_plugin_actions_response(
             continue
         if status is not None and action.get("status") != status:
             continue
+        if keyword is not None:
+            keyword_text = str(keyword).strip().lower()
+            if keyword_text and keyword_text not in " ".join(
+                str(action.get(field) or "").lower()
+                for field in (
+                    "id",
+                    "plugin_id",
+                    "connection_id",
+                    "code",
+                    "name",
+                    "description",
+                    "action_type",
+                    "status",
+                )
+            ):
+                continue
         items.append(public_action(action))
-    items.sort(key=lambda item: (item.get("plugin_id") or "", item.get("code") or "", item["id"]))
-    return {"items": items, "total": len(items)}
+    if sort_by is None and not with_pagination:
+        items.sort(
+            key=lambda item: (
+                item.get("plugin_id") or "",
+                item.get("code") or "",
+                item["id"],
+            ),
+        )
+    else:
+        items = sort_list_items(
+            items,
+            allowed_fields=PLUGIN_ACTION_SORT_FIELDS,
+            default_sort_by=resolved_sort_by,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+    total = len(items)
+    if with_pagination:
+        start_index = (resolved_page - 1) * resolved_page_size
+        items = items[start_index : start_index + resolved_page_size]
+        return add_list_observability(
+            {
+                "items": items,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
+                "total": total,
+            },
+            filters={"keyword": keyword, "plugin_id": plugin_id, "status": status},
+            list_name="plugin_actions",
+            page=resolved_page,
+            page_size=resolved_page_size,
+            sort_by=resolved_sort_by,
+            sort_order=sort_order,
+            started_at=started_at,
+        )
+    return {"items": items, "total": total}
 
 
 def create_plugin_action_response(

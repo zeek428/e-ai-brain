@@ -40,6 +40,8 @@ def test_management_list_p95_targets_are_explicit():
         "execution_traces": 500,
         "knowledge_documents": 400,
         "model_gateway_configs": 300,
+        "plugin_actions": 400,
+        "plugin_connections": 400,
         "product_versions": 300,
         "products": 300,
         "requirements": 300,
