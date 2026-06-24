@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.392 |
+| 功能版本 | v1.1.393 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.393 | 2026-06-24 | 执行诊断 `source_type` 新增 `ai_executor_runner`，Runner 节点会随 AI 执行器任务进入同一 Trace，可按 Runner ID 过滤或下钻排查接单、心跳和工作区配置 | Codex |
 | v1.1.392 | 2026-06-24 | 执行诊断模型网关日志链路补齐审计吸附：`model_gateway_log` Trace 会关联 subject、payload 或 ai_task 指向的审计事件，`source_id=audit_event_id` 可反查同一模型调用链路 | Codex |
 | v1.1.391 | 2026-06-24 | 插件连接和插件动作列表新增可选远程分页契约：带 `page/page_size` 时支持关键字、插件、状态、环境筛选和白名单排序，并返回 query/performance 观测信息 | Codex |
 | v1.1.390 | 2026-06-24 | 执行诊断 `source_type` 新增 `result_write_record`，定时作业和插件调用链路聚合结果写入记录，可按写入记录 ID 反查“是否真正写入报告/反馈/通知” | Codex |
@@ -4219,13 +4220,15 @@ GET /api/governance/execution-traces/{trace_id}
 
 链路聚合规则：模型网关日志可作为独立根节点，也可作为定时作业、插件调用、Runner 或 AI 助手运行的子节点；审计事件若通过 `subject_id`、payload 中的 `model_gateway_log_id` / `model_log_id`，或相同 `ai_task_id` 指向模型调用，会吸附到同一条模型调用 Trace。按对应审计事件 ID 作为 `source_id` 或详情 `{trace_id}` 查询时，应返回该模型调用链路，避免同一模型失败同时显示为孤立审计 Trace 和孤立模型 Trace。
 
+Runner 聚合规则：`ai_executor_task.runner_id` 必须解析为 `ai_executor_runner` 节点并与任务节点通过 `assigned_runner` 边相连；若 Runner 记录不存在，仍需生成带 `missing_runner_record` 元数据的占位节点保留 Runner ID，便于排查任务为什么没有被正确接单。Runner 节点只返回名称、协议、执行器类型、工作区、心跳时间、超时时间、并发、健康状态和 token 是否配置，不返回 `token_hash` 或安装包密钥。
+
 列表查询参数：
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | keyword | string | 按链路 ID、根 ID、根类型、标题、摘要或关联 ID 搜索。 |
-| source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`result_write_record` 或 `audit_event` 的 ID；前端深链命中唯一记录时自动打开详情。 |
-| source_type | enum | 根类型或节点类型：`scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`result_write_record`、`audit_event`。 |
+| source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_runner`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`result_write_record` 或 `audit_event` 的 ID；前端深链命中唯一记录时自动打开详情。 |
+| source_type | enum | 根类型或节点类型：`scheduled_job_run`、`scheduled_job_stage`、`plugin_invocation_log`、`ai_executor_runner`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`result_write_record`、`audit_event`。 |
 | status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
 | created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |
 | sort_by | enum | `started_at`、`updated_at`、`duration_ms`、`node_count`、`failed_node_count`、`root_type`、`status`、`id`。 |
@@ -4253,6 +4256,7 @@ GET /api/governance/execution-traces/{trace_id}
         "running_node_count": 0,
         "related_ids": {
           "plugin_invocation_log": ["plugin_invocation_log_001"],
+          "ai_executor_runner": ["ai_executor_runner_001"],
           "ai_executor_task": ["ai_executor_task_001"],
           "model_gateway_log": ["model_gateway_log_001"],
           "code_inspection_report": ["code_inspection_report_001"],

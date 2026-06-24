@@ -33,6 +33,9 @@ class FakeExecutionTraceRepository:
     def list_ai_executor_tasks(self) -> list[dict[str, Any]]:
         return list(self.store.ai_executor_tasks.values())
 
+    def list_ai_executor_runners(self) -> list[dict[str, Any]]:
+        return list(self.store.ai_executor_runners.values())
+
     def list_scheduled_job_runs(self) -> list[dict[str, Any]]:
         return list(self.store.scheduled_job_runs.values())
 
@@ -245,6 +248,24 @@ def seed_execution_trace_records() -> None:
         "status": "succeeded",
         "workspace_root": "/Users/zeek/source/e-ai-brain",
     }
+    store.ai_executor_runners["ai_executor_runner_001"] = {
+        "created_at": "2026-06-20T00:59:50+00:00",
+        "created_by": "user_admin",
+        "endpoint_url": "http://runner.local:8000",
+        "executor_types": ["codex"],
+        "heartbeat_timeout_seconds": 300,
+        "id": "ai_executor_runner_001",
+        "last_heartbeat_at": "2026-06-20T01:00:06+00:00",
+        "max_concurrent_tasks": 2,
+        "metadata": {"host": "runner-mac"},
+        "name": "本地 Codex Runner",
+        "protocol": "runner_polling",
+        "status": "active",
+        "token_hash": "runner-token-secret-hash",
+        "token_version": 1,
+        "updated_at": "2026-06-20T01:00:06+00:00",
+        "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+    }
     store.model_gateway_logs.append(
         {
             "ai_task_id": "ai_task_trace",
@@ -410,6 +431,7 @@ def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
     assert item["status"] == "succeeded"
     assert item["node_count"] >= 8
     assert item["related_ids"]["plugin_invocation_log"] == ["plugin_invocation_log_trace"]
+    assert item["related_ids"]["ai_executor_runner"] == ["ai_executor_runner_001"]
     assert item["related_ids"]["ai_executor_task"] == ["ai_executor_task_trace"]
     assert item["related_ids"]["model_gateway_log"] == ["model_gateway_log_trace"]
     assert item["related_ids"]["code_inspection_report"] == ["code_inspection_report_trace"]
@@ -429,6 +451,7 @@ def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
     source_types = {node["source_type"] for node in detail["nodes"]}
     assert {
         "ai_executor_task",
+        "ai_executor_runner",
         "audit_event",
         "code_inspection_report",
         "model_gateway_log",
@@ -438,11 +461,13 @@ def test_execution_trace_lists_related_runtime_nodes_and_redacts_secrets():
         "scheduled_job_stage",
     }.issubset(source_types)
     assert any(edge["label"] == "dispatches" for edge in detail["edges"])
+    assert any(edge["label"] == "assigned_runner" for edge in detail["edges"])
     assert any(edge["label"] == "writes_report" for edge in detail["edges"])
     assert any(edge["label"] == "writes_result" for edge in detail["edges"])
     serialized_detail = str(detail)
     assert "secret-run-token" not in serialized_detail
     assert "runner-secret-token" not in serialized_detail
+    assert "runner-token-secret-hash" not in serialized_detail
     assert "sk-test-secret" not in serialized_detail
     assert "<redacted>" in serialized_detail
 
@@ -619,6 +644,29 @@ def test_execution_trace_list_filters_by_scheduled_job_stage_source():
     assert body["items"][0]["root_type"] == "scheduled_job_run"
     assert "scheduled_job_run_trace:runner_execution" in body["items"][0]["related_ids"][
         "scheduled_job_stage"
+    ]
+
+
+def test_execution_trace_list_filters_by_ai_executor_runner_source():
+    app.state.store.reset()
+    seed_execution_trace_records()
+    headers = auth_headers()
+
+    response = client.get(
+        "/api/governance/execution-traces"
+        "?source_type=ai_executor_runner"
+        "&source_id=ai_executor_runner_001"
+        "&page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == "scheduled_job_run_trace"
+    assert body["items"][0]["root_type"] == "scheduled_job_run"
+    assert body["items"][0]["related_ids"]["ai_executor_runner"] == [
+        "ai_executor_runner_001"
     ]
 
 

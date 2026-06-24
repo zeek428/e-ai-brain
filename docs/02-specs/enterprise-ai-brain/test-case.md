@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.635 |
+| 功能版本 | v1.1.636 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.636 | 2026-06-24 | 补充执行诊断 Runner 节点验收：`ai_executor_task.runner_id` 必须解析为 `ai_executor_runner` 节点，支持按 `source_type=ai_executor_runner` 和 Runner ID 定位链路，响应不得泄露 `token_hash` | Codex |
 | v1.1.635 | 2026-06-24 | 补充代码巡检 finding 误报忽略审批验收：报告详情支持申请忽略和批准/驳回，审批通过同步报告 suppression 统计、治理概览分布和审计事件；`test_code_inspection_governance.py`、`CodeInspectionsPage.test.tsx`、typecheck、lint 和真实 `/governance/code-inspections` 页面 smoke 必须通过 | Codex |
 | v1.1.634 | 2026-06-24 | 补充代码巡检规则包与误报治理验收：dashboard API 必须返回 `rule_governance` 版本分布和 suppression 分布，代码巡检页展示“规则包与误报治理”；`test_code_inspection_governance.py`、`CodeInspectionsPage.test.tsx`、typecheck、lint 和真实 `/governance/code-inspections` 页面 smoke 必须通过 | Codex |
 | v1.1.633 | 2026-06-24 | 补充 AI 助手草案继续编辑深链验收：草案任务台列表和详情弹窗的“继续编辑”必须统一跳转 `/assistant?draft_id=...`，助手页需按 draft_id 加载草案卡；`AssistantDraftsPage.test.tsx`、typecheck、lint 和真实 `/assistant/drafts`、`/assistant` 页面 smoke 必须通过 | Codex |

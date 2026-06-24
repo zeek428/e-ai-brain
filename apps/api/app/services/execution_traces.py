@@ -13,6 +13,10 @@ from app.core.listing import (
     sort_list_items,
 )
 from app.core.trace import envelope
+from app.services.ai_executor_runners import (
+    SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID,
+    system_default_ai_executor_runner,
+)
 from app.services.plugins import (
     result_write_record_from_invocation_log,
     result_write_record_from_scheduled_run,
@@ -30,6 +34,7 @@ EXECUTION_TRACE_SORT_FIELDS = {
 }
 
 EXECUTION_TRACE_SOURCE_TYPES = {
+    "ai_executor_runner",
     "ai_executor_task",
     "audit_event",
     "assistant_chat_run",
@@ -182,6 +187,12 @@ def _records(current_store: Any) -> dict[str, list[dict[str, Any]]]:
         "list_ai_executor_tasks",
         getattr(current_store, "ai_executor_tasks", {}),
     )
+    ai_executor_runners = _repository_list(
+        current_store,
+        "list_ai_executor_runners",
+        getattr(current_store, "ai_executor_runners", {}),
+    )
+    ai_executor_runners = _with_system_default_runner(ai_executor_runners)
     assistant_chat_runs = _repository_list(
         current_store,
         "list_execution_trace_assistant_chat_runs",
@@ -202,11 +213,18 @@ def _records(current_store: Any) -> dict[str, list[dict[str, Any]]]:
         "code_inspection_reports": code_inspection_reports,
         "model_gateway_logs": model_gateway_logs,
         "plugin_invocation_logs": plugin_invocation_logs,
+        "ai_executor_runners": ai_executor_runners,
         "ai_executor_tasks": ai_executor_tasks,
         "assistant_chat_runs": assistant_chat_runs,
         "result_write_records": result_write_records,
         "scheduled_job_runs": scheduled_job_runs,
     }
+
+
+def _with_system_default_runner(runners: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if any(runner.get("id") == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID for runner in runners):
+        return runners
+    return [system_default_ai_executor_runner(), *runners]
 
 
 def _result_write_records(
@@ -287,7 +305,11 @@ def _status(value: Any) -> str:
     normalized = str(value or "").strip().lower()
     if normalized in {"success", "succeeded", "completed", "healthy", "recorded"}:
         return "succeeded"
+    if normalized in {"active", "managed", "online"}:
+        return "succeeded"
     if normalized in {"failure", "failed", "error"}:
+        return "failed"
+    if normalized in {"offline", "never_connected", "timed_out"}:
         return "failed"
     if normalized in {"cancelled", "canceled"}:
         return "cancelled"
@@ -295,7 +317,32 @@ def _status(value: Any) -> str:
         return normalized
     if normalized in {"skipped"}:
         return "skipped"
+    if normalized in {"disabled"}:
+        return "skipped"
     return normalized or "unknown"
+
+
+def _runner_trace_status(runner: dict[str, Any]) -> str:
+    metadata = runner.get("metadata") if isinstance(runner.get("metadata"), dict) else {}
+    if (
+        runner.get("id") == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
+        or runner.get("protocol") == "model_gateway"
+        or metadata.get("is_system") is True
+    ):
+        return "managed"
+    status = str(runner.get("status") or "").strip().lower()
+    if status in {"disabled", "offline"}:
+        return status
+    last_heartbeat_at = runner.get("last_heartbeat_at")
+    if not last_heartbeat_at:
+        return "never_connected" if status == "active" else status or "unknown"
+    try:
+        heartbeat_at = parse_trace_datetime(str(last_heartbeat_at), "last_heartbeat_at")
+    except Exception:
+        return status or "unknown"
+    timeout_seconds = int(runner.get("heartbeat_timeout_seconds") or 120)
+    age_seconds = (datetime.now(UTC) - heartbeat_at.astimezone(UTC)).total_seconds()
+    return "online" if 0 <= age_seconds <= timeout_seconds else "offline"
 
 
 def _merge_status(statuses: list[str]) -> str:
@@ -382,6 +429,7 @@ class ExecutionTraceBuilder:
         self.records = _records(current_store)
         self.runs = self.records["scheduled_job_runs"]
         self.plugins = self.records["plugin_invocation_logs"]
+        self.runners = self.records["ai_executor_runners"]
         self.tasks = self.records["ai_executor_tasks"]
         self.assistant_chat_runs = self.records["assistant_chat_runs"]
         self.model_logs = self.records["model_gateway_logs"]
@@ -390,7 +438,9 @@ class ExecutionTraceBuilder:
         self.result_write_records = self.records["result_write_records"]
         self.plugins_by_id = _by_id(self.plugins)
         self.plugins_by_run = _indexed(self.plugins, "scheduled_job_run_id")
+        self.runners_by_id = _by_id(self.runners)
         self.tasks_by_id = _by_id(self.tasks)
+        self.tasks_by_runner = _indexed(self.tasks, "runner_id")
         self.tasks_by_run = _indexed(self.tasks, "scheduled_job_run_id")
         self.tasks_by_plugin = _indexed(self.tasks, "plugin_invocation_log_id")
         self.model_logs_by_id = _by_id(self.model_logs)
@@ -415,6 +465,7 @@ class ExecutionTraceBuilder:
     def traces(self) -> list[dict[str, Any]]:
         traces: list[dict[str, Any]] = []
         consumed = {
+            "ai_executor_runner": set(),
             "audit_event": set(),
             "ai_executor_task": set(),
             "assistant_chat_run": set(),
@@ -441,6 +492,18 @@ class ExecutionTraceBuilder:
             task_id = str(task.get("id") or "")
             if task_id and task_id not in consumed["ai_executor_task"]:
                 trace = self.trace_for_task(task)
+                traces.append(trace)
+                _mark_consumed(consumed, trace)
+
+        for runner in self.runners:
+            runner_id = str(runner.get("id") or "")
+            if (
+                runner_id == SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID
+                and not self.tasks_by_runner.get(runner_id)
+            ):
+                continue
+            if runner_id and runner_id not in consumed["ai_executor_runner"]:
+                trace = self.trace_for_runner(runner)
                 traces.append(trace)
                 _mark_consumed(consumed, trace)
 
@@ -518,6 +581,7 @@ class ExecutionTraceBuilder:
             )
             edges.append(_edge(source, f"ai_executor_task:{task['id']}", "dispatches"))
             related["ai_executor_task"].add(str(task["id"]))
+            self._attach_runner_for_task(nodes, edges, related, task)
 
         model_log_ids = _collect_ids(
             run.get("result_summary") or {}, ("model_log_id", "model_gateway_log_id")
@@ -592,6 +656,7 @@ class ExecutionTraceBuilder:
                 )
             )
             related["ai_executor_task"].add(str(task["id"]))
+            self._attach_runner_for_task(nodes, edges, related, task)
 
         model_log_ids = _collect_ids(plugin, ("model_log_id", "model_gateway_log_id"))
         for task in self.tasks_by_plugin.get(plugin_id, []):
@@ -653,6 +718,7 @@ class ExecutionTraceBuilder:
         edges: list[dict[str, str]] = []
         related = self._empty_related()
         related["ai_executor_task"].add(task_id)
+        self._attach_runner_for_task(nodes, edges, related, task)
         model_log_ids = _collect_ids(task, ("model_log_id", "model_gateway_log_id"))
         model_log_ids.update(
             str(log.get("id"))
@@ -682,6 +748,38 @@ class ExecutionTraceBuilder:
             root=task,
             root_type="ai_executor_task",
             title=f"执行器任务 {task_id}",
+        )
+
+    def trace_for_runner(self, runner: dict[str, Any]) -> dict[str, Any]:
+        runner_id = str(runner["id"])
+        nodes = [self.runner_node(runner)]
+        edges: list[dict[str, str]] = []
+        related = self._empty_related()
+        related["ai_executor_runner"].add(runner_id)
+        for task in self.tasks_by_runner.get(runner_id, []):
+            nodes.append(self.task_node(task))
+            edges.append(
+                _edge(
+                    f"ai_executor_runner:{runner_id}",
+                    f"ai_executor_task:{task['id']}",
+                    "claims_task",
+                )
+            )
+            related["ai_executor_task"].add(str(task["id"]))
+        self._attach_audit(
+            nodes,
+            edges,
+            related,
+            runner_id,
+            root_node_id=f"ai_executor_runner:{runner_id}",
+        )
+        return self._trace_payload(
+            nodes=nodes,
+            edges=edges,
+            related=related,
+            root=runner,
+            root_type="ai_executor_runner",
+            title=f"AI 执行器 Runner {runner_id}",
         )
 
     def trace_for_assistant_chat_run(self, chat_run: dict[str, Any]) -> dict[str, Any]:
@@ -855,6 +953,48 @@ class ExecutionTraceBuilder:
             started_at=plugin.get("created_at"),
             status=plugin.get("status"),
             summary=plugin.get("error_message") or plugin.get("status"),
+        )
+
+    def runner_node(
+        self,
+        runner: dict[str, Any],
+        *,
+        use_health_status: bool = True,
+    ) -> dict[str, Any]:
+        health_status = _runner_trace_status(runner)
+        node_status = health_status if use_health_status else runner.get("status") or health_status
+        return _node(
+            error_message=runner.get("error_message"),
+            finished_at=runner.get("updated_at"),
+            label="AI 执行器 Runner",
+            metadata={
+                "endpoint_url": runner.get("endpoint_url"),
+                "executor_types": runner.get("executor_types"),
+                "heartbeat_timeout_seconds": runner.get("heartbeat_timeout_seconds"),
+                "health_status": health_status,
+                "last_heartbeat_at": runner.get("last_heartbeat_at"),
+                "max_concurrent_tasks": runner.get("max_concurrent_tasks"),
+                "metadata": runner.get("metadata"),
+                "name": runner.get("name"),
+                "protocol": runner.get("protocol"),
+                "status": runner.get("status"),
+                "token_configured": bool(runner.get("token_hash")),
+                "token_version": runner.get("token_version"),
+                "workspace_roots": runner.get("workspace_roots"),
+            },
+            source_id=str(runner["id"]),
+            source_type="ai_executor_runner",
+            started_at=(
+                runner.get("last_heartbeat_at")
+                or runner.get("updated_at")
+                or runner.get("created_at")
+            ),
+            status=node_status,
+            summary=_first_non_empty(
+                runner.get("name"),
+                runner.get("protocol"),
+                ",".join(str(item) for item in runner.get("executor_types") or []),
+            ),
         )
 
     def task_node(self, task: dict[str, Any]) -> dict[str, Any]:
@@ -1149,6 +1289,38 @@ class ExecutionTraceBuilder:
             nodes.append(self.audit_node(event))
             edges.append(_edge(root_node_id, f"audit_event:{event['id']}", "audits"))
             related["audit_event"].add(str(event["id"]))
+
+    def _attach_runner_for_task(
+        self,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, str]],
+        related: dict[str, set[str]],
+        task: dict[str, Any],
+    ) -> None:
+        runner_id = str(task.get("runner_id") or "").strip()
+        if not runner_id:
+            return
+        runner = self.runners_by_id.get(runner_id) or {
+            "created_at": task.get("created_at"),
+            "executor_types": [task.get("executor_type")] if task.get("executor_type") else [],
+            "id": runner_id,
+            "last_heartbeat_at": None,
+            "metadata": {"missing_runner_record": True},
+            "name": "未找到 Runner 记录",
+            "protocol": task.get("executor_type") or "unknown",
+            "status": "unknown",
+            "updated_at": task.get("updated_at") or task.get("created_at"),
+            "workspace_roots": [task.get("workspace_root")] if task.get("workspace_root") else [],
+        }
+        nodes.append(self.runner_node(runner, use_health_status=False))
+        edges.append(
+            _edge(
+                f"ai_executor_task:{task['id']}",
+                f"ai_executor_runner:{runner_id}",
+                "assigned_runner",
+            )
+        )
+        related["ai_executor_runner"].add(runner_id)
 
     def audit_events_for_model_log(self, model_log: dict[str, Any]) -> list[dict[str, Any]]:
         log_id = str(model_log.get("id") or "").strip()
