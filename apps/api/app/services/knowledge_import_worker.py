@@ -11,7 +11,11 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.knowledge_deposits import knowledge_write_store
-from app.services.knowledge_management import run_knowledge_import_job_result
+from app.services.knowledge_management import (
+    get_knowledge_import_job_from_memory,
+    put_knowledge_import_job_to_memory,
+    run_knowledge_import_job_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +180,7 @@ class KnowledgeImportWorker:
             )
 
         current_store = knowledge_write_store(self.app.state.store)
-        import_job = current_store.knowledge_import_jobs.get(item.job_id)
+        import_job = get_knowledge_import_job_from_memory(current_store, item.job_id)
         if import_job is None or import_job.get("status") != "queued":
             return False
         import_job = {
@@ -187,7 +191,7 @@ class KnowledgeImportWorker:
             ).isoformat(),
             "attempt_count": int(import_job.get("attempt_count", 0) or 0) + 1,
         }
-        current_store.knowledge_import_jobs[item.job_id] = import_job
+        put_knowledge_import_job_to_memory(current_store, import_job)
         return True
 
 

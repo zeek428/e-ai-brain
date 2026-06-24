@@ -26,6 +26,7 @@
 - 研发执行器策略任务类型：新增策略下拉补齐 PRD/原型/产品详细设计、技术方案、代码实现/开发计划、代码评审、自动化测试、代码整改、发布上线评估和上线后分析，并统一映射到现有研发 `task_type`。
 
 ### Changed
+- 知识导入 worker claim DB-first fallback 收口：worker fallback claim 不再直接写 `current_store.knowledge_import_jobs`，统一通过 import job helper 操作测试集合；repository 运行态继续优先使用 `claim_knowledge_import_job` 租约。
 - 知识 chunk set MemoryStore fallback 写入收口：知识空间文档创建、编辑和重试索引中的 chunk set building/active 状态不再直接写 `current_store.knowledge_chunk_sets`，统一通过显式 chunk set helper 操作测试集合。
 - 知识文档 MemoryStore fallback 写入收口：`clear_knowledge_chunks`、`apply_knowledge_document_to_memory` 和知识文档删除 fallback 不再直接写知识文档、chunk 或沉淀集合，统一通过 `_memory_collection` helper 操作测试集合。
 - 知识域审计 helper DB-first 收口：`record_audit_event` 不再调用 `current_store.audit()`，repository 运行态只生成待写审计事件，MemoryStore 测试 fallback 通过显式审计列表 helper 追加并去重。

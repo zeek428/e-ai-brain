@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.662 |
+| 功能版本 | v1.1.663 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.663 | 2026-06-24 | 补充知识导入 worker claim fallback 收口验收：worker 在无 repository claim 时必须通过 import job helper 标记 `locked_by` / `locked_until` / `attempt_count`，不得直接写 `current_store.knowledge_import_jobs`；repository 运行态仍优先调用 `claim_knowledge_import_job`；`test_knowledge_import_operations.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.662 | 2026-06-24 | 补充知识 chunk set MemoryStore fallback 写入收口验收：知识空间文档创建、编辑和重试索引不得直接写 `current_store.knowledge_chunk_sets`；MemoryStore 测试 fallback 必须通过 chunk set helper 写入/读取 building 与 active 状态，`test_knowledge_audit_persistence.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.661 | 2026-06-24 | 补充知识文档 MemoryStore fallback 写入收口验收：`clear_knowledge_chunks`、`apply_knowledge_document_to_memory` 和知识文档删除 fallback 不得直接写 `current_store.knowledge_documents` / `current_store.knowledge_chunks` / `current_store.knowledge_deposits`；MemoryStore 测试集合由 `_memory_collection` helper 操作并保持 chunk 替换语义；`test_knowledge_audit_persistence.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.660 | 2026-06-24 | 补充知识域审计 helper DB-first 收口验收：`record_audit_event` 不得调用 `current_store.audit()`；repository 运行态只生成待写审计事件，MemoryStore 测试 fallback 必须通过显式审计列表 helper 追加事件且避免重复；`test_knowledge_audit_persistence.py` 与 DB-first 扫描必须通过 | Codex |

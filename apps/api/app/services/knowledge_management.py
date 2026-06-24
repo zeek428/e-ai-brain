@@ -54,6 +54,33 @@ def persist_knowledge_payload(
     )
 
 
+def _memory_collection(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def get_knowledge_import_job_from_memory(
+    current_store: Any,
+    job_id: str | None,
+) -> dict[str, Any] | None:
+    if not job_id:
+        return None
+    return _memory_collection(current_store, "knowledge_import_jobs").get(str(job_id))
+
+
+def put_knowledge_import_job_to_memory(
+    current_store: Any,
+    import_job: dict[str, Any],
+) -> None:
+    job_id = import_job.get("id")
+    if job_id is None:
+        return
+    _memory_collection(current_store, "knowledge_import_jobs")[str(job_id)] = import_job
+
+
 def non_blank(value: str | None, field: str) -> str:
     if value is None or not value.strip():
         raise api_error(400, "VALIDATION_ERROR", f"{field} is required")

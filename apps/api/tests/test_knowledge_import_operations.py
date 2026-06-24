@@ -245,6 +245,35 @@ def test_background_import_worker_claims_repository_job_before_running():
     ]
 
 
+def test_background_import_worker_claims_memory_job_through_helper():
+    from app.core.store import MemoryStore
+    from app.services.knowledge_import_worker import (
+        KnowledgeImportWorker,
+        KnowledgeImportWorkItem,
+    )
+
+    store = MemoryStore()
+    store.knowledge_import_jobs["knowledge_import_job_001"] = {
+        "id": "knowledge_import_job_001",
+        "status": "queued",
+        "attempt_count": 0,
+    }
+    worker = KnowledgeImportWorker(
+        app=SimpleNamespace(state=SimpleNamespace(store=store)),
+        lock_ttl_seconds=42,
+    )
+
+    claimed = worker._claim_item(
+        KnowledgeImportWorkItem(job_id="knowledge_import_job_001", user={"id": "user_admin"}),
+    )
+
+    assert claimed is True
+    stored_job = store.knowledge_import_jobs["knowledge_import_job_001"]
+    assert stored_job["attempt_count"] == 1
+    assert stored_job["locked_by"] == worker.worker_id
+    assert stored_job["locked_until"]
+
+
 def test_background_import_worker_sweeps_queued_jobs_without_explicit_enqueue():
     from app.services.knowledge_import_worker import KnowledgeImportWorker
 
