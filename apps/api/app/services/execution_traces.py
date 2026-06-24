@@ -29,6 +29,7 @@ EXECUTION_TRACE_SOURCE_TYPES = {
     "ai_executor_task",
     "audit_event",
     "assistant_chat_run",
+    "assistant_message",
     "code_inspection_report",
     "model_gateway_log",
     "plugin_invocation_log",
@@ -363,6 +364,7 @@ class ExecutionTraceBuilder:
             "audit_event": set(),
             "ai_executor_task": set(),
             "assistant_chat_run": set(),
+            "assistant_message": set(),
             "code_inspection_report": set(),
             "model_gateway_log": set(),
             "plugin_invocation_log": set(),
@@ -580,6 +582,31 @@ class ExecutionTraceBuilder:
         edges: list[dict[str, str]] = []
         related = self._empty_related()
         related["assistant_chat_run"].add(run_id)
+        user_message_id = str(chat_run.get("user_message_id") or "").strip()
+        assistant_message_id = str(chat_run.get("assistant_message_id") or "").strip()
+
+        if user_message_id:
+            nodes.append(
+                self.assistant_message_node(
+                    chat_run,
+                    message_id=user_message_id,
+                    role="user",
+                )
+            )
+            edges.append(_edge(f"assistant_message:{user_message_id}", root_node_id, "triggers"))
+            related["assistant_message"].add(user_message_id)
+        if assistant_message_id:
+            nodes.append(
+                self.assistant_message_node(
+                    chat_run,
+                    message_id=assistant_message_id,
+                    role="assistant",
+                )
+            )
+            edges.append(
+                _edge(root_node_id, f"assistant_message:{assistant_message_id}", "writes_message")
+            )
+            related["assistant_message"].add(assistant_message_id)
 
         audit_events = _unique_records(
             list(self.audit_by_subject_id.get(run_id, []))
@@ -764,6 +791,34 @@ class ExecutionTraceBuilder:
             started_at=chat_run.get("started_at") or chat_run.get("created_at"),
             status=chat_run.get("status"),
             summary=chat_run.get("error_message") or chat_run.get("status"),
+        )
+
+    def assistant_message_node(
+        self,
+        chat_run: dict[str, Any],
+        *,
+        message_id: str,
+        role: str,
+    ) -> dict[str, Any]:
+        return _node(
+            finished_at=(
+                chat_run.get("started_at")
+                if role == "user"
+                else chat_run.get("finished_at") or chat_run.get("cancelled_at")
+            ),
+            label="用户消息" if role == "user" else "助手消息",
+            metadata={
+                "assistant_chat_run_id": chat_run.get("id"),
+                "client_request_id": chat_run.get("client_request_id"),
+                "conversation_id": chat_run.get("conversation_id"),
+                "role": role,
+                "user_id": chat_run.get("user_id"),
+            },
+            source_id=message_id,
+            source_type="assistant_message",
+            started_at=chat_run.get("created_at") if role == "user" else chat_run.get("started_at"),
+            status="succeeded" if role == "user" else chat_run.get("status"),
+            summary="用户发起消息" if role == "user" else "助手回复消息",
         )
 
     def model_log_node(self, log: dict[str, Any]) -> dict[str, Any]:
@@ -1075,6 +1130,15 @@ def _trace_matches_source_id(trace: dict[str, Any], source_id: str | None) -> bo
     return _trace_matches_related_id(trace, normalized)
 
 
+def _trace_matches_source_type(trace: dict[str, Any], source_type: str | None) -> bool:
+    normalized = str(source_type or "").strip()
+    if not normalized:
+        return True
+    if trace.get("root_type") == normalized:
+        return True
+    return any(node.get("source_type") == normalized for node in trace.get("nodes", []))
+
+
 def _list_item(trace: dict[str, Any]) -> dict[str, Any]:
     return {
         "duration_ms": trace.get("duration_ms"),
@@ -1176,9 +1240,11 @@ def list_execution_traces_response(
         full_traces = [
             trace for trace in full_traces if _trace_matches_source_id(trace, source_id)
         ]
-    traces = [_list_item(trace) for trace in full_traces]
     if source_type:
-        traces = [trace for trace in traces if trace["root_type"] == source_type]
+        full_traces = [
+            trace for trace in full_traces if _trace_matches_source_type(trace, source_type)
+        ]
+    traces = [_list_item(trace) for trace in full_traces]
     if status:
         traces = [trace for trace in traces if trace["status"] == status]
     if from_at or to_at:

@@ -158,6 +158,19 @@ function percent(value?: number) {
   return `${Math.round((value ?? 0) * 1000) / 10}%`;
 }
 
+function sourceTraceLink(sourceMessageId?: string | null) {
+  const value = String(sourceMessageId ?? '').trim();
+  if (!value) {
+    return '-';
+  }
+  const href = `/governance/execution-traces?source_id=${encodeURIComponent(value)}&source_type=assistant_message`;
+  return (
+    <Button href={href} type="link">
+      来源链路
+    </Button>
+  );
+}
+
 function SummaryStrip({ summary }: { summary?: AssistantActionDraftWorkbenchSummary }) {
   const statusCounts = summary?.status_counts ?? {};
   const metrics = [
@@ -355,6 +368,12 @@ export default function AssistantDraftsPage() {
         render: (_, row) => row.result_status ? `${row.result_status} · ${row.result_type ?? '-'}` : '-',
       },
       {
+        dataIndex: 'source_message_id',
+        title: '来源链路',
+        width: 120,
+        render: (_, row) => sourceTraceLink(row.source_message_id),
+      },
+      {
         dataIndex: 'view_count',
         sorter: true,
         title: '查看',
@@ -475,6 +494,7 @@ export default function AssistantDraftsPage() {
                 {detail.result_run?.status ? `${detail.result_run.status} · ${detail.result_run.result_type ?? '-'}` : '-'}
               </Descriptions.Item>
               <Descriptions.Item label="来源消息">{detail.source_message_id ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="来源链路">{sourceTraceLink(detail.source_message_id)}</Descriptions.Item>
             </Descriptions>
             <Table<AssistantActionDraftPreviewIssue>
               columns={issueColumns}

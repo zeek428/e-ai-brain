@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.386 |
+| 功能版本 | v1.1.387 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.387 | 2026-06-24 | 执行诊断 `source_type` 新增 `assistant_message` 节点类型，AI 助手运行链路可按用户消息或助手消息 ID 通过 `source_id` 精准定位，供草案任务台来源链路跳转使用 | Codex |
 | v1.1.386 | 2026-06-24 | 新增 `GET /api/system/permissions/diagnostics`，按用户、菜单路径、权限点和数据范围返回允许/阻断解释，用于角色管理页用户权限排障 | Codex |
 | v1.1.385 | 2026-06-24 | 新增 `GET /api/system/scheduled-job-catalog`，返回服务端作业类型、必填规则、调度/执行模式、连接环境和代码巡检选项，供定时作业页面和助手草案复用 | Codex |
 | v1.1.384 | 2026-06-24 | 执行诊断列表新增 `source_id` 查询参数，支持按任一链路节点来源 ID 精准定位；前端 `/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情 | Codex |
@@ -4213,7 +4214,7 @@ GET /api/governance/execution-traces/{trace_id}
 |------|------|------|
 | keyword | string | 按链路 ID、根 ID、根类型、标题、摘要或关联 ID 搜索。 |
 | source_id | string | 按任一链路节点来源 ID 精准定位，例如 `scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report` 或 `audit_event` 的 ID；前端深链命中唯一记录时自动打开详情。 |
-| source_type | enum | 根类型：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`model_gateway_log`、`code_inspection_report`、`audit_event`。 |
+| source_type | enum | 根类型或节点类型：`scheduled_job_run`、`plugin_invocation_log`、`ai_executor_task`、`assistant_chat_run`、`assistant_message`、`model_gateway_log`、`code_inspection_report`、`audit_event`。 |
 | status | enum | 聚合状态：`succeeded`、`failed`、`running`、`queued`、`partial`、`skipped`、`cancelled`、`unknown`。 |
 | created_from / created_to | ISO datetime | 按链路开始时间或更新时间过滤，未带时区时按 UTC 处理。 |
 | sort_by | enum | `started_at`、`updated_at`、`duration_ms`、`node_count`、`failed_node_count`、`root_type`、`status`、`id`。 |

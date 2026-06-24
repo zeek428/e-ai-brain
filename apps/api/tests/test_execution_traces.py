@@ -69,7 +69,12 @@ class FakeExecutionTraceRepository:
                 )
             ]
         if source_type:
-            traces = [trace for trace in traces if trace["root_type"] == source_type]
+            traces = [
+                trace
+                for trace in traces
+                if trace["root_type"] == source_type
+                or any(node.get("source_type") == source_type for node in trace.get("nodes", []))
+            ]
         if status:
             traces = [trace for trace in traces if trace["status"] == status]
         normalized_keyword = str(keyword or "").strip().lower()
@@ -416,6 +421,10 @@ def test_execution_trace_includes_assistant_chat_run_model_and_audit_nodes():
     assert item["id"] == "assistant_chat_run_trace"
     assert item["root_type"] == "assistant_chat_run"
     assert item["status"] == "failed"
+    assert item["related_ids"]["assistant_message"] == [
+        "assistant_message_trace",
+        "assistant_user_message_trace",
+    ]
     assert item["related_ids"]["model_gateway_log"] == ["model_gateway_log_assistant_trace"]
     assert item["related_ids"]["audit_event"] == ["audit_assistant_trace"]
 
@@ -428,8 +437,12 @@ def test_execution_trace_includes_assistant_chat_run_model_and_audit_nodes():
     detail = detail_response.json()["data"]
     assert detail["root_id"] == "assistant_chat_run_trace"
     source_types = {node["source_type"] for node in detail["nodes"]}
-    assert {"assistant_chat_run", "audit_event", "model_gateway_log"}.issubset(source_types)
+    assert {"assistant_chat_run", "assistant_message", "audit_event", "model_gateway_log"}.issubset(
+        source_types
+    )
     assert any(edge["label"] == "calls_model" for edge in detail["edges"])
+    assert any(edge["label"] == "triggers" for edge in detail["edges"])
+    assert any(edge["label"] == "writes_message" for edge in detail["edges"])
     serialized_detail = str(detail)
     assert "sk-assistant-secret" not in serialized_detail
     assert "<redacted>" in serialized_detail
@@ -451,6 +464,28 @@ def test_execution_trace_list_filters_by_any_related_source_id():
     assert body["total"] == 1
     assert body["items"][0]["id"] == "assistant_chat_run_trace"
     assert body["items"][0]["root_type"] == "assistant_chat_run"
+
+    message_response = client.get(
+        "/api/governance/execution-traces"
+        "?source_id=assistant_message_trace&page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert message_response.status_code == 200, message_response.text
+    message_body = message_response.json()["data"]
+    assert message_body["total"] == 1
+    assert message_body["items"][0]["id"] == "assistant_chat_run_trace"
+
+    message_type_response = client.get(
+        "/api/governance/execution-traces"
+        "?source_type=assistant_message&page=1&page_size=10",
+        headers=headers,
+    )
+
+    assert message_type_response.status_code == 200, message_type_response.text
+    message_type_body = message_type_response.json()["data"]
+    assert message_type_body["total"] == 1
+    assert message_type_body["items"][0]["id"] == "assistant_chat_run_trace"
 
 
 def test_execution_trace_requires_admin_diagnostics_permission():

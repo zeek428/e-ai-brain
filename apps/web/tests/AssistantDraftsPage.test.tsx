@@ -153,6 +153,10 @@ describe('AssistantDraftsPage', () => {
       'href',
       '/assistant?draft_id=assistant_action_draft_001',
     );
+    expect(screen.getByRole('link', { name: '来源链路' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=assistant_message_001&source_type=assistant_message',
+    );
 
     fireEvent.click(screen.getByRole('button', { name: '详情' }));
 
@@ -160,5 +164,9 @@ describe('AssistantDraftsPage', () => {
     await waitFor(() => expect(within(dialog).getByText('草案 Payload')).toBeInTheDocument());
     expect(within(dialog).getByText('plugin_action_id is required')).toBeInTheDocument();
     expect(within(dialog).getByText(/cron_expression/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: '来源链路' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=assistant_message_001&source_type=assistant_message',
+    );
   });
 });

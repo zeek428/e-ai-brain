@@ -192,8 +192,11 @@ class ExecutionTraceReadRepository:
         clauses: list[str] = []
         params: list[Any] = []
         if source_type:
-            clauses.append("root_type = %s")
-            params.append(source_type)
+            clauses.append("(root_type = %s OR nodes @> %s::jsonb)")
+            params.extend([
+                source_type,
+                json.dumps([{"source_type": source_type}], ensure_ascii=False),
+            ])
         if status:
             clauses.append("status = %s")
             params.append(status)
