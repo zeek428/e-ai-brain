@@ -29,6 +29,7 @@ import {
   copySystemRole,
   createSystemRole,
   fetchSystemPermissionMatrix,
+  fetchSystemPermissionDiagnostics,
   fetchSystemRoleList,
   setSystemRoleStatus,
   updateSystemRole,
@@ -42,6 +43,8 @@ import {
   type RoleListQuery,
   type ScopeGrant,
   type SystemRoleRecord,
+  type UserPermissionDiagnostic,
+  type UserPermissionDiagnosticCheck,
 } from '../../services/aiBrain';
 
 type RoleManagementRow = SystemRoleRecord & {
@@ -63,6 +66,14 @@ type RoleFormValues = {
   is_assignable?: boolean;
   name: string;
   sort_order?: number;
+};
+
+type PermissionDiagnosticFormValues = {
+  path?: string;
+  permissionCode?: string;
+  scopeId?: string;
+  scopeType?: string;
+  userId?: string;
 };
 
 type GrantModal =
@@ -198,6 +209,68 @@ function matrixColumns(): ColumnsType<RbacPolicyMatrixRow> {
         ),
       title: '诊断',
       width: 220,
+    },
+  ];
+}
+
+function diagnosticStatusLabel(status: string) {
+  return status === 'allowed' ? '通过' : '阻断';
+}
+
+function diagnosticStatusColor(status: string) {
+  return status === 'allowed' ? 'green' : 'red';
+}
+
+function renderDiagnosticReasons(reasons: string[]) {
+  if (!reasons.length) {
+    return <Text type="secondary">-</Text>;
+  }
+  return (
+    <Space size={[4, 4]} wrap>
+      {reasons.map((reason) => (
+        <Tag key={reason}>{reason}</Tag>
+      ))}
+    </Space>
+  );
+}
+
+function diagnosticCheckColumns(): ColumnsType<UserPermissionDiagnosticCheck> {
+  return [
+    {
+      dataIndex: 'code',
+      render: (_, row) => (
+        <Space orientation="vertical" size={2}>
+          <Text strong>{row.code}</Text>
+          {row.target ? <Text type="secondary">{row.target}</Text> : null}
+        </Space>
+      ),
+      title: '检查项',
+      width: 180,
+    },
+    {
+      dataIndex: 'status',
+      render: (_, row) => (
+        <StatusTag color={diagnosticStatusColor(row.status)} label={diagnosticStatusLabel(row.status)} />
+      ),
+      title: '状态',
+      width: 100,
+    },
+    {
+      dataIndex: 'message',
+      render: (_, row) => (
+        <Space orientation="vertical" size={4}>
+          <Text>{row.message}</Text>
+          {row.missing_permission_codes?.length ? (
+            <Text type="secondary">缺少：{row.missing_permission_codes.join(', ')}</Text>
+          ) : null}
+          {row.granted_by_roles?.length ? (
+            <Text type="secondary">
+              来源角色：{row.granted_by_roles.map((role) => role.role_name || role.role_code).join('、')}
+            </Text>
+          ) : null}
+        </Space>
+      ),
+      title: '说明',
     },
   ];
 }
@@ -384,7 +457,11 @@ export default function RolesPage() {
   const [policyMatrix, setPolicyMatrix] = useState<RbacPolicyMatrix>();
   const [policyMatrixError, setPolicyMatrixError] = useState<RemoteRowsError>();
   const [policyMatrixLoading, setPolicyMatrixLoading] = useState(false);
+  const [permissionDiagnosticResult, setPermissionDiagnosticResult] = useState<UserPermissionDiagnostic>();
+  const [permissionDiagnosticError, setPermissionDiagnosticError] = useState<RemoteRowsError>();
+  const [permissionDiagnosticLoading, setPermissionDiagnosticLoading] = useState(false);
   const [roleForm] = Form.useForm<RoleFormValues>();
+  const [permissionDiagnosticForm] = Form.useForm<PermissionDiagnosticFormValues>();
   const [grantForm] = Form.useForm<{
     menuCodes?: string[];
     permissionCodes?: string[];
@@ -487,6 +564,27 @@ export default function RolesPage() {
   useEffect(() => {
     void loadPolicyMatrix();
   }, [loadPolicyMatrix]);
+
+  const runPermissionDiagnostic = useCallback(async () => {
+    const values = await permissionDiagnosticForm.validateFields();
+    setPermissionDiagnosticLoading(true);
+    try {
+      const result = await fetchSystemPermissionDiagnostics({
+        path: normalizeFilterText(values.path),
+        permissionCode: normalizeFilterText(values.permissionCode),
+        scopeId: normalizeFilterText(values.scopeId),
+        scopeType: normalizeFilterText(values.scopeType),
+        userId: normalizeFilterText(values.userId) ?? '',
+      });
+      setPermissionDiagnosticResult(result);
+      setPermissionDiagnosticError(undefined);
+    } catch (loadError: unknown) {
+      setPermissionDiagnosticResult(undefined);
+      setPermissionDiagnosticError(normalizeRemoteRowsError(loadError));
+    } finally {
+      setPermissionDiagnosticLoading(false);
+    }
+  }, [permissionDiagnosticForm]);
 
   const openCreateRole = useCallback(() => {
     setEditingRole(undefined);
@@ -612,6 +710,7 @@ export default function RolesPage() {
     [copyRole, openEditRole, openGrantModal, toggleRoleStatus],
   );
   const policyMatrixColumns = useMemo(() => matrixColumns(), []);
+  const permissionDiagnosticColumns = useMemo(() => diagnosticCheckColumns(), []);
   const policyMatrixPanel = useMemo(() => {
     const summary = policyMatrix?.summary;
     return (
@@ -692,6 +791,127 @@ export default function RolesPage() {
         .sort((left, right) => left.code.localeCompare(right.code)),
     [mappedPermissionCodes, permissions],
   );
+  const permissionDiagnosticPanel = useMemo(
+    () => (
+      <section className="role-policy-matrix role-permission-diagnostic" aria-label="用户权限诊断">
+        <div className="role-policy-matrix-header">
+          <Space orientation="vertical" size={4}>
+            <Text strong>用户权限诊断</Text>
+            <Text type="secondary">
+              输入用户和目标入口、权限点或数据范围，解释当前账号为什么能访问或被阻断。
+            </Text>
+          </Space>
+        </div>
+        <Form<PermissionDiagnosticFormValues>
+          className="role-permission-diagnostic-form"
+          form={permissionDiagnosticForm}
+          layout="vertical"
+          onFinish={() => void runPermissionDiagnostic()}
+        >
+          <Form.Item
+            label="诊断用户 ID"
+            name="userId"
+            rules={[{ required: true, message: '请输入用户 ID' }]}
+          >
+            <Input placeholder="user_admin / user_xxx" />
+          </Form.Item>
+          <Form.Item label="菜单路径" name="path">
+            <Input placeholder="/system/roles" />
+          </Form.Item>
+          <Form.Item label="权限点" name="permissionCode">
+            <Select
+              allowClear
+              options={permissions.map((permission) => ({
+                label: `${permission.name} · ${permission.code}`,
+                value: permission.code,
+              }))}
+              optionFilterProp="label"
+              placeholder="请选择权限点"
+              showSearch
+            />
+          </Form.Item>
+          <Form.Item label="范围类型" name="scopeType">
+            <Select
+              allowClear
+              options={[
+                { label: '全局', value: 'global' },
+                { label: '产品', value: 'product' },
+                { label: '知识空间', value: 'knowledge_space' },
+                { label: '部门', value: 'department' },
+                { label: '评审任务', value: 'review_assignment' },
+              ]}
+              placeholder="可选"
+            />
+          </Form.Item>
+          <Form.Item label="范围 ID" name="scopeId">
+            <Input placeholder="* / product_001" />
+          </Form.Item>
+          <Form.Item className="role-permission-diagnostic-actions" label=" ">
+            <Space>
+              <Button htmlType="submit" loading={permissionDiagnosticLoading} type="primary">
+                运行诊断
+              </Button>
+              <Button
+                onClick={() => {
+                  permissionDiagnosticForm.resetFields();
+                  setPermissionDiagnosticError(undefined);
+                  setPermissionDiagnosticResult(undefined);
+                }}
+              >
+                清空
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+        {permissionDiagnosticError ? (
+          <Text className="role-policy-matrix-error" type="danger">
+            {formatRemoteRowsError(permissionDiagnosticError)}
+          </Text>
+        ) : null}
+        {permissionDiagnosticResult ? (
+          <div className="role-permission-diagnostic-result">
+            <Space size={[8, 8]} wrap>
+              <StatusTag
+                color={permissionDiagnosticResult.decision.allowed ? 'green' : 'red'}
+                label={permissionDiagnosticResult.decision.allowed ? '允许访问' : '存在阻断'}
+              />
+              <Tag>{permissionDiagnosticResult.user.id}</Tag>
+              <Tag>{permissionDiagnosticResult.user.status}</Tag>
+              <Tag>{permissionDiagnosticResult.effective.role_codes.length} 个角色</Tag>
+              <Tag>{permissionDiagnosticResult.effective.permission_codes.length} 个权限点</Tag>
+              <Tag>{permissionDiagnosticResult.effective.menu_codes.length} 个菜单</Tag>
+            </Space>
+            <Descriptions bordered column={2} size="small">
+              <Descriptions.Item label="阻断原因" span={2}>
+                {renderDiagnosticReasons(permissionDiagnosticResult.decision.blocked_reasons)}
+              </Descriptions.Item>
+              <Descriptions.Item label="授权来源" span={2}>
+                {renderDiagnosticReasons(permissionDiagnosticResult.decision.granted_reasons)}
+              </Descriptions.Item>
+            </Descriptions>
+            <Table<UserPermissionDiagnosticCheck>
+              columns={permissionDiagnosticColumns}
+              dataSource={permissionDiagnosticResult.checks}
+              pagination={false}
+              rowKey="code"
+              scroll={{ x: 760 }}
+              size="small"
+              tableLayout="fixed"
+            />
+          </div>
+        ) : null}
+      </section>
+    ),
+    [
+      permissionDiagnosticColumns,
+      permissionDiagnosticError,
+      permissionDiagnosticForm,
+      permissionDiagnosticLoading,
+      permissionDiagnosticResult,
+      permissions,
+      runPermissionDiagnostic,
+    ],
+  );
   const updateGrantMenuSelection = useCallback(
     (menu: MenuResourceRecord, checked: boolean) => {
       const nextMenuCodes = toggleArrayValue(selectedGrantMenuCodes, menu.code, checked);
@@ -752,7 +972,12 @@ export default function RolesPage() {
         onPrimaryAction={openCreateRole}
         onReload={() => void reload()}
         primaryAction="新增角色"
-        beforeTable={policyMatrixPanel}
+        beforeTable={
+          <>
+            {permissionDiagnosticPanel}
+            {policyMatrixPanel}
+          </>
+        }
         remote={{
           onChange: setListQuery,
           page: listState.page,

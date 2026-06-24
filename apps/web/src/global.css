@@ -503,6 +503,25 @@ body {
   display: block;
 }
 
+.role-permission-diagnostic-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 0 16px;
+}
+
+.role-permission-diagnostic-form .ant-form-item {
+  min-width: 0;
+}
+
+.role-permission-diagnostic-actions {
+  align-self: end;
+}
+
+.role-permission-diagnostic-result {
+  display: grid;
+  gap: 12px;
+}
+
 
 .dashboard-list {
   display: grid;
@@ -575,6 +594,9 @@ body {
     padding-left: 0;
   }
 
+  .role-permission-diagnostic-form {
+    grid-template-columns: 1fr;
+  }
 
   .capability-row {
     align-items: flex-start;

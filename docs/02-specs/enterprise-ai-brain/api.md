@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.385 |
+| 功能版本 | v1.1.386 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.386 | 2026-06-24 | 新增 `GET /api/system/permissions/diagnostics`，按用户、菜单路径、权限点和数据范围返回允许/阻断解释，用于角色管理页用户权限排障 | Codex |
 | v1.1.385 | 2026-06-24 | 新增 `GET /api/system/scheduled-job-catalog`，返回服务端作业类型、必填规则、调度/执行模式、连接环境和代码巡检选项，供定时作业页面和助手草案复用 | Codex |
 | v1.1.384 | 2026-06-24 | 执行诊断列表新增 `source_id` 查询参数，支持按任一链路节点来源 ID 精准定位；前端 `/governance/execution-traces?source_id=...` 命中唯一链路时自动打开详情 | Codex |
 | v1.1.383 | 2026-06-23 | 执行诊断 API 的 `source_type` 新增 `assistant_chat_run`，AI 助手聊天运行可作为链路根节点关联模型网关日志与审计事件 | Codex |
@@ -568,6 +569,8 @@ MVP 系统角色以 `admin`、`product_owner`、`rd_owner`、`reviewer`、`knowl
 | User Authorization | PUT | `/api/users/{user_id}/roles` | 系统管理员维护用户角色授权。 |
 | User Authorization | PUT | `/api/users/{user_id}/scopes` | 系统管理员维护用户直接数据范围授权。 |
 | System RBAC | GET | `/api/system/permissions` | 查询权限点目录。 |
+| System RBAC | GET | `/api/system/permissions/matrix` | 查询 RBAC 策略矩阵，按角色聚合权限点、菜单入口、数据范围和授权缺口。 |
+| System RBAC | GET | `/api/system/permissions/diagnostics` | 查询用户权限诊断，按 `user_id` 以及可选 `path`、`permission_code`、`scope_type`、`scope_id` 返回检查项、阻断原因和授权来源。 |
 | System RBAC | GET | `/api/system/menus` | 查询菜单资源目录。 |
 | System RBAC | POST | `/api/system/menus` | 创建非系统菜单资源。 |
 | System RBAC | PUT | `/api/system/menus/reorder` | 批量更新菜单排序。 |

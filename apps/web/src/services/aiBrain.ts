@@ -197,6 +197,55 @@ export type RbacPolicyMatrix = {
   };
 };
 
+export type UserPermissionDiagnosticCheck = {
+  code: string;
+  granted_by_roles?: Array<{
+    role_code: string;
+    role_name: string;
+  }>;
+  granted_menu_code?: string | null;
+  known?: boolean;
+  matched_menu?: {
+    code: string;
+    name?: string;
+    path?: string;
+  };
+  matched_scopes?: ScopeGrant[];
+  message: string;
+  missing_permission_codes?: string[];
+  permission?: {
+    code: string;
+    name?: string;
+    risk_level?: string | null;
+  };
+  required_permission_codes?: string[];
+  role_codes?: string[];
+  status: 'allowed' | 'blocked' | string;
+  target?: string;
+};
+
+export type UserPermissionDiagnostic = {
+  checks: UserPermissionDiagnosticCheck[];
+  decision: {
+    allowed: boolean;
+    blocked_reasons: string[];
+    granted_reasons: string[];
+  };
+  effective: {
+    menu_codes: string[];
+    permission_codes: string[];
+    role_codes: string[];
+    scopes: ScopeGrant[];
+  };
+  user: {
+    display_name?: string;
+    id: string;
+    roles: string[];
+    status: string;
+    username?: string;
+  };
+};
+
 export type AssistantChatResponse = {
   content: string;
   conversationId: string;
@@ -4627,6 +4676,25 @@ export async function fetchSystemPermissionMatrix(): Promise<RbacPolicyMatrix> {
     ...matrix,
     roles: matrix.roles.map(mapSystemRole),
   };
+}
+
+export async function fetchSystemPermissionDiagnostics(query: {
+  path?: string;
+  permissionCode?: string;
+  scopeId?: string;
+  scopeType?: string;
+  userId: string;
+}): Promise<UserPermissionDiagnostic> {
+  const token = requireAccessToken();
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'user_id', query.userId);
+  appendQueryParam(params, 'path', query.path);
+  appendQueryParam(params, 'permission_code', query.permissionCode);
+  appendQueryParam(params, 'scope_type', query.scopeType);
+  appendQueryParam(params, 'scope_id', query.scopeId);
+  return apiRequest<UserPermissionDiagnostic>(`/api/system/permissions/diagnostics?${params.toString()}`, {
+    token,
+  });
 }
 
 export async function createSystemMenu(

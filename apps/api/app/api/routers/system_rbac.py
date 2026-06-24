@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, api_error, require_any_permission, require_permissions
 from app.core.trace import envelope, get_trace_id
-from app.services.rbac_matrix import build_rbac_policy_matrix
+from app.services.rbac_matrix import build_rbac_policy_matrix, build_user_permission_diagnostic
 
 router = APIRouter(tags=["system-rbac"])
 
@@ -182,6 +182,36 @@ def get_permission_matrix(
     require_any_permission(user, {"system.roles.read", "system.roles.manage"})
     return envelope(
         build_rbac_policy_matrix(_authorization_repository(request)),
+        get_trace_id(request),
+    )
+
+
+@router.get("/api/system/permissions/diagnostics")
+def get_permission_diagnostics(
+    request: Request,
+    user_id: str,
+    path: str | None = None,
+    permission_code: str | None = None,
+    scope_type: str | None = None,
+    scope_id: str | None = None,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    require_any_permission(
+        user,
+        {"system.roles.read", "system.roles.manage", "system.users.manage"},
+    )
+    target_user = _find_user(request, user_id)
+    if target_user is None:
+        raise api_error(404, "NOT_FOUND", "User not found")
+    return envelope(
+        build_user_permission_diagnostic(
+            _authorization_repository(request),
+            target_user,
+            path=path,
+            permission_code=permission_code,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        ),
         get_trace_id(request),
     )
 

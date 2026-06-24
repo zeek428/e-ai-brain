@@ -259,6 +259,56 @@ describe('system management pages', () => {
           },
         );
       }
+      if (String(input).startsWith('/api/system/permissions/diagnostics?')) {
+        expect(String(input)).toContain('user_id=user_viewer');
+        return new Response(
+          JSON.stringify({
+            data: {
+              checks: [
+                {
+                  code: 'user_status',
+                  message: '用户状态为启用',
+                  status: 'allowed',
+                  target: 'active',
+                },
+                {
+                  code: 'permission',
+                  message: '用户未拥有该权限点',
+                  permission: {
+                    code: 'workspace.read',
+                    name: '工作台读取',
+                    risk_level: 'normal',
+                  },
+                  status: 'blocked',
+                  target: 'workspace.read',
+                },
+              ],
+              decision: {
+                allowed: false,
+                blocked_reasons: ['缺少权限点：workspace.read'],
+                granted_reasons: ['角色：viewer'],
+              },
+              effective: {
+                menu_codes: ['workspace.dashboard'],
+                permission_codes: [],
+                role_codes: ['viewer'],
+                scopes: [],
+              },
+              user: {
+                display_name: '查看者',
+                id: 'user_viewer',
+                roles: ['viewer'],
+                status: 'active',
+                username: 'viewer@example.com',
+              },
+            },
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          },
+        );
+      }
       expect(String(input)).toBe('/api/system/roles');
       return new Response(
         JSON.stringify({
@@ -277,6 +327,7 @@ describe('system management pages', () => {
 
     expect(screen.getByRole('navigation', { name: '面包屑' })).toHaveTextContent('系统管理');
     expect(await screen.findByText('权限审计矩阵')).toBeInTheDocument();
+    expect(screen.getByText('用户权限诊断')).toBeInTheDocument();
     expect(screen.getByText('1 个菜单权限缺口')).toBeInTheDocument();
     expect(screen.getByText('1 个高风险角色')).toBeInTheDocument();
     expect(screen.getByText('已授权菜单缺少对应权限点')).toBeInTheDocument();
@@ -298,6 +349,13 @@ describe('system management pages', () => {
     expect(screen.queryByRole('button', { name: '权限' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '菜单' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '范围' }).length).toBeGreaterThan(0);
+
+    fireEvent.change(screen.getByLabelText('诊断用户 ID'), { target: { value: 'user_viewer' } });
+    fireEvent.click(screen.getByRole('button', { name: '运行诊断' }));
+
+    expect(await screen.findByText('存在阻断')).toBeInTheDocument();
+    expect(screen.getByText('缺少权限点：workspace.read')).toBeInTheDocument();
+    expect(screen.getByText('角色：viewer')).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: '角色配置' })[0]);
 

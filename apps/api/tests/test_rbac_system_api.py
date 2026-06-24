@@ -139,6 +139,76 @@ def test_permission_matrix_explains_role_grants_and_menu_permission_gaps():
     assert matrix_row["diagnostics"][0]["code"] == "menu_permission_gap"
 
 
+def test_permission_diagnostics_explains_user_menu_permission_and_scope_blocks():
+    headers = auth_headers()
+    role = client.post(
+        "/api/system/roles",
+        headers=headers,
+        json={"code": "diagnostic_operator", "name": "Diagnostic Operator"},
+    ).json()["data"]
+    client.put(
+        f"/api/system/roles/{role['id']}/menus",
+        headers=headers,
+        json={"menu_codes": ["task.center"]},
+    )
+    client.put(
+        f"/api/system/roles/{role['id']}/scopes",
+        headers=headers,
+        json={
+            "scopes": [
+                {
+                    "scope_type": "product",
+                    "scope_id": "product_alpha",
+                    "access_level": "read",
+                }
+            ]
+        },
+    )
+    created_user = client.post(
+        "/api/users",
+        headers=headers,
+        json={
+            "username": "diagnostic-user@example.com",
+            "display_name": "Diagnostic User",
+            "password": "diagnostic123",
+            "roles": ["viewer"],
+            "status": "active",
+        },
+    ).json()["data"]
+    role_response = client.put(
+        f"/api/users/{created_user['id']}/roles",
+        headers=headers,
+        json={"role_codes": ["diagnostic_operator"]},
+    )
+    assert role_response.status_code == 200
+
+    response = client.get(
+        "/api/system/permissions/diagnostics",
+        headers=headers,
+        params={
+            "user_id": created_user["id"],
+            "path": "/delivery/rd-tasks",
+            "permission_code": "task.read",
+            "scope_type": "product",
+            "scope_id": "product_beta",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["decision"]["allowed"] is False
+    assert "未授予菜单" not in " ".join(data["decision"]["blocked_reasons"])
+    assert "缺少菜单权限：task.read" in data["decision"]["blocked_reasons"]
+    assert "缺少权限点：task.read" in data["decision"]["blocked_reasons"]
+    assert "缺少范围：product:product_beta" in data["decision"]["blocked_reasons"]
+    checks = {check["code"]: check for check in data["checks"]}
+    assert checks["menu_path"]["status"] == "blocked"
+    assert checks["menu_path"]["granted_menu_code"] == "task.center"
+    assert checks["menu_path"]["missing_permission_codes"] == ["task.read"]
+    assert checks["permission"]["status"] == "blocked"
+    assert checks["scope"]["status"] == "blocked"
+
+
 def test_task_center_contains_ai_jobs_and_plugin_menus():
     response = client.get("/api/system/menus", headers=auth_headers())
 
