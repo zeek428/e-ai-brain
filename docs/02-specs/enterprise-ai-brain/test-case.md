@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.670 |
+| 功能版本 | v1.1.671 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.671 | 2026-06-25 | 补充 Mock Issue 写回 fallback 收口验收：写回创建不得直接写 `current_store.mock_writebacks` 或调用 `current_store.audit()`；MemoryStore 测试 fallback 必须通过写回保存 helper 同时落写结果和单条审计，repository 运行态重复 POST 必须复用本地读缓存保持幂等；`test_mock_writeback_persistence.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.670 | 2026-06-25 | 补充研发执行器策略 fallback 收口验收：策略刷新、新增、编辑、删除和资源缓存补齐不得直接写 `current_store.rd_task_executor_policies` / `current_store.products` / `current_store.product_git_repositories`；MemoryStore 测试 fallback 必须通过策略保存/删除和资源缓存 helper 保持 create/update/delete 语义；`test_rd_task_executor_policies.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.669 | 2026-06-25 | 补充需求主流程 DB-first fallback 收口验收：需求创建/编辑/删除/审批/拒绝/关闭、批量分配/排期/推进和生成产品详细设计任务不得在调用方直接写 `current_store.requirements` / `current_store.ai_tasks` 或调用 `current_store.audit()`；MemoryStore 测试 fallback 必须由需求保存、删除、任务联动和审计 helper 写入且避免重复审计；`test_requirement_lifecycle.py`、`test_requirement_batch_schedule.py`、`test_requirement_task_persistence.py`、`test_persistence_repository_boundaries.py` 与 DB-first 扫描必须通过 | Codex |
 | v1.1.668 | 2026-06-24 | 补充生命周期上下文刷新 fallback 收口验收：上下文边和风险信号刷新不得直接写 `current_store.lifecycle_context_edges` / `current_store.lifecycle_risk_signals`；刷新必须移除当前锚点/任务范围旧记录、保留无关记录并 upsert 新边和新风险；`test_lifecycle_context.py`、`test_lifecycle_dashboard_persistence.py` 与 DB-first 扫描必须通过 | Codex |

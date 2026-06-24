@@ -9,6 +9,7 @@ from test_database_persistence import (
 
 from app.core.persistence import PersistentMemoryStore
 from app.core.users import MemoryUserRepository
+from app.services.mock_writeback import create_mock_writeback_result
 
 
 def test_mock_writebacks_are_persisted_through_fine_grained_repository_payload():
@@ -122,6 +123,38 @@ def test_stale_mock_writebacks_with_missing_tasks_are_not_persisted():
     assert repository.mock_writebacks_payload == {"mock_writebacks": {}}
 
 
+def test_mock_writeback_memory_fallback_writes_result_and_audit_once():
+    current_store = app.state.store
+    current_store.reset()
+    current_store.ai_tasks["task_mock_writeback"] = {
+        "id": "task_mock_writeback",
+        "status": "completed",
+        "title": "Mock writeback helper",
+    }
+
+    first = create_mock_writeback_result(
+        current_store,
+        task_id="task_mock_writeback",
+        actor_id="user_admin",
+    )
+    second = create_mock_writeback_result(
+        current_store,
+        task_id="task_mock_writeback",
+        actor_id="user_admin",
+    )
+
+    assert second == first
+    assert current_store.mock_writebacks[first["idempotency_key"]] == first
+    assert len(first["issues"]) == 1
+    writeback_events = [
+        event
+        for event in current_store.audit_events
+        if event["event_type"] == "mock_issue.written"
+        and event["ai_task_id"] == "task_mock_writeback"
+    ]
+    assert len(writeback_events) == 1
+
+
 def _create_generated_design_task(
     headers: dict[str, str],
     *,
@@ -196,9 +229,14 @@ def test_mock_writeback_writes_repository_without_request_persist():
             f"/api/writeback/results/{generated['task_id']}",
             headers=headers,
         ).json()["data"]
+        repeated = client.post(
+            f"/api/writeback/results/{generated['task_id']}",
+            headers=headers,
+        ).json()["data"]
 
         assert written["status"] == "completed"
         assert written["idempotency_key"] == f"mock_issue:{generated['task_id']}"
+        assert repeated == written
         assert repository.mock_writebacks_payload is not None
         assert (
             repository.mock_writebacks_payload["mock_writebacks"][written["idempotency_key"]]

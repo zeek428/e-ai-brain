@@ -10,6 +10,30 @@ def writeback_idempotency_key(task_id: str) -> str:
     return f"mock_issue:{task_id}"
 
 
+def _memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, list):
+        collection = []
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
+def _mock_writebacks_collection(current_store: Any) -> dict[str, dict[str, Any]]:
+    return _memory_dict(current_store, "mock_writebacks")
+
+
+def _audit_events_collection(current_store: Any) -> list[dict[str, Any]]:
+    return _memory_list(current_store, "audit_events")
+
+
 def completed_task_for_writeback(current_store: Any, task_id: str) -> dict[str, Any]:
     task = current_store.ai_tasks.get(task_id)
     if task is None:
@@ -22,7 +46,7 @@ def completed_task_for_writeback(current_store: Any, task_id: str) -> dict[str, 
 def read_mock_writeback_result(current_store: Any, task_id: str) -> dict[str, Any]:
     completed_task_for_writeback(current_store, task_id)
     idempotency_key = writeback_idempotency_key(task_id)
-    result = current_store.mock_writebacks.get(idempotency_key)
+    result = _mock_writebacks_collection(current_store).get(idempotency_key)
     if result is not None:
         return result
     return {
@@ -41,7 +65,7 @@ def create_mock_writeback_result(
 ) -> dict[str, Any]:
     task = completed_task_for_writeback(current_store, task_id)
     idempotency_key = writeback_idempotency_key(task_id)
-    result = current_store.mock_writebacks.get(idempotency_key)
+    result = _mock_writebacks_collection(current_store).get(idempotency_key)
     if result is not None:
         return result
 
@@ -57,9 +81,8 @@ def create_mock_writeback_result(
         "idempotency_key": idempotency_key,
         "issues": [issue],
     }
-    current_store.mock_writebacks[idempotency_key] = result
 
-    audit_event = record_writeback_audit_event(
+    audit_event = build_writeback_audit_event(
         current_store,
         actor_id=actor_id,
         task_id=task_id,
@@ -69,22 +92,13 @@ def create_mock_writeback_result(
     return result
 
 
-def record_writeback_audit_event(
+def build_writeback_audit_event(
     current_store: Any,
     *,
     actor_id: str,
     task_id: str,
     idempotency_key: str,
 ) -> dict[str, Any]:
-    if getattr(current_store, "repository", None) is None:
-        return current_store.audit(
-            event_type="mock_issue.written",
-            actor_id=actor_id,
-            ai_task_id=task_id,
-            subject_type="ai_task",
-            subject_id=task_id,
-            payload={"idempotency_key": idempotency_key},
-        )
     return {
         "id": current_store.new_id("audit"),
         "event_type": "mock_issue.written",
@@ -108,3 +122,10 @@ def save_mock_writeback_record(
     save_record = getattr(repository, "save_mock_writeback_record", None)
     if callable(save_record):
         save_record(record, audit_event=audit_event)
+        _mock_writebacks_collection(current_store)[str(record["idempotency_key"])] = dict(
+            record
+        )
+        return
+    _mock_writebacks_collection(current_store)[str(record["idempotency_key"])] = dict(record)
+    if audit_event is not None:
+        _audit_events_collection(current_store).append(dict(audit_event))
