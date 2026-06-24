@@ -28,7 +28,7 @@ class RequirementReadRepository:
 
     def save_requirements(self, payload: dict[str, Any]) -> None:
         requirements = payload.get("requirements", {})
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 if self._delete_missing is not None:
                     self._delete_missing(cursor, "requirements", requirements)
@@ -40,7 +40,7 @@ class RequirementReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 self.upsert_requirements(cursor, {record["id"]: record})
                 if audit_event is not None and self._upsert_audit_events is not None:
@@ -52,7 +52,7 @@ class RequirementReadRepository:
         *,
         audit_event: dict[str, Any] | None = None,
     ) -> None:
-        with self._connect() as connection:
+        with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("DELETE FROM requirements WHERE id = %s", (record_id,))
                 if audit_event is not None and self._upsert_audit_events is not None:

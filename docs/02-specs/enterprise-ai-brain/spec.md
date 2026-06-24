@@ -5,7 +5,7 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.539 |
+| 功能版本 | v1.1.540 |
 | 适用系统版本 | ≥ v1.0.0 |
 | 文档状态 | Approved |
 
@@ -13,6 +13,7 @@
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.540 | 2026-06-24 | 产品配置 DB-first 收口继续推进：迭代版本和版本代码分支配置路由移除直接 `current_store` 写入，统一通过单记录 helper 写入 MemoryStore 测试 fallback 或 repository；需求单记录写入/删除与审计事件开始使用数据库事务 | Codex |
 | v1.1.539 | 2026-06-24 | 产品配置 DB-first 收口继续推进：产品、产品模块、产品 Git 仓库和相关系统路由移除直接 `current_store` 写入，统一通过产品配置单记录 helper 写入 MemoryStore 测试 fallback 或 repository，并把产品配置单记录写入/删除与审计收口为数据库事务 | Codex |
 | v1.1.538 | 2026-06-24 | 执行诊断中心稳定性增强：`execution_trace_snapshots` 刷新必须在单个数据库事务中完成 upsert 与过期快照删除，避免诊断读模型出现半刷新状态 | Codex |
 | v1.1.537 | 2026-06-24 | 模型网关配置 DB-first 收口：配置 create/patch/delete 新增 repository 单记录读取、upsert 和 delete，默认配置切换与审计随单条记录写入，不再通过整包 `model_gateway_configs/model_gateway_logs` payload 同步配置变更 | Codex |

@@ -565,6 +565,67 @@ def test_product_config_record_writes_use_single_transaction():
     assert "DELETE FROM product_git_repositories WHERE id = %s" in executed_sql[1]
 
 
+def test_requirement_record_writes_use_single_transaction():
+    connect_calls: list[dict] = []
+    executed_sql: list[str] = []
+    audit_calls: list[list[dict]] = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql: str, params=None):  # type: ignore[no-untyped-def]
+            executed_sql.append(sql)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    class FakeConnect:
+        def __call__(self, *, autocommit: bool = True):
+            connect_calls.append({"autocommit": autocommit})
+            return FakeConnection()
+
+    def upsert_audit_events(cursor, audit_events):  # type: ignore[no-untyped-def]
+        audit_calls.append(audit_events)
+
+    repository = RequirementReadRepository(
+        FakeConnect(),
+        upsert_audit_events=upsert_audit_events,
+    )
+    record = {
+        "content": "事务需求内容",
+        "created_by": "user_admin",
+        "id": "requirement_atomic",
+        "product_id": "product_atomic",
+        "title": "事务需求",
+        "version_id": "version_atomic",
+    }
+    audit_event = {"id": "audit_requirement_atomic", "event_type": "requirement.updated"}
+
+    repository.save_requirements({"requirements": {"requirement_atomic": record}})
+    repository.save_requirement_record(record, audit_event=audit_event)
+    repository.delete_requirement_record("requirement_atomic", audit_event=audit_event)
+
+    assert connect_calls == [
+        {"autocommit": False},
+        {"autocommit": False},
+        {"autocommit": False},
+    ]
+    assert audit_calls == [[audit_event], [audit_event]]
+    assert any("INSERT INTO requirements" in sql for sql in executed_sql)
+    assert "DELETE FROM requirements WHERE id = %s" in executed_sql[-1]
+
+
 def test_postgres_requirement_read_models_delegate_to_domain_repository(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     calls: list[tuple[str, dict]] = []

@@ -360,11 +360,15 @@ def save_requirement_record(
     record: dict[str, Any],
     *,
     audit_event: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     repository = runtime_repository(current_store)
     save_record = getattr(repository, "save_requirement_record", None)
-    if save_record is not None:
+    if callable(save_record):
         save_record(record, audit_event=audit_event)
+        return True
+    if repository is None:
+        current_store.requirements[record["id"]] = record
+    return False
 
 
 def record_audit_event(
