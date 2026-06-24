@@ -196,14 +196,8 @@ def record_audit_event(
     subject_id: str,
     subject_type: str = "knowledge_deposit",
 ) -> dict[str, Any]:
-    if not uses_repository_context(current_store):
-        return current_store.audit(
-            event_type=event_type,
-            actor_id=actor_id,
-            subject_type=subject_type,
-            subject_id=subject_id,
-        )
-    return {
+    audit_events = _memory_audit_events(current_store)
+    event = {
         "id": current_store.new_id("audit"),
         "event_type": event_type,
         "actor_id": actor_id,
@@ -211,9 +205,12 @@ def record_audit_event(
         "subject_type": subject_type,
         "subject_id": subject_id,
         "payload": {},
-        "sequence": len(getattr(current_store, "audit_events", [])) + 1,
+        "sequence": len(audit_events) + 1,
         "created_at": datetime.now(UTC).isoformat(),
     }
+    if not uses_repository_context(current_store):
+        _append_memory_audit_event(current_store, event)
+    return event
 
 
 def save_knowledge_deposit_records(
@@ -264,12 +261,17 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
 
 
 def _append_memory_audit_event(current_store: Any, audit_event: dict[str, Any]) -> None:
+    audit_events = _memory_audit_events(current_store)
+    if not any(event.get("id") == audit_event.get("id") for event in audit_events):
+        audit_events.append(audit_event)
+
+
+def _memory_audit_events(current_store: Any) -> list[dict[str, Any]]:
     audit_events = getattr(current_store, "audit_events", None)
     if not isinstance(audit_events, list):
         audit_events = []
         vars(current_store)["audit_events"] = audit_events
-    if not any(event.get("id") == audit_event.get("id") for event in audit_events):
-        audit_events.append(audit_event)
+    return audit_events
 
 
 def save_knowledge_document_records(

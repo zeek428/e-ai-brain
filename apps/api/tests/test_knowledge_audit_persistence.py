@@ -1,7 +1,25 @@
 from test_database_persistence import FakeSnapshotRepository, app, auth_headers, client
 
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
+from app.core.store import MemoryStore
 from app.core.users import MemoryUserRepository
+from app.services.knowledge_deposits import record_audit_event
+
+
+def test_knowledge_record_audit_event_appends_memory_fallback_event():
+    current_store = MemoryStore()
+
+    event = record_audit_event(
+        current_store,
+        actor_id="user_admin",
+        event_type="knowledge_document.created",
+        subject_id="knowledge_001",
+        subject_type="knowledge_document",
+    )
+
+    assert event["id"] == "audit_001"
+    assert event["sequence"] == 1
+    assert current_store.audit_events == [event]
 
 
 def test_knowledge_and_audit_are_persisted_through_fine_grained_repository_payload():
