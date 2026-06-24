@@ -3,6 +3,7 @@ import { Button, Card, Col, Descriptions, Modal, Row, Space, Statistic, Table, T
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { ManagementListPage, StatusTag, type ManagementListQuery } from '../../components/ManagementListPage';
+import { ExecutionTraceLink } from '../../components/ExecutionTraceLink';
 import {
   fetchCodeInspectionDetail,
   fetchCodeInspectionDashboard,
@@ -381,6 +382,23 @@ function CodeInspectionGovernanceOverview({
 
 function sourceTraceItems(report: CodeInspectionReportRecord) {
   return [
+    {
+      key: 'execution_trace',
+      label: '执行诊断',
+      children: (
+        <Space wrap size={8}>
+          <ExecutionTraceLink sourceId={report.id} sourceType="code_inspection_report">
+            巡检报告诊断
+          </ExecutionTraceLink>
+          <ExecutionTraceLink sourceId={report.scheduled_job_run_id} sourceType="scheduled_job_run">
+            运行诊断
+          </ExecutionTraceLink>
+          <ExecutionTraceLink sourceId={report.plugin_invocation_log_id} sourceType="plugin_invocation_log">
+            插件诊断
+          </ExecutionTraceLink>
+        </Space>
+      ),
+    },
     { key: 'source_system', label: '来源系统', children: compactText(report.source_system) },
     {
       key: 'scheduled_job_id',
@@ -406,7 +424,19 @@ function sourceTraceItems(report: CodeInspectionReportRecord) {
     },
     { key: 'plugin_connection_id', label: '数据连接', children: compactText(report.plugin_connection_id) },
     { key: 'plugin_action_id', label: '结果动作', children: compactText(report.plugin_action_id) },
-    { key: 'plugin_invocation_log_id', label: '插件调用', children: compactText(report.plugin_invocation_log_id) },
+    {
+      key: 'plugin_invocation_log_id',
+      label: '插件调用',
+      children: (
+        <ExecutionTraceLink
+          sourceId={report.plugin_invocation_log_id}
+          sourceType="plugin_invocation_log"
+          style={{ display: 'block', maxWidth: '100%' }}
+        >
+          {report.plugin_invocation_log_id}
+        </ExecutionTraceLink>
+      ),
+    },
   ];
 }
 

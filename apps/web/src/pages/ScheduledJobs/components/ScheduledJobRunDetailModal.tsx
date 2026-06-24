@@ -10,6 +10,7 @@ import type {
   ResultWriteRecord,
   ScheduledJobRunRecord,
 } from '../../../services/aiBrain';
+import { ExecutionTraceLink } from '../../../components/ExecutionTraceLink';
 import { formatDisplayDateTime } from '../../../utils/dateTime';
 import { ScheduledJobJsonPreview as JsonPreview } from './ScheduledJobJsonPreview';
 import { ScheduledJobRunResultWriteRecords } from './ScheduledJobRunResultWriteRecords';
@@ -94,6 +95,11 @@ export function ScheduledJobRunDetailModal({
             <Button onClick={() => void onGenerateTemplate(run)}>
               生成模板
             </Button>
+          ) : null}
+          {run ? (
+            <ExecutionTraceLink asButton sourceId={run.id} sourceType="scheduled_job_run">
+              执行诊断
+            </ExecutionTraceLink>
           ) : null}
           {run ? (
             <Button

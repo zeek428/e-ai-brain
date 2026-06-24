@@ -5,13 +5,14 @@
 
 | 项目 | 值 |
 |------|------|
-| 功能版本 | v1.1.631 |
+| 功能版本 | v1.1.632 |
 | 适用系统版本 | ≥ v1.0.0 |
 
 **版本历史**
 
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|----------|------|
+| v1.1.632 | 2026-06-24 | 补充执行诊断统一入口验收：`ExecutionTraceLink` 需在 AI 助手草案、定时作业运行详情和代码巡检报告详情生成一致深链；代码巡检详情需提供巡检报告、来源运行和插件调用三个诊断入口，`AssistantDraftsPage.test.tsx`、`CodeInspectionsPage.test.tsx`、`ScheduledJobsPage.test.tsx`、typecheck、lint 和真实页面 smoke 必须通过 | Codex |
 | v1.1.631 | 2026-06-24 | 补充 AI 助手草案来源链路验收：执行诊断可按 `assistant_message` source_id 定位 `assistant_chat_run` 链路，草案任务台列表和详情展示“来源链路”并跳转 `/governance/execution-traces?source_id=...` | Codex |
 | v1.1.630 | 2026-06-24 | 补充插件管理测试诊断弹窗组件化验收：连接测试诊断和 Runner 测试诊断从主页面收口到 `PluginDiagnostics` 后，`PluginsPage.test.tsx`、typecheck、lint 和真实 `/tasks/plugins` 页面 smoke 必须通过 | Codex |
 | v1.1.629 | 2026-06-24 | 补充用户权限诊断验收：`GET /api/system/permissions/diagnostics` 可解释用户状态、角色、菜单路径、权限点和数据范围阻断原因，角色管理页展示“用户权限诊断”并可运行查询 | Codex |

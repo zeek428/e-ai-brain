@@ -1982,6 +1982,10 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_weekly_feedback' }));
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    expect(within(dialog).getByRole('link', { name: '执行诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=scheduled_job_run_weekly_feedback&source_type=scheduled_job_run',
+    );
     expect(within(dialog).getByText('运行链路')).toBeInTheDocument();
     expect(within(dialog).getAllByText('2026-06-11 18:00').length).toBeGreaterThanOrEqual(2);
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('succeeded');
@@ -2408,6 +2412,10 @@ describe('ScheduledJobsPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看运行结果 scheduled_job_run_code_inspection_ai' }));
 
     const dialog = await screen.findByRole('dialog', { name: '运行结果详情' });
+    expect(within(dialog).getByRole('link', { name: '执行诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=scheduled_job_run_code_inspection_ai&source_type=scheduled_job_run',
+    );
     expect(within(dialog).getByText('运行链路')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('流程节点 数据连接获取内容')).toHaveTextContent('succeeded');
     expect(within(dialog).getByLabelText('流程节点 AI执行处理内容')).toHaveTextContent('已调用');

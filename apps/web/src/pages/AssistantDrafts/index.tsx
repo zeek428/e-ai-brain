@@ -8,6 +8,7 @@ import {
   StatusTag,
   type ManagementListQuery,
 } from '../../components/ManagementListPage';
+import { ExecutionTraceLink } from '../../components/ExecutionTraceLink';
 import { formatRemoteRowsError, normalizeRemoteRowsError, type RemoteRowsError } from '../../hooks/useRemoteRows';
 import {
   cancelAssistantActionDraft,
@@ -156,19 +157,6 @@ function compactText(value?: string | null) {
 
 function percent(value?: number) {
   return `${Math.round((value ?? 0) * 1000) / 10}%`;
-}
-
-function sourceTraceLink(sourceMessageId?: string | null) {
-  const value = String(sourceMessageId ?? '').trim();
-  if (!value) {
-    return '-';
-  }
-  const href = `/governance/execution-traces?source_id=${encodeURIComponent(value)}&source_type=assistant_message`;
-  return (
-    <Button href={href} type="link">
-      来源链路
-    </Button>
-  );
 }
 
 function SummaryStrip({ summary }: { summary?: AssistantActionDraftWorkbenchSummary }) {
@@ -371,7 +359,11 @@ export default function AssistantDraftsPage() {
         dataIndex: 'source_message_id',
         title: '来源链路',
         width: 120,
-        render: (_, row) => sourceTraceLink(row.source_message_id),
+        render: (_, row) => (
+          <ExecutionTraceLink asButton sourceId={row.source_message_id} sourceType="assistant_message">
+            来源链路
+          </ExecutionTraceLink>
+        ),
       },
       {
         dataIndex: 'view_count',
@@ -494,7 +486,11 @@ export default function AssistantDraftsPage() {
                 {detail.result_run?.status ? `${detail.result_run.status} · ${detail.result_run.result_type ?? '-'}` : '-'}
               </Descriptions.Item>
               <Descriptions.Item label="来源消息">{detail.source_message_id ?? '-'}</Descriptions.Item>
-              <Descriptions.Item label="来源链路">{sourceTraceLink(detail.source_message_id)}</Descriptions.Item>
+              <Descriptions.Item label="来源链路">
+                <ExecutionTraceLink asButton sourceId={detail.source_message_id} sourceType="assistant_message">
+                  来源链路
+                </ExecutionTraceLink>
+              </Descriptions.Item>
             </Descriptions>
             <Table<AssistantActionDraftPreviewIssue>
               columns={issueColumns}

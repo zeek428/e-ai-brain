@@ -290,6 +290,19 @@ describe('CodeInspectionsPage', () => {
     const dialog = await screen.findByRole('dialog', { name: '代码巡检详情' });
     await waitFor(() => expect(within(dialog).getByText('来源链路')).toBeInTheDocument());
 
+    expect(within(dialog).getByText('执行诊断')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: '巡检报告诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=code_inspection_report_001&source_type=code_inspection_report',
+    );
+    expect(within(dialog).getByRole('link', { name: '运行诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=scheduled_job_run_001&source_type=scheduled_job_run',
+    );
+    expect(within(dialog).getByRole('link', { name: '插件诊断' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=plugin_invocation_log_001&source_type=plugin_invocation_log',
+    );
     expect(within(dialog).getByText('来源系统')).toBeInTheDocument();
     expect(within(dialog).getByText('github-code-scanner')).toBeInTheDocument();
     expect(within(dialog).getByText('来源作业')).toBeInTheDocument();
@@ -307,7 +320,10 @@ describe('CodeInspectionsPage', () => {
     expect(within(dialog).getByText('结果动作')).toBeInTheDocument();
     expect(within(dialog).getByText('plugin_action_github_scan')).toBeInTheDocument();
     expect(within(dialog).getByText('插件调用')).toBeInTheDocument();
-    expect(within(dialog).getByText('plugin_invocation_log_001')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: 'plugin_invocation_log_001' })).toHaveAttribute(
+      'href',
+      '/governance/execution-traces?source_id=plugin_invocation_log_001&source_type=plugin_invocation_log',
+    );
     expect(within(dialog).getByText('扫描快照')).toBeInTheDocument();
     expect(within(dialog).getByText('native_full_scan')).toBeInTheDocument();
     expect(within(dialog).getByText('workdir://checkouts/scheduled_job_run_001__repo_ai_brain__main__abc1234')).toBeInTheDocument();
