@@ -61,6 +61,11 @@ def requirement_read_store(current_store: Any) -> Any:
     return task_workflow_read_store(current_store)
 
 
+def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
 def get_requirement_response(*, current_store: Any, requirement_id: str) -> dict[str, Any]:
     read_store = requirement_read_store(current_store)
     requirement = read_store.requirements.get(requirement_id)
@@ -89,17 +94,19 @@ def requirement_full_chain_payload(
     user: dict[str, Any],
 ) -> dict[str, Any]:
     requirement_id = str(requirement["id"])
-    product = current_store.products.get(str(requirement.get("product_id"))) or {}
+    product = _read_memory_dict(current_store, "products").get(
+        str(requirement.get("product_id"))
+    ) or {}
     version_id = requirement.get("version_id")
     iteration_version = (
-        current_store.product_versions.get(str(version_id))
+        _read_memory_dict(current_store, "product_versions").get(str(version_id))
         if version_id is not None
         else None
     )
     tasks = sort_by_lifecycle_time(
         [
             task
-            for task in current_store.ai_tasks.values()
+            for task in _read_memory_dict(current_store, "ai_tasks").values()
             if str(task.get("requirement_id")) == requirement_id and can_read_task(user, task)
         ],
         "created_at",
@@ -114,7 +121,7 @@ def requirement_full_chain_payload(
     reviews = sort_by_lifecycle_time(
         [
             review
-            for review in current_store.human_reviews.values()
+            for review in _read_memory_dict(current_store, "human_reviews").values()
             if str(review.get("ai_task_id")) in task_ids or str(review.get("id")) in review_ids
         ],
         "created_at",
@@ -129,7 +136,7 @@ def requirement_full_chain_payload(
     code_review_reports = sort_by_lifecycle_time(
         [
             report
-            for report in current_store.code_review_reports.values()
+            for report in _read_memory_dict(current_store, "code_review_reports").values()
             if str(report.get("task_id")) in task_ids
             or str(report.get("id")) in code_review_report_ids
         ],
@@ -140,7 +147,7 @@ def requirement_full_chain_payload(
     git_snapshots = sort_by_lifecycle_time(
         [
             snapshot
-            for snapshot in current_store.gitlab_mr_snapshots.values()
+            for snapshot in _read_memory_dict(current_store, "gitlab_mr_snapshots").values()
             if str(snapshot.get("requirement_id")) == requirement_id
             or str(snapshot.get("technical_solution_task_id")) in task_ids
         ],
@@ -151,7 +158,7 @@ def requirement_full_chain_payload(
     bugs = sort_by_lifecycle_time(
         [
             bug_summary_projection(bug, current_store)
-            for bug in current_store.bugs.values()
+            for bug in _read_memory_dict(current_store, "bugs").values()
             if str(bug.get("requirement_id")) == requirement_id
             or str(bug.get("related_task_id")) in task_ids
         ],
@@ -161,7 +168,7 @@ def requirement_full_chain_payload(
     knowledge_deposits = sort_by_lifecycle_time(
         [
             deposit
-            for deposit in current_store.knowledge_deposits.values()
+            for deposit in _read_memory_dict(current_store, "knowledge_deposits").values()
             if str(deposit.get("ai_task_id")) in task_ids
         ],
         "created_at",
@@ -170,7 +177,10 @@ def requirement_full_chain_payload(
     jenkins_releases = sort_by_lifecycle_time(
         [
             release
-            for release in current_store.jenkins_release_records.values()
+            for release in _read_memory_dict(
+                current_store,
+                "jenkins_release_records",
+            ).values()
             if release.get("product_id") == requirement.get("product_id")
             and (
                 not requirement.get("version_id")
