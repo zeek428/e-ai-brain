@@ -45,15 +45,18 @@ def persist_knowledge_payload(
         return
     save_knowledge(
         {
-            "knowledge_assets": current_store.knowledge_assets,
-            "knowledge_chunk_sets": current_store.knowledge_chunk_sets,
-            "knowledge_chunks": current_store.knowledge_chunks,
-            "knowledge_deposits": current_store.knowledge_deposits,
-            "knowledge_documents": current_store.knowledge_documents,
-            "knowledge_folders": current_store.knowledge_folders,
-            "knowledge_import_jobs": current_store.knowledge_import_jobs,
-            "knowledge_space_members": current_store.knowledge_space_members,
-            "knowledge_spaces": current_store.knowledge_spaces,
+            "knowledge_assets": _memory_collection(current_store, "knowledge_assets"),
+            "knowledge_chunk_sets": _memory_collection(current_store, "knowledge_chunk_sets"),
+            "knowledge_chunks": _memory_collection(current_store, "knowledge_chunks"),
+            "knowledge_deposits": _memory_collection(current_store, "knowledge_deposits"),
+            "knowledge_documents": _memory_collection(current_store, "knowledge_documents"),
+            "knowledge_folders": _memory_collection(current_store, "knowledge_folders"),
+            "knowledge_import_jobs": _memory_collection(current_store, "knowledge_import_jobs"),
+            "knowledge_space_members": _memory_collection(
+                current_store,
+                "knowledge_space_members",
+            ),
+            "knowledge_spaces": _memory_collection(current_store, "knowledge_spaces"),
             "audit_events": [audit_event] if audit_event is not None else [],
         }
     )
@@ -67,13 +70,32 @@ def _memory_collection(current_store: Any, collection_name: str) -> dict[str, di
     return collection
 
 
+def _read_memory_collection(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    return collection if isinstance(collection, dict) else {}
+
+
+def _read_memory_record(
+    current_store: Any,
+    collection_name: str,
+    record_id: Any,
+) -> dict[str, Any] | None:
+    if record_id is None:
+        return None
+    record = _read_memory_collection(current_store, collection_name).get(str(record_id))
+    return record if isinstance(record, dict) else None
+
+
 def get_knowledge_import_job_from_memory(
     current_store: Any,
     job_id: str | None,
 ) -> dict[str, Any] | None:
     if not job_id:
         return None
-    return _memory_collection(current_store, "knowledge_import_jobs").get(str(job_id))
+    return _read_memory_record(current_store, "knowledge_import_jobs", job_id)
 
 
 def put_knowledge_import_job_to_memory(
@@ -157,7 +179,7 @@ def user_has_space_membership(
     required: str,
 ) -> bool:
     user_id = str(user["id"])
-    for member in current_store.knowledge_space_members.values():
+    for member in _read_memory_collection(current_store, "knowledge_space_members").values():
         if member.get("knowledge_space_id") != space_id:
             continue
         if member.get("user_id") != user_id or member.get("status", "active") != "active":
@@ -177,7 +199,7 @@ def user_can_access_space(
     space_id: str,
     required: str = "read",
 ) -> bool:
-    space = current_store.knowledge_spaces.get(space_id)
+    space = _read_memory_record(current_store, "knowledge_spaces", space_id)
     if space is None or space.get("status", "active") != "active":
         return False
     if space.get("owner_user_id") == user.get("id"):
@@ -194,7 +216,7 @@ def ensure_space_access(
     space_id: str,
     required: str = "read",
 ) -> None:
-    if space_id not in current_store.knowledge_spaces:
+    if _read_memory_record(current_store, "knowledge_spaces", space_id) is None:
         raise api_error(404, "NOT_FOUND", "Knowledge space not found")
     if not user_can_access_space(current_store, user, space_id=space_id, required=required):
         raise api_error(403, "FORBIDDEN", "Knowledge space permission denied")
@@ -226,7 +248,7 @@ def create_knowledge_space_result(
     normalized_code = non_blank(code, "code")
     if any(
         space.get("code") == normalized_code
-        for space in current_store.knowledge_spaces.values()
+        for space in _read_memory_collection(current_store, "knowledge_spaces").values()
     ):
         raise api_error(409, "KNOWLEDGE_SPACE_CODE_EXISTS", "Knowledge space code already exists")
     timestamp = now_iso()
@@ -256,7 +278,7 @@ def create_knowledge_space_result(
 def list_knowledge_spaces_result(*, current_store: Any, user: dict[str, Any]) -> dict[str, Any]:
     items = [
         dict(space)
-        for space in current_store.knowledge_spaces.values()
+        for space in _read_memory_collection(current_store, "knowledge_spaces").values()
         if user_can_access_space(current_store, user, space_id=space["id"], required="read")
     ]
     items.sort(key=lambda item: (item.get("code", ""), item["id"]))
@@ -313,7 +335,7 @@ def folder_path(current_store: Any, folder: dict[str, Any]) -> str:
     names = [folder["name"]]
     parent_id = folder.get("parent_folder_id")
     while parent_id:
-        parent = current_store.knowledge_folders.get(parent_id)
+        parent = _read_memory_record(current_store, "knowledge_folders", parent_id)
         if parent is None:
             break
         names.append(parent["name"])
@@ -331,7 +353,7 @@ def create_knowledge_folder_result(
 ) -> dict[str, Any]:
     ensure_space_access(current_store, user, space_id=space_id, required="write")
     if parent_folder_id is not None:
-        parent = current_store.knowledge_folders.get(parent_folder_id)
+        parent = _read_memory_record(current_store, "knowledge_folders", parent_folder_id)
         if parent is None or parent.get("knowledge_space_id") != space_id:
             raise api_error(404, "NOT_FOUND", "Parent folder not found")
         if not folder_is_effectively_active(current_store, parent_folder_id):
@@ -343,7 +365,7 @@ def create_knowledge_folder_result(
         "parent_folder_id": parent_folder_id,
         "name": non_blank(name, "name"),
         "status": "active",
-        "sort_order": len(current_store.knowledge_folders) + 1,
+        "sort_order": len(_read_memory_collection(current_store, "knowledge_folders")) + 1,
         "created_by": user["id"],
         "created_at": timestamp,
         "updated_at": timestamp,
@@ -366,7 +388,7 @@ def folder_descendant_ids(current_store: Any, folder_id: str) -> set[str]:
     changed = True
     while changed:
         changed = False
-        for folder in current_store.knowledge_folders.values():
+        for folder in _read_memory_collection(current_store, "knowledge_folders").values():
             parent_id = folder.get("parent_folder_id")
             if parent_id == folder_id or parent_id in descendants:
                 if folder["id"] not in descendants:
@@ -384,7 +406,7 @@ def folder_is_effectively_active(current_store: Any, folder_id: str | None) -> b
         if current_id in visited:
             return False
         visited.add(current_id)
-        folder = current_store.knowledge_folders.get(current_id)
+        folder = _read_memory_record(current_store, "knowledge_folders", current_id)
         if folder is None or folder.get("status", "active") == "archived":
             return False
         current_id = folder.get("parent_folder_id")
@@ -402,7 +424,7 @@ def patch_knowledge_folder_result(
     status: str | None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    folder = current_store.knowledge_folders.get(folder_id)
+    folder = _read_memory_record(current_store, "knowledge_folders", folder_id)
     if folder is None:
         raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
     space_id = folder["knowledge_space_id"]
@@ -410,7 +432,7 @@ def patch_knowledge_folder_result(
     if status is not None and status not in {"active", "archived"}:
         raise api_error(400, "VALIDATION_ERROR", "Unsupported folder status")
     if parent_folder_id_set and parent_folder_id is not None:
-        parent = current_store.knowledge_folders.get(parent_folder_id)
+        parent = _read_memory_record(current_store, "knowledge_folders", parent_folder_id)
         if parent is None or parent.get("knowledge_space_id") != space_id:
             raise api_error(404, "NOT_FOUND", "Parent folder not found")
         if not folder_is_effectively_active(current_store, parent_folder_id):
@@ -454,7 +476,7 @@ def list_knowledge_folders_result(
     ensure_space_access(current_store, user, space_id=space_id, required="read")
     items = [
         {**folder, "path": folder_path(current_store, folder)}
-        for folder in current_store.knowledge_folders.values()
+        for folder in _read_memory_collection(current_store, "knowledge_folders").values()
         if folder.get("knowledge_space_id") == space_id
         and folder_is_effectively_active(current_store, folder["id"])
     ]
@@ -468,14 +490,14 @@ def list_knowledge_document_assets_result(
     document_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    document = current_store.knowledge_documents.get(document_id)
+    document = _read_memory_record(current_store, "knowledge_documents", document_id)
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     if not document_is_readable(current_store, user, document):
         raise api_error(403, "FORBIDDEN", "Knowledge document permission denied")
     items = [
         dict(asset)
-        for asset in current_store.knowledge_assets.values()
+        for asset in _read_memory_collection(current_store, "knowledge_assets").values()
         if asset.get("document_id") == document_id
     ]
     items.sort(
@@ -491,14 +513,14 @@ def _import_job_space_id(
 ) -> str | None:
     document_id = import_job.get("document_id")
     if document_id:
-        document = current_store.knowledge_documents.get(document_id)
+        document = _read_memory_record(current_store, "knowledge_documents", document_id)
         if document is not None:
             document_space_id = document.get("knowledge_space_id")
             if document_space_id:
                 return document_space_id
     source_asset_id = import_job.get("source_asset_id")
     if source_asset_id:
-        asset = current_store.knowledge_assets.get(source_asset_id)
+        asset = _read_memory_record(current_store, "knowledge_assets", source_asset_id)
         if asset is not None:
             return asset.get("knowledge_space_id")
     return None
@@ -506,7 +528,11 @@ def _import_job_space_id(
 
 def import_job_response(current_store: Any, import_job: dict[str, Any]) -> dict[str, Any]:
     response = dict(import_job)
-    document = current_store.knowledge_documents.get(import_job.get("document_id"))
+    document = _read_memory_record(
+        current_store,
+        "knowledge_documents",
+        import_job.get("document_id"),
+    )
     if document is not None:
         response["document_title"] = document.get("title")
         document_space_id = document.get("knowledge_space_id")
@@ -514,13 +540,13 @@ def import_job_response(current_store: Any, import_job: dict[str, Any]) -> dict[
             response["knowledge_space_id"] = document_space_id
         folder_id = document.get("folder_id")
         if folder_id:
-            folder = current_store.knowledge_folders.get(folder_id)
+            folder = _read_memory_record(current_store, "knowledge_folders", folder_id)
             if folder is not None:
                 response["folder_id"] = folder_id
                 response["folder_path"] = folder.get("path") or folder_path(current_store, folder)
     source_asset_id = import_job.get("source_asset_id")
     if source_asset_id:
-        asset = current_store.knowledge_assets.get(source_asset_id)
+        asset = _read_memory_record(current_store, "knowledge_assets", source_asset_id)
         if asset is not None:
             response["asset_filename"] = asset.get("filename")
             response["asset_mime_type"] = asset.get("mime_type")
@@ -541,7 +567,7 @@ def list_knowledge_import_jobs_result(
         ensure_space_access(current_store, user, space_id=knowledge_space_id, required="read")
 
     items: list[dict[str, Any]] = []
-    for import_job in current_store.knowledge_import_jobs.values():
+    for import_job in _read_memory_collection(current_store, "knowledge_import_jobs").values():
         if document_id is not None and import_job.get("document_id") != document_id:
             continue
         if status is not None and import_job.get("status") != status:
@@ -557,7 +583,11 @@ def list_knowledge_import_jobs_result(
         ):
             continue
         if space_id is None:
-            document = current_store.knowledge_documents.get(import_job.get("document_id"))
+            document = _read_memory_record(
+                current_store,
+                "knowledge_documents",
+                import_job.get("document_id"),
+            )
             if document is not None and not document_is_readable(current_store, user, document):
                 continue
         items.append(import_job_response(current_store, import_job))
@@ -597,7 +627,7 @@ def create_asset_record(
     digest = hashlib.sha256(content).hexdigest()
     object_key = f"knowledge/{space_id}/{document_id}/v1/{asset_type}/{digest}/{filename}"
     bucket = settings.object_storage_bucket
-    for existing_asset in current_store.knowledge_assets.values():
+    for existing_asset in _read_memory_collection(current_store, "knowledge_assets").values():
         if existing_asset.get("bucket") != bucket or existing_asset.get("object_key") != object_key:
             continue
         if metadata:
@@ -993,7 +1023,7 @@ def upload_knowledge_document_result(
 ) -> dict[str, Any]:
     ensure_space_access(current_store, user, space_id=knowledge_space_id, required="write")
     if folder_id is not None:
-        folder = current_store.knowledge_folders.get(folder_id)
+        folder = _read_memory_record(current_store, "knowledge_folders", folder_id)
         if (
             folder is None
             or folder.get("knowledge_space_id") != knowledge_space_id
@@ -1140,10 +1170,18 @@ def run_knowledge_import_job_result(
     import_job = get_knowledge_import_job_from_memory(current_store, job_id)
     if import_job is None:
         raise api_error(404, "NOT_FOUND", "Knowledge import job not found")
-    document = current_store.knowledge_documents.get(import_job.get("document_id"))
+    document = _read_memory_record(
+        current_store,
+        "knowledge_documents",
+        import_job.get("document_id"),
+    )
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
-    source_asset = current_store.knowledge_assets.get(import_job.get("source_asset_id"))
+    source_asset = _read_memory_record(
+        current_store,
+        "knowledge_assets",
+        import_job.get("source_asset_id"),
+    )
     space_id = _space_id_for_document_or_asset(
         current_store,
         document=document,
@@ -1249,7 +1287,6 @@ def run_knowledge_import_job_result(
             "parser_engine": running_job.get("parser_engine", "plain_text"),
             "chunk_strategy": running_job.get("chunk_strategy", "simple_text"),
         }
-        _model_log_start_index = len(current_store.model_gateway_logs)
         indexed_document, chunks = replace_knowledge_chunks_result(
             current_store,
             indexing_document,
@@ -1379,7 +1416,11 @@ def run_knowledge_import_job_result(
             subject_type="knowledge_import_job",
         )
         _save_import_processing_state(current_store, audit_event=audit_event)
-        failed_document = current_store.knowledge_documents[document["id"]]
+        failed_document = _read_memory_record(
+            current_store,
+            "knowledge_documents",
+            document["id"],
+        ) or document
         return {
             "document": knowledge_document_response(current_store, failed_document, []),
             "import_job": import_job_response(current_store, failed_job),
@@ -1395,7 +1436,11 @@ def retry_knowledge_import_job_result(
     import_job = get_knowledge_import_job_from_memory(current_store, job_id)
     if import_job is None:
         raise api_error(404, "NOT_FOUND", "Knowledge import job not found")
-    document = current_store.knowledge_documents.get(import_job.get("document_id"))
+    document = _read_memory_record(
+        current_store,
+        "knowledge_documents",
+        import_job.get("document_id"),
+    )
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     space_id = document.get("knowledge_space_id") or _import_job_space_id(
@@ -1450,7 +1495,11 @@ def cancel_knowledge_import_job_result(
     import_job = get_knowledge_import_job_from_memory(current_store, job_id)
     if import_job is None:
         raise api_error(404, "NOT_FOUND", "Knowledge import job not found")
-    document = current_store.knowledge_documents.get(import_job.get("document_id"))
+    document = _read_memory_record(
+        current_store,
+        "knowledge_documents",
+        import_job.get("document_id"),
+    )
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     space_id = document.get("knowledge_space_id")
@@ -1496,14 +1545,14 @@ def list_knowledge_chunk_sets_result(
     document_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    document = current_store.knowledge_documents.get(document_id)
+    document = _read_memory_record(current_store, "knowledge_documents", document_id)
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     if not document_is_readable(current_store, user, document):
         raise api_error(403, "FORBIDDEN", "Knowledge document permission denied")
     items = [
         dict(chunk_set)
-        for chunk_set in current_store.knowledge_chunk_sets.values()
+        for chunk_set in _read_memory_collection(current_store, "knowledge_chunk_sets").values()
         if chunk_set.get("document_id") == document_id
     ]
     active_id = document.get("active_chunk_set_id")
@@ -1512,7 +1561,7 @@ def list_knowledge_chunk_sets_result(
         item["chunk_count"] = len(
             [
                 chunk
-                for chunk in current_store.knowledge_chunks.values()
+                for chunk in _read_memory_collection(current_store, "knowledge_chunks").values()
                 if chunk.get("chunk_set_id") == item["id"]
             ]
         )
@@ -1533,7 +1582,7 @@ def list_knowledge_chunks_result(
     chunk_set_id: str | None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    document = current_store.knowledge_documents.get(document_id)
+    document = _read_memory_record(current_store, "knowledge_documents", document_id)
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     if not document_is_readable(current_store, user, document):
@@ -1541,7 +1590,7 @@ def list_knowledge_chunks_result(
     target_chunk_set_id = chunk_set_id or document.get("active_chunk_set_id")
     items = [
         dict(chunk)
-        for chunk in current_store.knowledge_chunks.values()
+        for chunk in _read_memory_collection(current_store, "knowledge_chunks").values()
         if chunk.get("document_id") == document_id
         and (target_chunk_set_id is None or chunk.get("chunk_set_id") == target_chunk_set_id)
     ]
@@ -1569,18 +1618,20 @@ def activate_knowledge_chunk_set_result(
     chunk_set_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    document = current_store.knowledge_documents.get(document_id)
+    document = _read_memory_record(current_store, "knowledge_documents", document_id)
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     space_id = document.get("knowledge_space_id")
     if space_id:
         ensure_space_access(current_store, user, space_id=space_id, required="write")
-    chunk_set = current_store.knowledge_chunk_sets.get(chunk_set_id)
+    chunk_set = _read_memory_record(current_store, "knowledge_chunk_sets", chunk_set_id)
     if chunk_set is None or chunk_set.get("document_id") != document_id:
         raise api_error(404, "NOT_FOUND", "Knowledge chunk set not found")
     if chunk_set.get("status") not in {"active", "archived"}:
         raise api_error(409, "CHUNK_SET_STATE_INVALID", "Knowledge chunk set cannot be activated")
-    for existing_id, existing in list(current_store.knowledge_chunk_sets.items()):
+    for existing_id, existing in list(
+        _read_memory_collection(current_store, "knowledge_chunk_sets").items()
+    ):
         if existing.get("document_id") != document_id:
             continue
         put_knowledge_chunk_set_to_memory(current_store, existing_id, {
@@ -1608,7 +1659,7 @@ def activate_knowledge_chunk_set_result(
     put_knowledge_document_to_memory(current_store, updated_document)
     chunks = [
         chunk
-        for chunk in current_store.knowledge_chunks.values()
+        for chunk in _read_memory_collection(current_store, "knowledge_chunks").values()
         if chunk.get("document_id") == document_id and chunk.get("chunk_set_id") == chunk_set_id
     ]
     audit_event = record_audit_event(
@@ -1619,8 +1670,13 @@ def activate_knowledge_chunk_set_result(
         subject_type="knowledge_chunk_set",
     )
     _save_import_processing_state(current_store, audit_event=audit_event)
+    active_chunk_set = _read_memory_record(
+        current_store,
+        "knowledge_chunk_sets",
+        chunk_set_id,
+    ) or chunk_set
     return {
-        "chunk_set": dict(current_store.knowledge_chunk_sets[chunk_set_id]),
+        "chunk_set": dict(active_chunk_set),
         "document": knowledge_document_response(current_store, updated_document, chunks),
     }
 
@@ -1633,16 +1689,16 @@ def reparse_knowledge_document_result(
     chunk_strategy: str | None,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    document = current_store.knowledge_documents.get(document_id)
+    document = _read_memory_record(current_store, "knowledge_documents", document_id)
     if document is None:
         raise api_error(404, "NOT_FOUND", "Knowledge document not found")
     space_id = document.get("knowledge_space_id")
     if space_id:
         ensure_space_access(current_store, user, space_id=space_id, required="write")
     source_asset_id = document.get("source_asset_id")
-    if not source_asset_id or source_asset_id not in current_store.knowledge_assets:
+    source_asset = _read_memory_record(current_store, "knowledge_assets", source_asset_id)
+    if source_asset is None:
         raise api_error(404, "NOT_FOUND", "Knowledge source asset not found")
-    source_asset = current_store.knowledge_assets[source_asset_id]
     normalized_parser = normalize_parser_engine(
         parser_engine or document.get("parser_engine"),
         source_asset.get("mime_type"),
@@ -1706,7 +1762,7 @@ def batch_move_knowledge_documents_result(
         raise api_error(400, "VALIDATION_ERROR", "document_ids is required")
     target_folder = None
     if folder_id is not None:
-        target_folder = current_store.knowledge_folders.get(folder_id)
+        target_folder = _read_memory_record(current_store, "knowledge_folders", folder_id)
         if target_folder is None or not folder_is_effectively_active(current_store, folder_id):
             raise api_error(404, "NOT_FOUND", "Knowledge folder not found")
         ensure_space_access(
@@ -1718,7 +1774,7 @@ def batch_move_knowledge_documents_result(
     updated: list[str] = []
     skipped: list[dict[str, str]] = []
     for document_id in document_ids:
-        document = current_store.knowledge_documents.get(document_id)
+        document = _read_memory_record(current_store, "knowledge_documents", document_id)
         if document is None:
             skipped.append({"id": document_id, "reason": "not_found"})
             continue
@@ -1754,7 +1810,7 @@ def asset_preview_result(
     current_store: Any,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    asset = current_store.knowledge_assets.get(asset_id)
+    asset = _read_memory_record(current_store, "knowledge_assets", asset_id)
     if asset is None:
         raise api_error(404, "NOT_FOUND", "Knowledge asset not found")
     ensure_space_access(
